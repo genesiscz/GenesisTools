@@ -16,8 +16,8 @@ import type {
     VideoLongSummaryChapter,
     VideoReport,
 } from "@app/youtube/lib/video.types";
-import type { ProviderChoice } from "@ask/types";
 import { type CallLLMStructuredResult, callLLM, callLLMStructured } from "@genesiscz/utils/ai/call-llm";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 

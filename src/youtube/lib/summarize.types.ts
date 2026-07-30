@@ -6,13 +6,13 @@ import type {
     VideoId,
     VideoLongSummary,
 } from "@app/youtube/lib/video.types";
-import type { ProviderChoice } from "@ask/types";
 import type {
     CallLLMOptions,
     CallLLMResult,
     CallLLMStructuredOptions,
     CallLLMStructuredResult,
 } from "@genesiscz/utils/ai/call-llm";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 
 export interface SummaryProgressInfo {
     phase: "summarize";

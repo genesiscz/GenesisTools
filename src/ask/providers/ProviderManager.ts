@@ -1,45 +1,40 @@
 import { askUI } from "@ask/output/AskUILogger";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
-import { liteLLMPricingFetcher } from "@ask/providers/LiteLLMPricingFetcher";
-import type {
-    AiSdkProvider,
-    DetectedProvider,
-    ModelInfo,
-    OpenAIModelsResponse,
-    OpenRouterModelResponse,
-    OpenRouterModelsResponse,
-    OpenRouterPricing,
-    PricingInfo,
-    ProviderConfig,
-} from "@ask/types";
-import { getLanguageModel } from "@ask/types";
-import type { AskConfig } from "@ask/types/config";
-import { byProvider, formatModelDisplayName } from "@genesiscz/utils/ai/catalog";
-import { toModelInfo } from "@genesiscz/utils/ai/resolvers/resolve-models";
+import type { DetectedProvider, ModelInfo, ProviderConfig } from "@ask/types";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { ephemeralEnvAccounts } from "@genesiscz/utils/ai/config/migrations/2026-08-seedEnvAccounts";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { describeCredential } from "@genesiscz/utils/ai/providers/credentials";
+import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
+import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
+import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
-import {
-    createSubscriptionFetch,
-    SUBSCRIPTION_BETAS,
-    SUBSCRIPTION_SYSTEM_PREFIX,
-} from "@genesiscz/utils/claude/subscription-billing";
+import { modelsForProvider, providerNameFor, toDetectedProvider } from "@genesiscz/utils/ask/providers/detected";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { generateText } from "ai";
 
-interface ModelMetadata {
-    id: string;
-    description?: string;
-}
+/**
+ * Which providers can `ask` use right now?
+ *
+ * The answer used to be assembled from four disagreeing sources: a hand-kept
+ * `PROVIDER_CONFIGS` table, three per-vendor subscription branches, a resolver
+ * registry reached through dynamic imports, and live `/v1/models` calls. Now it
+ * is one walk over the unified AI config: every enabled account, bound through
+ * its provider plugin, with models read from the catalog. Adding a provider is a
+ * plugin, not an edit here.
+ *
+ * `DetectedProvider` is deliberately unchanged — `AIChat`, the pricing table and
+ * youtube all speak it — so this is a swap of the machine behind the shape.
+ */
 
 /**
  * Which key does provider detection spend? Configured account first,
- * environment second. The old order was the reverse, so an ambient variable
- * silently outranked the account the user had configured and you could not
- * tell which key was being spent. The environment still resolves keys — it is
- * just no longer the winner.
+ * environment second.
  *
- * Extracted so the ORDER is pinned by a unit test: this line decides whose
- * money a call costs, and it used to be untestable inside detectProviders.
+ * The live ladder is now `resolveCredential`
+ * (src/utils/ai/providers/credentials.ts), which applies this same order for
+ * every provider and names the variable it spent. This function stays because
+ * the deprecated v3 `AIConfig` facade still resolves keys this way and its order
+ * is pinned by a unit test: the line decides whose money a call costs.
  */
 export function detectApiKeyFor(
     aiConfig: { getProviderApiKey(name: string): string | undefined },
@@ -48,15 +43,20 @@ export function detectApiKeyFor(
     return aiConfig.getProviderApiKey(config.name) ?? env.ai.getByEnvKey(config.envKey);
 }
 
+/** Priority from the compat table, so the familiar openai → groq → … order survives. */
+function providerPriority(providerName: string): number {
+    const config = getProviderConfigs().find((entry) => entry.name === providerName);
+    return config?.priority ?? 99;
+}
+
 export class ProviderManager {
     private detectedProviders: Map<string, DetectedProvider> = new Map();
     /**
      * Set only by a scan that was allowed to look at EVERY provider. A targeted
-     * scan skips the subscription probes for the other providers (see the
-     * `!targetProvider ||` guards below), so marking its result complete would
-     * hide anthropic-sub / openai-sub / grok-sub for the rest of the process.
-     * That is exactly what happened in the long-lived youtube server: one
-     * `resolveProviderChoice({fallbackSpec: "xai/…"})` — a cost estimate was
+     * scan skips every account whose provider is not the requested one, so
+     * marking its result complete would hide the rest for the life of the
+     * process. That is exactly what happened in the long-lived youtube server:
+     * one `resolveProviderChoice({fallbackSpec: "xai/…"})` — a cost estimate was
      * enough — left `/api/v1/models` serving an xai-only catalog until restart.
      */
     private scannedAll = false;
@@ -66,70 +66,38 @@ export class ProviderManager {
             return Array.from(this.detectedProviders.values());
         }
 
-        // Load ask config for subscription settings
-        const { loadAskConfig } = await import("@ask/config");
-        const askConfig = await loadAskConfig();
+        registerBuiltInPlugins();
 
-        // Load AIConfig for provider enabled/disabled state
-        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-        const aiConfig = await AIConfig.load();
+        const store = await AiConfigStore.load();
+        const config = store.data();
+        const disabled = new Set(config.disabledProviders ?? []);
 
-        const configs = getProviderConfigs();
-        const detected: DetectedProvider[] = [];
+        for (const account of this.candidateAccounts(store, config)) {
+            const name = providerNameFor(account.provider);
 
-        for (const config of configs) {
-            if (!aiConfig.isProviderEnabled(config.name)) {
+            if (targetProvider && name !== targetProvider) {
                 continue;
             }
 
-            // Skip anthropic env key if subscription account is configured (subscription takes priority)
-            if (config.name === "anthropic" && (askConfig.claude?.accountRef || askConfig.claude?.independentToken)) {
+            if (this.detectedProviders.has(name) || disabled.has(account.provider)) {
                 continue;
             }
 
-            const apiKey = detectApiKeyFor(aiConfig, config);
-            if (!apiKey) {
+            const plugin = tryProviderPlugin(account.provider);
+
+            if (!plugin?.capabilities.has("chat")) {
+                logger.debug(
+                    { account: account.name, provider: account.provider },
+                    plugin ? "account skipped: provider cannot chat" : "account skipped: no plugin for its provider"
+                );
                 continue;
             }
 
-            try {
-                const provider = await this.createProvider(config, apiKey);
+            const provider = await this.detectAccount(account, plugin);
 
-                if (provider) {
-                    const models = await this.getAvailableModels(config, provider);
-                    const detectedProvider: DetectedProvider = {
-                        name: config.name,
-                        type: config.type,
-                        key: apiKey,
-                        provider,
-                        models,
-                        config,
-                        subscription: false,
-                    };
-
-                    detected.push(detectedProvider);
-                    this.detectedProviders.set(config.name, detectedProvider);
-
-                    askUI().logDetected({ provider: config.name, count: models.length });
-                }
-            } catch (error) {
-                logger.warn(`Failed to initialize ${config.name} provider: ${error}`);
+            if (provider) {
+                this.detectedProviders.set(name, provider);
             }
-        }
-
-        // Check for anthropic subscription token if not already detected via env key
-        if (!this.detectedProviders.has("anthropic") && (!targetProvider || targetProvider === "anthropic")) {
-            await this.detectAnthropicSubscription(askConfig, detected);
-        }
-
-        // Check for OpenAI subscription (Codex) if not already detected via env key
-        if (!this.detectedProviders.has("openai") && (!targetProvider || targetProvider === "openai")) {
-            await this.detectOpenAISubscription(detected);
-        }
-
-        // Check for a Grok CLI subscription (grok-sub account in AIConfig)
-        if (!this.detectedProviders.has("grok") && (!targetProvider || targetProvider === "grok")) {
-            await this.detectGrokSubscription(detected);
         }
 
         // Only a full scan may be cached as complete.
@@ -137,685 +105,114 @@ export class ProviderManager {
             this.scannedAll = true;
         }
 
-        // The map, not the local `detected` array: this scan skipped every probe
-        // an earlier targeted scan already cached, so returning only what THIS
-        // call found would hand the first full-catalog caller a short list.
-        const all = Array.from(this.detectedProviders.values());
+        // The map, not just what THIS pass added: this scan skipped every probe an
+        // earlier targeted scan already cached, so returning only the new finds
+        // would hand the first full-catalog caller a short list.
+        const detected = Array.from(this.detectedProviders.values());
 
-        if (all.length === 0) {
-            logger.warn("No AI providers detected. Please set API keys in environment variables.");
-            logger.info(`Supported providers: ${configs.map((c) => c.envKey).join(", ")}`);
+        if (detected.length === 0) {
+            logger.warn("No AI providers detected.");
+            logger.info("Add one with: tools ai config account add --provider <provider>");
         }
 
-        return all;
-    }
-
-    private async detectAnthropicSubscription(askConfig: AskConfig, detected: DetectedProvider[]): Promise<void> {
-        // Try AIConfig resolver first (unified storage, delegates to AnthropicSubResolver)
-        const resolvedViaConfig = await this.resolveAnthropicViaResolver();
-
-        if (resolvedViaConfig) {
-            const hint = resolvedViaConfig.account?.label ? ` (${resolvedViaConfig.account.label})` : "";
-            detected.push(resolvedViaConfig);
-            this.detectedProviders.set("anthropic", resolvedViaConfig);
-            askUI().logDetectedSubscription({ provider: "anthropic", hint });
-            return;
-        }
-
-        // Fallback: legacy askConfig.claude (for users who haven't migrated to AIConfig)
-        if (!askConfig.claude?.accountRef && !askConfig.claude?.independentToken) {
-            await this.detectAnthropicEnvKeyFallback(detected);
-            return;
-        }
-
-        try {
-            let accountName: string | undefined;
-
-            if (askConfig.claude.accountRef) {
-                accountName = askConfig.claude.accountRef;
-            }
-
-            // If we have an account ref, try the resolver
-            if (accountName) {
-                const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
-                await ensureResolversInitialized();
-                const provider = await getResolver("anthropic-sub").resolve(accountName);
-                const hint = askConfig.claude.accountLabel ? ` (${askConfig.claude.accountLabel})` : "";
-                detected.push(provider);
-                this.detectedProviders.set("anthropic", provider);
-                askUI().logDetectedSubscription({ provider: "anthropic", hint });
-                return;
-            }
-
-            // Independent token: build provider directly (no account in AIConfig)
-            const token = askConfig.claude.independentToken!;
-            const { createAnthropic } = await import("@ai-sdk/anthropic");
-            const sdkProvider = createAnthropic({
-                apiKey: "oauth-placeholder",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "anthropic-beta": SUBSCRIPTION_BETAS,
-                },
-                fetch: createSubscriptionFetch(),
-            });
-
-            const allConfigs = getProviderConfigs();
-            const anthropicConfig = allConfigs.find((c) => c.name === "anthropic");
-
-            if (!anthropicConfig) {
-                throw new Error("anthropic provider config missing from PROVIDER_CONFIGS");
-            }
-
-            const models = await this.getAvailableModels(anthropicConfig, sdkProvider);
-            const detectedProvider: DetectedProvider = {
-                name: "anthropic",
-                type: "anthropic-sub",
-                key: `${token.slice(0, 20)}...`,
-                provider: sdkProvider,
-                models,
-                config: anthropicConfig,
-                systemPromptPrefix: SUBSCRIPTION_SYSTEM_PREFIX,
-                subscription: true,
-            };
-
-            detected.push(detectedProvider);
-            this.detectedProviders.set("anthropic", detectedProvider);
-            askUI().logDetectedSubscription({ provider: "anthropic", hint: "" });
-        } catch (error) {
-            logger.warn(`Failed to initialize anthropic subscription provider: ${error}`);
-            await this.detectAnthropicEnvKeyFallback(detected);
-        }
+        return detected;
     }
 
     /**
-     * Try to resolve an anthropic-sub account from AIConfig via the resolver registry.
-     * Returns the DetectedProvider or null if no account found.
+     * Enabled accounts, then the grandfathered environment entries.
+     *
+     * Real accounts first is what keeps a configured Claude Max subscription
+     * outranking a stray `ANTHROPIC_API_KEY`, which is the priority the old
+     * per-vendor branch spelled out by hand for anthropic alone.
      */
-    private async resolveAnthropicViaResolver(): Promise<DetectedProvider | null> {
-        try {
-            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-            const config = await AIConfig.load();
-            const accounts = config.getAccountsByProvider("anthropic-sub");
-
-            if (accounts.length === 0) {
-                return null;
+    private candidateAccounts(store: AiConfigStore, config: ReturnType<AiConfigStore["data"]>): AccountEntry[] {
+        const preferred = config.defaults.account?.chat?.slice("@account/".length);
+        const real = store.accounts({ enabled: true }).sort((a, b) => {
+            if ((a.id === preferred) !== (b.id === preferred)) {
+                return a.id === preferred ? -1 : 1;
             }
 
-            // Prefer the default account if it's an anthropic-sub
-            const defaultAccount = config.getDefaultAccount("ask");
-            const account = (defaultAccount && accounts.find((a) => a.name === defaultAccount.name)) || accounts[0];
+            return providerPriority(providerNameFor(a.provider)) - providerPriority(providerNameFor(b.provider));
+        });
 
-            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
-            await ensureResolversInitialized();
-            return await getResolver("anthropic-sub").resolve(account.name);
-        } catch {
+        return [...real, ...ephemeralEnvAccounts(config)];
+    }
+
+    private async detectAccount(account: AccountEntry, plugin: ProviderPlugin): Promise<DetectedProvider | null> {
+        const credential = await describeCredential(account, plugin.credential);
+
+        if (!credential.ok) {
+            logger.debug(
+                { account: account.name, provider: account.provider, detail: credential.detail },
+                "account skipped: no usable credential"
+            );
+            return null;
+        }
+
+        try {
+            const binding = await plugin.bind({ account });
+            const models = await modelsForProvider(account.provider);
+            const detected = toDetectedProvider({
+                binding,
+                pluginId: account.provider,
+                account: { name: account.name, ...(account.label ? { label: account.label } : {}) },
+                models,
+                credentialSource: credential.detail,
+            });
+
+            if (plugin.kind === "subscription") {
+                askUI().logDetectedSubscription({
+                    provider: detected.name,
+                    hint: account.label ? ` (${account.label})` : "",
+                });
+            } else {
+                askUI().logDetected({ provider: detected.name, count: models.length });
+            }
+
+            return detected;
+        } catch (error) {
+            logger.warn(
+                { err: error, account: account.name, provider: account.provider },
+                "failed to bind provider for account"
+            );
             return null;
         }
     }
 
-    private async detectGrokSubscription(detected: DetectedProvider[]): Promise<void> {
-        try {
-            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-            const aiConfig = await AIConfig.load();
-            const subAccounts = aiConfig.getAccountsByProvider("grok-sub");
-
-            if (subAccounts.length === 0) {
-                return;
-            }
-
-            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
-            await ensureResolversInitialized();
-            const provider = await getResolver("grok-sub").resolve(subAccounts[0].name);
-
-            detected.push(provider);
-            this.detectedProviders.set("grok", provider);
-
-            const hint = subAccounts[0].label ? ` (${subAccounts[0].label})` : "";
-            askUI().logDetectedSubscription({ provider: "grok", hint });
-        } catch (error) {
-            logger.warn(`Failed to detect Grok subscription: ${error}`);
-        }
-    }
-
-    private async detectOpenAISubscription(detected: DetectedProvider[]): Promise<void> {
-        try {
-            const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-            const aiConfig = await AIConfig.load();
-            const subAccounts = aiConfig.getAccountsByProvider("openai-sub");
-
-            if (subAccounts.length === 0) {
-                return;
-            }
-
-            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
-            await ensureResolversInitialized();
-            const provider = await getResolver("openai-sub").resolve(subAccounts[0].name);
-
-            detected.push(provider);
-            this.detectedProviders.set("openai", provider);
-
-            const hint = subAccounts[0].label ? ` (${subAccounts[0].label})` : "";
-            askUI().logDetectedSubscription({ provider: "openai", hint });
-        } catch (error) {
-            logger.warn(`Failed to detect OpenAI subscription: ${error}`);
-        }
-    }
-
-    private async detectAnthropicEnvKeyFallback(detected: DetectedProvider[]): Promise<void> {
-        const envKey = env.ai.anthropic.getKey();
-
-        if (!envKey) {
-            return;
-        }
-
-        logger.info("Falling back to ANTHROPIC_API_KEY environment variable");
-
-        try {
-            const allConfigs = getProviderConfigs();
-            const cfg = allConfigs.find((c) => c.name === "anthropic");
-
-            if (!cfg) {
-                return;
-            }
-
-            const provider = await this.createProvider(cfg);
-
-            if (provider) {
-                const models = await this.getAvailableModels(cfg, provider);
-                const detectedProvider: DetectedProvider = {
-                    name: "anthropic",
-                    type: "anthropic",
-                    key: envKey,
-                    provider,
-                    models,
-                    config: cfg,
-                    subscription: false,
-                };
-                detected.push(detectedProvider);
-                this.detectedProviders.set("anthropic", detectedProvider);
-                askUI().logDetected({ provider: "anthropic", count: models.length });
-            }
-        } catch (fallbackErr) {
-            logger.warn(`Anthropic env-key fallback also failed: ${fallbackErr}`);
-        }
-    }
-
-    private async createProvider(config: ProviderConfig, apiKey?: string): Promise<AiSdkProvider> {
-        // Account key first, then the variable this provider declares. What is
-        // gone is the third path: the bare SDK singletons, which read their own
-        // environment variables internally. Those made a key's origin
-        // unauditable, and for openai-compatible providers they were an outright
-        // bug — with no key resolved, the SDK fell back to OPENAI_API_KEY and
-        // sent it to openrouter.ai / api.x.ai / api.jina.ai.
-        const key = apiKey ?? env.ai.getByEnvKey(config.envKey);
-
-        if (!key) {
-            throw new Error(
-                `No API key for ${config.name}. Set ${config.envKey}, or configure an account: ` +
-                    `tools ai config account add --provider ${config.name}`
-            );
-        }
-
-        try {
-            switch (config.type) {
-                case "openai": {
-                    const { createOpenAI } = await import("@ai-sdk/openai");
-                    return createOpenAI({ apiKey: key });
-                }
-
-                case "anthropic": {
-                    const { createAnthropic } = await import("@ai-sdk/anthropic");
-                    return createAnthropic({ apiKey: key });
-                }
-
-                case "google": {
-                    const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
-                    return createGoogleGenerativeAI({ apiKey: key });
-                }
-
-                case "groq": {
-                    const { createGroq } = await import("@ai-sdk/groq");
-                    return createGroq({ apiKey: key });
-                }
-
-                case "openai-compatible": {
-                    const { createOpenAI } = await import("@ai-sdk/openai");
-                    return createOpenAI({
-                        apiKey: key,
-                        baseURL: config.baseURL,
-                    });
-                }
-
-                default:
-                    throw new Error(`Unsupported provider type: ${config.type}`);
-            }
-        } catch (error) {
-            logger.error(`Failed to create provider ${config.name}: ${error}`);
-            throw error;
-        }
-    }
-
-    private async getAvailableModels(config: ProviderConfig, _provider: AiSdkProvider): Promise<ModelInfo[]> {
-        try {
-            // For OpenRouter, we can query the API for available models
-            if (config.name === "openrouter") {
-                return await this.getOpenRouterModels();
-            }
-
-            // For OpenAI, query the API for available models
-            if (config.name === "openai") {
-                return await this.getOpenAIModels();
-            }
-
-            // For other providers, discover models from LiteLLM pricing data + static catalog fallback
-            const models = await this.getModelsFromLiteLLM(config.name);
-            if (models.length > 0) {
-                return models;
-            }
-
-            // Fallback to the static catalog if LiteLLM has no data for this provider
-            const entries = byProvider(config.name);
-            if (entries.length > 0) {
-                const modelsWithPricing = await Promise.all(
-                    entries.map(async (entry) => {
-                        const info = toModelInfo(entry);
-                        const pricing = await dynamicPricingManager.getPricing(config.name, entry.id);
-                        return { ...info, pricing: pricing || info.pricing };
-                    })
-                );
-
-                modelsWithPricing.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
-                return modelsWithPricing;
-            }
-
-            // Fallback: try to get basic model info
-            logger.warn(`No known models for ${config.name}, using fallback`);
-            return [
-                {
-                    id: "default",
-                    name: `${config.name} Default Model`,
-                    contextWindow: 4096,
-                    capabilities: ["chat"],
-                    provider: config.name,
-                },
-            ];
-        } catch (error) {
-            logger.error(`Failed to get models for ${config.name}: ${error}`);
-            return [
-                {
-                    id: "default",
-                    name: `${config.name} Default Model`,
-                    contextWindow: 4096,
-                    capabilities: ["chat"],
-                    provider: config.name,
-                },
-            ];
-        }
-    }
-
-    /**
-     * Discover models from LiteLLM pricing data for a given provider.
-     * Returns models whose bare ID matches the provider prefix (e.g., "claude-" for anthropic).
-     * Excludes versioned duplicates (dated IDs) when an alias exists.
-     */
-    private async getModelsFromLiteLLM(providerName: string): Promise<ModelInfo[]> {
-        const prefixMap: Record<string, string> = {
-            anthropic: "claude-",
-            groq: "groq/",
-            xai: "xai/",
-        };
-
-        const prefix = prefixMap[providerName];
-        if (!prefix) {
-            return [];
-        }
-
-        try {
-            const allPricing = await liteLLMPricingFetcher.fetchModelPricing();
-            // Provider-scoped so a shared id never borrows another vendor's entry.
-            const curated = new Map(byProvider(providerName).map((entry) => [entry.id, toModelInfo(entry)]));
-            const models: ModelInfo[] = [];
-            const seenAliases = new Set<string>();
-
-            // First pass: collect alias IDs (no date suffix) to skip dated duplicates
-            for (const key of allPricing.keys()) {
-                if (!key.startsWith(prefix)) {
-                    continue;
-                }
-
-                // Skip keys with slashes (provider-prefixed like "anthropic/claude-...")
-                if (key.includes("/") && !prefix.includes("/")) {
-                    continue;
-                }
-
-                // Skip versioned keys like "claude-opus-4-6-20260205" when "claude-opus-4-6" exists
-                if (!/\d{8}/.test(key)) {
-                    seenAliases.add(key);
-                }
-            }
-
-            for (const [key, pricingData] of allPricing) {
-                if (!key.startsWith(prefix)) {
-                    continue;
-                }
-
-                if (key.includes("/") && !prefix.includes("/")) {
-                    continue;
-                }
-
-                // Skip dated versions when alias exists (e.g., skip "claude-opus-4-6-20260205" if "claude-opus-4-6" exists)
-                const dateMatch = key.match(/^(.+)-(\d{8})(-v\d+:\d+)?$/);
-                if (dateMatch && seenAliases.has(dateMatch[1])) {
-                    continue;
-                }
-
-                // Skip v1:0 suffixed keys
-                if (key.endsWith("-v1:0")) {
-                    continue;
-                }
-
-                const pricing = liteLLMPricingFetcher.convertToPricingInfo(pricingData);
-                const contextWindow = pricingData.max_input_tokens ?? pricingData.max_tokens ?? 200000;
-
-                // LiteLLM keys carry a routing prefix ("xai/grok-4-fast",
-                // "groq/llama-…") that the provider's own API rejects — the
-                // model id sent upstream must be the bare name. "claude-" is
-                // part of the real id, so only strip slash-style prefixes.
-                const id = prefix.endsWith("/") ? key.slice(prefix.length) : key;
-
-                // Curated display name when the catalog knows the id, else derive one.
-                const known = curated.get(id);
-
-                models.push({
-                    id,
-                    name: known?.name ?? formatModelDisplayName(id),
-                    contextWindow,
-                    capabilities: known?.capabilities ?? ["chat"],
-                    provider: providerName,
-                    pricing,
-                });
-            }
-
-            models.sort((a, b) => {
-                const aPrice = a.pricing?.inputPer1M ?? Infinity;
-                const bPrice = b.pricing?.inputPer1M ?? Infinity;
-                return aPrice - bPrice;
-            });
-            return models;
-        } catch (error) {
-            logger.warn(`Failed to get models from LiteLLM for ${providerName}: ${error}`);
-            return [];
-        }
-    }
-
-    private async getOpenAIModels(): Promise<ModelInfo[]> {
-        try {
-            const apiKey = env.ai.openai.getKey();
-            if (!apiKey) {
-                throw new Error("OpenAI API key not found");
-            }
-
-            const response = await fetch("https://api.openai.com/v1/models", {
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`OpenAI API error: ${response.status}`);
-            }
-
-            const data = (await response.json()) as OpenAIModelsResponse;
-
-            // Curated metadata to enrich the live list with, where the catalog has it.
-            const knownModelsMap = new Map(byProvider("openai").map((entry) => [entry.id, toModelInfo(entry)]));
-
-            // Known chat model prefixes (from @ai-sdk/openai OpenAIChatModelId type)
-            const chatModelPrefixes = [
-                "gpt-3.5-turbo",
-                "gpt-4-turbo",
-                "gpt-5-mini",
-                "gpt-5-nano",
-                "chatgpt-",
-                "gpt-4.1",
-                "gpt-4.5",
-                "gpt-4o",
-                "gpt-4",
-                "gpt-5",
-                "o1",
-                "o3",
-            ];
-
-            // Models that match gpt- prefix but are NOT chat models
-            const nonChatPatterns = [
-                "codex", // gpt-5-codex, gpt-5.2-codex — code execution, Responses API only
-                "-pro", // gpt-5-pro — specialized, Responses API only
-                "instruct", // gpt-3.5-turbo-instruct — legacy completion API
-                "image", // gpt-image-1 — image generation model
-                "transcribe", // gpt-4o-transcribe — audio transcription
-                "tts", // gpt-4o-mini-tts — text-to-speech
-                "embedding", // text-embedding models
-                "whisper", // whisper models
-                "dall-e", // image generation
-                "moderation", // content moderation
-            ];
-
-            const chatModels = data.data.filter((model) => {
-                const id = model.id.toLowerCase();
-
-                // Must NOT match any non-chat pattern
-                if (nonChatPatterns.some((p) => id.includes(p))) {
-                    return false;
-                }
-
-                // Must match a known chat prefix
-                if (!chatModelPrefixes.some((prefix) => id.startsWith(prefix))) {
-                    return false;
-                }
-
-                // Must be owned by OpenAI
-                return model.owned_by === "openai" || model.owned_by === "system";
-            });
-
-            const models: ModelInfo[] = await Promise.all(
-                chatModels.map(async (model) => {
-                    // Use known metadata if available, otherwise infer from model ID
-                    const knownModel = knownModelsMap.get(model.id);
-                    const capabilities = this.inferCapabilitiesFromModelId(model.id, knownModel?.capabilities);
-                    const contextWindow = knownModel?.contextWindow || this.inferContextWindowFromModelId(model.id);
-
-                    const pricing = await dynamicPricingManager.getPricing("openai", model.id);
-
-                    return {
-                        id: model.id,
-                        name: knownModel?.name || formatModelDisplayName(model.id),
-                        contextWindow,
-                        capabilities,
-                        provider: "openai",
-                        pricing: pricing || undefined,
-                    };
-                })
-            );
-
-            // Sort models alphabetically by name
-            models.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
-
-            return models;
-        } catch (error) {
-            logger.error(`Failed to fetch OpenAI models: ${error}`);
-
-            // Fallback to the static catalog. OpenAI's own API is the catalog of
-            // record here, so this list is short by design — it exists for the
-            // ids worth pinning, not to mirror the endpoint offline.
-            const entries = byProvider("openai");
-
-            if (entries.length === 0) {
-                logger.warn("No static OpenAI catalog entries — model list is empty until the API answers again");
-            }
-
-            return await Promise.all(
-                entries.map(async (entry) => {
-                    const info = toModelInfo(entry);
-                    const pricing = await dynamicPricingManager.getPricing("openai", entry.id);
-                    return { ...info, pricing: pricing || info.pricing };
-                })
-            );
-        }
-    }
-
-    private inferCapabilitiesFromModelId(modelId: string, knownCapabilities?: string[]): string[] {
-        if (knownCapabilities) {
-            return knownCapabilities;
-        }
-
-        const capabilities: string[] = ["chat"];
-
-        // Infer capabilities from model ID patterns
-        if (modelId.includes("vision") || modelId.includes("o1") || modelId.includes("o3")) {
-            capabilities.push("vision");
-        }
-
-        if (modelId.includes("function") || modelId.startsWith("gpt-4") || modelId.startsWith("gpt-3.5-turbo")) {
-            capabilities.push("function-calling");
-        }
-
-        if (modelId.includes("reasoning") || modelId.startsWith("o1") || modelId.startsWith("o3")) {
-            capabilities.push("reasoning");
-        }
-
-        return capabilities;
-    }
-
-    private inferContextWindowFromModelId(modelId: string): number {
-        // Default context windows based on model family
-        if (modelId.startsWith("gpt-4o") || modelId.startsWith("o1") || modelId.startsWith("o3")) {
-            return 128000;
-        }
-        if (modelId.startsWith("gpt-4-turbo")) {
-            return 128000;
-        }
-        if (modelId.startsWith("gpt-4")) {
-            return 8192;
-        }
-        if (modelId.startsWith("gpt-3.5-turbo")) {
-            return 16384;
-        }
-        // Default fallback
-        return 4096;
-    }
-
-    private async getOpenRouterModels(): Promise<ModelInfo[]> {
-        try {
-            const apiKey = env.ai.openrouter.getKey();
-            if (!apiKey) {
-                throw new Error("OpenRouter API key not found");
-            }
-
-            const response = await fetch("https://openrouter.ai/api/v1/models", {
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`OpenRouter API error: ${response.status}`);
-            }
-
-            const data = (await response.json()) as OpenRouterModelsResponse;
-
-            const models: ModelInfo[] = data.data.map((model: OpenRouterModelResponse) => {
-                return {
-                    id: model.id,
-                    name: model.name || model.id,
-                    contextWindow: model.context_length || 4096,
-                    pricing: model.pricing ? this.convertOpenRouterPricing(model.pricing) : undefined,
-                    capabilities: this.parseCapabilities({
-                        id: model.id,
-                        description: model.description,
-                    }),
-                    provider: "openrouter",
-                };
-            });
-
-            // Sort models alphabetically by name
-            models.sort((a: ModelInfo, b: ModelInfo) => a.name.localeCompare(b.name));
-
-            return models;
-        } catch (error) {
-            logger.error(`Failed to fetch OpenRouter models: ${error}`);
-            return [];
-        }
-    }
-
-    /**
-     * Convert OpenRouter pricing per token to PricingInfo (per million tokens)
-     * OpenRouter API returns pricing per token (e.g., "0.00000015" = $0.15 per million tokens)
-     */
-    private convertOpenRouterPricing(pricing: OpenRouterPricing): PricingInfo {
-        const promptPricePerToken =
-            typeof pricing.prompt === "string" ? parseFloat(pricing.prompt) : (pricing.prompt ?? 0);
-        const completionPricePerToken =
-            typeof pricing.completion === "string" ? parseFloat(pricing.completion) : (pricing.completion ?? 0);
-
-        // Handle both cache_read and input_cache_read field names
-        const cachePricePerToken =
-            pricing.cache_read !== undefined
-                ? typeof pricing.cache_read === "string"
-                    ? parseFloat(pricing.cache_read)
-                    : pricing.cache_read
-                : pricing.input_cache_read !== undefined
-                  ? typeof pricing.input_cache_read === "string"
-                      ? parseFloat(pricing.input_cache_read)
-                      : pricing.input_cache_read
-                  : undefined;
-
-        return {
-            inputPer1M: promptPricePerToken * 1_000_000, // Convert per-token to per-million
-            outputPer1M: completionPricePerToken * 1_000_000, // Convert per-token to per-million
-            cachedReadPer1M: cachePricePerToken ? cachePricePerToken * 1_000_000 : undefined, // Convert per-token to per-million
-        };
-    }
-
-    private parseCapabilities(model: ModelMetadata): string[] {
-        const capabilities: string[] = ["chat"];
-
-        if (model.description?.toLowerCase().includes("vision") || model.id.toLowerCase().includes("vision")) {
-            capabilities.push("vision");
-        }
-
-        if (model.description?.toLowerCase().includes("function") || model.id.toLowerCase().includes("tool")) {
-            capabilities.push("function-calling");
-        }
-
-        if (model.description?.toLowerCase().includes("reasoning") || model.id.toLowerCase().includes("reasoning")) {
-            capabilities.push("reasoning");
-        }
-
-        return capabilities;
-    }
-
+    /** Does this provider answer? Delegated to the plugin, which knows what a probe costs. */
     async validateProvider(providerName: string): Promise<boolean> {
-        try {
-            const providers = await this.detectProviders();
-            const provider = providers.find((p) => p.name === providerName);
+        registerBuiltInPlugins();
 
-            if (!provider) {
-                return false;
-            }
+        const store = await AiConfigStore.load();
+        const account = this.candidateAccounts(store, store.data()).find(
+            (entry) => providerNameFor(entry.provider) === providerName
+        );
 
-            // Try a minimal request to validate the provider
-            const modelId = provider.models[0]?.id || "default";
-            const model = getLanguageModel(provider.provider, modelId, provider.type);
-            await generateText({
-                model,
-                prompt: "test",
-            });
-
-            return true;
-        } catch (error) {
-            logger.warn(`Provider validation failed for ${providerName}: ${error}`);
+        if (!account) {
+            logger.warn(`Provider validation failed for ${providerName}: no account resolves to it`);
             return false;
         }
+
+        const plugin = tryProviderPlugin(account.provider);
+
+        if (!plugin) {
+            return false;
+        }
+
+        if (!plugin.health) {
+            // No probe declared: a resolvable credential is the strongest claim
+            // available without spending a request.
+            const credential = await describeCredential(account, plugin.credential);
+            return credential.ok;
+        }
+
+        const report = await plugin.health({ account, probe: true });
+
+        if (!report.ok) {
+            logger.warn(`Provider validation failed for ${providerName}: ${report.detail}`);
+        }
+
+        return report.ok;
     }
 
     getProvider(name: string): DetectedProvider | undefined {
@@ -832,15 +229,39 @@ export class ProviderManager {
     }
 
     /**
-     * Create a fresh subscription DetectedProvider for a specific claude account.
-     * Does NOT use or modify the singleton `detectedProviders` cache.
-     * Returns null if account not found or token resolution fails.
+     * A fresh subscription provider for one named account, bypassing the cache.
+     * `tools claude` uses it to talk as a specific login without disturbing the
+     * process-wide detection result.
      */
     async createSubscriptionProvider(accountName: string): Promise<DetectedProvider | null> {
+        registerBuiltInPlugins();
+
         try {
-            const { ensureResolversInitialized, getResolver } = await import("@genesiscz/utils/ai/resolvers");
-            await ensureResolversInitialized();
-            return await getResolver("anthropic-sub").resolve(accountName);
+            const store = await AiConfigStore.load();
+            const account = store.account(accountName);
+
+            if (!account) {
+                logger.warn(`Failed to create subscription provider for "${accountName}": no such account`);
+                return null;
+            }
+
+            const plugin = tryProviderPlugin(account.provider);
+
+            if (!plugin) {
+                logger.warn(
+                    `Failed to create subscription provider for "${accountName}": ${account.provider} has no plugin`
+                );
+                return null;
+            }
+
+            const binding = await plugin.bind({ account });
+
+            return toDetectedProvider({
+                binding,
+                pluginId: account.provider,
+                account: { name: account.name, ...(account.label ? { label: account.label } : {}) },
+                models: await modelsForProvider(account.provider),
+            });
         } catch (err) {
             logger.warn(`Failed to create subscription provider for "${accountName}": ${err}`);
             return null;

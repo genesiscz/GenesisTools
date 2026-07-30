@@ -2,6 +2,8 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
 import { createOpenAI } from "@ai-sdk/openai";
+import type { AiSdkProvider } from "@genesiscz/utils/ask/types/provider";
+import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import type { SpeechModel } from "ai";
 import { resolveCredential } from "../credentials";
 import type { BindContext, Capability, ProviderBinding, ProviderPlugin } from "../plugin-types";
@@ -61,6 +63,13 @@ const SPECS: ApiKeyProviderSpec[] = [
         baseURL: "https://openrouter.ai/api/v1",
         create: createOpenAI,
     },
+    {
+        id: "jinaai",
+        envKeys: ["JINA_AI_API_KEY"],
+        capabilities: ["chat", "embed", "rerank"],
+        baseURL: "https://api.jina.ai/v1",
+        create: createOpenAI,
+    },
 ];
 
 /**
@@ -115,13 +124,13 @@ function buildPlugin(spec: ApiKeyProviderSpec): ProviderPlugin {
                 accountId: ctx.account.id,
                 providerId: spec.id,
                 billed: true,
-                language: (modelId: string) => {
-                    if (!provider.languageModel) {
-                        throw new Error(`${spec.id} exposes no language model`);
-                    }
-
-                    return provider.languageModel(modelId);
-                },
+                // Via `getLanguageModel`, not `provider.languageModel`: for
+                // OpenAI-shaped providers the SDK's `languageModel()` defaults to
+                // the Responses API, while `/v1/chat/completions` is the endpoint
+                // every model here actually serves (only codex/pro need
+                // Responses). Calling it directly silently moved gpt-4o traffic to
+                // a different endpoint than the one ask has always used.
+                language: (modelId: string) => getLanguageModel(provider as AiSdkProvider, modelId, spec.id),
                 ...(provider.textEmbeddingModel
                     ? { embedding: (modelId: string) => provider.textEmbeddingModel?.(modelId) }
                     : {}),

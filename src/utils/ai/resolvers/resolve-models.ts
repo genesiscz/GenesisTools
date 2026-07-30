@@ -1,7 +1,8 @@
 import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
-import type { ModelInfo, PricingInfo, ProviderConfig } from "@genesiscz/utils/ask/types";
+import type { ModelInfo, ProviderConfig } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
 import { byProvider, type CatalogEntry, inputModalitiesFor } from "../catalog";
+import { pricingFor } from "../catalog/pricing";
 
 interface ResolvedModels {
     models: ModelInfo[];
@@ -88,34 +89,12 @@ export async function resolveModelsWithPricing(providerName: string): Promise<Re
         return { models: [], config };
     }
 
-    const getPricing = await loadPricingLookup();
     const models: ModelInfo[] = await Promise.all(
         entries.map(async (entry) => {
             const info = toModelInfo(entry);
-            return { ...info, pricing: (await getPricing(providerName, entry.id)) || info.pricing };
+            return { ...info, pricing: (await pricingFor(providerName, entry.id)) || info.pricing };
         })
     );
 
     return { models, config };
-}
-
-type PricingLookup = (provider: string, modelId: string) => Promise<PricingInfo | null | undefined>;
-
-/**
- * Pricing enrichment lives in the ask tool (DynamicPricing drags the ask UI
- * stack) — inside @genesiscz/tools this resolves, but a standalone
- * @genesiscz/utils install has no @ask/* tree, so degrade to pricing-less
- * models instead of throwing.
- */
-async function loadPricingLookup(): Promise<PricingLookup> {
-    try {
-        const { dynamicPricingManager } = await import("@ask/providers/DynamicPricing");
-        return (provider, modelId) => dynamicPricingManager.getPricing(provider, modelId);
-    } catch (error) {
-        logger.debug(
-            { err: error },
-            "DynamicPricing unavailable (standalone @genesiscz/utils install?) — models resolve without pricing"
-        );
-        return async () => undefined;
-    }
 }

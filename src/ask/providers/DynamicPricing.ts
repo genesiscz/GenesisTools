@@ -1,6 +1,6 @@
 import type { PricingInfo } from "@ask/types";
-import { usageCacheReadTokens, usageCacheWriteTokens, usageInputNoCacheTokens } from "@ask/utils/helpers";
 import { clearPricingCache, pricingCacheSize, pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
 
@@ -13,10 +13,8 @@ import type { LanguageModelUsage } from "ai";
  * CostPredictor, ChatEngine, ConversationManager, src/usage, the claude
  * summarize engine) until Phase 8 flips them.
  *
- * The cost math below stays here because it reads ai-sdk usage objects, which
- * is the caller's shape, not the catalog's.
- *
- * @deprecated Use `pricingFor` from `@genesiscz/utils/ai/catalog/pricing`.
+ * @deprecated Use `pricingFor` from `@genesiscz/utils/ai/catalog/pricing` and
+ * `calculateCallCostUsd` from `@genesiscz/utils/ai/llm-cost`.
  */
 export class DynamicPricingManager {
     async getPricing(provider: string, modelId: string): Promise<PricingInfo | null> {
@@ -31,58 +29,8 @@ export class DynamicPricingManager {
             return 0;
         }
 
-        // Base input is the NON-cached portion only — ai@7's `inputTokens`
-        // includes cache read/write on some providers (e.g. anthropic@4), so
-        // pricing it here would double-charge against the cache costs below.
-        const inputTokens = usageInputNoCacheTokens(usage);
-        const outputTokens = usage.outputTokens ?? 0;
-        const cachedReadTokens = usageCacheReadTokens(usage);
-        const cachedCreateTokens = usageCacheWriteTokens(usage);
-
-        const hasTieredPricing =
-            pricing.inputPer1MAbove200k != null ||
-            pricing.outputPer1MAbove200k != null ||
-            pricing.cachedReadPer1MAbove200k != null ||
-            pricing.cachedCreatePer1MAbove200k != null;
-
-        const flat = (tokens: number, per1M: number): number => (tokens / 1_000_000) * per1M;
-
-        const tiered = (tokens: number, basePer1M: number, abovePer1M?: number): number => {
-            if (tokens <= 0) {
-                return 0;
-            }
-
-            if (tokens > 200_000 && abovePer1M != null) {
-                return flat(200_000, basePer1M) + flat(tokens - 200_000, abovePer1M);
-            }
-
-            return flat(tokens, basePer1M);
-        };
-
-        const useTiers = hasTieredPricing && (inputTokens > 200_000 || outputTokens > 200_000);
-
-        const inputCost = useTiers
-            ? tiered(inputTokens, pricing.inputPer1M, pricing.inputPer1MAbove200k)
-            : flat(inputTokens, pricing.inputPer1M);
-        const outputCost = useTiers
-            ? tiered(outputTokens, pricing.outputPer1M, pricing.outputPer1MAbove200k)
-            : flat(outputTokens, pricing.outputPer1M);
-        const cachedReadCost = pricing.cachedReadPer1M
-            ? useTiers
-                ? tiered(cachedReadTokens, pricing.cachedReadPer1M, pricing.cachedReadPer1MAbove200k)
-                : flat(cachedReadTokens, pricing.cachedReadPer1M)
-            : 0;
-        const cachedCreateCost = pricing.cachedCreatePer1M
-            ? useTiers
-                ? tiered(cachedCreateTokens, pricing.cachedCreatePer1M, pricing.cachedCreatePer1MAbove200k)
-                : flat(cachedCreateTokens, pricing.cachedCreatePer1M)
-            : 0;
-
-        const totalCost = inputCost + outputCost + cachedReadCost + cachedCreateCost;
-        logger.debug(
-            { provider, model, inputCost, outputCost, cachedReadCost, cachedCreateCost, totalCost },
-            "calculated call cost"
-        );
+        const totalCost = calculateCallCostUsd(pricing, usage) ?? 0;
+        logger.debug({ provider, model, totalCost }, "calculated call cost");
 
         return totalCost;
     }

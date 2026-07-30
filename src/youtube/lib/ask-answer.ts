@@ -3,7 +3,7 @@ import type { AskCitation, AskHistoryTurn, QaSource } from "@app/youtube/lib/qa.
 import { formatClock, videoUrl } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
-import type { ProviderChoice } from "@ask/types";
+import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface AnswerProgress {

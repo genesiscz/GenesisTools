@@ -26,7 +26,7 @@ import { CREDIT_COSTS, InsufficientCreditsError, REUSE_COST } from "@app/youtube
 import { resolveUserSettings, type TaskDefaultSettings } from "@app/youtube/lib/user-settings";
 import type { SummaryFormat, SummaryLength, SummaryTone } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
-import { dynamicPricingManager } from "@ask/providers/DynamicPricing";
+import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
 import { estimateLlmCallCostUsd, estimateSpeechTokens } from "@genesiscz/utils/ai/llm-cost";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { estimateTokens } from "@genesiscz/utils/tokens";
@@ -650,9 +650,7 @@ export async function handleVideosRoute(req: Request, url: URL, yt: Youtube): Pr
 
             if (inputTokens !== null && !subscription) {
                 const pricing =
-                    choice.model.pricing ??
-                    (await dynamicPricingManager.getPricing(choice.provider.name, choice.model.id)) ??
-                    undefined;
+                    choice.model.pricing ?? (await pricingFor(choice.provider.name, choice.model.id)) ?? undefined;
                 estUsd = estimateLlmCallCostUsd({ pricing, inputTokens, outputTokens });
             }
 
