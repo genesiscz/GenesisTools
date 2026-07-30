@@ -1,9 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    _resetClientKeyCacheForTest,
     clientProviderDenial,
     OWNER_CLIENT_NAME,
     resolveClient,
@@ -15,6 +16,28 @@ import { env } from "@genesiscz/utils/env";
 import { _resetSecretsForTest, invalidateMasterKeyCache, secrets, secureRef } from "@genesiscz/utils/security";
 
 const good: AiProxyClientConfig = { name: "alice", key: "k".repeat(24) };
+
+const ERIN_PATH = "ai-proxy/clients/erin/key";
+const DAVE_PATH = "ai-proxy/clients/dave/key";
+
+/**
+ * Whole seconds on purpose: `statSync().mtimeMs` is a float carrying
+ * sub-millisecond precision, so copying one file's `mtime` Date onto another
+ * truncates and the two stamps still differ. Pinning both vaults to the same
+ * integer is the only way to make mtime genuinely tie.
+ */
+const PINNED_MTIME_SEC = 1_700_000_000;
+
+function vaultFile(home: string): string {
+    return join(home, ".genesis-tools", "security", "vault.json");
+}
+
+/** Every in-process cache a config-root swap has to invalidate. */
+function resetSecurityState(): void {
+    _resetSecretsForTest();
+    invalidateMasterKeyCache();
+    _resetClientKeyCacheForTest();
+}
 
 describe("validateClients", () => {
     it("accepts a valid list and an absent list", () => {
@@ -114,8 +137,7 @@ describe("resolveClient", () => {
         await env.testing.withOverrides(
             { GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_MASTER_KEY: randomBytes(32).toString("base64") },
             async () => {
-                _resetSecretsForTest();
-                invalidateMasterKeyCache();
+                resetSecurityState();
                 const store = await secrets();
                 const ref = await store.set("ai-proxy/clients/carol/key", "carol-key-0123456789");
                 const carol = { name: "carol", key: ref };
@@ -125,13 +147,76 @@ describe("resolveClient", () => {
             }
         );
 
-        _resetSecretsForTest();
-        invalidateMasterKeyCache();
+        resetSecurityState();
     });
 
     it("denies a client whose vault reference no longer resolves", async () => {
         const ghost = { name: "ghost", key: secureRef("ai-proxy/clients/ghost/key") };
         expect(await resolveClient(reqWithBearer("ghost-key-0123456789"), cfg([ghost]))).toBeNull();
+    });
+
+    it("stops authenticating a cached key once the vault is rewritten", async () => {
+        const home = mkdtempSync(join(tmpdir(), "aiproxy-clients-rot-"));
+
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_MASTER_KEY: randomBytes(32).toString("base64") },
+            async () => {
+                resetSecurityState();
+                const store = await secrets();
+                const erin = { name: "erin", key: await store.set(ERIN_PATH, "erin-old-key-012345") };
+
+                expect((await resolveClient(reqWithBearer("erin-old-key-012345"), cfg([erin])))?.name).toBe("erin");
+
+                await store.set(ERIN_PATH, "erin-new-key-012345");
+
+                expect(await resolveClient(reqWithBearer("erin-old-key-012345"), cfg([erin]))).toBeNull();
+                expect((await resolveClient(reqWithBearer("erin-new-key-012345"), cfg([erin])))?.name).toBe("erin");
+            }
+        );
+
+        resetSecurityState();
+    });
+
+    /**
+     * The cache identity has to carry the vault PATH, not just its mtime: one
+     * process can point at two config roots, and the same logical secret path
+     * means different plaintext in each. The two vaults are forced to share an
+     * mtime here so the path is the only thing left that can tell them apart.
+     * Otherwise the test passes for the wrong reason.
+     */
+    it("does not serve one config root's cached key out of another root's vault", async () => {
+        const homeA = mkdtempSync(join(tmpdir(), "aiproxy-clients-a-"));
+        const homeB = mkdtempSync(join(tmpdir(), "aiproxy-clients-b-"));
+        const masterKey = randomBytes(32).toString("base64");
+        const dave = { name: "dave", key: secureRef(DAVE_PATH) };
+
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: homeA, GENESIS_TOOLS_MASTER_KEY: masterKey },
+            async () => {
+                resetSecurityState();
+                await (await secrets()).set(DAVE_PATH, "dave-in-root-a-01234");
+                utimesSync(vaultFile(homeA), PINNED_MTIME_SEC, PINNED_MTIME_SEC);
+                expect((await resolveClient(reqWithBearer("dave-in-root-a-01234"), cfg([dave])))?.name).toBe("dave");
+            }
+        );
+
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: homeB, GENESIS_TOOLS_MASTER_KEY: masterKey },
+            async () => {
+                // Deliberately NOT clearing the client-key cache: switching roots has
+                // to invalidate it on its own.
+                _resetSecretsForTest();
+                invalidateMasterKeyCache();
+                await (await secrets()).set(DAVE_PATH, "dave-in-root-b-01234");
+                utimesSync(vaultFile(homeB), PINNED_MTIME_SEC, PINNED_MTIME_SEC);
+
+                expect(statSync(vaultFile(homeB)).mtimeMs).toBe(statSync(vaultFile(homeA)).mtimeMs);
+                expect(await resolveClient(reqWithBearer("dave-in-root-a-01234"), cfg([dave]))).toBeNull();
+                expect((await resolveClient(reqWithBearer("dave-in-root-b-01234"), cfg([dave])))?.name).toBe("dave");
+            }
+        );
+
+        resetSecurityState();
     });
 });
 

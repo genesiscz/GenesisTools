@@ -54,7 +54,12 @@ import type { ResolvedBinding, ResolvedModel, ResolvedTarget, ResolveOptions } f
  * default account for the provider half of an explicit model).
  */
 
-const TASK_CAPABILITY: Record<TaskName, Capability> = {
+/**
+ * Which capability a task needs. Exported because `tasks/resolve-task.ts` asks
+ * the same question, and a second copy could be edited out of step: `Record`
+ * forces both to hold every key, but nothing forces the VALUES to agree.
+ */
+export const TASK_CAPABILITY: Record<TaskName, Capability> = {
     chat: "chat",
     embed: "embed",
     transcribe: "transcribe",
@@ -347,10 +352,19 @@ function defaultModelIdFor(providerId: string, capability: Capability): string |
 }
 
 function lookupModel(modelId: string, providerId: string, opts: { warnUnlisted: boolean }): ResolvedModel {
-    const entry = byId(modelId);
+    // Scoped, because one id can name two different products. `gpt-5.4` is a
+    // 272K Codex-subscription model (static.ts:335) AND a 1.05M OpenAI API model
+    // (static.ts:403), and `OPENAI_SUB_ENTRIES` comes first in STATIC_CATALOG.
+    // An unscoped `byId` therefore handed an OpenAI API account the
+    // subscription record: wrong context window and no pricing at all, which
+    // then pushed the call into the live pricing feeds or left it unpriced.
+    // `catalogKeysFor` keeps the deliberate `-sub` to base-vendor fallback.
+    for (const key of catalogKeysFor(providerId)) {
+        const scoped = byId(modelId, key);
 
-    if (entry) {
-        return entry;
+        if (scoped) {
+            return scoped;
+        }
     }
 
     const { log } = logger.scoped("ai-core");

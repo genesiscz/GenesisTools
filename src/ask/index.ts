@@ -776,7 +776,12 @@ class ASKTool {
         chatConfig: ChatConfig
     ): Promise<void> {
         if (result.newModel && result.newProvider) {
-            await chatEngine.switchModel(result.newModel, result.newProvider, result.newModelName || "unknown");
+            await chatEngine.switchModel(
+                result.newModel,
+                result.newProvider,
+                result.newModelName || "unknown",
+                result.newProviderChoice
+            );
 
             if (result.newProvider) {
                 modelChoice.provider.name = result.newProvider;

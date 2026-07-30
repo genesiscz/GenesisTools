@@ -123,6 +123,18 @@ function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): numb
         return calculateCallCostUsd(resolved, usage) ?? undefined;
     }
 
+    // The flat estimate has no notion of cache reads or writes, so an emitter
+    // that hands over token counts instead of the provider's usage object gets
+    // its cached tokens billed at the full input rate. Said out loud when the
+    // model actually publishes cache rates: the stored cost is then knowably
+    // high, and nothing else in the row records that.
+    if (resolved.cachedReadPer1M !== undefined || resolved.cachedCreatePer1M !== undefined) {
+        logger.debug(
+            { provider: event.provider, modelId: event.modelId, app: event.app },
+            "usage: costed from token counts alone, so this model's cache rates were not applied"
+        );
+    }
+
     return (
         estimateLlmCallCostUsd({
             pricing: resolved,

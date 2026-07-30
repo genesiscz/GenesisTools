@@ -60,16 +60,26 @@ export function teammateWrappersDir(): string {
 }
 
 /**
- * Resolve a real executable for teammate panes. Must be a file path, not a shell
- * function (`ccc`/`claude` wrappers from rc) — CC execs TEAMMATE_COMMAND directly.
+ * Where to look for `claude`, in order. Must yield a file path, not a shell
+ * function (`ccc`/`claude` wrappers from rc): CC execs TEAMMATE_COMMAND directly.
+ *
+ * Split out and injectable because the last-resort branch below is otherwise
+ * untestable from inside this repo: `Bun.which("claude")` finds our own
+ * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so no test
+ * could ever force every candidate to miss.
  */
-export function resolveClaudeBinaryForTeammates(): string {
+export function claudeBinaryCandidates(): string[] {
     const home = env.paths.getHome() ?? homedir();
-    const candidates = [
+
+    return [
         join(home, ".bun", "bin", "claude"),
         join(home, ".local", "bin", "claude"),
         Bun.which("claude") ?? undefined,
     ].filter((p): p is string => Boolean(p));
+}
+
+export function resolveClaudeBinaryForTeammates(candidatesFor: () => string[] = claudeBinaryCandidates): string {
+    const candidates = candidatesFor();
 
     for (const candidate of candidates) {
         try {
@@ -84,9 +94,21 @@ export function resolveClaudeBinaryForTeammates(): string {
         }
     }
 
-    // Last resort: leave it on PATH for the wrapper's exec. Better than aborting
-    // the lead launch; teammate may still fail if `claude` is only a shell fn.
-    logger.warn("[teammate-wrapper] could not resolve absolute claude binary; wrapper will exec 'claude' on PATH");
+    // Last resort: leave it on PATH for the wrapper's exec, because aborting the
+    // LEAD launch over a teammate's binary is the worse failure.
+    //
+    // The one way this still works is a tmux pane whose PATH carries a `claude`
+    // this process's PATH does not, which is why it is not a hard error. What it
+    // can NEVER be is a shell function or alias, as the previous comment here
+    // suggested: the wrapper is `#!/usr/bin/env bash` with `set -euo pipefail`,
+    // sources no profile, and ends in `exec`, so only a real executable resolves.
+    // Bun.which already looked, so error level rather than warn: this is a
+    // probably-broken teammate, and the log is the only place that says so.
+    logger.error(
+        "[teammate-wrapper] no executable `claude` found (checked ~/.bun/bin, ~/.local/bin and PATH). " +
+            "The wrapper will exec `claude` and the teammate will fail unless the tmux pane's PATH has one. " +
+            "Install it somewhere on PATH, or point the lead at an absolute path."
+    );
     return "claude";
 }
 

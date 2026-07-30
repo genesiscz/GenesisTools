@@ -91,13 +91,27 @@ export class ChatEngine {
         return engine.sendMessage(options.message, options.tools);
     }
 
-    /** What `coreChat` needs to know about this engine's configured model. */
+    /**
+     * What `coreChat` needs to know about this engine's configured model.
+     *
+     * `accountId` / `provider` / `modelId` / `app` are not optional decoration:
+     * `logUsage` falls back to `accountId: "unknown"` and `modelId: target.label`
+     * when they are absent, and the label is `<provider>/<model>`, which
+     * `catalogPricing`'s `byId` can never match. Every `tools ask` row was
+     * therefore written unpriced and unattributed — into an append-only log, so
+     * the cross-surface total the usage layer exists to produce was blind to the
+     * busiest emitter in the repo.
+     */
     private callTarget() {
         return {
             model: this.config.model,
             providerType: this.config.providerType,
             systemPromptPrefix: this.config.providerChoice?.provider.systemPromptPrefix,
             label: `${this.config.provider}/${this.config.modelName}`,
+            accountId: this.config.providerChoice?.provider.account?.name ?? this.config.provider,
+            provider: this.config.providerType ?? this.config.provider,
+            modelId: this.config.modelName,
+            app: "ask",
         };
     }
 
@@ -252,10 +266,29 @@ export class ChatEngine {
         return this.conversationHistory.reduce((total, msg) => total + (msg.tokens || 0), 0);
     }
 
-    async switchModel(newModel: LanguageModel, provider: string, modelName: string): Promise<void> {
+    /**
+     * `providerChoice` is not decoration here.
+     *
+     * `/model` can move the session to a different provider TYPE, and this used
+     * to update only the name and the model. `callTarget` reads `providerType`
+     * for usage attribution and `providerChoice` for the system-prompt prefix, so
+     * everything after a switch was recorded against the provider the session
+     * started on, and subscription prefixes were applied from the old one.
+     */
+    async switchModel(
+        newModel: LanguageModel,
+        provider: string,
+        modelName: string,
+        providerChoice?: ProviderChoice
+    ): Promise<void> {
         this.config.model = newModel;
         this.config.provider = provider;
         this.config.modelName = modelName;
+
+        if (providerChoice) {
+            this.config.providerChoice = providerChoice;
+            this.config.providerType = providerChoice.provider.type;
+        }
 
         logger.info(`Switched to ${provider}/${modelName}`);
     }

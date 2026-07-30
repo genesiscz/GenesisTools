@@ -13,6 +13,14 @@ export interface ResolveAccountOptions {
      * cannot always persist.
      */
     noRefresh?: boolean;
+    /**
+     * The auth file the CALLER already holds, for subscription providers that
+     * keep credentials in a CLI's file. Supplying it skips the resolver's own
+     * lookup-by-name, so a binding is decided by the context it was handed
+     * rather than by re-querying global config: an isolated account object can
+     * bind, and two accounts sharing a name cannot resolve to each other.
+     */
+    authFile?: string;
 }
 
 export interface AccountResolver {

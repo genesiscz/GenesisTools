@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -110,6 +110,33 @@ describe("AiConfigStore lookup", () => {
     });
 });
 
+describe("AiConfigStore singleton", () => {
+    /**
+     * `load()` awaits a migration and a read between checking the static field
+     * and assigning it, so racing callers each used to build their own store and
+     * only the last assignment won. Whoever held a loser mutated an object no
+     * later `load()` would ever return.
+     */
+    test("concurrent first loads all get the one instance", async () => {
+        const [a, b, c] = await Promise.all([AiConfigStore.load(), AiConfigStore.load(), AiConfigStore.load()]);
+
+        expect(a).toBe(b);
+        expect(b).toBe(c);
+        expect(await AiConfigStore.load()).toBe(a);
+    });
+
+    test("a failed first load does not poison later ones", async () => {
+        writeFileSync(configPath(home), "{ not json");
+
+        await expect(AiConfigStore.load()).rejects.toThrow();
+
+        writeConfig(home, SEED);
+        AiConfigStore.invalidate();
+
+        expect((await AiConfigStore.load()).account("acc_max")?.name).toBe("martin-max");
+    });
+});
+
 describe("AiConfigStore freshness", () => {
     test("load() re-reads when another process wrote the file", async () => {
         const store = await AiConfigStore.load();
@@ -150,6 +177,28 @@ describe("AiConfigStore freshness", () => {
         const first = store.data();
 
         expect((await AiConfigStore.load()).data()).toBe(first);
+    });
+
+    /**
+     * The case the test above cannot reach: a rewrite whose timestamp is
+     * preserved (an editor's atomic replace, `rsync -t`, a restore). Both stamps
+     * are pinned to the same whole second on purpose, because `mtimeMs` is a
+     * float and any incidental difference would let mtime alone pass the test.
+     * Size is the only thing left that can tell the two configs apart.
+     */
+    test("a rewrite that keeps the same mtime is still picked up", async () => {
+        const pinned = 1_700_000_000;
+        utimesSync(configPath(home), pinned, pinned);
+        AiConfigStore.invalidate();
+
+        const store = await AiConfigStore.load();
+        expect(store.accounts().length).toBe(3);
+
+        writeConfig(home, { ...SEED, accounts: [account("acc_only", "solo")] });
+        utimesSync(configPath(home), pinned, pinned);
+        expect(statSync(configPath(home)).mtimeMs).toBe(pinned * 1000);
+
+        expect((await AiConfigStore.load()).accounts().map((a) => a.id)).toEqual(["acc_only"]);
     });
 });
 

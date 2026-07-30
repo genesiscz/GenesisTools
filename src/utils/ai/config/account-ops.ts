@@ -49,6 +49,13 @@ export interface EditAccountPatch {
     rename?: string;
     endpoint?: string;
     useEnvApiKey?: UseEnvApiKey;
+    /**
+     * Both were settable at `account add` time and nowhere else, so an account
+     * whose auth file moved could not be repaired through the CLI at all, and the
+     * repair hint for a missing one had no command to name.
+     */
+    authFile?: string;
+    dataDir?: string;
 }
 
 export class AccountNotFoundError extends Error {
@@ -194,6 +201,14 @@ export async function editAccount(idOrName: string, patch: EditAccountPatch): Pr
             account.useEnvApiKey = patch.useEnvApiKey;
         }
 
+        if (patch.authFile !== undefined) {
+            account.credentials.authFile = patch.authFile.length > 0 ? patch.authFile : undefined;
+        }
+
+        if (patch.dataDir !== undefined) {
+            account.credentials.dataDir = patch.dataDir.length > 0 ? patch.dataDir : undefined;
+        }
+
         logger.info({ id: account.id }, "edited AI account");
         return account;
     });
@@ -237,6 +252,56 @@ export async function removeAccount(idOrName: string, options: { force?: boolean
         config.accounts = config.accounts.filter((entry) => entry.id !== account.id);
         logger.info({ id: account.id, referrers: referrers.length, secretsDeleted }, "removed AI account");
         return { account, referrers, secretsDeleted };
+    });
+}
+
+/** Credential fields a caller may clear without deleting the account. */
+export type ClearableCredential = "apiKey" | "accessToken" | "refreshToken" | "longLivedToken";
+
+const EXPIRY_OF: Partial<Record<ClearableCredential, string[]>> = {
+    accessToken: ["expiresAt"],
+    refreshToken: ["refreshExpiresAt"],
+    longLivedToken: ["longLivedTokenExpiresAt"],
+};
+
+/**
+ * Revoke specific credentials, keeping the account.
+ *
+ * This exists because a legacy caller CANNOT express a deletion. The v3 view is
+ * a projection built from whatever currently resolves (`toV3Account`), so a
+ * field the caller deleted and a field whose vault read merely failed look
+ * identical by the time they reach `applyV3Tokens`, which skips both. That is
+ * how `tools claude logout` came to report "Removed access + refresh token"
+ * while the vault refs, and therefore the working credentials, survived.
+ *
+ * Deleting is destructive, so it is stated explicitly here rather than inferred
+ * from an absence.
+ */
+export async function clearCredentials(
+    idOrName: string,
+    fields: readonly ClearableCredential[]
+): Promise<{ account: AccountEntry; secretsDeleted: string[] }> {
+    const store = await AiConfigStore.load();
+
+    return store.withLock(async (config) => {
+        const account = requireAccount(config, idOrName);
+        const vault = await secrets();
+        const secretsDeleted: string[] = [];
+
+        for (const field of fields) {
+            if (await vault.delete(vaultPathFor(account.id, field))) {
+                secretsDeleted.push(vaultPathFor(account.id, field));
+            }
+
+            delete account.credentials[field];
+
+            for (const expiry of EXPIRY_OF[field] ?? []) {
+                delete (account.credentials as Record<string, unknown>)[expiry];
+            }
+        }
+
+        logger.info({ id: account.id, fields, secretsDeleted }, "cleared AI account credentials");
+        return { account, secretsDeleted };
     });
 }
 

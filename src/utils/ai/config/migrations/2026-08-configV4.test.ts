@@ -150,6 +150,13 @@ describe("convertConfig", () => {
         expect(converted.defaults.app?.ask).toBeUndefined();
     });
 
+    // The hand-rolled slug skipped NFD normalisation, so an accented letter
+    // contributed nothing at all: "José" became "acc_jos".
+    test("an accented name transliterates instead of losing the letter", () => {
+        expect(slugifyAccountId("José", new Set())).toBe("acc_jose");
+        expect(slugifyAccountId("Martin Max", new Set())).toBe("acc_martin_max");
+    });
+
     // "cloud" was AICloudProvider("auto"), never a real provider. Carrying it
     // into v4 named a plugin that does not exist and broke `tools ai summarize`
     // with `No enabled account for provider "cloud"` on every migrated home.

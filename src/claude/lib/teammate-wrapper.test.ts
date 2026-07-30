@@ -1,22 +1,28 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
     accessSync,
     chmodSync,
     constants,
     existsSync,
+    mkdirSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
+    realpathSync,
+    rmSync,
     statSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { shellSingleQuote } from "./shell-quote";
 import {
     buildTeammateWrapperScript,
     installTeammateWrapper,
     removeTeammateWrapper,
+    resolveClaudeBinaryForTeammates,
     sweepStaleTeammateWrappers,
 } from "./teammate-wrapper";
 
@@ -30,6 +36,106 @@ const AUTH = {
     subscriptionType: "max",
 };
 
+describe("resolveClaudeBinaryForTeammates", () => {
+    let home: string;
+
+    // Saved, not unset: deleting HOME and PATH outright would leave every later
+    // test in the same Bun process without a home directory or a search path.
+    const originalHome = env.get("HOME");
+    const originalPath = env.get("PATH");
+
+    function restore(name: "HOME" | "PATH", value: string | undefined): void {
+        if (value === undefined) {
+            env.testing.unset(name);
+            return;
+        }
+
+        env.testing.set(name, value);
+    }
+
+    function installClaudeAt(...segments: string[]): string {
+        const dir = join(home, ...segments);
+        mkdirSync(dir, { recursive: true });
+        const bin = join(dir, "claude");
+        writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+        chmodSync(bin, 0o755);
+
+        // The resolver returns realpathSync(), and on macOS /var is a symlink to
+        // /private/var, so the expectation has to be the real path too.
+        return realpathSync(bin);
+    }
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "gt-teammate-"));
+        env.testing.set("HOME", home);
+        // An empty PATH removes the machine's own `claude` from the search, so these
+        // assertions are about the resolver rather than about this developer's box.
+        env.testing.set("PATH", join(home, "empty-bin"));
+    });
+
+    afterEach(() => {
+        restore("HOME", originalHome);
+        restore("PATH", originalPath);
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    test("prefers ~/.bun/bin and returns an absolute path", () => {
+        const bin = installClaudeAt(".bun", "bin");
+
+        expect(resolveClaudeBinaryForTeammates()).toBe(bin);
+    });
+
+    test("falls through to ~/.local/bin when the bun path has none", () => {
+        const bin = installClaudeAt(".local", "bin");
+
+        expect(resolveClaudeBinaryForTeammates()).toBe(bin);
+    });
+
+    test("skips a candidate that exists but is not executable", () => {
+        const dir = join(home, ".bun", "bin");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "claude"), "not executable");
+        chmodSync(join(dir, "claude"), 0o644);
+        const usable = installClaudeAt(".local", "bin");
+
+        expect(resolveClaudeBinaryForTeammates()).toBe(usable);
+    });
+
+    test("returns an absolute path whenever anything resolves at all", () => {
+        const resolved = resolveClaudeBinaryForTeammates();
+
+        expect(resolved.startsWith("/")).toBe(true);
+        expect(resolved).not.toBe("claude");
+    });
+
+    /**
+     * The last-resort branch, reachable only through the injected lookup:
+     * `Bun.which("claude")` finds this repo's own
+     * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so the
+     * real candidate list can never come back empty from inside the repo.
+     */
+    test("falls back to the bare name when every candidate misses", () => {
+        expect(resolveClaudeBinaryForTeammates(() => [])).toBe("claude");
+    });
+
+    test("falls back when candidates exist but none is executable", () => {
+        const dir = join(home, "nope");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "claude"), "not executable");
+        chmodSync(join(dir, "claude"), 0o644);
+
+        expect(resolveClaudeBinaryForTeammates(() => [join(dir, "claude"), join(dir, "missing")])).toBe("claude");
+    });
+
+    test("the injected list is honoured in order", () => {
+        const first = installClaudeAt("first", "bin");
+        const second = installClaudeAt("second", "bin");
+
+        expect(resolveClaudeBinaryForTeammates(() => [first, second])).toBe(first);
+        expect(resolveClaudeBinaryForTeammates(() => [second, first])).toBe(second);
+    });
+});
+
 describe("buildTeammateWrapperScript", () => {
     test("exports the OAuth env CC's spawn allowlist drops, then execs the real binary", () => {
         const script = buildTeammateWrapperScript({ claudeBin: "/Users/x/.bun/bin/claude", env: AUTH });
@@ -40,6 +146,20 @@ describe("buildTeammateWrapperScript", () => {
         expect(script.trimEnd().endsWith(`exec '/Users/x/.bun/bin/claude' "$@"`)).toBe(true);
     });
 
+    /**
+     * The script is why a shell function can never satisfy the bare-name fallback
+     * above: non-interactive bash, no profile sourced, and it ends in `exec`, so
+     * only a real executable on PATH resolves.
+     */
+    test("execs the resolved binary from a non-interactive shell that sources nothing", () => {
+        const script = buildTeammateWrapperScript({ claudeBin: "/usr/local/bin/claude", env: AUTH });
+
+        expect(script).toContain("#!/usr/bin/env bash");
+        expect(script).toContain("set -euo pipefail");
+        expect(script).not.toContain("source ");
+        expect(script).not.toContain("bash -l");
+    });
+
     test("single quotes in a value cannot break out of the export", () => {
         const script = buildTeammateWrapperScript({
             claudeBin: "/bin/claude",
@@ -47,6 +167,16 @@ describe("buildTeammateWrapperScript", () => {
         });
 
         expect(script).toContain(`export TOOLS_CLAUDE_ACCOUNT='it'\\''s mine'`);
+    });
+
+    test("a token carrying shell metacharacters cannot break out either", () => {
+        const script = buildTeammateWrapperScript({
+            claudeBin: "/usr/local/bin/claude",
+            env: { ...AUTH, oauthToken: "tok'; rm -rf /; echo '" },
+        });
+
+        expect(script).toContain(`export CLAUDE_CODE_OAUTH_TOKEN=${shellSingleQuote("tok'; rm -rf /; echo '")}`);
+        expect(script).not.toContain("rm -rf /; echo ''\n");
     });
 
     test("optional Fable model knobs are omitted when unset", () => {

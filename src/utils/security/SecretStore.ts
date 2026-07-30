@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
@@ -46,6 +47,38 @@ export function encryptEntry(master: Buffer, path: string, value: string): Vault
         tag: cipher.getAuthTag().toString("base64"),
         updatedAt: Date.now(),
     };
+}
+
+/** Escrow of the OUTGOING key during rotation; see rotateMasterKey. */
+export function rotationBackupPath(): string {
+    return join(dirname(vaultAdmin.path()), "master.key.rotate-bak");
+}
+
+/**
+ * Turn "unable to authenticate data" into the recovery it actually means.
+ *
+ * Storing the new key and rewriting the vault cannot be atomic together. If a
+ * rotation dies between them, the key store holds the new key while every entry
+ * on disk still needs the old one, and the old one exists ONLY in the escrow
+ * file. Rotation writes that file before either step precisely so this is
+ * survivable, but nothing consumed it, so the user met a raw node error instead
+ * of the two commands that fix it.
+ */
+function describeDecryptFailure(path: string, err: unknown): Error {
+    const escrow = rotationBackupPath();
+
+    if (!existsSync(escrow)) {
+        return err instanceof Error ? err : new Error(String(err));
+    }
+
+    const variable = env.security.getMasterKeyEnvKey();
+
+    return new Error(
+        `Vault entry "${path}" will not decrypt with the current master key, and ${escrow} exists. ` +
+            "That file holds the key a rotation was replacing when it was interrupted, so the vault on disk still needs it. " +
+            `Recover with: export ${variable}=$(cat ${escrow})  then re-run 'tools ai config secret rotate' and delete the file once it succeeds.`,
+        { cause: err }
+    );
 }
 
 export function decryptEntry(master: Buffer, path: string, entry: VaultEntry): string {
@@ -124,7 +157,11 @@ class FileSecretStore implements SecretStore {
             return undefined;
         }
 
-        return decryptEntry(await masterKey(), path, entry);
+        try {
+            return decryptEntry(await masterKey(), path, entry);
+        } catch (err) {
+            throw describeDecryptFailure(path, err);
+        }
     }
 
     getSync(path: string): string | undefined {
@@ -139,7 +176,11 @@ class FileSecretStore implements SecretStore {
             return undefined;
         }
 
-        return decryptEntry(key, path, entry);
+        try {
+            return decryptEntry(key, path, entry);
+        } catch (err) {
+            throw describeDecryptFailure(path, err);
+        }
     }
 
     async set(path: string, value: string): Promise<SecureRef> {

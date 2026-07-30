@@ -269,7 +269,7 @@ describe("DynamicPricingManager", () => {
 
             expect(liteLLMPricing).not.toBeNull();
 
-            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
+            const pricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing!);
 
             // Verify conversion (per token to per million)
             expect(pricingInfo.inputPer1M).toBeCloseTo((liteLLMPricing?.input_cost_per_token ?? 0) * 1_000_000, 2);
@@ -294,7 +294,7 @@ describe("DynamicPricingManager", () => {
                 cache_read_input_token_cost: 2.5e-6, // $2.5 per million
             };
 
-            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+            const pricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
             expect(pricingInfo.inputPer1M).toBe(5.0);
             expect(pricingInfo.outputPer1M).toBe(15.0);
@@ -309,7 +309,7 @@ describe("DynamicPricingManager", () => {
                 output_cost_per_token_above_200k_tokens: 30e-6,
             };
 
-            const pricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+            const pricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
             expect(pricingInfo.inputPer1M).toBe(3.0);
             expect(pricingInfo.outputPer1M).toBe(15.0);
@@ -654,7 +654,7 @@ describe("DynamicPricingManager", () => {
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(modelName);
                 expect(liteLLMPricing).not.toBeNull();
 
-                const convertedPricing = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing!);
+                const convertedPricing = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing!);
 
                 // Verify conversion: per-token * 1M = per-million
                 if (liteLLMPricing?.input_cost_per_token) {
@@ -942,7 +942,7 @@ describe("DynamicPricingManager", () => {
                 return;
             }
 
-            const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+            const liteLLMPricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
             // Compare pricing (allow 5% difference due to cache/timing differences)
             const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
@@ -985,7 +985,7 @@ describe("DynamicPricingManager", () => {
                 return;
             }
 
-            const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+            const liteLLMPricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
             const inputDiff = Math.abs(providerManagerPricing!.inputPer1M - liteLLMPricingInfo.inputPer1M);
             const outputDiff = Math.abs(providerManagerPricing!.outputPer1M - liteLLMPricingInfo.outputPer1M);
@@ -1034,7 +1034,7 @@ describe("DynamicPricingManager", () => {
                     continue;
                 }
 
-                const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+                const liteLLMPricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
                 const inputDiff = Math.abs(model.pricing.inputPer1M - liteLLMPricingInfo.inputPer1M);
                 const outputDiff = Math.abs(model.pricing.outputPer1M - liteLLMPricingInfo.outputPer1M);
@@ -1084,7 +1084,7 @@ describe("DynamicPricingManager", () => {
                     continue;
                 }
 
-                const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+                const liteLLMPricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
                 // Check if both have pricing (structure consistency)
                 const bothHaveInput = (model.pricing?.inputPer1M ?? 0) > 0 && liteLLMPricingInfo.inputPer1M > 0;
@@ -1134,7 +1134,7 @@ describe("DynamicPricingManager", () => {
                 // Compare with LiteLLM if available
                 const liteLLMPricing = await liteLLMPricingFetcher.getModelPricing(`openrouter/${model.id}`);
                 if (liteLLMPricing) {
-                    const liteLLMPricingInfo = liteLLMPricingFetcher.convertToPricingInfo(liteLLMPricing);
+                    const liteLLMPricingInfo = liteLLMPricingFetcher.convertToModelPricing(liteLLMPricing);
 
                     // Both should have non-zero pricing or both should be zero
                     const providerHasPricing =

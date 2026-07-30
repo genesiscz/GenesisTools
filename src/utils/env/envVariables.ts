@@ -161,6 +161,12 @@ export const env = {
         getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
         /** True only when GENESIS_TOOLS_HOME is actually set (a sandboxed root). */
         hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
+        /**
+         * Opt out of the worktree migration guard for the deliberate post-merge
+         * run. Read through the facade so `env.testing` overrides are seen; a
+         * direct `process.env` read in the guard was invisible to them.
+         */
+        allowsRealMigration: () => getTrimmed("GENESIS_TOOLS_ALLOW_REAL_MIGRATION") === "1",
         getHomeEnvKey: () => (isNonEmpty("GENESIS_TOOLS_HOME") ? "GENESIS_TOOLS_HOME" : undefined),
         getPath: () => getTrimmed("GENESIS_TOOLS_PATH"),
         getRoot: () => getTrimmed("GENESIS_TOOLS_ROOT"),
@@ -242,6 +248,11 @@ export const env = {
         getTestAudioFile: () => getTrimmed("TEST_AUDIO_FILE"),
         isOllamaTest: () => isNonEmpty("TEST_OLLAMA"),
         isTvNetTests: () => isNonEmpty("TV_NET_TESTS"),
+        /**
+         * Opt a test process OUT of the throwaway `~/.genesis-tools` sandbox that
+         * `preload-test-sandbox` installs. Nothing in the suite should need it.
+         */
+        allowsRealHome: () => isFlag("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME"),
     },
 
     // Client-safe domains are defined once in @app/utils/env.client and re-exposed here.

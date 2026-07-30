@@ -16,7 +16,7 @@ import { getJobActivityContext } from "@app/youtube/lib/job-activity";
 import type { JobActivityKind } from "@app/youtube/lib/jobs.types";
 import { getRequestContext } from "@app/youtube/lib/request-context";
 import { costTracker } from "@ask/output/CostTracker";
-import { pricingFor } from "@genesiscz/utils/ai/catalog/pricing";
+import { pricingForCall } from "@genesiscz/utils/ai/catalog/pricing";
 import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -144,7 +144,11 @@ function actionToKind(action: YoutubeUsageAction): JobActivityKind {
 
 async function safeCalculateCost(provider: string, model: string, usage: LanguageModelUsage): Promise<number | null> {
     try {
-        const cost = calculateCallCostUsd(await pricingFor(provider, model), usage);
+        const pricing = await pricingForCall(provider, model, {
+            at: new Date(),
+            contextTokens: usage.inputTokens ?? 0,
+        });
+        const cost = calculateCallCostUsd(pricing, usage);
         return cost !== null && Number.isFinite(cost) ? cost : null;
     } catch {
         return null;

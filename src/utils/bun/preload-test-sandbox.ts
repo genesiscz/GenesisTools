@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 
 /**
  * Force every test process to use a throwaway `~/.genesis-tools` root.
@@ -23,15 +24,18 @@ import { join } from "node:path";
  *    real user directory. Nothing in the suite should need this.
  */
 function installSandbox(): void {
-    if (process.env.GENESIS_TOOLS_TEST_ALLOW_REAL_HOME === "1") {
+    if (env.test.allowsRealHome()) {
         return;
     }
 
-    if (process.env.GENESIS_TOOLS_HOME) {
+    if (env.tools.hasExplicitHome()) {
         return;
     }
 
-    process.env.GENESIS_TOOLS_HOME = mkdtempSync(join(tmpdir(), "gt-test-home-"));
+    // `env.testing.set` writes straight through to `process.env`, which is what
+    // this needs: `Storage` reads the facade, but so do third-party consumers of
+    // the raw variable, and the sandbox has to be visible to both.
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "gt-test-home-")));
 }
 
 installSandbox();

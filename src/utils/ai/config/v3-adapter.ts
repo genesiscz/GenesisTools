@@ -48,20 +48,25 @@ function toSecondary(account: AccountEntry): AISecondaryLogin | undefined {
 export function toV3Account(account: AccountEntry, config: AiConfigData): AIAccountEntry {
     const { credentials } = account;
 
+    // Each field is resolved ONCE. `resolveSecretSync` reads and parses the whole
+    // vault, derives an HKDF subkey and runs an AES-GCM decrypt with no caching
+    // of its own, and this runs for every account on every load and every locked
+    // mutation, so testing a field and then reading it doubled all of that.
+    const tokens: Partial<Record<(typeof SECRET_FIELDS)[number], string>> = {};
+
+    for (const field of SECRET_FIELDS) {
+        const value = resolveSecretSync(credentials[field]);
+
+        if (value) {
+            tokens[field] = value;
+        }
+    }
+
     const entry: AIAccountEntry = {
         name: account.name,
         provider: account.provider as AIProvider,
         tokens: {
-            ...(resolveSecretSync(credentials.apiKey) ? { apiKey: resolveSecretSync(credentials.apiKey) } : {}),
-            ...(resolveSecretSync(credentials.accessToken)
-                ? { accessToken: resolveSecretSync(credentials.accessToken) }
-                : {}),
-            ...(resolveSecretSync(credentials.refreshToken)
-                ? { refreshToken: resolveSecretSync(credentials.refreshToken) }
-                : {}),
-            ...(resolveSecretSync(credentials.longLivedToken)
-                ? { longLivedToken: resolveSecretSync(credentials.longLivedToken) }
-                : {}),
+            ...tokens,
             ...(credentials.authFile ? { authFile: credentials.authFile } : {}),
             ...(credentials.expiresAt !== undefined ? { expiresAt: credentials.expiresAt } : {}),
             ...(credentials.refreshExpiresAt !== undefined ? { refreshExpiresAt: credentials.refreshExpiresAt } : {}),

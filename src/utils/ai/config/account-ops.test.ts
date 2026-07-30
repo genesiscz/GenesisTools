@@ -14,7 +14,14 @@ import {
 import type { BindContext, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
 import { AiConfigStore } from "./AiConfigStore";
-import { AccountInUseError, addAccount, editAccount, removeAccount, testAccount } from "./account-ops";
+import {
+    AccountInUseError,
+    addAccount,
+    clearCredentials,
+    editAccount,
+    removeAccount,
+    testAccount,
+} from "./account-ops";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AiConfigData, CONFIG_VERSION } from "./schema";
 
@@ -190,6 +197,43 @@ describe("removeAccount", () => {
 
         expect(result.referrers).toHaveLength(0);
         expect(readRawConfig().accounts).toHaveLength(0);
+    });
+});
+
+describe("clearCredentials", () => {
+    // The bug this pins: `tools claude logout` used to delete fields off a v3
+    // token projection and write it back, but `applyV3Tokens` skips absent
+    // fields (it cannot distinguish a deliberate deletion from a failed vault
+    // read), so the credentials survived while the command printed success.
+    test("revokes the named credentials from both the config and the vault", async () => {
+        await addAccount({
+            provider: "fake",
+            name: "sub",
+            secrets: { accessToken: "sk-access", refreshToken: "sk-refresh", apiKey: "sk-untouched" },
+        });
+
+        const result = await clearCredentials("sub", ["accessToken", "refreshToken"]);
+        const vault = await secrets();
+
+        expect(result.secretsDeleted.sort()).toEqual(["ai/acc_sub/accessToken", "ai/acc_sub/refreshToken"]);
+        expect(await vault.get("ai/acc_sub/accessToken")).toBeUndefined();
+        expect(await vault.get("ai/acc_sub/refreshToken")).toBeUndefined();
+
+        const account = (await AiConfigStore.load()).account("sub");
+        expect(account?.credentials.accessToken).toBeUndefined();
+        expect(account?.credentials.refreshToken).toBeUndefined();
+
+        // Untouched fields stay, so a partial logout is genuinely partial.
+        expect(await vault.get("ai/acc_sub/apiKey")).toBe("sk-untouched");
+        expect(account?.credentials.apiKey).toBeDefined();
+    });
+
+    test("the account itself survives a credential clear", async () => {
+        await addAccount({ provider: "fake", name: "kept", secrets: { accessToken: "sk-a" } });
+
+        await clearCredentials("kept", ["accessToken"]);
+
+        expect((await AiConfigStore.load()).account("kept")).toBeDefined();
     });
 });
 

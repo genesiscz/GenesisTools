@@ -1,7 +1,7 @@
-import type { PricingInfo } from "@genesiscz/utils/ask/types/provider";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
+import type { ModelPricing } from "./types";
 
 const storage = new Storage("ask");
 
@@ -360,9 +360,12 @@ export class LiteLLMPricingFetcher {
     }
 
     /**
-     * Convert LiteLLM pricing (per token) to PricingInfo (per 1M tokens)
+     * Convert LiteLLM pricing (per token) to the catalog's ModelPricing (per 1M
+     * tokens). Deliberately NOT ask's `PricingInfo`: this is the shared catalog,
+     * and importing a tool surface's vocabulary made every non-ask consumer of
+     * this module depend transitively on ask's type layer.
      */
-    convertToPricingInfo(pricing: LiteLLMModelPricing): PricingInfo {
+    convertToModelPricing(pricing: LiteLLMModelPricing): ModelPricing {
         // LiteLLM pricing is per token, convert to per 1M tokens (multiply by 1,000,000)
         const inputPer1M = pricing.input_cost_per_token ? pricing.input_cost_per_token * 1_000_000 : 0;
         const outputPer1M = pricing.output_cost_per_token ? pricing.output_cost_per_token * 1_000_000 : 0;

@@ -170,7 +170,7 @@ See `.claude/docs/tool-template.md` for complete templates (@inquirer + @clack/p
 - **Long call: biome keeps args inline and expands only the trailing object/array** (`fn(a, b, {\n ... \n})`), not one-arg-per-line.
 - **Long `if`: parenthesized multiline, one clause per line** — `if (\n  a ||\n  b\n ) {`.
 - **`// biome-ignore` must name a rule that actually fires there**, else it becomes a `suppressions/unused` warning itself.
-- **The SafeJSON rule (`noRestrictedGlobals` denying bare `JSON`) is already OFF in two zones** — `plugins/*/skills/*/scripts/**` and `src/youtube/extension/**` (biome.json overrides). In those zones use `JSON` directly with NO biome-ignore (it warns as unused); everywhere else use `SafeJSON`, never an ignore.
+- **The SafeJSON rule (`noRestrictedGlobals` denying bare `JSON`) is OFF in exactly one zone** — `src/youtube/extension/**` (a biome.json override). There, use `JSON` directly with NO biome-ignore (it warns as unused). **Standalone plugin skill scripts** (`plugins/*/skills/*/scripts/**`) have no override: they cannot import `SafeJSON`, so each `JSON` call carries its own `// biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON`. Everywhere else use `SafeJSON`, never an ignore.
 - **The pre-commit hook runs `biome check --write --staged`**: it can fix the staged copy while leaving a reflow residue in the working tree of the SAME file. After committing, glance at `git status` and commit the residue as `style:` — don't leave it to pollute the next person's diff.
 
 ## Code Style Rules

@@ -24,7 +24,7 @@ export function isWorktreeCheckout(cwd: string = process.cwd()): boolean {
  * the user's real file.
  */
 export function assertSafeToWriteRealConfig(): void {
-    if (env.tools.hasExplicitHome() || process.env.GENESIS_TOOLS_ALLOW_REAL_MIGRATION === "1") {
+    if (env.tools.hasExplicitHome() || env.tools.allowsRealMigration()) {
         return;
     }
 
@@ -48,7 +48,7 @@ export function migrationAllowedHere(): boolean {
         return true;
     }
 
-    if (process.env.GENESIS_TOOLS_ALLOW_REAL_MIGRATION === "1") {
+    if (env.tools.allowsRealMigration()) {
         return true;
     }
 

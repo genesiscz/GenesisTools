@@ -169,6 +169,39 @@ describe("mini-agent", () => {
         await first;
     });
 
+    /**
+     * The same-tick case the test above cannot reach: its `Bun.sleep(5)` is
+     * exactly long enough for the old guard's flag to have been assigned. Two
+     * sends issued before any await both passed, both appended to the shared
+     * message array, and both ran against the model at once.
+     */
+    test("a second send issued in the same tick is refused too", async () => {
+        let release = (): void => {};
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const { transport, seen } = scripted([
+            async () => {
+                await gate;
+
+                return { text: "a", toolCalls: 0 };
+            },
+        ]);
+        const agent = createMiniAgent({ transport });
+
+        const first = agent.send("q1");
+        const second = agent.send("q2");
+
+        await expect(second).rejects.toBeInstanceOf(SessionBusyError);
+        expect(agent.busy).toBe(true);
+
+        release();
+        await first;
+
+        expect(seen).toHaveLength(1);
+        expect(agent.busy).toBe(false);
+    });
+
     test("model and transport cannot both be named", () => {
         const { transport } = scripted([]);
         expect(() => createMiniAgent({ transport, model: "opus" })).toThrow("not both");

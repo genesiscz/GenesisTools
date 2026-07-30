@@ -71,13 +71,32 @@ function matches(account: AccountEntry, filter: AccountFilter): boolean {
  * dashboard kept serving credentials that a `tools claude login` in another
  * terminal had already replaced.
  */
+/**
+ * What "the file has not changed" means here.
+ *
+ * mtime alone was the whole test, and mtime alone can repeat: a filesystem with
+ * coarse timestamps, or any writer that preserves them (an editor's atomic
+ * replace, `rsync -t`, a restore from backup), produces two different configs
+ * that compare equal, and the store then keeps serving the stale snapshot
+ * indefinitely. Size is free from the same `stat` and catches every such case
+ * where the content length moved.
+ */
+interface FileStamp {
+    mtimeMs: number;
+    size: number;
+}
+
+const MISSING_FILE: FileStamp = { mtimeMs: 0, size: 0 };
+
 export class AiConfigStore {
     private static instance: AiConfigStore | null = null;
+    /** First construction in flight, so concurrent `load()` calls share one. */
+    private static loading: Promise<AiConfigStore> | null = null;
 
     private constructor(
         private readonly storage: Storage,
         private config: AiConfigData,
-        private mtimeMs: number
+        private stamp: FileStamp
     ) {}
 
     static async load(): Promise<AiConfigStore> {
@@ -86,23 +105,40 @@ export class AiConfigStore {
             return AiConfigStore.instance;
         }
 
+        // The instance check and the read below are separated by an await, so two
+        // callers racing the first load both saw `instance === null`, both ran the
+        // migration and built a store, and each got a DIFFERENT object while only
+        // the last assignment won the static field. Whoever held the loser then
+        // mutated a detached in-memory view. The in-flight promise makes the first
+        // construction the one every caller awaits.
+        AiConfigStore.loading ??= AiConfigStore.build();
+
+        try {
+            return await AiConfigStore.loading;
+        } finally {
+            AiConfigStore.loading = null;
+        }
+    }
+
+    private static async build(): Promise<AiConfigStore> {
         await ensureAiConfigMigrated();
 
         const storage = new Storage("ai");
-        const { config, mtimeMs } = await AiConfigStore.readFrom(storage);
-        AiConfigStore.instance = new AiConfigStore(storage, config, mtimeMs);
+        const { config, stamp } = await AiConfigStore.readFrom(storage);
+        AiConfigStore.instance = new AiConfigStore(storage, config, stamp);
         return AiConfigStore.instance;
     }
 
     static invalidate(): void {
         AiConfigStore.instance = null;
+        AiConfigStore.loading = null;
         _resetMigrationStateForTest();
     }
 
-    private static async readFrom(storage: Storage): Promise<{ config: AiConfigData; mtimeMs: number }> {
+    private static async readFrom(storage: Storage): Promise<{ config: AiConfigData; stamp: FileStamp }> {
         const raw = await storage.getConfig<Record<string, unknown>>();
         if (!raw || Object.keys(raw).length === 0) {
-            return { config: emptyConfig(), mtimeMs: 0 };
+            return { config: emptyConfig(), stamp: MISSING_FILE };
         }
 
         const parsed = aiConfigSchema.safeParse(raw);
@@ -113,7 +149,7 @@ export class AiConfigStore {
             // Converting in memory is read-only: nothing is written back here.
             const adapted = adaptOlderConfig(raw);
             if (adapted) {
-                return { config: adapted, mtimeMs: AiConfigStore.mtimeOf(storage) };
+                return { config: adapted, stamp: AiConfigStore.stampOf(storage) };
             }
 
             throw new Error(
@@ -123,29 +159,31 @@ export class AiConfigStore {
             );
         }
 
-        return { config: parsed.data, mtimeMs: AiConfigStore.mtimeOf(storage) };
+        return { config: parsed.data, stamp: AiConfigStore.stampOf(storage) };
     }
 
-    private static mtimeOf(storage: Storage): number {
+    private static stampOf(storage: Storage): FileStamp {
         try {
-            return statSync(storage.getConfigPath()).mtimeMs;
+            const stat = statSync(storage.getConfigPath());
+
+            return { mtimeMs: stat.mtimeMs, size: stat.size };
         } catch (err) {
             logger.debug({ err }, "ai config not on disk yet");
-            return 0;
+            return MISSING_FILE;
         }
     }
 
     /** Re-read when another process has written since we loaded. */
     private async refreshIfStale(): Promise<void> {
-        const current = AiConfigStore.mtimeOf(this.storage);
-        if (current === this.mtimeMs) {
+        const current = AiConfigStore.stampOf(this.storage);
+        if (current.mtimeMs === this.stamp.mtimeMs && current.size === this.stamp.size) {
             return;
         }
 
-        const { config, mtimeMs } = await AiConfigStore.readFrom(this.storage);
+        const { config, stamp } = await AiConfigStore.readFrom(this.storage);
         this.config = config;
-        this.mtimeMs = mtimeMs;
-        logger.debug({ mtimeMs }, "reloaded ai config after external write");
+        this.stamp = stamp;
+        logger.debug({ stamp }, "reloaded ai config after external write");
     }
 
     data(): Readonly<AiConfigData> {
@@ -218,7 +256,7 @@ export class AiConfigStore {
             assertSafeToWriteRealConfig();
             await this.storage.setConfig(validated);
             this.config = validated;
-            this.mtimeMs = AiConfigStore.mtimeOf(this.storage);
+            this.stamp = AiConfigStore.stampOf(this.storage);
             return result;
         });
     }

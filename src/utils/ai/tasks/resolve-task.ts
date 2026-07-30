@@ -2,7 +2,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { AiConfigStore } from "../config/AiConfigStore";
 import type { TaskName } from "../config/schema";
 import type { ModelRef } from "../core/model-ref";
-import { ModelResolutionError, resolveModel } from "../core/resolve";
+import { ModelResolutionError, resolveModel, TASK_CAPABILITY } from "../core/resolve";
 import type { ResolvedBinding } from "../core/types";
 import type { Capability, ProviderBinding } from "../providers/plugin-types";
 import { registerBuiltInPlugins } from "../providers/plugins";
@@ -49,19 +49,6 @@ const FALLBACK_ORDER: readonly string[] = [
     "deepgram",
     "gladia",
 ];
-
-const TASK_CAPABILITY: Record<TaskName, Capability> = {
-    chat: "chat",
-    embed: "embed",
-    transcribe: "transcribe",
-    tts: "tts",
-    summarize: "summarize",
-    translate: "translate",
-    classify: "classify",
-    sentiment: "sentiment",
-    image: "image",
-    realtime: "realtime",
-};
 
 export interface ResolveTaskOptions {
     task: TaskName;

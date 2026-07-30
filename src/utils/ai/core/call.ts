@@ -37,6 +37,11 @@ import type { ResolvedBinding, ResolveOptions } from "./types";
 /** How many tool round-trips a call may take before it stops on its own. */
 const DEFAULT_MAX_STEPS = 5;
 
+// Module scope on purpose: `logger.scoped` builds a pino child AND two `out`
+// objects on every call, and this file runs on every LLM call in the repo. The
+// binding is constant for the module's lifetime.
+const { log } = logger.scoped("ai-core");
+
 export interface CallLLMOptions {
     systemPrompt: string;
     userPrompt: string;
@@ -191,7 +196,6 @@ export function effectiveSystemPrompt(prefix: string | undefined, base: string |
 
 /** The single `streamText`/`generateText` call. Everything else in this file funnels here. */
 export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult> {
-    const { log } = logger.scoped("ai-core");
     const { target, tools } = options;
     const hasTools = Boolean(tools && Object.keys(tools).length > 0);
 
@@ -269,8 +273,6 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
  * is accounting; the answer is the product.
  */
 function logUsage(target: CallTarget, usage: LanguageModelUsage | undefined): void {
-    const { log } = logger.scoped("ai-core");
-
     // The SDK always hands back a usage OBJECT; a provider that reported nothing
     // shows up as undefined token counts inside it. Both spellings mean the same
     // thing, and recording a 0/0 row for them would assert this call cost $0

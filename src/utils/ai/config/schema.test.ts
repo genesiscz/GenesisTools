@@ -45,6 +45,26 @@ describe("aiConfigSchema", () => {
         ).toThrow();
     });
 
+    /**
+     * A secure path the schema accepts but `resolveSecret` rejects reads at
+     * runtime as a MISSING credential, not a malformed one, so the config looks
+     * valid and the account silently cannot authenticate. Both sides now test
+     * against the same pattern.
+     */
+    test("a secure ref must satisfy the same path rule resolution enforces", () => {
+        const withPath = (path: string) => ({
+            version: 4,
+            accounts: [{ ...validAccount, credentials: { accessToken: { type: "secure", path } } }],
+        });
+
+        expect(() => aiConfigSchema.parse(withPath("ai/acc_anthropic_max/accessToken"))).not.toThrow();
+        expect(() => aiConfigSchema.parse(withPath("ai/acc_max/secondary.accessToken"))).not.toThrow();
+
+        for (const bad of ["", "no-domain", "/leading", "ai/", "AI/acc/token", "ai//token", "ai/acc token"]) {
+            expect(() => aiConfigSchema.parse(withPath(bad))).toThrow();
+        }
+    });
+
     test("useEnvApiKey accepts all three shapes and defaults to false", () => {
         for (const useEnvApiKey of [true, "XAI_API_KEY", ["XAI_API_KEY", "X_AI_API_KEY"]]) {
             expect(() =>

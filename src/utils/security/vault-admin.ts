@@ -1,13 +1,15 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { MASTER_KEY_BYTES } from "./keyring/types";
 import { invalidateMasterKeyCache, masterKey, masterKeySource, writeMasterKey } from "./MasterKey";
-import { decryptEntry, encryptEntry, TAG_BYTES, vaultAdmin } from "./SecretStore";
+import { decryptEntry, encryptEntry, rotationBackupPath, TAG_BYTES, vaultAdmin } from "./SecretStore";
 import type { VaultFile } from "./vault-format";
+
+export { rotationBackupPath };
 
 const EXPORT_VERSION = 1;
 const SCRYPT_N = 2 ** 15;
@@ -30,11 +32,6 @@ export interface VaultExportBlob {
 
 function passphraseKey(passphrase: string, salt: Buffer, N: number, r: number, p: number): Buffer {
     return scryptSync(passphrase, salt, MASTER_KEY_BYTES, { N, r, p, maxmem: 512 * 1024 * 1024 });
-}
-
-/** Escrow of the OUTGOING key during rotation; see rotateMasterKey. */
-export function rotationBackupPath(): string {
-    return join(dirname(vaultAdmin.path()), "master.key.rotate-bak");
 }
 
 /**
@@ -152,8 +149,28 @@ export async function importVault(blob: string, passphrase: string): Promise<{ i
         throw new Error(`Vault export has a ${tag.length}-byte auth tag (expected ${TAG_BYTES}); refusing.`);
     }
 
-    const key = passphraseKey(passphrase, Buffer.from(parsed.salt, "base64"), parsed.N, parsed.r, parsed.p);
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(parsed.iv, "base64"));
+    // The blob names its own KDF cost, and it arrives from a file the caller
+    // chose. `maxmem` bounds MEMORY (node enforces 128*r*N + 128*r*p <= maxmem)
+    // but nothing bounds TIME: N=2^14, r=8, p=2^15 fits in ~50 MiB and still
+    // costs ~4.3e9 operations, blocking the event loop for minutes inside a
+    // synchronous scrypt. Only the parameters we actually write are accepted.
+    if (parsed.N !== SCRYPT_N || parsed.r !== SCRYPT_r || parsed.p !== SCRYPT_p) {
+        throw new Error(
+            `Vault export uses unsupported scrypt parameters (N=${parsed.N}, r=${parsed.r}, p=${parsed.p}); expected N=${SCRYPT_N}, r=${SCRYPT_r}, p=${SCRYPT_p}.`
+        );
+    }
+
+    const salt = Buffer.from(parsed.salt, "base64");
+    const iv = Buffer.from(parsed.iv, "base64");
+
+    if (salt.length !== SALT_BYTES || iv.length !== IV_BYTES) {
+        throw new Error(
+            `Vault export has a ${salt.length}-byte salt and a ${iv.length}-byte IV, expected ${SALT_BYTES} and ${IV_BYTES}.`
+        );
+    }
+
+    const key = passphraseKey(passphrase, salt, parsed.N, parsed.r, parsed.p);
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
     decipher.setAuthTag(tag);
 
     let payload: { exportedAt: number; secrets: Record<string, string> };

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clearPricingCache, convertOpenRouterPricing, effectivePricing, pricingCacheSize, pricingFor } from "./pricing";
+import {
+    clearPricingCache,
+    convertOpenRouterPricing,
+    effectivePricing,
+    pricingCacheSize,
+    pricingFor,
+    pricingForCall,
+} from "./pricing";
 import { byId } from "./static";
 import type { ModelPricing } from "./types";
 
@@ -114,7 +121,21 @@ describe("pricing ladder", () => {
             outputPer1M: 10,
             cachedReadPer1M: 1.25,
         });
-        expect(convertOpenRouterPricing({})).toEqual({ inputPer1M: 0, outputPer1M: 0 });
+        // Absent means UNKNOWN, never free (the invariant in catalog/types.ts).
+        // This used to assert `{inputPer1M: 0, outputPer1M: 0}`, which is a
+        // truthy object: it got cached for an hour and booked calls at $0,
+        // indistinguishable from a genuinely free model.
+        expect(convertOpenRouterPricing({})).toBeUndefined();
+        expect(convertOpenRouterPricing({ prompt: "0.0000025" })).toBeUndefined();
+    });
+
+    // A real free route quotes "0", which must survive as a priced zero rather
+    // than being confused with an absent field.
+    test("an explicit zero quote stays a priced zero", () => {
+        expect(convertOpenRouterPricing({ prompt: "0", completion: "0" })).toEqual({
+            inputPer1M: 0,
+            outputPer1M: 0,
+        });
     });
 });
 
@@ -281,5 +302,32 @@ describe("catalog entries carrying rules", () => {
         }
 
         expect(effectivePricing(opus, { at: new Date("2026-07-29"), contextTokens: 900_000 })).toEqual(opus);
+    });
+});
+
+describe("pricingForCall", () => {
+    /**
+     * `pricingFor` answers with rules unapplied by design, and three production
+     * cost paths priced that answer directly, so a dated rule was declared in the
+     * catalog and never charged. This is the resolved entry point they use.
+     */
+    test("resolves dated rules that pricingFor leaves unapplied", async () => {
+        clearPricingCache();
+        const raw = await pricingFor("anthropic", "claude-sonnet-5");
+        const intro = await pricingForCall("anthropic", "claude-sonnet-5", {
+            at: new Date("2026-07-29T12:00:00Z"),
+        });
+        const later = await pricingForCall("anthropic", "claude-sonnet-5", {
+            at: new Date("2026-09-01T00:00:00Z"),
+        });
+
+        expect(raw?.rules?.length).toBeGreaterThan(0);
+        expect(intro?.rules).toBeUndefined();
+        expect(intro?.inputPer1M).toBeLessThan(raw?.inputPer1M as number);
+        expect(later?.inputPer1M).toBe(raw?.inputPer1M as number);
+    });
+
+    test("an unpriced model stays undefined rather than becoming an empty rate", async () => {
+        expect(await pricingForCall("nobody", "no-such-model")).toBeUndefined();
     });
 });

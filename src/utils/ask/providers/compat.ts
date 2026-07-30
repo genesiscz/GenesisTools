@@ -86,62 +86,6 @@ export const PROVIDER_CONFIGS: ProviderConfig[] = [
     },
 ];
 
-export const TRANSCRIPTION_PROVIDERS = [
-    // Groq - Fast, high quality, 25MB limit
-    {
-        name: "groq",
-        envKey: "GROQ_API_KEY",
-        model: "whisper-large-v3",
-        maxFileSize: 25 * 1024 * 1024, // 25MB
-        priority: 1,
-    },
-
-    // OpenRouter - Various models, 25MB limit
-    {
-        name: "openrouter",
-        envKey: "OPENROUTER_API_KEY",
-        model: "openai/whisper-1",
-        maxFileSize: 25 * 1024 * 1024, // 25MB
-        priority: 2,
-    },
-
-    // OpenAI - Original Whisper, 25MB limit
-    {
-        name: "openai",
-        envKey: "OPENAI_API_KEY",
-        model: "whisper-1",
-        maxFileSize: 25 * 1024 * 1024, // 25MB
-        priority: 3,
-    },
-
-    // AssemblyAI - Professional, supports large files
-    {
-        name: "assemblyai",
-        envKey: "ASSEMBLYAI_API_KEY",
-        model: "best",
-        maxFileSize: 100 * 1024 * 1024, // 100MB+
-        priority: 4,
-    },
-
-    // Deepgram - Fast, supports large files
-    {
-        name: "deepgram",
-        envKey: "DEEPGRAM_API_KEY",
-        model: "nova-3",
-        maxFileSize: 100 * 1024 * 1024, // 100MB+
-        priority: 5,
-    },
-
-    // Gladia - Good quality, supports large files
-    {
-        name: "gladia",
-        envKey: "GLADIA_API_KEY",
-        model: "default",
-        maxFileSize: 100 * 1024 * 1024, // 100MB+
-        priority: 6,
-    },
-];
-
 export function getProviderConfig(name: string): ProviderConfig | undefined {
     return PROVIDER_CONFIGS.find((config) => config.name === name);
 }

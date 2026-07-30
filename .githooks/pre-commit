@@ -22,8 +22,20 @@ echo "▶ tsgo --noEmit (failing on staged files only)..."
 # but only errors in STAGED files block the commit. Unstaged breakage — e.g. a
 # parallel agent mid-rewire in the same worktree — must not wedge an unrelated
 # commit; CI still gates the full tree.
-tsgo_output=$(bunx tsgo --noEmit 2>&1) || true
+tsgo_output=$(bunx tsgo --noEmit 2>&1) && tsgo_status=0 || tsgo_status=$?
 staged_files=$(git diff --cached --name-only --diff-filter=d | grep -E '\.(ts|tsx)$' || true)
+
+# Only per-file diagnostics are skippable. A non-zero exit with NO diagnostic
+# lines is a compiler crash, a bad tsconfig or a global error, and none of those
+# are "someone else's unstaged file" — swallowing them printed "pre-commit
+# passed" while the project did not build at all.
+diagnostics=$(printf '%s\n' "$tsgo_output" | grep -E '\([0-9]+,[0-9]+\): (error|warning) TS[0-9]+' || true)
+
+if [ "$tsgo_status" -ne 0 ] && [ -z "$diagnostics" ]; then
+    printf '%s\n' "$tsgo_output"
+    echo "✖ tsgo exited $tsgo_status with no file diagnostics (crash, config or global error)"
+    exit 1
+fi
 
 if [ -n "$staged_files" ] && [ -n "$tsgo_output" ]; then
     patterns=$(mktemp)
@@ -36,6 +48,10 @@ if [ -n "$staged_files" ] && [ -n "$tsgo_output" ]; then
         echo "✖ tsgo errors in staged files"
         exit 1
     fi
+fi
+
+if [ "$tsgo_status" -ne 0 ]; then
+    echo "ℹ tsgo reported errors, none attributable to staged files — CI still gates the full tree"
 fi
 
 echo "✔ pre-commit passed"

@@ -152,14 +152,41 @@ export async function accountBindingFingerprint(account: AiProxyAccountConfig): 
         .slice(0, 32);
 }
 
+/**
+ * How long a vault stamp is reused before the file is stat'd again.
+ *
+ * `accountBindingFingerprint` runs per request, so a burst paid one blocking
+ * `statSync` each. One second is short enough that a rotation is still picked up
+ * within a rebuild's worth of latency, and long enough that a burst costs one
+ * stat rather than hundreds.
+ */
+const VAULT_STAMP_TTL_MS = 1_000;
+
+let vaultStampCache: { at: number; mtimeMs: number } | null = null;
+
 /** Epoch ms of the last vault write, or 0 when there is no vault yet. */
 function vaultStamp(): number {
+    const now = Date.now();
+
+    if (vaultStampCache && now - vaultStampCache.at < VAULT_STAMP_TTL_MS) {
+        return vaultStampCache.mtimeMs;
+    }
+
+    let mtimeMs = 0;
+
     try {
-        return statSync(join(securityStorage().getBaseDir(), "vault.json")).mtimeMs;
+        mtimeMs = statSync(join(securityStorage().getBaseDir(), "vault.json")).mtimeMs;
     } catch (err) {
         logger.debug({ err }, "ai-proxy: no vault file to stamp");
-        return 0;
     }
+
+    vaultStampCache = { at: now, mtimeMs };
+    return mtimeMs;
+}
+
+/** Drop the stamp cache. Tests swap config roots faster than its TTL. */
+export function _resetVaultStampCacheForTest(): void {
+    vaultStampCache = null;
 }
 
 export function migrateAccountConfig(account: AiProxyAccountConfig & LegacyAccountFields): AiProxyAccountConfig {

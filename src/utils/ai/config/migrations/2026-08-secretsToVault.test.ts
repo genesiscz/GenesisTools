@@ -174,6 +174,36 @@ describe("migrateSecretsToVault", () => {
         expect(readFileSync(configPath(), "utf8")).toBe(configAfterFirst);
     });
 
+    /**
+     * A credential added after the first migration makes `shouldRun()` true
+     * again. The first backup predates it, and the config on disk no longer
+     * holds run one's secrets in plaintext, so neither file on its own is the
+     * fallback the warning promises. Run two therefore writes its own copy and
+     * leaves run one's alone.
+     */
+    test("a later run backs up the plaintext it is about to move", async () => {
+        writeConfig(V4_WITH_PLAINTEXT);
+        await migrateSecretsToVault.run();
+        const firstBackup = readFileSync(backupFile(), "utf8");
+
+        const config = readConfig();
+        config.accounts[1].credentials.apiKey = "xai-added-after-the-first-run";
+        writeConfig(config);
+
+        expect(await migrateSecretsToVault.shouldRun()).toBe(true);
+        await migrateSecretsToVault.run();
+
+        expect(readFileSync(backupFile(), "utf8")).toBe(firstBackup);
+        expect(firstBackup).not.toContain("xai-added-after-the-first-run");
+
+        const second = join(home, ".genesis-tools", "ai", "config.v3.plaintext.bak.2.json");
+        expect(readFileSync(second, "utf8")).toContain("xai-added-after-the-first-run");
+        expect(statSync(second).mode & 0o777).toBe(0o600);
+
+        expect(isSecureRef(readConfig().accounts[1].credentials.apiKey)).toBe(true);
+        expect(await (await secrets()).get("ai/acc_xai/apiKey")).toBe("xai-added-after-the-first-run");
+    });
+
     test("the migrated config still loads through the store, refs intact", async () => {
         writeConfig(V4_WITH_PLAINTEXT);
         await migrateSecretsToVault.run();

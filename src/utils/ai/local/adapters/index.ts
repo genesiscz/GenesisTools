@@ -23,21 +23,38 @@ import { byTask, type LocalModelDescriptor } from "../descriptors";
  * all of them down together, which is why task facades must call it.
  */
 
+/** Account-level settings a runtime needs at construction. */
+interface LocalRuntimeContext {
+    /** `account.endpoint`: where a self-hosted runtime actually lives. */
+    endpoint?: string;
+}
+
 interface LocalPluginSpec {
     id: string;
     capabilities: Capability[];
     /** Runtimes load a model at construction, so this is per model id. */
-    createEmbedder?: (modelId: string) => AIEmbeddingProvider;
+    createEmbedder?: (modelId: string, runtime: LocalRuntimeContext) => AIEmbeddingProvider;
     /** Same contract for speech-to-text: one runtime per model id, cached on the binding. */
-    createTranscriber?: (modelId: string) => AITranscriptionProvider;
+    createTranscriber?: (modelId: string, runtime: LocalRuntimeContext) => AITranscriptionProvider;
     /** Text-to-speech. `Synthesizer` uses the rich engine directly; this is for byte consumers. */
-    createSpeaker?: (modelId: string) => AITextToSpeechProvider;
+    createSpeaker?: (modelId: string, runtime: LocalRuntimeContext) => AITextToSpeechProvider;
 }
 
+/**
+ * `capabilities` describes what the BINDING can serve, which is narrower than
+ * what the underlying runtime class can do.
+ *
+ * `AILocalProvider` and `AIOllamaProvider` both implement `summarize()` and
+ * `translate()` as their own methods, but a binding serves those two verbs
+ * through `language()`, and no local runtime is wrapped as an ai-sdk
+ * `LanguageModel` yet, so `language()` throws. Advertising them here made
+ * capability-based selection route `ai.summarize()` to a plugin that then threw
+ * at the point of use. They come back the moment a language adapter exists.
+ */
 const SPECS: LocalPluginSpec[] = [
     {
         id: "local-hf",
-        capabilities: ["embed", "transcribe", "translate", "summarize"],
+        capabilities: ["embed", "transcribe"],
         createEmbedder: () => new AILocalProvider(),
         // Whisper via transformers.js. The model id reaches the runtime through
         // the per-call options rather than the constructor, so one instance
@@ -46,8 +63,9 @@ const SPECS: LocalPluginSpec[] = [
     },
     {
         id: "ollama",
-        capabilities: ["embed", "summarize", "translate"],
-        createEmbedder: (modelId: string) => new AIOllamaProvider({ defaultModel: modelId }),
+        capabilities: ["embed"],
+        createEmbedder: (modelId: string, { endpoint }: LocalRuntimeContext) =>
+            new AIOllamaProvider({ defaultModel: modelId, ...(endpoint ? { baseUrl: endpoint } : {}) }),
     },
     {
         id: "coreml",
@@ -116,11 +134,12 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
             // still two native handles, and `dispose()` has to free both.
             const runtimes = new Map<string, { dispose?(): void }>();
             const { createEmbedder, createTranscriber, createSpeaker } = spec;
+            const runtimeCtx: LocalRuntimeContext = ctx.account.endpoint ? { endpoint: ctx.account.endpoint } : {};
 
             function runtimeFor<T extends { dispose?(): void }>(
                 task: string,
                 modelId: string,
-                create: (id: string) => T
+                create: (id: string, runtime: LocalRuntimeContext) => T
             ): T {
                 const key = `${task}:${modelId}`;
                 const existing = runtimes.get(key) as T | undefined;
@@ -129,7 +148,7 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
                     return existing;
                 }
 
-                const created = create(modelId);
+                const created = create(modelId, runtimeCtx);
                 runtimes.set(key, created);
                 return created;
             }
@@ -184,7 +203,10 @@ function buildPlugin(spec: LocalPluginSpec): ProviderPlugin {
         },
 
         async health() {
-            const probe = spec.createEmbedder?.("probe");
+            // Plugin-level, so there is no account and no endpoint: a self-hosted
+            // runtime is probed at its default address here, and an account that
+            // overrides `endpoint` is only reached through `bind`.
+            const probe = spec.createEmbedder?.("probe", {});
 
             if (!probe) {
                 return { ok: true, detail: `${spec.id} needs no credential` };
