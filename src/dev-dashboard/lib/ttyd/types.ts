@@ -6,12 +6,15 @@ export interface TtydSession {
     pid: number;
     startedAt: string;
     tmuxSessionName?: string;
-    /** User-set display name; falls back to "<command> :<port>" when unset. */
+    /**
+     * User-set display name. When set (including after a unified rename), tabs and Session Hub share
+     * this identity with `tmuxSessionName`. Falls back via {@link deriveTtydDisplayName}.
+     */
     name?: string;
     /**
      * Live command in the bound tmux session's active pane (`#{pane_current_command}`), refreshed on
-     * every `listTtyd()`. Drives an auto-name when the user has not set `name`. NOT persisted — it is
-     * a derived live fact, recomputed each read. Absent when the session has no tmux binding.
+     * every `listTtyd()`. Surfaced as secondary meta in the hub / CLI — not the primary tab label when
+     * a tmux binding exists. NOT persisted — derived live fact, recomputed each read.
      */
     lastCommand?: string;
 }

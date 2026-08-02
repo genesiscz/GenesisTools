@@ -89,7 +89,8 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
                             <GlassDialogEyebrow>Session hub</GlassDialogEyebrow>
                             <GlassDialogTitle className="font-mono text-lg">Tmux sessions</GlassDialogTitle>
                             <GlassDialogDescription className="font-mono text-xs text-zinc-400">
-                                Attach in ttyd or send to cmux — shared tmux I/O across surfaces.
+                                Same names as the terminal tabs — rename once, tmux + ttyd both update. Attach in ttyd
+                                or send to cmux.
                             </GlassDialogDescription>
                         </GlassDialogHeader>
 
@@ -181,7 +182,11 @@ function SessionRow({
     onRemove?: () => void;
     onRenamed: (nextName: string) => void;
 }) {
-    const alreadyInTtyd = session.ttydTabIds.length > 0;
+    const alreadyInTtyd = (session.ttydTabs?.length ?? session.ttydTabIds.length) > 0;
+    const primaryTab = session.ttydTabs?.[0];
+    const cwd = primaryTab?.cwd;
+    const lastCommand = primaryTab?.lastCommand;
+    const shortCwd = cwd ? shortenPath(cwd) : null;
 
     return (
         <BezelCard
@@ -197,11 +202,23 @@ function SessionRow({
                     </div>
                     <p className="font-mono text-[10px] text-zinc-500">
                         {session.windows} window(s) · {session.attached} attached
-                        {alreadyInTtyd ? ` · ttyd ×${session.ttydTabIds.length}` : ""}
+                        {alreadyInTtyd
+                            ? ` · ttyd ${
+                                  (session.ttydTabs ?? []).map((t) => `:${t.port}`).join(" ") ||
+                                  `×${session.ttydTabIds.length}`
+                              }`
+                            : ""}
                         {session.inCmux && session.cmuxSurfaces.length > 0
                             ? ` · cmux ×${session.cmuxSurfaces.length}`
                             : ""}
                     </p>
+                    {shortCwd || lastCommand ? (
+                        <p className="truncate font-mono text-[10px] text-zinc-400">
+                            {lastCommand ? <span className="text-amber-400/90">{lastCommand}</span> : null}
+                            {lastCommand && shortCwd ? <span className="text-zinc-600"> · </span> : null}
+                            {shortCwd ? <span>{shortCwd}</span> : null}
+                        </p>
+                    ) : null}
                 </div>
                 <div className="flex shrink-0 flex-col gap-1.5">
                     <Button
@@ -247,4 +264,21 @@ function SessionRow({
             </div>
         </BezelCard>
     );
+}
+
+function shortenPath(path: string): string {
+    const home = "/Users/";
+    if (path.startsWith(home)) {
+        const rest = path.slice(home.length);
+        const slash = rest.indexOf("/");
+        if (slash >= 0) {
+            return `~/${rest.slice(slash + 1)}`;
+        }
+    }
+
+    if (path.startsWith("/private/tmp")) {
+        return path.replace("/private/tmp", "/tmp");
+    }
+
+    return path;
 }

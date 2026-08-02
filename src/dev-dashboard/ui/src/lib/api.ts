@@ -26,6 +26,13 @@ export interface TmuxHubSession {
     attached: number;
     windows: number;
     ttydTabIds: string[];
+    ttydTabs: Array<{
+        id: string;
+        port: number;
+        label: string;
+        cwd?: string;
+        lastCommand?: string;
+    }>;
     canAttachInTtyd: boolean;
     cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;
     inCmux: boolean;

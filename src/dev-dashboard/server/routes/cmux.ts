@@ -131,13 +131,13 @@ export function cmuxRoutes(): RouteDef[] {
                             title: body.title,
                         });
 
-                        // A cmux rename is an explicit user action, so it sets the ttyd MANUAL name
-                        // (same tier as the in-terminal pencil) — best-effort, never fails the rename.
+                        // One identity: cmux rename → ttyd display name + bound tmux session.
+                        // Best-effort — never fails the cmux rename itself.
                         if (ttydId) {
                             try {
                                 await renameTtyd(ttydId, body.title);
                             } catch (err) {
-                                logger.debug({ err, ttydId }, "cmux rename: ttyd display-name propagation failed");
+                                logger.debug({ err, ttydId }, "cmux rename: ttyd/tmux sync failed");
                             }
                         }
                     } else {

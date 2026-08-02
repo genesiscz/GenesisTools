@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { NAV_ROUTES } from "@/lib/nav-routes";
 
 export interface ShellTab {
@@ -34,6 +34,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
     const [overviewOpen, setOverviewOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const skipBlurCommitRef = useRef(false);
 
     const renderTab = (
         tab: ShellTab,
@@ -49,13 +50,36 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                     onFocus={(e) => e.currentTarget.select()}
                     onKeyDown={(e) => {
                         if (e.key === "Enter") {
+                            skipBlurCommitRef.current = true;
                             onRename?.(tab.id, e.currentTarget.value);
                             setEditingId(null);
                         }
+
+                        if (e.key === "Escape") {
+                            skipBlurCommitRef.current = true;
+                            setEditingId(null);
+                        }
                     }}
-                    onBlur={() => setEditingId(null)}
+                    onBlur={(e) => {
+                        if (skipBlurCommitRef.current) {
+                            skipBlurCommitRef.current = false;
+                            setEditingId(null);
+                            return;
+                        }
+
+                        const next = e.currentTarget.value.trim();
+
+                        // Commit on blur when the value changed — blur-cancel was dropping renames
+                        // when the user clicked away after editing.
+                        if (next.length > 0 && next !== tab.label) {
+                            onRename?.(tab.id, next);
+                        }
+
+                        setEditingId(null);
+                    }}
                     className="dd-tab-edit"
                     aria-label={`rename ${tab.label}`}
+                    title="Renames the tmux session too"
                 />
             );
         }

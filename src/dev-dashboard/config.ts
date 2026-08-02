@@ -41,6 +41,8 @@ const TtydSessionSchema = z.object({
     pid: z.number().int(),
     startedAt: z.string(),
     tmuxSessionName: z.string().optional(),
+    /** User-set display name; also mirrors the tmux session name after a unified rename. */
+    name: z.string().optional(),
 });
 
 const WeatherCoordsSchema = z.object({

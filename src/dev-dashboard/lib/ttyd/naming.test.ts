@@ -28,15 +28,15 @@ describe("isMeaningfulCommand", () => {
     });
 });
 
-describe("deriveTtydDisplayName precedence (manual wins — auto never overwrites)", () => {
-    it("a manual name beats a meaningful lastCommand", () => {
+describe("deriveTtydDisplayName precedence (tmux identity over live command)", () => {
+    it("a manual name beats tmux session name and lastCommand", () => {
         const s = session({ name: "My Server", lastCommand: "vim", tmuxSessionName: "dev-dashboard-abc12345" });
         expect(deriveTtydDisplayName(s)).toBe("My Server");
     });
 
-    it("auto-names from lastCommand when no manual name", () => {
+    it("prefers tmux session name over a meaningful lastCommand (shared hub identity)", () => {
         const s = session({ lastCommand: "claude", tmuxSessionName: "dev-dashboard-abc12345" });
-        expect(deriveTtydDisplayName(s)).toBe("claude");
+        expect(deriveTtydDisplayName(s)).toBe("dev-dashboard-abc12345");
     });
 
     it("falls back to tmux session name when lastCommand is just a shell", () => {
@@ -44,13 +44,18 @@ describe("deriveTtydDisplayName precedence (manual wins — auto never overwrite
         expect(deriveTtydDisplayName(s)).toBe("dev-dashboard-abc12345");
     });
 
-    it("falls back to command when there is no tmux binding and no meaningful command", () => {
+    it("uses meaningful lastCommand when unbound", () => {
+        const s = session({ lastCommand: "node", command: "/bin/zsh" });
+        expect(deriveTtydDisplayName(s)).toBe("node");
+    });
+
+    it("falls back to command:port when unbound and no meaningful command", () => {
         const s = session({ command: "/bin/zsh", lastCommand: "zsh" });
-        expect(deriveTtydDisplayName(s)).toBe("/bin/zsh");
+        expect(deriveTtydDisplayName(s)).toBe("zsh :4001");
     });
 
     it("a whitespace-only manual name is treated as unset", () => {
         const s = session({ name: "   ", lastCommand: "node", tmuxSessionName: "t" });
-        expect(deriveTtydDisplayName(s)).toBe("node");
+        expect(deriveTtydDisplayName(s)).toBe("t");
     });
 });
