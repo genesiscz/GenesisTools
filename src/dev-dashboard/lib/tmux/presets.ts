@@ -71,7 +71,7 @@ export function savePreset(input: SavePresetInput, store?: TmuxPresetStore): Tmu
     return s.summarize(preset);
 }
 
-export function restorePreset(name: string, store?: TmuxPresetStore): RestorePresetResult {
+export async function restorePreset(name: string, store?: TmuxPresetStore): Promise<RestorePresetResult> {
     const s = resolveStore(store);
     const preset = s.read(name);
 
@@ -82,7 +82,7 @@ export function restorePreset(name: string, store?: TmuxPresetStore): RestorePre
 
     for (const session of preset.sessions) {
         try {
-            const outcome = restoreTmuxSession(session);
+            const outcome = await restoreTmuxSession(session);
             outcomes.push(outcome);
 
             if (outcome.created) {

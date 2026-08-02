@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getConfig, saveTtydSessions } from "@app/dev-dashboard/config";
+import { isClaudeForegroundCommand, parseClaudePaneTitle } from "@app/dev-dashboard/lib/tmux/claude-pane-title";
 import { makeTtydTmuxSessionName } from "@app/dev-dashboard/lib/tmux/naming";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
+import { profiler } from "@genesiscz/utils/profile";
 import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
@@ -14,7 +16,8 @@ import {
     ensureTmuxServerPersists,
     ensureTmuxSessionEnvironment,
     killTmuxSession,
-    listTmuxSessionCommands,
+    listTmuxSessionActivePanes,
+    renameTmuxSession,
     sessionExists,
 } from "@genesiscz/utils/tmux/sessions";
 import type { Subprocess } from "bun";
@@ -42,6 +45,12 @@ const registry = new Map<string, Tracked>();
 const TTYD_BIN = "/opt/homebrew/bin/ttyd";
 let hydrated = false;
 
+// `listTtyd` is polled by several routes every few seconds and `spawnTtyd` sits on the
+// interactive "new terminal" path, so both are worth breaking into phases: a slow request
+// here is always one phase, never the whole function.
+//   PROFILE=ttyd,tmux tools dev-dashboard …
+const prof = profiler.scope("ttyd");
+
 function tmuxAlreadyOpenInTtyd(tmuxSessionName: string): boolean {
     for (const tracked of registry.values()) {
         if (tracked.session.tmuxSessionName === tmuxSessionName) {
@@ -57,20 +66,6 @@ function tmuxAlreadyOpenInTtyd(tmuxSessionName: string): boolean {
  * unrelated process that reused the PID. ttyd is spawned with a unique
  * `-b /ttyd/<id>` base path, so its argv carries the session id as a marker.
  */
-function processMatchesSession(session: TtydSession): boolean {
-    const result = Bun.spawnSync(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
-        stdio: ["ignore", "pipe", "ignore"],
-    });
-
-    if (result.exitCode !== 0) {
-        return false;
-    }
-
-    const cmd = result.stdout.toString().trim();
-
-    return cmd.includes("ttyd") && cmd.includes(`/ttyd/${session.id}`);
-}
-
 async function processMatchesSessionAsync(session: TtydSession): Promise<boolean> {
     const proc = Bun.spawn(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
         stdio: ["ignore", "pipe", "ignore"],
@@ -126,9 +121,11 @@ async function persistRegistry(): Promise<void> {
     }
 
     const all = Array.from(registry.values()).map((tracked) => tracked.session);
-    const alive = await isSessionAliveBatch(all);
+    const alive = await prof.measureAsync("persist.aliveBatch", () => isSessionAliveBatch(all));
     const sessions = all.filter((session) => alive.get(session.id) === true);
-    await saveTtydSessions(sessions);
+    // Re-reads the whole config off disk before writing it back; called once per spawn/kill
+    // AND once per renamed session inside the list hot path.
+    await prof.measureAsync("persist.saveConfig", () => saveTtydSessions(sessions));
 }
 
 async function hydrateRegistry(): Promise<void> {
@@ -195,7 +192,7 @@ async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
         return;
     }
 
-    if (!processMatchesSession(tracked.session)) {
+    if (!(await processMatchesSessionAsync(tracked.session))) {
         logger.debug({ id, pid: tracked.session.pid }, "ttyd pid no longer ours; skipping kill");
         return;
     }
@@ -212,58 +209,36 @@ async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
                     return;
                 }
 
-                const poll = (): void => {
+                const poll = async (): Promise<void> => {
                     try {
                         process.kill(pid, 0);
 
                         // A live PID isn't necessarily still ttyd — the OS can reuse a PID
                         // within the escalation grace window. Confirm ownership before
                         // continuing to treat it as the process we're waiting to exit.
-                        if (!processMatchesSession(tracked.session)) {
+                        if (!(await processMatchesSessionAsync(tracked.session))) {
                             listener();
                             return;
                         }
 
-                        setTimeout(poll, 200);
+                        setTimeout(() => void poll(), 200);
                     } catch (err) {
                         // ESRCH means the process is actually gone; anything else (e.g. EPERM,
                         // pid reused by a process we can't signal) means it's still alive.
                         if (err && typeof err === "object" && "code" in err && err.code === "ESRCH") {
                             listener();
                         } else {
-                            setTimeout(poll, 200);
+                            setTimeout(() => void poll(), 200);
                         }
                     }
                 };
 
-                poll();
+                void poll();
             },
         });
     } catch (err) {
         logger.debug({ err, id }, "ttyd process already gone");
     }
-}
-
-/**
- * ttyd's attach target is baked into argv at spawn (`tmux attach-session -t NAME`).
- * Renaming the tmux session (or only updating config.tmuxSessionName) leaves a live
- * ttyd forever trying the old name → "can't find session" + "Reconnecting…".
- * True when the live process cmdline still contains the expected session name.
- */
-function ttydProcessTargetsTmux(session: TtydSession, tmuxSessionName: string): boolean {
-    if (session.pid <= 0) {
-        return false;
-    }
-
-    const result = Bun.spawnSync(["/bin/ps", "-p", String(session.pid), "-o", "command="], {
-        stdio: ["ignore", "pipe", "ignore"],
-    });
-
-    if (result.exitCode !== 0) {
-        return false;
-    }
-
-    return argvTargetsTmux(result.stdout.toString(), tmuxSessionName);
 }
 
 /**
@@ -294,10 +269,10 @@ export function argvTargetsTmux(cmd: string, tmuxSessionName: string): boolean {
 }
 
 /**
- * Async sibling of ttydProcessTargetsTmux — the heal sweep runs one of these per
- * live session on `listTtyd()`, and listTtyd is polled by several routes. Serial
- * `Bun.spawnSync("/bin/ps")` there re-introduced exactly the blocking hot path
- * `isSessionAliveBatch` was written to remove (10.4ms serial vs 2.6ms parallel, n=11).
+ * ttyd's attach target is baked into argv at spawn (`tmux attach-session -t NAME`).
+ * Renaming the tmux session (or only updating config.tmuxSessionName) leaves a live
+ * ttyd forever trying the old name → "can't find session" + "Reconnecting…".
+ * True when the live process cmdline still contains the expected session name.
  */
 async function ttydProcessTargetsTmuxAsync(session: TtydSession, tmuxSessionName: string): Promise<boolean> {
     if (session.pid <= 0) {
@@ -455,27 +430,31 @@ async function waitForTtydListening(child: TtydChild, port: number): Promise<voi
  * across renames.
  */
 async function relaunchTtydAtTmux(tracked: Tracked, tmuxSessionName: string): Promise<void> {
+    // Split lock-wait from the work: queueing behind another caller's kill+relaunch is
+    // indistinguishable from a slow relaunch when only the route is timed.
+    const endLockWait = prof.start("relaunch.lockWait");
+
     return withTtydLifecycleLock(async () => {
+        endLockWait();
         const prev = tracked.session;
 
-        if (!sessionExists(tmuxSessionName)) {
+        if (!(await sessionExists(tmuxSessionName))) {
             throw new Error(`tmux session ${tmuxSessionName} does not exist`);
         }
 
         // A concurrent caller (heal + retarget, or two polling routes) may have
         // relaunched this session at the same target while we waited for the lock.
         // Replacing a healthy child would drop live websockets for nothing.
-        if (ttydProcessTargetsTmux(prev, tmuxSessionName)) {
+        if (await ttydProcessTargetsTmuxAsync(prev, tmuxSessionName)) {
             tracked.session = { ...prev, tmuxSessionName };
             registry.set(prev.id, tracked);
             logger.debug({ id: prev.id, tmuxSessionName }, "ttyd already targets this tmux session; skipping relaunch");
             return;
         }
 
-        ensureTmuxSessionEnvironment(tmuxSessionName);
-        ensureTmuxServerPersists();
+        await Promise.all([ensureTmuxSessionEnvironment(tmuxSessionName), ensureTmuxServerPersists()]);
 
-        await stopTtydProcess(tracked, prev.id);
+        await prof.measureAsync("relaunch.stopProcess", () => stopTtydProcess(tracked, prev.id));
 
         // Port may still be draining for a tick after kill; retry bind briefly.
         let lastErr: unknown;
@@ -497,7 +476,11 @@ async function relaunchTtydAtTmux(tracked: Tracked, tmuxSessionName: string): Pr
                 // that failure surfaces asynchronously, so without this probe the
                 // retry loop never retries and callers see a "successful" retarget
                 // pointing at a dead endpoint.
-                await waitForTtydListening(launched.child, prev.port);
+                //
+                // Worst case here is 8 attempts × TTYD_LISTEN_TIMEOUT_MS plus backoff, so a
+                // per-attempt timer is the difference between "ttyd is slow" and "attempt 6".
+                const spawnedChild = launched.child;
+                await prof.measureAsync("relaunch.waitListening", () => waitForTtydListening(spawnedChild, prev.port));
 
                 tracked.session = launched.session;
                 tracked.child = launched.child;
@@ -521,7 +504,7 @@ async function relaunchTtydAtTmux(tracked: Tracked, tmuxSessionName: string): Pr
 }
 
 export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
-    await hydrateRegistry();
+    await prof.measureAsync("spawn.hydrate", () => hydrateRegistry());
 
     if (!existsSync(TTYD_BIN)) {
         throw new Error(`ttyd not found at ${TTYD_BIN}`);
@@ -530,13 +513,13 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     const rawCommand = opts.command ?? env.paths.getShell("/bin/zsh");
     const command = rawCommand.trim().length > 0 && !rawCommand.includes("=") ? rawCommand.trim() : "/bin/zsh";
     const cwd = opts.cwd ?? process.cwd();
-    const port = await findFreePort();
+    const port = await prof.measureAsync("spawn.freePort", () => findFreePort());
     const id = randomUUID();
 
     let tmuxSessionName: string;
 
     if (opts.attachTmuxSession) {
-        if (!sessionExists(opts.attachTmuxSession)) {
+        if (!(await sessionExists(opts.attachTmuxSession))) {
             throw new Error(`tmux session ${opts.attachTmuxSession} does not exist`);
         }
 
@@ -546,21 +529,27 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
             throw err;
         }
 
-        tmuxSessionName = opts.attachTmuxSession;
-        ensureTmuxSessionEnvironment(tmuxSessionName);
-        // Re-pin the server even when attaching to a pre-existing session — it may
-        // have been bootstrapped (by an older dashboard) with exit-empty on.
-        ensureTmuxServerPersists();
+        const attachTo = opts.attachTmuxSession;
+        tmuxSessionName = attachTo;
+        await prof.measureAsync("spawn.tmuxAttachSetup", () =>
+            Promise.all([
+                ensureTmuxSessionEnvironment(attachTo),
+                // Re-pin the server even when attaching to a pre-existing session — it may
+                // have been bootstrapped (by an older dashboard) with exit-empty on.
+                ensureTmuxServerPersists(),
+            ])
+        );
     } else {
-        tmuxSessionName = makeTtydTmuxSessionName(id);
-        createTmuxSession(tmuxSessionName, cwd, command);
+        const created = makeTtydTmuxSessionName(id);
+        tmuxSessionName = created;
+        await prof.measureAsync("spawn.tmuxCreateSession", () => createTmuxSession(created, cwd, command));
     }
 
     const { session, child } = launchTtydChild({ id, port, cwd, command, tmuxSessionName });
 
     try {
         registry.set(id, { session, child });
-        await persistRegistry();
+        await prof.measureAsync("spawn.persist", () => persistRegistry());
     } catch (err) {
         registry.delete(id);
         await killWithEscalation(child);
@@ -575,14 +564,14 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
 
 /**
  * Config/registry can say `tmuxSessionName: "bridge"` while the live ttyd still
- * has `attach-session -t dev-dashboard-OLD` in argv (rename retarget used to only
+ * has `attach-session -t dd-OLD` in argv (rename retarget used to only
  * rewrite JSON). Heal by relaunching misaligned processes so list/UI recover without
  * a manual kill.
  */
 const HEAL_TTL_MS = 3000;
 let lastHealAt = 0;
 
-async function healStaleTtydTmuxTargets(): Promise<void> {
+async function healStaleTtydTmuxTargets(liveTmuxSessions: ReadonlySet<string>): Promise<void> {
     // Same reasoning as pruneDeadSessions' TTL: listTtyd is polled from several
     // routes every few seconds, and a stale attach target only appears on rename.
     if (Date.now() - lastHealAt < HEAL_TTL_MS) {
@@ -592,11 +581,14 @@ async function healStaleTtydTmuxTargets(): Promise<void> {
     lastHealAt = Date.now();
 
     // One `ps` per session, all in flight at once — never a serial blocking sweep.
+    // Existence checks reuse the caller's single list-sessions result: a per-binding
+    // `sessionExists` here was an N+1 subprocess storm (10 bindings = 10 extra
+    // full `tmux list-sessions` calls per poll).
     const candidates = await Promise.all(
         Array.from(registry.values()).map(async (tracked): Promise<Tracked | null> => {
             const expected = tracked.session.tmuxSessionName;
 
-            if (!expected || !sessionExists(expected)) {
+            if (!expected || !liveTmuxSessions.has(expected)) {
                 return null;
             }
 
@@ -651,20 +643,108 @@ async function healStaleTtydTmuxTargets(): Promise<void> {
 }
 
 export async function listTtyd(): Promise<TtydSession[]> {
-    await hydrateRegistry();
-    await pruneDeadSessions();
-    await healStaleTtydTmuxTargets();
+    await prof.measureAsync("list.hydrate", () => hydrateRegistry());
 
-    // Refresh each session's live `lastCommand` from its bound tmux session (one list-sessions call,
-    // shared across all sessions). Drives the auto-name; a manual `name` still wins downstream.
-    const commandByTmux = listTmuxSessionCommands();
+    // prune touches only ps + config; the tmux list touches only tmux — run them
+    // concurrently. (hydrate stays sequential: prune reads the hydrated registry.)
+    const [, panesByTmux] = await Promise.all([
+        prof.measureAsync("list.prune", () => pruneDeadSessions()),
+        // One list-sessions call serving THREE consumers: heal's existence set,
+        // syncNames' pane titles, and the lastCommand enrichment below.
+        prof.measureAsync("list.activePanes", () => listTmuxSessionActivePanes()),
+    ]);
+
+    await prof.measureAsync("list.heal", () => healStaleTtydTmuxTargets(new Set(panesByTmux.keys())));
+    // Can escalate into a tmux rename + full ttyd kill/relaunch inside this GET.
+    await prof.measureAsync("list.syncClaudeNames", () => syncNamesFromClaudePaneTitles(panesByTmux));
 
     return Array.from(registry.values()).map((tracked) => {
         const { session } = tracked;
-        const lastCommand = session.tmuxSessionName ? commandByTmux.get(session.tmuxSessionName) : undefined;
+        const pane = session.tmuxSessionName ? panesByTmux.get(session.tmuxSessionName) : undefined;
 
-        return { ...session, lastCommand };
+        return { ...session, lastCommand: pane?.command || undefined };
     });
+}
+
+/**
+ * Claude `/rename` only updates `#{pane_title}` (`✳ name`). Mirror that onto the real tmux
+ * session name + ttyd display label so Session Hub / tabs stay in sync.
+ */
+async function syncNamesFromClaudePaneTitles(
+    panesByTmux: Awaited<ReturnType<typeof listTmuxSessionActivePanes>>
+): Promise<void> {
+    // Snapshot first — retarget mutates registry bindings mid-loop.
+    const candidates = Array.from(registry.values())
+        .map((tracked) => {
+            const fromName = tracked.session.tmuxSessionName;
+
+            if (!fromName) {
+                return null;
+            }
+
+            const pane = panesByTmux.get(fromName);
+
+            if (!pane || !isClaudeForegroundCommand(pane.command)) {
+                return null;
+            }
+
+            const toName = parseClaudePaneTitle(pane.title);
+
+            if (!toName || toName === fromName) {
+                // Tmux already matches; still mirror a stale ttyd display name.
+                if (toName && tracked.session.name !== toName) {
+                    return { id: tracked.session.id, fromName, toName, renameTmux: false };
+                }
+
+                return null;
+            }
+
+            return { id: tracked.session.id, fromName, toName, renameTmux: true };
+        })
+        .filter((c): c is { id: string; fromName: string; toName: string; renameTmux: boolean } => c !== null);
+
+    if (candidates.length === 0) {
+        return;
+    }
+
+    for (const { id, fromName, toName, renameTmux } of candidates) {
+        try {
+            if (renameTmux) {
+                // The pane map's keys are the full live session-name set from this
+                // poll's single list-sessions — no extra tmux call for the clash check.
+                if (panesByTmux.has(toName)) {
+                    logger.debug(
+                        { id, fromName, toName },
+                        "claude pane title sync skipped: destination tmux session already exists"
+                    );
+                    continue;
+                }
+
+                await renameTmuxSession(fromName, toName);
+                await retargetTtydTmuxBindings(fromName, toName);
+
+                // Retarget updates bindings under the new name; refresh the pane map key for later reads.
+                const pane = panesByTmux.get(fromName);
+
+                if (pane) {
+                    panesByTmux.delete(fromName);
+                    panesByTmux.set(toName, pane);
+                }
+            }
+
+            const tracked = registry.get(id);
+
+            if (!tracked) {
+                continue;
+            }
+
+            tracked.session.name = toName;
+            await persistRegistry();
+            logger.info({ id, fromName, toName, renameTmux }, "synced tmux/ttyd name from Claude pane title (/rename)");
+        } catch (err) {
+            logger.debug({ err, id, fromName, toName }, "claude pane title sync failed");
+        }
+    }
 }
 
 /**
@@ -719,11 +799,67 @@ export async function renameTtyd(id: string, name: string): Promise<boolean> {
     }
 
     const trimmed = name.trim();
-    tracked.session.name = trimmed.length > 0 ? trimmed : undefined;
+
+    // Clearing the display name only — keep the tmux session (identity still derives from
+    // tmuxSessionName via deriveTtydDisplayName).
+    if (!trimmed) {
+        tracked.session.name = undefined;
+        await persistRegistry();
+        logger.info({ id, name: undefined }, "ttyd display name cleared");
+
+        return true;
+    }
+
+    const fromTmux = tracked.session.tmuxSessionName;
+
+    if (fromTmux && fromTmux !== trimmed) {
+        // One identity: tab rename = tmux rename. Retarget relaunches ttyd so attach argv tracks.
+        await renameTmuxSession(fromTmux, trimmed);
+        await retargetTtydTmuxBindings(fromTmux, trimmed);
+    }
+
+    const after = registry.get(id);
+
+    if (!after) {
+        return false;
+    }
+
+    after.session.name = trimmed;
     await persistRegistry();
-    logger.info({ id, name: tracked.session.name }, "ttyd renamed");
+    logger.info(
+        { id, name: trimmed, tmuxSessionName: after.session.tmuxSessionName },
+        "ttyd renamed (synced to tmux when bound)"
+    );
 
     return true;
+}
+
+/** After a hub-side tmux rename, mirror the new name onto every bound ttyd display label. */
+export async function syncTtydDisplayNamesForTmux(tmuxSessionName: string, displayName: string): Promise<void> {
+    await hydrateRegistry();
+
+    const trimmed = displayName.trim();
+    let changed = false;
+
+    for (const tracked of registry.values()) {
+        if (tracked.session.tmuxSessionName !== tmuxSessionName) {
+            continue;
+        }
+
+        const next = trimmed.length > 0 ? trimmed : undefined;
+
+        if (tracked.session.name === next) {
+            continue;
+        }
+
+        tracked.session.name = next;
+        changed = true;
+    }
+
+    if (changed) {
+        await persistRegistry();
+        logger.info({ tmuxSessionName, displayName: trimmed }, "synced ttyd display names after tmux rename");
+    }
 }
 
 export async function retargetTtydTmuxBindings(fromName: string, toName: string): Promise<void> {
@@ -776,7 +912,7 @@ export async function killTtyd(id: string, opts: KillTtydOptions = {}): Promise<
     await stopTtydProcess(tracked, id);
 
     if (opts.killTmux && tracked.session.tmuxSessionName) {
-        killTmuxSession(tracked.session.tmuxSessionName);
+        await killTmuxSession(tracked.session.tmuxSessionName);
     }
 
     registry.delete(id);

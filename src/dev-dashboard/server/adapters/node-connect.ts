@@ -2,6 +2,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RouteMatch, Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
+
+// Per-endpoint handler time, keyed by route pattern so `:id` routes aggregate.
+//   PROFILE=route,ttyd,tmux tools dev-dashboard …
+const prof = profiler.scope("route");
 
 async function readRawBytes(req: IncomingMessage): Promise<Uint8Array> {
     const chunks: Buffer[] = [];
@@ -118,7 +123,8 @@ export async function handleWithRouter(
         services: opts.services,
     };
 
-    const result = await matched.def.handler(ctx);
+    const label = `${matched.def.method} ${matched.def.pattern}`;
+    const result = await prof.measureAsync(label, async () => matched.def.handler(ctx));
     writeResult(res, result);
 
     return true;

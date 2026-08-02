@@ -8,7 +8,12 @@ import { fetchCmuxFullLayout } from "@genesiscz/utils/cmux/layout";
 import type { CmuxTmuxSurfaceRef } from "@genesiscz/utils/cmux/tmux-bindings";
 import { indexCmuxSurfacesByTmuxSession } from "@genesiscz/utils/cmux/tmux-bindings";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { listTmuxSessions } from "@genesiscz/utils/tmux/sessions";
+
+// The route-level timer (server/adapters/*) gives the total; this splits it into the two
+// halves that actually move — the optional cmux layout RPC and the ttyd list sweep.
+const prof = profiler.scope("route");
 
 export function tmuxRoutes(): RouteDef[] {
     return [
@@ -35,7 +40,9 @@ export function tmuxRoutes(): RouteDef[] {
                         // workspace/surface ids+titles, never `preview`. Capturing the visible
                         // screen of each selected surface (the default) added ~600ms to this
                         // endpoint on a 12-workspace machine.
-                        const layout = await fetchCmuxFullLayout({ includePreviews: false });
+                        const layout = await prof.measureAsync("tmux.cmuxLayout", () =>
+                            fetchCmuxFullLayout({ includePreviews: false })
+                        );
 
                         if (layout.available) {
                             cmuxBySession = indexCmuxSurfacesByTmuxSession(layout);
@@ -45,7 +52,11 @@ export function tmuxRoutes(): RouteDef[] {
                     }
                 }
 
-                const sessions = enrichSessionsForHub(listTmuxSessions(), await listTtyd(), cmuxBySession);
+                // Argument order preserved: `listTtyd()` can rename tmux sessions mid-call, and
+                // this list is deliberately the pre-rename snapshot.
+                const tmuxSessions = await prof.measureAsync("tmux.listSessions", () => listTmuxSessions());
+                const ttydSessions = await prof.measureAsync("tmux.listTtyd", () => listTtyd());
+                const sessions = enrichSessionsForHub(tmuxSessions, ttydSessions, cmuxBySession);
 
                 return { kind: "json", status: 200, body: { sessions } };
             },
@@ -57,7 +68,7 @@ export function tmuxRoutes(): RouteDef[] {
                 try {
                     const body = await ctx.readJson<{ name?: string; cwd?: string; command?: string }>();
 
-                    return { kind: "json", status: 200, body: createStandaloneTmuxSession(body) };
+                    return { kind: "json", status: 200, body: await createStandaloneTmuxSession(body) };
                 } catch (err) {
                     logger.warn({ err, route: "POST /api/tmux/create" }, "tmux hub: create session failed");
 

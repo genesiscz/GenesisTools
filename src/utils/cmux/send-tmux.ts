@@ -75,7 +75,7 @@ export async function attachTmuxToCmux({
     cwd,
     focus = true,
 }: AttachTmuxToCmuxOptions): Promise<AttachTmuxResult> {
-    if (!sessionExists(tmuxSessionName)) {
+    if (!(await sessionExists(tmuxSessionName))) {
         throw new Error(`tmux session ${tmuxSessionName} does not exist`);
     }
 

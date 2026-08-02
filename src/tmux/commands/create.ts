@@ -19,16 +19,16 @@ export function registerCreateCommand(program: Command): void {
         .option("-c, --cwd <path>", "Working directory (default: cwd)")
         .option("--command <shell>", "Command to run in the session (default: $SHELL)")
         .option("-a, --attach", "Attach to the new session immediately (foreground; needs a TTY)")
-        .action((flags: CreateFlags) => {
+        .action(async (flags: CreateFlags) => {
             const sessionName = flags.name?.trim() || makeStandaloneTmuxSessionName();
             const cwd = flags.cwd ?? process.cwd();
             const command = flags.command ?? env.paths.getShell("/bin/zsh");
 
-            if (sessionExists(sessionName)) {
+            if (await sessionExists(sessionName)) {
                 throw new Error(`tmux session ${sessionName} already exists`);
             }
 
-            createTmuxSession(sessionName, cwd, command);
+            await createTmuxSession(sessionName, cwd, command);
 
             if (!flags.attach) {
                 out.result({ sessionName, cwd, command });
