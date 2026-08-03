@@ -8,6 +8,14 @@ describe("parseClaudePaneTitle", () => {
         expect(parseClaudePaneTitle("* testt")).toBe("testt");
     });
 
+    test("accepts every animated braille spinner frame, not just U+2810", () => {
+        // Observed live: a running session's title read `⠂ ttyd-naming` (U+2802) and parsed as null,
+        // so the sync silently succeeded or failed depending on poll timing.
+        for (const marker of ["⠂", "⠈", "⠠", "⣾", "⠋", "⠿", "⠀"]) {
+            expect(parseClaudePaneTitle(`${marker} ttyd-naming`)).toBe("ttyd-naming");
+        }
+    });
+
     test("keeps multi-word titles and sanitizes colons", () => {
         expect(parseClaudePaneTitle("✳ Debug formatting: spacing")).toBe("Debug formatting- spacing");
     });

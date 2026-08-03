@@ -184,9 +184,13 @@ function SessionRow({
 }) {
     const alreadyInTtyd = (session.ttydTabs?.length ?? session.ttydTabIds.length) > 0;
     const primaryTab = session.ttydTabs?.[0];
-    const cwd = primaryTab?.cwd;
-    const lastCommand = primaryTab?.lastCommand;
+    // Fall back to tmux's own active-pane facts. Reading these only off the ttyd binding left every
+    // unbound session (a plain `tools tmux create`) rendering as a bare name with no meta at all.
+    const cwd = primaryTab?.cwd ?? session.cwd;
+    const lastCommand = primaryTab?.lastCommand ?? session.command;
     const shortCwd = cwd ? shortenPath(cwd) : null;
+    const topic = claudeTopicFromTitle(session.title);
+    const idleFor = session.lastActivity ? formatSinceSeconds(session.lastActivity) : null;
 
     return (
         <BezelCard
@@ -211,9 +215,15 @@ function SessionRow({
                         {session.inCmux && session.cmuxSurfaces.length > 0
                             ? ` · cmux ×${session.cmuxSurfaces.length}`
                             : ""}
+                        {idleFor ? ` · active ${idleFor} ago` : ""}
                     </p>
+                    {topic ? (
+                        <p className="truncate font-mono text-[10px] text-emerald-300/80" title={session.title}>
+                            {topic}
+                        </p>
+                    ) : null}
                     {shortCwd || lastCommand ? (
-                        <p className="truncate font-mono text-[10px] text-zinc-400">
+                        <p className="truncate font-mono text-[10px] text-zinc-400" title={cwd}>
                             {lastCommand ? <span className="text-amber-400/90">{lastCommand}</span> : null}
                             {lastCommand && shortCwd ? <span className="text-zinc-600"> · </span> : null}
                             {shortCwd ? <span>{shortCwd}</span> : null}
@@ -264,6 +274,45 @@ function SessionRow({
             </div>
         </BezelCard>
     );
+}
+
+/**
+ * The Claude topic out of a raw `#{pane_title}`, or null for a shell's own title (hostname, cwd).
+ * Client-side twin of the server's `parseClaudePaneTitle` — kept separate because that module is
+ * server-only and this is display-only (no name promotion, so a looser read is safe here).
+ */
+function claudeTopicFromTitle(title: string | undefined): string | null {
+    if (!title) {
+        return null;
+    }
+
+    // `✳` while working, otherwise an animated Braille spinner frame (U+2800–U+28FF).
+    const match = title.trim().match(/^[✳*⠀-⣿]\s*(.+)$/u);
+    const topic = match?.[1]?.trim();
+
+    return topic && topic.toLowerCase() !== "claude code" ? topic : null;
+}
+
+function formatSinceSeconds(unixSeconds: number): string | null {
+    const seconds = Math.floor(Date.now() / 1000) - unixSeconds;
+
+    if (!Number.isFinite(seconds) || seconds < 0) {
+        return null;
+    }
+
+    if (seconds < 60) {
+        return `${seconds}s`;
+    }
+
+    if (seconds < 3600) {
+        return `${Math.floor(seconds / 60)}m`;
+    }
+
+    if (seconds < 86_400) {
+        return `${Math.floor(seconds / 3600)}h`;
+    }
+
+    return `${Math.floor(seconds / 86_400)}d`;
 }
 
 function shortenPath(path: string): string {

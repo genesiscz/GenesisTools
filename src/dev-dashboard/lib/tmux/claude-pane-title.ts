@@ -1,10 +1,15 @@
 /**
- * Claude Code sets the tmux pane title via OSC to `✳ <name>` (working) or `⠐ <name>` (idle)
- * after `/rename`. Strip that marker so we can mirror the name onto the tmux session + ttyd tab.
+ * Claude Code sets the tmux pane title via OSC to `<marker> <name>`. Strip the marker so we can
+ * mirror the name onto the tmux session + ttyd tab.
+ *
+ * The marker is `✳` while working, and otherwise an ANIMATED BRAILLE SPINNER FRAME — not a single
+ * fixed glyph. Matching only `⠐` (U+2810) made the sync succeed or fail depending on which frame
+ * happened to be current at poll time: a live session observed here read `⠂ ttyd-naming` (U+2802)
+ * and parsed as null. Accept the whole Braille Patterns block (U+2800–U+28FF).
  *
  * @see src/cmux/docs/Cmux.md — same title convention on cmux surfaces.
  */
-const CLAUDE_PANE_TITLE_RE = /^[✳⠐*]\s*(.+)$/u;
+const CLAUDE_PANE_TITLE_RE = /^[✳*⠀-⣿]\s*(.+)$/u;
 
 /** Stock title before the user runs `/rename` — never promote this to a session name. */
 const CLAUDE_DEFAULT_TITLES = new Set(["claude code", "claude"]);

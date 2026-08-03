@@ -180,11 +180,23 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
         return [];
     }
 
+    // Every extra field here is a format column on the SAME call, not another round-trip, so the
+    // richer payload is free. `pane_title` is last because it is the only field that can itself
+    // contain arbitrary user text.
     const result = await runTmux([
         tmuxBin,
         "list-sessions",
         "-F",
-        "#{session_name}\t#{session_attached}\t#{session_windows}",
+        [
+            "#{session_name}",
+            "#{session_attached}",
+            "#{session_windows}",
+            "#{pane_current_command}",
+            "#{pane_current_path}",
+            "#{session_created}",
+            "#{session_activity}",
+            "#{pane_title}",
+        ].join("\t"),
     ]);
 
     if (result.exitCode !== 0) {
@@ -194,20 +206,29 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
     const sessions: TmuxSessionInfo[] = [];
 
     for (const line of result.stdout.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) {
+        const trimmed = line.trimEnd();
+        if (!trimmed.trim()) {
             continue;
         }
 
-        const [name, attachedRaw, windowsRaw] = trimmed.split("\t");
+        const [name, attachedRaw, windowsRaw, command, cwd, createdRaw, activityRaw, ...titleParts] =
+            trimmed.split("\t");
         if (!name) {
             continue;
         }
+
+        const created = Number.parseInt(createdRaw ?? "", 10);
+        const lastActivity = Number.parseInt(activityRaw ?? "", 10);
 
         sessions.push({
             name,
             attached: Number.parseInt(attachedRaw ?? "0", 10) || 0,
             windows: Number.parseInt(windowsRaw ?? "0", 10) || 0,
+            command: command?.trim() || undefined,
+            cwd: cwd?.trim() || undefined,
+            title: titleParts.join("\t").trim() || undefined,
+            created: Number.isFinite(created) ? created : undefined,
+            lastActivity: Number.isFinite(lastActivity) ? lastActivity : undefined,
         });
     }
 
