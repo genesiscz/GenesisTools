@@ -12,6 +12,12 @@ describe("parseClaudePaneTitle", () => {
         expect(parseClaudePaneTitle("✳ Debug formatting: spacing")).toBe("Debug formatting- spacing");
     });
 
+    test("sanitizes dots — tmux target-syntax separators that 3.6a silently munges to _ on rename", () => {
+        expect(parseClaudePaneTitle("✳ Fix v1.2 bug")).toBe("Fix v1-2 bug");
+        // Unicode ellipsis is NOT a dot — Claude's truncated auto-topic titles keep it.
+        expect(parseClaudePaneTitle("✳ Analyze slow HAR file load…")).toBe("Analyze slow HAR file load…");
+    });
+
     test("rejects non-Claude titles and the stock default", () => {
         expect(parseClaudePaneTitle("zsh")).toBeNull();
         expect(parseClaudePaneTitle("/Users/me/proj")).toBeNull();

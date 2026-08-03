@@ -26,8 +26,10 @@ export function parseClaudePaneTitle(title: string | undefined | null): string |
         return null;
     }
 
-    // tmux session names cannot contain `:`. Collapse whitespace; keep the rest.
-    const name = match[1].replace(/:/g, "-").replace(/\s+/g, " ").trim();
+    // tmux session names cannot contain `:` or `.` — both are target-syntax separators.
+    // tmux 3.6a even silently munges a renamed session's dots to `_`, which would desync
+    // the stored binding name from the real session. Collapse whitespace; keep the rest.
+    const name = match[1].replace(/[:.]/g, "-").replace(/\s+/g, " ").trim();
 
     if (!name || CLAUDE_DEFAULT_TITLES.has(name.toLowerCase())) {
         return null;
