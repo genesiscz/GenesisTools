@@ -189,7 +189,9 @@ function SessionRow({
     const cwd = primaryTab?.cwd ?? session.cwd;
     const lastCommand = primaryTab?.lastCommand ?? session.command;
     const shortCwd = cwd ? shortenPath(cwd) : null;
-    const topic = claudeTopicFromTitle(session.title);
+    // Prefer the server-parsed topic from the bound ttyd; fall back to parsing tmux's raw
+    // pane title so unbound sessions (a plain `tools tmux create`) show it too.
+    const topic = primaryTab?.title ?? claudeTopicFromTitle(session.title);
     const idleFor = session.lastActivity ? formatSinceSeconds(session.lastActivity) : null;
 
     return (

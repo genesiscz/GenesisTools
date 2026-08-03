@@ -17,6 +17,12 @@ export interface TtydSession {
      * a tmux binding exists. NOT persisted — derived live fact, recomputed each read.
      */
     lastCommand?: string;
+    /**
+     * Claude Code's live topic from `#{pane_title}`, marker stripped. Informational ONLY: it is
+     * never promoted into `name`, because auto-topics and `/rename` are indistinguishable on the
+     * wire and promoting them destroyed manual names. NOT persisted — recomputed each read.
+     */
+    title?: string;
 }
 
 export type SplitNode =

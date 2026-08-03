@@ -40,6 +40,7 @@ export interface TmuxHubSession {
         label: string;
         cwd?: string;
         lastCommand?: string;
+        title?: string;
     }>;
     canAttachInTtyd: boolean;
     cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;

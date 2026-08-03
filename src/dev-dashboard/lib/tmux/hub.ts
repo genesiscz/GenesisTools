@@ -5,9 +5,12 @@ import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 export interface TtydHubTab {
     id: string;
     port: number;
+    /** Identity. Never Claude's topic — see the name-vs-title note in ttyd/manager.ts. */
     label: string;
     cwd?: string;
     lastCommand?: string;
+    /** Claude's live topic, shown alongside the label rather than replacing it. */
+    title?: string;
 }
 
 export interface TmuxHubSession extends TmuxSessionInfo {
@@ -26,6 +29,7 @@ interface TtydBinding {
     tmuxSessionName?: string;
     name?: string;
     lastCommand?: string;
+    title?: string;
 }
 
 export function enrichSessionsForHub(
@@ -46,6 +50,7 @@ export function enrichSessionsForHub(
             label: ttydLabel(ttyd),
             cwd: ttyd.cwd,
             lastCommand: ttyd.lastCommand,
+            title: ttyd.title,
         };
         const existing = ttydByTmux.get(ttyd.tmuxSessionName) ?? [];
         existing.push(tab);

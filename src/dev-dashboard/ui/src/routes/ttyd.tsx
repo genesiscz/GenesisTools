@@ -400,6 +400,7 @@ export function TtydRoute() {
                             return (
                                 <MosaicWindow<string>
                                     path={path}
+                                    // Name wins in the topbar; Claude's live topic is separate meta.
                                     title={ttydLabel(session)}
                                     additionalControls={null}
                                     toolbarControls={

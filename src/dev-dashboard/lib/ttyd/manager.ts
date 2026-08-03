@@ -19,6 +19,7 @@ import {
     listTmuxSessionActivePanes,
     renameTmuxSession,
     sessionExists,
+    type TmuxActivePaneInfo,
 } from "@genesiscz/utils/tmux/sessions";
 import type { Subprocess } from "bun";
 
@@ -655,96 +656,39 @@ export async function listTtyd(): Promise<TtydSession[]> {
     ]);
 
     await prof.measureAsync("list.heal", () => healStaleTtydTmuxTargets(new Set(panesByTmux.keys())));
-    // Can escalate into a tmux rename + full ttyd kill/relaunch inside this GET.
-    await prof.measureAsync("list.syncClaudeNames", () => syncNamesFromClaudePaneTitles(panesByTmux));
 
     return Array.from(registry.values()).map((tracked) => {
         const { session } = tracked;
         const pane = session.tmuxSessionName ? panesByTmux.get(session.tmuxSessionName) : undefined;
 
-        return { ...session, lastCommand: pane?.command || undefined };
+        return {
+            ...session,
+            lastCommand: pane?.command || undefined,
+            title: claudeTopicForPane(pane) ?? undefined,
+        };
     });
 }
 
 /**
- * Claude `/rename` only updates `#{pane_title}` (`✳ name`). Mirror that onto the real tmux
- * session name + ttyd display label so Session Hub / tabs stay in sync.
+ * NAME vs TITLE. These are two different things and neither may overwrite the other:
+ *
+ *   - `name` is IDENTITY. It comes from the tmux session name or an explicit rename (tab pencil,
+ *     hub rename, cmux rename) and is what every surface labels the session with.
+ *   - `title` is Claude Code's live topic, read off `#{pane_title}`. It is a derived, ephemeral
+ *     fact — Claude re-summarizes mid-session and animates a spinner marker in front of it.
+ *
+ * This used to promote the title INTO the name (renaming the real tmux session and rewriting
+ * `session.name`), which silently destroyed manual names: a tab renamed "aaa" came back as
+ * "testt" the moment Claude re-emitted its topic. Auto-topics and `/rename` ride the exact same
+ * OSC escape, so there is no way to honour only the deliberate ones. Surface the topic alongside
+ * the name instead and let the name win wherever a single label is shown.
  */
-async function syncNamesFromClaudePaneTitles(
-    panesByTmux: Awaited<ReturnType<typeof listTmuxSessionActivePanes>>
-): Promise<void> {
-    // Snapshot first — retarget mutates registry bindings mid-loop.
-    const candidates = Array.from(registry.values())
-        .map((tracked) => {
-            const fromName = tracked.session.tmuxSessionName;
-
-            if (!fromName) {
-                return null;
-            }
-
-            const pane = panesByTmux.get(fromName);
-
-            if (!pane || !isClaudeForegroundCommand(pane.command)) {
-                return null;
-            }
-
-            const toName = parseClaudePaneTitle(pane.title);
-
-            if (!toName || toName === fromName) {
-                // Tmux already matches; still mirror a stale ttyd display name.
-                if (toName && tracked.session.name !== toName) {
-                    return { id: tracked.session.id, fromName, toName, renameTmux: false };
-                }
-
-                return null;
-            }
-
-            return { id: tracked.session.id, fromName, toName, renameTmux: true };
-        })
-        .filter((c): c is { id: string; fromName: string; toName: string; renameTmux: boolean } => c !== null);
-
-    if (candidates.length === 0) {
-        return;
+function claudeTopicForPane(pane: TmuxActivePaneInfo | undefined): string | null {
+    if (!pane || !isClaudeForegroundCommand(pane.command)) {
+        return null;
     }
 
-    for (const { id, fromName, toName, renameTmux } of candidates) {
-        try {
-            if (renameTmux) {
-                // The pane map's keys are the full live session-name set from this
-                // poll's single list-sessions — no extra tmux call for the clash check.
-                if (panesByTmux.has(toName)) {
-                    logger.debug(
-                        { id, fromName, toName },
-                        "claude pane title sync skipped: destination tmux session already exists"
-                    );
-                    continue;
-                }
-
-                await renameTmuxSession(fromName, toName);
-                await retargetTtydTmuxBindings(fromName, toName);
-
-                // Retarget updates bindings under the new name; refresh the pane map key for later reads.
-                const pane = panesByTmux.get(fromName);
-
-                if (pane) {
-                    panesByTmux.delete(fromName);
-                    panesByTmux.set(toName, pane);
-                }
-            }
-
-            const tracked = registry.get(id);
-
-            if (!tracked) {
-                continue;
-            }
-
-            tracked.session.name = toName;
-            await persistRegistry();
-            logger.info({ id, fromName, toName, renameTmux }, "synced tmux/ttyd name from Claude pane title (/rename)");
-        } catch (err) {
-            logger.debug({ err, id, fromName, toName }, "claude pane title sync failed");
-        }
-    }
+    return parseClaudePaneTitle(pane.title);
 }
 
 /**
