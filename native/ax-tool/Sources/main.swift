@@ -897,7 +897,13 @@ func cmdWindow(appName: String) {
             let _ = performActionWithTimeout(w, action: "AXZoomWindow" as String, timeoutMs: 2000)
             jsonOutput(["ok": true, "action": "maximize", "window": title])
         case "close":
-            let _ = performActionWithTimeout(w, action: "AXRaise" as String, timeoutMs: 1000)
+            // `--no-raise`: close without pulling the window forward first.
+            // Raising to close is a visible disturbance for something the user
+            // never asked to see, and AXPress on the close button works fine
+            // on a background window.
+            if !args.contains("--no-raise") {
+                let _ = performActionWithTimeout(w, action: "AXRaise" as String, timeoutMs: 1000)
+            }
             for child in axChildren(w) {
                 if axStringAttribute(child, "AXSubrole") == "AXCloseButton" {
                     let _ = performActionWithTimeout(child, action: kAXPressAction as String)
@@ -945,7 +951,16 @@ func cmdWindow(appName: String) {
 
 func cmdFocus(appName: String) {
     let pid = resolveApp(appName)
-    _ = bringFrontmost(pid)
+    // `--no-activate`: set AXFocused WITHOUT raising the app.
+    //
+    // Activating is right for an operator tool — you asked it to focus
+    // something and you are watching. It is wrong for anything running while
+    // the user works: this call was the single largest source of stolen
+    // windows in an automated run, because focusing an element does not
+    // actually require owning the keyboard.
+    if !args.contains("--no-activate") {
+        _ = bringFrontmost(pid)
+    }
 
     let app = AXUIElementCreateApplication(pid)
     let hasTarget = argValue("--id") != nil || argValue("--role") != nil ||
@@ -990,9 +1005,9 @@ func postClick(at point: CGPoint, right: Bool, double: Bool) {
                                 mouseCursorPosition: point, mouseButton: button) else { return }
         down.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
         up.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
-        down.post(tap: .cghidEventTap)
+        down.postRouted()
         Thread.sleep(forTimeInterval: 0.03)
-        up.post(tap: .cghidEventTap)
+        up.postRouted()
         if double && i == 0 { Thread.sleep(forTimeInterval: 0.03) }
     }
 }
@@ -1066,8 +1081,8 @@ func typeString(_ text: String, delayMs: Double) {
               let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else { continue }
         down.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
         up.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+        down.postRouted()
+        up.postRouted()
         Thread.sleep(forTimeInterval: delayMs / 1000)
     }
 }
@@ -1077,7 +1092,7 @@ func tapKey(_ code: UInt16, flags: CGEventFlags = []) {
     guard let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true),
           let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false) else { return }
     d.flags = flags; u.flags = flags
-    d.post(tap: .cghidEventTap); u.post(tap: .cghidEventTap)
+    d.postRouted(); u.postRouted()
 }
 
 func cmdTypeText(appName: String, text: String) {
@@ -1320,7 +1335,7 @@ func cmdScroll(appName: String) {
         errorExit("failed to create scroll event")
     }
     if let p = point { ev.location = p }
-    ev.post(tap: .cghidEventTap)
+    ev.postRouted()
     var result: [String: Any] = ["ok": true, "action": "scroll", "method": "wheel",
                                   "direction": direction!, "amount": amount]
     if let p = point { result["x"] = p.x; result["y"] = p.y }
@@ -1714,9 +1729,9 @@ func cmdHotkey(keys: String) {
     }
     down.flags = flags
     up.flags = flags
-    down.post(tap: .cghidEventTap)
+    down.postRouted()
     Thread.sleep(forTimeInterval: holdMs / 1000)
-    up.post(tap: .cghidEventTap)
+    up.postRouted()
 
     jsonOutput(["ok": true, "action": "hotkey", "keys": keys])
 }
@@ -2278,6 +2293,200 @@ guard let appName = argValue("--app") else {
     errorExit("--app <name> required")
 }
 
+// MARK: - Harness primitives (ported from Genesis scripts/ui/lib/axquery.swift)
+//
+// These four exist because a TEST needs different things from an operator tool.
+// `tree` answers "what is there"; a sweep needs "where is it, is it enabled,
+// which window owns it, is it actually on screen, and what does it look like".
+// All are generic macOS AX capabilities with no Genesis knowledge in them.
+
+/// Route a synthetic event to a specific PROCESS when `--to-pid` is given.
+///
+/// The default `.cghidEventTap` is the global HID tap: it goes to whatever app
+/// owns the keyboard, which for an unattended agent means it can type into the
+/// user's editor. `postToPid` cannot leave the target process. This is the
+/// single most valuable thing to have available here.
+extension CGEvent {
+    func postRouted() {
+        if let raw = argValue("--to-pid"), let pid = pid_t(raw) {
+            self.postToPid(pid)
+        } else {
+            self.post(tap: .cghidEventTap)
+        }
+    }
+}
+
+/// `Int(someCGFloat)` TRAPS on NaN/infinite input, and AX hands out both for
+/// detached or not-yet-laid-out elements. A whole-tree walk hits one eventually
+/// — this crashed the original with SIGTRAP (exit 133) on its first real run.
+func axPx(_ v: CGFloat) -> Int {
+    guard v.isFinite else { return 0 }
+    return Int(min(max(v.rounded(), -1_000_000), 1_000_000))
+}
+
+func axFrame(_ el: AXUIElement) -> CGRect {
+    var pos = CGPoint.zero
+    var size = CGSize.zero
+    if let pv = axAttribute(el, kAXPositionAttribute as String), CFGetTypeID(pv) == AXValueGetTypeID() {
+        AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+    }
+    if let sv = axAttribute(el, kAXSizeAttribute as String), CFGetTypeID(sv) == AXValueGetTypeID() {
+        AXValueGetValue(sv as! AXValue, .cgSize, &size)
+    }
+    return CGRect(origin: pos, size: size)
+}
+
+func printJSON(_ object: Any, fallback: String) {
+    if let data = try? JSONSerialization.data(withJSONObject: object),
+       let text = String(data: data, encoding: .utf8) {
+        print(text)
+    } else {
+        print(fallback)
+    }
+}
+
+/// Whole addressable surface in ONE process: flat elements with geometry,
+/// enabled state, owning window and scroll-clip visibility.
+///
+/// `tree` returns nested id/role/title/value and no geometry at all, so no
+/// geometric assertion can be written against it: do two controls overlap, is
+/// a control outside its own window, did a container identifier swallow its
+/// children (detectable by frame containment), is a labelled control actually
+/// on screen. Flat + `win` index is what lets one call answer those.
+func cmdDump(appName: String) {
+    let pid = resolveApp(appName)
+    let app = AXUIElementCreateApplication(pid)
+    var windowDicts: [[String: Any]] = []
+    var elementDicts: [[String: Any]] = []
+
+    for (index, w) in axWindows(app).enumerated() {
+        let wf = axFrame(w)
+        windowDicts.append([
+            "title": axStringAttribute(w, kAXTitleAttribute as String) ?? "",
+            "x": axPx(wf.origin.x), "y": axPx(wf.origin.y),
+            "w": axPx(wf.width), "h": axPx(wf.height),
+        ])
+        // Track the nearest AXScrollArea ancestor so a caller can tell a
+        // genuinely visible element from one the scroll view is CLIPPING. AX
+        // reports a row's full frame even when it is scrolled out of sight,
+        // which made a geometry sweep report a footer "overlapping" the last
+        // row's buttons — the row is not on screen there at all.
+        func walkClipped(_ el: AXUIElement, clip: CGRect?, depth: Int = 0) {
+            guard depth < 80 else { return }
+            let role = axStringAttribute(el, kAXRoleAttribute as String) ?? ""
+            let f = axFrame(el)
+            var childClip = clip
+            if role == "AXScrollArea" {
+                childClip = clip.map { $0.intersection(f) } ?? f
+            }
+            let id = axStringAttribute(el, "AXIdentifier") ?? ""
+            let title = axStringAttribute(el, kAXTitleAttribute as String) ?? ""
+            let desc = axStringAttribute(el, kAXDescriptionAttribute as String) ?? ""
+            let value = axStringAttribute(el, kAXValueAttribute as String) ?? ""
+            if !(id.isEmpty && title.isEmpty && desc.isEmpty && value.isEmpty) {
+                var enabled = true
+                if let e = axAttribute(el, kAXEnabledAttribute as String) as? NSNumber { enabled = e.boolValue }
+                // Visible = the element's centre lies inside every scroll clip
+                // above it. Centre, not full containment, so a row straddling
+                // the edge counts as visible while a fully scrolled-off one
+                // does not.
+                var visible = true
+                if let c = clip, f.width > 0, f.height > 0 {
+                    visible = c.contains(CGPoint(x: f.midX, y: f.midY))
+                }
+                elementDicts.append([
+                    "id": id, "role": role,
+                    "title": title, "desc": desc, "value": value,
+                    "enabled": enabled, "visible": visible,
+                    "x": axPx(f.origin.x), "y": axPx(f.origin.y),
+                    "w": axPx(f.width), "h": axPx(f.height),
+                    "win": index,
+                ])
+            }
+            for c in axChildren(el) { walkClipped(c, clip: childClip, depth: depth + 1) }
+        }
+        walkClipped(w, clip: nil)
+    }
+    printJSON(["windows": windowDicts, "elements": elementDicts],
+              fallback: "{\"windows\":[],\"elements\":[]}")
+}
+
+/// Rendered font and colour for every static text, from
+/// AXAttributedStringForRange. No screenshots, no OCR, no golden images.
+///
+/// This is how "is any label too small to read" and "is any text nearly
+/// invisible" become assertable at all: the values are what the app ACTUALLY
+/// rendered, theme and Dynamic Type included.
+func cmdTypography(appName: String) {
+    let pid = resolveApp(appName)
+    let app = AXUIElementCreateApplication(pid)
+    var out: [[String: Any]] = []
+
+    func walk(_ el: AXUIElement, depth: Int = 0) {
+        guard depth < 80 else { return }
+        if axStringAttribute(el, kAXRoleAttribute as String) == "AXStaticText",
+           let value = axStringAttribute(el, kAXValueAttribute as String), !value.isEmpty {
+            // Do NOT gate on kAXNumberOfCharacters: SwiftUI text elements often
+            // omit it while still answering the parameterized attribute, and
+            // gating on it returned zero labels for an entire app.
+            var range = CFRange(location: 0, length: 1)
+            if let axRange = AXValueCreate(.cfRange, &range) {
+                var attributed: CFTypeRef?
+                if AXUIElementCopyParameterizedAttributeValue(
+                    el, kAXAttributedStringForRangeParameterizedAttribute as CFString,
+                    axRange, &attributed) == .success,
+                    let text = attributed as? NSAttributedString, text.length > 0 {
+                    let attrs = text.attributes(at: 0, effectiveRange: nil)
+                    var fontName = ""
+                    var fontSize = 0.0
+                    if let fontInfo = attrs[NSAttributedString.Key("AXFont")] as? [String: Any] {
+                        fontName = (fontInfo["AXFontName"] as? String) ?? ""
+                        fontSize = (fontInfo["AXFontSize"] as? Double) ?? 0
+                    }
+                    var rgba: [Double] = []
+                    if let colorRef = attrs[NSAttributedString.Key("AXForegroundColor")] {
+                        let cg = colorRef as! CGColor
+                        rgba = (cg.components ?? []).map { Double($0) }
+                    }
+                    out.append([
+                        "value": String(value.prefix(80)),
+                        "font": fontName, "size": fontSize, "rgba": rgba,
+                    ])
+                }
+            }
+        }
+        for c in axChildren(el) { walk(c, depth: depth + 1) }
+    }
+    for w in axWindows(app) { walk(w) }
+    printJSON(out, fallback: "[]")
+}
+
+/// Which element does the system actually deliver a click at this point to?
+///
+/// An id existing in the tree does NOT mean a user can reach it: a sheet, an
+/// overlay or a sibling drawn on top swallows the click while every id
+/// assertion still passes. Walks up to the nearest identified ancestor,
+/// because SwiftUI leaves the id on the control while the click lands on an
+/// inner text or image child.
+func cmdHitTest(x: Double, y: Double) {
+    let systemWide = AXUIElementCreateSystemWide()
+    var hit: AXUIElement?
+    guard AXUIElementCopyElementAtPosition(systemWide, Float(x), Float(y), &hit) == .success,
+          let hitEl = hit else { errorExit("no element at \(x),\(y)") }
+
+    var cursor: AXUIElement? = hitEl
+    var found = ""
+    var role = ""
+    var hops = 0
+    while let c = cursor, hops < 8 {
+        if role.isEmpty { role = axStringAttribute(c, kAXRoleAttribute as String) ?? "" }
+        if let id = axStringAttribute(c, "AXIdentifier"), !id.isEmpty { found = id; break }
+        cursor = axAttribute(c, kAXParentAttribute as String).map { $0 as! AXUIElement }
+        hops += 1
+    }
+    jsonOutput(["ok": true, "x": x, "y": y, "axId": found, "role": role, "hops": hops])
+}
+
 let maxDepth = Int(argValue("--depth") ?? "10") ?? 10
 
 switch command {
@@ -2317,6 +2526,16 @@ case "scroll":
 case "type":
     guard let text = argValue("--text") else { errorExit("--text required") }
     cmdTypeText(appName: appName, text: text)
+case "dump":
+    cmdDump(appName: appName)
+case "typography":
+    cmdTypography(appName: appName)
+case "hittest":
+    guard let raw = argValue("--at"), case let parts = raw.split(separator: ","), parts.count == 2,
+          let hx = Double(parts[0]), let hy = Double(parts[1]) else {
+        errorExit("hittest requires --at <x,y>")
+    }
+    cmdHitTest(x: hx, y: hy)
 case "preflight":
     cmdPreflight(appName: appName, maxDepth: maxDepth)
 case "ocr":
@@ -2325,5 +2544,5 @@ case "screenshot":
     guard let path = argValue("--path") else { errorExit("--path <file.png> required") }
     cmdScreenshot(appName: appName, path: path)
 default:
-    errorExit("unknown command: \(command). Use: list, tree, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, snapshot, restore, record")
+    errorExit("unknown command: \(command). Use: list, tree, dump, typography, hittest, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, snapshot, restore, record")
 }
