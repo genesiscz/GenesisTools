@@ -29,10 +29,7 @@ const UNUSABLE_PLANS = new Set(["claude_free"]);
  * checked, profile unreachable) count as usable: a launch gate must never
  * block on missing data.
  */
-export function planAllowsClaudeCode(entry: {
-    subscriptionPlan?: string;
-    subscriptionStatus?: string;
-}): boolean {
+export function planAllowsClaudeCode(entry: { subscriptionPlan?: string; subscriptionStatus?: string }): boolean {
     if (entry.subscriptionPlan && UNUSABLE_PLANS.has(entry.subscriptionPlan)) {
         return false;
     }
@@ -52,7 +49,9 @@ export async function ensureSubscriptionAnchors(config: AIConfig, accounts: AIAc
     const due = accounts.filter(
         (a) =>
             !failedAnchors.has(a.name) &&
-            (!a.subscriptionCreatedAt || !a.subscriptionCheckedAt || now - a.subscriptionCheckedAt > SUBSCRIPTION_RECHECK_MS)
+            (!a.subscriptionCreatedAt ||
+                !a.subscriptionCheckedAt ||
+                now - a.subscriptionCheckedAt > SUBSCRIPTION_RECHECK_MS)
     );
 
     if (due.length === 0) {
