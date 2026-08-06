@@ -10,6 +10,7 @@ import {
     weeklyStatusForAccount,
 } from "@app/claude/lib/usage/fable-guard";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
+import { pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
@@ -498,6 +499,46 @@ function scoredHint(account: ScoredAccount): string {
     return account.dataNote ? `${account.why} ${pc.yellow(`[${account.dataNote}]`)}` : account.why;
 }
 
+/**
+ * `cc opus` / `cc fable` let the usage data choose the account (rules in
+ * lib/usage/smart-alias.ts) and print what was picked plus the headroom it was
+ * picked on. Returns null when nothing qualifies, so the caller falls back to
+ * the picker: an alias never blocks a launch.
+ */
+async function resolveSmartAlias(
+    alias: SmartAlias,
+    withToken: AIAccountEntry[],
+    modelId: string | undefined
+): Promise<string | null> {
+    const scored = await scoreTokenAccounts(withToken, modelId);
+
+    if (!scored) {
+        out.printlnErr(pc.yellow("Usage data unavailable — picking manually:"));
+        return null;
+    }
+
+    const pick = pickSmart(alias, scored);
+
+    if (!pick) {
+        out.printlnErr(
+            pc.yellow(
+                alias === "fable"
+                    ? "No account has Fable headroom right now — picking manually:"
+                    : "No account has usable weekly headroom right now — picking manually:"
+            )
+        );
+        return null;
+    }
+
+    if (pick.warning) {
+        out.printlnErr(pc.yellow(`⚠ ${pick.warning}`));
+    }
+
+    out.printlnErr(`${pc.cyan("▸")} ${pc.bold(alias)} → ${pick.line}`);
+
+    return pick.accountName;
+}
+
 /** Plain alphabetical select — fallback when usage data is unavailable. */
 async function plainSelect(withToken: AIAccountEntry[], defaultName: string): Promise<string> {
     const picked = await p.select({
@@ -696,11 +737,24 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         process.exit(1);
     }
 
-    const modelId = opts.model ? await resolveModel(opts.model) : undefined;
+    const explicitModelId = opts.model ? await resolveModel(opts.model) : undefined;
+    const alias = smartAliasOf(
+        nameArg,
+        withToken.map((a) => a.name)
+    );
+
+    // `cc opus` / `cc fable` name a model as well as a strategy. An explicit
+    // --model always wins.
+    const modelId =
+        explicitModelId ?? (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? "claude-fable-5[1m]" : undefined);
 
     let accountName: string;
 
-    if (nameArg) {
+    if (alias) {
+        accountName =
+            (await resolveSmartAlias(alias, withToken, modelId)) ??
+            (await pickAccount(withToken, opts, modelId, aiConfig));
+    } else if (nameArg) {
         accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
     } else {
         accountName = await pickAccount(withToken, opts, modelId, aiConfig);
