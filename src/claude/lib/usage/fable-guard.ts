@@ -86,6 +86,38 @@ export function weeklyStatusForAccount(
     };
 }
 
+export interface DeadBucket {
+    /** Human name of the bucket that is empty. */
+    bucket: "weekly quota" | "Fable 5";
+    resetsAt: string | null;
+}
+
+/**
+ * The bucket that would make an account refuse a turn, or null when it can
+ * still serve one. `fableMatters` is false for an Opus launch: that bucket is
+ * irrelevant there, only the all-model weekly one counts.
+ */
+export function deadBucketForAccount(
+    accounts: AccountUsage[],
+    accountName: string,
+    fableMatters: boolean,
+    now: Date = new Date()
+): DeadBucket | null {
+    const weekly = weeklyStatusForAccount(accounts, accountName, now);
+
+    if (!weekly.available) {
+        return { bucket: "weekly quota", resetsAt: weekly.resetsAt };
+    }
+
+    if (!fableMatters) {
+        return null;
+    }
+
+    const fable = fableStatusForAccount(accounts, accountName, now);
+
+    return fable.available ? null : { bucket: "Fable 5", resetsAt: fable.resetsAt };
+}
+
 /**
  * Accounts that can still run Fable AND have weekly headroom — the suggestion
  * list when the user declines a downgrade. Accounts with no usage data are

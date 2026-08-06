@@ -3,13 +3,19 @@ import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { fableCapableAccounts, fableStatusForAccount, weeklyStatusForAccount } from "@app/claude/lib/usage/fable-guard";
+import {
+    deadBucketForAccount,
+    fableCapableAccounts,
+    fableStatusForAccount,
+    weeklyStatusForAccount,
+} from "@app/claude/lib/usage/fable-guard";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
+import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
@@ -387,6 +393,55 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
     }
 }
 
+/**
+ * An interactive session gates its turns on the KEYCHAIN account's limits, not
+ * the pinned token's: a long-lived token is inference-only (the profile
+ * endpoint 403s on it), so the UI reads usage from the keychain login and
+ * refuses before sending. Inference still bills the pinned account. So a
+ * limit-dead keychain kills every session on the machine. Say so.
+ */
+async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, modelId: string | undefined): Promise<void> {
+    const uuid = await keychainOwnerUuidOffline();
+
+    if (!uuid) {
+        return; // unmanaged or unknown login — nothing we can vouch for
+    }
+
+    const owner = aiConfig.getAccountsByProvider("anthropic-sub").find((a) => a.secondary?.accountUuid === uuid);
+
+    if (!owner || owner.name === accountName) {
+        return;
+    }
+
+    const cached = await peekSharedUsage().catch(() => null);
+
+    if (!cached) {
+        return;
+    }
+
+    // An explicit non-Fable model does not care about the Fable bucket; every
+    // launch cares about the all-model weekly one.
+    const fableMatters = !modelId || modelFamilyOf(modelId) === "fable";
+    const dead = deadBucketForAccount(cached.accounts, owner.name, fableMatters);
+
+    if (!dead) {
+        return;
+    }
+
+    out.printlnErr(
+        pc.yellow(
+            `⚠ The keychain is on "${owner.name}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`
+        )
+    );
+    out.printlnErr(
+        pc.dim(
+            "  Interactive sessions read their limits from the KEYCHAIN account even when pinned to another one,\n" +
+                "  so this session would refuse on its first turn."
+        )
+    );
+    out.printlnErr(pc.dim(`  Fix it with: ${pc.cyan(`tools claude start --keychain ${accountName}`)}`));
+}
+
 /** "resets in 2h 5m" / "resetting now" from an ISO reset timestamp. */
 function resetPhrase(resetsAt: string | null): string {
     if (!resetsAt) {
@@ -654,6 +709,10 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     const account = withToken.find((a) => a.name === accountName)!;
 
     await refuseIfWeeklyDead(accountName);
+
+    if (!opts.keychain) {
+        await warnKeychainLimits(accountName, aiConfig, modelId);
+    }
 
     const resumeArgs = await resolveResumeArgs(opts);
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsage, UsageResponse } from "./api";
-import { fableCapableAccounts, fableStatus, fableStatusForAccount, weeklyStatusForAccount } from "./fable-guard";
+import { deadBucketForAccount, fableCapableAccounts, fableStatus, fableStatusForAccount, weeklyStatusForAccount } from "./fable-guard";
 
 const NOW = new Date("2026-07-24T20:00:00.000Z");
 
@@ -161,5 +161,36 @@ describe("fableCapableAccounts never recommends a dead account", () => {
         };
 
         expect(fableCapableAccounts([errored], NOW)).toEqual([]);
+    });
+});
+
+describe("deadBucketForAccount", () => {
+    function spentWeekly(): AccountUsage {
+        return {
+            accountName: "a",
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 100, resets_at: hoursFromNow(20) },
+            },
+        };
+    }
+
+    test("weekly wins over fable when both are dead", () => {
+        expect(deadBucketForAccount([spentWeekly()], "a", true, NOW)?.bucket).toBe("weekly quota");
+    });
+
+    test("an opus launch ignores a dead fable bucket", () => {
+        const acc: AccountUsage = { accountName: "a", usage: usageWith(100, 10) };
+        expect(deadBucketForAccount([acc], "a", false, NOW)).toBeNull();
+    });
+
+    test("a fable launch reports the dead fable bucket", () => {
+        const acc: AccountUsage = { accountName: "a", usage: usageWith(100, 10) };
+        expect(deadBucketForAccount([acc], "a", true, NOW)?.bucket).toBe("Fable 5");
+    });
+
+    test("a healthy account returns null", () => {
+        const acc: AccountUsage = { accountName: "a", usage: usageWith(10, 10) };
+        expect(deadBucketForAccount([acc], "a", true, NOW)).toBeNull();
     });
 });

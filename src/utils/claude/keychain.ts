@@ -50,6 +50,32 @@ function assertMacOS(): void {
     }
 }
 
+/**
+ * The keychain owner's account uuid read from the offline marker Claude Code
+ * keeps in ~/.claude.json. Cheaper and quieter than the keychain itself (no
+ * `security` invocation), and enough to ATTRIBUTE a login. Callers that need
+ * authority over latency should prefer readKeychainPayload plus
+ * resolveKeychainAccountUuid and fall back to this.
+ */
+export async function keychainOwnerUuidOffline(): Promise<string | undefined> {
+    try {
+        const file = Bun.file(join(homedir(), ".claude.json"));
+
+        if (!(await file.exists())) {
+            return undefined;
+        }
+
+        const config = SafeJSON.parse(await file.text(), { strict: true }) as {
+            oauthAccount?: { accountUuid?: string };
+        };
+
+        return config.oauthAccount?.accountUuid;
+    } catch (err) {
+        logger.debug({ err }, "[keychain] offline owner marker unreadable");
+        return undefined;
+    }
+}
+
 /** Read the raw keychain payload Claude Code stores. Returns null when absent. */
 export async function readKeychainPayload(): Promise<KeychainPayload | null> {
     // No keychain off macOS (a Linux devbox, CI): that is "no ambient
