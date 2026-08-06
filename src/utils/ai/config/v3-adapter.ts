@@ -92,6 +92,18 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
         entry.subscriptionCreatedAt = account.subscriptionCreatedAt;
     }
 
+    if (account.subscriptionPlan) {
+        entry.subscriptionPlan = account.subscriptionPlan;
+    }
+
+    if (account.subscriptionStatus) {
+        entry.subscriptionStatus = account.subscriptionStatus;
+    }
+
+    if (account.subscriptionCheckedAt) {
+        entry.subscriptionCheckedAt = account.subscriptionCheckedAt;
+    }
+
     // v3 kept this on the account; v4 does too, with app-default references as a
     // fallback for accounts that predate the field.
     const apps = account.apps ?? appsFor(config, account.id);

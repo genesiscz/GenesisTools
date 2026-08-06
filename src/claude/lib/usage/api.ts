@@ -117,6 +117,14 @@ export interface AccountUsage {
     label?: string;
     /** Stripe billing-cycle anchor (ISO) — renders as the next renewal date. */
     subscriptionCreatedAt?: string;
+    /**
+     * `organization_type` from the OAuth profile. A free org cannot run Claude
+     * Code even while its usage buckets look healthy, so this is carried into
+     * scoring alongside the buckets.
+     */
+    subscriptionPlan?: string;
+    /** `subscription_status` from the OAuth profile ("active", "canceled", …). */
+    subscriptionStatus?: string;
     /** Refresh-grant expiry (Unix ms) — past this the account needs a browser re-login. */
     refreshExpiresAt?: number;
     usage?: UsageResponse;
@@ -253,6 +261,8 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
                     accountName: account.name,
                     label: account.label,
                     subscriptionCreatedAt: account.subscriptionCreatedAt,
+                    subscriptionPlan: account.subscriptionPlan,
+                    subscriptionStatus: account.subscriptionStatus,
                     refreshExpiresAt: account.tokens.refreshExpiresAt,
                     usage,
                 } satisfies AccountUsage;
@@ -300,6 +310,8 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
                     accountName: account.name,
                     label: account.label,
                     subscriptionCreatedAt: account.subscriptionCreatedAt,
+                    subscriptionPlan: account.subscriptionPlan,
+                    subscriptionStatus: account.subscriptionStatus,
                     refreshExpiresAt: account.tokens.refreshExpiresAt,
                     usage,
                 } satisfies AccountUsage;
@@ -318,6 +330,8 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
             accountName: accounts[i].name,
             label: accounts[i].label,
             subscriptionCreatedAt: accounts[i].subscriptionCreatedAt,
+            subscriptionPlan: accounts[i].subscriptionPlan,
+            subscriptionStatus: accounts[i].subscriptionStatus,
             refreshExpiresAt: accounts[i].tokens.refreshExpiresAt,
             error: reason,
             orgBlocked: isSubscriptionExpiredError(reason) || opts.orgBlocked?.has(accounts[i].name),

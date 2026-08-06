@@ -310,7 +310,10 @@ describe("grouped urgency", () => {
         expect(scored.cooling).toBe(true);
     });
 
-    test("sortGrouped puts fable before opus before dead before expired", () => {
+    // Expired outranks dead: an expired login only kills usage polling (the
+    // launcher runs on the long-lived token, and one re-login restores the
+    // numbers), while a dead account is out of quota or off a paid plan.
+    test("sortGrouped puts fable before opus before expired before dead", () => {
         const scored = scoreAccounts(
             [
                 account("dead", usage({ seven_day: { utilization: 99, resets_at: hoursFromNow(20) } })),
@@ -333,7 +336,7 @@ describe("grouped urgency", () => {
             { now: NOW }
         );
 
-        expect(sortGrouped(scored).map((s) => s.accountName)).toEqual(["fable-ok", "opus-only", "dead", "expired"]);
+        expect(sortGrouped(scored).map((s) => s.accountName)).toEqual(["fable-ok", "opus-only", "expired", "dead"]);
     });
 
     test("sortGrouped sinks cooling accounts to their group's bottom", () => {
@@ -466,5 +469,49 @@ describe("fmtHours carry", () => {
         const acc = account("a", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(19.995) } }));
         expect(scoreAccounts([acc], { now: NOW })[0].why).not.toContain("60m");
         expect(scoreAccounts([acc], { now: NOW })[0].why).toContain("20h");
+    });
+});
+
+describe("scoreAccounts — plan gate", () => {
+    test("a claude_free plan is unusable even with perfectly healthy buckets", () => {
+        const free: AccountUsage = {
+            accountName: "free-plan",
+            subscriptionPlan: "claude_free",
+            usage: usage({ seven_day: { utilization: 5, resets_at: hoursFromNow(100) } }),
+        };
+        const paid = account("paid", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(100) } }));
+
+        const ranked = scoreAccounts([free, paid], { now: NOW });
+
+        expect(ranked[0].accountName).toBe("paid");
+        expect(ranked[1].subscriptionExpired).toBe(true);
+        expect(ranked[1].why).toContain("claude_free");
+    });
+
+    test("a canceled subscription is unusable", () => {
+        const canceled: AccountUsage = {
+            accountName: "canceled",
+            subscriptionStatus: "canceled",
+            usage: usage({}),
+        };
+
+        expect(scoreAccounts([canceled], { now: NOW })[0].subscriptionExpired).toBe(true);
+    });
+
+    test("an unchecked plan never blocks — unknown is not dead", () => {
+        const unknown = account("unknown", usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(50) } }));
+
+        expect(scoreAccounts([unknown], { now: NOW })[0].subscriptionExpired).toBeUndefined();
+    });
+
+    test("a paid plan scores normally", () => {
+        const paid: AccountUsage = {
+            accountName: "max",
+            subscriptionPlan: "claude_max",
+            subscriptionStatus: "active",
+            usage: usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(50) } }),
+        };
+
+        expect(scoreAccounts([paid], { now: NOW })[0].tier).toBe("ready");
     });
 });

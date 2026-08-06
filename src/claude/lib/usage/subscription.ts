@@ -14,55 +14,103 @@ import { logger } from "@genesiscz/utils/logger";
 const failedAnchors = new Set<string>();
 
 /**
- * Backfill `subscriptionCreatedAt` for accounts that don't have it yet. One
- * profile fetch per missing account, persisted to the AI config; subsequent
- * calls are free. Never throws — a missing anchor only costs the renewal line.
+ * How long a stored plan reading stays trusted. A subscription can lapse at any
+ * time and nothing else reports it: a free org keeps serving healthy-looking
+ * usage buckets while every inference call answers 403
+ * `oauth_not_allowed_for_organization` (observed on 5 accounts, 2026-08-06).
+ */
+export const SUBSCRIPTION_RECHECK_MS = 6 * 60 * 60 * 1000;
+
+/** Org types that cannot run Claude Code — inference is blocked at the org level. */
+const UNUSABLE_PLANS = new Set(["claude_free"]);
+
+/**
+ * Whether the account's plan still permits Claude Code. Unknown plans (never
+ * checked, profile unreachable) count as usable: a launch gate must never
+ * block on missing data.
+ */
+export function planAllowsClaudeCode(entry: {
+    subscriptionPlan?: string;
+    subscriptionStatus?: string;
+}): boolean {
+    if (entry.subscriptionPlan && UNUSABLE_PLANS.has(entry.subscriptionPlan)) {
+        return false;
+    }
+
+    return entry.subscriptionStatus !== "canceled";
+}
+
+/**
+ * Backfill the billing anchor and the plan fields from the OAuth profile. The
+ * anchor is fetched once and kept forever; the plan is re-read every
+ * SUBSCRIPTION_RECHECK_MS, because a lapsed subscription is otherwise invisible
+ * until an inference call fails. Never throws — a failed read only costs the
+ * renewal line and leaves the previous plan reading in place.
  */
 export async function ensureSubscriptionAnchors(config: AIConfig, accounts: AIAccountEntry[]): Promise<void> {
-    const missing = accounts.filter((a) => !a.subscriptionCreatedAt && !failedAnchors.has(a.name));
+    const now = Date.now();
+    const due = accounts.filter(
+        (a) =>
+            !failedAnchors.has(a.name) &&
+            (!a.subscriptionCreatedAt || !a.subscriptionCheckedAt || now - a.subscriptionCheckedAt > SUBSCRIPTION_RECHECK_MS)
+    );
 
-    if (missing.length === 0) {
+    if (due.length === 0) {
         return;
     }
 
     const fetched = await Promise.allSettled(
-        missing.map(async (account) => {
+        due.map(async (account) => {
             const { token } = await resolveAccountToken(account.name, {
                 staleAccessToken: account.tokens.accessToken,
             });
             const profile = await fetchOAuthProfile(token);
-            const createdAt = profile?.organization.subscription_created_at;
 
-            if (!createdAt) {
-                throw new Error("profile has no subscription_created_at");
+            if (!profile) {
+                throw new Error("profile unavailable");
             }
 
-            return { name: account.name, createdAt };
+            return {
+                name: account.name,
+                createdAt: profile.organization.subscription_created_at,
+                plan: profile.organization.organization_type,
+                status: profile.organization.subscription_status,
+            };
         })
     );
 
     for (const [i, result] of fetched.entries()) {
-        const account = missing[i];
+        const account = due[i];
 
         if (result.status === "rejected") {
             failedAnchors.add(account.name);
-            logger.debug(`[subscription:${account.name}] anchor unavailable: ${result.reason}`);
+            logger.debug(`[subscription:${account.name}] profile unavailable: ${result.reason}`);
             continue;
         }
 
+        const patch = {
+            // A missing anchor must not erase the stored one.
+            subscriptionCreatedAt: result.value.createdAt || account.subscriptionCreatedAt,
+            subscriptionPlan: result.value.plan,
+            subscriptionStatus: result.value.status,
+            subscriptionCheckedAt: now,
+        };
+
         try {
-            await config.updateAccount(account.name, { subscriptionCreatedAt: result.value.createdAt });
-            logger.info(`[subscription:${account.name}] billing anchor stored (${result.value.createdAt})`);
+            await config.updateAccount(account.name, patch);
+            logger.info(
+                `[subscription:${account.name}] plan ${patch.subscriptionPlan ?? "unknown"} (${patch.subscriptionStatus ?? "unknown"}), anchor ${patch.subscriptionCreatedAt ?? "unknown"}`
+            );
         } catch (err) {
             failedAnchors.add(account.name);
             logger.warn(
-                `[subscription:${account.name}] could not persist anchor: ${err instanceof Error ? err.message : err}`
+                `[subscription:${account.name}] could not persist profile: ${err instanceof Error ? err.message : err}`
             );
             continue;
         }
 
         // Mirror into the in-memory entry the caller is still holding.
-        account.subscriptionCreatedAt = result.value.createdAt;
+        Object.assign(account, patch);
     }
 }
 

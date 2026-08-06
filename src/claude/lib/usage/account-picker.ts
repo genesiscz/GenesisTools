@@ -2,6 +2,7 @@ import type { ClaudeModelFamily } from "@app/claude/lib/models";
 import type { AccountUsage, UsageBucket } from "./api";
 import { isSubscriptionExpiredError } from "./api";
 import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
+import { planAllowsClaudeCode } from "./subscription";
 
 /**
  * Account-picking heuristic for `tools claude start --pick/--autopick`.
@@ -56,11 +57,17 @@ const TIER_ORDER: Record<AccountTier, number> = {
     "no-data": 3,
 };
 
+/**
+ * `expired` outranks `dead` on purpose. An expired LOGIN only kills usage
+ * polling: the launcher runs on the long-lived token, so the account may still
+ * work and one re-login restores the numbers. A `dead` account is either out of
+ * weekly quota or off a paid plan, and no re-login fixes either.
+ */
 const GROUP_ORDER: Record<AccountGroup, number> = {
     fable: 0,
     opus: 1,
-    dead: 2,
-    expired: 3,
+    expired: 2,
+    dead: 3,
 };
 
 interface BucketView {
@@ -192,7 +199,14 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         // stale-replayed usage: shared-cache backfills the last good payload,
         // so a dead account otherwise keeps rendering its old headroom and
         // ranks at the TOP of the tier order (the lukas.pribik96 bug).
-        if (account.orgBlocked || isSubscriptionExpiredError(expiredError)) {
+        //
+        // The plan check catches the quieter half of the same problem: a lapsed
+        // account can keep serving perfectly healthy usage buckets while every
+        // inference call answers 403 (pribik.turena, 2026-08-06 — 800 usage
+        // successes that day, and not one turn it could have run).
+        const planDead = !planAllowsClaudeCode(account);
+
+        if (account.orgBlocked || isSubscriptionExpiredError(expiredError) || planDead) {
             return {
                 ...base,
                 tier: "no-data",
@@ -204,7 +218,9 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 sessionHeadroomPct: 0,
                 weeklyHeadroomPct: 0,
                 sessionUsableFraction: 0,
-                why: "subscription expired — renew at claude.ai",
+                why: planDead
+                    ? `plan is ${account.subscriptionPlan ?? "not usable"} — Claude Code needs a paid subscription`
+                    : "subscription expired — renew at claude.ai",
                 dataNote: "subscription expired",
             };
         }

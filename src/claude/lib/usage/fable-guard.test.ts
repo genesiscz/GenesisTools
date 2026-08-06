@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsage, UsageResponse } from "./api";
-import { deadBucketForAccount, fableCapableAccounts, fableStatus, fableStatusForAccount, weeklyStatusForAccount } from "./fable-guard";
+import {
+    deadBucketForAccount,
+    fableCapableAccounts,
+    fableStatus,
+    fableStatusForAccount,
+    weeklyStatusForAccount,
+} from "./fable-guard";
 
 const NOW = new Date("2026-07-24T20:00:00.000Z");
 

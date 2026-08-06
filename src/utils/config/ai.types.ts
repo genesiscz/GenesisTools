@@ -55,6 +55,17 @@ export interface AIAccountEntry {
     apps?: string[]; // which tools use this: ["ask", "claude"]
     /** Stripe billing-cycle anchor from the OAuth profile; drives the renewal date. */
     subscriptionCreatedAt?: string;
+    /**
+     * `organization.organization_type` from the OAuth profile: "claude_max",
+     * "claude_pro", "claude_free", … A free org cannot run Claude Code at all
+     * (inference answers `oauth_not_allowed_for_organization`), which the usage
+     * buckets do NOT reveal — some free orgs still serve healthy-looking limits.
+     */
+    subscriptionPlan?: string;
+    /** `organization.subscription_status` from the OAuth profile ("active", "canceled", …). */
+    subscriptionStatus?: string;
+    /** When the plan fields were last read from the profile (Unix ms). */
+    subscriptionCheckedAt?: number;
 }
 
 // ── Task types (from types.ts) ──

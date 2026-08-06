@@ -746,7 +746,8 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // `cc opus` / `cc fable` name a model as well as a strategy. An explicit
     // --model always wins.
     const modelId =
-        explicitModelId ?? (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? "claude-fable-5[1m]" : undefined);
+        explicitModelId ??
+        (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? "claude-fable-5[1m]" : undefined);
 
     let accountName: string;
 

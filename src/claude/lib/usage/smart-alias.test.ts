@@ -115,10 +115,7 @@ describe("pickOpus", () => {
 
 describe("pickFable", () => {
     test("most room wins when the gap is wide", () => {
-        const scored = score([
-            account("roomy", { weekly: 30, fable: 20 }),
-            account("thin", { weekly: 30, fable: 70 }),
-        ]);
+        const scored = score([account("roomy", { weekly: 30, fable: 20 }), account("thin", { weekly: 30, fable: 70 })]);
 
         const pick = pickFable(scored, NOW);
         expect(pick?.accountName).toBe("roomy");
