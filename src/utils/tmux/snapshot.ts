@@ -1,13 +1,23 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
     createTmuxSession,
     killTmuxSession,
     sessionExists,
     setTmuxSpawnSyncForTests,
+    type TmuxSpawnResult,
     type TmuxSpawnSync,
 } from "@genesiscz/utils/tmux/sessions";
+
+/**
+ * Snapshot capture/replay stays synchronous: it runs in CLI flows (presets
+ * save/restore, reset) with no event loop to protect, and its pane walk is a
+ * tight sequential pipeline. Only the shared create/kill/exists calls above go
+ * through the async sessions module.
+ */
+type SyncTmuxSpawn = (cmd: string[], opts?: { cwd?: string }) => TmuxSpawnResult;
 
 export const SNAPSHOT_VERSION = 1 as const;
 
@@ -60,7 +70,7 @@ const PANE_LIST_FORMAT = [
     "#{pane_pid}",
 ].join("\t");
 
-const defaultSpawnSync: TmuxSpawnSync = (cmd, opts) => {
+const defaultSpawnSync: SyncTmuxSpawn = (cmd, opts) => {
     const result = Bun.spawnSync(cmd, {
         cwd: opts?.cwd,
         stdio: ["ignore", "pipe", "pipe"],
@@ -72,12 +82,12 @@ const defaultSpawnSync: TmuxSpawnSync = (cmd, opts) => {
     };
 };
 
-let spawnImpl: TmuxSpawnSync = defaultSpawnSync;
+let spawnImpl: SyncTmuxSpawn = defaultSpawnSync;
 
 /** Override spawn for tests. Also forwards to sessions.ts so create/kill mock too. */
-export function setTmuxSnapshotSpawnForTests(impl: TmuxSpawnSync | null): void {
+export function setTmuxSnapshotSpawnForTests(impl: SyncTmuxSpawn | null): void {
     spawnImpl = impl ?? defaultSpawnSync;
-    setTmuxSpawnSyncForTests(impl);
+    setTmuxSpawnSyncForTests(impl satisfies TmuxSpawnSync | null);
 }
 
 export interface CaptureOptions {
@@ -266,14 +276,19 @@ function parseLastShellCommand(
             const parts = [candidate];
             for (let j = i + 1; j < lines.length && parts.length < 5; j += 1) {
                 const cont = lines[j]?.trimEnd();
-                if (!cont || extractPromptCommand(cont) || isOutputLine(cont)) {
+                if (!cont || extractPromptCommand(cont) || isOutputLine(cont) || isPromptChromeOrControlJunk(cont)) {
                     break;
                 }
 
                 parts.push(cont);
             }
 
-            return parts.join("\n");
+            const joined = parts.join("\n");
+            if (!isPlausibleLastShellCommand(joined)) {
+                continue;
+            }
+
+            return joined;
         }
     }
 
@@ -282,8 +297,17 @@ function parseLastShellCommand(
 
 const PROMPT_LINE = /^[^\s$#%❯➜]*[$#%❯➜]\s+(.+?)\s*$/;
 
+/** SGR mouse / CSI leftovers that leak into the tty when mouse mode is on (e.g. in ttyd). */
+const CONTROL_JUNK_RE = /\d+;\d+[A-Za-z]|;\d*n|\b997;\d/;
+
+/**
+ * Oh-my-zsh / similar put `dir git:(branch)` on the same line after `➜` with no command —
+ * that must not be treated as a typed command.
+ */
+const PROMPT_REMANT_RE = /^[\w./-]+\s+git:\([^)]*\)/;
+
 function extractPromptCommand(line: string): string | undefined {
-    const match = PROMPT_LINE.exec(line);
+    const match = PROMPT_LINE.exec(stripAnsi(line));
     if (!match) {
         return undefined;
     }
@@ -298,7 +322,66 @@ function extractPromptCommand(line: string): string | undefined {
         return undefined;
     }
 
+    if (!isPlausibleLastShellCommand(cmd)) {
+        return undefined;
+    }
+
     return cmd;
+}
+
+function isPromptChromeOrControlJunk(line: string): boolean {
+    const plain = stripAnsi(line).trim();
+
+    if (!plain) {
+        return true;
+    }
+
+    // Another prompt glyph mid-scrollback — not a multi-line command continuation.
+    if (/[$#%❯➜]/.test(plain)) {
+        return true;
+    }
+
+    return !isPlausibleLastShellCommand(plain);
+}
+
+/** Exported for unit tests — keep `last:` free of mouse/CSI junk and prompt chrome. */
+export function isPlausibleLastShellCommand(cmd: string): boolean {
+    const trimmed = cmd.trim();
+
+    if (!trimmed) {
+        return false;
+    }
+
+    if (CONTROL_JUNK_RE.test(trimmed)) {
+        return false;
+    }
+
+    if (PROMPT_REMANT_RE.test(trimmed)) {
+        return false;
+    }
+
+    // Prompt glyphs that leaked into the captured "command" (wrapped oh-my-zsh lines).
+    if (/[❯➜]/.test(trimmed)) {
+        return false;
+    }
+
+    // Single CapitalizedToken — almost always the directory segment of `➜  DirName`, not a command.
+    if (/^[A-Z][A-Za-z0-9_.-]*$/.test(trimmed)) {
+        return false;
+    }
+
+    // Claude / agent statusline fragments scraped out of scrollback.
+    if (/·|resets in|\d+h\s+\d+%/.test(trimmed)) {
+        return false;
+    }
+
+    // Dense digit/semicolon runs = pasted mouse reports, not a shell command.
+    const junkChars = (trimmed.match(/[0-9;]/g) ?? []).length;
+    if (trimmed.length >= 24 && junkChars / trimmed.length > 0.35) {
+        return false;
+    }
+
+    return true;
 }
 
 const OUTPUT_MARKERS = /^\s*[⎿✅❌⏵─│┌└├]+|^\s{6,}/;
@@ -329,11 +412,14 @@ function runTmux(tmuxBin: string, args: string[], op: string): string {
     return result.stdout;
 }
 
-export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreOptions = {}): RestoreOutcome {
+export async function restoreTmuxSession(
+    snapshot: TmuxSessionSnapshot,
+    opts: RestoreOptions = {}
+): Promise<RestoreOutcome> {
     const tmuxBin = resolveTmuxBin();
     const targetName = resolveTargetName(snapshot.name, opts.nameSuffix);
 
-    if (sessionExists(targetName)) {
+    if (await sessionExists(targetName)) {
         return {
             name: snapshot.name,
             sessionName: targetName,
@@ -347,7 +433,7 @@ export function restoreTmuxSession(snapshot: TmuxSessionSnapshot, opts: RestoreO
     const firstPane = firstWindow?.panes[0];
     const firstCwd = firstPane?.cwd ?? snapshot.cwd ?? process.cwd();
 
-    createTmuxSession(targetName, firstCwd, env.paths.getShell("/bin/zsh"));
+    await createTmuxSession(targetName, firstCwd, env.paths.getShell("/bin/zsh"));
 
     if (firstWindow?.name) {
         runTmux(tmuxBin, ["rename-window", "-t", `${targetName}:0`, firstWindow.name], "rename-window");
@@ -433,16 +519,16 @@ function resolveTargetName(baseName: string, suffix?: string): string {
  * Kill all sessions matching `prefix`. Returns the names of sessions actually
  * killed. Idempotent — names that no longer exist are silently skipped.
  */
-export function killTmuxSessionsMatching(names: string[]): string[] {
+export async function killTmuxSessionsMatching(names: string[]): Promise<string[]> {
     const killed: string[] = [];
 
     for (const name of names) {
-        if (!sessionExists(name)) {
+        if (!(await sessionExists(name))) {
             continue;
         }
 
         try {
-            killTmuxSession(name);
+            await killTmuxSession(name);
             killed.push(name);
         } catch (error) {
             logger.warn({ error, name }, "killTmuxSessionsMatching: failed to kill session");

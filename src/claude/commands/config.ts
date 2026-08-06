@@ -5,10 +5,15 @@ import {
     loadConfig,
     updateConfig,
 } from "@app/claude/lib/config";
+import { identityMismatch } from "@app/claude/lib/identity-guard";
 import { fetchUsage } from "@app/claude/lib/usage/api";
+import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { invalidateSharedUsage } from "@app/claude/lib/usage/shared-cache";
+import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
+import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -743,6 +748,27 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
             lines.push(
                 `    ${pc.dim("Label:")} ${acc.label ?? pc.dim("none")}  ${pc.dim("Token:")} ${pc.dim(maskToken(acc.tokens.accessToken ?? ""))}`
             );
+
+            // A missing or truncated setup token means `cc <name>` silently
+            // launches on the KEYCHAIN account instead of this one.
+            const longLived = acc.tokens.longLivedToken;
+
+            if (!longLived) {
+                lines.push(
+                    `    ${pc.dim("Launch:")} ${pc.yellow("no long-lived token")} ${pc.dim(`— fix: tools claude login-long ${acc.name}`)}`
+                );
+            } else if (longLived.length < LONG_TOKEN_MIN_LENGTH) {
+                lines.push(
+                    `    ${pc.dim("Launch:")} ${pc.red(`token truncated (${longLived.length} chars)`)} ${pc.dim(`— fix: tools claude login-long ${acc.name}`)}`
+                );
+            }
+
+            if (acc.subscriptionPlan && !planAllowsClaudeCode(acc)) {
+                lines.push(
+                    `    ${pc.dim("Plan:")} ${pc.red(acc.subscriptionPlan)} ${pc.dim("— cannot run Claude Code")}`
+                );
+            }
+
             lines.push("");
         }
     }
@@ -853,6 +879,63 @@ export function registerConfigCommand(program: Command): void {
         });
 
     configCmd
+        .command("rename <oldName> <newName>")
+        .description("Rename an account, carrying its usage history and defaults across")
+        .action(async (oldName: string, newName: string) => {
+            const aiConfig = await AIConfig.load();
+
+            if (!aiConfig.getAccount(oldName)) {
+                p.log.error(`Account "${oldName}" not found.`);
+                process.exit(1);
+            }
+
+            await aiConfig.renameAccount(oldName, newName);
+
+            // History is keyed by NAME, so it has to move in the same breath or
+            // the account's burn pace silently restarts from zero.
+            const moved = new UsageHistoryDb().renameAccount(oldName, newName);
+
+            // The shared usage cache is name-keyed too; drop it so the next poll
+            // rebuilds it under the new name instead of showing a ghost row.
+            await invalidateSharedUsage();
+
+            p.log.success(`Renamed "${oldName}" → "${newName}" (${moved} history row${moved === 1 ? "" : "s"} moved).`);
+            out.println(pc.dim("Sessions already running keep reporting the old name until they exit."));
+        });
+
+    configCmd
+        .command("refresh [name]")
+        .description("Re-read the subscription plan from the OAuth profile (all accounts when no name is given)")
+        .action(async (name?: string) => {
+            const aiConfig = await AIConfig.load();
+            const accounts = aiConfig
+                .getAccountsByProvider("anthropic-sub")
+                .filter((a) => !name || a.name === name)
+                // Force a re-read: the automatic pass only refetches every 6h.
+                .map((a) => ({ ...a, subscriptionCheckedAt: undefined }));
+
+            if (accounts.length === 0) {
+                p.log.error(name ? `Account "${name}" not found.` : "No Claude accounts configured.");
+                process.exit(1);
+            }
+
+            await ensureSubscriptionAnchors(aiConfig, accounts);
+
+            const fresh = await AIConfig.load();
+
+            for (const account of accounts) {
+                const stored = fresh.getAccount(account.name);
+                const plan = stored?.subscriptionPlan ?? "unknown";
+                const status = stored?.subscriptionStatus ?? "unknown";
+                const usable = planAllowsClaudeCode(stored ?? {});
+
+                out.println(
+                    `${usable ? pc.green("●") : pc.red("●")} ${account.name} — ${plan} (${status})${usable ? "" : pc.dim(" — cannot run Claude Code")}`
+                );
+            }
+        });
+
+    configCmd
         .command("show")
         .description("Show current configuration")
         .action(async () => {
@@ -891,6 +974,32 @@ export function registerConfigCommand(program: Command): void {
             // Fetch profile for label
             const profile = await fetchOAuthProfile(tokens.accessToken);
             const label = determineAccountLabel(profile);
+
+            // The browser decided who authorized. If that is a different person
+            // than the entry being written, saying yes would overwrite another
+            // account's tokens with this identity's.
+            const existing = aiConfig.getAccount(accountName);
+
+            if (
+                identityMismatch({
+                    storedUuid: existing?.secondary?.accountUuid,
+                    incomingUuid: profile?.account.uuid,
+                })
+            ) {
+                out.println(
+                    pc.yellow(
+                        `⚠ This grant belongs to ${profile?.account.email ?? "another account"}, ` +
+                            `a DIFFERENT identity than "${accountName}".`
+                    )
+                );
+
+                const proceed = await p.confirm({ message: "Save anyway?", initialValue: false });
+
+                if (p.isCancel(proceed) || !proceed) {
+                    p.cancel("Cancelled — nothing written.");
+                    process.exit(0);
+                }
+            }
 
             await aiConfig.addAccountWithDefaults({
                 name: accountName,

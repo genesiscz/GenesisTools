@@ -71,6 +71,20 @@ describe("toV3Account", () => {
         expect(v3.label).toBe("max 20x");
     });
 
+    test("carries the subscription plan fields across the projection", () => {
+        const entry = account({
+            subscriptionPlan: "claude_max",
+            subscriptionStatus: "active",
+            subscriptionCheckedAt: 1_700_000_000_000,
+        });
+
+        const v3 = toV3Account(entry, config([entry]));
+
+        expect(v3.subscriptionPlan).toBe("claude_max");
+        expect(v3.subscriptionStatus).toBe("active");
+        expect(v3.subscriptionCheckedAt).toBe(1_700_000_000_000);
+    });
+
     test("omits token fields that are absent rather than emitting empty strings", () => {
         const v3 = toV3Account(account(), config([account()]));
 

@@ -1,11 +1,11 @@
 import { logger } from "@genesiscz/utils/logger";
-import { byId, byProvider, catalogKeysFor } from "../catalog";
+import { byId, byProvider, catalogKeysFor, providerNameFor } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { ephemeralEnvAccounts } from "../config/migrations/2026-08-seedEnvAccounts";
 import type { AccountEntry, AiConfigData, TaskDefault, TaskName } from "../config/schema";
 import type { Capability } from "../providers/plugin-types";
 import { registerBuiltInPlugins } from "../providers/plugins";
-import { providerPlugin } from "../providers/registry";
+import { providerPlugin, registeredProviderIds, tryProviderPlugin } from "../providers/registry";
 import { formatModelRef, type ModelRef, type ParsedModelRef, parseModelRef } from "./model-ref";
 import type { ResolvedBinding, ResolvedModel, ResolvedTarget, ResolveOptions } from "./types";
 
@@ -305,6 +305,40 @@ function accountForProvider(
         );
 
         return seeded;
+    }
+
+    // The billing-mode-free NAME, which is what every surface prints. `tools ask`
+    // lists a grok-sub account under "grok" (providerNameFor) and suggests
+    // `-p grok`, so "grok/grok-4.5" is the ref a user is told to write — and it
+    // resolved against nothing, because no plugin is called "grok". Inverting the
+    // same function is exact rather than a hand-kept alias table, and it stays a
+    // FALLBACK so a real plugin id ("xai", "anthropic") still wins outright.
+    const named = store
+        .accounts({ enabled: true })
+        .filter((account) => providerNameFor(account.provider) === providerId);
+
+    if (named.length > 0) {
+        // The default account keeps its priority in name mode too, mirroring the
+        // exact-id branch above: two grok-sub accounts with the default pointing
+        // at the second must not flip to the first because the ref said "grok".
+        const chosen = named.find((account) => account.id === preferred?.id) ?? named[0];
+
+        log.debug(
+            { provider: providerId, resolvedProvider: chosen.provider, via: request.via },
+            "no plugin named that; matched the account by its billing-mode-free provider name"
+        );
+
+        return chosen;
+    }
+
+    // `account add --provider <name-form>` dies on the same unknown id, so
+    // suggesting it verbatim sends the user to a second error. Name the real
+    // plugin ids instead when the ref half is not one.
+    if (providerId && !tryProviderPlugin(providerId)) {
+        throw new ModelResolutionError(
+            `No provider plugin is called "${providerId}" (from ${request.via}). ` +
+                `Known providers: ${registeredProviderIds().sort().join(", ")}.`
+        );
     }
 
     throw new ModelResolutionError(

@@ -15,6 +15,35 @@ export class RetryableApiError extends Error {
     }
 }
 
+/** The usage API's org-level 403 — the subscription behind this login is gone. */
+const SUBSCRIPTION_EXPIRED_ERROR_RE = /not allowed for this org/i;
+
+export function isSubscriptionExpiredError(error: string | undefined): boolean {
+    return error !== undefined && SUBSCRIPTION_EXPIRED_ERROR_RE.test(error);
+}
+
+/**
+ * Accounts a cached poll found org-blocked, by name. Checks the sticky flag
+ * first, then both places an error string can hide: the live error and the
+ * stale-backfill reason (shared-cache replays the last good usage and moves
+ * the error into `stale.reason`).
+ */
+export function orgBlockedAccounts(accounts: AccountUsage[] | undefined): Set<string> {
+    const blocked = new Set<string>();
+
+    for (const account of accounts ?? []) {
+        if (
+            account.orgBlocked ||
+            isSubscriptionExpiredError(account.error) ||
+            isSubscriptionExpiredError(account.stale?.reason)
+        ) {
+            blocked.add(account.accountName);
+        }
+    }
+
+    return blocked;
+}
+
 export interface UsageBucket {
     utilization: number;
     resets_at: string | null;
@@ -88,6 +117,14 @@ export interface AccountUsage {
     label?: string;
     /** Stripe billing-cycle anchor (ISO) — renders as the next renewal date. */
     subscriptionCreatedAt?: string;
+    /**
+     * `organization_type` from the OAuth profile. A free org cannot run Claude
+     * Code even while its usage buckets look healthy, so this is carried into
+     * scoring alongside the buckets.
+     */
+    subscriptionPlan?: string;
+    /** `subscription_status` from the OAuth profile ("active", "canceled", …). */
+    subscriptionStatus?: string;
     /** Refresh-grant expiry (Unix ms) — past this the account needs a browser re-login. */
     refreshExpiresAt?: number;
     usage?: UsageResponse;
@@ -99,6 +136,14 @@ export interface AccountUsage {
      * skip stale entries.
      */
     stale?: AccountStaleInfo;
+    /**
+     * The usage API answered with the org-level 403 for this account: the
+     * subscription behind the login is gone. STICKY across polls that end in
+     * 401/429, because a dead org answers inconsistently and inferring the
+     * block from the last error alone would let a single 429 erase it (and
+     * re-arm the force-refresh below). Cleared by a successful fetch.
+     */
+    orgBlocked?: boolean;
 }
 
 export function isUsageBucket(value: unknown): value is UsageBucket {
@@ -152,10 +197,22 @@ export async function fetchUsage(
     return res.json() as Promise<UsageResponse>;
 }
 
-export async function fetchAllAccountsUsage(
-    accountFilter?: string | string[],
-    signal?: AbortSignal
-): Promise<AccountUsage[]> {
+export interface FetchAllAccountsOptions {
+    accountFilter?: string | string[];
+    signal?: AbortSignal;
+    /**
+     * Accounts the last poll found org-blocked. Their 403 is a subscription
+     * fact, not a token fact: a freshly minted token draws the identical 403,
+     * so the 401/429 force-refresh retry must be skipped for them. Otherwise
+     * every poll that happens to draw a 429 burns a single-use refresh token.
+     * A plain fetch is still attempted, so a renewed subscription recovers on
+     * the next poll with no intervention.
+     */
+    orgBlocked?: ReadonlySet<string>;
+}
+
+export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}): Promise<AccountUsage[]> {
+    const { accountFilter, signal } = opts;
     const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
     const config = await AIConfig.load();
     let accounts = config.getAccountsByProvider("anthropic-sub");
@@ -204,11 +261,13 @@ export async function fetchAllAccountsUsage(
                     accountName: account.name,
                     label: account.label,
                     subscriptionCreatedAt: account.subscriptionCreatedAt,
+                    subscriptionPlan: account.subscriptionPlan,
+                    subscriptionStatus: account.subscriptionStatus,
                     refreshExpiresAt: account.tokens.refreshExpiresAt,
                     usage,
                 } satisfies AccountUsage;
             } catch (err) {
-                if (!(err instanceof RetryableApiError)) {
+                if (!(err instanceof RetryableApiError) || opts.orgBlocked?.has(account.name)) {
                     logger.error(`${tag} fetch failed: ${err instanceof Error ? err.message : err}`);
                     throw err;
                 }
@@ -251,6 +310,8 @@ export async function fetchAllAccountsUsage(
                     accountName: account.name,
                     label: account.label,
                     subscriptionCreatedAt: account.subscriptionCreatedAt,
+                    subscriptionPlan: account.subscriptionPlan,
+                    subscriptionStatus: account.subscriptionStatus,
                     refreshExpiresAt: account.tokens.refreshExpiresAt,
                     usage,
                 } satisfies AccountUsage;
@@ -263,13 +324,17 @@ export async function fetchAllAccountsUsage(
             return r.value;
         }
 
-        logger.error(`[usage:${accounts[i].name}] final error: ${r.reason}`);
+        const reason = String(r.reason);
+        logger.error(`[usage:${accounts[i].name}] final error: ${reason}`);
         return {
             accountName: accounts[i].name,
             label: accounts[i].label,
             subscriptionCreatedAt: accounts[i].subscriptionCreatedAt,
+            subscriptionPlan: accounts[i].subscriptionPlan,
+            subscriptionStatus: accounts[i].subscriptionStatus,
             refreshExpiresAt: accounts[i].tokens.refreshExpiresAt,
-            error: String(r.reason),
+            error: reason,
+            orgBlocked: isSubscriptionExpiredError(reason) || opts.orgBlocked?.has(accounts[i].name),
         };
     });
 }

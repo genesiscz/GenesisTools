@@ -117,7 +117,11 @@ export function selectResetTargets(
  * output — returns a result the caller renders. Reusable by the dev-dashboard
  * server (its "recycle dev-dashboard-* sessions" flow) without shelling out.
  */
-export function resetSessions(opts: { targets: ResetTargets; options: ResetCoreOptions; now?: Date }): ResetResult {
+export async function resetSessions(opts: {
+    targets: ResetTargets;
+    options: ResetCoreOptions;
+    now?: Date;
+}): Promise<ResetResult> {
     const { targets, options } = opts;
     const now = opts.now ?? new Date();
     const { sessions } = targets;
@@ -146,13 +150,13 @@ export function resetSessions(opts: { targets: ResetTargets; options: ResetCoreO
 
     // Scrub the server's global env BEFORE killing so the recreated shells don't
     // re-inherit NO_COLOR / empty COLORTERM leaked by whichever process founded it.
-    ensureTmuxServerPersists();
+    await ensureTmuxServerPersists();
 
-    result.killed = killTmuxSessionsMatching(sessions.map((s) => s.name));
+    result.killed = await killTmuxSessionsMatching(sessions.map((s) => s.name));
 
     for (const session of sessions) {
         try {
-            const outcome = restoreTmuxSession(session, { skipReplay: options.skipReplay });
+            const outcome = await restoreTmuxSession(session, { skipReplay: options.skipReplay });
             result.outcomes.push(outcome);
         } catch (error) {
             result.failures.push({ name: session.name, error });

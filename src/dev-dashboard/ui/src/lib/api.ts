@@ -25,7 +25,23 @@ export interface TmuxHubSession {
     name: string;
     attached: number;
     windows: number;
+    /** Active-pane facts from tmux itself — the only meta available for a session with no ttyd. */
+    command?: string;
+    cwd?: string;
+    /** Raw `#{pane_title}`: Claude's `<spinner> <topic>`, a shell's own title, or absent. */
+    title?: string;
+    /** Unix seconds. */
+    created?: number;
+    lastActivity?: number;
     ttydTabIds: string[];
+    ttydTabs: Array<{
+        id: string;
+        port: number;
+        label: string;
+        cwd?: string;
+        lastCommand?: string;
+        title?: string;
+    }>;
     canAttachInTtyd: boolean;
     cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;
     inCmux: boolean;

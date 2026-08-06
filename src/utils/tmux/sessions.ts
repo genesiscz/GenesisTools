@@ -1,13 +1,21 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
-export type TmuxSpawnSync = (
-    cmd: string[],
-    opts?: { cwd?: string }
-) => { exitCode: number | null; stdout: string; stderr?: string };
+export interface TmuxSpawnResult {
+    exitCode: number | null;
+    stdout: string;
+    stderr?: string;
+}
+
+/**
+ * Injection seam for tests. Sync-returning impls remain valid (the core awaits
+ * whatever comes back), so existing test doubles don't need to change.
+ */
+export type TmuxSpawnSync = (cmd: string[], opts?: { cwd?: string }) => TmuxSpawnResult | Promise<TmuxSpawnResult>;
 
 export function buildTmuxSpawnEnv(): NodeJS.ProcessEnv {
     return buildTerminalSpawnEnv();
@@ -58,52 +66,69 @@ function tmuxLoginShellArgv(shell: string): string[] {
     return argv;
 }
 
-export function ensureTmuxSessionEnvironment(sessionName: string): void {
-    const tmuxBin = resolveTmuxBin();
-    const env = buildTerminalSpawnEnv();
+/**
+ * Join several tmux commands into ONE client invocation using tmux's `;`
+ * argv separator. This is the difference between N subprocess round-trips and
+ * one: the 17 idempotent set-environment/set-option calls that used to run on
+ * every spawn each cost a full fork/exec/socket round-trip. On error tmux
+ * aborts the remainder of the chain and exits non-zero, so chains are only
+ * used for best-effort batches, never for a must-succeed command.
+ */
+function chainTmuxCommands(commands: string[][]): string[] {
+    const argv: string[] = [];
 
-    for (const key of TMUX_SESSION_ENV_KEYS) {
-        const value = env[key];
-
-        if (!value) {
-            continue;
+    for (const command of commands) {
+        if (argv.length > 0) {
+            argv.push(";");
         }
 
-        const result = spawnSyncImpl([tmuxBin, "set-environment", "-t", sessionName, key, value]);
-
-        if (result.exitCode !== 0) {
-            logger.debug(
-                { sessionName, key, exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
-                "tmux set-environment failed (session env not applied)"
-            );
-        }
+        argv.push(...command);
     }
+
+    return argv;
 }
 
-/** @deprecated Use {@link ensureTmuxSessionEnvironment} */
-export const ensureTmuxSessionUtf8Locale = ensureTmuxSessionEnvironment;
+// Every tmux call funnels through this async spawn. The previous implementation
+// used Bun.spawnSync, which blocks the WHOLE Bun event loop for the subprocess
+// lifetime — in the dev-dashboard server that froze every other in-flight HTTP
+// request too (a 7s spawn made an unrelated 200ms poll take 6.7s). The timing
+// scope survives:
+//   PROFILE=tmux tools dev-dashboard …
+const prof = profiler.scope("tmux");
 
-const defaultSpawnSync: TmuxSpawnSync = (cmd, opts) => {
-    const result = Bun.spawnSync(cmd, {
+const defaultSpawn: TmuxSpawnSync = async (cmd, opts) => {
+    // Bound every tmux call. A wedged tmux server makes `list-sessions` (and friends) block
+    // forever, spinning a core at ~100% CPU; if the parent process is then killed mid-call the
+    // child is orphaned and keeps spinning. 10s is far above any healthy tmux command, so this
+    // only ever fires on a genuine wedge. SIGKILL because a spinning `list-sessions` ignores TERM.
+    const proc = Bun.spawn(cmd, {
         cwd: opts?.cwd,
         env: buildTmuxSpawnEnv(),
         stdio: ["ignore", "pipe", "pipe"],
-        // Bound every tmux call. A wedged tmux server makes `list-sessions` (and friends) block
-        // forever, spinning a core at ~100% CPU; if the parent process is then killed mid-call the
-        // child is orphaned and keeps spinning. 10s is far above any healthy tmux command, so this
-        // only ever fires on a genuine wedge. SIGKILL because a spinning `list-sessions` ignores TERM.
         timeout: 10_000,
         killSignal: "SIGKILL",
     });
 
-    return {
-        exitCode: result.exitCode,
-        stdout: result.stdout.toString(),
-        stderr: result.stderr.toString(),
-    };
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+
+    return { exitCode, stdout, stderr };
 };
 
-let spawnSyncImpl: TmuxSpawnSync = defaultSpawnSync;
+let spawnImpl: TmuxSpawnSync = defaultSpawn;
+
+async function runTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSpawnResult> {
+    const end = prof.start(cmd[1] ?? "tmux");
+
+    try {
+        return await spawnImpl(cmd, opts);
+    } finally {
+        end();
+    }
+}
 
 function tmuxErrorDetail(stderr?: string): string {
     const trimmed = stderr?.trim();
@@ -111,10 +136,42 @@ function tmuxErrorDetail(stderr?: string): string {
 }
 
 export function setTmuxSpawnSyncForTests(impl: TmuxSpawnSync | null): void {
-    spawnSyncImpl = impl ?? defaultSpawnSync;
+    spawnImpl = impl ?? defaultSpawn;
+    // The server-persist TTL latch must not leak across tests that swap impls.
+    lastServerPersistAt = 0;
 }
 
-export function listTmuxSessions(): TmuxSessionInfo[] {
+export async function ensureTmuxSessionEnvironment(sessionName: string): Promise<void> {
+    const tmuxBin = resolveTmuxBin();
+    const env = buildTerminalSpawnEnv();
+    const commands: string[][] = [];
+
+    for (const key of TMUX_SESSION_ENV_KEYS) {
+        const value = env[key];
+
+        if (value) {
+            commands.push(["set-environment", "-t", sessionName, key, value]);
+        }
+    }
+
+    if (commands.length === 0) {
+        return;
+    }
+
+    const result = await runTmux([tmuxBin, ...chainTmuxCommands(commands)]);
+
+    if (result.exitCode !== 0) {
+        logger.debug(
+            { sessionName, exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
+            "tmux set-environment batch failed (session env not applied)"
+        );
+    }
+}
+
+/** @deprecated Use {@link ensureTmuxSessionEnvironment} */
+export const ensureTmuxSessionUtf8Locale = ensureTmuxSessionEnvironment;
+
+export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
     let tmuxBin: string;
 
     try {
@@ -123,11 +180,23 @@ export function listTmuxSessions(): TmuxSessionInfo[] {
         return [];
     }
 
-    const result = spawnSyncImpl([
+    // Every extra field here is a format column on the SAME call, not another round-trip, so the
+    // richer payload is free. `pane_title` is last because it is the only field that can itself
+    // contain arbitrary user text.
+    const result = await runTmux([
         tmuxBin,
         "list-sessions",
         "-F",
-        "#{session_name}\t#{session_attached}\t#{session_windows}",
+        [
+            "#{session_name}",
+            "#{session_attached}",
+            "#{session_windows}",
+            "#{pane_current_command}",
+            "#{pane_current_path}",
+            "#{session_created}",
+            "#{session_activity}",
+            "#{pane_title}",
+        ].join("\t"),
     ]);
 
     if (result.exitCode !== 0) {
@@ -137,20 +206,29 @@ export function listTmuxSessions(): TmuxSessionInfo[] {
     const sessions: TmuxSessionInfo[] = [];
 
     for (const line of result.stdout.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) {
+        const trimmed = line.trimEnd();
+        if (!trimmed.trim()) {
             continue;
         }
 
-        const [name, attachedRaw, windowsRaw] = trimmed.split("\t");
+        const [name, attachedRaw, windowsRaw, command, cwd, createdRaw, activityRaw, ...titleParts] =
+            trimmed.split("\t");
         if (!name) {
             continue;
         }
+
+        const created = Number.parseInt(createdRaw ?? "", 10);
+        const lastActivity = Number.parseInt(activityRaw ?? "", 10);
 
         sessions.push({
             name,
             attached: Number.parseInt(attachedRaw ?? "0", 10) || 0,
             windows: Number.parseInt(windowsRaw ?? "0", 10) || 0,
+            command: command?.trim() || undefined,
+            cwd: cwd?.trim() || undefined,
+            title: titleParts.join("\t").trim() || undefined,
+            created: Number.isFinite(created) ? created : undefined,
+            lastActivity: Number.isFinite(lastActivity) ? lastActivity : undefined,
         });
     }
 
@@ -162,7 +240,32 @@ export function listTmuxSessions(): TmuxSessionInfo[] {
  * (`#{pane_current_command}`). Lightweight (no scrollback parse, unlike `captureTmuxSnapshot`) so it
  * is cheap enough for the ttyd-list hit path that derives an auto-name from the live command.
  */
-export function listTmuxSessionCommands(): Map<string, string> {
+export async function listTmuxSessionCommands(): Promise<Map<string, string>> {
+    const commands = new Map<string, string>();
+
+    for (const [name, pane] of await listTmuxSessionActivePanes()) {
+        if (pane.command) {
+            commands.set(name, pane.command);
+        }
+    }
+
+    return commands;
+}
+
+export interface TmuxActivePaneInfo {
+    command: string;
+    title: string;
+}
+
+/**
+ * Active-pane command + title per session. Title is how Claude Code surfaces `/rename`
+ * (`✳ name` / `⠐ name`) into tmux without renaming the session itself.
+ *
+ * The keys are the full live session-name set, so callers that only need
+ * existence checks against many names should reuse this ONE call instead of
+ * issuing per-name `sessionExists` list-sessions storms.
+ */
+export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActivePaneInfo>> {
     let tmuxBin: string;
 
     try {
@@ -171,43 +274,50 @@ export function listTmuxSessionCommands(): Map<string, string> {
         return new Map();
     }
 
-    const result = spawnSyncImpl([tmuxBin, "list-sessions", "-F", "#{session_name}\t#{pane_current_command}"]);
+    const result = await runTmux([
+        tmuxBin,
+        "list-sessions",
+        "-F",
+        "#{session_name}\t#{pane_current_command}\t#{pane_title}",
+    ]);
 
     if (result.exitCode !== 0) {
         return new Map();
     }
 
-    const commands = new Map<string, string>();
+    const panes = new Map<string, TmuxActivePaneInfo>();
 
     for (const line of result.stdout.split("\n")) {
-        const trimmed = line.trim();
+        const trimmed = line.trimEnd();
+
         if (!trimmed) {
             continue;
         }
 
-        const tab = trimmed.indexOf("\t");
-        if (tab === -1) {
+        const [name, commandRaw = "", ...titleParts] = trimmed.split("\t");
+
+        if (!name) {
             continue;
         }
 
-        const name = trimmed.slice(0, tab);
-        const command = trimmed.slice(tab + 1).trim();
-
-        if (name && command) {
-            commands.set(name, command);
-        }
+        panes.set(name, {
+            command: commandRaw.trim(),
+            title: titleParts.join("\t").trim(),
+        });
     }
 
-    return commands;
+    return panes;
 }
 
-export function sessionExists(sessionName: string): boolean {
-    return listTmuxSessions().some((session) => session.name === sessionName);
+export async function sessionExists(sessionName: string): Promise<boolean> {
+    // Each call is a full `list-sessions`. Callers checking MANY names should reuse
+    // one listTmuxSessions()/listTmuxSessionActivePanes() result instead of looping this.
+    return (await listTmuxSessions()).some((session) => session.name === sessionName);
 }
 
-export function createTmuxSession(sessionName: string, cwd: string, command: string): void {
+export async function createTmuxSession(sessionName: string, cwd: string, command: string): Promise<void> {
     const tmuxBin = resolveTmuxBin();
-    const result = spawnSyncImpl(
+    const result = await runTmux(
         [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...tmuxLoginShellArgv(command)],
         { cwd }
     );
@@ -216,10 +326,12 @@ export function createTmuxSession(sessionName: string, cwd: string, command: str
         throw new Error(`Failed to create tmux session ${sessionName}${tmuxErrorDetail(result.stderr)}`);
     }
 
-    ensureTmuxSessionEnvironment(sessionName);
-
-    // Pin the (possibly freshly-bootstrapped) server to keep sessions alive.
-    ensureTmuxServerPersists(tmuxBin);
+    // Both best-effort and independent — run concurrently.
+    await Promise.all([
+        ensureTmuxSessionEnvironment(sessionName),
+        // Pin the (possibly freshly-bootstrapped) server to keep sessions alive.
+        ensureTmuxServerPersists(tmuxBin),
+    ]);
 }
 
 /**
@@ -246,8 +358,19 @@ export function createTmuxSession(sessionName: string, cwd: string, command: str
  * whole server, `-g` forces the positive ones, and once a server has been
  * touched by this function its global env is colour-clean regardless of who
  * bootstrapped it. All set-options are idempotent and safe.
+ *
+ * All nine commands ride ONE tmux invocation, and the whole thing is skipped
+ * within a short TTL: the options are server-global and idempotent, so
+ * re-running them on every spawn/attach only added subprocess round-trips.
  */
-export function ensureTmuxServerPersists(tmuxBin?: string): void {
+const SERVER_PERSIST_TTL_MS = 60_000;
+let lastServerPersistAt = 0;
+
+export async function ensureTmuxServerPersists(tmuxBin?: string): Promise<void> {
+    if (Date.now() - lastServerPersistAt < SERVER_PERSIST_TTL_MS) {
+        return;
+    }
+
     let bin: string;
 
     try {
@@ -257,42 +380,48 @@ export function ensureTmuxServerPersists(tmuxBin?: string): void {
         return;
     }
 
-    // -u = unset; -g = global. Run set-environment FIRST so any session created
-    // immediately after this call (e.g. createTmuxSession → ensureTmuxServerPersists
-    // → next createTmuxSession) gets the clean env.
-    const setOptionArgs: string[][] = [
-        ["set-environment", "-gu", "NO_COLOR"],
-        ["set-environment", "-gu", "CARGO_TERM_COLOR"],
-        ["set-environment", "-gu", "PIP_NO_COLOR"],
-        ["set-environment", "-g", "COLORTERM", "truecolor"],
-        ["set-environment", "-g", "FORCE_COLOR", "1"],
-        ["set-environment", "-g", "CLICOLOR", "1"],
-        ["set-environment", "-g", "CLICOLOR_FORCE", "1"],
-        ["set-option", "-s", "exit-empty", "off"],
-        ["set-option", "-g", "destroy-unattached", "off"],
-    ];
+    // -u = unset; -g = global. set-environment runs FIRST in the chain so any
+    // session created immediately after this call gets the clean env.
+    const result = await runTmux([
+        bin,
+        ...chainTmuxCommands([
+            ["set-environment", "-gu", "NO_COLOR"],
+            ["set-environment", "-gu", "CARGO_TERM_COLOR"],
+            ["set-environment", "-gu", "PIP_NO_COLOR"],
+            ["set-environment", "-g", "COLORTERM", "truecolor"],
+            ["set-environment", "-g", "FORCE_COLOR", "1"],
+            ["set-environment", "-g", "CLICOLOR", "1"],
+            ["set-environment", "-g", "CLICOLOR_FORCE", "1"],
+            ["set-option", "-s", "exit-empty", "off"],
+            ["set-option", "-g", "destroy-unattached", "off"],
+        ]),
+    ]);
 
-    for (const args of setOptionArgs) {
-        const result = spawnSyncImpl([bin, ...args]);
-
-        if (result.exitCode !== 0) {
-            logger.debug(
-                { args, exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
-                "ensureTmuxServerPersists: tmux set-option failed"
-            );
-        }
+    if (result.exitCode !== 0) {
+        logger.debug(
+            { exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
+            "ensureTmuxServerPersists: tmux batch failed"
+        );
+        return;
     }
+
+    // Only latch on success — a failure (e.g. `set-environment -gu` on a var
+    // that a wedged server rejects) should be retried on the next touch.
+    lastServerPersistAt = Date.now();
 }
 
-export function killTmuxSession(sessionName: string): void {
+export async function killTmuxSession(sessionName: string): Promise<void> {
     const tmuxBin = resolveTmuxBin();
-    spawnSyncImpl([tmuxBin, "kill-session", "-t", sessionName]);
+    await runTmux([tmuxBin, "kill-session", "-t", sessionName]);
 }
 
 /**
  * Hand the controlling terminal to `tmux attach-session`. Replaces our stdio with
  * tmux's; control returns on detach (C-b d) or session kill. The caller MUST guard
  * for a TTY first — attaching without one fails. Throws on a non-zero exit.
+ *
+ * Deliberately sync: this is a CLI-only TTY handoff that blocks until the user
+ * detaches — there is no event loop to protect.
  */
 export function attachTmuxSession(sessionName: string): void {
     const tmuxBin = resolveTmuxBin();
@@ -305,7 +434,7 @@ export function attachTmuxSession(sessionName: string): void {
     }
 }
 
-export function renameTmuxSession(fromName: string, toName: string): void {
+export async function renameTmuxSession(fromName: string, toName: string): Promise<void> {
     const tmuxBin = resolveTmuxBin();
     const trimmed = toName.trim();
 
@@ -313,15 +442,15 @@ export function renameTmuxSession(fromName: string, toName: string): void {
         throw new Error("tmux session name cannot be empty");
     }
 
-    if (!sessionExists(fromName)) {
+    if (!(await sessionExists(fromName))) {
         throw new Error(`tmux session ${fromName} does not exist`);
     }
 
-    if (fromName !== trimmed && sessionExists(trimmed)) {
+    if (fromName !== trimmed && (await sessionExists(trimmed))) {
         throw new Error(`tmux session ${trimmed} already exists`);
     }
 
-    const result = spawnSyncImpl([tmuxBin, "rename-session", "-t", fromName, trimmed]);
+    const result = await runTmux([tmuxBin, "rename-session", "-t", fromName, trimmed]);
 
     if (result.exitCode !== 0) {
         throw new Error(`Failed to rename tmux session ${fromName}${tmuxErrorDetail(result.stderr)}`);
@@ -351,7 +480,7 @@ export interface TmuxScrollState {
  * reported by tmux in copy-mode, so it reads as 0 (live bottom) when `inMode` is
  * false. Returns null if tmux is unavailable or the session is gone.
  */
-export function getTmuxScrollState(sessionName: string): TmuxScrollState | null {
+export async function getTmuxScrollState(sessionName: string): Promise<TmuxScrollState | null> {
     let tmuxBin: string;
 
     try {
@@ -361,7 +490,7 @@ export function getTmuxScrollState(sessionName: string): TmuxScrollState | null 
         return null;
     }
 
-    const result = spawnSyncImpl([
+    const result = await runTmux([
         tmuxBin,
         "display-message",
         "-p",
@@ -392,7 +521,7 @@ export function getTmuxScrollState(sessionName: string): TmuxScrollState | null 
  * a fraction at/near the bottom cancels copy-mode so the pane follows live output
  * again; otherwise it parks at the exact line via history-bottom + N scroll-up.
  */
-export function scrollTmuxToFraction(sessionName: string, fraction: number): void {
+export async function scrollTmuxToFraction(sessionName: string, fraction: number): Promise<void> {
     if (!Number.isFinite(fraction)) {
         return;
     }
@@ -406,7 +535,7 @@ export function scrollTmuxToFraction(sessionName: string, fraction: number): voi
         return;
     }
 
-    const state = getTmuxScrollState(sessionName);
+    const state = await getTmuxScrollState(sessionName);
 
     if (!state) {
         return;
@@ -417,16 +546,22 @@ export function scrollTmuxToFraction(sessionName: string, fraction: number): voi
 
     if (fromBottom <= 0) {
         if (state.inMode) {
-            spawnSyncImpl([tmuxBin, "send-keys", "-t", sessionName, "-X", "cancel"]);
+            await runTmux([tmuxBin, "send-keys", "-t", sessionName, "-X", "cancel"]);
         }
 
         return;
     }
 
     if (!state.inMode) {
-        spawnSyncImpl([tmuxBin, "copy-mode", "-t", sessionName]);
+        await runTmux([tmuxBin, "copy-mode", "-t", sessionName]);
     }
 
-    spawnSyncImpl([tmuxBin, "send-keys", "-t", sessionName, "-X", "history-bottom"]);
-    spawnSyncImpl([tmuxBin, "send-keys", "-t", sessionName, "-X", "-N", String(fromBottom), "scroll-up"]);
+    // One invocation: park at the bottom of history, then step up N lines.
+    await runTmux([
+        tmuxBin,
+        ...chainTmuxCommands([
+            ["send-keys", "-t", sessionName, "-X", "history-bottom"],
+            ["send-keys", "-t", sessionName, "-X", "-N", String(fromBottom), "scroll-up"],
+        ]),
+    ]);
 }

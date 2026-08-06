@@ -1,19 +1,34 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { accountOwningKeychain } from "@app/claude/lib/doctor";
+import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
+import {
+    ensureOnboardingSkippedForOAuthToken,
+    FABLE_MODEL_ID,
+    FABLE_MODEL_OPTION,
+    FABLE_MODEL_OPTION_DESCRIPTION,
+    FABLE_MODEL_OPTION_NAME,
+    pinnedLaunchEnv,
+    subscriptionTypeOf,
+} from "@app/claude/lib/launch-env";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
-import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
+import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { fableCapableAccounts, fableStatusForAccount } from "@app/claude/lib/usage/fable-guard";
+import {
+    deadBucketForAccount,
+    fableCapableAccounts,
+    fableStatusForAccount,
+    weeklyStatusForAccount,
+} from "@app/claude/lib/usage/fable-guard";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
+import { pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
+import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -27,15 +42,6 @@ import {
 } from "../lib/teammate-wrapper";
 import { pickSessionForResume } from "./resume";
 
-/**
- * Claude Code reads `.claude.json` from `$CLAUDE_CONFIG_DIR/.claude.json` when that
- * env var is set (else `~/.claude.json`). The onboarding patch must target the same
- * file the launched claude will read, or it silently patches the wrong config.
- */
-function claudeJsonPath(): string {
-    return join(env.paths.getClaudeConfigDir() ?? homedir(), ".claude.json");
-}
-
 interface StartOptions {
     pick?: boolean;
     autopick?: boolean;
@@ -44,38 +50,6 @@ interface StartOptions {
     continue?: boolean;
     keychain?: boolean;
     cmux?: boolean;
-}
-
-/**
- * Claude Code's interactive onboarding ignores CLAUDE_CODE_OAUTH_TOKEN and shows
- * the OAuth login screen when hasCompletedOnboarding is false (e.g. after /logout).
- * See anthropics/claude-code#8938, #46259 — token auth works once onboarding is skipped.
- */
-async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
-    // Best-effort by contract: any fs/parse failure here (permissions, disk, foreign
-    // ~/.claude.json) must log and return — never abort the actual claude launch.
-    const claudeJson = claudeJsonPath();
-    try {
-        const file = Bun.file(claudeJson);
-        const text = (await file.exists()) ? await file.text() : "{}";
-        if (/"hasCompletedOnboarding"\s*:\s*true/.test(text)) {
-            return;
-        }
-
-        let updated: string;
-        if (/"hasCompletedOnboarding"\s*:\s*false/.test(text)) {
-            updated = text.replace(/"hasCompletedOnboarding"\s*:\s*false/, '"hasCompletedOnboarding": true');
-        } else {
-            const config = SafeJSON.parse(text, { strict: true }) as Record<string, unknown>;
-            config.hasCompletedOnboarding = true;
-            updated = SafeJSON.stringify(config, null, 2);
-        }
-
-        await Bun.write(claudeJson, updated);
-        logger.debug({ path: claudeJson }, "Set hasCompletedOnboarding for CLAUDE_CODE_OAUTH_TOKEN launch");
-    } catch (error) {
-        logger.warn({ error, path: claudeJson }, "Could not patch hasCompletedOnboarding");
-    }
 }
 
 /** Same bound findClaudeCommand uses — an rc file that blocks must not hang the launch. */
@@ -296,7 +270,9 @@ async function scoreTokenAccounts(
             logger.debug({ error }, "background usage revalidation failed");
         });
 
-        return scoreAccounts(cachedAccounts, scoreOpts);
+        // Grouped urgency (fable → opus → dead → expired) so the launch picker
+        // agrees with the usage TUI; dead/expired stay visible at the bottom.
+        return sortGrouped(scoreAccounts(cachedAccounts, scoreOpts));
     }
 
     const spinner = p.spinner();
@@ -309,7 +285,7 @@ async function scoreTokenAccounts(
             return null;
         }
 
-        const scored = scoreAccounts(usage, scoreOpts);
+        const scored = sortGrouped(scoreAccounts(usage, scoreOpts));
         spinner.stop(`Ranked ${scored.length} account${scored.length === 1 ? "" : "s"} by usage headroom`);
         return scored;
     } catch (error) {
@@ -385,8 +361,147 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
     }
 }
 
+/**
+ * An interactive session gates its turns on the KEYCHAIN account's limits, not
+ * the pinned token's: a long-lived token is inference-only (the profile
+ * endpoint 403s on it), so the UI reads usage from the keychain login and
+ * refuses before sending. Inference still bills the pinned account. So a
+ * limit-dead keychain kills every session on the machine. Say so.
+ */
+async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, modelId: string | undefined): Promise<void> {
+    const uuid = await keychainOwnerUuidOffline();
+
+    if (!uuid) {
+        return; // unmanaged or unknown login — nothing we can vouch for
+    }
+
+    const owner = accountOwningKeychain(aiConfig.getAccountsByProvider("anthropic-sub"), uuid);
+
+    if (!owner || owner === accountName) {
+        return;
+    }
+
+    const cached = await peekSharedUsage().catch(() => null);
+
+    if (!cached) {
+        return;
+    }
+
+    // An explicit non-Fable model does not care about the Fable bucket; every
+    // launch cares about the all-model weekly one.
+    const fableMatters = !modelId || modelFamilyOf(modelId) === "fable";
+    const dead = deadBucketForAccount(cached.accounts, owner, fableMatters);
+
+    if (!dead) {
+        return;
+    }
+
+    out.printlnErr(
+        pc.yellow(`⚠ The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`)
+    );
+    out.printlnErr(
+        pc.dim(
+            "  Interactive sessions read their limits from the KEYCHAIN account even when pinned to another one,\n" +
+                "  so this session would refuse on its first turn."
+        )
+    );
+    out.printlnErr(pc.dim(`  Fix it with: ${pc.cyan(`tools claude start --keychain ${accountName}`)}`));
+}
+
+/** "resets in 2h 5m" / "resetting now" from an ISO reset timestamp. */
+function resetPhrase(resetsAt: string | null): string {
+    if (!resetsAt) {
+        return "reset window unknown";
+    }
+
+    const hours = (new Date(resetsAt).getTime() - Date.now()) / 3_600_000;
+
+    if (!Number.isFinite(hours) || hours <= 0) {
+        return "resetting now";
+    }
+
+    return `resets in ${fmtHours(hours)}`;
+}
+
+/**
+ * A weekly-dead account cannot serve ANY model: every turn 429s and Claude
+ * Code silently falls back to the keychain account. This runs before the
+ * interactive and --model checks on purpose. Both are escapes from a Fable
+ * question, and neither is an escape from an empty weekly bucket.
+ */
+async function refuseIfWeeklyDead(accountName: string): Promise<void> {
+    const cached = await peekSharedUsage().catch((error) => {
+        logger.debug({ error }, "weekly gate: cache peek failed, skipping the check");
+        return null;
+    });
+
+    if (!cached) {
+        return;
+    }
+
+    const weekly = weeklyStatusForAccount(cached.accounts, accountName);
+
+    if (weekly.available) {
+        return;
+    }
+
+    out.error(pc.red(`⚠ "${accountName}" has no weekly quota left (${resetPhrase(weekly.resetsAt)}).`));
+    out.printlnErr(pc.dim("  Every model 429s until it refills, so switching model would not help."));
+
+    const withRoom = fableCapableAccounts(cached.accounts).filter((name) => name !== accountName);
+
+    out.printlnErr(
+        withRoom.length > 0
+            ? pc.dim(`  Accounts with headroom: ${withRoom.join(", ")}`)
+            : pc.dim("  No other account has weekly headroom right now.")
+    );
+
+    await out.flush();
+    process.exit(1);
+}
+
 function scoredHint(account: ScoredAccount): string {
     return account.dataNote ? `${account.why} ${pc.yellow(`[${account.dataNote}]`)}` : account.why;
+}
+
+/**
+ * `cc opus` / `cc fable` let the usage data choose the account (rules in
+ * lib/usage/smart-alias.ts) and print what was picked plus the headroom it was
+ * picked on. Returns null when nothing qualifies, so the caller falls back to
+ * the picker: an alias never blocks a launch.
+ */
+async function resolveSmartAlias(
+    alias: SmartAlias,
+    withToken: AIAccountEntry[],
+    modelId: string | undefined
+): Promise<string | null> {
+    const scored = await scoreTokenAccounts(withToken, modelId);
+
+    if (!scored) {
+        out.printlnErr(pc.yellow("Usage data unavailable — picking manually:"));
+        return null;
+    }
+
+    const pick = pickSmart(alias, scored);
+
+    if (!pick) {
+        out.printlnErr(
+            pc.yellow(
+                alias === "fable"
+                    ? "No account has Fable headroom right now — picking manually:"
+                    : "No account has usable weekly headroom right now — picking manually:"
+            )
+        );
+        return null;
+    }
+
+    if (pick.warning) {
+        out.printlnErr(pc.yellow(`⚠ ${pick.warning}`));
+    }
+
+    out.printlnErr(`${pc.cyan("▸")} ${pc.bold(alias)} → ${pick.line}`);
+
+    return pick.accountName;
 }
 
 /** Plain alphabetical select — fallback when usage data is unavailable. */
@@ -434,7 +549,18 @@ async function pickAccount(
             process.exit(1);
         }
 
-        const best = scored[0];
+        // An auto-pick must never land on an account that cannot serve a turn.
+        // The interactive table still SHOWS these rows; only the automatic
+        // choice skips them.
+        const eligible = scored.filter(
+            (s) => !s.subscriptionExpired && s.group !== "dead" && s.group !== "expired" && s.tier !== "weekly-blocked"
+        );
+        const best = eligible[0] ?? scored[0];
+
+        if (eligible.length === 0) {
+            out.printlnErr(pc.yellow("No account has usable headroom; picking the best of a bad set."));
+        }
+
         if (best.tier === "no-data") {
             out.printlnErr(pc.yellow("No account has usage data; picking the first configured account."));
         }
@@ -531,7 +657,106 @@ async function resolveAccountName(
     process.exit(1);
 }
 
-async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
+/** "12m ago" / "2h ago" / "3d ago" — coarse on purpose, it's a disambiguator. */
+function agePhrase(mtimeMs: number): string {
+    const minutes = Math.max(0, Math.round((Date.now() - mtimeMs) / 60_000));
+
+    if (minutes < 60) {
+        return `${minutes}m ago`;
+    }
+
+    const hours = Math.round(minutes / 60);
+
+    return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+}
+
+/**
+ * One row: `d8deebf0 · 12m ago · ⚠ limit · in .worktrees/fix · "the prompt"`.
+ * The prompt goes in the LABEL rather than clack's `hint` (a hint only renders
+ * on the focused row, and every row has to be identifiable) and is trimmed to
+ * whatever the terminal has left, so no row wraps.
+ */
+function sessionLabel(session: SessionSummary): string {
+    const short = session.id.slice(0, 8);
+    const cells = [
+        { plain: short, colored: pc.cyan(short) },
+        { plain: agePhrase(session.mtimeMs), colored: agePhrase(session.mtimeMs) },
+    ];
+
+    if (session.limitStop) {
+        cells.push({ plain: "⚠ limit", colored: pc.yellow("⚠ limit") });
+    }
+
+    if (session.subdir) {
+        cells.push({ plain: `in ${session.subdir}`, colored: pc.dim(`in ${session.subdir}`) });
+    }
+
+    // 3 per separator; the 20 covers the "│  ● " gutter, the quotes, and
+    // clack's own wrap margin — it wraps at `columns - prefix.length` on a
+    // COLORED prefix, so its escape codes eat ~13 columns of the budget. A row
+    // that overshoots wraps onto a second line and the picker turns to mush.
+    const used = cells.reduce((n, cell) => n + cell.plain.length + 3, 20);
+    const room = (process.stdout.columns ?? 80) - used;
+
+    if (session.lastPrompt && room >= 20) {
+        const text =
+            session.lastPrompt.length > room ? `${session.lastPrompt.slice(0, room - 1)}…` : session.lastPrompt;
+        cells.push({ plain: text, colored: pc.dim(`"${text}"`) });
+    }
+
+    return cells.map((cell) => cell.colored).join(pc.dim(" · "));
+}
+
+/** True when the user already told claude what to open (`--resume`, `-c`, `-p`, …). */
+export function passthroughHandlesSession(passthrough: string[]): boolean {
+    return passthrough.some((arg) =>
+        ["--resume", "-r", "--continue", "-c", "--fork-session", "--print", "-p"].includes(arg.split("=")[0])
+    );
+}
+
+/**
+ * A session that died on a rate limit is the one case where a NEW session is
+ * almost never what was wanted: relaunching under another account is exactly
+ * how you carry on. The prompt is gated on the NEWEST session having died that
+ * way; the other recent ones ride along so an older thread stays reachable.
+ */
+async function offerLimitKilledResume(): Promise<string[]> {
+    if (!isInteractive()) {
+        return [];
+    }
+
+    const cwd = process.cwd();
+    const sessions = await findRecentSessions(cwd).catch((error) => {
+        logger.debug({ error }, "[start] limit-killed session scan failed");
+        return [];
+    });
+
+    if (!sessions[0]?.limitStop) {
+        return [];
+    }
+
+    out.printlnErr(
+        pc.yellow(`⚠ The last session here stopped on a limit ${pc.dim(`(${agePhrase(sessions[0].mtimeMs)})`)}`)
+    );
+    out.printlnErr(pc.dim(`  ${sessions[0].limitStop.slice(0, 160)}`));
+
+    const picked = await p.select({
+        message: `Resume a session in ${cwd.replace(env.paths.getHome() ?? "", "~")}?`,
+        options: [
+            ...sessions.map((session) => ({ value: session.id, label: sessionLabel(session) })),
+            { value: "", label: "Start fresh" },
+        ],
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Cancelled — nothing launched.");
+        process.exit(0);
+    }
+
+    return picked ? ["--resume", picked] : [];
+}
+
+async function resolveResumeArgs(opts: StartOptions, passthrough: string[]): Promise<string[]> {
     if (opts.continue) {
         if (opts.resume) {
             out.printlnErr(pc.dim("Both --continue and --resume given; using --continue."));
@@ -551,6 +776,12 @@ async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
         }
 
         return ["--resume", session.sessionId];
+    }
+
+    // The user said nothing about sessions. Offer the limit-killed one, if the
+    // passthrough has not already told claude what to open.
+    if (!passthroughHandlesSession(passthrough)) {
+        return offerLimitKilledResume();
     }
 
     return [];
@@ -576,11 +807,25 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         process.exit(1);
     }
 
-    const modelId = opts.model ? await resolveModel(opts.model) : undefined;
+    const explicitModelId = opts.model ? await resolveModel(opts.model) : undefined;
+    const alias = smartAliasOf(
+        nameArg,
+        withToken.map((a) => a.name)
+    );
+
+    // `cc opus` / `cc fable` name a model as well as a strategy. An explicit
+    // --model always wins.
+    const modelId =
+        explicitModelId ??
+        (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? "claude-fable-5[1m]" : undefined);
 
     let accountName: string;
 
-    if (nameArg) {
+    if (alias) {
+        accountName =
+            (await resolveSmartAlias(alias, withToken, modelId)) ??
+            (await pickAccount(withToken, opts, modelId, aiConfig));
+    } else if (nameArg) {
         accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
     } else {
         accountName = await pickAccount(withToken, opts, modelId, aiConfig);
@@ -588,7 +833,13 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     const account = withToken.find((a) => a.name === accountName)!;
 
-    const resumeArgs = await resolveResumeArgs(opts);
+    await refuseIfWeeklyDead(accountName);
+
+    if (!opts.keychain) {
+        await warnKeychainLimits(accountName, aiConfig, modelId);
+    }
+
+    const resumeArgs = await resolveResumeArgs(opts, passthrough);
 
     await guardFableHeadroom(accountName, modelId, resumeArgs.length > 0);
 
@@ -678,28 +929,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         launchEnv = { ...process.env, TOOLS_CLAUDE_ACCOUNT: account.name };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
     } else {
-        launchEnv = {
-            ...process.env,
-            TOOLS_CLAUDE_ACCOUNT: account.name,
-            CLAUDE_CODE_OAUTH_TOKEN: account.tokens.longLivedToken!,
-            // Interactive CC can't resolve the tier from an inference-only setup token,
-            // which blocks opus/sonnet [1m] model switches (see claude-code#70124).
-            CLAUDE_CODE_SUBSCRIPTION_TYPE: account.label?.split(" ")[0] ?? "max",
-            // The /model *catalog* comes from /api/claude_cli/bootstrap, which 403s for
-            // inference-only setup tokens ("scope requirement user:profile") — so Fable
-            // never loads. These two env vars are CC's escape hatches:
-            //  1. ANTHROPIC_DEFAULT_FABLE_MODEL opens the Fable availability gate (vYe()),
-            //     so `/model fable` and Fable inference are allowed. But it does NOT add
-            //     Fable to the *picker list* for first-party OAuth (that path is gated by
-            //     Xf()/firstParty and stays empty).
-            //  2. ANTHROPIC_CUSTOM_MODEL_OPTION pushes an entry straight into the picker
-            //     list, ungated by first-party — so "Fable 5" shows up in `/model` without
-            //     the user having to type it. `[1m]` selects the 1M-context Fable.
-            ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",
-            ANTHROPIC_CUSTOM_MODEL_OPTION: "claude-fable-5[1m]",
-            ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "Fable 5",
-            ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: "Fable 5 · Most capable for hardest and longest-running tasks",
-        };
+        launchEnv = { ...process.env, ...pinnedLaunchEnv(account, account.tokens.longLivedToken!) };
     }
 
     // Agent-team tmux teammates do NOT inherit CLAUDE_CODE_OAUTH_TOKEN (CC spawn
@@ -714,11 +944,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
                 env: {
                     accountName: account.name,
                     oauthToken: account.tokens.longLivedToken,
-                    subscriptionType: account.label?.split(" ")[0] ?? "max",
-                    fableModel: "claude-fable-5",
-                    customModelOption: "claude-fable-5[1m]",
-                    customModelOptionName: "Fable 5",
-                    customModelOptionDescription: "Fable 5 · Most capable for hardest and longest-running tasks",
+                    subscriptionType: subscriptionTypeOf(account),
+                    fableModel: FABLE_MODEL_ID,
+                    customModelOption: FABLE_MODEL_OPTION,
+                    customModelOptionName: FABLE_MODEL_OPTION_NAME,
+                    customModelOptionDescription: FABLE_MODEL_OPTION_DESCRIPTION,
                 },
             });
             teammateWrapperPath = installed.path;

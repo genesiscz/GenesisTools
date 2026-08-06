@@ -5,6 +5,7 @@ import {
     buildTmuxSpawnEnv,
     createTmuxSession,
     getTmuxScrollState,
+    listTmuxSessionActivePanes,
     listTmuxSessionCommands,
     listTmuxSessions,
     renameTmuxSession,
@@ -20,7 +21,7 @@ describe("tmux sessions", () => {
         resetTmuxBinCache();
     });
 
-    test("listTmuxSessions parses tmux list-sessions output", () => {
+    test("listTmuxSessions parses tmux list-sessions output", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
@@ -33,42 +34,63 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        expect(listTmuxSessions()).toEqual([
+        expect(await listTmuxSessions()).toEqual([
             { name: "dev-dashboard-abc12345", attached: 1, windows: 2 },
             { name: "cmux-test", attached: 0, windows: 1 },
         ]);
     });
 
-    test("listTmuxSessions returns empty when tmux fails", () => {
+    test("listTmuxSessions returns empty when tmux fails", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests(() => ({ exitCode: 1, stdout: "" }));
-        expect(listTmuxSessions()).toEqual([]);
+        expect(await listTmuxSessions()).toEqual([]);
     });
 
-    test("listTmuxSessionCommands maps session name to its active pane command", () => {
+    test("listTmuxSessionCommands maps session name to its active pane command", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
-                return { exitCode: 0, stdout: "dev-dashboard-abc12345\tclaude\ncmux-test\tzsh\nblank-cmd\t\n" };
+                return {
+                    exitCode: 0,
+                    stdout: "dev-dashboard-abc12345\tclaude\t✳ testt\ncmux-test\tzsh\t\nblank-cmd\t\t\n",
+                };
             }
 
             return { exitCode: 0, stdout: "" };
         });
 
-        const commands = listTmuxSessionCommands();
+        const commands = await listTmuxSessionCommands();
         expect(commands.get("dev-dashboard-abc12345")).toBe("claude");
         expect(commands.get("cmux-test")).toBe("zsh");
         // A blank command is skipped (no entry), not stored as "".
         expect(commands.has("blank-cmd")).toBe(false);
     });
 
-    test("listTmuxSessionCommands returns empty when tmux fails", () => {
+    test("listTmuxSessionActivePanes includes pane titles", async () => {
         setTmuxBinForTests("/mock/tmux");
-        setTmuxSpawnSyncForTests(() => ({ exitCode: 1, stdout: "" }));
-        expect(listTmuxSessionCommands().size).toBe(0);
+        setTmuxSpawnSyncForTests((cmd) => {
+            if (cmd.includes("list-sessions")) {
+                return {
+                    exitCode: 0,
+                    stdout: "dev-dashboard-abc12345\tclaude\t✳ testt\ncmux-test\tzsh\t\n",
+                };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        const panes = await listTmuxSessionActivePanes();
+        expect(panes.get("dev-dashboard-abc12345")).toEqual({ command: "claude", title: "✳ testt" });
+        expect(panes.get("cmux-test")).toEqual({ command: "zsh", title: "" });
     });
 
-    test("sessionExists checks parsed list", () => {
+    test("listTmuxSessionCommands returns empty when tmux fails", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests(() => ({ exitCode: 1, stdout: "" }));
+        expect((await listTmuxSessionCommands()).size).toBe(0);
+    });
+
+    test("sessionExists checks parsed list", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
@@ -78,8 +100,8 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        expect(sessionExists("foo")).toBe(true);
-        expect(sessionExists("missing")).toBe(false);
+        expect(await sessionExists("foo")).toBe(true);
+        expect(await sessionExists("missing")).toBe(false);
     });
 
     test("buildTmuxSpawnEnv sets UTF-8 locale when LANG unset", () => {
@@ -117,7 +139,7 @@ describe("tmux sessions", () => {
         }
     });
 
-    test("renameTmuxSession calls tmux rename-session", () => {
+    test("renameTmuxSession calls tmux rename-session", async () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];
         setTmuxSpawnSyncForTests((cmd) => {
@@ -130,12 +152,12 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        renameTmuxSession("foo", "bar");
+        await renameTmuxSession("foo", "bar");
 
         expect(calls.some((cmd) => cmd.includes("rename-session") && cmd.includes("bar"))).toBe(true);
     });
 
-    test("createTmuxSession pins exit-empty off so the server keeps sessions across teardown", () => {
+    test("createTmuxSession pins exit-empty off so the server keeps sessions across teardown", async () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];
         setTmuxSpawnSyncForTests((cmd) => {
@@ -143,7 +165,7 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        createTmuxSession("foo", "/tmp", "/bin/zsh");
+        await createTmuxSession("foo", "/tmp", "/bin/zsh");
 
         expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("foo"))).toBe(true);
         expect(calls.some((cmd) => cmd.includes("new-session") && cmd.includes("--"))).toBe(true);
@@ -172,7 +194,7 @@ describe("tmux sessions", () => {
         ).toBe(true);
     });
 
-    test("getTmuxScrollState parses display-message output", () => {
+    test("getTmuxScrollState parses display-message output", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("display-message")) {
@@ -182,7 +204,7 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        expect(getTmuxScrollState("foo")).toEqual({
+        expect(await getTmuxScrollState("foo")).toEqual({
             historySize: 979,
             paneHeight: 24,
             scrollPosition: 100,
@@ -191,11 +213,11 @@ describe("tmux sessions", () => {
         });
     });
 
-    test("getTmuxScrollState treats empty scroll_position as live bottom", () => {
+    test("getTmuxScrollState treats empty scroll_position as live bottom", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests(() => ({ exitCode: 0, stdout: "500|40||0|0" }));
 
-        expect(getTmuxScrollState("foo")).toEqual({
+        expect(await getTmuxScrollState("foo")).toEqual({
             historySize: 500,
             paneHeight: 40,
             scrollPosition: 0,
@@ -204,7 +226,7 @@ describe("tmux sessions", () => {
         });
     });
 
-    test("scrollTmuxToFraction(1) cancels copy-mode to follow live output", () => {
+    test("scrollTmuxToFraction(1) cancels copy-mode to follow live output", async () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];
         setTmuxSpawnSyncForTests((cmd) => {
@@ -217,13 +239,13 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        scrollTmuxToFraction("foo", 1);
+        await scrollTmuxToFraction("foo", 1);
 
         expect(calls.some((cmd) => cmd.includes("cancel"))).toBe(true);
         expect(calls.some((cmd) => cmd.includes("scroll-up"))).toBe(false);
     });
 
-    test("scrollTmuxToFraction ignores non-finite fraction", () => {
+    test("scrollTmuxToFraction ignores non-finite fraction", async () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];
         setTmuxSpawnSyncForTests((cmd) => {
@@ -231,12 +253,12 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "1000|24|50|1|0" };
         });
 
-        scrollTmuxToFraction("foo", Number.NaN);
+        await scrollTmuxToFraction("foo", Number.NaN);
 
         expect(calls.length).toBe(0);
     });
 
-    test("scrollTmuxToFraction(0) parks at the top of history", () => {
+    test("scrollTmuxToFraction(0) parks at the top of history", async () => {
         setTmuxBinForTests("/mock/tmux");
         const calls: string[][] = [];
         setTmuxSpawnSyncForTests((cmd) => {
@@ -249,7 +271,7 @@ describe("tmux sessions", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        scrollTmuxToFraction("foo", 0);
+        await scrollTmuxToFraction("foo", 0);
 
         expect(calls.some((cmd) => cmd.includes("copy-mode"))).toBe(true);
         expect(calls.some((cmd) => cmd.includes("history-bottom"))).toBe(true);

@@ -1,6 +1,8 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
 import type { AccountUsage, UsageBucket } from "./api";
+import { isSubscriptionExpiredError } from "./api";
 import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
+import { planAllowsClaudeCode } from "./subscription";
 
 /**
  * Account-picking heuristic for `tools claude start --pick/--autopick`.
@@ -55,11 +57,17 @@ const TIER_ORDER: Record<AccountTier, number> = {
     "no-data": 3,
 };
 
+/**
+ * `expired` outranks `dead` on purpose. An expired LOGIN only kills usage
+ * polling: the launcher runs on the long-lived token, so the account may still
+ * work and one re-login restores the numbers. A `dead` account is either out of
+ * weekly quota or off a paid plan, and no re-login fixes either.
+ */
 const GROUP_ORDER: Record<AccountGroup, number> = {
     fable: 0,
     opus: 1,
-    dead: 2,
-    expired: 3,
+    expired: 2,
+    dead: 3,
 };
 
 interface BucketView {
@@ -82,6 +90,8 @@ export interface ScoredAccount {
     score: number;
     /** 5h window nearly spent — sinks to the group bottom until its reset passes. */
     cooling: boolean;
+    /** Usage API 403'd at the org level: the subscription is gone (strikethrough row, never auto-picked). */
+    subscriptionExpired?: boolean;
     /** Weekly scarcity rate in %/h of the binding weekly bucket. 0 for no-data. */
     weeklyRatePctPerHour: number;
     sessionHeadroomPct: number;
@@ -140,7 +150,7 @@ function hoursToReset(resetsAt: string | null | undefined, periodHours: number, 
     return Number.isFinite(hours) && hours > 0 ? hours : periodHours;
 }
 
-function fmtHours(hours: number): string {
+export function fmtHours(hours: number): string {
     if (hours < 1) {
         return `${Math.max(1, Math.round(hours * 60))}m`;
     }
@@ -148,6 +158,12 @@ function fmtHours(hours: number): string {
     if (hours < 48) {
         const whole = Math.floor(hours);
         const minutes = Math.round((hours - whole) * 60);
+
+        // 19.995h rounds to 60 minutes — carry it, no clock says "19h 60m".
+        if (minutes >= 60) {
+            return `${whole + 1}h`;
+        }
+
         return minutes > 0 ? `${whole}h ${minutes}m` : `${whole}h`;
     }
 
@@ -178,6 +194,36 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         // invalid_grant in `stale.reason`, so both places must be checked.
         const expiredError = account.error ?? account.stale?.reason;
         const loginExpired = expiredError !== undefined && EXPIRED_ERROR_RE.test(expiredError);
+
+        // Org-level 403 means the subscription is gone. This wins over
+        // stale-replayed usage: shared-cache backfills the last good payload,
+        // so a dead account otherwise keeps rendering its old headroom and
+        // ranks at the TOP of the tier order (the lukas.pribik96 bug).
+        //
+        // The plan check catches the quieter half of the same problem: a lapsed
+        // account can keep serving perfectly healthy usage buckets while every
+        // inference call answers 403 (pribik.turena, 2026-08-06 — 800 usage
+        // successes that day, and not one turn it could have run).
+        const planDead = !planAllowsClaudeCode(account);
+
+        if (account.orgBlocked || isSubscriptionExpiredError(expiredError) || planDead) {
+            return {
+                ...base,
+                tier: "no-data",
+                group: "dead",
+                score: 0,
+                cooling: false,
+                subscriptionExpired: true,
+                weeklyRatePctPerHour: 0,
+                sessionHeadroomPct: 0,
+                weeklyHeadroomPct: 0,
+                sessionUsableFraction: 0,
+                why: planDead
+                    ? `plan is ${account.subscriptionPlan ?? "not usable"} — Claude Code needs a paid subscription`
+                    : "subscription expired — renew at claude.ai",
+                dataNote: "subscription expired",
+            };
+        }
 
         if (!account.usage) {
             const expired = loginExpired;

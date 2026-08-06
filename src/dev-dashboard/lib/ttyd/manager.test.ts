@@ -90,7 +90,7 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
         expect(fromName).toBeTruthy();
 
         const toName = `retarget-test-${session.id.slice(0, 8)}`;
-        renameTmuxSession(fromName!, toName);
+        await renameTmuxSession(fromName!, toName);
 
         await retargetTtydTmuxBindings(fromName!, toName);
 
@@ -98,8 +98,8 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
         expect(listed?.tmuxSessionName).toBe(toName);
         expect(listed?.port).toBe(session.port);
         expect(listed?.id).toBe(session.id);
-        expect(sessionExists(toName)).toBe(true);
-        expect(sessionExists(fromName!)).toBe(false);
+        expect(await sessionExists(toName)).toBe(true);
+        expect(await sessionExists(fromName!)).toBe(false);
 
         // Live process must attach to the NEW name (this is the bug: config-only retarget).
         const ps = Bun.spawnSync(["/bin/ps", "-p", String(listed!.pid), "-o", "command="], {
@@ -109,6 +109,23 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
         const cmd = ps.stdout.toString();
         expect(cmd).toContain(`-t ${toName}`);
         expect(cmd).not.toContain(`-t ${fromName}`);
+    });
+
+    test("renameTtyd renames the bound tmux session and mirrors the display name", async () => {
+        const { renameTtyd } = await import("./manager");
+        const session = await spawnTtyd({ command: "/bin/sh", cwd: process.cwd() });
+        const fromName = session.tmuxSessionName;
+        expect(fromName).toBeTruthy();
+
+        const toName = `tab-rename-${session.id.slice(0, 8)}`;
+        const ok = await renameTtyd(session.id, toName);
+        expect(ok).toBe(true);
+
+        const listed = (await listTtyd()).find((s) => s.id === session.id);
+        expect(listed?.name).toBe(toName);
+        expect(listed?.tmuxSessionName).toBe(toName);
+        expect(await sessionExists(toName)).toBe(true);
+        expect(await sessionExists(fromName!)).toBe(false);
     });
 });
 
@@ -162,16 +179,22 @@ const labelBase: TtydSession = {
 };
 
 describe("ttydLabel", () => {
-    test("falls back to '<cmd-basename> :<port>' when no name", () => {
+    test("falls back to tmux session name when bound", () => {
+        expect(ttydLabel({ ...labelBase, tmuxSessionName: "dev-dashboard-abc12345" })).toBe("dev-dashboard-abc12345");
+    });
+
+    test("falls back to '<cmd-basename> :<port>' when unbound", () => {
         expect(ttydLabel(labelBase)).toBe("zsh :50245");
     });
 
     test("uses the custom name when set", () => {
-        expect(ttydLabel({ ...labelBase, name: "deploy-watch" })).toBe("deploy-watch");
+        expect(ttydLabel({ ...labelBase, name: "deploy-watch", tmuxSessionName: "dev-dashboard-x" })).toBe(
+            "deploy-watch"
+        );
     });
 
-    test("blank name falls back", () => {
-        expect(ttydLabel({ ...labelBase, name: "  " })).toBe("zsh :50245");
+    test("blank name falls back to tmux when bound", () => {
+        expect(ttydLabel({ ...labelBase, name: "  ", tmuxSessionName: "bridge" })).toBe("bridge");
     });
 });
 

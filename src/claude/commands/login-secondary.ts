@@ -1,3 +1,4 @@
+import { identityMismatch } from "@app/claude/lib/identity-guard";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -107,13 +108,14 @@ export function registerLoginSecondaryCommand(program: Command): void {
             // Guard the sync-back match key: an unexpected identity here would
             // route future keychain rotations to the wrong account.
             if (
-                account.secondary?.accountUuid &&
-                tokens.account?.uuid &&
-                account.secondary.accountUuid !== tokens.account.uuid
+                identityMismatch({
+                    storedUuid: account.secondary?.accountUuid,
+                    incomingUuid: tokens.account?.uuid,
+                })
             ) {
                 const proceed = await p.confirm({
                     message:
-                        `This grant belongs to ${tokens.account.email ?? tokens.account.uuid}, but the previous ` +
+                        `This grant belongs to ${tokens.account?.email ?? tokens.account?.uuid}, but the previous ` +
                         `secondary login was a DIFFERENT Anthropic account. Save anyway?`,
                     initialValue: false,
                 });

@@ -104,6 +104,12 @@ export const accountEntrySchema = z.object({
     /** Escape hatch for selector exceptions; empty in the common case. */
     overrides: z.record(z.string(), z.unknown()).optional(),
     subscriptionCreatedAt: z.string().optional(),
+    /** `organization_type` from the OAuth profile; a free org cannot run Claude Code. */
+    subscriptionPlan: z.string().optional(),
+    /** `subscription_status` from the OAuth profile ("active", "canceled", …). */
+    subscriptionStatus: z.string().optional(),
+    /** When the two fields above were last read (Unix ms). */
+    subscriptionCheckedAt: z.number().optional(),
 });
 
 export const accountRefSchema = z.string().regex(/^@account\/acc_[a-z0-9][a-z0-9_-]*$/);

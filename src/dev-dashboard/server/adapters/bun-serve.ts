@@ -2,6 +2,11 @@ import type { Router } from "@app/dev-dashboard/server/router";
 import type { RouteContext, RouteResult, RouteServices, SseEmitter } from "@app/dev-dashboard/server/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
+
+// Per-endpoint handler time, keyed by route pattern so `:id` routes aggregate.
+//   PROFILE=route,ttyd,tmux tools dev-dashboard …
+const prof = profiler.scope("route");
 
 export function toResponse(result: RouteResult): Response {
     if (result.kind === "json") {
@@ -119,5 +124,7 @@ export async function routerToResponse(
         services: opts.services,
     };
 
-    return toResponse(await matched.def.handler(ctx));
+    const label = `${matched.def.method} ${matched.def.pattern}`;
+
+    return toResponse(await prof.measureAsync(label, async () => matched.def.handler(ctx)));
 }

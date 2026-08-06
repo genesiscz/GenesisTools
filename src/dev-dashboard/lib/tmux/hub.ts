@@ -1,8 +1,21 @@
+import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { CmuxTmuxSurfaceRef } from "@genesiscz/utils/cmux/tmux-bindings";
 import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
+export interface TtydHubTab {
+    id: string;
+    port: number;
+    /** Identity. Never Claude's topic — see the name-vs-title note in ttyd/manager.ts. */
+    label: string;
+    cwd?: string;
+    lastCommand?: string;
+    /** Claude's live topic, shown alongside the label rather than replacing it. */
+    title?: string;
+}
+
 export interface TmuxHubSession extends TmuxSessionInfo {
     ttydTabIds: string[];
+    ttydTabs: TtydHubTab[];
     canAttachInTtyd: boolean;
     cmuxSurfaces: CmuxTmuxSurfaceRef[];
     inCmux: boolean;
@@ -10,7 +23,13 @@ export interface TmuxHubSession extends TmuxSessionInfo {
 
 interface TtydBinding {
     id: string;
+    port: number;
+    command: string;
+    cwd: string;
     tmuxSessionName?: string;
+    name?: string;
+    lastCommand?: string;
+    title?: string;
 }
 
 export function enrichSessionsForHub(
@@ -18,26 +37,35 @@ export function enrichSessionsForHub(
     ttydSessions: TtydBinding[],
     cmuxBySession: Map<string, CmuxTmuxSurfaceRef[]> = new Map()
 ): TmuxHubSession[] {
-    const ttydByTmux = new Map<string, string[]>();
+    const ttydByTmux = new Map<string, TtydHubTab[]>();
 
     for (const ttyd of ttydSessions) {
         if (!ttyd.tmuxSessionName) {
             continue;
         }
 
+        const tab: TtydHubTab = {
+            id: ttyd.id,
+            port: ttyd.port,
+            label: ttydLabel(ttyd),
+            cwd: ttyd.cwd,
+            lastCommand: ttyd.lastCommand,
+            title: ttyd.title,
+        };
         const existing = ttydByTmux.get(ttyd.tmuxSessionName) ?? [];
-        existing.push(ttyd.id);
+        existing.push(tab);
         ttydByTmux.set(ttyd.tmuxSessionName, existing);
     }
 
     return sessions.map((session) => {
-        const ttydTabIds = ttydByTmux.get(session.name) ?? [];
+        const ttydTabs = ttydByTmux.get(session.name) ?? [];
         const cmuxSurfaces = cmuxBySession.get(session.name) ?? [];
 
         return {
             ...session,
-            ttydTabIds,
-            canAttachInTtyd: ttydTabIds.length === 0,
+            ttydTabIds: ttydTabs.map((tab) => tab.id),
+            ttydTabs,
+            canAttachInTtyd: ttydTabs.length === 0,
             cmuxSurfaces,
             inCmux: cmuxSurfaces.length > 0,
         };

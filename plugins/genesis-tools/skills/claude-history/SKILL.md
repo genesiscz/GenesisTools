@@ -155,6 +155,33 @@ tools claude history summarize abc123 --mode custom --custom-prompt "List all AP
 tools claude history summarize abc123 --mode short-memory --provider anthropic --model claude-sonnet-4-5-20250929
 ```
 
+## Extract shell quirks (zsh/bash NOMATCH)
+
+Mine Claude session JSONLs for Bash tool calls that tripped on zsh 5.9 expansion quirks (`no matches found`, unquoted `?` in URLs, bare `===` equals-expansion, `*(N)` / nobareglobqual, for-loop aborts). Each finding includes the command, result excerpt, and **exact jsonl path + line** so another agent can jump straight there.
+
+```bash
+# Full report → file (Obsidian path example)
+tools claude history extract-shell-quirks --all \
+  -o ~/Tresors/Projects/GenesisBrain/Claude/Bugs/ZshBugs.extracted.md
+
+# Machine JSON
+tools claude history extract-shell-quirks --all --json --max 50
+
+# One project only
+tools claude history extract-shell-quirks -p GenesisTools -o /tmp/zsh.md
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--all` | Scan every project under `~/.claude/projects` |
+| `-p / --project` | Restrict to one project |
+| `--max <n>` | Cap findings (do not use `-l`; parent `history` owns that) |
+| `--exclude-agents` | Skip subagent transcripts |
+| `--no-rule-codification` | Skip pure CLAUDE.md discussion hits |
+| `--no-dedupe` | Keep repeated identical command+error occurrences as separate findings (default collapses to one with `×N`) |
+| `-o / --output` | Write markdown report |
+| `--json` | Findings JSON on stdout |
+
 ## Dashboard
 
 For visual exploration, `tools claude history dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.

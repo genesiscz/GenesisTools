@@ -126,6 +126,18 @@ export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): P
             account.subscriptionCreatedAt = incoming.subscriptionCreatedAt;
         }
 
+        if (incoming.subscriptionPlan !== undefined) {
+            account.subscriptionPlan = incoming.subscriptionPlan;
+        }
+
+        if (incoming.subscriptionStatus !== undefined) {
+            account.subscriptionStatus = incoming.subscriptionStatus;
+        }
+
+        if (incoming.subscriptionCheckedAt !== undefined) {
+            account.subscriptionCheckedAt = incoming.subscriptionCheckedAt;
+        }
+
         if (incoming.apps !== undefined) {
             account.apps = [...incoming.apps];
         }

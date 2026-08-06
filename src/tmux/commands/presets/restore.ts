@@ -61,7 +61,7 @@ export async function runRestorePreset(name: string, flags: RestoreFlags): Promi
 
     for (const session of targets) {
         const targetName = flags.suffix ? `${session.name}${flags.suffix}` : session.name;
-        const clash = sessionExists(targetName);
+        const clash = await sessionExists(targetName);
         const note = clash ? pc.yellow("(skip — already exists)") : pc.dim(`(${countPanes(session)} pane(s))`);
         out.println(`  ${clash ? pc.dim(targetName) : pc.cyan(targetName)} ${note}`);
     }
@@ -96,7 +96,7 @@ export async function runRestorePreset(name: string, flags: RestoreFlags): Promi
 
     for (const session of targets) {
         try {
-            const outcome = restoreTmuxSession(session, {
+            const outcome = await restoreTmuxSession(session, {
                 skipReplay: flags.skipReplay,
                 nameSuffix: flags.suffix,
             });

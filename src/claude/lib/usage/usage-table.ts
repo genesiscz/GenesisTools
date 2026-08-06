@@ -3,7 +3,6 @@ import { accent, padVisible } from "@genesiscz/utils/prompts/clack/table-select"
 import pc from "picocolors";
 import type { ScoredAccount } from "./account-picker";
 import { type CompactLimit, effectiveLeftPct } from "./compact-limits";
-import { isResetImminent } from "./constants";
 
 export const TIER_BADGE: Record<ScoredAccount["tier"], string> = {
     ready: pc.green("●"),
@@ -24,22 +23,19 @@ function colorByPct(pct: number, text: string): string {
     return pc.green(text);
 }
 
-/** Headroom coloring, forced green when the bucket is about to refill anyway. */
-function colorByHeadroom(pct: number, text: string, bucket: string, resetsAt: string | null, now: Date): string {
-    if (isResetImminent(bucket, resetsAt, now)) {
-        return pc.green(text);
-    }
-
-    return colorByPct(pct, text);
-}
-
-function pctCell(limit: CompactLimit | undefined, bucket: string, now: Date = new Date()): string {
+/**
+ * Scarcity colors, headroom and nothing else: <20% red, ≤50% yellow, else
+ * green. Reset timing deliberately does NOT bend these — how much is left and
+ * when it refills are two different questions, and the countdown column
+ * already answers the second one (green when imminent).
+ */
+function pctCell(limit: CompactLimit | undefined, now: Date = new Date()): string {
     if (!limit) {
         return pc.dim("—");
     }
 
     const pct = Math.round(effectiveLeftPct(limit, now));
-    return colorByHeadroom(pct, `${pct}%`, bucket, limit.resetsAt, now);
+    return colorByPct(pct, `${pct}%`);
 }
 
 function hoursUntil(resetsAt: string | null | undefined, now: Date): number | null {
@@ -97,11 +93,13 @@ export function accountCells(scored: ScoredAccount, now: Date = new Date()): str
         ? `${fmtCoarse(hoursUntil(limits.session?.resetsAt, now))} · ${fmtCoarse(hoursUntil(limits.weekly?.resetsAt, now))}`
         : "—";
 
+    const name = scored.subscriptionExpired ? pc.strikethrough(pc.dim(scored.accountName)) : scored.accountName;
+
     return [
-        scored.accountName,
-        pctCell(limits?.session, "five_hour", now),
-        pctCell(limits?.weekly, "seven_day", now),
-        pctCell(limits?.fable, "seven_day_fable", now),
+        name,
+        pctCell(limits?.session, now),
+        pctCell(limits?.weekly, now),
+        pctCell(limits?.fable, now),
         pc.dim(resets),
     ];
 }
@@ -110,8 +108,8 @@ const DETAIL_LABEL_W = 8;
 const BAR_W = 10;
 const WHY_MAX_W = 66;
 
-/** `████████░░ 78%` — colored by headroom. */
-function barCell(limit: CompactLimit | undefined, bucket: string, now: Date = new Date()): string {
+/** `████████░░ 78%` — colored by headroom alone (see `pctCell`). */
+function barCell(limit: CompactLimit | undefined, now: Date = new Date()): string {
     if (!limit) {
         return pc.dim("—");
     }
@@ -119,7 +117,7 @@ function barCell(limit: CompactLimit | undefined, bucket: string, now: Date = ne
     const pct = Math.round(effectiveLeftPct(limit, now));
     const filled = Math.round((pct / 100) * BAR_W);
     const bar = "█".repeat(filled) + pc.dim("░".repeat(BAR_W - filled));
-    const paint = (text: string) => colorByHeadroom(pct, text, bucket, limit.resetsAt, now);
+    const paint = (text: string) => colorByPct(pct, text);
     return `${paint(bar)} ${paint(`${pct}%`)}`;
 }
 
@@ -158,8 +156,8 @@ function truncateWhy(why: string): string {
 }
 
 /** `Weekly   ████░░░░░░  20%  in 7h 29m` — one narrow row per limit. */
-function limitRow(label: string, limit: CompactLimit | undefined, reset: string, now: Date, bucket: string): string {
-    return `${pc.dim(padVisible(label, DETAIL_LABEL_W))} ${padVisible(barCell(limit, bucket, now), BAR_W + 5, "left")} ${pc.dim(reset)}`;
+function limitRow(label: string, limit: CompactLimit | undefined, reset: string, now: Date): string {
+    return `${pc.dim(padVisible(label, DETAIL_LABEL_W))} ${padVisible(barCell(limit, now), BAR_W + 5, "left")} ${pc.dim(reset)}`;
 }
 
 /**
@@ -200,9 +198,9 @@ export function detailBlock(
         return [
             identity.join(" · "),
             subscription,
-            limitRow("5 Hour", undefined, "—", now, "five_hour"),
-            limitRow("Weekly", undefined, "—", now, "seven_day"),
-            limitRow("Fable", undefined, "—", now, "seven_day_fable"),
+            limitRow("5 Hour", undefined, "—", now),
+            limitRow("Weekly", undefined, "—", now),
+            limitRow("Fable", undefined, "—", now),
         ];
     }
 
@@ -212,8 +210,8 @@ export function detailBlock(
     return [
         identity.join(" · "),
         subscription,
-        limitRow("5 Hour", limits.session, resetCell(limits.session, now, pace?.session), now, "five_hour"),
-        limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now, pace?.weekly), now, "seven_day"),
-        limitRow("Fable", limits.fable, fableReset, now, "seven_day_fable"),
+        limitRow("5 Hour", limits.session, resetCell(limits.session, now, pace?.session), now),
+        limitRow("Weekly", limits.weekly, resetCell(limits.weekly, now, pace?.weekly), now),
+        limitRow("Fable", limits.fable, fableReset, now),
     ];
 }

@@ -31,6 +31,7 @@ const ACCOUNTS: AccountEntry[] = [
     account("acc_proxy", "local-proxy", { provider: "ai-proxy", billing: { mode: "free" } }),
     account("acc_ollama", "ollama-local", { provider: "ollama", billing: { mode: "free" } }),
     account("acc_off", "disabled-one", { enabled: false, provider: "groq" }),
+    account("acc_grok", "grok", { provider: "grok-sub" }),
 ];
 
 function writeConfig(config: Partial<AiConfigData>): void {
@@ -94,6 +95,38 @@ describe("resolveModel — explicit refs", () => {
         const target = await resolveModelTarget("xai/grok-4.5");
 
         expect(target.account.id).toBe("acc_xai");
+    });
+
+    // `tools ask` lists a grok-sub account as "grok" and prints `-p grok`, so
+    // this is the ref users are told to write. No plugin is called "grok".
+    test("<provider>/<model> accepts the billing-mode-free provider name", async () => {
+        writeConfig({});
+
+        const target = await resolveModelTarget("grok/grok-4.5");
+
+        expect(target.account.id).toBe("acc_grok");
+        expect(target.account.provider).toBe("grok-sub");
+    });
+
+    test("the default account keeps its priority when matched by provider name", async () => {
+        writeConfig({
+            accounts: [...ACCOUNTS, account("acc_grok2", "grok-second", { provider: "grok-sub" })],
+            defaults: { account: { chat: "@account/acc_grok2" } },
+        });
+
+        const target = await resolveModelTarget("grok/grok-4.5");
+
+        expect(target.account.id).toBe("acc_grok2");
+    });
+
+    test("an exact plugin id still beats the billing-mode-free name", async () => {
+        writeConfig({
+            accounts: [...ACCOUNTS, account("acc_anthropic_key", "anthropic-api", { provider: "anthropic" })],
+        });
+
+        const target = await resolveModelTarget("anthropic/claude-sonnet-5");
+
+        expect(target.account.id).toBe("acc_anthropic_key");
     });
 
     test("a bare model id uses the default account", async () => {
@@ -286,6 +319,14 @@ describe("resolveModel — errors", () => {
         writeConfig({ defaults: { account: { chat: "@account/acc_max" } } });
 
         expect(resolveModelTarget("groq/llama-3.3-70b")).rejects.toThrow("tools ai config account add --provider groq");
+    });
+
+    // `account add --provider nope` would die on the same unknown id, so the
+    // error must not suggest it — it names the real plugin ids instead.
+    test("a provider id no plugin owns lists the known providers", async () => {
+        writeConfig({});
+
+        expect(resolveModelTarget("nope/some-model")).rejects.toThrow(/No provider plugin is called "nope".*grok-sub/);
     });
 
     test("a provider that cannot chat fails resolution instead of throwing from language()", async () => {

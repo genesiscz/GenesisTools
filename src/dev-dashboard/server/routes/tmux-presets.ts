@@ -48,7 +48,7 @@ export function tmuxPresetsRoutes(): RouteDef[] {
                         return { kind: "json", status: 400, body: { error: "name is required" } };
                     }
 
-                    return { kind: "json", status: 200, body: { result: restorePreset(body.name) } };
+                    return { kind: "json", status: 200, body: { result: await restorePreset(body.name) } };
                 } catch (err) {
                     logger.warn({ err, route: "POST /api/tmux/presets/restore" }, "tmux presets: restore failed");
 

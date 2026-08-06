@@ -37,6 +37,7 @@ import {
     scrollIframeTerminalByPage,
     sendKeyToIframe,
 } from "@/lib/iframe-keys";
+import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
 
@@ -198,7 +199,7 @@ export function TtydRoute() {
     const renameMut = useMutation({
         mutationFn: ({ id, name }: { id: string; name: string }) => ttydApi.rename(id, name),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["ttyd", "list"] });
+            invalidateTmuxAndTtyd(queryClient);
         },
     });
 
@@ -399,6 +400,7 @@ export function TtydRoute() {
                             return (
                                 <MosaicWindow<string>
                                     path={path}
+                                    // Name wins in the topbar; Claude's live topic is separate meta.
                                     title={ttydLabel(session)}
                                     additionalControls={null}
                                     toolbarControls={

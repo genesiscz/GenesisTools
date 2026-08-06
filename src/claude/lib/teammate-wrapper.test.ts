@@ -259,3 +259,65 @@ describe("sweepStaleTeammateWrappers", () => {
         expect(sweepStaleTeammateWrappers(1, join(freshDir(), "never-created"))).toBe(0);
     });
 });
+
+describe("sweepStaleTeammateWrappers identity table", () => {
+    test("dead owner pid is swept immediately, whatever the age", () => {
+        const dir = freshDir();
+        // A pid far above the macOS default max, so it cannot be alive.
+        writeFileSync(join(dir, "wrapper-4194303-1700000000000-abc123.sh"), "#!/usr/bin/env bash\n");
+
+        expect(sweepStaleTeammateWrappers(7 * 24 * 3_600_000, dir, () => null)).toBe(1);
+    });
+
+    test("live pid with a matching start time is kept forever", () => {
+        const dir = freshDir();
+        const start = 1_700_000_000_000;
+        writeFileSync(join(dir, `wrapper-${process.pid}-${start}-abc123.sh`), "#!/usr/bin/env bash\n");
+
+        // An age cap of 1ms would sweep an mtime-only implementation.
+        expect(sweepStaleTeammateWrappers(1, dir, () => start)).toBe(0);
+    });
+
+    test("live pid with a different start time is a reused pid and gets swept", () => {
+        const dir = freshDir();
+        writeFileSync(join(dir, `wrapper-${process.pid}-1700000000000-abc123.sh`), "#!/usr/bin/env bash\n");
+
+        expect(sweepStaleTeammateWrappers(7 * 24 * 3_600_000, dir, () => 1_700_000_099_000)).toBe(1);
+    });
+
+    test("unknown identity falls back to the age cap and spares a fresh file", () => {
+        const dir = freshDir();
+        writeFileSync(join(dir, `wrapper-${process.pid}-0-abc123.sh`), "#!/usr/bin/env bash\n");
+
+        expect(sweepStaleTeammateWrappers(7 * 24 * 3_600_000, dir, () => null)).toBe(0);
+    });
+
+    test("a legacy two-part filename still sweeps on age", () => {
+        const dir = freshDir();
+        const file = join(dir, `wrapper-${process.pid}-abc123.sh`);
+        writeFileSync(file, "#!/usr/bin/env bash\n");
+        const longAgo = new Date(Date.now() - 30 * 24 * 3_600_000);
+        utimesSync(file, longAgo, longAgo);
+
+        expect(sweepStaleTeammateWrappers(7 * 24 * 3_600_000, dir, () => null)).toBe(1);
+    });
+
+    test("the real processStartMs identifies our own fresh wrapper as owned", () => {
+        const dir = freshDir();
+        const installed = installTeammateWrapper({ dir, claudeBin: "/bin/claude", env: AUTH });
+
+        expect(sweepStaleTeammateWrappers(1, dir)).toBe(0);
+        expect(existsSync(installed.path)).toBe(true);
+    });
+});
+
+test("a failed write leaves no token on disk and never touches a pre-existing file", () => {
+    // Force the fail-closed path by pre-creating the target, so "wx" throws.
+    const dir = freshDir();
+    const id = "1-1-fixed";
+    writeFileSync(join(dir, `wrapper-${id}.sh`), "pre-existing");
+
+    expect(() => installTeammateWrapper({ claudeBin: "/bin/echo", dir, id, env: AUTH })).toThrow();
+    // The pre-existing file must survive: we never wrote into it and never deleted it.
+    expect(readFileSync(join(dir, `wrapper-${id}.sh`), "utf8")).toBe("pre-existing");
+});

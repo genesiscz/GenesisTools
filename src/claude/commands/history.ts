@@ -1,5 +1,7 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { extractShellQuirks, renderShellQuirksMarkdown } from "@app/claude/lib/history/extract-shell-quirks";
 import {
     type AssistantMessage,
     type ConversationMessage,
@@ -368,6 +370,99 @@ export function registerHistoryCommand(program: Command): void {
                 throw error;
             }
         });
+
+    // -------------------------------------------------------------------------
+    // extract-shell-quirks — mine zsh/bash NOMATCH failures from session JSONLs
+    // -------------------------------------------------------------------------
+    historyCmd
+        .command("extract-shell-quirks")
+        .description(
+            "Extract zsh/bash shell-quirk incidents (NOMATCH, unquoted URLs/globs, *(N) fails) from session JSONLs"
+        )
+        .option("-p, --project <name>", "Filter by project name / encoded dir")
+        .option("--all", "Scan all projects (default when no --project)")
+        .option("--exclude-agents", "Skip subagent transcripts")
+        .option("--no-rule-codification", "Skip pure discussion / CLAUDE.md rule-writing hits")
+        .option("--no-dedupe", "Keep every repeated occurrence as its own finding (default collapses to ×N)")
+        // Use --max (not -l): parent `history` already owns -l/--limit
+        .option("--max <n>", "Max findings to keep (scan may stop early)")
+        .option("--excerpt <n>", "Max chars per command/result excerpt", "1200")
+        .option("-o, --output <path>", "Write markdown report to this path")
+        .option("--json", "Machine-readable findings JSON on stdout")
+        .option("--md", "Print markdown to stdout (default when no --output/--json)")
+        .action(
+            async (options: {
+                project?: string;
+                all?: boolean;
+                excludeAgents?: boolean;
+                ruleCodification?: boolean;
+                dedupe?: boolean;
+                max?: string;
+                excerpt: string;
+                output?: string;
+                json?: boolean;
+                md?: boolean;
+            }) => {
+                const project = options.project;
+                out.println(pc.dim("Scanning Claude session JSONLs for zsh/bash shell quirks…"));
+
+                const maxFindings = options.max ? parseInt(options.max, 10) : undefined;
+                const result = await extractShellQuirks({
+                    project: options.all ? undefined : project,
+                    includeSubagents: !options.excludeAgents,
+                    includeRuleCodification: options.ruleCodification !== false,
+                    dedupe: options.dedupe !== false,
+                    limit: maxFindings && maxFindings > 0 ? maxFindings : undefined,
+                    excerptChars: parseInt(options.excerpt, 10) || 1200,
+                    onProgress: (done, total, file) => {
+                        if (done === total || done % 25 === 0) {
+                            out.println(pc.dim(`  ${done}/${total}  ${basename(file)}`));
+                        }
+                    },
+                });
+
+                out.println(
+                    pc.green(
+                        `Done: ${result.findings.length} findings in ${result.filesWithHits}/${result.filesScanned} files (${result.elapsedMs} ms)`
+                    )
+                );
+
+                if (options.json) {
+                    out.result(
+                        SafeJSON.stringify(
+                            {
+                                meta: {
+                                    filesScanned: result.filesScanned,
+                                    filesWithHits: result.filesWithHits,
+                                    candidateFiles: result.candidateFiles,
+                                    elapsedMs: result.elapsedMs,
+                                },
+                                findings: result.findings,
+                            },
+                            { strict: true }
+                        )
+                    );
+                    return;
+                }
+
+                const md = renderShellQuirksMarkdown(result, {
+                    generatedAt: new Date().toISOString(),
+                    command: "tools claude history extract-shell-quirks",
+                    claudeMdNote:
+                        "Source rules: `~/.claude/CLAUDE.md` section **zsh quirks** (shell is zsh 5.9, not bash).",
+                });
+
+                if (options.output) {
+                    mkdirSync(dirname(options.output), { recursive: true });
+                    writeFileSync(options.output, md, "utf8");
+                    out.println(pc.cyan(`Wrote ${options.output}`));
+                    return;
+                }
+
+                // default: markdown to stdout
+                out.print(md);
+            }
+        );
 
     const dashboardDir = resolve(import.meta.dir, "../../claude-history-dashboard");
     const viteConfigPath = resolve(dashboardDir, "vite.config.ts");

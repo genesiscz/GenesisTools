@@ -96,7 +96,7 @@ export async function runReset(sessionId: string | undefined, flags: ResetCliFla
         }
     }
 
-    const result = resetSessions({
+    const result = await resetSessions({
         targets,
         options: { skipReplay: flags.skipReplay, preset: flags.preset, skipBackup: flags.skipBackup },
     });
@@ -149,7 +149,7 @@ export async function runReset(sessionId: string | undefined, flags: ResetCliFla
 }
 
 export async function runAttach(query: string): Promise<void> {
-    const sessions = listTmuxSessions();
+    const sessions = await listTmuxSessions();
     const match = resolveSessionQuery(query, sessions);
     const isTty = Boolean(process.stdin.isTTY);
 

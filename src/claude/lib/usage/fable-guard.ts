@@ -53,13 +53,88 @@ function hasWeeklyHeadroom(usage: UsageResponse, now: Date): boolean {
     return effectiveLeftPct(extractCompactLimits(usage).weekly, now) > 0;
 }
 
+export interface WeeklyStatus {
+    /** True when the all-model weekly bucket can still serve anything. */
+    available: boolean;
+    leftPct: number;
+    resetsAt: string | null;
+}
+
+/**
+ * All-model weekly headroom for one account, from the warm cache. This is the
+ * bucket that decides whether a session can do ANYTHING: when it is empty
+ * every model 429s, so switching to Opus is no escape. Unknown accounts (never
+ * polled) report available, so the gate never blocks blindly.
+ */
+export function weeklyStatusForAccount(
+    accounts: AccountUsage[],
+    accountName: string,
+    now: Date = new Date()
+): WeeklyStatus {
+    const usage = accounts.find((a) => a.accountName === accountName)?.usage;
+
+    if (!usage) {
+        return { available: true, leftPct: 100, resetsAt: null };
+    }
+
+    const weekly = extractCompactLimits(usage).weekly;
+
+    return {
+        available: hasWeeklyHeadroom(usage, now),
+        leftPct: effectiveLeftPct(weekly, now),
+        resetsAt: weekly?.resetsAt ?? null,
+    };
+}
+
+export interface DeadBucket {
+    /** Human name of the bucket that is empty. */
+    bucket: "weekly quota" | "Fable 5";
+    resetsAt: string | null;
+}
+
+/**
+ * The bucket that would make an account refuse a turn, or null when it can
+ * still serve one. `fableMatters` is false for an Opus launch: that bucket is
+ * irrelevant there, only the all-model weekly one counts.
+ */
+export function deadBucketForAccount(
+    accounts: AccountUsage[],
+    accountName: string,
+    fableMatters: boolean,
+    now: Date = new Date()
+): DeadBucket | null {
+    const weekly = weeklyStatusForAccount(accounts, accountName, now);
+
+    if (!weekly.available) {
+        return { bucket: "weekly quota", resetsAt: weekly.resetsAt };
+    }
+
+    if (!fableMatters) {
+        return null;
+    }
+
+    const fable = fableStatusForAccount(accounts, accountName, now);
+
+    return fable.available ? null : { bucket: "Fable 5", resetsAt: fable.resetsAt };
+}
+
 /**
  * Accounts that can still run Fable AND have weekly headroom — the suggestion
  * list when the user declines a downgrade. Accounts with no usage data are
- * skipped: we can't vouch for them.
+ * skipped (we can't vouch for them), and so is any account carrying an error
+ * or the org-blocked flag: a dead account still holds a stale usage replay
+ * whose long-past reset reads as a full refill, which once made a canceled
+ * subscription look like the way out.
  */
 export function fableCapableAccounts(accounts: AccountUsage[], now: Date = new Date()): string[] {
     return accounts
-        .filter((a) => a.usage && fableStatus(a.usage, now).available && hasWeeklyHeadroom(a.usage, now))
+        .filter(
+            (a) =>
+                !a.error &&
+                !a.orgBlocked &&
+                a.usage &&
+                fableStatus(a.usage, now).available &&
+                hasWeeklyHeadroom(a.usage, now)
+        )
         .map((a) => a.accountName);
 }

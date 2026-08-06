@@ -158,6 +158,10 @@ tools control click --app Genesis --subrole AXMinimizeButton --window Genesis
 | `set` | Text fields: CGEvent clear+type, then reads the field back (retry once, fail loud). Other elements: AXValue write | Text fields — verified content |
 | `type` | CGEvent keystrokes | When you need real typing (autocomplete, validation, non-AX inputs) |
 | `focus` | NSRunningApplication.activate + AXFocused | Bring app/element to front before typing |
+| `focus --no-activate` | AXFocused only | Focus an element WITHOUT raising the app — use whenever the user is working |
+| `dump` | whole surface, flat + geometry | Assertions about layout: overlap, clipping, off-window controls, scroll visibility |
+| `typography` | AXAttributedStringForRange | Rendered font/size/colour — legibility and contrast checks with no screenshots |
+| `hittest --at x,y` | AXUIElementCopyElementAtPosition | Is a control actually reachable, or is something drawn on top of it |
 
 ### `click` scroll-safety
 
