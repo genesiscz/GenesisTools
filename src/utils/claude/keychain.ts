@@ -52,7 +52,14 @@ function assertMacOS(): void {
 
 /** Read the raw keychain payload Claude Code stores. Returns null when absent. */
 export async function readKeychainPayload(): Promise<KeychainPayload | null> {
-    assertMacOS();
+    // No keychain off macOS (a Linux devbox, CI): that is "no ambient
+    // identity", not an error. Status, the rotated-creds sync and the doctor
+    // degrade gracefully; pinned sessions via CLAUDE_CODE_OAUTH_TOKEN are the
+    // model there. The WRITE paths stay macOS-only.
+    if (process.platform !== "darwin") {
+        logger.debug("[keychain] no keychain on this platform — no ambient identity");
+        return null;
+    }
 
     const proc = Bun.spawn({
         cmd: ["security", "find-generic-password", "-a", keychainUser(), "-w", "-s", KEYCHAIN_SERVICE],
