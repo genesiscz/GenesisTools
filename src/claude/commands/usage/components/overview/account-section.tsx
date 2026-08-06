@@ -160,9 +160,10 @@ function BucketRow({ limit, layout }: BucketRowProps) {
     const notUsed = !limit.resets_at && limit.percent === 0;
     const projected = calcProjection(limit.percent, limit.resets_at, limit.bucket);
     const pct = Math.round(Math.max(0, Math.min(limit.percent, 100)));
-    // A bucket about to refill is not a problem, however spent it is.
+    // Headroom decides the bar and percent color; the countdown below keeps
+    // its own imminent-green, which is where reset timing belongs.
     const imminent = isResetImminent(limit.bucket, limit.resets_at);
-    const color = imminent ? "green" : severityColor(limit.severity);
+    const color = severityColor(limit.severity);
 
     const projStr = projected !== null && projected >= 100 ? (projected > 999 ? "(≥999%)" : `(~${projected}%)`) : "";
     const projColor = projected !== null ? colorForPct(projected) : undefined;
