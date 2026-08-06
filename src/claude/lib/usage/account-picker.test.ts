@@ -460,3 +460,11 @@ describe("scoreAccounts — org-blocked subscription", () => {
         expect(grouped[grouped.length - 1].accountName).toBe("expired");
     });
 });
+
+describe("fmtHours carry", () => {
+    test("19.995h prints 20h, never 19h 60m", () => {
+        const acc = account("a", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(19.995) } }));
+        expect(scoreAccounts([acc], { now: NOW })[0].why).not.toContain("60m");
+        expect(scoreAccounts([acc], { now: NOW })[0].why).toContain("20h");
+    });
+});

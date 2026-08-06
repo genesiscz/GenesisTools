@@ -1,6 +1,6 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
-import { isSubscriptionExpiredError } from "./api";
 import type { AccountUsage, UsageBucket } from "./api";
+import { isSubscriptionExpiredError } from "./api";
 import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
 
 /**
@@ -151,6 +151,12 @@ function fmtHours(hours: number): string {
     if (hours < 48) {
         const whole = Math.floor(hours);
         const minutes = Math.round((hours - whole) * 60);
+
+        // 19.995h rounds to 60 minutes — carry it, no clock says "19h 60m".
+        if (minutes >= 60) {
+            return `${whole + 1}h`;
+        }
+
         return minutes > 0 ? `${whole}h ${minutes}m` : `${whole}h`;
     }
 
