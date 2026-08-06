@@ -3,13 +3,13 @@ import type { ApiLimit } from "@app/claude/lib/usage/api";
 import type { Cached } from "@app/claude/lib/usage/shared-cache";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import {
+    accountOwningKeychain,
     billsKeychain,
     diagnoseGroup,
+    fallbackSuffix,
     groupSessions,
     MAX_USAGE_AGE_MS,
     modelFromArgv,
-    accountOwningKeychain,
-    fallbackSuffix,
     parsePinnedProcesses,
     resolveKeychainIdentity,
     type SessionGroup,
@@ -257,7 +257,10 @@ describe("fallbackSuffix", () => {
 
 describe("accountOwningKeychain", () => {
     test("matches the account holding that secondary uuid", () => {
-        const accounts = [account("a"), { ...account("b"), secondary: { accessToken: "x", refreshToken: "y", accountUuid: "uuid-b" } }];
+        const accounts = [
+            account("a"),
+            { ...account("b"), secondary: { accessToken: "x", refreshToken: "y", accountUuid: "uuid-b" } },
+        ];
 
         expect(accountOwningKeychain(accounts, "uuid-b")).toBe("b");
     });

@@ -397,9 +397,7 @@ async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, model
     }
 
     out.printlnErr(
-        pc.yellow(
-            `⚠ The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`
-        )
+        pc.yellow(`⚠ The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`)
     );
     out.printlnErr(
         pc.dim(
