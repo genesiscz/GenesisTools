@@ -18,6 +18,7 @@ const SUBCOMMANDS = new Set([
     "logout",
     "start",
     "run",
+    "exec",
 ]);
 
 /**
