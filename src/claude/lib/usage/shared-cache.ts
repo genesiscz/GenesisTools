@@ -6,7 +6,7 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { recordUsage } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountUsage } from "./api";
-import { fetchAllAccountsUsage } from "./api";
+import { fetchAllAccountsUsage, isSubscriptionExpiredError, orgBlockedAccounts } from "./api";
 import { normalizeLimits, normalizeSpend } from "./limits";
 
 export const DB_FRESH_MS = 10_000;
@@ -21,7 +21,7 @@ export interface Cached {
 }
 
 interface Deps {
-    fetchAll: (filter?: string | string[]) => Promise<AccountUsage[]>;
+    fetchAll: (opts: { accountFilter?: string | string[]; orgBlocked: ReadonlySet<string> }) => Promise<AccountUsage[]>;
     getCache: (key: string) => (Cached | null) | Promise<Cached | null>;
     putCache: (key: string, value: Cached) => void | Promise<void>;
     withLock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
@@ -167,6 +167,10 @@ function backfillFromLastGood(fresh: AccountUsage[], prev: Cached | null): Accou
                 lastSuccessAt: prevAccount.stale?.lastSuccessAt ?? prev.fetchedAt,
                 reason: account.error,
             },
+            // The flag must survive the backfill: without it a poll that 403s
+            // once and then 429s forever would look unblocked again and re-arm
+            // the force-refresh retry.
+            orgBlocked: account.orgBlocked || isSubscriptionExpiredError(account.error) || prevAccount.orgBlocked,
         };
     });
 }
@@ -206,7 +210,11 @@ export function __makeSharedUsage(deps: Deps) {
                     return filterAccounts(c2.accounts, opts.accountFilter);
                 }
 
-                const fresh = backfillFromLastGood(await deps.fetchAll(), c2 ?? cached);
+                const previous = c2 ?? cached;
+                const fresh = backfillFromLastGood(
+                    await deps.fetchAll({ orgBlocked: orgBlockedAccounts(previous?.accounts) }),
+                    previous
+                );
                 await deps.putCache(CACHE_KEY, { fetchedAt: Date.now(), accounts: fresh });
 
                 if (deps.recordHistory) {
@@ -253,7 +261,7 @@ export function __makeSharedUsage(deps: Deps) {
 const CACHE_TTL = "365 days" as const;
 
 const realGetShared = __makeSharedUsage({
-    fetchAll: (filter) => fetchAllAccountsUsage(filter),
+    fetchAll: (opts) => fetchAllAccountsUsage(opts),
     getCache: async (key) => (await storage.getCacheFile<Cached>(key, CACHE_TTL)) ?? null,
     putCache: (key, value) => storage.putCacheFile(key, value, CACHE_TTL),
     withLock: (key, fn) =>

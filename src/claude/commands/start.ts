@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
-import { type ScoredAccount, scoreAccounts } from "@app/claude/lib/usage/account-picker";
+import { type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { fableCapableAccounts, fableStatusForAccount } from "@app/claude/lib/usage/fable-guard";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
@@ -296,7 +296,9 @@ async function scoreTokenAccounts(
             logger.debug({ error }, "background usage revalidation failed");
         });
 
-        return scoreAccounts(cachedAccounts, scoreOpts);
+        // Grouped urgency (fable → opus → dead → expired) so the launch picker
+        // agrees with the usage TUI; dead/expired stay visible at the bottom.
+        return sortGrouped(scoreAccounts(cachedAccounts, scoreOpts));
     }
 
     const spinner = p.spinner();
@@ -309,7 +311,7 @@ async function scoreTokenAccounts(
             return null;
         }
 
-        const scored = scoreAccounts(usage, scoreOpts);
+        const scored = sortGrouped(scoreAccounts(usage, scoreOpts));
         spinner.stop(`Ranked ${scored.length} account${scored.length === 1 ? "" : "s"} by usage headroom`);
         return scored;
     } catch (error) {

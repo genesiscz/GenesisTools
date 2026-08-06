@@ -405,3 +405,58 @@ describe("grouped urgency", () => {
         expect(ranked[0].accountName).toBe("ready");
     });
 });
+
+describe("scoreAccounts — org-blocked subscription", () => {
+    const ORG_403 =
+        'Usage API 403: {"type":"error","error":{"type":"permission_error",' +
+        '"message":"OAuth authentication is currently not allowed for this organization."}}';
+
+    test("stale replayed usage does not let an org-blocked account rank first", () => {
+        const dead: AccountUsage = {
+            accountName: "expired",
+            usage: usage({ seven_day: { utilization: 36, resets_at: hoursFromNow(2) } }),
+            stale: { lastSuccessAt: NOW.getTime() - 3_600_000, reason: ORG_403 },
+        };
+        const live = account("live", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(100) } }));
+
+        const ranked = scoreAccounts([dead, live], { now: NOW });
+
+        expect(ranked[0].accountName).toBe("live");
+        expect(ranked[1].accountName).toBe("expired");
+        expect(ranked[1].tier).toBe("no-data");
+        expect(ranked[1].group).toBe("dead");
+        expect(ranked[1].subscriptionExpired).toBe(true);
+    });
+
+    test("the sticky flag alone is enough, with no error string present", () => {
+        const dead: AccountUsage = {
+            accountName: "expired",
+            orgBlocked: true,
+            usage: usage({ seven_day: { utilization: 0, resets_at: null } }),
+        };
+
+        expect(scoreAccounts([dead], { now: NOW })[0].subscriptionExpired).toBe(true);
+    });
+
+    test("expired accounts stay in the result, they are never filtered out", () => {
+        const dead: AccountUsage = { accountName: "expired", orgBlocked: true };
+        const live = account("live", usage({}));
+
+        const names = scoreAccounts([dead, live], { now: NOW })
+            .map((s) => s.accountName)
+            .sort();
+        expect(names).toEqual(["expired", "live"]);
+    });
+
+    test("grouped order sinks an org-blocked account below every healthy one", () => {
+        const dead: AccountUsage = {
+            accountName: "expired",
+            usage: usage({ seven_day: { utilization: 36, resets_at: hoursFromNow(2) } }),
+            stale: { lastSuccessAt: NOW.getTime() - 3_600_000, reason: ORG_403 },
+        };
+        const live = account("live", usage({ seven_day: { utilization: 50, resets_at: hoursFromNow(100) } }));
+
+        const grouped = sortGrouped(scoreAccounts([dead, live], { now: NOW }));
+        expect(grouped[grouped.length - 1].accountName).toBe("expired");
+    });
+});

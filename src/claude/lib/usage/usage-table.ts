@@ -97,8 +97,10 @@ export function accountCells(scored: ScoredAccount, now: Date = new Date()): str
         ? `${fmtCoarse(hoursUntil(limits.session?.resetsAt, now))} · ${fmtCoarse(hoursUntil(limits.weekly?.resetsAt, now))}`
         : "—";
 
+    const name = scored.subscriptionExpired ? pc.strikethrough(pc.dim(scored.accountName)) : scored.accountName;
+
     return [
-        scored.accountName,
+        name,
         pctCell(limits?.session, "five_hour", now),
         pctCell(limits?.weekly, "seven_day", now),
         pctCell(limits?.fable, "seven_day_fable", now),

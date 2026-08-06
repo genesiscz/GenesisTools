@@ -282,3 +282,62 @@ describe("getSharedAccountsUsage", () => {
         expect(r[0].error).toBeUndefined();
     });
 });
+
+describe("org-blocked accounts", () => {
+    const ORG_403 = "Usage API 403: OAuth authentication is currently not allowed for this organization.";
+
+    test("passes the blocked set from the previous cache into the fetch", async () => {
+        const store: CacheStore = new Map();
+        store.set("usage-shared", {
+            fetchedAt: Date.now() - 60_000,
+            accounts: [{ accountName: "dead", error: ORG_403 } as AccountUsage],
+        });
+
+        let seen: ReadonlySet<string> | undefined;
+        const get = __makeSharedUsage({
+            fetchAll: async (opts) => {
+                seen = opts.orgBlocked;
+                return [{ accountName: "dead", error: ORG_403 } as AccountUsage];
+            },
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+        });
+
+        await get({});
+        expect(seen?.has("dead")).toBe(true);
+    });
+
+    test("the sticky flag survives a backfill from the last good payload", async () => {
+        const store: CacheStore = new Map();
+        store.set("usage-shared", {
+            fetchedAt: Date.now() - 60_000,
+            accounts: [{ ...acct("dead", 10), orgBlocked: true }],
+        });
+
+        const get = __makeSharedUsage({
+            fetchAll: async () => [{ accountName: "dead", error: "Usage API 429: rate limited" } as AccountUsage],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+        });
+
+        const result = await get({});
+        expect(result[0].orgBlocked).toBe(true);
+        expect(result[0].usage).toBeDefined();
+    });
+
+    test("an old cache entry with no orgBlocked field still loads", async () => {
+        const store: CacheStore = new Map();
+        store.set("usage-shared", { fetchedAt: Date.now() - 5_000, accounts: [acct("a", 11)] });
+
+        const get = __makeSharedUsage({
+            fetchAll: async () => [],
+            getCache: (k) => store.get(k) ?? null,
+            putCache: (k, v) => void store.set(k, v),
+            withLock: async (_k, fn) => fn(),
+        });
+
+        expect((await get({}))[0].orgBlocked).toBeUndefined();
+    });
+});

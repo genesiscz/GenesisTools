@@ -1,4 +1,5 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
+import { isSubscriptionExpiredError } from "./api";
 import type { AccountUsage, UsageBucket } from "./api";
 import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
 
@@ -82,6 +83,8 @@ export interface ScoredAccount {
     score: number;
     /** 5h window nearly spent — sinks to the group bottom until its reset passes. */
     cooling: boolean;
+    /** Usage API 403'd at the org level: the subscription is gone (strikethrough row, never auto-picked). */
+    subscriptionExpired?: boolean;
     /** Weekly scarcity rate in %/h of the binding weekly bucket. 0 for no-data. */
     weeklyRatePctPerHour: number;
     sessionHeadroomPct: number;
@@ -178,6 +181,27 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         // invalid_grant in `stale.reason`, so both places must be checked.
         const expiredError = account.error ?? account.stale?.reason;
         const loginExpired = expiredError !== undefined && EXPIRED_ERROR_RE.test(expiredError);
+
+        // Org-level 403 means the subscription is gone. This wins over
+        // stale-replayed usage: shared-cache backfills the last good payload,
+        // so a dead account otherwise keeps rendering its old headroom and
+        // ranks at the TOP of the tier order (the lukas.pribik96 bug).
+        if (account.orgBlocked || isSubscriptionExpiredError(expiredError)) {
+            return {
+                ...base,
+                tier: "no-data",
+                group: "dead",
+                score: 0,
+                cooling: false,
+                subscriptionExpired: true,
+                weeklyRatePctPerHour: 0,
+                sessionHeadroomPct: 0,
+                weeklyHeadroomPct: 0,
+                sessionUsableFraction: 0,
+                why: "subscription expired — renew at claude.ai",
+                dataNote: "subscription expired",
+            };
+        }
 
         if (!account.usage) {
             const expired = loginExpired;
