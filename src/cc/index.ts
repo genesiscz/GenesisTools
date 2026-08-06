@@ -19,6 +19,7 @@ const SUBCOMMANDS = new Set([
     "start",
     "run",
     "exec",
+    "doctor",
 ]);
 
 /**

@@ -1,7 +1,7 @@
-import { mkdtemp, utimes, writeFile, mkdir } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { findRecentSessions, projectSlug } from "./limit-kill";
 
@@ -148,7 +148,11 @@ describe("findRecentSessions", () => {
             path,
             [
                 SafeJSON.stringify({ cwd: CWD, type: "last-prompt", lastPrompt: "start here" }),
-                SafeJSON.stringify({ cwd: `${CWD}/.worktrees/fix`, type: "last-prompt", lastPrompt: "now in the worktree" }),
+                SafeJSON.stringify({
+                    cwd: `${CWD}/.worktrees/fix`,
+                    type: "last-prompt",
+                    lastPrompt: "now in the worktree",
+                }),
                 SafeJSON.stringify({ cwd: `${CWD}/.worktrees/fix`, ...limitRecord }),
             ].join("\n")
         );

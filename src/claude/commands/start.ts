@@ -1,3 +1,4 @@
+import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
 import {
     ensureOnboardingSkippedForOAuthToken,
     FABLE_MODEL_ID,
@@ -7,7 +8,6 @@ import {
     pinnedLaunchEnv,
     subscriptionTypeOf,
 } from "@app/claude/lib/launch-env";
-import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
