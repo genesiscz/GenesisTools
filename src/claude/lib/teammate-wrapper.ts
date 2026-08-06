@@ -1,9 +1,11 @@
 import {
     accessSync,
     chmodSync,
+    closeSync,
     constants,
     existsSync,
     mkdirSync,
+    openSync,
     readdirSync,
     realpathSync,
     statSync,
@@ -151,45 +153,103 @@ exec ${shellSingleQuote(claudeBin)} "$@"
 /** The wrapper holds the OAuth token in plaintext — owner-only, never group/other. */
 const WRAPPER_MODE = 0o700;
 
+/**
+ * When the process started, from `ps -o etime=` ([[dd-]hh:]mm:ss). null when
+ * it cannot be determined; callers must treat that as "identity unknown".
+ */
+export function processStartMs(pid: number): number | null {
+    try {
+        const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "etime="]);
+        const etime = new TextDecoder().decode(proc.stdout).trim();
+        const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(etime);
+
+        if (!match) {
+            return null;
+        }
+
+        const [, days, hours, minutes, seconds] = match;
+        const elapsedMs =
+            (((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+
+        return Date.now() - elapsedMs;
+    } catch (error) {
+        logger.debug({ error, pid }, "[teammate-wrapper] ps etime lookup failed");
+        return null;
+    }
+}
+
+/** `<pid>-<startMs>-<rand>`: the sweep compares the recorded start EXACTLY, so a reused pid is detectable. 0 = start unknown. */
+function wrapperId(): string {
+    const startMs = processStartMs(process.pid) ?? 0;
+    return `${process.pid}-${Math.round(startMs)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function installTeammateWrapper(input: InstallTeammateWrapperInput): InstalledTeammateWrapper {
     const dir = input.dir ?? teammateWrappersDir();
-    mkdirSync(dir, { recursive: true, mode: WRAPPER_MODE });
 
-    // mkdirSync's mode applies only when it CREATES the directory. A dir inherited
-    // from an older build (or a looser umask) keeps its own mode, so re-assert it
-    // before writing a token inside.
-    chmodSync(dir, WRAPPER_MODE);
+    // Tracked outside the try: once the file exists the token is on disk, so
+    // EVERY later failure (chmod, stat, even the fail-closed unlink) must
+    // still attempt to remove it before throwing.
+    let created: string | undefined;
 
-    const id = input.id ?? `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
-    const path = join(dir, `wrapper-${id}.sh`);
-    const script = buildTeammateWrapperScript({
-        claudeBin: input.claudeBin,
-        env: input.env,
-    });
+    try {
+        mkdirSync(dir, { recursive: true, mode: WRAPPER_MODE });
 
-    // "wx" (exclusive create) rather than "w": open(2) ignores the creation mode
-    // when the file already exists, so writing into a pre-created wrapper would
-    // silently inherit ITS mode and put the OAuth token there. Failing is correct —
-    // the caller degrades to teammates without OAuth instead of leaking a token.
-    writeFileSync(path, script, { mode: WRAPPER_MODE, flag: "wx" });
+        // mkdirSync's mode applies only when it CREATES the directory. A dir
+        // inherited from an older build (or a looser umask) keeps its own mode,
+        // so re-assert it before writing a token inside.
+        chmodSync(dir, WRAPPER_MODE);
 
-    // umask can only clear permission bits, never add them, so the mode above is an
-    // upper bound on any POSIX filesystem. Verify anyway and fail closed: a mount
-    // that ignores creation modes must not silently hand out a readable token.
-    chmodSync(path, WRAPPER_MODE);
-    const mode = statSync(path).mode & 0o777;
+        const path = join(dir, `wrapper-${input.id ?? wrapperId()}.sh`);
+        const script = buildTeammateWrapperScript({ claudeBin: input.claudeBin, env: input.env });
 
-    if ((mode & 0o077) !== 0) {
-        unlinkSync(path);
-        throw new Error(`teammate wrapper ${path} landed with mode ${mode.toString(8)}; refusing to store the token`);
+        // Open with "wx" (exclusive create) FIRST, mark the path created, then
+        // write through the descriptor. "wx" also guarantees we never write a
+        // token into a pre-existing file, whose mode open(2) would have kept.
+        const fd = openSync(path, "wx", WRAPPER_MODE);
+        created = path;
+
+        try {
+            writeFileSync(fd, script);
+        } finally {
+            closeSync(fd);
+        }
+
+        // umask can only clear permission bits, never add them, so the mode
+        // above is an upper bound on any POSIX filesystem. Verify anyway and
+        // fail closed: a mount that ignores creation modes must not hand out a
+        // readable token.
+        chmodSync(path, WRAPPER_MODE);
+        const mode = statSync(path).mode & 0o777;
+
+        if ((mode & 0o077) !== 0) {
+            unlinkSync(path);
+            created = undefined;
+            throw new Error(
+                `teammate wrapper ${path} landed with mode ${mode.toString(8)}; refusing to store the token`
+            );
+        }
+
+        logger.debug(
+            { path, account: input.env.accountName, claudeBin: input.claudeBin },
+            "[teammate-wrapper] installed CLAUDE_CODE_TEAMMATE_COMMAND wrapper"
+        );
+
+        return { path };
+    } catch (error) {
+        if (created) {
+            try {
+                unlinkSync(created);
+            } catch (cleanupError) {
+                // ENOENT means it is already gone, which IS success.
+                if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") {
+                    logger.warn({ cleanupError, created }, "[teammate-wrapper] could not remove a partial wrapper");
+                }
+            }
+        }
+
+        throw error;
     }
-
-    logger.debug(
-        { path, account: input.env.accountName, claudeBin: input.claudeBin },
-        "[teammate-wrapper] installed CLAUDE_CODE_TEAMMATE_COMMAND wrapper"
-    );
-
-    return { path };
 }
 
 export function removeTeammateWrapper(path: string | undefined): void {
@@ -207,25 +267,88 @@ export function removeTeammateWrapper(path: string | undefined): void {
     }
 }
 
-/** Drop wrappers older than maxAgeMs (default 7d). Best-effort; never throws. */
-export function sweepStaleTeammateWrappers(maxAgeMs = 7 * 24 * 60 * 60 * 1000, dir?: string): number {
+/** True when a process with this pid exists (signal 0 probes without killing). */
+function pidAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        // EPERM means it exists but is not ours; anything else (ESRCH) is gone.
+        return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+}
+
+/**
+ * Two etime-derived estimates of the SAME process's start differ by ps's
+ * one-second granularity plus query-time rounding, never by more.
+ */
+const START_IDENTITY_TOLERANCE_MS = 5_000;
+
+/**
+ * Drop leftover wrappers from sessions that are gone; each holds a token in
+ * plaintext. The filename embeds the owner's identity (pid plus process start
+ * time recorded at install), compared EXACTLY against the live process:
+ *
+ * - owner pid dead: swept immediately, whatever the wrapper's age;
+ * - pid alive with a matching start time (± ps precision): the real owner,
+ *   kept indefinitely, because long-running sessions still spawn teammates;
+ * - pid alive with a different start time: the pid was reused by an unrelated
+ *   process, so sweep;
+ * - either start time unknown: identity unprovable, kept while the pid is
+ *   alive but only up to maxAgeMs, which is also the fallback for filenames
+ *   with no parseable identity.
+ *
+ * Best-effort; never throws. The old sweep was mtime-only, which deleted a
+ * live 8-day session's wrapper out from under it and left dead sessions'
+ * tokens on disk for a week.
+ */
+export function sweepStaleTeammateWrappers(
+    maxAgeMs = 7 * 24 * 60 * 60 * 1000,
+    dir?: string,
+    startMsOf: (pid: number) => number | null = processStartMs
+): number {
     const root = dir ?? teammateWrappersDir();
+
     if (!existsSync(root)) {
         return 0;
     }
 
     let removed = 0;
+
     try {
         const now = Date.now();
+
         for (const name of readdirSync(root)) {
             if (!name.startsWith("wrapper-") || !name.endsWith(".sh")) {
                 continue;
             }
 
+            const match = /^wrapper-(\d+)-(\d+)-[a-z0-9]+\.sh$/.exec(name);
             const full = join(root, name);
+
             try {
-                const st = statSync(full);
-                if (now - st.mtimeMs > maxAgeMs) {
+                const overAgeCap = now - statSync(full).mtimeMs > maxAgeMs;
+
+                let stale: boolean;
+
+                if (!match) {
+                    // Legacy `wrapper-<pid>-<rand>.sh` names carry no start
+                    // time; age is all we have.
+                    stale = overAgeCap;
+                } else if (!pidAlive(Number(match[1]))) {
+                    stale = true;
+                } else {
+                    const recordedStartMs = Number(match[2]);
+                    const currentStartMs = startMsOf(Number(match[1]));
+
+                    if (recordedStartMs === 0 || currentStartMs === null) {
+                        stale = overAgeCap;
+                    } else {
+                        stale = Math.abs(currentStartMs - recordedStartMs) > START_IDENTITY_TOLERANCE_MS;
+                    }
+                }
+
+                if (stale) {
                     unlinkSync(full);
                     removed++;
                 }
