@@ -246,4 +246,30 @@ describe("UsageHistoryDb", () => {
         expect(latest?.utilization).toBe(10);
         db2.close();
     });
+
+    describe("renameAccount", () => {
+        test("moves every usage row to the new name", () => {
+            db.recordSnapshot("old", "five_hour", 42, recentTimestamp(5));
+            db.recordSnapshot("old", "seven_day", 10, recentTimestamp(4));
+
+            const moved = db.renameAccount("old", "new");
+
+            expect(moved).toBe(2);
+            expect(db.getSnapshots("new", "five_hour", 60)).toHaveLength(1);
+            expect(db.getSnapshots("old", "five_hour", 60)).toHaveLength(0);
+        });
+
+        test("leaves other accounts untouched", () => {
+            db.recordSnapshot("old", "five_hour", 42, recentTimestamp(5));
+            db.recordSnapshot("keep", "five_hour", 7, recentTimestamp(5));
+
+            db.renameAccount("old", "new");
+
+            expect(db.getSnapshots("keep", "five_hour", 60)).toHaveLength(1);
+        });
+
+        test("an unknown name moves nothing rather than throwing", () => {
+            expect(db.renameAccount("nobody", "new")).toBe(0);
+        });
+    });
 });

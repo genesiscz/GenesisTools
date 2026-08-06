@@ -3,8 +3,8 @@ import {
     type Diagnosis,
     diagnoseGroup,
     groupSessions,
-    parsePinnedProcesses,
     PROBLEM_TEXT,
+    parsePinnedProcesses,
     resolveKeychainIdentity,
     UNCERTAINTY_TEXT,
 } from "@app/claude/lib/doctor";

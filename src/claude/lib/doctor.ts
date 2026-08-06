@@ -1,6 +1,6 @@
-import type { Cached } from "@app/claude/lib/usage/shared-cache";
 import { effectiveLeftPct, extractCompactLimits } from "@app/claude/lib/usage/compact-limits";
 import { fableStatusForAccount, weeklyStatusForAccount } from "@app/claude/lib/usage/fable-guard";
+import type { Cached } from "@app/claude/lib/usage/shared-cache";
 import type { TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 

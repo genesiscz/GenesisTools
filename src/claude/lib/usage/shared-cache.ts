@@ -278,6 +278,16 @@ export function getSharedAccountsUsage(opts: SharedUsageOpts = {}): Promise<Acco
     return realGetShared(opts);
 }
 
+/**
+ * Drop the shared cache so the next read rebuilds it. Needed after anything
+ * that changes what an account is CALLED, since every entry is name-keyed and
+ * a stale entry would render as a ghost row under the old name.
+ */
+export async function invalidateSharedUsage(): Promise<void> {
+    await storage.putCacheFile(CACHE_KEY, { fetchedAt: 0, accounts: [] }, CACHE_TTL);
+    logger.debug("[usage] shared cache invalidated");
+}
+
 /** Read the last cached usage payload WITHOUT ever triggering a fetch. */
 export async function peekSharedUsage(): Promise<Cached | null> {
     return (await storage.getCacheFile<Cached>(CACHE_KEY, CACHE_TTL)) ?? null;

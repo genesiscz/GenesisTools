@@ -207,6 +207,34 @@ export class AIConfig {
         });
     }
 
+    /**
+     * Rename an account and every reference to it, in ONE write: the entry
+     * itself plus the per-context defaults. Callers that keep their own
+     * name-keyed data (the usage history DB) must re-key it in the same
+     * operation — a name is an identifier here, not a label.
+     */
+    async renameAccount(oldName: string, newName: string): Promise<void> {
+        await this.mutate((data) => {
+            const idx = data.accounts.findIndex((a) => a.name === oldName);
+
+            if (idx < 0) {
+                throw new Error(`Account "${oldName}" not found`);
+            }
+
+            if (data.accounts.some((a) => a.name.toLowerCase() === newName.toLowerCase() && a.name !== oldName)) {
+                throw new Error(`Account "${newName}" already exists`);
+            }
+
+            data.accounts[idx] = { ...data.accounts[idx], name: newName };
+
+            for (const [context, accountName] of Object.entries(data.defaultAccounts)) {
+                if (accountName === oldName) {
+                    data.defaultAccounts[context] = newName;
+                }
+            }
+        });
+    }
+
     async removeAccount(name: string): Promise<void> {
         await this.mutate((data) => {
             data.accounts = data.accounts.filter((a) => a.name !== name);

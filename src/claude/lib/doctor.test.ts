@@ -196,9 +196,7 @@ describe("diagnoseGroup", () => {
         const replayed = cache();
         replayed.accounts[0].stale = { lastSuccessAt: NOW.getTime() - 3_600_000, reason: "429" };
 
-        expect(diagnoseGroup(group(), [account("work")], replayed, "ok", NOW).unverified).toContain(
-            "usage-data-stale"
-        );
+        expect(diagnoseGroup(group(), [account("work")], replayed, "ok", NOW).unverified).toContain("usage-data-stale");
     });
 
     test("a spent weekly bucket blocks every model", () => {
@@ -216,7 +214,9 @@ describe("diagnoseGroup", () => {
 
     test("a Fable session on a dead Fable bucket is flagged", () => {
         const fableGroup = group({
-            processes: [{ pid: 1, tty: "ttys001", account: "work", token: TOKEN, model: "claude-fable-5", isAgent: false }],
+            processes: [
+                { pid: 1, tty: "ttys001", account: "work", token: TOKEN, model: "claude-fable-5", isAgent: false },
+            ],
         });
 
         expect(diagnoseGroup(fableGroup, [account("work")], cache({ fableUsed: 100 }), "ok", NOW).problems).toContain(
@@ -226,7 +226,9 @@ describe("diagnoseGroup", () => {
 
     test("an OPUS session on the same dead Fable bucket is NOT flagged", () => {
         const opusGroup = group({
-            processes: [{ pid: 1, tty: "ttys001", account: "work", token: TOKEN, model: "claude-opus-5", isAgent: false }],
+            processes: [
+                { pid: 1, tty: "ttys001", account: "work", token: TOKEN, model: "claude-opus-5", isAgent: false },
+            ],
         });
 
         expect(diagnoseGroup(opusGroup, [account("work")], cache({ fableUsed: 100 }), "ok", NOW).problems).toEqual([]);

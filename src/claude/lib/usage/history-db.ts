@@ -262,6 +262,31 @@ export class UsageHistoryDb {
         return rows.map((r) => ({ accountName: r.account_name, bucket: r.bucket }));
     }
 
+    /**
+     * Re-key every row of a renamed account, in ONE transaction. History is
+     * keyed by account NAME, so a rename that skips this silently splits an
+     * account's burn history in two and the observed pace restarts from zero.
+     * Returns the number of rows moved.
+     */
+    renameAccount(oldName: string, newName: string): number {
+        const db = this.claudeDb.getDb();
+
+        const rekey = db.transaction(() => {
+            const usage = db.prepare("UPDATE usage_snapshots SET account_name = ?2 WHERE account_name = ?1");
+            const spend = db.prepare("UPDATE spend_snapshots SET account_name = ?2 WHERE account_name = ?1");
+
+            usage.run(oldName, newName);
+            const afterUsage = db.prepare("SELECT changes() AS n").get() as { n: number };
+
+            spend.run(oldName, newName);
+            const afterSpend = db.prepare("SELECT changes() AS n").get() as { n: number };
+
+            return afterUsage.n + afterSpend.n;
+        });
+
+        return rekey();
+    }
+
     pruneOlderThan(days: number): number {
         const usagePruned = this.claudeDb.pruneTable("usage_snapshots", "timestamp", days);
         const spendPruned = this.claudeDb.pruneTable("spend_snapshots", "timestamp", days);
