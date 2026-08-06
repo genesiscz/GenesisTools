@@ -223,17 +223,50 @@ export async function resolveKeychainIdentity(deps: {
     return uuid ?? (await deps.offlineUuid());
 }
 
+/**
+ * The configured account owning a keychain identity, or undefined when the
+ * identity is unknown. The `uuid !== undefined` guard is the whole point:
+ * `find(a => a.secondary?.accountUuid === undefined)` matches the FIRST
+ * account that has no secondary login, so an unmanaged keychain would be
+ * attributed to whichever account happens to sit first in the config.
+ */
+export function accountOwningKeychain(accounts: AIAccountEntry[], uuid: string | undefined): string | undefined {
+    if (!uuid) {
+        return undefined;
+    }
+
+    return accounts.find((a) => a.secondary?.accountUuid === uuid)?.name;
+}
+
 export const UNCERTAINTY_TEXT: Record<DoctorUncertainty, string> = {
     "probe-unreachable": "could not verify the token (probe unreachable) — liveness unknown",
     "no-usage-data": "no usage data for this account — bucket state unknown",
     "usage-data-stale": "usage snapshot too old or replayed — bucket state unknown (wait for the next poll)",
 };
 
+/**
+ * What went wrong. These describe the FAILURE, not its consequence: whether a
+ * failing pin lands on someone else's bill or simply dies depends on there
+ * being a keychain login at all, which `fallbackSuffix` states separately.
+ */
 export const PROBLEM_TEXT: Record<DoctorProblem, string> = {
-    "expired-token": "token expired (401) — every turn silently bills the keychain",
+    "expired-token": "token expired (401) — every turn falls back to the keychain login",
     "stale-token": "token differs from config — launched before the last recapture",
     "unknown-account": "pin names an account the config no longer has",
-    "fable-blocked": "Fable bucket exhausted — Fable turns 429 and silently bill the keychain",
-    "weekly-blocked": "weekly quota exhausted — every turn 429s and silently bills the keychain",
-    "session-blocked": "5h window exhausted — every turn 429s and silently bills the keychain until it resets",
+    "fable-blocked": "Fable bucket exhausted — Fable turns 429 and fall back to the keychain login",
+    "weekly-blocked": "weekly quota exhausted — every turn 429s and falls back to the keychain login",
+    "session-blocked": "5h window exhausted — every turn 429s and falls back until the window resets",
 };
+
+/**
+ * Who actually absorbs the fallback. With no keychain login there is nothing
+ * to fall back ONTO, so the turns just fail — saying "billing X" there would
+ * be a fabricated claim.
+ */
+export function fallbackSuffix(problem: DoctorProblem, keychainLabel: string | undefined): string {
+    if (!billsKeychain([problem])) {
+        return "";
+    }
+
+    return keychainLabel ? ` → billing ${keychainLabel}` : " → no keychain login, so these turns just fail";
+}

@@ -8,6 +8,8 @@ import {
     groupSessions,
     MAX_USAGE_AGE_MS,
     modelFromArgv,
+    accountOwningKeychain,
+    fallbackSuffix,
     parsePinnedProcesses,
     resolveKeychainIdentity,
     type SessionGroup,
@@ -232,6 +234,43 @@ describe("diagnoseGroup", () => {
         });
 
         expect(diagnoseGroup(opusGroup, [account("work")], cache({ fableUsed: 100 }), "ok", NOW).problems).toEqual([]);
+    });
+});
+
+describe("fallbackSuffix", () => {
+    test("names the account absorbing the fallback when there is one", () => {
+        expect(fallbackSuffix("expired-token", "other")).toBe(" → billing other");
+    });
+
+    // With no keychain login there is nothing to fall back onto, so claiming a
+    // bill would be fabricated.
+    test("says the turns just fail when no keychain login exists", () => {
+        expect(fallbackSuffix("expired-token", undefined)).toContain("just fail");
+        expect(fallbackSuffix("expired-token", undefined)).not.toContain("billing");
+    });
+
+    test("a non-billing problem gets no suffix at all", () => {
+        expect(fallbackSuffix("stale-token", "other")).toBe("");
+        expect(fallbackSuffix("unknown-account", "other")).toBe("");
+    });
+});
+
+describe("accountOwningKeychain", () => {
+    test("matches the account holding that secondary uuid", () => {
+        const accounts = [account("a"), { ...account("b"), secondary: { accessToken: "x", refreshToken: "y", accountUuid: "uuid-b" } }];
+
+        expect(accountOwningKeychain(accounts, "uuid-b")).toBe("b");
+    });
+
+    // The regression: `find(a => a.secondary?.accountUuid === undefined)` matches
+    // the FIRST account with no secondary, so an unmanaged keychain used to be
+    // attributed to whichever account sat first in the config.
+    test("an unknown identity owns nothing, even when no account has a secondary", () => {
+        expect(accountOwningKeychain([account("first"), account("second")], undefined)).toBeUndefined();
+    });
+
+    test("a uuid no account claims owns nothing", () => {
+        expect(accountOwningKeychain([account("a")], "uuid-nobody")).toBeUndefined();
     });
 });
 

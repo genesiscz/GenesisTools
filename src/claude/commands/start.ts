@@ -1,3 +1,4 @@
+import { accountOwningKeychain } from "@app/claude/lib/doctor";
 import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
 import {
     ensureOnboardingSkippedForOAuthToken,
@@ -374,9 +375,9 @@ async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, model
         return; // unmanaged or unknown login — nothing we can vouch for
     }
 
-    const owner = aiConfig.getAccountsByProvider("anthropic-sub").find((a) => a.secondary?.accountUuid === uuid);
+    const owner = accountOwningKeychain(aiConfig.getAccountsByProvider("anthropic-sub"), uuid);
 
-    if (!owner || owner.name === accountName) {
+    if (!owner || owner === accountName) {
         return;
     }
 
@@ -389,7 +390,7 @@ async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, model
     // An explicit non-Fable model does not care about the Fable bucket; every
     // launch cares about the all-model weekly one.
     const fableMatters = !modelId || modelFamilyOf(modelId) === "fable";
-    const dead = deadBucketForAccount(cached.accounts, owner.name, fableMatters);
+    const dead = deadBucketForAccount(cached.accounts, owner, fableMatters);
 
     if (!dead) {
         return;
@@ -397,7 +398,7 @@ async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, model
 
     out.printlnErr(
         pc.yellow(
-            `⚠ The keychain is on "${owner.name}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`
+            `⚠ The keychain is on "${owner}", which has no ${dead.bucket} left (${resetPhrase(dead.resetsAt)}).`
         )
     );
     out.printlnErr(

@@ -1,8 +1,10 @@
 import {
+    accountOwningKeychain,
     billsKeychain,
     type Diagnosis,
     diagnoseGroup,
     groupSessions,
+    fallbackSuffix,
     PROBLEM_TEXT,
     parsePinnedProcesses,
     resolveKeychainIdentity,
@@ -60,8 +62,8 @@ function describeGroup(diag: Diagnosis, keychainLabel: string | undefined): void
 
     for (const problem of problems) {
         const text = PROBLEM_TEXT[problem];
-        const suffix = billsKeychain([problem]) && keychainLabel ? ` → billing ${pc.bold(keychainLabel)}` : "";
-        out.printlnErr(`    ${billsKeychain([problem]) ? pc.red(text) : pc.yellow(text)}${suffix}`);
+        const suffix = fallbackSuffix(problem, keychainLabel);
+        out.printlnErr(`    ${billsKeychain([problem]) ? pc.red(text) : pc.yellow(text)}${pc.dim(suffix)}`);
     }
 
     for (const uncertainty of unverified) {
@@ -92,10 +94,15 @@ export async function doctorCommand(): Promise<void> {
         onDegrade: (err) => logger.debug({ err }, "[doctor] authoritative keychain lookup failed, using the marker"),
     });
 
-    const keychainName = accounts.find((a) => a.secondary?.accountUuid === keychainUuid)?.name;
     // An unmanaged login still absorbs fallbacks — attribute by UUID then.
-    const keychainLabel = keychainName ?? keychainUuid;
-    out.printlnErr(pc.dim(`Keychain (absorbs silent fallbacks): ${keychainLabel ?? "unknown / unmanaged"}`));
+    const keychainLabel = accountOwningKeychain(accounts, keychainUuid) ?? keychainUuid;
+    out.printlnErr(
+        pc.dim(
+            keychainLabel
+                ? `Keychain (absorbs silent fallbacks): ${keychainLabel}`
+                : "Keychain: no login — a failing pin has nothing to fall back on, so those turns just fail"
+        )
+    );
 
     const groups = groupSessions(parsePinnedProcesses(pinnedProcessesFromPs()));
 
