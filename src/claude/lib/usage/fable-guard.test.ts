@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsage, UsageResponse } from "./api";
-import { fableCapableAccounts, fableStatus, fableStatusForAccount } from "./fable-guard";
+import { fableCapableAccounts, fableStatus, fableStatusForAccount, weeklyStatusForAccount } from "./fable-guard";
 
 const NOW = new Date("2026-07-24T20:00:00.000Z");
 
@@ -102,5 +102,64 @@ describe("fableCapableAccounts", () => {
         ];
 
         expect(fableCapableAccounts(accounts, NOW)).toEqual(["good"]);
+    });
+});
+
+describe("weeklyStatusForAccount", () => {
+    test("an unpolled account reports available so the gate never blocks blindly", () => {
+        expect(weeklyStatusForAccount([], "nobody").available).toBe(true);
+    });
+
+    test("a spent weekly bucket reports unavailable", () => {
+        const acc: AccountUsage = {
+            accountName: "a",
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 100, resets_at: hoursFromNow(20) },
+            },
+        };
+
+        expect(weeklyStatusForAccount([acc], "a", NOW).available).toBe(false);
+    });
+
+    test("a spent bucket whose reset already passed reads as fresh", () => {
+        const acc: AccountUsage = {
+            accountName: "a",
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 100, resets_at: hoursFromNow(-1) },
+            },
+        };
+
+        expect(weeklyStatusForAccount([acc], "a", NOW).available).toBe(true);
+    });
+});
+
+describe("fableCapableAccounts never recommends a dead account", () => {
+    test("an org-blocked account with a stale full-looking replay is excluded", () => {
+        const dead: AccountUsage = {
+            accountName: "dead",
+            orgBlocked: true,
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 0, resets_at: null },
+            },
+            stale: { lastSuccessAt: 0, reason: "not allowed for this organization" },
+        };
+
+        expect(fableCapableAccounts([dead], NOW)).toEqual([]);
+    });
+
+    test("an errored account with a full-looking replay is excluded", () => {
+        const errored: AccountUsage = {
+            accountName: "errored",
+            error: "Usage API 401: auth failed",
+            usage: {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 0, resets_at: null },
+            },
+        };
+
+        expect(fableCapableAccounts([errored], NOW)).toEqual([]);
     });
 });

@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
-import { type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
+import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { fableCapableAccounts, fableStatusForAccount } from "@app/claude/lib/usage/fable-guard";
+import { fableCapableAccounts, fableStatusForAccount, weeklyStatusForAccount } from "@app/claude/lib/usage/fable-guard";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
@@ -387,6 +387,58 @@ async function guardFableHeadroom(accountName: string, modelId: string | undefin
     }
 }
 
+/** "resets in 2h 5m" / "resetting now" from an ISO reset timestamp. */
+function resetPhrase(resetsAt: string | null): string {
+    if (!resetsAt) {
+        return "reset window unknown";
+    }
+
+    const hours = (new Date(resetsAt).getTime() - Date.now()) / 3_600_000;
+
+    if (!Number.isFinite(hours) || hours <= 0) {
+        return "resetting now";
+    }
+
+    return `resets in ${fmtHours(hours)}`;
+}
+
+/**
+ * A weekly-dead account cannot serve ANY model: every turn 429s and Claude
+ * Code silently falls back to the keychain account. This runs before the
+ * interactive and --model checks on purpose. Both are escapes from a Fable
+ * question, and neither is an escape from an empty weekly bucket.
+ */
+async function refuseIfWeeklyDead(accountName: string): Promise<void> {
+    const cached = await peekSharedUsage().catch((error) => {
+        logger.debug({ error }, "weekly gate: cache peek failed, skipping the check");
+        return null;
+    });
+
+    if (!cached) {
+        return;
+    }
+
+    const weekly = weeklyStatusForAccount(cached.accounts, accountName);
+
+    if (weekly.available) {
+        return;
+    }
+
+    out.error(pc.red(`⚠ "${accountName}" has no weekly quota left (${resetPhrase(weekly.resetsAt)}).`));
+    out.printlnErr(pc.dim("  Every model 429s until it refills, so switching model would not help."));
+
+    const withRoom = fableCapableAccounts(cached.accounts).filter((name) => name !== accountName);
+
+    out.printlnErr(
+        withRoom.length > 0
+            ? pc.dim(`  Accounts with headroom: ${withRoom.join(", ")}`)
+            : pc.dim("  No other account has weekly headroom right now.")
+    );
+
+    await out.flush();
+    process.exit(1);
+}
+
 function scoredHint(account: ScoredAccount): string {
     return account.dataNote ? `${account.why} ${pc.yellow(`[${account.dataNote}]`)}` : account.why;
 }
@@ -436,7 +488,18 @@ async function pickAccount(
             process.exit(1);
         }
 
-        const best = scored[0];
+        // An auto-pick must never land on an account that cannot serve a turn.
+        // The interactive table still SHOWS these rows; only the automatic
+        // choice skips them.
+        const eligible = scored.filter(
+            (s) => !s.subscriptionExpired && s.group !== "dead" && s.group !== "expired" && s.tier !== "weekly-blocked"
+        );
+        const best = eligible[0] ?? scored[0];
+
+        if (eligible.length === 0) {
+            out.printlnErr(pc.yellow("No account has usable headroom; picking the best of a bad set."));
+        }
+
         if (best.tier === "no-data") {
             out.printlnErr(pc.yellow("No account has usage data; picking the first configured account."));
         }
@@ -589,6 +652,8 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     }
 
     const account = withToken.find((a) => a.name === accountName)!;
+
+    await refuseIfWeeklyDead(accountName);
 
     const resumeArgs = await resolveResumeArgs(opts);
 

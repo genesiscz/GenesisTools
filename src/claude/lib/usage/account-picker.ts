@@ -143,7 +143,7 @@ function hoursToReset(resetsAt: string | null | undefined, periodHours: number, 
     return Number.isFinite(hours) && hours > 0 ? hours : periodHours;
 }
 
-function fmtHours(hours: number): string {
+export function fmtHours(hours: number): string {
     if (hours < 1) {
         return `${Math.max(1, Math.round(hours * 60))}m`;
     }
