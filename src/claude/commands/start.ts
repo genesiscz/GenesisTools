@@ -7,6 +7,7 @@ import {
     pinnedLaunchEnv,
     subscriptionTypeOf,
 } from "@app/claude/lib/launch-env";
+import { findRecentSessions, type SessionSummary } from "@app/claude/lib/history/limit-kill";
 import { type LaunchableModel, modelFamilyOf, resolveModelSpec } from "@app/claude/lib/models";
 import { fmtHours, type ScoredAccount, scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
@@ -657,7 +658,106 @@ async function resolveAccountName(
     process.exit(1);
 }
 
-async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
+/** "12m ago" / "2h ago" / "3d ago" — coarse on purpose, it's a disambiguator. */
+function agePhrase(mtimeMs: number): string {
+    const minutes = Math.max(0, Math.round((Date.now() - mtimeMs) / 60_000));
+
+    if (minutes < 60) {
+        return `${minutes}m ago`;
+    }
+
+    const hours = Math.round(minutes / 60);
+
+    return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+}
+
+/**
+ * One row: `d8deebf0 · 12m ago · ⚠ limit · in .worktrees/fix · "the prompt"`.
+ * The prompt goes in the LABEL rather than clack's `hint` (a hint only renders
+ * on the focused row, and every row has to be identifiable) and is trimmed to
+ * whatever the terminal has left, so no row wraps.
+ */
+function sessionLabel(session: SessionSummary): string {
+    const short = session.id.slice(0, 8);
+    const cells = [
+        { plain: short, colored: pc.cyan(short) },
+        { plain: agePhrase(session.mtimeMs), colored: agePhrase(session.mtimeMs) },
+    ];
+
+    if (session.limitStop) {
+        cells.push({ plain: "⚠ limit", colored: pc.yellow("⚠ limit") });
+    }
+
+    if (session.subdir) {
+        cells.push({ plain: `in ${session.subdir}`, colored: pc.dim(`in ${session.subdir}`) });
+    }
+
+    // 3 per separator; the 20 covers the "│  ● " gutter, the quotes, and
+    // clack's own wrap margin — it wraps at `columns - prefix.length` on a
+    // COLORED prefix, so its escape codes eat ~13 columns of the budget. A row
+    // that overshoots wraps onto a second line and the picker turns to mush.
+    const used = cells.reduce((n, cell) => n + cell.plain.length + 3, 20);
+    const room = (process.stdout.columns ?? 80) - used;
+
+    if (session.lastPrompt && room >= 20) {
+        const text =
+            session.lastPrompt.length > room ? `${session.lastPrompt.slice(0, room - 1)}…` : session.lastPrompt;
+        cells.push({ plain: text, colored: pc.dim(`"${text}"`) });
+    }
+
+    return cells.map((cell) => cell.colored).join(pc.dim(" · "));
+}
+
+/** True when the user already told claude what to open (`--resume`, `-c`, `-p`, …). */
+export function passthroughHandlesSession(passthrough: string[]): boolean {
+    return passthrough.some((arg) =>
+        ["--resume", "-r", "--continue", "-c", "--fork-session", "--print", "-p"].includes(arg.split("=")[0])
+    );
+}
+
+/**
+ * A session that died on a rate limit is the one case where a NEW session is
+ * almost never what was wanted: relaunching under another account is exactly
+ * how you carry on. The prompt is gated on the NEWEST session having died that
+ * way; the other recent ones ride along so an older thread stays reachable.
+ */
+async function offerLimitKilledResume(): Promise<string[]> {
+    if (!isInteractive()) {
+        return [];
+    }
+
+    const cwd = process.cwd();
+    const sessions = await findRecentSessions(cwd).catch((error) => {
+        logger.debug({ error }, "[start] limit-killed session scan failed");
+        return [];
+    });
+
+    if (!sessions[0]?.limitStop) {
+        return [];
+    }
+
+    out.printlnErr(
+        pc.yellow(`⚠ The last session here stopped on a limit ${pc.dim(`(${agePhrase(sessions[0].mtimeMs)})`)}`)
+    );
+    out.printlnErr(pc.dim(`  ${sessions[0].limitStop.slice(0, 160)}`));
+
+    const picked = await p.select({
+        message: `Resume a session in ${cwd.replace(env.paths.getHome() ?? "", "~")}?`,
+        options: [
+            ...sessions.map((session) => ({ value: session.id, label: sessionLabel(session) })),
+            { value: "", label: "Start fresh" },
+        ],
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Cancelled — nothing launched.");
+        process.exit(0);
+    }
+
+    return picked ? ["--resume", picked] : [];
+}
+
+async function resolveResumeArgs(opts: StartOptions, passthrough: string[]): Promise<string[]> {
     if (opts.continue) {
         if (opts.resume) {
             out.printlnErr(pc.dim("Both --continue and --resume given; using --continue."));
@@ -677,6 +777,12 @@ async function resolveResumeArgs(opts: StartOptions): Promise<string[]> {
         }
 
         return ["--resume", session.sessionId];
+    }
+
+    // The user said nothing about sessions. Offer the limit-killed one, if the
+    // passthrough has not already told claude what to open.
+    if (!passthroughHandlesSession(passthrough)) {
+        return offerLimitKilledResume();
     }
 
     return [];
@@ -734,7 +840,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         await warnKeychainLimits(accountName, aiConfig, modelId);
     }
 
-    const resumeArgs = await resolveResumeArgs(opts);
+    const resumeArgs = await resolveResumeArgs(opts, passthrough);
 
     await guardFableHeadroom(accountName, modelId, resumeArgs.length > 0);
 
