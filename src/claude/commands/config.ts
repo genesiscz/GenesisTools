@@ -8,11 +8,13 @@ import {
 import { identityMismatch } from "@app/claude/lib/identity-guard";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
 import { invalidateSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
+import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatLocalDate } from "@genesiscz/utils/date";
@@ -929,6 +931,12 @@ export function registerConfigCommand(program: Command): void {
                 const status = stored?.subscriptionStatus ?? "unknown";
                 const usable = planAllowsClaudeCode(stored ?? {});
 
+                // An account that just came back healthy must not sit out the
+                // backoff it earned while it was dead.
+                if (usable) {
+                    await clearPollGate(account.name);
+                }
+
                 out.println(
                     `${usable ? pc.green("●") : pc.red("●")} ${account.name} — ${plan} (${status})${usable ? "" : pc.dim(" — cannot run Claude Code")}`
                 );
@@ -1013,6 +1021,23 @@ export function registerConfigCommand(program: Command): void {
                 label,
                 apps: ["claude", "ask"],
             });
+
+            // The plan reading comes free with the profile fetched above. Storing
+            // it here is what lets a just-renewed account be polled immediately
+            // instead of waiting out the 6h recheck window with a stale
+            // "claude_free" that keeps it suppressed.
+            if (profile) {
+                await aiConfig.updateAccount(accountName, {
+                    subscriptionCreatedAt: profile.organization.subscription_created_at || undefined,
+                    subscriptionPlan: profile.organization.organization_type,
+                    subscriptionStatus: profile.organization.subscription_status,
+                    subscriptionCheckedAt: Date.now(),
+                });
+            }
+
+            // A fresh grant retires both cooldowns the dead one earned.
+            clearInvalidGrant(accountName);
+            await clearPollGate(accountName);
 
             out.println();
             out.println(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));

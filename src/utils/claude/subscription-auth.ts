@@ -72,9 +72,62 @@ function isTransientRefreshError(error: unknown): boolean {
  * Per-account cooldown after invalid_grant. A dead refresh token stays dead
  * until re-login; without this every poll re-hammers the token endpoint with
  * a known-dead token (~1 POST/30s per consumer).
+ *
+ * Persisted, NOT a module-level Map: the usage poll daemon is a fresh process
+ * every minute, so an in-memory cooldown never survives to the run it was
+ * meant to stop. Two dead-grant accounts sent ~1,082 refresh POSTs each on
+ * 2026-08-08 with the in-memory version in place. A re-login is still picked
+ * up immediately — a fresh access token returns on the fast path above,
+ * before this cooldown is ever consulted.
  */
 const INVALID_GRANT_COOLDOWN_MS = 10 * 60 * 1000;
-const invalidGrantAt = new Map<string, number>();
+
+function invalidGrantPath(): string {
+    return join(env.tools.getHome() || homedir(), ".genesis-tools", "ai", "invalid-grant.json");
+}
+
+function readInvalidGrants(): Record<string, number> {
+    try {
+        return parseJSON<Record<string, number>>(readFileSync(invalidGrantPath(), "utf8")) ?? {};
+    } catch (err) {
+        // "No cooldowns yet" is the normal state, not a problem worth a line.
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+            logger.debug({ err }, "[token-refresh] invalid_grant cooldown file unreadable");
+        }
+
+        return {};
+    }
+}
+
+function invalidGrantSince(account: string): number | undefined {
+    return readInvalidGrants()[account];
+}
+
+function markInvalidGrant(account: string): void {
+    try {
+        const all = readInvalidGrants();
+        all[account] = Date.now();
+        writeFileSync(invalidGrantPath(), SafeJSON.stringify(all, null, 2), { mode: 0o600 });
+    } catch (err) {
+        logger.warn({ err, account }, "[token-refresh] could not persist invalid_grant cooldown");
+    }
+}
+
+/** Drop the cooldown after a successful refresh or a re-login. */
+export function clearInvalidGrant(account: string): void {
+    try {
+        const all = readInvalidGrants();
+
+        if (!(account in all)) {
+            return;
+        }
+
+        delete all[account];
+        writeFileSync(invalidGrantPath(), SafeJSON.stringify(all, null, 2), { mode: 0o600 });
+    } catch (err) {
+        logger.debug({ err, account }, "[token-refresh] could not clear invalid_grant cooldown");
+    }
+}
 
 /**
  * Append the old and freshly-issued token pair to a journal BEFORE the config
@@ -345,7 +398,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         // process re-logged in, the fresh-token detection above already returned the new token.
         // Only a refresh token that is still dead on disk hits the cooldown, so a re-login is
         // picked up immediately instead of being blocked for the full window.
-        const lastInvalidGrant = invalidGrantAt.get(name);
+        const lastInvalidGrant = invalidGrantSince(name);
 
         if (lastInvalidGrant && Date.now() - lastInvalidGrant < INVALID_GRANT_COOLDOWN_MS) {
             throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
@@ -378,7 +431,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                         newTokens = await claudeOAuth.refresh(recovery.refreshToken);
                         logger.info(`[token-refresh] ${name}: journal recovery succeeded`);
                     } catch (recoveryErr) {
-                        invalidGrantAt.set(name, Date.now());
+                        markInvalidGrant(name);
                         logger.warn(
                             `[token-refresh] ${name}: journal recovery failed: ` +
                                 `${recoveryErr instanceof Error ? recoveryErr.message : recoveryErr}`
@@ -386,7 +439,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                         throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
                     }
                 } else {
-                    invalidGrantAt.set(name, Date.now());
+                    markInvalidGrant(name);
                     throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
                 }
             } else {
@@ -412,7 +465,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             },
         };
 
-        invalidGrantAt.delete(name);
+        clearInvalidGrant(name);
         logger.info(
             `[token-refresh] ${name}: refreshed successfully ` +
                 `(new expires ${new Date(newTokens.expiresAt).toISOString()})`

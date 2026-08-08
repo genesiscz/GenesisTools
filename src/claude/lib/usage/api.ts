@@ -1,7 +1,17 @@
+import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { ensureSubscriptionAnchors } from "./subscription";
+import {
+    blockedEntry,
+    loadPollGate,
+    type PollGate,
+    pruneGate,
+    recordFailure,
+    recordSuccess,
+    savePollGate,
+} from "./poll-gate";
+import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile } from "./subscription";
 
 export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";
 
@@ -12,6 +22,23 @@ export class RetryableApiError extends Error {
         super(message);
         this.name = "RetryableApiError";
         this.statusCode = statusCode;
+    }
+}
+
+/**
+ * The account was not polled at all: its plan cannot run Claude Code, or it is
+ * inside a failure backoff. Distinct from a fetch failure because it must NOT
+ * count as one — counting a skip as a failure would ratchet the backoff up
+ * forever without a single request ever being sent.
+ */
+export class PollSuppressedError extends Error {
+    /** Epoch ms of the next attempt, or 0 when recovery is plan-driven. */
+    readonly retryAt: number;
+
+    constructor(reason: string, retryAt = 0) {
+        super(reason);
+        this.name = "PollSuppressedError";
+        this.retryAt = retryAt;
     }
 }
 
@@ -211,6 +238,125 @@ export interface FetchAllAccountsOptions {
     orgBlocked?: ReadonlySet<string>;
 }
 
+/** The account fields every result row carries, fetched or not. */
+function identityOf(account: AIAccountEntry) {
+    return {
+        accountName: account.name,
+        label: account.label,
+        subscriptionCreatedAt: account.subscriptionCreatedAt,
+        subscriptionPlan: account.subscriptionPlan,
+        subscriptionStatus: account.subscriptionStatus,
+        refreshExpiresAt: account.tokens.refreshExpiresAt,
+    };
+}
+
+function planReason(account: AIAccountEntry): string {
+    return `plan is ${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"}) — Claude Code needs a paid subscription`;
+}
+
+interface PollAccountArgs {
+    account: AIAccountEntry;
+    config: AIConfig;
+    gate: PollGate;
+    now: number;
+    signal?: AbortSignal;
+    orgBlocked?: ReadonlySet<string>;
+}
+
+/**
+ * One account's poll, including the two gates that decide whether it is polled
+ * at all:
+ *
+ *  1. a failure backoff (persisted, so it survives the per-minute daemon
+ *     process) skips EVERYTHING — no token resolve, no profile read, no usage
+ *     request;
+ *  2. a plan the OAuth profile says cannot run Claude Code skips the usage
+ *     request but still allows the 6-hourly profile re-read, because that read
+ *     is the only way a renewed subscription is ever noticed.
+ */
+async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> {
+    const { account, config, gate, now, signal } = args;
+    const tag = `[usage:${account.name}]`;
+
+    const blocked = blockedEntry(gate, account.name, now);
+
+    if (blocked) {
+        throw new PollSuppressedError(blocked.reason, blocked.blockedUntil);
+    }
+
+    const anchorDue = isAnchorDue(account, now);
+
+    if (!planAllowsClaudeCode(account) && !anchorDue) {
+        throw new PollSuppressedError(planReason(account));
+    }
+
+    // ONE token resolve per account per poll. The profile read used to resolve
+    // its own, which doubled every refresh attempt for dead-grant accounts.
+    const { token, refreshed: tokenRefreshed } = await resolveAccountToken(account.name, {
+        staleAccessToken: account.tokens.accessToken,
+    });
+
+    if (tokenRefreshed) {
+        logger.debug(`${tag} token was refreshed before fetch`);
+    }
+
+    if (anchorDue) {
+        // Mutates `account` in place on success, so the plan check below sees
+        // the fresh reading — this is the recovery path for a renewed plan.
+        await refreshSubscriptionProfile(config, account, token, now);
+    }
+
+    if (!planAllowsClaudeCode(account)) {
+        throw new PollSuppressedError(planReason(account));
+    }
+
+    try {
+        const usage = await fetchUsage(token, signal, account.name);
+        return { ...identityOf(account), usage } satisfies AccountUsage;
+    } catch (err) {
+        if (!(err instanceof RetryableApiError) || args.orgBlocked?.has(account.name)) {
+            logger.debug(`${tag} fetch failed: ${err instanceof Error ? err.message : err}`);
+            throw err;
+        }
+
+        // The usage endpoint allows exactly 5 requests per access token
+        // (verified empirically 2026-07-11: fresh token = 5x 200 then 429,
+        // no refill, strictly per-token). Rotating the token on 429 is the
+        // intended unlock — resolveAccountToken's on-disk staleAccessToken
+        // check keeps concurrent consumers to one rotation per exhausted
+        // token. 401 (token rejected) takes the same path.
+        logger.debug(`${tag} got ${err.statusCode}, attempting force-refresh`);
+
+        let freshToken: string;
+        let refreshed: boolean;
+
+        try {
+            ({ token: freshToken, refreshed } = await resolveAccountToken(account.name, {
+                staleAccessToken: token,
+                forceRefresh: true,
+            }));
+        } catch (refreshErr) {
+            // A dead refresh token (invalid_grant / cooldown) must not
+            // upgrade a routine 429 into a hard auth error — the access
+            // token can still land requests once another consumer rotates
+            // it. Keep the original status as the account error and carry
+            // the refresh failure as context.
+            const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
+            logger.debug(`${tag} token refresh after ${err.statusCode} failed: ${detail}`);
+            throw new RetryableApiError(err.statusCode, `${err.message} (token refresh failed: ${detail})`);
+        }
+
+        if (!refreshed) {
+            logger.debug(`${tag} force-refresh did not produce a new token, re-throwing ${err.statusCode}`);
+            throw err;
+        }
+
+        logger.debug(`${tag} retrying with refreshed token`);
+        const usage = await fetchUsage(freshToken, signal, account.name);
+        return { ...identityOf(account), usage } satisfies AccountUsage;
+    }
+}
+
 export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}): Promise<AccountUsage[]> {
     const { accountFilter, signal } = opts;
     const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
@@ -239,102 +385,77 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
 
     logger.debug(`[usage] polling ${accounts.length} account(s): ${accounts.map((a) => a.name).join(", ")}`);
 
-    // One-time per account, then free forever — the anchor rides along with usage
-    // so every consumer (TUI, picker, cache) can render the renewal date.
-    await ensureSubscriptionAnchors(config, accounts);
+    const now = Date.now();
+    const storedGate = await loadPollGate();
+    // Pruning is only safe on an UNFILTERED poll: a filtered one knows nothing
+    // about the accounts it excluded and would wipe their backoff.
+    const gate =
+        accountFilter === undefined
+            ? pruneGate(
+                  storedGate,
+                  accounts.map((a) => a.name)
+              )
+            : storedGate;
+    // A prune that dropped entries is itself a reason to rewrite the file.
+    let gateDirty = Object.keys(gate).length !== Object.keys(storedGate).length;
 
     const results = await Promise.allSettled(
-        accounts.map(async (account: AIAccountEntry) => {
-            const tag = `[usage:${account.name}]`;
-
-            const { token, refreshed: tokenRefreshed } = await resolveAccountToken(account.name, {
-                staleAccessToken: account.tokens.accessToken,
-            });
-
-            if (tokenRefreshed) {
-                logger.info(`${tag} token was refreshed before fetch`);
-            }
-
-            try {
-                const usage = await fetchUsage(token, signal, account.name);
-                return {
-                    accountName: account.name,
-                    label: account.label,
-                    subscriptionCreatedAt: account.subscriptionCreatedAt,
-                    subscriptionPlan: account.subscriptionPlan,
-                    subscriptionStatus: account.subscriptionStatus,
-                    refreshExpiresAt: account.tokens.refreshExpiresAt,
-                    usage,
-                } satisfies AccountUsage;
-            } catch (err) {
-                if (!(err instanceof RetryableApiError) || opts.orgBlocked?.has(account.name)) {
-                    logger.error(`${tag} fetch failed: ${err instanceof Error ? err.message : err}`);
-                    throw err;
-                }
-
-                // The usage endpoint allows exactly 5 requests per access token
-                // (verified empirically 2026-07-11: fresh token = 5x 200 then 429,
-                // no refill, strictly per-token). Rotating the token on 429 is the
-                // intended unlock — resolveAccountToken's on-disk staleAccessToken
-                // check keeps concurrent consumers to one rotation per exhausted
-                // token. 401 (token rejected) takes the same path.
-                logger.debug(`${tag} got ${err.statusCode}, attempting force-refresh`);
-
-                let freshToken: string;
-                let refreshed: boolean;
-
-                try {
-                    ({ token: freshToken, refreshed } = await resolveAccountToken(account.name, {
-                        staleAccessToken: token,
-                        forceRefresh: true,
-                    }));
-                } catch (refreshErr) {
-                    // A dead refresh token (invalid_grant / cooldown) must not
-                    // upgrade a routine 429 into a hard auth error — the access
-                    // token can still land requests once another consumer rotates
-                    // it. Keep the original status as the account error and carry
-                    // the refresh failure as context.
-                    const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
-                    logger.warn(`${tag} token refresh after ${err.statusCode} failed: ${detail}`);
-                    throw new RetryableApiError(err.statusCode, `${err.message} (token refresh failed: ${detail})`);
-                }
-
-                if (!refreshed) {
-                    logger.warn(`${tag} force-refresh did not produce a new token, re-throwing ${err.statusCode}`);
-                    throw err;
-                }
-
-                logger.info(`${tag} retrying with refreshed token`);
-                const usage = await fetchUsage(freshToken, signal, account.name);
-                return {
-                    accountName: account.name,
-                    label: account.label,
-                    subscriptionCreatedAt: account.subscriptionCreatedAt,
-                    subscriptionPlan: account.subscriptionPlan,
-                    subscriptionStatus: account.subscriptionStatus,
-                    refreshExpiresAt: account.tokens.refreshExpiresAt,
-                    usage,
-                } satisfies AccountUsage;
-            }
-        })
+        accounts.map((account: AIAccountEntry) =>
+            pollAccount({ account, config, gate, now, signal, orgBlocked: opts.orgBlocked })
+        )
     );
 
-    return results.map((r, i) => {
+    let nextGate = gate;
+    const usages = results.map((r, i) => {
+        const account = accounts[i];
+
         if (r.status === "fulfilled") {
+            const cleared = recordSuccess(nextGate, account.name);
+            gateDirty = gateDirty || cleared !== nextGate;
+            nextGate = cleared;
             return r.value;
         }
 
-        const reason = String(r.reason);
-        logger.error(`[usage:${accounts[i].name}] final error: ${reason}`);
+        const suppressed = r.reason instanceof PollSuppressedError;
+        const reason = suppressed ? suppressedReason(r.reason) : String(r.reason);
+
+        if (suppressed) {
+            logger.debug(`[usage:${account.name}] not polled: ${reason}`);
+        } else {
+            nextGate = recordFailure(nextGate, account.name, String(r.reason), now);
+            gateDirty = true;
+
+            // Only the FIRST failure in a streak is worth a console line. After
+            // that the backoff is doing its job and repeating the same error
+            // every minute just pollutes whatever TUI happens to be running.
+            const repeat = (gate[account.name]?.failures ?? 0) > 0;
+            const line = `[usage:${account.name}] fetch failed: ${reason}`;
+
+            if (repeat) {
+                logger.debug(line);
+            } else {
+                logger.error(line);
+            }
+        }
+
         return {
-            accountName: accounts[i].name,
-            label: accounts[i].label,
-            subscriptionCreatedAt: accounts[i].subscriptionCreatedAt,
-            subscriptionPlan: accounts[i].subscriptionPlan,
-            subscriptionStatus: accounts[i].subscriptionStatus,
-            refreshExpiresAt: accounts[i].tokens.refreshExpiresAt,
+            ...identityOf(account),
             error: reason,
-            orgBlocked: isSubscriptionExpiredError(reason) || opts.orgBlocked?.has(accounts[i].name),
-        };
+            orgBlocked: isSubscriptionExpiredError(reason) || opts.orgBlocked?.has(account.name),
+        } satisfies AccountUsage;
     });
+
+    if (gateDirty) {
+        await savePollGate(nextGate);
+    }
+
+    return usages;
+}
+
+function suppressedReason(err: PollSuppressedError): string {
+    if (err.retryAt <= 0) {
+        return err.message;
+    }
+
+    return `${err.message} (paused until ${new Date(err.retryAt).toISOString()})`;
 }

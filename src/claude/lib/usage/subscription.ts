@@ -38,79 +38,103 @@ export function planAllowsClaudeCode(entry: { subscriptionPlan?: string; subscri
 }
 
 /**
- * Backfill the billing anchor and the plan fields from the OAuth profile. The
- * anchor is fetched once and kept forever; the plan is re-read every
- * SUBSCRIPTION_RECHECK_MS, because a lapsed subscription is otherwise invisible
- * until an inference call fails. Never throws — a failed read only costs the
- * renewal line and leaves the previous plan reading in place.
+ * Whether this account's stored profile reading is old enough to re-read.
+ * Accounts whose profile already failed in THIS process are never due again:
+ * retrying a broken login once per poll is what the recheck window exists to
+ * avoid.
+ */
+export function isAnchorDue(
+    account: Pick<AIAccountEntry, "name" | "subscriptionCreatedAt" | "subscriptionCheckedAt">,
+    now: number = Date.now()
+): boolean {
+    if (failedAnchors.has(account.name)) {
+        return false;
+    }
+
+    if (!account.subscriptionCreatedAt || !account.subscriptionCheckedAt) {
+        return true;
+    }
+
+    return now - account.subscriptionCheckedAt > SUBSCRIPTION_RECHECK_MS;
+}
+
+/**
+ * Read the OAuth profile with a token the caller ALREADY resolved, and persist
+ * the anchor plus the plan fields. Taking the token as an argument is the whole
+ * point: the poller resolves each account's token exactly once per run, and a
+ * second independent `resolveAccountToken` here used to double every refresh
+ * attempt (2,162 refresh initiations for two dead-grant accounts on
+ * 2026-08-08, against 1,082 polls).
+ *
+ * Never throws — a failed read only costs the renewal line and leaves the
+ * previous plan reading in place. Returns whether the account was updated.
+ */
+export async function refreshSubscriptionProfile(
+    config: AIConfig,
+    account: AIAccountEntry,
+    token: string,
+    now: number = Date.now()
+): Promise<boolean> {
+    const profile = await fetchOAuthProfile(token);
+
+    if (!profile) {
+        failedAnchors.add(account.name);
+        logger.debug(`[subscription:${account.name}] profile unavailable`);
+        return false;
+    }
+
+    const patch = {
+        // A missing anchor must not erase the stored one.
+        subscriptionCreatedAt: profile.organization.subscription_created_at || account.subscriptionCreatedAt,
+        subscriptionPlan: profile.organization.organization_type,
+        subscriptionStatus: profile.organization.subscription_status,
+        subscriptionCheckedAt: now,
+    };
+
+    try {
+        await config.updateAccount(account.name, patch);
+        logger.info(
+            `[subscription:${account.name}] plan ${patch.subscriptionPlan ?? "unknown"} (${patch.subscriptionStatus ?? "unknown"}), anchor ${patch.subscriptionCreatedAt ?? "unknown"}`
+        );
+    } catch (err) {
+        failedAnchors.add(account.name);
+        logger.warn(
+            `[subscription:${account.name}] could not persist profile: ${err instanceof Error ? err.message : err}`
+        );
+        return false;
+    }
+
+    // Mirror into the in-memory entry the caller is still holding.
+    Object.assign(account, patch);
+    return true;
+}
+
+/**
+ * Backfill the billing anchor and the plan fields for a whole set of accounts,
+ * resolving each token here. Used by `tools claude config refresh`; the poller
+ * calls `refreshSubscriptionProfile` with its own token instead.
  */
 export async function ensureSubscriptionAnchors(config: AIConfig, accounts: AIAccountEntry[]): Promise<void> {
     const now = Date.now();
-    const due = accounts.filter(
-        (a) =>
-            !failedAnchors.has(a.name) &&
-            (!a.subscriptionCreatedAt ||
-                !a.subscriptionCheckedAt ||
-                now - a.subscriptionCheckedAt > SUBSCRIPTION_RECHECK_MS)
-    );
+    const due = accounts.filter((a) => isAnchorDue(a, now));
 
     if (due.length === 0) {
         return;
     }
 
-    const fetched = await Promise.allSettled(
+    await Promise.allSettled(
         due.map(async (account) => {
-            const { token } = await resolveAccountToken(account.name, {
-                staleAccessToken: account.tokens.accessToken,
-            });
-            const profile = await fetchOAuthProfile(token);
-
-            if (!profile) {
-                throw new Error("profile unavailable");
+            try {
+                const { token } = await resolveAccountToken(account.name, {
+                    staleAccessToken: account.tokens.accessToken,
+                });
+                await refreshSubscriptionProfile(config, account, token, now);
+            } catch (err) {
+                failedAnchors.add(account.name);
+                logger.debug(`[subscription:${account.name}] token unavailable for profile read: ${err}`);
             }
-
-            return {
-                name: account.name,
-                createdAt: profile.organization.subscription_created_at,
-                plan: profile.organization.organization_type,
-                status: profile.organization.subscription_status,
-            };
         })
     );
-
-    for (const [i, result] of fetched.entries()) {
-        const account = due[i];
-
-        if (result.status === "rejected") {
-            failedAnchors.add(account.name);
-            logger.debug(`[subscription:${account.name}] profile unavailable: ${result.reason}`);
-            continue;
-        }
-
-        const patch = {
-            // A missing anchor must not erase the stored one.
-            subscriptionCreatedAt: result.value.createdAt || account.subscriptionCreatedAt,
-            subscriptionPlan: result.value.plan,
-            subscriptionStatus: result.value.status,
-            subscriptionCheckedAt: now,
-        };
-
-        try {
-            await config.updateAccount(account.name, patch);
-            logger.info(
-                `[subscription:${account.name}] plan ${patch.subscriptionPlan ?? "unknown"} (${patch.subscriptionStatus ?? "unknown"}), anchor ${patch.subscriptionCreatedAt ?? "unknown"}`
-            );
-        } catch (err) {
-            failedAnchors.add(account.name);
-            logger.warn(
-                `[subscription:${account.name}] could not persist profile: ${err instanceof Error ? err.message : err}`
-            );
-            continue;
-        }
-
-        // Mirror into the in-memory entry the caller is still holding.
-        Object.assign(account, patch);
-    }
 }
 
 /**

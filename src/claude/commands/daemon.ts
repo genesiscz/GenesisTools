@@ -38,7 +38,11 @@ export function registerDaemonCommand(program: Command): void {
     daemon
         .command("register")
         .description("Register usage polling as a daemon task")
-        .option("-i, --interval <interval>", "Polling interval", "every 1 minute")
+        // 30s, not 60s: the usage buckets are what every picker and dashboard
+        // ranks accounts by, and a minute-old reading is already wrong after a
+        // busy turn. Only HEALTHY accounts pay for it — lapsed and failing ones
+        // are held back by the poll gate (src/claude/lib/usage/poll-gate.ts).
+        .option("-i, --interval <interval>", "Polling interval", "every 30 seconds")
         .option("--retention-days <days>", "Delete run logs older than N days (with --retention-min)", "3")
         .option("--retention-min <count>", "Always keep at least N newest run logs", "100")
         .action(async (opts: { interval: string; retentionDays: string; retentionMin: string }) => {

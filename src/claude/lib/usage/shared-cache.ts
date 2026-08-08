@@ -10,7 +10,15 @@ import { fetchAllAccountsUsage, isSubscriptionExpiredError, orgBlockedAccounts }
 import { normalizeLimits, normalizeSpend } from "./limits";
 
 export const DB_FRESH_MS = 10_000;
-export const API_MIN_INTERVAL_MS = 30_000;
+/**
+ * How old a cached fetch may be before a READING consumer fetches for itself.
+ * Deliberately longer than the daemon's 30s poll period: the daemon is the
+ * single driver, and a window shorter than its period makes every other
+ * consumer race it into a duplicate poll (at 30s/60s, roughly every second
+ * `tools claude start` fetched all accounts itself and printed the failures
+ * into its own picker).
+ */
+export const API_MIN_INTERVAL_MS = 45_000;
 
 const CACHE_KEY = "usage-shared";
 const storage = getClaudeUsageStorage();
