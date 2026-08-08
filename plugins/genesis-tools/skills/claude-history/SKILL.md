@@ -7,6 +7,29 @@ description: Find or reference a past Claude Code conversation — fixes, decisi
 
 Search through Claude Code conversation history to find past interactions.
 
+## 🛑 Do NOT pipe to `head` / `tail`
+
+`tools claude history` already bounds its own output. Piping it through `head -40` / `tail -20`:
+
+- truncates the result set mid-record, so a match that WAS found looks absent;
+- masks the real exit code (the pipeline reports `head`'s);
+- can SIGPIPE the indexer mid-scan on `--all` runs.
+
+Use the CLI's own bounds instead:
+
+```bash
+tools claude history "query" --all --limit 10             # fewer results
+tools claude history "query" --all --limit 5 --context 0  # no surrounding messages
+tools claude history "query" --all > /tmp/hist.md         # big result set → file, then Read it
+```
+
+Rules of thumb:
+
+- Cap with `--limit`, never with `head`. Default is 20; drop to `5`-`10` for a scoped question.
+- The command can take >10s on `--all`. Run it with `run_in_background: true` (or a longer `timeout`), not with a pipe that hides the stall.
+- Need only a machine answer? `--format json | tools json` is fine — that is a converter, not a truncator.
+- Redirecting to a file with `>` and then `Read`ing costs less than a re-run after a bad truncation. There is no `-o` flag on this command.
+
 ## Quick Reference
 
 ```bash
