@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 
 const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", "com.genesis-tools.automate.plist");
 const LABEL = "com.genesis-tools.automate";
 
-export const DAEMON_LOG_DIR = join(homedir(), ".genesis-tools", "automate", "logs");
+export const DAEMON_LOG_DIR = join(env.tools.getHome(), ".genesis-tools", "automate", "logs");
 export const DAEMON_STDOUT_LOG = join(DAEMON_LOG_DIR, "daemon-stdout.log");
 export const DAEMON_STDERR_LOG = join(DAEMON_LOG_DIR, "daemon-stderr.log");
 
@@ -36,7 +37,7 @@ export function generatePlist(): string {
 }
 
 export async function installLaunchd(): Promise<void> {
-    mkdirSync(join(homedir(), ".genesis-tools", "automate", "logs"), { recursive: true });
+    mkdirSync(join(env.tools.getHome(), ".genesis-tools", "automate", "logs"), { recursive: true });
     await Bun.write(PLIST_PATH, generatePlist());
     const proc = Bun.spawn(["launchctl", "load", PLIST_PATH], { stdio: ["ignore", "pipe", "pipe"] });
     const exitCode = await proc.exited;

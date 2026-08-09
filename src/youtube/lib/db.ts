@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { deleteIfExists } from "@app/youtube/lib/cache";
 import type { Channel, ChannelHandle } from "@app/youtube/lib/channel.types";
@@ -84,11 +83,15 @@ import type {
     VideoReport,
 } from "@app/youtube/lib/video.types";
 import { BaseDatabase, SQL_NOW_UTC } from "@genesiscz/utils/database";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 
-export const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "youtube", "youtube.db");
+// Root via `env.tools.getHome()` (falls back to `homedir()`) so the test
+// sandbox's GENESIS_TOOLS_HOME is honoured — a bare `homedir()` here would let
+// any test constructing `new YoutubeDatabase()` write the user's real library.
+export const DEFAULT_DB_PATH = join(env.tools.getHome(), ".genesis-tools", "youtube", "youtube.db");
 
 const SCHEMA_VERSION = 2;
 

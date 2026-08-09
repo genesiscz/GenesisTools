@@ -2,8 +2,8 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type {
     CommentRecord,
     FetchMetadataRecord,
@@ -13,7 +13,7 @@ import type {
 } from "@genesiscz/utils/github/types";
 import { logger } from "@genesiscz/utils/logger";
 
-const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "github");
+const DEFAULT_CACHE_DIR = join(env.tools.getHome(), ".genesis-tools", "github");
 const DB_NAME = "cache.db";
 
 let _db: Database | null = null;

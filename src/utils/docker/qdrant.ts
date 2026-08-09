@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { DockerContainer, type DockerProgressCallback } from "./docker-container";
@@ -22,7 +21,7 @@ function parsePort(envValue: string | undefined, defaultPort: number): number {
 
     return parsed;
 }
-const QDRANT_STORAGE = join(homedir(), ".genesis-tools", "indexes", "qdrant");
+const QDRANT_STORAGE = join(env.tools.getHome(), ".genesis-tools", "indexes", "qdrant");
 
 let instance: DockerContainer | null = null;
 

@@ -9,12 +9,13 @@
  * pidFile module self-contained instead of importing youtube/lib so the
  * dependency graph stays one-way (youtube → DashboardApp, never back).
  */
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
 
-const DASHBOARDS_DIR = join(homedir(), ".genesis-tools", "dashboards");
-const LOGS_DIR = join(homedir(), ".genesis-tools", "logs");
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+
+const DASHBOARDS_DIR = join(env.tools.getHome(), ".genesis-tools", "dashboards");
+const LOGS_DIR = join(env.tools.getHome(), ".genesis-tools", "logs");
 
 export function pidFilePath(key: string): string {
     return join(DASHBOARDS_DIR, `${key}.pid`);

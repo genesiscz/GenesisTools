@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { AIChat } from "@app/ask/index.lib";
+import { env } from "@genesiscz/utils/env";
 import { z } from "zod";
 import { parseDate } from "./DateParser";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
@@ -73,7 +73,7 @@ export class AssistantEngine {
                 temperature: config.temperature ?? 0.7,
                 session: {
                     id: `telegram-assistant-${this.contact.userId}`,
-                    dir: resolve(homedir(), ".genesis-tools", "telegram", "ai-sessions"),
+                    dir: resolve(env.tools.getHome(), ".genesis-tools", "telegram", "ai-sessions"),
                     autoSave: true,
                 },
             });

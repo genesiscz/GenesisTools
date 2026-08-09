@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { SearchEngine } from "@genesiscz/utils/search";
 import { vectorSearch } from "@genesiscz/utils/search/drivers/sqlite-fts5/vector";
@@ -26,7 +26,7 @@ import type {
     UpsertMessageInput,
 } from "./types";
 
-const DB_PATH = join(homedir(), ".genesis-tools", "telegram", "history.db");
+const DB_PATH = join(env.tools.getHome(), ".genesis-tools", "telegram", "history.db");
 
 /** MessageRow with index signature so it satisfies Record<string, unknown> for SearchEngine */
 type IndexableMessageRow = MessageRow & Record<string, unknown>;

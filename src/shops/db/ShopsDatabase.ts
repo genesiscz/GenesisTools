@@ -1,5 +1,4 @@
 import type { Database as BunDatabase } from "bun:sqlite";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RawProduct } from "@app/shops/api/ShopApiClient.types";
 import { SHOPS_MIGRATIONS } from "@app/shops/db/migrations";
@@ -22,6 +21,7 @@ import {
     type Unit,
 } from "@app/shops/lib/normalize";
 import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type Insertable, type Kysely, type Selectable, sql } from "kysely";
@@ -67,7 +67,7 @@ export interface ListedProduct {
     imageUrl?: string;
 }
 
-const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "shops", "index.db");
+const DEFAULT_DB_PATH = join(env.tools.getHome(), ".genesis-tools", "shops", "index.db");
 
 export class ShopsDatabase {
     private readonly client: DatabaseClient<ShopsDB>;

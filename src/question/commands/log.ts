@@ -1,5 +1,5 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -7,7 +7,7 @@ import { formatQaEntry } from "../lib/format";
 import { openReadModel, type QueryOpts, queryEntries } from "../lib/read-model";
 
 export function defaultDbPath(): string {
-    return join(homedir(), ".genesis-tools", "question", "qa.db");
+    return join(env.tools.getHome(), ".genesis-tools", "question", "qa.db");
 }
 
 export function renderDigest(opts: QueryOpts & { dbPath: string }): string {

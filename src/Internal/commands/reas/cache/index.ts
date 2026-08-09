@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CacheEntry } from "@app/Internal/commands/reas/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
-const CACHE_DIR = join(homedir(), ".genesis-tools", "internal", "reas");
+const CACHE_DIR = join(env.tools.getHome(), ".genesis-tools", "internal", "reas");
 
 export const REAS_TTL = 24 * 60 * 60 * 1000;
 export const SREALITY_TTL = 6 * 60 * 60 * 1000;

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveActiveVault } from "./discovery";
 
@@ -9,7 +9,7 @@ export interface ObsidianConfig {
 }
 
 export function obsidianConfigPath(): string {
-    return join(homedir(), ".genesis-tools", "obsidian", "config.json");
+    return join(env.tools.getHome(), ".genesis-tools", "obsidian", "config.json");
 }
 
 /** Resolution order: unified config → obsidian.json discovery → null. */

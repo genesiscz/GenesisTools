@@ -1,0 +1,43 @@
+// no-homedir-genesis-tools.grit — Flag `homedir()` used to build a
+// `~/.genesis-tools/...` path. Use `env.tools.getHome()` instead.
+//
+// `env.tools.getHome()` reads GENESIS_TOOLS_HOME and falls back to `homedir()`,
+// so production behaviour is byte-identical. The difference is tests: the
+// `[test] preload` sandbox (src/utils/bun/preload-test-sandbox.ts) points
+// GENESIS_TOOLS_HOME at a throwaway tmp dir, and a bare `homedir()` walks
+// straight past it into the user's real data.
+//
+// Lessons learned: the youtube tool built DEFAULT_DB_PATH, DEFAULT_BASE_DIR,
+// DEFAULT_CACHE_DIR and SERVER_BASE_DIR from `homedir()`, so the sandbox was a
+// no-op for a 7.5 MB library of real videos — one `new YoutubeDatabase()` in a
+// future test would have written it. 57 files were on the same footing.
+//
+// Same LIMITATION + workaround as no-hardcoded-tmp.grit — see that file for
+// the full explanation of why the binding contexts are enumerated.
+//
+// Suppression: `// biome-ignore lint/plugin: asserts against the REAL home`
+// above the line — correct for the sandbox's own tests, which must prove a
+// path is NOT under the real `~/.genesis-tools`.
+
+engine biome(1.0)
+language js(typescript, jsx)
+
+or {
+    `$_(homedir(), $seg)` as $match,
+    `$_(homedir(), $seg, $_)` as $match,
+    `$_(homedir(), $seg, $_, $_)` as $match,
+    `$_(homedir(), $seg, $_, $_, $_)` as $match,
+    `const $_ = $seg` as $match,
+    `let $_ = $seg` as $match,
+    `$_ = $seg` as $match,
+    `return $seg` as $match,
+} where {
+    // GritQL regexes are FULL-match, so both alternatives need trailing `.*`
+    // (the same reason no-hardcoded-tmp.grit ends its pattern in `.+`).
+    $seg <: r"[\"'`]\.genesis-tools.*|.*\$\{homedir\(\)\}/\.genesis-tools.*",
+    register_diagnostic(
+        span = $match,
+        message = "`homedir()` bypasses the GENESIS_TOOLS_HOME test sandbox. Use `env.tools.getHome()` from @genesiscz/utils/env — it falls back to homedir(), so production is unchanged.",
+        severity = "error"
+    )
+}

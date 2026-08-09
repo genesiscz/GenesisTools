@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ChatEngine } from "@ask/chat/ChatEngine";
 import { ChatEvent } from "@ask/lib/ChatEvent";
@@ -18,6 +17,7 @@ import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
 import type { ChatConfig } from "@ask/types";
 import { getLanguageModel } from "@ask/types";
+import { env } from "@genesiscz/utils/env";
 import type { ToolSet } from "ai";
 import { tool } from "ai";
 
@@ -26,7 +26,7 @@ interface EngineWithRestore {
     restore: () => void;
 }
 
-const DEFAULT_SESSION_DIR = resolve(homedir(), ".genesis-tools/ai-chat/sessions");
+const DEFAULT_SESSION_DIR = resolve(env.tools.getHome(), ".genesis-tools/ai-chat/sessions");
 
 export class AIChat {
     private _options: AIChatOptions;

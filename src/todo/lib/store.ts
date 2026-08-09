@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { nanoid } from "nanoid";
@@ -14,7 +14,7 @@ function projectHash(projectRoot: string): string {
 }
 
 function defaultStorageRoot(): string {
-    return join(homedir(), ".genesis-tools", "todo");
+    return join(env.tools.getHome(), ".genesis-tools", "todo");
 }
 
 function applyFilters(todos: Todo[], filters: TodoFilters): Todo[] {

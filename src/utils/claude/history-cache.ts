@@ -6,12 +6,12 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, sep } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
-const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "claude-history");
+const DEFAULT_CACHE_DIR = join(env.tools.getHome(), ".genesis-tools", "claude-history");
 const DB_NAME = "index.db";
 
 let _db: Database | null = null;

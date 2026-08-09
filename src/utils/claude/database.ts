@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { BaseDatabase } from "@genesiscz/utils/database";
 import { env } from "@genesiscz/utils/env";
@@ -14,7 +13,7 @@ import { env } from "@genesiscz/utils/env";
  * ~/.genesis-tools/claude-history/index.db, alongside 35k genuine ones.
  */
 function claudeDbPath(): string {
-    return join(env.tools.getHome() || homedir(), ".genesis-tools", "claude-history", "index.db");
+    return join(env.tools.getHome() || env.tools.getHome(), ".genesis-tools", "claude-history", "index.db");
 }
 
 let _instance: ClaudeDatabase | null = null;

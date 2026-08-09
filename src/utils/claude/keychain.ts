@@ -255,7 +255,7 @@ export async function syncKeychainToConfig(aiConfig: AIConfig): Promise<Keychain
  * ai config. Returns the backup path.
  */
 export async function backupKeychainPayload(payload: KeychainPayload): Promise<string> {
-    const dir = join(env.tools.getHome() || homedir(), ".genesis-tools", "claude", "keychain-backups");
+    const dir = join(env.tools.getHome() || env.tools.getHome(), ".genesis-tools", "claude", "keychain-backups");
     const path = join(dir, `keychain-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
     await Bun.write(path, SafeJSON.stringify(payload, null, 2));
     chmodSync(path, 0o600);

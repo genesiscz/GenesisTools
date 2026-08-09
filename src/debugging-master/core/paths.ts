@@ -1,5 +1,5 @@
-import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
+import { env } from "@genesiscz/utils/env";
 
 /**
  * Single source of truth for where session JSONL files live on disk.
@@ -7,7 +7,7 @@ import { resolve, sep } from "node:path";
  * resolve session paths via this constant — keep them in sync by importing
  * from here instead of re-deriving the path.
  */
-export const SESSIONS_DIR = resolve(homedir(), ".genesis-tools", "debugging-master", "sessions");
+export const SESSIONS_DIR = resolve(env.tools.getHome(), ".genesis-tools", "debugging-master", "sessions");
 
 /**
  * Resolve the JSONL file path for a session by name. Defense-in-depth:

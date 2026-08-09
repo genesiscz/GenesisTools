@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
-export const FABLE_LOCAL_DIR = resolve(homedir(), ".genesis-tools", "claude", "fable");
+export const FABLE_LOCAL_DIR = resolve(env.tools.getHome(), ".genesis-tools", "claude", "fable");
 export const FABLE_CONFIG_PATH = join(FABLE_LOCAL_DIR, "config.json");
 export const FABLE_MODEL = "claude-fable-5";
 

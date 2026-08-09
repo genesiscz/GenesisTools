@@ -1,6 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 
@@ -12,7 +11,7 @@ const TAG_BYTES = 16;
 let cachedKey: Buffer | null = null;
 
 function defaultKeyPath(): string {
-    return env.shops.getSecretKeyPath() ?? join(homedir(), ".genesis-tools", "shops", ".secret-key");
+    return env.shops.getSecretKeyPath() ?? join(env.tools.getHome(), ".genesis-tools", "shops", ".secret-key");
 }
 
 function loadOrCreateKey(): Buffer {

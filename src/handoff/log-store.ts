@@ -1,5 +1,4 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -9,7 +8,7 @@ import type { HandoffEvent } from "./types";
 function questionRoot(): string {
     const logBase = env.question.getLogBase();
 
-    return logBase !== undefined ? dirname(logBase) : join(homedir(), ".genesis-tools", "question");
+    return logBase !== undefined ? dirname(logBase) : join(env.tools.getHome(), ".genesis-tools", "question");
 }
 
 export function handoffLogDir(base?: string): string {

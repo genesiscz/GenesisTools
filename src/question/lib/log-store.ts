@@ -1,12 +1,11 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { QaEntry } from "./types";
 
 export function logDir(base?: string): string {
-    return base ?? env.question.getLogBase() ?? join(homedir(), ".genesis-tools", "question", "log");
+    return base ?? env.question.getLogBase() ?? join(env.tools.getHome(), ".genesis-tools", "question", "log");
 }
 
 export function logFilePathFor(entry: Pick<QaEntry, "ts">, base?: string): string {

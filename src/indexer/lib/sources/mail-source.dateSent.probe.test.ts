@@ -40,7 +40,7 @@ function findEnvelopePath(): string | null {
 }
 
 describe("date_sent prune predicate (probe — skipped if files missing)", () => {
-    const indexPath = join(homedir(), ".genesis-tools/indexer/macos-mail/index.db");
+    const indexPath = join(env.tools.getHome(), ".genesis-tools/indexer/macos-mail/index.db");
     const envPath = findEnvelopePath();
 
     const skip = !existsSync(indexPath) || envPath === null;

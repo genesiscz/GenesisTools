@@ -1,5 +1,4 @@
 import { appendFileSync, chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
@@ -83,7 +82,7 @@ function isTransientRefreshError(error: unknown): boolean {
 const INVALID_GRANT_COOLDOWN_MS = 10 * 60 * 1000;
 
 function invalidGrantPath(): string {
-    return join(env.tools.getHome() || homedir(), ".genesis-tools", "ai", "invalid-grant.json");
+    return join(env.tools.getHome() || env.tools.getHome(), ".genesis-tools", "ai", "invalid-grant.json");
 }
 
 function readInvalidGrants(): Record<string, number> {
@@ -238,7 +237,7 @@ export function pruneJournal(path: string): void {
 }
 
 function journalPath(): string {
-    return join(env.tools.getHome() || homedir(), ".genesis-tools", "ai", "token-journal.jsonl");
+    return join(env.tools.getHome() || env.tools.getHome(), ".genesis-tools", "ai", "token-journal.jsonl");
 }
 
 /**

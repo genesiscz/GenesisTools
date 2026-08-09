@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { TelegramHistoryStore } from "./TelegramHistoryStore";
 import type { TGClient } from "./TGClient";
 
-const ATTACHMENTS_BASE = resolve(homedir(), ".genesis-tools/telegram/chats");
+const ATTACHMENTS_BASE = resolve(env.tools.getHome(), ".genesis-tools/telegram/chats");
 
 export class AttachmentDownloader {
     constructor(

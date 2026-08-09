@@ -1,8 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 
-export const SERVER_BASE_DIR = join(homedir(), ".genesis-tools", "youtube-server");
+// Root via `env.tools.getHome()` (falls back to `homedir()`) so the test
+// sandbox's GENESIS_TOOLS_HOME is honoured — a test writing the real port file
+// would point every CLI at a port the running launchd server does not own.
+export const SERVER_BASE_DIR = join(env.tools.getHome(), ".genesis-tools", "youtube-server");
 export const PORT_FILE = join(SERVER_BASE_DIR, "port");
 
 export interface PortFileOptions {

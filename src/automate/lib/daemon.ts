@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { createLogger } from "@genesiscz/utils/logger";
 import { closeDb, getDb } from "./db";
 import { runSchedulerLoop } from "./scheduler";
 
-const PID_FILE = join(homedir(), ".genesis-tools", "automate", "daemon.pid");
+const PID_FILE = join(env.tools.getHome(), ".genesis-tools", "automate", "daemon.pid");
 
 export async function startDaemon(): Promise<void> {
     const log = createLogger({ logToFile: false });

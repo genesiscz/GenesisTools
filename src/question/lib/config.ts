@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SoundChoice } from "@genesiscz/utils/audio/runner.server";
 import { env } from "@genesiscz/utils/env";
@@ -20,7 +19,7 @@ const DEFAULT: QuestionConfig = {
 };
 
 export function configPath(): string {
-    return env.question.getConfigPath() ?? join(homedir(), ".genesis-tools", "question", "config.json");
+    return env.question.getConfigPath() ?? join(env.tools.getHome(), ".genesis-tools", "question", "config.json");
 }
 
 export function loadConfig(path = configPath()): QuestionConfig {

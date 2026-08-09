@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CacheLayout } from "@app/youtube/lib/cache.types";
 import type { ChannelHandle } from "@app/youtube/lib/channel.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
-export const DEFAULT_CACHE_DIR = join(homedir(), ".genesis-tools", "youtube", "cache");
+// Root via `env.tools.getHome()` (falls back to `homedir()`) so the test
+// sandbox's GENESIS_TOOLS_HOME is honoured and no test can prune real media.
+export const DEFAULT_CACHE_DIR = join(env.tools.getHome(), ".genesis-tools", "youtube", "cache");
 
 export function videoDir(layout: CacheLayout, handle: ChannelHandle, id: VideoId): string {
     const safeHandle = handle.replace(/^@/, "").replace(/[^a-zA-Z0-9_-]/g, "_");

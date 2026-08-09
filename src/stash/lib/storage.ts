@@ -1,13 +1,13 @@
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 
 export class StashStorage {
     private readonly base: string;
 
     constructor(base?: string) {
         const envRoot = process.env.GENESIS_TOOLS_STASH_ROOT;
-        this.base = base ?? envRoot ?? join(homedir(), ".genesis-tools", "stash");
+        this.base = base ?? envRoot ?? join(env.tools.getHome(), ".genesis-tools", "stash");
     }
 
     root(): string {

@@ -18,6 +18,7 @@ describe("test sandbox preload", () => {
     test("Storage resolves outside the real home directory", () => {
         const base = new Storage("sandbox-probe").getBaseDir();
 
+        // biome-ignore lint/plugin: asserts against the REAL home on purpose — the whole point is that the sandbox is elsewhere
         expect(base.startsWith(`${homedir()}/.genesis-tools`)).toBe(false);
         expect(base).toContain(".genesis-tools/sandbox-probe");
     });

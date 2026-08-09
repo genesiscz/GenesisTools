@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -16,7 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 // complementary defence is the safety-number (SAS) check after pairing — see the managed-tier
 // follow-up. This module is the admission gate; SAS is the MITM detector.
 
-const CODE_PATH = join(homedir(), ".genesis-tools", "dev-dashboard", "pairing-code.json");
+const CODE_PATH = join(env.tools.getHome(), ".genesis-tools", "dev-dashboard", "pairing-code.json");
 const DEFAULT_TTL_MS = 5 * 60_000;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I — unambiguous to read + type
 const CODE_LENGTH = 8;

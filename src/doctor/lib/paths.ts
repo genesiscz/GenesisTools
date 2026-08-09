@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { toPosixPath } from "@genesiscz/utils/paths";
 
-export const DOCTOR_DIR = toPosixPath(join(homedir(), ".genesis-tools", "doctor"));
+export const DOCTOR_DIR = toPosixPath(join(env.tools.getHome(), ".genesis-tools", "doctor"));
 export const ANALYSIS_DIR = toPosixPath(join(DOCTOR_DIR, "analysis"));
 export const CACHE_DIR = toPosixPath(join(DOCTOR_DIR, "cache"));
 export const SNAPSHOTS_DIR = toPosixPath(join(DOCTOR_DIR, "global-packages-snapshots"));

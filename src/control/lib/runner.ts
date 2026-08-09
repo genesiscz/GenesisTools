@@ -1,14 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
 const SWIFT_SOURCE = join(GT_ROOT, "native", "ax-tool");
 
-export const RECORD_DIR = join(homedir(), ".genesis-tools", "control", "record");
+export const RECORD_DIR = join(env.tools.getHome(), ".genesis-tools", "control", "record");
 export const RECORD_SESSION = join(RECORD_DIR, "session.json");
 const RECORDED_COMMANDS = new Set([
     "press",

@@ -58,7 +58,7 @@ export interface InstalledTeammateWrapper {
 }
 
 export function teammateWrappersDir(): string {
-    return join(env.paths.getHome() ?? homedir(), ".genesis-tools", "claude", "teammate-wrappers");
+    return join(env.paths.getHome() ?? env.tools.getHome(), ".genesis-tools", "claude", "teammate-wrappers");
 }
 
 /**

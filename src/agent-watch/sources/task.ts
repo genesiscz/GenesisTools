@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
@@ -22,7 +22,7 @@ interface TaskMeta {
 }
 
 export function defaultTaskDir(): string {
-    return join(homedir(), ".genesis-tools", "task", "sessions");
+    return join(env.tools.getHome(), ".genesis-tools", "task", "sessions");
 }
 
 function toEpochMs(ts: number | string | undefined): number | undefined {

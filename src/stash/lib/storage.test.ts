@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { StashStorage } from "./storage";
 
 let work: string;
@@ -43,7 +44,7 @@ describe("StashStorage", () => {
         delete process.env.GENESIS_TOOLS_STASH_ROOT;
         try {
             const s = new StashStorage();
-            expect(s.root()).toBe(join(homedir(), ".genesis-tools", "stash"));
+            expect(s.root()).toBe(join(env.tools.getHome(), ".genesis-tools", "stash"));
         } finally {
             if (orig !== undefined) {
                 process.env.GENESIS_TOOLS_STASH_ROOT = orig;

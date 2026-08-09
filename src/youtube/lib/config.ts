@@ -1,13 +1,16 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { YoutubeConfigInit, YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 
-export const DEFAULT_BASE_DIR = join(homedir(), ".genesis-tools", "youtube");
+// `env.tools.getHome()` falls back to `homedir()`, so production is unchanged.
+// It reads GENESIS_TOOLS_HOME, which the test preload points at a tmp dir —
+// with a bare `homedir()` here the sandbox cannot protect the real server.json.
+export const DEFAULT_BASE_DIR = join(env.tools.getHome(), ".genesis-tools", "youtube");
 export const CONFIG_FILENAME = "server.json";
 
 export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {

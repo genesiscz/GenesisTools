@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ProcessSwap, ScanOptions, ScanResult, SystemSwap } from "./types";
 
@@ -113,7 +113,7 @@ const VMMAP_CONCURRENCY = 32;
 const RSS_FLOOR_BYTES = 25 * 1024 * 1024;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const START_TIME_TOLERANCE_MS = 5000;
-const CACHE_PATH = join(homedir(), ".genesis-tools", "macos-swap", "cache.json");
+const CACHE_PATH = join(env.tools.getHome(), ".genesis-tools", "macos-swap", "cache.json");
 
 interface CachedEntry {
     pid: number;

@@ -1,6 +1,6 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
@@ -12,7 +12,7 @@ const log = logger.child({ component: "clones:file-meta-cache" });
 /** Single global path: any scan that walks a path looks up its cached metadata
  *  regardless of which root surrounded it. `~/Projects/Foo` then `~/Projects`
  *  reuses rows from the first scan. ONE db per machine, not per scan-root. */
-export const FILE_META_DB_PATH = join(homedir(), ".genesis-tools", "macos-clones", "cache", "file-meta.db");
+export const FILE_META_DB_PATH = join(env.tools.getHome(), ".genesis-tools", "macos-clones", "cache", "file-meta.db");
 
 /** SQLite caps bound parameters at 32766 (SQLITE_MAX_VARIABLE_NUMBER since
  *  3.32.0). Our flush rows have 6 columns, so 32766 / 6 = 5461 is the hard

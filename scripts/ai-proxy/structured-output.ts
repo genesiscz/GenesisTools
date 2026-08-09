@@ -9,10 +9,11 @@
  *
  * Usage: bun scripts/ai-proxy/structured-output.ts [model...]
  */
+
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { AiProxyClient, type SchemaMode } from "@genesiscz/utils/ai/proxy/AiProxyClient";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const SCHEMA = {
@@ -32,7 +33,7 @@ const SCHEMA = {
 const PROMPT = "Pick the fruit that is a berry botanically-speaking from: apple, banana, cherry.";
 
 function lastUsageRecord(model: string): unknown {
-    const path = join(homedir(), ".genesis-tools", "ai-proxy", "usage", "requests.jsonl");
+    const path = join(env.tools.getHome(), ".genesis-tools", "ai-proxy", "usage", "requests.jsonl");
     if (!existsSync(path)) {
         return "NO requests.jsonl";
     }

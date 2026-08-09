@@ -1,16 +1,16 @@
 import { chmodSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { verifyAndConsumePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 // The managed-tier pairing store. Holds device PUBLIC keys ONLY (0600 file) — there is
 // nothing here the vendor relay could misuse even if it logged the pairing POST, because
 // a public key is public by definition. The matching secret key never leaves the phone.
-const PEERS_PATH = join(homedir(), ".genesis-tools", "dev-dashboard", "e2e-peers.json");
+const PEERS_PATH = join(env.tools.getHome(), ".genesis-tools", "dev-dashboard", "e2e-peers.json");
 
 interface PeerRecord {
     publicKey: string;

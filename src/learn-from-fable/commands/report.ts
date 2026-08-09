@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { renderMarkdownToCli } from "@genesiscz/utils/markdown";
@@ -249,10 +249,10 @@ export function buildReportMarkdown(config: FableConfig): { markdown: string; da
     push(`## Where to verify every model call`);
     push();
     push(
-        `- per-request tokens + write-time cost: ${code(join(homedir(), ".genesis-tools/ai-proxy/usage/requests.jsonl"))} (proxy records every call; grep by model id)`
+        `- per-request tokens + write-time cost: ${code(join(env.tools.getHome(), ".genesis-tools/ai-proxy/usage/requests.jsonl"))} (proxy records every call; grep by model id)`
     );
     push(
-        `- day-stamped debug logs (full prompts on jsonrepair events, drift retries): ${code(join(homedir(), ".genesis-tools/logs/"))}`
+        `- day-stamped debug logs (full prompts on jsonrepair events, drift retries): ${code(join(env.tools.getHome(), ".genesis-tools/logs/"))}`
     );
     push(`- episode inputs (context prefixes fed to models) + reference outputs: the per-model episode files above`);
     push(

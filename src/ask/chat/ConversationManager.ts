@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ChatMessage, ChatSession, ConversationMetadata } from "@ask/types";
 import { usageCacheReadTokens } from "@ask/utils/helpers";
 import { costForCall } from "@genesiscz/utils/ai/catalog/pricing";
+import { env } from "@genesiscz/utils/env";
 import { formatCost } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { write } from "bun";
 
-const DEFAULT_CONVERSATIONS_DIR = resolve(homedir(), ".genesis-tools", "ask", "conversations");
+const DEFAULT_CONVERSATIONS_DIR = resolve(env.tools.getHome(), ".genesis-tools", "ask", "conversations");
 
 export class ConversationManager {
     private conversationsDir: string;

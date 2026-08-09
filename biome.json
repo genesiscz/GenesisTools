@@ -9,7 +9,9 @@
         "./scripts/biome/no-direct-prompt-backend.grit",
         "./scripts/biome/no-mock-module-prompts.grit",
         "./scripts/biome/no-hardcoded-tmp.grit",
-        "./scripts/biome/no-hardcoded-user-paths.grit"
+        "./scripts/biome/no-hardcoded-user-paths.grit",
+        "./scripts/biome/no-homedir-genesis-tools.grit",
+        "./scripts/biome/no-homedir-genesis-tools-template.grit"
     ],
     "formatter": {
         "enabled": true,

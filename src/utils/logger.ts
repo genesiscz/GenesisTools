@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { formatLocalDate } from "@genesiscz/utils/date";
@@ -172,7 +171,7 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
     // File stream (if enabled) — ALWAYS debug+, independent of the console
     // gate, so the file never starves no matter how high the console threshold.
     if (logToFile) {
-        const logDir = path.join(homedir(), ".genesis-tools", "logs");
+        const logDir = path.join(env.tools.getHome(), ".genesis-tools", "logs");
 
         try {
             streams.push({

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import {
     type DetectChangesOptions,
     defaultDetectChanges,
@@ -12,7 +12,7 @@ import {
     type SourceEntry,
 } from "./source";
 
-const DEFAULT_DB_PATH = join(homedir(), ".genesis-tools", "telegram", "history.db");
+const DEFAULT_DB_PATH = join(env.tools.getHome(), ".genesis-tools", "telegram", "history.db");
 
 interface TelegramMessageRow {
     rowid: number;

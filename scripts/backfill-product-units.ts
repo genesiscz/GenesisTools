@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * One-shot backfill: derive unit/unit_amount/pack_count/flavor_key for existing
  * `products` rows that were ingested before commit 3031bc18 hardcoded `unit:
@@ -10,14 +11,14 @@
  */
 
 import { Database } from "bun:sqlite";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { refreshMasterDenorm } from "../src/shops/lib/master-denorm";
 import { extractFlavorKey, extractPackCount, extractSize, parseUnit, type Unit } from "../src/shops/lib/normalize";
 
 const DRY_RUN = process.argv.includes("--dry-run");
-const DB_PATH = join(homedir(), ".genesis-tools/shops/index.db");
+const DB_PATH = join(env.tools.getHome(), ".genesis-tools/shops/index.db");
 
 interface Row {
     id: number;

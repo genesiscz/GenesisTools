@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { homedir } from "node:os";
 import { analysisDirFor, cacheFilePath, DOCTOR_DIR, makeRunId } from "@app/doctor/lib/paths";
+import { env } from "@genesiscz/utils/env";
 import { toPosixPath } from "@genesiscz/utils/paths";
 
-const HOME = toPosixPath(homedir());
+// Not `homedir()`: the paths follow GENESIS_TOOLS_HOME, which the test preload
+// points at a tmp sandbox. Pinning the real home here asserted the bug.
+const HOME = toPosixPath(env.tools.getHome());
 
 describe("paths", () => {
     it("DOCTOR_DIR lives under ~/.genesis-tools/doctor", () => {
