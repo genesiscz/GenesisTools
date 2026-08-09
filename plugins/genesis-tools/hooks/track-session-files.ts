@@ -35,6 +35,7 @@ interface SessionData {
     files: string[];
 }
 
+// biome-ignore lint/plugin: standalone hook script without access to @genesiscz/utils/env
 const STORAGE_DIR = join(homedir(), ".genesis-tools", "claude-code", "sessions");
 const CLEANUP_DAYS = 30;
 

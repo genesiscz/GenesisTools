@@ -30,6 +30,7 @@ import { chmod, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 
+// biome-ignore lint/plugin: standalone script without access to @genesiscz/utils/env
 const PLUGIN_CONFIG = join(homedir(), ".genesis-tools", "plugins", "config.json");
 const HERE_START = "<!-- YOU-ARE-HERE:START -->";
 const HERE_END = "<!-- YOU-ARE-HERE:END -->";
