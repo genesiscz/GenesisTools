@@ -351,6 +351,21 @@ Key names accepted by `send-key`: `enter`, `tab`, `escape`, `up`/`down`/`left`/`
 1. `send "cd <cwd>\n"` — actually executes (newline included).
 2. `send "<command>"` — without the newline, so the captured shell command sits at the prompt and waits for the user to confirm with Enter.
 
+### Sending to your own surface (`tools cmux send-self`)
+
+`cmux send`/`send-key` accept the caller's own `$CMUX_WORKSPACE_ID` / `$CMUX_SURFACE_ID` as `--workspace` / `--surface`, so a process can type into the terminal it is running in. `tools cmux send-self <text>` wraps that, and falls back to `tmux send-keys -t $TMUX_PANE` when `TMUX_PANE` is set (tmux wins when nested inside cmux; `--target` forces one).
+
+This is the only reliable way to make an agent CLI parse a slash command it did not receive from the keyboard — the bytes arrive on the PTY exactly as if typed.
+
+```bash
+# fire /compact into this session 15 minutes from now
+nohup zsh -c "sleep 900; tools cmux send-self '/compact'" </dev/null >/dev/null 2>&1 &
+```
+
+The `sleep` must live in the calling shell. A `--delay` implemented inside the tool was tried and removed: the long-lived bun process is killed at an agent turn boundary, while a detached `zsh` + `sleep` survives.
+
+Verified 2026-08-10 on cmux 1.3.2: writes route to the addressed surface even when it is unfocused and in another workspace, unlike `surface.read_text` (issue #3189). A surface that has never been rendered reports `in_window=false` from `cmux surface-health` and cannot be read back until its workspace is selected once.
+
 ---
 
 ## Browser surfaces

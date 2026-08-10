@@ -11,9 +11,11 @@
  *   tools cmux profiles edit <name>
  *   tools cmux profiles delete <name>
  *   tools cmux profiles path <name>
+ *   tools cmux send-self <text> [--no-enter]
  */
 
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
+import { registerSendSelfCommand } from "@app/cmux/commands/send-self";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
@@ -31,6 +33,7 @@ program
     .option("-v, --verbose", "Enable debug logging");
 
 registerProfilesCommand(program);
+registerSendSelfCommand(program);
 
 enhanceHelp(program);
 
