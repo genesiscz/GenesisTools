@@ -99,7 +99,9 @@ for (const rel of SUBPROJECTS) {
     const code = await proc.exited;
 
     if (code !== 0 && diagnose(dir, [])) {
-        process.stderr.write(`\x1b[31m[test] ${rel}: bun install failed (exit ${code}) and node_modules is still missing\x1b[0m\n`);
+        process.stderr.write(
+            `\x1b[31m[test] ${rel}: bun install failed (exit ${code}) and node_modules is still missing\x1b[0m\n`
+        );
         process.exit(code);
     }
 }
