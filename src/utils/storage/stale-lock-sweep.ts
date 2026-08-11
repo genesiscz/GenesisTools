@@ -126,10 +126,7 @@ export function sweepStaleLocks(dir: string, opts: SweepOptions = {}): SweepRepo
             try {
                 unlinkSync(fullPath);
                 report.reaped.push({ lock: fullPath, pid: payload.pid, reason, payload });
-                log.info(
-                    { lock: fullPath, pid: payload.pid, reason, command: identity.command },
-                    "reaped stale lock"
-                );
+                log.info({ lock: fullPath, pid: payload.pid, reason, command: identity.command }, "reaped stale lock");
             } catch (err) {
                 log.warn({ lock: fullPath, err }, "failed to unlink stale lock");
             }

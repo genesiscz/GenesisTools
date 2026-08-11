@@ -41,7 +41,15 @@ import {
     promptLaunchdInstall,
     promptMineMenu,
 } from "./menu";
-import { classifyDashboardPid, clearPid, logFilePath, pidFilePath, pidFileStartTime, readPid, writePid } from "./pidFile";
+import {
+    classifyDashboardPid,
+    clearPid,
+    logFilePath,
+    pidFilePath,
+    pidFileStartTime,
+    readPid,
+    writePid,
+} from "./pidFile";
 import { checkPortConflict, killPortOwner, waitForPortFree } from "./portConflict";
 import { readPreferences, writePreferences } from "./preferences";
 import { waitForReady, waitForUrlReady } from "./readiness";

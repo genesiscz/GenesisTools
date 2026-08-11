@@ -7,7 +7,6 @@ import {
     sessionNameFromJsonlFilename,
     uiJsonlPath,
 } from "@app/task/lib/paths";
-import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
 import type {
     MarkExitedInput,
@@ -22,6 +21,7 @@ import { fuzzyResolveSession } from "@genesiscz/utils/log-session/fuzzy-resolver
 import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@genesiscz/utils/log-session/types";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 export type { ResolvedRunSession } from "@app/task/types";
