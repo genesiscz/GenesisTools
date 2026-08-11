@@ -72,6 +72,39 @@ if (broken) {
 }
 
 /**
+ * Standalone sub-projects with their own dependency trees (own package.json,
+ * NOT workspace members), whose tests the default sweep includes. Without their
+ * install, module resolution fails in ways that read like broken code —
+ * apps/eve's `Cannot find module 'eve/channels/auth'` sat in the full suite as
+ * a phantom failure for exactly this reason.
+ */
+const SUBPROJECTS = ["apps/eve"];
+
+for (const rel of SUBPROJECTS) {
+    const dir = join(ROOT, rel);
+
+    if (!(await Bun.file(join(dir, "package.json")).exists())) {
+        continue;
+    }
+
+    // Empty canary list: only the node_modules-missing check applies — the
+    // root canaries name root-tree packages a sub-project never has.
+    const subBroken = diagnose(dir, []);
+    if (!subBroken) {
+        continue;
+    }
+
+    warn(`${rel}: ${subBroken} — running bun install`);
+    const proc = Bun.spawn(["bun", "install"], { cwd: dir, stdio: ["inherit", "inherit", "inherit"] });
+    const code = await proc.exited;
+
+    if (code !== 0 && diagnose(dir, [])) {
+        process.stderr.write(`\x1b[31m[test] ${rel}: bun install failed (exit ${code}) and node_modules is still missing\x1b[0m\n`);
+        process.exit(code);
+    }
+}
+
+/**
  * Opt-in gates are silent by design: a suite can be green while whole categories
  * (real APIs, e2e, native models, Apple Mail) never ran. Printing the skipped set
  * once per run makes that visible instead of folklore, and names the variable that
