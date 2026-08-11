@@ -7,6 +7,11 @@ import { cooldownRemainingMs, markRateLimited, markSuccess, markUnhealthy } from
 import { resolveOpenAiSubFailoverToken, resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { mapWhamError, parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
+import {
+    createWhamItemHarvestTransform,
+    rememberWhamOutputItem,
+    resolveWhamItemReferences,
+} from "@app/ai-proxy/lib/providers/wham-item-store";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { getTodayUsageSummary, getUsageSummarySince } from "@app/ai-proxy/lib/usage/store";
@@ -340,7 +345,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const droppedHeader = dropped.length > 0 ? { "x-ai-proxy-dropped": dropped.join(",") } : undefined;
 
         if (wantStream) {
-            return new Response(upstream.body, {
+            return new Response(upstream.body.pipeThrough(createWhamItemHarvestTransform()), {
                 status: 200,
                 headers: {
                     "Content-Type": "text/event-stream; charset=utf-8",
@@ -559,8 +564,18 @@ export function buildWhamResponsesBody(
     const dropped: string[] = [];
 
     if (Array.isArray(parsed.input)) {
-        // Already a Responses body.
-        body.input = parsed.input;
+        // Already a Responses body. Inline any item_reference pointers — WHAM
+        // has no store to resolve them against (see wham-item-store.ts).
+        const resolved = resolveWhamItemReferences(parsed.input);
+        body.input = resolved.input;
+
+        if (resolved.unresolved.length > 0) {
+            dropped.push("item_reference");
+            logger.warn(
+                { unresolved: resolved.unresolved, orphanedOutputs: resolved.orphanedOutputs },
+                "ai-proxy: dropped item_reference input items with no stored record (proxy restarted mid-conversation?)"
+            );
+        }
 
         if (typeof parsed.instructions === "string") {
             body.instructions = parsed.instructions;
@@ -723,6 +738,12 @@ async function accumulateResponsesJson(
         }
 
         output.push(call);
+    }
+
+    for (const item of output) {
+        // Responses clients chain the next turn by item_reference id; the proxy
+        // is the store those references resolve against.
+        rememberWhamOutputItem(item);
     }
 
     return { failed: false, body: SafeJSON.stringify({ ...completed, object: "response", output }) };
