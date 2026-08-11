@@ -88,7 +88,9 @@ async function fetchOpenRouterPricing(modelId: string): Promise<ModelPricing | u
 
         return convertOpenRouterPricing(model.pricing);
     } catch (err) {
-        logger.warn({ err, modelId }, "OpenRouter pricing lookup failed");
+        // Optional rung of the pricing ladder — a miss is handled by the
+        // caller, so file-level debug is enough (promote with -v when triaging).
+        logger.debug({ err, modelId }, "OpenRouter pricing lookup failed");
         return undefined;
     }
 }

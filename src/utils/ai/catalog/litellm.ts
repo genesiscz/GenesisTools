@@ -150,6 +150,14 @@ export class LiteLLMPricingFetcher {
     }
 
     private async handleFallbackToCachedPricing(originalError: unknown): Promise<Map<string, LiteLLMModelPricing>> {
+        if (this.offlineLoader == null) {
+            // No fallback is configured (the pricing-ladder singleton): the
+            // caller catches and logs this at debug — don't ERROR-spam a path
+            // that is optional by design.
+            this.logDebug({ error: originalError }, "LiteLLM fetch failed and no offline loader is configured");
+            throw originalError instanceof Error ? originalError : new Error(String(originalError));
+        }
+
         this.logWarn("Failed to fetch model pricing from LiteLLM, falling back to cached pricing data");
         this.logDebug({ error: originalError }, "Fetch error details");
         try {
