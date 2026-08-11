@@ -4,8 +4,9 @@ import { ensurePublicExposure, verifyPublicExposure } from "@app/ai-proxy/lib/ex
 import { buildLocalBaseUrl, buildPublicBaseUrl, resolveCursorBaseUrl } from "@app/ai-proxy/lib/public-url";
 import {
     clearRuntimeState,
+    inspectProxyPid,
+    type ProxyPidState,
     readRuntimeState,
-    resolveLiveProxyPid,
     writeProxyPid,
     writeRuntimeState,
 } from "@app/ai-proxy/lib/runtime";
@@ -72,15 +73,26 @@ export async function runAiProxyUp(): Promise<UpResult> {
     const localUrl = buildLocalBaseUrl(config);
     const cursorUrl = resolveCursorBaseUrl(config);
 
-    const livePid = resolveLiveProxyPid();
-    if (livePid !== null) {
+    const pidState = inspectProxyPid();
+
+    if (pidState.status === "live" || pidState.status === "unverified") {
         return {
             started: false,
-            pid: livePid,
-            message: `ai-proxy already running (pid ${livePid})`,
+            pid: pidState.pid,
+            message: `ai-proxy already running (pid ${pidState.pid})`,
             localUrl,
             cursorUrl,
         };
+    }
+
+    if (pidState.status === "dead" || pidState.status === "foreign") {
+        const reason =
+            pidState.status === "foreign"
+                ? `pid ${pidState.pid} now belongs to another process (${pidState.command})`
+                : `pid ${pidState.pid} is gone`;
+        out.log.warn(`Clearing stale ai-proxy state — ${reason}`);
+        logger.warn({ pidState }, "ai-proxy up: clearing stale runtime state");
+        await clearRuntimeState();
     }
 
     const portOwner = await getPortOwner(config.listen.port);
@@ -144,13 +156,29 @@ export async function runAiProxyDown(): Promise<DownResult> {
     const store = getAiProxyConfigStore();
     const config = await store.load();
 
-    const runtime = await readRuntimeState();
-    const targetPid = resolveLiveProxyPid() ?? runtime.proxy?.pid ?? null;
+    const pidState = inspectProxyPid();
 
-    if (targetPid === null || !isProcessAlive(targetPid)) {
+    if (pidState.status === "foreign") {
+        // Never signal a pid we can't prove is ours — a recycled pid can be any
+        // program on the machine.
+        logger.warn({ pidState }, "ai-proxy down: refusing to signal a recycled pid");
+        await clearRuntimeState();
+
+        return {
+            stopped: false,
+            pid: pidState.pid,
+            message:
+                `ai-proxy is not running — recorded pid ${pidState.pid} belongs to another process ` +
+                `(${pidState.command}). Left it alone and cleared the stale record.`,
+        };
+    }
+
+    if (pidState.status === "none" || pidState.status === "dead") {
         await clearRuntimeState();
         return { stopped: false, message: "ai-proxy is not running" };
     }
+
+    const targetPid = pidState.pid;
 
     try {
         process.kill(targetPid, "SIGTERM");
@@ -196,6 +224,10 @@ export async function runAiProxyDown(): Promise<DownResult> {
 export interface StatusResult {
     proxyRunning: boolean;
     proxyPid?: number;
+    /** Full classification of the recorded pid — see {@link ProxyPidState}. */
+    pidState: ProxyPidState;
+    /** Set when the recorded pid is dead or recycled; names the repair command. */
+    staleWarning?: string;
     localHealth: boolean;
     publicHealth?: boolean;
     localUrl: string;
@@ -211,16 +243,29 @@ export async function runAiProxyStatus(): Promise<StatusResult> {
     const store = getAiProxyConfigStore();
     const config = await store.load();
     const runtime = await readRuntimeState();
-    const proxyPid = resolveLiveProxyPid() ?? runtime.proxy?.pid;
-    const proxyRunning = proxyPid !== null && proxyPid !== undefined && isProcessAlive(proxyPid);
+    const pidState = inspectProxyPid();
+    const proxyRunning = pidState.status === "live" || pidState.status === "unverified";
 
     const localHealthUrl = `http://${config.listen.host}:${config.listen.port}/health`;
     const localProbe = await probeUrl(localHealthUrl);
     const publicVerify = await verifyPublicExposure(config);
 
+    let staleWarning: string | undefined;
+    if (pidState.status === "foreign") {
+        staleWarning =
+            `recorded pid ${pidState.pid} belongs to another process (${pidState.command}) — ` +
+            `stale record, run \`tools ai-proxy up\` to restart`;
+    } else if (pidState.status === "dead") {
+        staleWarning = `recorded pid ${pidState.pid} is gone — run \`tools ai-proxy up\` to restart`;
+    } else if (pidState.status === "live" && !localProbe.ok) {
+        staleWarning = `pid ${pidState.pid} is alive but not answering ${localHealthUrl} — check ${getAiProxyStorage().proxyLogPath()}`;
+    }
+
     return {
         proxyRunning,
-        proxyPid: proxyRunning ? proxyPid : undefined,
+        proxyPid: proxyRunning ? pidState.pid : undefined,
+        pidState,
+        staleWarning,
         localHealth: localProbe.ok,
         publicHealth: publicVerify?.ok,
         localUrl: buildLocalBaseUrl(config),

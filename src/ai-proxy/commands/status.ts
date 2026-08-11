@@ -14,6 +14,10 @@ export async function runStatusCommand(options: { json?: boolean }): Promise<voi
     out.log.info(`Proxy:        ${status.proxyRunning ? `running (pid ${status.proxyPid})` : "stopped"}`);
     out.log.info(`Local health: ${status.localHealth ? "ok" : "fail"} — ${status.localUrl}`);
 
+    if (status.staleWarning) {
+        out.log.warn(`Proxy state:  ${status.staleWarning}`);
+    }
+
     if (status.publicUrl) {
         out.log.info(`Public URL:   ${status.publicUrl}`);
         out.log.info(`Public health:${status.publicHealth ? " ok" : " fail"}`);
