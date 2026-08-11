@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { SafeJSON } from "@genesiscz/utils/json";
 import {
     createWhamItemHarvestTransform,
     rememberWhamOutputItem,
@@ -7,6 +6,7 @@ import {
     resolveWhamItemReferences,
     whamItemStoreSize,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 afterEach(() => {
     resetWhamItemStore();
