@@ -2,7 +2,8 @@ import { closeSync, openSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { logger } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { sessionDaemonLogPath, sessionLaunchPath } from "./paths";
@@ -52,6 +53,29 @@ export function resolveWritePolicy(
     return { writePolicy: "deny", sandbox: "read-only", approvalPolicy: "never" };
 }
 
+/**
+ * True when the recorded daemon pid is alive AND still is this session's
+ * daemon. A recycled pid (unrelated process inheriting the number) used to
+ * block respawn forever with "already active" — verify the command line
+ * matches the `bun daemon.ts --name <name>` shape before trusting it.
+ */
+function isCodexDaemonPid(pid: number, name: string): boolean {
+    const identity = classifyPid(
+        pid,
+        (command) => command.includes(`--name ${name}`) && (command.includes("daemon") || command.includes("codex"))
+    );
+
+    if (identity.status === "foreign") {
+        logger.warn(
+            { pid, name, command: identity.command },
+            "codex spawn: recorded daemon pid belongs to another process (pid reuse) — treating session as inactive"
+        );
+        return false;
+    }
+
+    return identity.status === "live" || identity.status === "unverified";
+}
+
 export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSessionMeta> {
     const store = new CodexSessionStore();
     const existing = await store.readMeta(options.name);
@@ -59,7 +83,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         existing &&
         existing.status !== "closed" &&
         existing.status !== "failed" &&
-        isProcessAlive(existing.daemonPid)
+        isCodexDaemonPid(existing.daemonPid, options.name)
     ) {
         throw new Error(`Codex session "${options.name}" is already active (pid ${existing.daemonPid})`);
     }

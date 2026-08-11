@@ -40,7 +40,7 @@ export interface StaleLockReapedEvent extends FeedEventBase {
     type: "stale_lock_reaped";
     lock: string;
     pid?: number;
-    reason: "dead_pid" | "unreadable";
+    reason: "dead_pid" | "recycled_pid" | "unreadable";
 }
 
 export interface MessageEvent extends FeedEventBase {
@@ -75,6 +75,8 @@ export interface AgentRecord {
 
 export interface SlotLockPayload {
     pid: number;
+    /** Command line of `pid` at lock time — lets the sweep detect pid reuse. */
+    command?: string;
     since: string;
     owner: string;
     kind: "login";

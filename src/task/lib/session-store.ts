@@ -7,7 +7,7 @@ import {
     sessionNameFromJsonlFilename,
     uiJsonlPath,
 } from "@app/task/lib/paths";
-import { isProcessAlive } from "@app/task/lib/process-alive";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
 import type {
     MarkExitedInput,
@@ -311,10 +311,17 @@ export class TaskSessionStore {
         }
 
         if (meta) {
-            if (meta.pid !== undefined && !isProcessAlive(meta.pid)) {
-                const durationMs = Date.now() - meta.createdAt;
-                await this.markExited({ name, exitCode: 130, durationMs });
-                return this.getSessionMeta(name);
+            if (meta.pid !== undefined) {
+                // pidCommand catches pid reuse: a recycled pid is alive but is
+                // NOT this session — without the check the dead session shows
+                // as running forever.
+                const identity = classifyPid(meta.pid, meta.pidCommand);
+
+                if (identity.status === "dead" || identity.status === "foreign") {
+                    const durationMs = Date.now() - meta.createdAt;
+                    await this.markExited({ name, exitCode: 130, durationMs });
+                    return this.getSessionMeta(name);
+                }
             }
 
             return meta;
@@ -366,6 +373,7 @@ export class TaskSessionStore {
         }
 
         meta.pid = pid;
+        meta.pidCommand = readProcessCommand(pid) ?? undefined;
         await this.writeSessionMeta(meta);
     }
 

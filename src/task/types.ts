@@ -22,6 +22,8 @@ export interface TaskSessionMeta {
     lastActivityAt: number;
     startedAt: string;
     pid?: number;
+    /** Command line of `pid` captured when it was recorded — detects pid reuse. */
+    pidCommand?: string;
     exitCode?: number;
     durationMs?: number;
     exitedAt?: string;

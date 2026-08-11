@@ -73,7 +73,8 @@ export async function runStaleSweep(paths: SessionPaths): Promise<void> {
         const owner = String(reaped.payload.owner ?? "");
         const kind = reaped.payload.kind;
 
-        if (reaped.reason === "dead_pid" && kind === "login" && owner) {
+        // A recycled pid means the login holder is just as gone as a dead one.
+        if ((reaped.reason === "dead_pid" || reaped.reason === "recycled_pid") && kind === "login" && owner) {
             const reapedMode =
                 reaped.payload.mode === "once" || reaped.payload.mode === "stream" ? reaped.payload.mode : undefined;
             await appendFeed(paths, {

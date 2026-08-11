@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { classifyPid, type PidIdentity, readProcessCommand } from "@genesiscz/utils/process-identity";
 
 const DASHBOARDS_DIR = join(env.tools.getHome(), ".genesis-tools", "dashboards");
 const LOGS_DIR = join(env.tools.getHome(), ".genesis-tools", "logs");
@@ -39,7 +40,39 @@ function ensureDir(file: string): void {
 export function writePid(key: string, pid: number): void {
     const file = pidFilePath(key);
     ensureDir(file);
-    writeFileSync(file, String(pid));
+
+    // Line 2 captures the pid's command line so later reads can detect pid
+    // reuse (see classifyDashboardPid). Old single-line files stay parseable.
+    const command = readProcessCommand(pid);
+    writeFileSync(file, command === null ? String(pid) : `${pid}\n${command}`);
+}
+
+/** The command line captured when the pid file was written, if any. */
+export function readPidCommand(key: string): string | null {
+    const file = pidFilePath(key);
+
+    if (!existsSync(file)) {
+        return null;
+    }
+
+    const lines = readFileSync(file, "utf-8").split("\n");
+    const command = lines.slice(1).join("\n").trim();
+    return command.length > 0 ? command : null;
+}
+
+/**
+ * Classify the recorded pid against the command line captured at write time.
+ * Returns null when no pid is recorded. "unverified" (pre-identity pid file,
+ * or `ps` unavailable) should be treated as running, matching old behavior.
+ */
+export function classifyDashboardPid(key: string): PidIdentity | null {
+    const pid = readPidRaw(key);
+
+    if (pid === null) {
+        return null;
+    }
+
+    return classifyPid(pid, readPidCommand(key) ?? undefined);
 }
 
 export function readPidRaw(key: string): number | null {

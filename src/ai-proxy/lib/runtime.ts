@@ -4,7 +4,7 @@ import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyRuntimeState } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 
 function ensureParentDir(filePath: string): void {
     const dir = dirname(filePath);
@@ -67,34 +67,6 @@ export function clearProxyPid(): void {
 }
 
 /**
- * Read a pid's command line. Returns null when the OS can't tell us — Windows
- * (no `ps`), a `ps` failure, or a process that exited between the liveness
- * probe and this call.
- */
-export function readProcessCommand(pid: number): string | null {
-    if (process.platform === "win32") {
-        return null;
-    }
-
-    try {
-        const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-
-        if (proc.exitCode !== 0) {
-            return null;
-        }
-
-        const command = proc.stdout.toString().trim();
-        return command.length > 0 ? command : null;
-    } catch (err) {
-        logger.debug({ err, pid }, "ai-proxy: ps lookup failed");
-        return null;
-    }
-}
-
-/**
  * True when a command line is recognisably an ai-proxy *serve* process.
  *
  * Both halves matter. The path segment rejects unrelated programs that happen
@@ -136,22 +108,21 @@ export function inspectProxyPid(): ProxyPidState {
         return { status: "none" };
     }
 
-    if (!isProcessAlive(pid)) {
-        return { status: "dead", pid };
+    const identity = classifyPid(pid, isAiProxyServeCommand);
+
+    if (identity.status === "foreign") {
+        logger.warn(
+            { pid, command: identity.command },
+            "ai-proxy: recorded pid belongs to another process (pid reuse)"
+        );
+        return { status: "foreign", pid, command: identity.command ?? "(unknown)" };
     }
 
-    const command = readProcessCommand(pid);
-    if (command === null) {
-        logger.debug({ pid }, "ai-proxy: could not read command line for recorded pid");
-        return { status: "unverified", pid };
+    if (identity.status === "live") {
+        return { status: "live", pid, command: identity.command ?? "(unknown)" };
     }
 
-    if (!isAiProxyServeCommand(command)) {
-        logger.warn({ pid, command }, "ai-proxy: recorded pid belongs to another process (pid reuse)");
-        return { status: "foreign", pid, command };
-    }
-
-    return { status: "live", pid, command };
+    return { status: identity.status, pid };
 }
 
 export function resolveLiveProxyPid(): number | null {

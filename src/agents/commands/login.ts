@@ -2,6 +2,7 @@ import { isInteractive } from "@genesiscz/utils/cli";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { Command } from "commander";
 import { readCursor, writeCursor } from "../lib/cursor";
 import { deriveRegistry, findById, findByName, nextSubagentId } from "../lib/derived-registry";
@@ -254,6 +255,7 @@ function claimSlot({ paths, record, mode }: { paths: SessionPaths; record: Agent
     const lockPath = slotLockPath(paths, record.agent_id);
     const payload: SlotLockPayload = {
         pid: process.pid,
+        command: readProcessCommand(process.pid) ?? undefined,
         since: new Date().toISOString(),
         owner: record.agent_id,
         kind: "login",

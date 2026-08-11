@@ -41,7 +41,7 @@ import {
     promptLaunchdInstall,
     promptMineMenu,
 } from "./menu";
-import { clearPid, logFilePath, pidFilePath, pidFileStartTime, readPid, writePid } from "./pidFile";
+import { classifyDashboardPid, clearPid, logFilePath, pidFilePath, pidFileStartTime, readPid, writePid } from "./pidFile";
 import { checkPortConflict, killPortOwner, waitForPortFree } from "./portConflict";
 import { readPreferences, writePreferences } from "./preferences";
 import { waitForReady, waitForUrlReady } from "./readiness";
@@ -441,6 +441,24 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
         return { stopped: true };
     }
 
+    // A pid that came only from the pid file (nothing on the port) may have
+    // been recycled onto an unrelated process — never signal it in that case.
+    if (pid === filePid) {
+        const identity = classifyDashboardPid(config.key);
+
+        if (identity?.status === "foreign") {
+            logger.warn(
+                { key: config.key, pid, command: identity.command },
+                "dashboard down: recorded pid belongs to another process (pid reuse) — not killing"
+            );
+            clearPid(config.key);
+            out.info(
+                `${config.name ?? config.key} is not running — recorded pid ${pid} now belongs to another process. Cleared the stale record.`
+            );
+            return { stopped: false };
+        }
+    }
+
     if (isProcessAlive(pid)) {
         try {
             process.kill(pid, "SIGTERM");
@@ -502,8 +520,17 @@ export async function restart(ctx: LifecycleContext, opts: UpOptions = {}): Prom
 
 export async function status(ctx: LifecycleContext): Promise<StatusResult> {
     const { config, port } = ctx;
-    let pid = readPid(config.key);
-    let running = pid !== null && isProcessAlive(pid);
+    const identity = classifyDashboardPid(config.key);
+    let pid = identity?.pid ?? null;
+    let running = identity?.status === "live" || identity?.status === "unverified";
+
+    if (identity?.status === "foreign") {
+        logger.warn(
+            { key: config.key, pid, command: identity.command },
+            "dashboard status: recorded pid belongs to another process (pid reuse)"
+        );
+        pid = null;
+    }
 
     if (!running) {
         const owner = await getPortOwner(port);

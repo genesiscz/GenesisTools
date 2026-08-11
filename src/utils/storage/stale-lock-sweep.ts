@@ -2,20 +2,22 @@ import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "nod
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 
 const log = logger.child({ component: "storage:stale-lock-sweep" });
 
 export interface LockPayload {
     pid: number;
     since?: string;
+    /** Command line of `pid` at lock time — enables pid-reuse detection. */
+    command?: string;
     [k: string]: unknown;
 }
 
 export interface ReapedLock {
     lock: string;
     pid?: number;
-    reason: "dead_pid" | "unreadable";
+    reason: "dead_pid" | "recycled_pid" | "unreadable";
     payload: LockPayload;
 }
 
@@ -115,13 +117,19 @@ export function sweepStaleLocks(dir: string, opts: SweepOptions = {}): SweepRepo
             continue;
         }
 
-        const alive = isProcessAlive(payload.pid);
+        const recordedCommand = typeof payload.command === "string" ? payload.command : undefined;
+        const identity = classifyPid(payload.pid, recordedCommand);
 
-        if (!alive) {
+        if (identity.status === "dead" || identity.status === "foreign") {
+            const reason = identity.status === "dead" ? "dead_pid" : "recycled_pid";
+
             try {
                 unlinkSync(fullPath);
-                report.reaped.push({ lock: fullPath, pid: payload.pid, reason: "dead_pid", payload });
-                log.info({ lock: fullPath, pid: payload.pid }, "reaped stale lock (dead pid)");
+                report.reaped.push({ lock: fullPath, pid: payload.pid, reason, payload });
+                log.info(
+                    { lock: fullPath, pid: payload.pid, reason, command: identity.command },
+                    "reaped stale lock"
+                );
             } catch (err) {
                 log.warn({ lock: fullPath, err }, "failed to unlink stale lock");
             }
