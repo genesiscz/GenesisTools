@@ -27,6 +27,7 @@ import { registerListCommand } from "./commands/list";
 // Import and register command modules
 import { registerLoadCommand } from "./commands/load";
 import { registerMcpCommand } from "./commands/mcp";
+import { registerRedactCommand } from "./commands/redact";
 import { registerRedirectsCommand } from "./commands/redirects";
 import { registerSearchCommand } from "./commands/search";
 import { registerSecurityCommand } from "./commands/security";
@@ -52,6 +53,7 @@ registerRedirectsCommand(program);
 registerCookiesCommand(program);
 registerDiffCommand(program);
 registerExportCommand(program);
+registerRedactCommand(program);
 registerSessionsCommand(program);
 registerMcpCommand(program);
 

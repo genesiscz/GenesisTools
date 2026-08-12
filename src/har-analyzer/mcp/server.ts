@@ -2,11 +2,13 @@ import { resolve } from "node:path";
 import { formatDashboard, formatEntryLine, truncatePath } from "@app/har-analyzer/core/formatter";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
+import { parseRedactorFlags, redactHar } from "@app/har-analyzer/core/redactor";
 import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarFile, HarSession } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type CallToolResult,
@@ -118,6 +120,30 @@ export async function startMcpServer(): Promise<void> {
                             },
                         },
                         required: ["type"],
+                    },
+                },
+                {
+                    name: "har_redact",
+                    description:
+                        "Redact PII/credentials (passwords, emails, usernames, tokens, cookies, JWTs) from a HAR file. Writes <name>.redacted.har next to the input unless output is given. Never overwrites the original.",
+                    inputSchema: {
+                        type: "object" as const,
+                        properties: {
+                            file: { type: "string", description: "Path to the HAR file to redact" },
+                            output: { type: "string", description: "Output path (default: <name>.redacted.har)" },
+                            only: {
+                                type: "string",
+                                description:
+                                    "Redact only these kinds, comma-separated (password,secret,token,session,email,username,cookie,jwt)",
+                            },
+                            skip: { type: "string", description: "Kinds to leave untouched, comma-separated" },
+                            mask: {
+                                type: "string",
+                                description:
+                                    "Per-kind mask style, kind=style pairs (styles: label, stars, partial, keep)",
+                            },
+                        },
+                        required: ["file"],
                     },
                 },
                 {
@@ -390,6 +416,48 @@ export async function startMcpServer(): Promise<void> {
                             },
                         ],
                     };
+                }
+
+                case "har_redact": {
+                    const inputPath = resolve(a.file as string);
+                    const har = await loadHarFile(inputPath);
+
+                    const { options: redactorOptions, errors: flagErrors } = parseRedactorFlags({
+                        only: typeof a.only === "string" ? a.only : undefined,
+                        skip: typeof a.skip === "string" ? a.skip : undefined,
+                        mask: typeof a.mask === "string" ? a.mask : undefined,
+                    });
+                    if (flagErrors.length > 0) {
+                        return {
+                            content: [{ type: "text" as const, text: flagErrors.join("\n") }],
+                            isError: true,
+                        };
+                    }
+
+                    const { har: redacted, changes, skipped } = redactHar(har, redactorOptions);
+                    const verified = redactHar(redacted, redactorOptions).changes.length === 0;
+
+                    const outputPath =
+                        typeof a.output === "string"
+                            ? resolve(a.output)
+                            : `${inputPath.replace(/\.har$/i, "")}.redacted.har`;
+                    await Bun.write(outputPath, SafeJSON.stringify(redacted, { strict: true }));
+
+                    const total = changes.reduce((sum, c) => sum + c.count, 0);
+                    const byKind = new Map<string, number>();
+                    for (const c of changes) {
+                        byKind.set(c.kind, (byKind.get(c.kind) ?? 0) + c.count);
+                    }
+
+                    const lines = [
+                        `Redacted ${total} value(s) across ${redacted.log.entries.length} entries -> ${outputPath}`,
+                        ...[...byKind].sort((x, y) => y[1] - x[1]).map(([kind, count]) => `  ${kind}: ${count}`),
+                        ...skipped.map((s) => `  SKIPPED: ${s}`),
+                        verified
+                            ? "verify: second pass found 0 remaining"
+                            : "verify FAILED: second pass still found redactable data",
+                    ];
+                    return { content: [{ type: "text" as const, text: lines.join("\n") }], isError: !verified };
                 }
 
                 case "har_export": {

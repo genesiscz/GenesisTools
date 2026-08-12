@@ -1,56 +1,15 @@
 import { resolve } from "node:path";
 import { loadHarFile } from "@app/har-analyzer/core/parser";
 import { filterEntries } from "@app/har-analyzer/core/query-engine";
+import { redactEntry } from "@app/har-analyzer/core/redactor";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarEntry, HarFile, OutputOptions } from "@app/har-analyzer/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
-const SENSITIVE_HEADER_NAMES = new Set([
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "x-api-key",
-    "x-auth-token",
-    "proxy-authorization",
-]);
-
-const SENSITIVE_QS_NAMES = new Set(["api_key", "apikey", "key", "token", "secret", "password", "access_token"]);
-
-function sanitizeEntry(entry: HarEntry): HarEntry {
-    const clone = SafeJSON.parse(SafeJSON.stringify(entry)) as HarEntry;
-
-    // Sanitize request headers
-    for (const h of clone.request.headers) {
-        if (SENSITIVE_HEADER_NAMES.has(h.name.toLowerCase())) {
-            h.value = "[REDACTED]";
-        }
-    }
-
-    // Sanitize response headers
-    for (const h of clone.response.headers) {
-        if (SENSITIVE_HEADER_NAMES.has(h.name.toLowerCase())) {
-            h.value = "[REDACTED]";
-        }
-    }
-
-    // Sanitize query string params
-    for (const q of clone.request.queryString) {
-        if (SENSITIVE_QS_NAMES.has(q.name.toLowerCase())) {
-            q.value = "[REDACTED]";
-        }
-    }
-
-    // Sanitize cookies
-    for (const c of clone.request.cookies) {
-        c.value = "[REDACTED]";
-    }
-    for (const c of clone.response.cookies) {
-        c.value = "[REDACTED]";
-    }
-
-    return clone;
+function sanitizeEntry(entry: HarEntry, index: number): HarEntry {
+    return redactEntry(entry, index).entry;
 }
 
 function stripBodies(entry: HarEntry): HarEntry {
@@ -106,7 +65,7 @@ export function registerExportCommand(program: Command): void {
 
                 // Apply transformations
                 if (options.sanitize) {
-                    entries = entries.map(sanitizeEntry);
+                    entries = entries.map((entry, i) => sanitizeEntry(entry, i));
                 }
                 if (options.stripBodies) {
                     entries = entries.map(stripBodies);
