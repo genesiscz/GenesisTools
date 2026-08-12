@@ -1,8 +1,8 @@
 /**
  * Shared HTML-to-Markdown conversion using Turndown with GFM support.
  */
+import { gfm } from "@truto/turndown-plugin-gfm";
 import TurndownService from "turndown";
-import { gfm } from "turndown-plugin-gfm";
 
 const turndown = new TurndownService({
     headingStyle: "atx",
