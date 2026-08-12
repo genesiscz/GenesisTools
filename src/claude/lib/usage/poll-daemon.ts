@@ -87,6 +87,11 @@ async function main(): Promise<void> {
         out.println(
             `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`
         );
+
+        for (const account of results) {
+            const status = account.error ?? account.stale?.reason ?? "ok";
+            out.println(`  ${account.accountName}: ${status}${account.stale ? " [stale]" : ""}`);
+        }
     } finally {
         db.close();
     }
