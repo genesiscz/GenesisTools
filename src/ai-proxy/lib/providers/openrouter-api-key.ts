@@ -220,6 +220,25 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
             body.models = effectiveFallbackModels;
         }
 
+        // What the upstream is actually asked for, after the client's body and
+        // the account defaults are merged. "No thinking appeared" is otherwise
+        // unanswerable: it cannot be told apart from the client having asked for
+        // none, and the request body itself is too large to log.
+        logger.debug(
+            {
+                account: this.account.name,
+                upstreamModel,
+                streaming,
+                clientSentReasoning: "reasoning" in (parsed as Record<string, unknown>),
+                reasoning: body.reasoning,
+                routeMatched: route?.match,
+                provider: body.provider,
+                models: body.models,
+                tools: Array.isArray(body.tools) ? body.tools.length : undefined,
+            },
+            "ai-proxy: openrouter outbound body"
+        );
+
         return SafeJSON.stringify(body);
     }
 

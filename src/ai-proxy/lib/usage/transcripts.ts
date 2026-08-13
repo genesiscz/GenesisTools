@@ -391,6 +391,12 @@ export function writeTranscript(input: TranscriptInput): TranscriptRef | undefin
                     max_tokens: request.max_tokens,
                     temperature: request.temperature,
                     reasoning_effort: request.reasoning_effort,
+                    // The OpenRouter-style `reasoning` object decides whether the
+                    // upstream returns thinking at all. Without it recorded, a
+                    // client that suppressed thinking is indistinguishable from a
+                    // model that simply did not think — which is exactly the
+                    // question a "why is there no thinking" report needs answered.
+                    reasoning: request.reasoning,
                     response_format: request.response_format,
                     tools: Array.isArray(request.tools) ? request.tools.length : undefined,
                 },
