@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { OpenRouterApiKeyProvider } from "@app/ai-proxy/lib/providers/openrouter-api-key";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyAccountConfig, AiProxyOpenRouterAccountConfig } from "@app/ai-proxy/lib/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -192,8 +193,19 @@ describe("the openrouter provider surface", () => {
     });
 
     test("a missing key names the variable that was checked", async () => {
-        await expect(
-            OpenRouterApiKeyProvider.create({ ...account(), apiKey: undefined, apiKeyEnv: "MY_OR_KEY" })
-        ).rejects.toThrow("MY_OR_KEY / OPENROUTER_API_KEY");
+        // The developer running this suite has a real OPENROUTER_API_KEY
+        // exported; the ambient fallback would resolve it and trip the
+        // env-source guard instead of the missing-key error under test.
+        const envSnapshot = env.testing.snapshot();
+        env.testing.unset("MY_OR_KEY");
+        env.testing.unset("OPENROUTER_API_KEY");
+
+        try {
+            await expect(
+                OpenRouterApiKeyProvider.create({ ...account(), apiKey: undefined, apiKeyEnv: "MY_OR_KEY" })
+            ).rejects.toThrow("MY_OR_KEY / OPENROUTER_API_KEY");
+        } finally {
+            env.testing.restore(envSnapshot);
+        }
     });
 });
