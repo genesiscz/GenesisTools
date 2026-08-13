@@ -17,6 +17,21 @@ describe("shouldTranslateChatRequest", () => {
         ).toBe(false);
     });
 
+    it("skips responses translation for openrouter, which has no Responses upstream", () => {
+        const req = new Request("http://127.0.0.1/v1/chat/completions", {
+            headers: { "User-Agent": "Cursor/1.0" },
+        });
+
+        expect(
+            shouldTranslateChatRequest({
+                mode: "auto",
+                req,
+                bodyText: '{"messages":[{"role":"user","content":"hi"}]}',
+                providerId: "openrouter",
+            })
+        ).toBe(false);
+    });
+
     it("still translates copilot subscription for Cursor", () => {
         const req = new Request("http://127.0.0.1/v1/chat/completions", {
             headers: { "User-Agent": "Cursor/1.0" },

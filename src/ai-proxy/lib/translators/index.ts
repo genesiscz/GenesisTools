@@ -22,9 +22,13 @@ export function shouldTranslateChatRequest({
 
     // Grok subscription chat/completions already streams Cursor-native reasoning_content.
     // Re-encoding via /responses drops role coalescing and breaks the thinking UI.
-    // anthropic-subscription has no Responses upstream — its chatCompletions is the
-    // only supported path, so never route it through the /responses translation.
-    if (providerId === "grok-subscription" || providerId === "anthropic-subscription") {
+    // anthropic-subscription and openrouter have no Responses upstream — their
+    // chatCompletions is the only supported path, so never route them through the
+    // /responses translation. Without this, a Cursor-detected /v1/chat/completions
+    // request against an openrouter model is silently rerouted into
+    // provider.responses(), which openrouter declines with an explicit 501 that
+    // then surfaces to the client as a chat/completions failure.
+    if (providerId === "grok-subscription" || providerId === "anthropic-subscription" || providerId === "openrouter") {
         return false;
     }
 
