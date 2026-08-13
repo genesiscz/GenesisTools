@@ -1,4 +1,9 @@
-import { createFoldedStreamState, foldedAnswerPrefix, foldedReasoningPrefix } from "@app/ai-proxy/lib/thinking-folded";
+import {
+    closeFoldedDetailsContent,
+    createFoldedStreamState,
+    foldedAnswerPrefix,
+    foldedReasoningPrefix,
+} from "@app/ai-proxy/lib/thinking-folded";
 import { buildReasoningItem, serializeReasoningItems } from "@app/ai-proxy/lib/translators/reasoning";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -90,17 +95,36 @@ function enrichDeltaForCursor(delta: JsonObject, state: StreamEnrichState): Json
 
 function enrichDeltaForFolded(delta: JsonObject, state: StreamEnrichState): JsonObject {
     const next: JsonObject = { ...delta };
+    const reasoning = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
+    const answer = typeof delta.content === "string" ? delta.content : "";
 
-    if (typeof delta.reasoning_content === "string") {
-        const prefix = foldedReasoningPrefix(state.foldedState);
-        next.content = `${prefix}${delta.reasoning_content}`;
+    // 🛑 OpenRouter sends `content: ""` on EVERY thinking delta. Treating an
+    // empty string as an answer chunk closes <details> on the first thinking
+    // token and overwrites the thinking text with the close tag, so the client
+    // receives a stream of bare `</details>` and neither the thinking nor the
+    // answer. Length, not typeof, is what separates a real chunk from a filler.
+    if (reasoning.length === 0 && answer.length === 0) {
+        if (typeof delta.reasoning_content !== "string") {
+            return delta;
+        }
+
+        delete next.reasoning_content;
+
+        return next;
+    }
+
+    let content = "";
+
+    if (reasoning.length > 0) {
+        content += `${foldedReasoningPrefix(state.foldedState)}${reasoning}`;
         delete next.reasoning_content;
     }
 
-    if (typeof delta.content === "string") {
-        const prefix = foldedAnswerPrefix(state.foldedState);
-        next.content = `${prefix}${delta.content}`;
+    if (answer.length > 0) {
+        content += `${foldedAnswerPrefix(state.foldedState)}${answer}`;
     }
+
+    next.content = content;
 
     return next;
 }
@@ -226,7 +250,22 @@ function rewriteSseDataLine(
     const payload = trimmed.slice(prefix.length).trim();
 
     if (isSseDonePayload(payload)) {
-        return line;
+        // Generation can stop mid-thought (finish_reason "length"), leaving the
+        // <details> block open and the client rendering broken markdown for the
+        // rest of the message. Close it before the terminator, not after.
+        const closing = thinkingMode === "folded" ? closeFoldedDetailsContent(state.foldedState) : null;
+
+        if (!closing) {
+            return line;
+        }
+
+        const chunk = {
+            object: "chat.completion.chunk",
+            model: responseModel,
+            choices: [{ index: 0, delta: { content: closing }, finish_reason: null }],
+        };
+
+        return `data: ${SafeJSON.stringify(chunk)}\n\n${line}`;
     }
 
     try {
