@@ -6,6 +6,7 @@ import {
 } from "@genesiscz/utils/ask/usage-tokens";
 import { logger } from "@genesiscz/utils/logger";
 import type { LanguageModelUsage } from "ai";
+import { perTokenToPer1M } from "./decimal";
 import { liteLLMPricingFetcher } from "./litellm";
 import { byId } from "./static";
 import type { ModelPricing, PricingRule } from "./types";
@@ -28,26 +29,54 @@ interface CacheEntry {
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const cache = new Map<string, CacheEntry>();
 
-export interface OpenRouterPricingShape {
+/** The per-token rate fields OpenRouter quotes, both at the top level and inside an override. */
+interface OpenRouterRateFields {
     prompt?: string | number;
     completion?: string | number;
     cache_read?: string | number;
     input_cache_read?: string | number;
+    input_cache_write?: string | number;
 }
 
-function toNumber(value: string | number | undefined): number | undefined {
-    if (value === undefined) {
-        return undefined;
-    }
+/**
+ * A context-banded rate: "from this prompt length on, these rates instead".
+ *
+ * The feed quotes only a lower bound (`min_prompt_tokens`) and lists bands in
+ * ascending order, which maps 1:1 onto `PricingRule.ctxFrom` under
+ * `effectivePricing`'s later-match-wins ordering.
+ */
+export interface OpenRouterPricingOverride extends OpenRouterRateFields {
+    min_prompt_tokens?: number;
+}
 
-    const parsed = typeof value === "string" ? Number.parseFloat(value) : value;
-    return Number.isFinite(parsed) ? parsed : undefined;
+export interface OpenRouterPricingShape extends OpenRouterRateFields {
+    overrides?: OpenRouterPricingOverride[];
+}
+
+type RateFields = Pick<PricingRule, "inputPer1M" | "outputPer1M" | "cachedReadPer1M" | "cachedCreatePer1M">;
+
+function per1M(value: string | number | undefined): number | undefined {
+    return value === undefined ? undefined : perTokenToPer1M(value);
+}
+
+/** Only the fields actually quoted, so a partial override overrides only what it names. */
+function toRateFields(rates: OpenRouterRateFields): RateFields {
+    const input = per1M(rates.prompt);
+    const output = per1M(rates.completion);
+    const cachedRead = per1M(rates.cache_read) ?? per1M(rates.input_cache_read);
+    const cachedCreate = per1M(rates.input_cache_write);
+
+    return {
+        ...(input === undefined ? {} : { inputPer1M: input }),
+        ...(output === undefined ? {} : { outputPer1M: output }),
+        ...(cachedRead === undefined ? {} : { cachedReadPer1M: cachedRead }),
+        ...(cachedCreate === undefined ? {} : { cachedCreatePer1M: cachedCreate }),
+    };
 }
 
 /** OpenRouter quotes per token; everything else in this layer is per 1M. */
 export function convertOpenRouterPricing(pricing: OpenRouterPricingShape): ModelPricing | undefined {
-    const input = toNumber(pricing.prompt);
-    const output = toNumber(pricing.completion);
+    const base = toRateFields(pricing);
 
     // Absent means UNKNOWN, never free — the invariant this layer states at
     // catalog/types.ts. Coercing a missing field to 0 produced a truthy pricing
@@ -55,17 +84,31 @@ export function convertOpenRouterPricing(pricing: OpenRouterPricingShape): Model
     // indistinguishable from a genuinely free model and invisible to the
     // `unpricedEvents` accounting. An explicit 0 is preserved: OpenRouter's
     // `:free` routes really do quote "0", which is why this is a presence check
-    // rather than a truthiness check.
-    if (input === undefined || output === undefined) {
+    // rather than a truthiness check. A `-1` sentinel is rejected by
+    // `perTokenToPer1M` and lands here as absent.
+    if (base.inputPer1M === undefined || base.outputPer1M === undefined) {
         return undefined;
     }
 
-    const cached = toNumber(pricing.cache_read) ?? toNumber(pricing.input_cache_read);
+    const rules: PricingRule[] = [];
+
+    for (const override of pricing.overrides ?? []) {
+        const rates = toRateFields(override);
+
+        // A band with no lower bound cannot be expressed as a rule, and one with
+        // no usable rate would override nothing.
+        if (override.min_prompt_tokens === undefined || Object.keys(rates).length === 0) {
+            continue;
+        }
+
+        rules.push({ ctxFrom: override.min_prompt_tokens, ...rates });
+    }
 
     return {
-        inputPer1M: input * 1_000_000,
-        outputPer1M: output * 1_000_000,
-        ...(cached === undefined ? {} : { cachedReadPer1M: cached * 1_000_000 }),
+        ...base,
+        inputPer1M: base.inputPer1M,
+        outputPer1M: base.outputPer1M,
+        ...(rules.length === 0 ? {} : { rules }),
     };
 }
 
@@ -144,10 +187,14 @@ export async function pricingFor(provider: string, modelId: string): Promise<Mod
         return hit.pricing;
     }
 
+    // The OpenRouter feed prices OPENROUTER's routes. Asking it for a
+    // synthesized `${provider}/${modelId}` billed a direct Anthropic call at
+    // OpenRouter's resale rate — the exact inverse of the invariant
+    // `scopedStaticPricing` exists to hold.
     const resolved =
         scopedStaticPricing(provider, modelId) ??
         (await fetchLiteLlmPricing(provider, modelId)) ??
-        (await fetchOpenRouterPricing(provider === "openrouter" ? modelId : `${provider}/${modelId}`));
+        (provider === "openrouter" ? await fetchOpenRouterPricing(modelId) : undefined);
 
     if (resolved) {
         cache.set(key, { pricing: resolved, at: Date.now() });

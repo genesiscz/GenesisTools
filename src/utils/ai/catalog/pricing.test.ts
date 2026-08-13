@@ -137,6 +137,98 @@ describe("pricing ladder", () => {
             outputPer1M: 0,
         });
     });
+
+    /**
+     * `parseFloat(s) * 1_000_000` answers `0.19999999999999998` for this input,
+     * and 70 of OpenRouter's 410 models quote rates of that shape.
+     */
+    test("conversion carries no double-rounding noise", () => {
+        expect(convertOpenRouterPricing({ prompt: "0.0000002", completion: "0.000000021" })).toEqual({
+            inputPer1M: 0.2,
+            outputPer1M: 0.021,
+        });
+    });
+
+    /**
+     * `openrouter/auto` and four sibling meta routes quote `-1`. The old
+     * converter scaled that to `inputPer1M: -1_000_000`, which then SUBTRACTED
+     * from every cost aggregate for a cache hour.
+     */
+    test("a -1 sentinel price is unknown, not a negative rate", () => {
+        expect(convertOpenRouterPricing({ prompt: "-1", completion: "-1" })).toBeUndefined();
+        expect(convertOpenRouterPricing({ prompt: "0.000001", completion: "-1" })).toBeUndefined();
+    });
+
+    test("the cache-write quote becomes cachedCreatePer1M", () => {
+        expect(
+            convertOpenRouterPricing({
+                prompt: "0.000002",
+                completion: "0.00001",
+                input_cache_read: "0.0000002",
+                input_cache_write: "0.0000025",
+            })
+        ).toEqual({
+            inputPer1M: 2,
+            outputPer1M: 10,
+            cachedReadPer1M: 0.2,
+            cachedCreatePer1M: 2.5,
+        });
+    });
+
+    /**
+     * `pricing.overrides` is a context-banded rate array the old converter
+     * dropped, which under-billed long-context calls on 59 models by ~2x. The
+     * feed lists bands ascending, so `effectivePricing`'s later-match-wins
+     * ordering picks the highest band a request qualifies for.
+     */
+    test("context-banded overrides become pricing rules", () => {
+        const pricing = convertOpenRouterPricing({
+            prompt: "0.00000003",
+            completion: "0.00000013",
+            overrides: [
+                { min_prompt_tokens: 32_000, prompt: "0.0000001", completion: "0.0000004" },
+                { min_prompt_tokens: 256_000, prompt: "0.0000002", completion: "0.0000008" },
+            ],
+        });
+
+        expect(pricing?.rules).toEqual([
+            { ctxFrom: 32_000, inputPer1M: 0.1, outputPer1M: 0.4 },
+            { ctxFrom: 256_000, inputPer1M: 0.2, outputPer1M: 0.8 },
+        ]);
+        expect(effectivePricing(pricing as ModelPricing, { contextTokens: 10_000 }).inputPer1M).toBe(0.03);
+        expect(effectivePricing(pricing as ModelPricing, { contextTokens: 100_000 }).inputPer1M).toBe(0.1);
+        expect(effectivePricing(pricing as ModelPricing, { contextTokens: 300_000 }).inputPer1M).toBe(0.2);
+    });
+
+    test("an override with no lower bound or no rate is dropped", () => {
+        const pricing = convertOpenRouterPricing({
+            prompt: "0.000001",
+            completion: "0.000002",
+            overrides: [{ prompt: "0.000009" }, { min_prompt_tokens: 128_000 }],
+        });
+
+        expect(pricing?.rules).toBeUndefined();
+    });
+
+    /**
+     * Bug 2, pinned: the ladder used to ask OpenRouter for a synthesized
+     * `${provider}/${modelId}`, so a direct Anthropic call could be priced at
+     * OpenRouter's resale rate. The openrouter rung must fire for openrouter
+     * only — the second half is the negative control proving it still fires.
+     */
+    test("a direct provider call never reaches the OpenRouter feed", async () => {
+        const urls: string[] = [];
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            urls.push(String(input));
+            throw new Error("network disabled in pricing ladder tests");
+        }) as unknown as typeof fetch;
+
+        expect(await pricingFor("anthropic", "claude-absent-from-every-catalog")).toBeUndefined();
+        expect(urls.filter((url) => url.includes("openrouter.ai"))).toEqual([]);
+
+        expect(await pricingFor("openrouter", "anthropic/claude-absent-from-every-catalog")).toBeUndefined();
+        expect(urls.filter((url) => url.includes("openrouter.ai")).length).toBe(1);
+    });
 });
 
 describe("effectivePricing", () => {
