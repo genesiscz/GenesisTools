@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { openRouterPricingSync, resetOpenRouterCatalogCache } from "../catalog/openrouter";
 import { dayFilePath, usageDir, utcDayOf } from "./paths";
 import { queryUsage } from "./query";
 import { recordUsage } from "./record";
@@ -134,6 +135,44 @@ describe("recordUsage", () => {
         try {
             await recordUsage(input({ provider: "some-local-thing", modelId: "no-such-model-xyz" }));
             await recordUsage(input({ inputTokens: 1_000_000, outputTokens: 0 }));
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    /**
+     * The static catalog holds ZERO openrouter entries by design (it cannot
+     * enumerate 400 routes that change weekly), so before the shared catalog was
+     * wired in here, EVERY openrouter call recorded with no cost at all. The
+     * expectation is derived from the same snapshot rather than hardcoded, so a
+     * refreshed snapshot cannot turn a price change into a test failure — what is
+     * pinned is the wiring and the zero-network guarantee.
+     */
+    test("an openrouter route prices from the shared catalog with zero network calls", async () => {
+        resetOpenRouterCatalogCache();
+
+        const calls: string[] = [];
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = ((requested: RequestInfo | URL) => {
+            calls.push(String(requested));
+            throw new Error("recordUsage must not reach the network on the hot path");
+        }) as unknown as typeof fetch;
+
+        try {
+            const rates = openRouterPricingSync("anthropic/claude-sonnet-5");
+            const event = await recordUsage(
+                input({
+                    provider: "openrouter",
+                    modelId: "anthropic/claude-sonnet-5",
+                    inputTokens: 1_000_000,
+                    outputTokens: 1_000_000,
+                })
+            );
+
+            expect(rates?.inputPer1M).toBeGreaterThan(0);
+            expect(event.costUsd).toBe((rates?.inputPer1M as number) + (rates?.outputPer1M as number));
+            expect(event.costSource).toBe("catalog");
+            expect(calls).toEqual([]);
         } finally {
             globalThis.fetch = originalFetch;
         }

@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { usageCacheReadTokens, usageCacheWriteTokens } from "@genesiscz/utils/ask/usage-tokens";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { openRouterPricingSync } from "../catalog/openrouter";
 import { effectivePricing } from "../catalog/pricing";
 import { byId } from "../catalog/static";
 import type { ModelPricing } from "../catalog/types";
@@ -161,8 +162,21 @@ function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): numb
 function catalogPricing(provider: string, modelId: string): ModelPricing | undefined {
     const direct = byId(modelId, provider)?.pricing;
 
-    if (direct || !provider.endsWith("-sub")) {
+    if (direct) {
         return direct;
+    }
+
+    // OpenRouter routes several hundred models that the curated list will never
+    // enumerate, so the static catalog holds ZERO openrouter entries by design
+    // and every openrouter call used to record with no cost at all. The sync
+    // catalog reads a memoized file, never the network, so the no-HTTP-in-the-
+    // hot-path rule above still holds.
+    if (provider === "openrouter") {
+        return openRouterPricingSync(modelId);
+    }
+
+    if (!provider.endsWith("-sub")) {
+        return undefined;
     }
 
     return byId(modelId, provider.slice(0, -"-sub".length))?.pricing;
