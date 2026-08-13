@@ -16,6 +16,12 @@ export interface ClientMonthUsage {
     cost_usd: number;
     /** Count of requests whose model had no pricing entry (cost under-estimated). */
     unpriced_requests: number;
+    /**
+     * Of `requests`, how many were booked from the UPSTREAM's own reported charge
+     * rather than from the local rate table. Keeps "how much of this invoice is
+     * exact?" answerable after the fact.
+     */
+    upstream_priced_requests?: number;
 }
 
 export interface ClientLedgerStore {
@@ -84,7 +90,13 @@ export function recordClientUsage(input: {
     client: string;
     ts: string;
     upstreamModel: string;
-    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        /** The upstream's own reported charge, when it reports one. */
+        cost_usd?: number;
+    };
     /** The account billed upstream. Absent only where no route is known (tests). */
     accountId?: string;
     provider?: string;
@@ -116,12 +128,23 @@ export function recordClientUsage(input: {
     entry.completion_tokens += input.usage?.completion_tokens ?? 0;
     entry.total_tokens += input.usage?.total_tokens ?? 0;
 
-    const cost = estimateCostUsd(input.upstreamModel, input.usage ?? {});
+    // The upstream's own number first: it prices the route actually taken, at the
+    // rate actually charged, including a provider this proxy has no rate table
+    // for. The local estimate stays the fallback. The write-time invariant is
+    // unchanged — cost is still computed once, here, from data captured on THIS
+    // exchange, so a later rate edit can never rewrite a past invoice.
+    const upstreamCost = input.usage?.cost_usd;
+    const usedUpstream = typeof upstreamCost === "number" && Number.isFinite(upstreamCost) && upstreamCost >= 0;
+    const cost = usedUpstream ? upstreamCost : estimateCostUsd(input.upstreamModel, input.usage ?? {});
 
     if (cost === undefined) {
         entry.unpriced_requests += 1;
     } else {
         entry.cost_usd += cost;
+    }
+
+    if (usedUpstream) {
+        entry.upstream_priced_requests = (entry.upstream_priced_requests ?? 0) + 1;
     }
 
     atomicWriteFileSync(ledgerPath(), SafeJSON.stringify(ledger, null, 2) ?? "{}");

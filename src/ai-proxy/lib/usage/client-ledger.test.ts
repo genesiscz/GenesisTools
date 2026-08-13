@@ -94,3 +94,92 @@ describe("checkClientQuota", () => {
         expect(denied.ok).toBe(false);
     });
 });
+
+describe("upstream-priced booking", () => {
+    /**
+     * The upstream's own charge prices the route ACTUALLY taken at the rate
+     * actually charged, which a local rate table cannot know. OpenRouter ids are
+     * deliberately absent from `billing/pricing.ts`, so without this the request
+     * would count as unpriced.
+     */
+    it("books the upstream cost instead of the local estimate", () => {
+        const ts = new Date().toISOString();
+        recordClientUsage({
+            client: "alice",
+            ts,
+            upstreamModel: "anthropic/claude-sonnet-5",
+            usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150, cost_usd: 0.004 },
+        });
+
+        const entry = readClientLedger().months[monthKeyFromTs(ts)].alice;
+
+        expect(entry.cost_usd).toBe(0.004);
+        expect(entry.unpriced_requests).toBe(0);
+        expect(entry.upstream_priced_requests).toBe(1);
+    });
+
+    /** Without the upstream number an OpenRouter id has no rate at all, by design. */
+    it("counts an openrouter request with no upstream cost as unpriced", () => {
+        const ts = new Date().toISOString();
+        recordClientUsage({
+            client: "bob",
+            ts,
+            upstreamModel: "anthropic/claude-sonnet-5",
+            usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+        });
+
+        const entry = readClientLedger().months[monthKeyFromTs(ts)].bob;
+
+        expect(entry.cost_usd).toBe(0);
+        expect(entry.unpriced_requests).toBe(1);
+        expect(entry.upstream_priced_requests).toBeUndefined();
+    });
+
+    /** A locally priced model keeps its estimate, and is not counted as exact. */
+    it("leaves the local estimate in charge when no upstream cost arrives", () => {
+        const ts = new Date().toISOString();
+        recordClientUsage({
+            client: "carol",
+            ts,
+            upstreamModel: "grok-4-fast",
+            usage: { prompt_tokens: 1_000_000, completion_tokens: 0, total_tokens: 1_000_000 },
+        });
+
+        const entry = readClientLedger().months[monthKeyFromTs(ts)].carol;
+
+        expect(entry.cost_usd).toBeGreaterThan(0);
+        expect(entry.upstream_priced_requests).toBeUndefined();
+    });
+
+    /** A negative or NaN cost added to a running total corrupts the whole month. */
+    it("ignores an impossible upstream cost and falls back", () => {
+        const ts = new Date().toISOString();
+        recordClientUsage({
+            client: "dave",
+            ts,
+            upstreamModel: "grok-4-fast",
+            usage: { prompt_tokens: 1_000_000, completion_tokens: 0, total_tokens: 1_000_000, cost_usd: -5 },
+        });
+
+        const entry = readClientLedger().months[monthKeyFromTs(ts)].dave;
+
+        expect(entry.cost_usd).toBeGreaterThan(0);
+        expect(entry.upstream_priced_requests).toBeUndefined();
+    });
+
+    it("an explicit zero upstream cost is booked as exactly zero", () => {
+        const ts = new Date().toISOString();
+        recordClientUsage({
+            client: "erin",
+            ts,
+            upstreamModel: "some/free-route",
+            usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost_usd: 0 },
+        });
+
+        const entry = readClientLedger().months[monthKeyFromTs(ts)].erin;
+
+        expect(entry.cost_usd).toBe(0);
+        expect(entry.unpriced_requests).toBe(0);
+        expect(entry.upstream_priced_requests).toBe(1);
+    });
+});

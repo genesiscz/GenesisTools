@@ -79,3 +79,45 @@ describe("estimateUsageFromExchange", () => {
         expect(usage.completion_tokens).toBe(3);
     });
 });
+
+describe("upstream-reported cost", () => {
+    it("reads the charge OpenRouter reports alongside the tokens", () => {
+        const usage = extractUsageFromJsonBody(
+            '{"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"cost":0.000123,' +
+                '"cost_details":{"upstream_inference_cost":0.0001}}}'
+        );
+
+        expect(usage?.cost_usd).toBe(0.000123);
+        expect(usage?.upstream_cost_usd).toBe(0.0001);
+        expect(usage?.prompt_tokens).toBe(10);
+    });
+
+    /** An exchange carrying only a cost is still a usage record. */
+    it("keeps a cost-only usage block instead of bailing", () => {
+        expect(extractUsageFromJsonBody('{"usage":{"cost":0.5}}')?.cost_usd).toBe(0.5);
+    });
+
+    /** A NaN added to a running total turns a whole month's invoice into NaN. */
+    it("rejects a non-numeric cost rather than poisoning the total", () => {
+        expect(extractUsageFromJsonBody('{"usage":{"prompt_tokens":1,"cost":"free"}}')?.cost_usd).toBeUndefined();
+        expect(extractUsageFromJsonBody('{"usage":{"prompt_tokens":1,"cost":null}}')?.cost_usd).toBeUndefined();
+        expect(
+            extractUsageFromJsonBody('{"usage":{"prompt_tokens":1,"cost_details":{"upstream_inference_cost":"x"}}}')
+                ?.upstream_cost_usd
+        ).toBeUndefined();
+    });
+
+    it("an explicit zero cost is a booked zero, not an absent one", () => {
+        expect(extractUsageFromJsonBody('{"usage":{"prompt_tokens":1,"cost":0}}')?.cost_usd).toBe(0);
+    });
+
+    /** SSE routes every payload through the same normalizer, so it comes along free. */
+    it("survives the SSE path", () => {
+        const sse =
+            'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n' +
+            'data: {"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4,"cost":0.00009}}\n\n' +
+            "data: [DONE]\n\n";
+
+        expect(extractLatestUsageFromSse(sse)?.cost_usd).toBe(0.00009);
+    });
+});

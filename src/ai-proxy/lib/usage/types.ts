@@ -6,6 +6,17 @@ export interface TokenUsage {
     completion_tokens?: number;
     total_tokens?: number;
     cost_in_usd_ticks?: number;
+    /**
+     * USD the upstream itself charged for this exchange, as it reported it.
+     * OpenRouter returns this when `usage.include` is set. More authoritative than
+     * any local rate table, because it prices the route actually taken.
+     */
+    cost_usd?: number;
+    /**
+     * What the upstream paid the underlying provider, when the gateway breaks its
+     * own margin out. Recorded for visibility; never what a client is billed.
+     */
+    upstream_cost_usd?: number;
     /** "estimated" = local char-heuristic because upstream omitted usage; absent = upstream-reported. */
     source?: "estimated";
 }

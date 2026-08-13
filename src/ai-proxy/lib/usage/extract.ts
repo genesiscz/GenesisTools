@@ -14,8 +14,13 @@ function normalizeUsage(raw: unknown): TokenUsage | undefined {
     const completion = raw.completion_tokens ?? raw.output_tokens;
     const total = raw.total_tokens;
     const costTicks = raw.cost_in_usd_ticks;
+    // OpenRouter reports the charge for the route it actually took. An exchange
+    // that carries ONLY a cost is still a usage record, so `cost` joins the
+    // all-null bail guard — otherwise the most authoritative number available is
+    // dropped for want of a token count.
+    const cost = raw.cost;
 
-    if (prompt == null && completion == null && total == null && costTicks == null) {
+    if (prompt == null && completion == null && total == null && costTicks == null && cost == null) {
         return undefined;
     }
 
@@ -37,6 +42,20 @@ function normalizeUsage(raw: unknown): TokenUsage | undefined {
 
     if (costTicks != null) {
         usage.cost_in_usd_ticks = Number(costTicks);
+    }
+
+    // Finite numbers only: a string, a null or a NaN reaching the ledger would be
+    // added to a running total and turn the whole month's invoice into NaN.
+    const costUsd = Number(cost);
+
+    if (cost != null && Number.isFinite(costUsd)) {
+        usage.cost_usd = costUsd;
+    }
+
+    const upstreamCost = isObject(raw.cost_details) ? Number(raw.cost_details.upstream_inference_cost) : Number.NaN;
+
+    if (Number.isFinite(upstreamCost)) {
+        usage.upstream_cost_usd = upstreamCost;
     }
 
     return usage;
