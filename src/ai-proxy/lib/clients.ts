@@ -23,11 +23,20 @@ export const SUBSCRIPTION_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new
     "openai-subscription",
 ]);
 
-/** Every known provider type — catches allowedProviders typos at validation time. */
+/**
+ * Every known provider type — catches allowedProviders typos at validation time.
+ *
+ * ⚠️ Membership here rather than in `SUBSCRIPTION_PROVIDER_TYPES` means an
+ * omitted `allowedProviders` ("all non-subscription providers") grants every
+ * existing client access to this provider's BILLED key. That is correct for a
+ * metered api-key provider and is exactly why `monthlyCostCapUsd` exists; the
+ * README says so under the openrouter section.
+ */
 export const VALID_PROVIDER_TYPES: ReadonlySet<AiProxyProviderType> = new Set([
     ...SUBSCRIPTION_PROVIDER_TYPES,
     "xai-api-key",
     "openai",
+    "openrouter",
 ]);
 
 export function validateClients(clients: AiProxyClientConfig[] | undefined): string[] {

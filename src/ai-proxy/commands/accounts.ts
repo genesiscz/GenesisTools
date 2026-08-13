@@ -169,7 +169,7 @@ export async function runAccountsSetEnabled(name: string, enabled: boolean): Pro
     out.log.info("Restart the proxy to apply: tools ai-proxy down && tools ai-proxy up");
 }
 
-const API_KEY_PROVIDERS = new Set<AiProxyProviderType>(["xai-api-key", "openai"]);
+const API_KEY_PROVIDERS = new Set<AiProxyProviderType>(["xai-api-key", "openai", "openrouter"]);
 
 export async function runAccountsSetKey(name: string, key: string | undefined): Promise<void> {
     const config = await loadConfig();

@@ -13,6 +13,7 @@ export type AiProxyProviderType =
     | "github-copilot-subscription"
     | "xai-api-key"
     | "openai"
+    | "openrouter"
     | "anthropic-subscription"
     | "openai-subscription";
 
@@ -112,6 +113,35 @@ export interface AiProxyOpenAiSubAccountConfig {
     aliases?: Record<string, string>;
 }
 
+export interface AiProxyOpenRouterAccountConfig {
+    /** Per-account /v1/models filter. Globs matched against the OpenRouter id. */
+    models?: {
+        /** Absent -> the curated default. ["*"] or [] -> every model OpenRouter serves. */
+        include?: string[];
+        /** Applied AFTER include. Absent -> ["*:free"]. Explicit [] -> nothing excluded. */
+        exclude?: string[];
+    };
+    /**
+     * Provider-routing defaults injected into every request body, for the
+     * top-level keys the CLIENT did not set. `order` + `allow_fallbacks: false`
+     * pins a model to named upstreams.
+     */
+    provider?: {
+        order?: string[];
+        only?: string[];
+        ignore?: string[];
+        sort?: "price" | "throughput" | "latency";
+        max_price?: Record<string, number>;
+        allow_fallbacks?: boolean;
+        require_parameters?: boolean;
+        data_collection?: "allow" | "deny";
+    };
+    /** OpenRouter `models` fallback list: try these ids if the primary one fails. */
+    fallbackModels?: string[];
+    appName?: string;
+    appUrl?: string;
+}
+
 export interface AiProxyAccountConfig {
     name: string;
     label?: string;
@@ -128,6 +158,7 @@ export interface AiProxyAccountConfig {
     githubCopilot?: AiProxyGithubCopilotAccountConfig;
     anthropicSub?: AiProxyAnthropicSubAccountConfig;
     openaiSub?: AiProxyOpenAiSubAccountConfig;
+    openrouter?: AiProxyOpenRouterAccountConfig;
     /**
      * Literal API key for api-key providers, stored in config instead of the
      * environment. Takes precedence over `apiKeyEnv` so the account keeps

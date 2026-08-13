@@ -27,11 +27,12 @@ export async function runConfigDetect(): Promise<void> {
     out.println(formatDetectReportText(reports));
 }
 
-export async function runConfigInit(): Promise<void> {
+export async function runConfigInit(options?: { append?: boolean }): Promise<void> {
     const existing = await loadConfig();
 
-    if (existing.accounts.length > 0) {
+    if (existing.accounts.length > 0 && !options?.append) {
         out.log.warn("Config already has accounts. Use `ai-proxy config show` to inspect.");
+        out.log.info(suggestCommand("tools ai-proxy", { add: ["config", "init", "--append"] }));
         return;
     }
 
@@ -49,10 +50,43 @@ export async function runConfigInit(): Promise<void> {
         return;
     }
 
-    const config = getDefaultConfig();
-    config.accounts = detected;
-    await saveConfig(config);
-    out.log.success(`Wrote config with ${detected.length} account(s)`);
+    if (existing.accounts.length === 0) {
+        const config = getDefaultConfig();
+        config.accounts = detected;
+        await saveConfig(config);
+        out.log.success(`Wrote config with ${detected.length} account(s)`);
+        return;
+    }
+
+    // Matched on provider TYPE, not on name: the point is "this proxy cannot yet
+    // reach OpenRouter at all", and an existing account of that type already
+    // answers that — re-adding it under a detected name would give the user two
+    // accounts billing one key. Existing entries are never touched.
+    const configuredTypes = new Set(existing.accounts.map((account) => account.provider));
+    const additions = detected.filter((account) => !configuredTypes.has(account.provider));
+
+    if (additions.length === 0) {
+        out.log.info("Every detected provider already has an account. Nothing to append.");
+        return;
+    }
+
+    // Names are the routing key, so a collision with an existing account would
+    // silently shadow it.
+    const usedNames = new Set(existing.accounts.map((account) => account.name));
+
+    for (const account of additions) {
+        while (usedNames.has(account.name)) {
+            account.name = `${account.name}-2`;
+        }
+
+        usedNames.add(account.name);
+    }
+
+    existing.accounts = [...existing.accounts, ...additions];
+    await saveConfig(existing);
+    out.log.success(
+        `Appended ${additions.length} account(s): ${additions.map((account) => `${account.name} (${account.provider})`).join(", ")}`
+    );
 }
 
 export async function runConfigShow(): Promise<void> {

@@ -222,6 +222,36 @@ export async function detectXaiApiKeyAccount(name = "default"): Promise<Detected
     };
 }
 
+/**
+ * OpenRouter needs no OAuth and no management key: one api key is the whole
+ * credential, and `/api/v1/models` is public, so detection is a presence check.
+ */
+export async function detectOpenRouterApiKeyAccount(name = "openrouter"): Promise<DetectedAccountReport | null> {
+    const apiKey = env.ai.openrouter.getKey();
+
+    if (!apiKey) {
+        return null;
+    }
+
+    const apiKeyEnv = env.ai.openrouter.getEnvKey() ?? "OPENROUTER_API_KEY";
+    const account: AiProxyAccountConfig = {
+        name,
+        label: `${name} (OpenRouter API key)`,
+        provider: "openrouter",
+        providerSlug: "openrouter",
+        enabled: true,
+        apiKeyEnv,
+    };
+
+    return {
+        account,
+        providerTitle: providerTitleFor(account),
+        detectedFrom: `${apiKeyEnv} environment variable`,
+        authRef: apiKeyEnv,
+        suggestedModel: suggestedModelFor(account),
+    };
+}
+
 export async function detectAccountReports(options?: DetectGithubCopilotOptions): Promise<DetectedAccountReport[]> {
     const reports: DetectedAccountReport[] = [];
     const [grok, copilot] = await Promise.all([detectGrokAccount(), detectGithubCopilotAccount(undefined, options)]);
@@ -244,6 +274,14 @@ export async function detectAccountReports(options?: DetectGithubCopilotOptions)
 
     if (xai) {
         reports.push(xai);
+    }
+
+    const openrouter = await detectOpenRouterApiKeyAccount(
+        reports.some((report) => report.account.name === "openrouter") ? "openrouter-api" : "openrouter"
+    );
+
+    if (openrouter) {
+        reports.push(openrouter);
     }
 
     return reports;

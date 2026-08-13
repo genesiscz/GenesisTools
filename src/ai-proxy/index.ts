@@ -241,8 +241,9 @@ configCmd
 configCmd
     .command("init")
     .description("Initialize config from detected accounts")
-    .action(async () => {
-        await runConfigInit();
+    .option("--append", "Add detected providers the config has no account for, leaving existing accounts untouched")
+    .action(async (options: { append?: boolean }) => {
+        await runConfigInit(options);
     });
 
 configCmd

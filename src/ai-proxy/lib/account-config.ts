@@ -40,7 +40,7 @@ export interface AccountCredentialDescription {
  * platform API key, which does.
  */
 export function describeAccountCredential(account: AiProxyAccountConfig): AccountCredentialDescription {
-    if (account.provider === "xai-api-key" || account.provider === "openai") {
+    if (account.provider === "xai-api-key" || account.provider === "openai" || account.provider === "openrouter") {
         const envName = defaultApiKeyEnvName(account);
         // Trimmed, because that is what the resolvers do: a whitespace-only
         // `apiKey` falls through to the env var, and this log must say so.
@@ -97,6 +97,9 @@ export function accountConfigFingerprint(account: AiProxyAccountConfig): string 
         githubCopilot: account.githubCopilot,
         anthropicSub: account.anthropicSub,
         openaiSub: account.openaiSub,
+        // Without this, editing the models filter or the provider-routing
+        // defaults on a running proxy never rebuilds the account's provider.
+        openrouter: account.openrouter,
         apiKey: configuredKey ? createHash("sha256").update(configuredKey).digest("hex").slice(0, 12) : undefined,
         allowEnvApiKey: account.allowEnvApiKey,
         apiKeyEnv: account.apiKeyEnv,

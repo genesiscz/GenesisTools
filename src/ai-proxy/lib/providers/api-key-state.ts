@@ -48,6 +48,11 @@ export function defaultApiKeyEnvName(account: AiProxyAccountConfig): string {
         return "OPENAI_API_KEY";
     }
 
+    // Before the xAI fallback, or every openrouter error names the wrong variable.
+    if (account.provider === "openrouter") {
+        return "OPENROUTER_API_KEY";
+    }
+
     return env.x.getApiEnvKey() ?? "XAI_API_KEY";
 }
 

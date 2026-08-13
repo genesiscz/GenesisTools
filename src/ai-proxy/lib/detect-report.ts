@@ -46,6 +46,8 @@ export function providerTitleFor(account: AiProxyAccountConfig): string {
             return "GitHub Copilot";
         case "xai-api-key":
             return "xAI API";
+        case "openrouter":
+            return "OpenRouter";
         default:
             return account.providerSlug;
     }
@@ -59,6 +61,10 @@ export function suggestedModelFor(account: AiProxyAccountConfig): string | undef
             return `${account.name}/github-copilot/claude-sonnet-4`;
         case "xai-api-key":
             return `${account.name}/${account.providerSlug}/grok-4.5`;
+        // Three segments plus the slash inside the OpenRouter id: the fully
+        // qualified form `resolve-model.ts` parses without ambiguity.
+        case "openrouter":
+            return `${account.name}/${account.providerSlug}/anthropic/claude-sonnet-5`;
         default:
             return undefined;
     }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
     listAnthropicSubProxyModels,
     listOpenAiSubProxyModels,
+    listOpenRouterProxyModels,
     listXaiStaticProxyModels,
 } from "@app/ai-proxy/lib/model-meta";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
@@ -97,5 +98,88 @@ describe("listOpenAiSubProxyModels", () => {
         const statuses = new Set(models.map((model) => model.probeStatus));
 
         expect([...statuses].every((status) => status === "ok" || status === "skipped")).toBe(true);
+    });
+});
+
+describe("listOpenRouterProxyModels", () => {
+    const openRouterAccount = (models?: { include?: string[]; exclude?: string[] }): AiProxyAccountConfig => ({
+        name: "router",
+        provider: "openrouter",
+        providerSlug: "openrouter",
+        enabled: true,
+        ...(models ? { openrouter: { models } } : {}),
+    });
+
+    it("advertises the curated default when no filter is configured", async () => {
+        const ids = (await listOpenRouterProxyModels(openRouterAccount())).map((model) => model.upstreamId);
+
+        expect(ids.length).toBeGreaterThan(50);
+        expect(ids).toContain("anthropic/claude-sonnet-5");
+        // Not in the curated vendor list, so the default filter hides it.
+        expect(ids.some((id) => id.startsWith("thedrummer/"))).toBe(false);
+    });
+
+    /**
+     * `??` and not `||`: absent means "curated default", an explicit `[]` means
+     * "no filter". Collapsing them makes `include: []` mean the opposite of what
+     * it reads as.
+     */
+    it("distinguishes an absent include list from an empty one", async () => {
+        const empty = (await listOpenRouterProxyModels(openRouterAccount({ include: [] }))).map(
+            (model) => model.upstreamId
+        );
+        const star = (await listOpenRouterProxyModels(openRouterAccount({ include: ["*"] }))).map(
+            (model) => model.upstreamId
+        );
+        const curated = (await listOpenRouterProxyModels(openRouterAccount())).map((model) => model.upstreamId);
+
+        expect(empty).toEqual(star);
+        expect(empty.length).toBeGreaterThan(curated.length);
+        expect(empty.some((id) => id.startsWith("thedrummer/"))).toBe(true);
+    });
+
+    it("excludes free routes by default and honours an explicit empty exclude", async () => {
+        const defaults = (await listOpenRouterProxyModels(openRouterAccount({ include: ["*"] }))).map(
+            (model) => model.upstreamId
+        );
+        const nothingExcluded = (
+            await listOpenRouterProxyModels(openRouterAccount({ include: ["*"], exclude: [] }))
+        ).map((model) => model.upstreamId);
+
+        expect(defaults.some((id) => id.endsWith(":free"))).toBe(false);
+        expect(nothingExcluded.some((id) => id.endsWith(":free"))).toBe(true);
+    });
+
+    it("applies exclude after include", async () => {
+        const ids = (
+            await listOpenRouterProxyModels(openRouterAccount({ include: ["anthropic/*"], exclude: ["*haiku*"] }))
+        ).map((model) => model.upstreamId);
+
+        expect(ids.length).toBeGreaterThan(0);
+        expect(ids.every((id) => id.startsWith("anthropic/"))).toBe(true);
+        expect(ids.some((id) => id.includes("haiku"))).toBe(false);
+    });
+
+    /** The `-1`-priced router pseudo-models can never be priced, so they are never advertised. */
+    it("always drops the meta routes, even under include ['*']", async () => {
+        const ids = (await listOpenRouterProxyModels(openRouterAccount({ include: ["*"], exclude: [] }))).map(
+            (model) => model.upstreamId
+        );
+
+        for (const meta of ["openrouter/auto", "openrouter/fusion", "openrouter/bodybuilder"]) {
+            expect(ids).not.toContain(meta);
+        }
+    });
+
+    it("maps real capability data rather than inferring it from the id", async () => {
+        const models = await listOpenRouterProxyModels(openRouterAccount({ include: ["anthropic/claude-sonnet-5"] }));
+        const sonnet = models.find((model) => model.upstreamId === "anthropic/claude-sonnet-5");
+
+        expect(sonnet?.proxyId).toBe("router/openrouter/anthropic/claude-sonnet-5");
+        expect(sonnet?.contextWindow).toBe(1_000_000);
+        expect(sonnet?.inputModalities).toContain("image");
+        expect(sonnet?.supportsTools).toBe(true);
+        expect(sonnet?.thinking).toBe("optional");
+        expect(sonnet?.billingPlane).toBe("api-key");
     });
 });
