@@ -85,7 +85,18 @@ export async function detectGrokAccount(authPath?: string): Promise<DetectedAcco
     let label = active.email;
 
     try {
-        const client = new GrokSubscriptionClient({ token: active.key, authPath: resolvedAuthPath });
+        // 🛑 `probe: true` unconditionally, not only for `config detect`.
+        //
+        // Everything this block adds is DECORATION: a plan name and a quota line
+        // on the report's label, with the email as fallback three lines down. It
+        // must never be worth rotating the Grok CLI's single-use OIDC grant and
+        // rewriting the auth file it owns — which is exactly what `config detect`
+        // was doing, silently, just by printing an account.
+        const client = new GrokSubscriptionClient({
+            token: active.key,
+            authPath: resolvedAuthPath,
+            probe: true,
+        });
         const settings = await client.getSettings();
         const billing = await client.getBilling();
         tier = settings.subscription_tier_display;

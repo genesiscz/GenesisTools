@@ -12,6 +12,20 @@ export interface GrokSubscriptionClientOptions {
     authPath?: string;
     baseUrl?: string;
     clientVersion?: string;
+    /**
+     * This client is a DIAGNOSIS, not real use: read the credential, never rotate it.
+     *
+     * The OIDC grant in `~/.grok/auth.json` is single-use — `refreshGrokAuth`
+     * rotates the `refresh_token` and rewrites a file the Grok CLI owns. A probe
+     * that refreshed would therefore spend the user's grant on a report, which is
+     * how `tools ai-proxy config detect` came to rotate a live token just by
+     * printing an account's plan name.
+     *
+     * Same contract as `BindContext.probe` (providers/plugin-types.ts) and the
+     * same guard shape as `ensureFreshToken` (grok/account.ts): refuse at the line
+     * that spends the credential, and name the command that repairs it.
+     */
+    probe?: boolean;
 }
 
 export class GrokSubscriptionClient {
@@ -19,15 +33,20 @@ export class GrokSubscriptionClient {
     private readonly authPath: string;
     private readonly baseUrl: string;
     private readonly clientVersion?: string;
+    private readonly probe: boolean;
 
     constructor(options: GrokSubscriptionClientOptions) {
         this.token = options.token;
         this.authPath = options.authPath ?? grokAuthPath();
         this.baseUrl = options.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL;
         this.clientVersion = options.clientVersion;
+        this.probe = options.probe ?? false;
     }
 
-    static async fromAuthFile(authPath?: string): Promise<GrokSubscriptionClient | null> {
+    static async fromAuthFile(
+        authPath?: string,
+        options?: Pick<GrokSubscriptionClientOptions, "probe">
+    ): Promise<GrokSubscriptionClient | null> {
         const entries = await readAuthFileAsync(authPath);
         const active = getActiveAuthEntry(entries);
 
@@ -38,6 +57,7 @@ export class GrokSubscriptionClient {
         return new GrokSubscriptionClient({
             token: active.key,
             authPath: authPath ?? grokAuthPath(),
+            ...(options?.probe === undefined ? {} : { probe: options.probe }),
         });
     }
 
@@ -83,11 +103,34 @@ export class GrokSubscriptionClient {
     }
 
     /**
+     * The ONE gate in front of every OIDC grant this client can spend.
+     *
+     * Both refresh paths (expired-on-open and upstream-401) ask here first, so the
+     * guard sits immediately before the line that spends the credential rather
+     * than at each of this client's five callers. A new caller inherits the
+     * protection by passing `probe`, and a new refresh path inside the client
+     * cannot forget it without also skipping this method.
+     */
+    private assertMayRefresh(reason: string): void {
+        if (!this.probe) {
+            return;
+        }
+
+        throw new Error(
+            `Refusing to refresh the Grok token in ${this.authPath} during a diagnosis (${reason}): ` +
+                "the OIDC grant is single-use and refreshing would rotate the Grok CLI's refresh token " +
+                "and rewrite its auth file. Run: grok"
+        );
+    }
+
+    /**
      * Last resort before giving up on an expired token: perform the OIDC
      * refresh-token grant ourselves instead of telling the user to run the
      * `grok` CLI, which a background daemon cannot do.
      */
     private async refreshToken(reason: string): Promise<void> {
+        this.assertMayRefresh(reason);
+
         this.token = await refreshGrokAuthOrThrow({
             authPath: this.authPath,
             context: { reason },
@@ -113,6 +156,8 @@ export class GrokSubscriptionClient {
                 // than retrying the identical credential. A rejected token is
                 // usually still inside its `exp`, so an unforced refresh would
                 // hand back that same credential and skip the retry entirely.
+                this.assertMayRefresh(`upstream returned ${response.status}`);
+
                 const refreshed = await refreshGrokAuth({ path: this.authPath, force: true });
 
                 if (refreshed && refreshed !== previousToken) {

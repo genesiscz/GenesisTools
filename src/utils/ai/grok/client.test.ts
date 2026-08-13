@@ -25,6 +25,7 @@ function jwt(expSecondsFromNow: number): string {
 /** Time-valid, so nothing on the expiry path fires — only upstream's 401 does. */
 const FRESH = jwt(3_600);
 const ROTATED = jwt(7_200);
+const EXPIRED = jwt(-3_600);
 
 let authPath: string;
 const originalFetch = globalThis.fetch;
@@ -81,6 +82,31 @@ function stubFetch(options: { calls: string[]; apiStatuses: number[]; grantedTok
     }) as typeof fetch;
 }
 
+/**
+ * The refresh primitive, spied on where it is actually SPENT: the OIDC token
+ * endpoint. It records the call AND throws, so any path that reaches it fails
+ * loudly instead of passing quietly.
+ */
+function stubFetchRefusingGrant(options: { grantCalls: string[] }): void {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+
+        if (url.endsWith("/.well-known/openid-configuration")) {
+            return new Response("no", { status: 404 });
+        }
+
+        if (url.endsWith("/oauth2/token")) {
+            options.grantCalls.push(url);
+            throw new Error("the OIDC grant must not be spent on this path");
+        }
+
+        return new Response(SafeJSON.stringify({ data: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    }) as typeof fetch;
+}
+
 beforeEach(() => {
     authPath = join(mkdtempSync(join(tmpdir(), "grok-client-")), "auth.json");
 });
@@ -115,5 +141,84 @@ describe("GrokSubscriptionClient 401 recovery", () => {
 
         await expect(client.getModels()).rejects.toThrow(GrokAuthExpiredError);
         expect(calls.filter((url) => url === `${BASE_URL}/models`)).toHaveLength(1);
+    });
+});
+
+/**
+ * `tools ai-proxy config detect` rotated a live Grok token just by printing an
+ * account's plan name. Both halves are needed: proving the probe path never
+ * spends the grant, AND proving the normal path still does — a guard that leaked
+ * into normal use would break every account at token expiry, which is worse than
+ * the bug it fixed.
+ */
+describe("GrokSubscriptionClient probe purity", () => {
+    it("refuses to refresh an expired token and never reaches the OIDC grant", async () => {
+        writeAuth(EXPIRED);
+        const before = readFileSync(authPath, "utf-8");
+        const grantCalls: string[] = [];
+        stubFetchRefusingGrant({ grantCalls });
+
+        const client = new GrokSubscriptionClient({ token: EXPIRED, authPath, baseUrl: BASE_URL, probe: true });
+
+        await expect(client.getSettings()).rejects.toThrow(/Refusing to refresh the Grok token/);
+        expect(grantCalls).toEqual([]);
+        // The auth file the Grok CLI owns is byte-identical.
+        expect(readFileSync(authPath, "utf-8")).toBe(before);
+    });
+
+    it("refuses on the upstream-401 path too, where the token is still time-valid", async () => {
+        writeAuth(FRESH);
+        const before = readFileSync(authPath, "utf-8");
+        const grantCalls: string[] = [];
+        let apiCall = 0;
+
+        globalThis.fetch = (async (input: string | URL | Request) => {
+            const url = typeof input === "string" ? input : input.toString();
+
+            if (url.endsWith("/.well-known/openid-configuration")) {
+                return new Response("no", { status: 404 });
+            }
+
+            if (url.endsWith("/oauth2/token")) {
+                grantCalls.push(url);
+                throw new Error("the OIDC grant must not be spent on this path");
+            }
+
+            apiCall += 1;
+            return new Response(SafeJSON.stringify({ data: [] }), { status: apiCall === 1 ? 401 : 200 });
+        }) as typeof fetch;
+
+        const client = new GrokSubscriptionClient({ token: FRESH, authPath, baseUrl: BASE_URL, probe: true });
+
+        await expect(client.getModels()).rejects.toThrow(/Refusing to refresh the Grok token/);
+        expect(grantCalls).toEqual([]);
+        expect(readFileSync(authPath, "utf-8")).toBe(before);
+    });
+
+    /** Negative control: normal use MUST still reach the refresh. */
+    it("without probe, an expired token still reaches the OIDC grant", async () => {
+        writeAuth(EXPIRED);
+        const grantCalls: string[] = [];
+        stubFetchRefusingGrant({ grantCalls });
+
+        const client = new GrokSubscriptionClient({ token: EXPIRED, authPath, baseUrl: BASE_URL });
+
+        // The spy throws, so this rejects — but for the OPPOSITE reason: the call
+        // was attempted. That is what the assertion below pins.
+        await expect(client.getSettings()).rejects.toThrow();
+        expect(grantCalls).toHaveLength(1);
+    });
+
+    /** Negative control: the working 401 recovery is untouched when probe is off. */
+    it("without probe, the 401 path still rotates and retries", async () => {
+        writeAuth(FRESH);
+        const calls: string[] = [];
+        stubFetch({ calls, apiStatuses: [401, 200] });
+
+        const client = new GrokSubscriptionClient({ token: FRESH, authPath, baseUrl: BASE_URL });
+        await client.getModels();
+
+        expect(client.getToken()).toBe(ROTATED);
+        expect(calls).toContain(`${ISSUER}/oauth2/token`);
     });
 });
