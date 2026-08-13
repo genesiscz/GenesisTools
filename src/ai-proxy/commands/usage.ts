@@ -12,7 +12,8 @@ import {
 } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot, UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { formatTokens } from "@genesiscz/utils/format";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
+import { formatDotStatus } from "@genesiscz/utils/table";
 
 export interface UsageCommandOptions {
     account?: string;
@@ -29,6 +30,11 @@ interface UsageCommandResult {
     provider: string;
     tier?: string;
     summary: string;
+    /**
+     * Why the LIVE lookup failed for this account, when it did. The row still
+     * renders from the local store; only the live figure is missing.
+     */
+    failure?: string;
     live?: UsageSummary;
     billing?: Pick<AccountBillingSnapshot, "fetchedAt" | "tier" | "summary">;
     today: ReturnType<typeof getTodayUsageSummary>;
@@ -91,33 +97,76 @@ async function fetchLiveUsage(account: AiProxyAccountConfig): Promise<UsageSumma
     return undefined;
 }
 
+/** A provider error is long (the xAI one carries a console URL); keep the row readable. */
+const MAX_FAILURE_CHARS = 200;
+
+/**
+ * The live half of an account's usage, isolated so one account cannot take down
+ * the command.
+ *
+ * `createProvider` and `getUsage` both reach credentials and the network, and
+ * every one of them can throw for reasons that have nothing to do with the OTHER
+ * accounts being asked about: a missing key env var, an expired OAuth login, an
+ * account opted out of the ambient key. Before this, the FIRST such account
+ * aborted `tools ai-proxy usage` entirely, so a healthy account's figures were
+ * unreachable until the broken one was fixed or disabled.
+ *
+ * The local store is read outside this function and always renders.
+ */
+async function liveUsageOrFailure(
+    account: AiProxyAccountConfig,
+    providers: Map<string, ProxyProvider>,
+    options: UsageCommandOptions
+): Promise<{ live?: UsageSummary; failure?: string }> {
+    try {
+        if (account.provider === "grok-subscription" || account.provider === "github-copilot-subscription") {
+            const key = providerKey(account);
+
+            if (!providers.has(key)) {
+                providers.set(key, await createProvider(account));
+            }
+
+            await maybeSyncBilling(account, providers);
+        }
+
+        if (options.json) {
+            return {};
+        }
+
+        const live = await fetchLiveUsage(account);
+
+        return live ? { live } : {};
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(
+            { err, account: account.name, provider: account.provider },
+            "ai-proxy usage: live lookup failed for this account — reporting from the local store"
+        );
+
+        return {
+            failure: message.length > MAX_FAILURE_CHARS ? `${message.slice(0, MAX_FAILURE_CHARS)}…` : message,
+        };
+    }
+}
+
 async function buildAccountUsage(
     account: AiProxyAccountConfig,
     providers: Map<string, ProxyProvider>,
     options: UsageCommandOptions
 ): Promise<UsageCommandResult> {
-    if (account.provider === "grok-subscription" || account.provider === "github-copilot-subscription") {
-        const key = providerKey(account);
-
-        if (!providers.has(key)) {
-            providers.set(key, await createProvider(account));
-        }
-
-        await maybeSyncBilling(account, providers);
-    }
-
+    const { live, failure } = await liveUsageOrFailure(account, providers, options);
     const cachedBilling = readBillingStore().accounts[account.name];
     const today = getTodayUsageSummary(account.name);
     const recentLimit = options.recent ?? 1;
     const accountRecent = readRecentRequestsForAccount(account.name, recentLimit);
     const last = accountRecent.at(-1);
-    const live = options.json ? undefined : await fetchLiveUsage(account);
 
     return {
         accountName: account.name,
         provider: account.provider,
         tier: live?.tier ?? cachedBilling?.tier,
         summary: live?.summary ?? cachedBilling?.summary ?? "No billing data available",
+        ...(failure === undefined ? {} : { failure }),
         live,
         billing: billingSnapshot(cachedBilling),
         today,
@@ -172,6 +221,11 @@ export async function runUsageCommand(options: UsageCommandOptions): Promise<voi
     for (const summary of summaries) {
         const tier = summary.tier ? ` (${summary.tier})` : "";
         out.log.info(`${summary.accountName}: ${summary.summary}${tier}`);
+
+        if (summary.failure) {
+            out.log.info(`  ${formatDotStatus("err", "live usage unavailable")}: ${summary.failure}`);
+        }
+
         out.log.info(`  today: ${formatTodaySummary(summary.today)}`);
 
         if (summary.last) {
