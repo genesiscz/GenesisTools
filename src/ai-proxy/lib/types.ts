@@ -113,6 +113,32 @@ export interface AiProxyOpenAiSubAccountConfig {
     aliases?: Record<string, string>;
 }
 
+/** Provider-routing knobs, shared shape for both the account-level default and a per-model route. */
+export interface AiProxyOpenRouterProviderRouting {
+    order?: string[];
+    only?: string[];
+    ignore?: string[];
+    sort?: "price" | "throughput" | "latency";
+    max_price?: Record<string, number>;
+    allow_fallbacks?: boolean;
+    require_parameters?: boolean;
+    data_collection?: "allow" | "deny";
+}
+
+/**
+ * A per-model routing override. `match` is a glob (exact id or a trailing
+ * `*`) tested against the UPSTREAM model id — the same id the client's
+ * `messages` request resolves to, e.g. `moonshotai/kimi-k3` or the prefix
+ * `moonshotai/*`. Each field falls back to the account-level default
+ * independently: a route naming only `provider` still uses the account's
+ * `fallbackModels`, and vice versa.
+ */
+export interface AiProxyOpenRouterRoute {
+    match: string;
+    provider?: AiProxyOpenRouterProviderRouting;
+    fallbackModels?: string[];
+}
+
 export interface AiProxyOpenRouterAccountConfig {
     /** Per-account /v1/models filter. Globs matched against the OpenRouter id. */
     models?: {
@@ -124,20 +150,19 @@ export interface AiProxyOpenRouterAccountConfig {
     /**
      * Provider-routing defaults injected into every request body, for the
      * top-level keys the CLIENT did not set. `order` + `allow_fallbacks: false`
-     * pins a model to named upstreams.
+     * pins a model to named upstreams. Overridden per model by `routes`.
      */
-    provider?: {
-        order?: string[];
-        only?: string[];
-        ignore?: string[];
-        sort?: "price" | "throughput" | "latency";
-        max_price?: Record<string, number>;
-        allow_fallbacks?: boolean;
-        require_parameters?: boolean;
-        data_collection?: "allow" | "deny";
-    };
+    provider?: AiProxyOpenRouterProviderRouting;
     /** OpenRouter `models` fallback list: try these ids if the primary one fails. */
     fallbackModels?: string[];
+    /**
+     * Per-model overrides, checked in array order — first match wins. Lets one
+     * account pin a specific model (e.g. an uncensored route) while leaving
+     * everything else on open/cheapest routing. Precedence: client request body
+     * > first matching route > this account-level `provider`/`fallbackModels` >
+     * OpenRouter's own default.
+     */
+    routes?: AiProxyOpenRouterRoute[];
     appName?: string;
     appUrl?: string;
 }

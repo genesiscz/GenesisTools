@@ -30,11 +30,15 @@ function account(openrouter?: AiProxyOpenRouterAccountConfig): AiProxyAccountCon
     };
 }
 
-async function relay(config: AiProxyAccountConfig, body: Record<string, unknown>): Promise<Captured> {
+async function relay(
+    config: AiProxyAccountConfig,
+    body: Record<string, unknown>,
+    upstreamModel = "anthropic/claude-sonnet-5"
+): Promise<Captured> {
     const provider = await OpenRouterApiKeyProvider.create(config);
     const request = new Request("http://localhost/v1/chat/completions", { method: "POST" });
 
-    await provider.chatCompletions(request, "anthropic/claude-sonnet-5", SafeJSON.stringify(body) ?? "{}");
+    await provider.chatCompletions(request, upstreamModel, SafeJSON.stringify(body) ?? "{}");
 
     return captured[captured.length - 1];
 }
@@ -85,6 +89,82 @@ describe("the openrouter relay body", () => {
 
         expect(request.body.provider).toEqual({ order: ["Morph", "DeepInfra"], allow_fallbacks: false });
         expect(request.body.models).toEqual(["a/b"]);
+    });
+
+    test("a matching route overrides the account-level provider default", async () => {
+        const request = await relay(
+            account({
+                provider: { sort: "price" },
+                routes: [{ match: "moonshotai/kimi-k3", provider: { order: ["Morph"], allow_fallbacks: false } }],
+            }),
+            { model: "whatever", messages: [] },
+            "moonshotai/kimi-k3"
+        );
+
+        expect(request.body.provider).toEqual({ order: ["Morph"], allow_fallbacks: false });
+    });
+
+    test("a trailing-* route glob matches the whole vendor prefix", async () => {
+        const request = await relay(
+            account({ routes: [{ match: "moonshotai/*", provider: { order: ["Morph"], allow_fallbacks: false } }] }),
+            { model: "whatever", messages: [] },
+            "moonshotai/kimi-k2"
+        );
+
+        expect(request.body.provider).toEqual({ order: ["Morph"], allow_fallbacks: false });
+    });
+
+    test("the first matching route wins over later ones", async () => {
+        const request = await relay(
+            account({
+                routes: [
+                    { match: "moonshotai/kimi-k3", provider: { sort: "throughput" } },
+                    { match: "moonshotai/*", provider: { order: ["Morph"] } },
+                ],
+            }),
+            { model: "whatever", messages: [] },
+            "moonshotai/kimi-k3"
+        );
+
+        expect(request.body.provider).toEqual({ sort: "throughput" });
+    });
+
+    test("a model that matches no route falls back to the account-level default", async () => {
+        const request = await relay(
+            account({
+                provider: { sort: "price" },
+                routes: [{ match: "moonshotai/*", provider: { order: ["Morph"], allow_fallbacks: false } }],
+            }),
+            { model: "whatever", messages: [] },
+            "qwen/qwen3.7-flash"
+        );
+
+        expect(request.body.provider).toEqual({ sort: "price" });
+    });
+
+    test("a route naming only fallbackModels still inherits the account's provider default", async () => {
+        const request = await relay(
+            account({
+                provider: { order: ["Morph"], allow_fallbacks: false },
+                routes: [{ match: "deepseek/*", fallbackModels: ["deepseek/deepseek-v4-flash"] }],
+            }),
+            { model: "whatever", messages: [] },
+            "deepseek/deepseek-v4-flash-0731"
+        );
+
+        expect(request.body.provider).toEqual({ order: ["Morph"], allow_fallbacks: false });
+        expect(request.body.models).toEqual(["deepseek/deepseek-v4-flash"]);
+    });
+
+    test("a client-supplied provider block wins over a matching route too", async () => {
+        const clientProvider = { order: ["Together"] };
+        const request = await relay(
+            account({ routes: [{ match: "moonshotai/*", provider: { order: ["Morph"], allow_fallbacks: false } }] }),
+            { model: "whatever", messages: [], provider: clientProvider },
+            "moonshotai/kimi-k3"
+        );
+
+        expect(request.body.provider).toEqual(clientProvider);
     });
 
     /**

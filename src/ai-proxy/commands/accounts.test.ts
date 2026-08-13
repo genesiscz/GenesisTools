@@ -257,3 +257,101 @@ describe("runAccountsSetRouting", () => {
         expect((await loadConfig()).accounts).toHaveLength(1);
     });
 });
+
+describe("runAccountsSetRouting --match (per-model routes)", () => {
+    it("--match adds a route without touching the account-level default", async () => {
+        await seed(openrouterAccount({ openrouter: { provider: { sort: "price" } } }));
+
+        await runAccountsSetRouting(
+            "router",
+            { order: ["Morph", "DeepInfra"], allowFallbacks: false },
+            { match: "moonshotai/kimi-k3" }
+        );
+
+        const stored = await readAccount("router");
+        expect(stored?.openrouter?.provider).toEqual({ sort: "price" });
+        expect(stored?.openrouter?.routes).toEqual([
+            { match: "moonshotai/kimi-k3", provider: { order: ["Morph", "DeepInfra"], allow_fallbacks: false } },
+        ]);
+    });
+
+    it("--match with an existing route name updates that route in place, preserving the rest", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: {
+                    routes: [
+                        { match: "moonshotai/kimi-k3", provider: { order: ["Morph"], allow_fallbacks: false } },
+                        { match: "deepseek/*", provider: { sort: "price" } },
+                    ],
+                },
+            })
+        );
+
+        await runAccountsSetRouting("router", { ignore: ["Together"] }, { match: "deepseek/*" });
+
+        const stored = await readAccount("router");
+        expect(stored?.openrouter?.routes).toEqual([
+            { match: "moonshotai/kimi-k3", provider: { order: ["Morph"], allow_fallbacks: false } },
+            { match: "deepseek/*", provider: { sort: "price", ignore: ["Together"] } },
+        ]);
+    });
+
+    it("--match --clear drops only that one route", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: {
+                    routes: [
+                        { match: "moonshotai/kimi-k3", provider: { order: ["Morph"], allow_fallbacks: false } },
+                        { match: "deepseek/*", provider: { sort: "price" } },
+                    ],
+                },
+            })
+        );
+
+        await runAccountsSetRouting("router", {}, { match: "moonshotai/kimi-k3", clear: true });
+
+        expect((await readAccount("router"))?.openrouter?.routes).toEqual([
+            { match: "deepseek/*", provider: { sort: "price" } },
+        ]);
+    });
+
+    it("--match --clear on the last route drops the routes key entirely", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: { routes: [{ match: "moonshotai/kimi-k3", provider: { order: ["Morph"] } }] },
+            })
+        );
+
+        await runAccountsSetRouting("router", {}, { match: "moonshotai/kimi-k3", clear: true });
+
+        expect((await readAccount("router"))?.openrouter?.routes).toBeUndefined();
+    });
+
+    it("--match --clear on a route that does not exist warns and changes nothing", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: { routes: [{ match: "moonshotai/kimi-k3", provider: { order: ["Morph"] } }] },
+            })
+        );
+
+        await runAccountsSetRouting("router", {}, { match: "qwen/*", clear: true });
+
+        expect((await readAccount("router"))?.openrouter?.routes).toEqual([
+            { match: "moonshotai/kimi-k3", provider: { order: ["Morph"] } },
+        ]);
+    });
+
+    it("--match with no routing fields and no --clear changes nothing", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: { routes: [{ match: "moonshotai/kimi-k3", provider: { order: ["Morph"] } }] },
+            })
+        );
+
+        await runAccountsSetRouting("router", {}, { match: "moonshotai/kimi-k3" });
+
+        expect((await readAccount("router"))?.openrouter?.routes).toEqual([
+            { match: "moonshotai/kimi-k3", provider: { order: ["Morph"] } },
+        ]);
+    });
+});

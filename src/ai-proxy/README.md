@@ -161,8 +161,11 @@ real numbers rather than "no usage endpoint".
   "allowEnvApiKey": true,
   "openrouter": {
     "models": { "include": ["anthropic/*", "openai/*"], "exclude": ["*:free"] },
-    "provider": { "order": ["Morph", "DeepInfra"], "allow_fallbacks": false },
-    "fallbackModels": ["qwen/qwen3.7-flash"]
+    "provider": { "sort": "price" },
+    "fallbackModels": ["qwen/qwen3.7-flash"],
+    "routes": [
+      { "match": "moonshotai/kimi-k3", "provider": { "order": ["Morph", "DeepInfra"], "allow_fallbacks": false } }
+    ]
   }
 }
 ```
@@ -188,22 +191,39 @@ The five `-1`-priced router pseudo-models (`openrouter/auto`, `auto-beta`, `fusi
 
 **Body merge: the client wins.** `usage: {include: true}` (plus `stream_options.include_usage`
 when streaming) is injected so the ledger can book OpenRouter's own reported charge instead of an
-estimate. `account.openrouter.provider` and `fallbackModels` are injected only for top-level keys
-the client did not set — a client-supplied `provider` block reaches the upstream verbatim.
+estimate. `provider`/`fallbackModels` are injected only for top-level keys the client did not set
+— a client-supplied `provider` block reaches the upstream verbatim.
 
-**Setting the account-level pin from the CLI** (writes `account.openrouter.provider` /
-`fallbackModels`; hot-reloads on the next request, no restart):
+**Per-model routing.** `openrouter.routes[]` overrides `provider`/`fallbackModels` for specific
+upstream model ids, checked in array order — first match (exact id or a trailing `*`) wins. This
+is how one account pins a strict route for a model that needs it (e.g. an uncensored provider for
+`moonshotai/kimi-k3`) while everything else on the same account keeps open/cheapest routing —
+without `routes`, `provider` applies to every model and can 404 models the pinned providers do not
+serve. Precedence end to end: client request body > first matching route > this account's
+`provider`/`fallbackModels` > OpenRouter's own default. Each route field falls back to the
+account-level default independently — a route naming only `provider` still uses the account's
+`fallbackModels`.
+
+**Setting routing from the CLI** (writes `account.openrouter.provider`/`fallbackModels`, or one
+entry of `routes[]` with `--match`; hot-reloads on the next request, no restart):
 
 ```bash
+# account-level default (no --match)
 tools ai-proxy accounts set-routing router --order Morph,DeepInfra,Fireworks --no-allow-fallbacks
 tools ai-proxy accounts set-routing router --ignore Chutes,Together --sort price
 tools ai-proxy accounts set-routing router --fallback-models qwen/qwen3.7-flash,deepseek/deepseek-v4-flash
 tools ai-proxy accounts set-routing router --clear
+
+# per-model route (--match; add/update by exact match string, or a trailing * prefix)
+tools ai-proxy accounts set-routing router --match "moonshotai/kimi-k3" --order Morph,DeepInfra --no-allow-fallbacks
+tools ai-proxy accounts set-routing router --match "deepseek/*" --sort price
+tools ai-proxy accounts set-routing router --match "moonshotai/kimi-k3" --clear   # drops that one route
 ```
 
 `--order/--only/--ignore/--fallback-models` take a comma-separated list; each flag patches only
-the fields it names, leaving the rest (and the `models` filter) untouched. `--clear` removes the
-routing pin entirely, keeping any `models` filter on the account.
+the fields it names, leaving the rest (and the `models` filter) untouched. `--clear` without
+`--match` removes the account-level pin entirely, keeping any `models` filter and any `routes`;
+`--clear` with `--match` removes only that one route.
 
 > ⚠️ **`openrouter` is a non-subscription provider, so an omitted `allowedProviders` on a client
 > ("all non-subscription providers") grants that client this account's BILLED key.** Scope it

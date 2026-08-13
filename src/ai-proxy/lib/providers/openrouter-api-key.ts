@@ -3,17 +3,26 @@ import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/l
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
-import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, AiProxyOpenRouterRoute, UsageSummary } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 import { isObject } from "@genesiscz/utils/object";
+import { matchGlob } from "@genesiscz/utils/string";
 
 export const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1";
 
 const APP_NAME = "GenesisTools";
 const APP_URL = "https://github.com/genesiscz/GenesisTools";
+
+/** First route (in array order) whose glob matches the upstream model id, if any. */
+function matchOpenRouterRoute(
+    routes: AiProxyOpenRouterRoute[] | undefined,
+    upstreamModel: string
+): AiProxyOpenRouterRoute | undefined {
+    return routes?.find((route) => matchGlob(upstreamModel, route.match));
+}
 
 function maskKey(key: string): string {
     if (key.length <= 8) {
@@ -180,6 +189,12 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
 
         const body: Record<string, unknown> = { ...parsed, model: upstreamModel };
         const defaults = this.account.openrouter;
+        const route = matchOpenRouterRoute(defaults?.routes, upstreamModel);
+        // Each field falls back to the account-level default independently: a
+        // route naming only `provider` still picks up the account's
+        // `fallbackModels`, and vice versa.
+        const effectiveProvider = route?.provider ?? defaults?.provider;
+        const effectiveFallbackModels = route?.fallbackModels ?? defaults?.fallbackModels;
 
         if (!("usage" in body)) {
             body.usage = { include: true };
@@ -189,12 +204,12 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
             body.stream_options = { include_usage: true };
         }
 
-        if (defaults?.provider && !("provider" in body)) {
-            body.provider = defaults.provider;
+        if (effectiveProvider && !("provider" in body)) {
+            body.provider = effectiveProvider;
         }
 
-        if (defaults?.fallbackModels?.length && !("models" in body)) {
-            body.models = defaults.fallbackModels;
+        if (effectiveFallbackModels?.length && !("models" in body)) {
+            body.models = effectiveFallbackModels;
         }
 
         return SafeJSON.stringify(body);

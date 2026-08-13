@@ -6,6 +6,8 @@ import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/provide
 import type {
     AiProxyAccountConfig,
     AiProxyOpenRouterAccountConfig,
+    AiProxyOpenRouterProviderRouting,
+    AiProxyOpenRouterRoute,
     AiProxyProviderType,
 } from "@app/ai-proxy/lib/types";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
@@ -419,10 +421,26 @@ function hasRoutingPatch(patch: AccountsRoutingPatch): boolean {
     );
 }
 
+function buildProviderPatch(
+    existing: AiProxyOpenRouterProviderRouting | undefined,
+    patch: AccountsRoutingPatch
+): AiProxyOpenRouterProviderRouting {
+    return {
+        ...existing,
+        ...(patch.order ? { order: patch.order } : {}),
+        ...(patch.only ? { only: patch.only } : {}),
+        ...(patch.ignore ? { ignore: patch.ignore } : {}),
+        ...(patch.sort ? { sort: patch.sort } : {}),
+        ...(patch.allowFallbacks !== undefined ? { allow_fallbacks: patch.allowFallbacks } : {}),
+        ...(patch.requireParameters !== undefined ? { require_parameters: patch.requireParameters } : {}),
+        ...(patch.dataCollection ? { data_collection: patch.dataCollection } : {}),
+    };
+}
+
 export async function runAccountsSetRouting(
     name: string,
     patch: AccountsRoutingPatch,
-    options: { clear?: boolean } = {}
+    options: { clear?: boolean; match?: string } = {}
 ): Promise<void> {
     const config = await loadConfig();
     const account = config.accounts.find((item) => item.name === name);
@@ -435,6 +453,11 @@ export async function runAccountsSetRouting(
 
     if (account.provider !== "openrouter") {
         out.log.warn(`Account "${name}" is ${account.provider} — provider-routing pins are an OpenRouter feature.`);
+        return;
+    }
+
+    if (options.match) {
+        await applyRoutePatch({ config, account, name, match: options.match, patch, clear: options.clear });
         return;
     }
 
@@ -461,16 +484,7 @@ export async function runAccountsSetRouting(
     }
 
     const existing: AiProxyOpenRouterAccountConfig = account.openrouter ?? {};
-    const mergedProvider = {
-        ...existing.provider,
-        ...(patch.order ? { order: patch.order } : {}),
-        ...(patch.only ? { only: patch.only } : {}),
-        ...(patch.ignore ? { ignore: patch.ignore } : {}),
-        ...(patch.sort ? { sort: patch.sort } : {}),
-        ...(patch.allowFallbacks !== undefined ? { allow_fallbacks: patch.allowFallbacks } : {}),
-        ...(patch.requireParameters !== undefined ? { require_parameters: patch.requireParameters } : {}),
-        ...(patch.dataCollection ? { data_collection: patch.dataCollection } : {}),
-    };
+    const mergedProvider = buildProviderPatch(existing.provider, patch);
 
     account.openrouter = {
         ...existing,
@@ -488,6 +502,90 @@ export async function runAccountsSetRouting(
 
     if (account.openrouter.fallbackModels) {
         out.log.info(`  fallbackModels: ${SafeJSON.stringify(account.openrouter.fallbackModels) ?? "[]"}`);
+    }
+
+    out.log.info(HOT_RELOAD_HINT);
+}
+
+/**
+ * `--match` scopes the whole operation to one entry of `openrouter.routes[]`
+ * instead of the account-level default — a strict pin for one model (or
+ * vendor prefix) without narrowing every other model routed through the same
+ * account.
+ */
+async function applyRoutePatch(input: {
+    config: Awaited<ReturnType<typeof loadConfig>>;
+    account: AiProxyAccountConfig;
+    name: string;
+    match: string;
+    patch: AccountsRoutingPatch;
+    clear?: boolean;
+}): Promise<void> {
+    const { config, account, name, match, patch, clear } = input;
+    const routes = account.openrouter?.routes ?? [];
+    const index = routes.findIndex((route) => route.match === match);
+
+    if (clear) {
+        if (index === -1) {
+            out.log.warn(`No route for "${match}" on "${name}" — nothing to clear.`);
+            return;
+        }
+
+        const next = routes.filter((_, i) => i !== index);
+        account.openrouter = { ...account.openrouter };
+
+        if (next.length > 0) {
+            account.openrouter.routes = next;
+        } else {
+            delete account.openrouter.routes;
+        }
+
+        await saveConfig(config);
+        out.log.success(`Cleared the "${match}" route for "${name}".`);
+        out.log.info(HOT_RELOAD_HINT);
+        return;
+    }
+
+    if (!hasRoutingPatch(patch)) {
+        out.log.warn("No routing fields given — nothing changed.");
+        out.log.info(
+            cmd([
+                "accounts",
+                "set-routing",
+                name,
+                "--match",
+                match,
+                "--order",
+                "Morph,DeepInfra",
+                "--no-allow-fallbacks",
+            ])
+        );
+        return;
+    }
+
+    const existingRoute: AiProxyOpenRouterRoute | undefined = index === -1 ? undefined : routes[index];
+    const mergedProvider = buildProviderPatch(existingRoute?.provider, patch);
+    const nextRoute: AiProxyOpenRouterRoute = {
+        ...existingRoute,
+        match,
+        ...(Object.keys(mergedProvider).length > 0 ? { provider: mergedProvider } : {}),
+        ...(patch.fallbackModels ? { fallbackModels: patch.fallbackModels } : {}),
+    };
+    const nextRoutes =
+        index === -1 ? [...routes, nextRoute] : routes.map((route, i) => (i === index ? nextRoute : route));
+
+    account.openrouter = { ...account.openrouter, routes: nextRoutes };
+
+    await saveConfig(config);
+
+    out.log.success(`Updated the "${match}" route for "${name}" (${nextRoutes.length} route(s) configured).`);
+
+    if (nextRoute.provider) {
+        out.log.info(`  provider: ${SafeJSON.stringify(nextRoute.provider) ?? "{}"}`);
+    }
+
+    if (nextRoute.fallbackModels) {
+        out.log.info(`  fallbackModels: ${SafeJSON.stringify(nextRoute.fallbackModels) ?? "[]"}`);
     }
 
     out.log.info(HOT_RELOAD_HINT);

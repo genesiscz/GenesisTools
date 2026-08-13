@@ -375,6 +375,10 @@ accountsCmd
 accountsCmd
     .command("set-routing <name>")
     .description("Pin an OpenRouter account's provider routing (order/only/ignore/sort/fallbacks)")
+    .option(
+        "--match <glob>",
+        "Scope to one per-model route instead of the account-level default (exact id or a trailing *)"
+    )
     .option("--order <providers>", "Comma-separated provider names, most preferred first")
     .option("--only <providers>", "Comma-separated provider names — route ONLY to these")
     .option("--ignore <providers>", "Comma-separated provider names to never route to")
@@ -402,6 +406,7 @@ accountsCmd
         async (
             name: string,
             options: {
+                match?: string;
                 order?: string;
                 only?: string;
                 ignore?: string;
@@ -427,7 +432,7 @@ accountsCmd
                 fallbackModels: parseCsvOption(options.fallbackModels),
             };
 
-            await runAccountsSetRouting(name, patch, { clear: options.clear });
+            await runAccountsSetRouting(name, patch, { clear: options.clear, match: options.match });
         }
     );
 
