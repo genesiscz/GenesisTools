@@ -204,6 +204,14 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
             body.stream_options = { include_usage: true };
         }
 
+        // Cursor (and most OpenAI-shaped clients) never send `reasoning`, and
+        // OpenRouter then omits the thinking from the response entirely — the
+        // tokens are generated and billed regardless, so asking for them back
+        // is free and is what makes a client's thinking panel work at all.
+        if (!("reasoning" in body)) {
+            body.reasoning = defaults?.reasoning ?? { enabled: true };
+        }
+
         if (effectiveProvider && !("provider" in body)) {
             body.provider = effectiveProvider;
         }

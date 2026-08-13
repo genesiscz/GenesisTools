@@ -3,6 +3,14 @@ import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
 
+/**
+ * Providers whose chat/completions answer needs reshaping for the client.
+ * openrouter is here because it never reaches the /responses translator (it has
+ * no Responses upstream) yet still returns thinking that a client must be able
+ * to render.
+ */
+const CHAT_ENRICHED_PROVIDERS = new Set(["grok-subscription", "openrouter"]);
+
 export async function identityPipeline({
     provider,
     upstreamModel,
@@ -29,7 +37,7 @@ export async function identityPipeline({
 
     const upstream = await provider.chatCompletions(req, upstreamModel, bodyText);
 
-    if (!proxyModel || provider.id !== "grok-subscription") {
+    if (!proxyModel || !CHAT_ENRICHED_PROVIDERS.has(provider.id)) {
         return pipelineResult(upstream, undefined, startedAt);
     }
 

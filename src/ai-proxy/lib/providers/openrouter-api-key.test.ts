@@ -75,6 +75,29 @@ describe("the openrouter relay body", () => {
         expect(request.body.stream_options).toBeUndefined();
     });
 
+    /**
+     * Proven from a live transcript: Cursor sends no `reasoning`, OpenRouter
+     * then omits thinking from the stream, and the client's thinking panel is
+     * empty. The tokens are billed either way, so asking is free.
+     */
+    test("asks for reasoning the client did not request", async () => {
+        const request = await relay(account(), { model: "whatever", messages: [] });
+
+        expect(request.body.reasoning).toEqual({ enabled: true });
+    });
+
+    test("a client-set reasoning block is left alone", async () => {
+        const request = await relay(account(), { model: "whatever", messages: [], reasoning: { exclude: true } });
+
+        expect(request.body.reasoning).toEqual({ exclude: true });
+    });
+
+    test("the account can override the reasoning default", async () => {
+        const request = await relay(account({ reasoning: { effort: "low" } }), { model: "whatever", messages: [] });
+
+        expect(request.body.reasoning).toEqual({ effort: "low" });
+    });
+
     test("adds stream_options only for a streaming request", async () => {
         const streamed = await relay(account(), { model: "whatever", messages: [], stream: true });
 

@@ -105,6 +105,26 @@ function enrichDeltaForFolded(delta: JsonObject, state: StreamEnrichState): Json
     return next;
 }
 
+/**
+ * OpenRouter (and other DeepSeek-shaped upstreams) carry thinking as
+ * `reasoning`; Cursor reads `reasoning_content`. Renaming it here means the
+ * cursor/folded enrichment below serves both without a second pipeline. Grok
+ * never sends `reasoning`, so this is a no-op on that path.
+ */
+function normalizeReasoningField(node: JsonObject): JsonObject {
+    if (typeof node.reasoning !== "string" || node.reasoning.length === 0) {
+        return node;
+    }
+
+    if (node.reasoning_content !== undefined) {
+        return node;
+    }
+
+    const { reasoning, ...rest } = node;
+
+    return { ...rest, reasoning_content: reasoning };
+}
+
 function enrichChatPayload(
     payload: JsonObject,
     thinkingMode: ThinkingPresentationMode,
@@ -125,15 +145,32 @@ function enrichChatPayload(
         const delta = rawChoice.delta;
 
         if (!isObject(delta)) {
-            return rawChoice;
+            // Non-streaming responses carry `message` instead of `delta`; it
+            // still needs the field rename or a client sees no thinking at all.
+            const message = rawChoice.message;
+
+            if (!isObject(message)) {
+                return rawChoice;
+            }
+
+            const normalizedMessage = normalizeReasoningField(message);
+
+            if (normalizedMessage === message) {
+                return rawChoice;
+            }
+
+            changed = true;
+
+            return { ...rawChoice, message: normalizedMessage };
         }
 
-        let enrichedDelta = delta;
+        const normalizedDelta = normalizeReasoningField(delta);
+        let enrichedDelta = normalizedDelta;
 
         if (thinkingMode === "cursor") {
-            enrichedDelta = enrichDeltaForCursor(delta, state);
+            enrichedDelta = enrichDeltaForCursor(normalizedDelta, state);
         } else if (thinkingMode === "folded") {
-            enrichedDelta = enrichDeltaForFolded(delta, state);
+            enrichedDelta = enrichDeltaForFolded(normalizedDelta, state);
         }
 
         if (enrichedDelta === delta) {

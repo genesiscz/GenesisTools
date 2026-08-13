@@ -156,6 +156,19 @@ export interface AiProxyOpenRouterAccountConfig {
     /** OpenRouter `models` fallback list: try these ids if the primary one fails. */
     fallbackModels?: string[];
     /**
+     * OpenRouter reasoning controls. Absent -> `{ enabled: true }`, because a
+     * reasoning model bills its thinking tokens either way and OpenRouter omits
+     * them from the response unless asked — so the default costs nothing extra
+     * and is the difference between a client showing thinking and showing none.
+     * Set `{ exclude: true }` to keep the tokens but drop them from the response.
+     */
+    reasoning?: {
+        enabled?: boolean;
+        effort?: "low" | "medium" | "high";
+        max_tokens?: number;
+        exclude?: boolean;
+    };
+    /**
      * Per-model overrides, checked in array order — first match wins. Lets one
      * account pin a specific model (e.g. an uncensored route) while leaving
      * everything else on open/cheapest routing. Precedence: client request body
