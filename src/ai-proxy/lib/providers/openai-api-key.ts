@@ -43,7 +43,11 @@ export class OpenAiApiKeyProvider implements ProxyProvider {
 
     static async create(account: AiProxyAccountConfig): Promise<OpenAiApiKeyProvider> {
         const envName = defaultApiKeyEnvName(account);
-        const resolved = resolveAccountApiKey({ account, defaultEnvKey: () => env.ai.openai.getKey() });
+        const resolved = resolveAccountApiKey({
+            account,
+            defaultEnvKey: () => env.ai.openai.getKey(),
+            knownEnvNames: env.ai.openai.getKeys(),
+        });
 
         if (!resolved) {
             // Name both: the fallback is always consulted, so an account with a

@@ -10,5 +10,9 @@ export const XAI_API_BASE_URL = "https://api.x.ai/v1";
  * provider's default step.
  */
 export function resolveXaiApiKey(account: AiProxyAccountConfig): ResolvedApiKey | undefined {
-    return resolveAccountApiKey({ account, defaultEnvKey: () => env.x.getApiKey() });
+    return resolveAccountApiKey({
+        account,
+        defaultEnvKey: () => env.x.getApiKey(),
+        knownEnvNames: env.ai.xai.getKeys(),
+    });
 }

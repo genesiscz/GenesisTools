@@ -86,6 +86,8 @@ export interface ApiKeyAccessor {
     getKey(): string | undefined;
     getEnvKey(): EnvKey | undefined;
     hasKey(): boolean;
+    /** Every name this accessor would ever read, present or not — the static alias set. */
+    getKeys(): readonly EnvKey[];
 }
 
 export function createApiKeyAccessor(keys: readonly EnvKey[]): ApiKeyAccessor {
@@ -93,5 +95,6 @@ export function createApiKeyAccessor(keys: readonly EnvKey[]): ApiKeyAccessor {
         getKey: () => getFirstValue(keys),
         getEnvKey: () => getFirstEnvKey(keys),
         hasKey: () => getFirstValue(keys) !== undefined,
+        getKeys: () => keys,
     };
 }

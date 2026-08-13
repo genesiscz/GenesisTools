@@ -23,6 +23,13 @@ export interface ResolvedApiKey {
 export function resolveAccountApiKey(input: {
     account: AiProxyAccountConfig;
     defaultEnvKey: () => string | undefined;
+    /**
+     * Every env var name `defaultEnvKey` would ever read (aliases included,
+     * e.g. xAI's `XAI_API_KEY` / `X_AI_API_KEY`). Distinguishes "this account
+     * never customized its variable name" from "this account was pointed at a
+     * genuinely different one" — see the comment below.
+     */
+    knownEnvNames: readonly string[];
 }): ResolvedApiKey | undefined {
     const configured = input.account.apiKey?.trim();
 
@@ -35,6 +42,18 @@ export function resolveAccountApiKey(input: {
 
         if (named) {
             return { key: named, source: "configEnv" };
+        }
+
+        // A CUSTOM name — one that is not even an alias of the provider's own
+        // default — is a deliberate choice to use a different credential slot,
+        // usually to run two accounts on two different keys. Falling through to
+        // the provider's default here would silently bill the OTHER account's
+        // key instead of reporting "not found" for this one. The fallback stays
+        // available only when the account's name IS one the provider itself
+        // would already check (`xai-api-key.test.ts` "falls back to standard
+        // xAI aliases" — XAI_API_KEY and X_AI_API_KEY name the same credential).
+        if (!input.knownEnvNames.includes(input.account.apiKeyEnv)) {
+            return undefined;
         }
     }
 

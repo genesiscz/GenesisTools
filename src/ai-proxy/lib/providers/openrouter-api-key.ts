@@ -54,7 +54,11 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
 
     static async create(account: AiProxyAccountConfig): Promise<OpenRouterApiKeyProvider> {
         const envName = defaultApiKeyEnvName(account);
-        const resolved = resolveAccountApiKey({ account, defaultEnvKey: () => env.ai.openrouter.getKey() });
+        const resolved = resolveAccountApiKey({
+            account,
+            defaultEnvKey: () => env.ai.openrouter.getKey(),
+            knownEnvNames: env.ai.openrouter.getKeys(),
+        });
 
         if (!resolved) {
             // Name both: the fallback is always consulted, so an account with a
