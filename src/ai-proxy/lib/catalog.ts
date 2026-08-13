@@ -2,6 +2,7 @@ import {
     listAnthropicSubProxyModels,
     listCopilotProxyModels,
     listGrokProxyModels,
+    listOpenAiProxyModels,
     listOpenAiSubProxyModels,
     listOpenRouterProxyModels,
     listXaiProxyModels,
@@ -42,6 +43,10 @@ export async function buildProxyModelCatalog(accounts: AiProxyAccountConfig[]): 
 
         if (account.provider === "openrouter") {
             models.push(...(await listOpenRouterProxyModels(account)));
+        }
+
+        if (account.provider === "openai") {
+            models.push(...(await listOpenAiProxyModels(account)));
         }
     }
 

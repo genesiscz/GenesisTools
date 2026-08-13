@@ -88,6 +88,8 @@ async function fetchLiveUsage(account: AiProxyAccountConfig): Promise<UsageSumma
         account.provider === "github-copilot-subscription" ||
         account.provider === "xai-api-key" ||
         account.provider === "openrouter" ||
+        account.provider === "openai" ||
+        account.provider === "anthropic-subscription" ||
         account.provider === "openai-subscription"
     ) {
         const provider = await createProvider(account);

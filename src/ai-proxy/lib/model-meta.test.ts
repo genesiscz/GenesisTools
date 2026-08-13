@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
     listAnthropicSubProxyModels,
+    listOpenAiProxyModels,
     listOpenAiSubProxyModels,
     listOpenRouterProxyModels,
     listXaiStaticProxyModels,
@@ -9,6 +10,7 @@ import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { ANTHROPIC_SUB_ALIASES } from "@genesiscz/utils/ai/anthropic/models";
 import { byProvider } from "@genesiscz/utils/ai/catalog";
 import { isCuratedGrokModelId } from "@genesiscz/utils/ai/grok";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const account: AiProxyAccountConfig = {
     name: "martin",
@@ -181,5 +183,83 @@ describe("listOpenRouterProxyModels", () => {
         expect(sonnet?.supportsTools).toBe(true);
         expect(sonnet?.thinking).toBe("optional");
         expect(sonnet?.billingPlane).toBe("api-key");
+    });
+});
+
+describe("listOpenAiProxyModels", () => {
+    const openAiAccount: AiProxyAccountConfig = {
+        name: "platform",
+        provider: "openai",
+        providerSlug: "openai",
+        enabled: true,
+        // A literal key so the ambient-env guard is not what is under test here.
+        apiKey: "sk-openai-test",
+    };
+
+    const realFetch = globalThis.fetch;
+
+    function stubModels(ids: string[]): void {
+        globalThis.fetch = (async () =>
+            new Response(SafeJSON.stringify({ data: ids.map((id) => ({ id, created: 1, owned_by: "openai" })) }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            })) as unknown as typeof fetch;
+    }
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    /**
+     * `GET /v1/models` returns embeddings, moderation, TTS and image ids too.
+     * Handing those to a chat client floods its picker with ids that 400 on
+     * /chat/completions.
+     */
+    it("advertises chat families only", async () => {
+        stubModels([
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "o3-mini",
+            "chatgpt-4o-latest",
+            "text-embedding-3-small",
+            "tts-1",
+            "whisper-1",
+            "dall-e-3",
+            "omni-moderation-latest",
+            "gpt-4o-audio-preview",
+            "gpt-realtime",
+            "gpt-4o-transcribe",
+            "gpt-4o-search-preview",
+        ]);
+
+        const ids = (await listOpenAiProxyModels(openAiAccount)).map((model) => model.upstreamId);
+
+        expect(ids).toEqual(["gpt-5.4", "gpt-5.4-mini", "o3-mini", "chatgpt-4o-latest"]);
+    });
+
+    it("maps proxy ids and the api-key billing plane", async () => {
+        stubModels(["gpt-5.4"]);
+
+        const [model] = await listOpenAiProxyModels(openAiAccount);
+
+        expect(model.proxyId).toBe("platform/openai/gpt-5.4");
+        expect(model.billingPlane).toBe("api-key");
+        expect(model.source).toBe("api-catalog");
+        expect(model.baseUrl).toBe("https://api.openai.com/v1");
+    });
+
+    /** No curated OpenAI list exists to fall back to, so empty is the honest answer. */
+    it("returns nothing rather than throwing when the listing fails", async () => {
+        globalThis.fetch = (async () => {
+            throw new Error("offline");
+        }) as unknown as typeof fetch;
+
+        expect(await listOpenAiProxyModels(openAiAccount)).toEqual([]);
+    });
+
+    it("returns nothing when the account has no usable key", async () => {
+        stubModels(["gpt-5.4"]);
+
+        expect(await listOpenAiProxyModels({ ...openAiAccount, apiKey: undefined })).toEqual([]);
     });
 });

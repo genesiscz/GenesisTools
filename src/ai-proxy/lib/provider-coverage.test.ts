@@ -26,32 +26,14 @@ const SUBSCRIPTION_TYPES: ReadonlySet<AiProxyProviderType> = new Set([
     "openai-subscription",
 ]);
 
-type CoverageDimension = "title" | "suggestedModel" | "catalog" | "liveUsage";
-
 /**
- * ⚠️ Gaps that predate this test, recorded rather than hidden.
+ * ❗ There is no exemption list here, on purpose.
  *
- * Each entry is a real hole someone should close, and closing one means DELETING
- * a line here — the list can only shrink by accident, never grow by accident,
- * because adding to it requires editing this file. That is the whole point: a new
- * provider cannot slip past any dimension silently.
+ * This file used to carry a `KNOWN_GAPS` array documenting nine holes that
+ * predated it. All nine are closed, so the escape hatch is gone with them: every
+ * dimension below now applies to EVERY provider type, unconditionally. Adding one
+ * back means arguing for it in review rather than appending a line.
  */
-const KNOWN_GAPS: ReadonlyArray<{ provider: AiProxyProviderType; dimension: CoverageDimension; why: string }> = [
-    { provider: "openai", dimension: "title", why: "detect-report has no OpenAI API branch" },
-    { provider: "openai", dimension: "suggestedModel", why: "no detection path suggests an OpenAI model" },
-    { provider: "openai", dimension: "catalog", why: "OpenAI model listing was never implemented" },
-    { provider: "openai", dimension: "liveUsage", why: "the OpenAI provider has no getUsage()" },
-    { provider: "anthropic-subscription", dimension: "title", why: "detect-report has no anthropic-sub branch" },
-    { provider: "anthropic-subscription", dimension: "suggestedModel", why: "no detection path suggests one" },
-    { provider: "anthropic-subscription", dimension: "liveUsage", why: "usage comes from the billing store" },
-    { provider: "openai-subscription", dimension: "title", why: "detect-report has no openai-sub branch" },
-    { provider: "openai-subscription", dimension: "suggestedModel", why: "no detection path suggests one" },
-];
-
-function isKnownGap(provider: AiProxyProviderType, dimension: CoverageDimension): boolean {
-    return KNOWN_GAPS.some((gap) => gap.provider === provider && gap.dimension === dimension);
-}
-
 function accountFor(provider: AiProxyProviderType): AiProxyAccountConfig {
     return {
         name: "coverage",
@@ -71,15 +53,6 @@ describe("every valid provider type is wired end to end", () => {
         expect(VALID_PROVIDER_TYPES.has("openrouter")).toBe(true);
     });
 
-    /** A gap for a provider that no longer exists would silently excuse nothing. */
-    test("every recorded gap names a real provider type", () => {
-        for (const gap of KNOWN_GAPS) {
-            expect(VALID_PROVIDER_TYPES.has(gap.provider)).toBe(true);
-        }
-
-        expect(KNOWN_GAPS.some((gap) => gap.provider === "openrouter")).toBe(false);
-    });
-
     for (const provider of VALID_PROVIDER_TYPES) {
         describe(provider, () => {
             test("is implemented at runtime", () => {
@@ -96,20 +69,12 @@ describe("every valid provider type is wired end to end", () => {
             });
 
             test("has a human title rather than the raw slug", () => {
-                if (isKnownGap(provider, "title")) {
-                    return;
-                }
-
                 const account = accountFor(provider);
 
                 expect(providerTitleFor(account)).not.toBe(account.providerSlug);
             });
 
             test("suggests a model id a client can actually call", () => {
-                if (isKnownGap(provider, "suggestedModel")) {
-                    return;
-                }
-
                 const suggestion = suggestedModelFor(accountFor(provider));
 
                 expect(suggestion).toBeString();
@@ -134,18 +99,10 @@ describe("every valid provider type is wired end to end", () => {
             });
 
             test("has a /v1/models catalog branch", async () => {
-                if (isKnownGap(provider, "catalog")) {
-                    return;
-                }
-
                 expect(await sourceOf("./catalog.ts")).toInclude(`account.provider === "${provider}"`);
             });
 
             test("has a fetchLiveUsage branch", async () => {
-                if (isKnownGap(provider, "liveUsage")) {
-                    return;
-                }
-
                 expect(await sourceOf("../commands/usage.ts")).toInclude(`account.provider === "${provider}"`);
             });
         });

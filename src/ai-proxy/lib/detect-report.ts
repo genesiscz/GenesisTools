@@ -48,6 +48,12 @@ export function providerTitleFor(account: AiProxyAccountConfig): string {
             return "xAI API";
         case "openrouter":
             return "OpenRouter";
+        case "openai":
+            return "OpenAI API";
+        case "anthropic-subscription":
+            return "Claude subscription";
+        case "openai-subscription":
+            return "ChatGPT/Codex subscription";
         default:
             return account.providerSlug;
     }
@@ -65,6 +71,15 @@ export function suggestedModelFor(account: AiProxyAccountConfig): string | undef
         // qualified form `resolve-model.ts` parses without ambiguity.
         case "openrouter":
             return `${account.name}/${account.providerSlug}/anthropic/claude-sonnet-5`;
+        case "openai":
+            return `${account.name}/${account.providerSlug}/gpt-5.4`;
+        // The short alias, not a dated id: `listAnthropicSubProxyModels` always
+        // advertises `sonnet`/`opus`/`haiku`/`fable`, and they track the current
+        // dated model so a suggestion cannot rot.
+        case "anthropic-subscription":
+            return `${account.name}/${account.providerSlug}/sonnet`;
+        case "openai-subscription":
+            return `${account.name}/${account.providerSlug}/gpt-5.5`;
         default:
             return undefined;
     }
