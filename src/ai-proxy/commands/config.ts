@@ -32,7 +32,9 @@ export async function runConfigInit(options?: { append?: boolean }): Promise<voi
 
     if (existing.accounts.length > 0 && !options?.append) {
         out.log.warn("Config already has accounts. Use `ai-proxy config show` to inspect.");
-        out.log.info(suggestCommand("tools ai-proxy", { add: ["config", "init", "--append"] }));
+        // `suggestCommand` appends to THIS process's argv, which already carries
+        // `config init` — adding it again doubles the sub-path.
+        out.log.info(suggestCommand("tools ai-proxy", { add: ["--append"] }));
         return;
     }
 

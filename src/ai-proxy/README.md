@@ -43,6 +43,7 @@ Examples:
 - `genesiscz/github-copilot/claude-sonnet-4`
 - `genesiscz/claude-sub/sonnet` (aliases: `sonnet`, `opus`, `haiku`, `fable` — resolve to the current dated Claude model ids)
 - `genesiscz/codex/gpt-5.5`
+- `router/openrouter/anthropic/claude-sonnet-5` (OpenRouter ids contain a slash, so the id has four segments)
 
 ## Auth
 
@@ -141,6 +142,68 @@ OpenAI-compatible passthrough to `https://api.x.ai/v1` (chat completions + respo
 
 Model ids: `work/xai/grok-4.5`, `work/xai/grok-4.3`, …  
 Usage for this provider needs Management API credentials (`managementKeyEnv` + `teamId` / `XAI_TEAM_ID`); the inference key alone has no usage endpoint.
+
+### OpenRouter API key
+
+Relay to `https://openrouter.ai/api/v1/chat/completions`, detected from `OPENROUTER_API_KEY`
+(`tools ai-proxy config detect`; `tools ai-proxy config init --append` adds it to a config that
+already has accounts). `/v1/responses` answers **501** — OpenRouter serves no Responses API.
+`tools ai-proxy usage` reads the key-scoped `GET /api/v1/key`, so spend and remaining limit are
+real numbers rather than "no usage endpoint".
+
+```json
+{
+  "name": "router",
+  "provider": "openrouter",
+  "providerSlug": "openrouter",
+  "enabled": true,
+  "apiKeyEnv": "OPENROUTER_API_KEY",
+  "allowEnvApiKey": true,
+  "openrouter": {
+    "models": { "include": ["anthropic/*", "openai/*"], "exclude": ["*:free"] },
+    "provider": { "order": ["Morph", "DeepInfra"], "allow_fallbacks": false },
+    "fallbackModels": ["qwen/qwen3.7-flash"]
+  }
+}
+```
+
+**Model ids carry a slash of their own**, so the canonical form has four segments:
+`router/openrouter/anthropic/claude-sonnet-5`. Two shorter forms also resolve:
+`openrouter/anthropic/claude-sonnet-5` (provider-slug shorthand) and the bare
+`anthropic/claude-sonnet-5`. The bare form is **catalog-gated** — it resolves only for ids
+OpenRouter actually serves, so `xai/grok-4.5` still fails locally instead of becoming an upstream
+404 on a billed key.
+
+**`models` filter** (governs `/v1/models` only, never what can be called):
+
+| Setting | Meaning |
+|---|---|
+| absent `include` | the curated vendor default (anthropic, openai, google, x-ai, deepseek, qwen, …) |
+| `include: ["*"]` or `[]` | every model OpenRouter serves |
+| absent `exclude` | `["*:free"]` — free routes are rate-limited and route to donated capacity |
+| `exclude: []` | nothing excluded |
+
+The five `-1`-priced router pseudo-models (`openrouter/auto`, `auto-beta`, `fusion`,
+`pareto-code`, `bodybuilder`) are always dropped: they cannot be priced.
+
+**Body merge: the client wins.** `usage: {include: true}` (plus `stream_options.include_usage`
+when streaming) is injected so the ledger can book OpenRouter's own reported charge instead of an
+estimate. `account.openrouter.provider` and `fallbackModels` are injected only for top-level keys
+the client did not set — a client-supplied `provider` block reaches the upstream verbatim.
+
+> ⚠️ **`openrouter` is a non-subscription provider, so an omitted `allowedProviders` on a client
+> ("all non-subscription providers") grants that client this account's BILLED key.** Scope it
+> explicitly, or bound it with `monthlyCostCapUsd`.
+
+Live verification (🛑 spends real money):
+
+```bash
+bun src/ai-proxy/scripts/verify-openrouter-live.ts --models 20 --images
+```
+
+It runs every model on BOTH surfaces (plugin and relay) inside a temp `GENESIS_TOOLS_HOME`, and
+prints upstream-reported cost next to the catalog's derived cost per row. That delta column is how
+the pricing module is checked against ground truth.
 
 ## Usage analytics
 
