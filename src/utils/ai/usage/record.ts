@@ -110,6 +110,20 @@ function toDate(at: UsageEventInput["at"]): Date {
  * than zero.
  */
 function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): number | undefined {
+    const cacheRead = usageCacheReadTokens(usage);
+    const cacheWrite = usageCacheWriteTokens(usage);
+    const billableTokens = event.inputTokens + event.outputTokens + cacheRead + cacheWrite;
+
+    // A token rate applied to ZERO tokens is exactly 0, and booking that says
+    // "this call was free" when the truth is "this call is not token-priced at
+    // all". `ai.image()` is the case that surfaced it: an image is priced per
+    // image, so a derived 0 would have hidden real spend behind a $0.00 row and
+    // kept it out of `unpricedEvents` too. An emitter that knows a non-token cost
+    // passes `costUsd` itself.
+    if (billableTokens === 0) {
+        return undefined;
+    }
+
     const rates = catalogPricing(event.provider, event.modelId);
 
     if (!rates) {
@@ -122,7 +136,7 @@ function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): numb
     // crosses the >200k rule and books at the sub-200k rates.
     const resolved = effectivePricing(rates, {
         at: new Date(event.at),
-        contextTokens: event.inputTokens + usageCacheReadTokens(usage) + usageCacheWriteTokens(usage),
+        contextTokens: event.inputTokens + cacheRead + cacheWrite,
     });
 
     if (usage) {

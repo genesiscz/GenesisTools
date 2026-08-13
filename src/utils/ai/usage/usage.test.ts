@@ -178,6 +178,37 @@ describe("recordUsage", () => {
         }
     });
 
+    /**
+     * A token rate applied to ZERO tokens is exactly 0, and booking that asserts
+     * "free" where the truth is "not token-priced". `ai.image()` is the caller
+     * that surfaced it: a per-image charge would have hidden behind a $0.00 row
+     * and stayed out of `unpricedEvents` as well.
+     */
+    test("a zero-token event derives no cost, so it counts as unpriced rather than free", async () => {
+        const event = await recordUsage(
+            input({ provider: "anthropic", modelId: "claude-opus-5", inputTokens: 0, outputTokens: 0 })
+        );
+
+        expect("costUsd" in event).toBe(false);
+        expect(event.costSource).toBeUndefined();
+    });
+
+    /** Negative control: a cache-read-only call has real billable tokens and must still price. */
+    test("a call billed only for cache reads still derives a cost", async () => {
+        const event = await recordUsage(
+            input({
+                provider: "anthropic",
+                modelId: "claude-opus-5",
+                inputTokens: 0,
+                outputTokens: 0,
+                usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 500_000 },
+            })
+        );
+
+        expect(event.costUsd).toBeGreaterThan(0);
+        expect(event.costSource).toBe("catalog");
+    });
+
     test("keeps meta on the round-trip", async () => {
         await recordUsage(
             input({ at: "2026-03-05T00:00:00.000Z", meta: { kind: "bucket-snapshot", bucket: "five_hour" } })

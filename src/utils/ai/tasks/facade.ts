@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { embed as sdkEmbed, embedMany as sdkEmbedMany, generateImage as sdkGenerateImage } from "ai";
+import { openRouterExtras } from "../catalog/openrouter";
 import type { TaskName } from "../config/schema";
 import { type CallLLMOptions, type CallLLMResult, callLLM } from "../core/call";
 import type { ModelRef } from "../core/model-ref";
@@ -16,6 +17,7 @@ import type {
     TranslationResult,
     TTSResult,
 } from "../types";
+import { recordUsage } from "../usage";
 import { resolveForTask } from "./resolve-task";
 import type { SpeakOptions } from "./Synthesizer";
 import { Synthesizer } from "./Synthesizer";
@@ -61,6 +63,37 @@ export class NotImplementedError extends Error {
         super(`${what} is not implemented yet — ${where}`);
         this.name = "NotImplementedError";
     }
+}
+
+/**
+ * Book an image generation in the shared usage log.
+ *
+ * Image spend was invisible: this verb recorded nothing, and the SDK drops
+ * OpenRouter's reported `cost` from mapped image usage, so a run of image calls
+ * left no trace in `tools ai usage` at all.
+ *
+ * Images are not token-priced, so the row carries 0/0 tokens and its cost comes
+ * from the per-image fee instead. When no fee is known the event is still
+ * recorded, WITHOUT `costUsd` — absent means unknown, never zero, which is what
+ * keeps `unpricedEvents` able to say how much of a total is missing.
+ *
+ * Fired, not awaited: `recordUsage` never throws, and an accounting row must not
+ * sit between the provider's answer and the caller's return.
+ */
+function recordImageUsage(resolved: ResolvedBinding, images: number, app?: string): void {
+    const perImage =
+        resolved.plugin.id === "openrouter" ? openRouterExtras(resolved.model.id)?.imageOutputPerImage : undefined;
+
+    void recordUsage({
+        app: app ?? "ai-image",
+        accountId: resolved.account.id,
+        provider: resolved.account.provider,
+        modelId: resolved.model.id,
+        inputTokens: 0,
+        outputTokens: 0,
+        ...(perImage === undefined ? {} : { costUsd: perImage * images }),
+        meta: { kind: "image", images },
+    });
 }
 
 async function withBinding<T>(
@@ -286,6 +319,8 @@ export const ai = {
                     { provider: resolved.plugin.id, model: resolved.model.id, images: result.images.length },
                     "generated images"
                 );
+
+                recordImageUsage(resolved, result.images.length, options?.app);
 
                 return {
                     images: result.images.map((image) => image.uint8Array),
