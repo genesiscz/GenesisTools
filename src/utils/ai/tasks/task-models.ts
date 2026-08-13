@@ -22,7 +22,9 @@ import type { Capability } from "../providers/plugin-types";
 const STATIC_TASK_MODELS: Record<string, Partial<Record<Capability, string>>> = {
     openai: { transcribe: "whisper-1", tts: "tts-1", embed: "text-embedding-3-small" },
     groq: { transcribe: "whisper-large-v3" },
-    openrouter: { transcribe: "openai/whisper-1" },
+    // `GET /models` lists zero embedding models, so nothing can enumerate one for
+    // OpenRouter — this table is the only place the embed default can come from.
+    openrouter: { transcribe: "openai/whisper-1", embed: "openai/text-embedding-3-small" },
     // xAI's TTS is voice-addressed rather than model-addressed (the REST body
     // carries `voice_id`, providers/xai/AIXAITextToSpeechProvider.ts:98), so the
     // id here only names the product for logs and cache keys.

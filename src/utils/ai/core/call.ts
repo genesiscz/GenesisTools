@@ -1,3 +1,4 @@
+import type { SharedV4ProviderMetadata } from "@ai-sdk/provider";
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import {
@@ -218,8 +219,9 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
 
     if (!options.stream) {
         const result = await generateText(args);
+        const costUsd = upstreamCostUsd(result.providerMetadata);
 
-        logUsage(target, result.usage);
+        logUsage({ target, usage: result.usage, ...(costUsd === undefined ? {} : { costUsd }) });
 
         return {
             content: result.text,
@@ -257,11 +259,33 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
 
     const usage = await result.usage;
     const response = await result.response;
+    const costUsd = upstreamCostUsd(await result.providerMetadata);
 
-    logUsage(target, usage);
+    logUsage({ target, usage, ...(costUsd === undefined ? {} : { costUsd }) });
     log.debug({ model: target.label, chars: content.length }, "stream drained");
 
     return { content, usage, responseMessages: response.messages as ModelMessage[] };
+}
+
+/**
+ * The charge OpenRouter itself reports for the route it actually took.
+ *
+ * Keyed explicitly on `openrouter` rather than generically on "whatever provider
+ * put a `cost` in its metadata": another provider's differently-scaled `cost`
+ * (credits, cents, per-1K) picked up by accident would be booked as dollars and
+ * never questioned again, because the usage log is append-only.
+ *
+ * Requires `usage.include` on the request, which the openrouter plugin sets at
+ * bind time and `buildProviderOptions` sets for every other call site.
+ */
+function upstreamCostUsd(providerMetadata: SharedV4ProviderMetadata | undefined): number | undefined {
+    const cost = (providerMetadata?.openrouter as { usage?: { cost?: unknown } } | undefined)?.usage?.cost;
+
+    if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) {
+        return undefined;
+    }
+
+    return cost;
 }
 
 /**
@@ -272,7 +296,15 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
  * write between the provider's last token and the caller's return. A usage row
  * is accounting; the answer is the product.
  */
-function logUsage(target: CallTarget, usage: LanguageModelUsage | undefined): void {
+function logUsage({
+    target,
+    usage,
+    costUsd,
+}: {
+    target: CallTarget;
+    usage: LanguageModelUsage | undefined;
+    costUsd?: number;
+}): void {
     // The SDK always hands back a usage OBJECT; a provider that reported nothing
     // shows up as undefined token counts inside it. Both spellings mean the same
     // thing, and recording a 0/0 row for them would assert this call cost $0
@@ -300,6 +332,9 @@ function logUsage(target: CallTarget, usage: LanguageModelUsage | undefined): vo
         // The frozen event shape has no cache columns, so the counts ride in
         // `meta` while `usage` (unstored) lets the cost use the real cache rates.
         usage,
+        // An upstream-reported charge beats anything the catalog can derive, and
+        // `recordUsage` marks it `costSource: "supplied"` so the two never blur.
+        ...(costUsd === undefined ? {} : { costUsd }),
         ...(cacheRead > 0 || cacheWrite > 0
             ? { meta: { cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite } }
             : {}),

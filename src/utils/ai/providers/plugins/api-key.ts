@@ -77,13 +77,6 @@ const SPECS: ApiKeyProviderSpec[] = [
         create: createOpenAI,
     },
     {
-        id: "openrouter",
-        envKeys: ["OPENROUTER_API_KEY"],
-        capabilities: ["chat", "summarize", "translate"],
-        baseURL: "https://openrouter.ai/api/v1",
-        create: createOpenAI,
-    },
-    {
         id: "jinaai",
         envKeys: ["JINA_AI_API_KEY"],
         capabilities: ["chat", "summarize", "translate", "embed", "rerank"],

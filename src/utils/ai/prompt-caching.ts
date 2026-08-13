@@ -44,5 +44,18 @@ export function buildProviderOptions(providerType?: string): SharedV2ProviderOpt
         };
     }
 
+    // OpenRouter reports its own charge for the exact route it took, but only when
+    // asked: the SDK sends `include_usage` in `strict` compatibility mode or when
+    // `usage.include` is true, and `createOpenRouter` defaults to `compatible`.
+    // The plugin sets it at bind time; this covers the call sites that reach the
+    // model some other way. Per-account provider routing cannot live here — this
+    // function is pure and has no account.
+    if (providerType === "openrouter") {
+        return {
+            ...anthropicCacheControl(),
+            openrouter: { usage: { include: true } },
+        };
+    }
+
     return anthropicCacheControl();
 }

@@ -7,6 +7,7 @@ import { githubCopilotPlugin } from "./plugins/github-copilot";
 import { grokSubPlugin } from "./plugins/grok-sub";
 import { huggingFacePlugin } from "./plugins/huggingface";
 import { openAiSubPlugin } from "./plugins/openai-sub";
+import { openRouterPlugin } from "./plugins/openrouter";
 import { registerPlugin } from "./registry";
 
 /**
@@ -30,6 +31,10 @@ export function registerBuiltInPlugins(): void {
     registerPlugin(githubCopilotPlugin);
     registerPlugin(aiProxyPlugin);
     registerPlugin(huggingFacePlugin);
+    // The id must stay exactly "openrouter": seven files key off it, plus the
+    // grandfathered `acc_env_openrouter` account and every user config already
+    // naming it.
+    registerPlugin(openRouterPlugin);
 
     for (const plugin of [...apiKeyPlugins, ...asrVendorPlugins, ...localPlugins]) {
         registerPlugin(plugin);

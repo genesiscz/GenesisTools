@@ -159,8 +159,11 @@ export interface TranscriptionProviderOptionInput {
  * auto-detect per 30s window and hallucinate/loop on non-English audio.
  * So `language` MUST be threaded here for every provider.
  *
- * The outer key is the AI SDK *provider id*, not our internal name:
- * `openrouter` is created via `createOpenAI(...)` so its id is `openai`.
+ * The outer key is the AI SDK *provider id*, not our internal name. `openrouter`
+ * maps to `openai` because its transcription model genuinely IS an
+ * `@ai-sdk/openai` model: `OpenRouterProvider` has no `transcriptionModel`, so
+ * the openrouter plugin builds a second, transcription-only `createOpenAI`
+ * instance pointed at OpenRouter's base URL.
  */
 export function buildTranscriptionProviderOptions(
     provider: string,
