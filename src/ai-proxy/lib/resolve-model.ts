@@ -1,5 +1,6 @@
 import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { openRouterModelSync } from "@genesiscz/utils/ai/catalog/openrouter";
 
 export interface ParsedModelId {
     accountName: string;
@@ -7,7 +8,8 @@ export interface ParsedModelId {
     upstreamId: string;
 }
 
-const FULL_MODEL_ID_HINT = "Use a full <account>/<provider>/<model> id.";
+const FULL_MODEL_ID_HINT =
+    "Use a full <account>/<provider>/<model> id, e.g. default/openrouter/anthropic/claude-sonnet-5.";
 
 export function parseProxyModelId(proxyModelId: string): ParsedModelId {
     const parts = proxyModelId.split("/");
@@ -72,6 +74,33 @@ function resolveProviderUpstreamModel(providerSlug: string, upstreamId: string, 
     return resolveFromAccountMatches(matches, upstreamId, `${providerSlug}/${upstreamId}`);
 }
 
+/**
+ * The last resort: a whole slashed string IS one upstream model id.
+ *
+ * OpenRouter's ids contain a slash (`anthropic/claude-sonnet-5`), which collides
+ * head-on with this module's `<account>/<provider>/<model>` grammar. Only
+ * openrouter accounts can answer such a request, so only they are considered.
+ *
+ * 🛑 **Catalog-gated, not unconditional.** Ungated, `xai/grok-4.5` on a box with
+ * no xai account would stop throwing a clear local error and instead become an
+ * upstream 404 charged through a BILLED account. Gated, `anthropic/claude-sonnet-5`
+ * resolves because OpenRouter really serves it, and `xai/grok-4.5` keeps throwing
+ * because it does not. When the catalog is unavailable the gate never opens and
+ * behaviour is bit-identical to before this fallback existed.
+ *
+ * `openRouterModelSync` reads a memoized file and never the network — this runs
+ * on every routed request.
+ */
+function resolveCatalogGatedUpstreamModel(upstreamId: string, accounts: AiProxyAccountConfig[]) {
+    if (!openRouterModelSync(upstreamId)) {
+        return undefined;
+    }
+
+    const candidates = enabledImplementedAccounts(accounts).filter((account) => account.provider === "openrouter");
+
+    return resolveFromAccountMatches(candidates, upstreamId, upstreamId);
+}
+
 export function resolveModel(proxyModelId: string, accounts: AiProxyAccountConfig[]) {
     const trimmed = proxyModelId.trim();
 
@@ -102,10 +131,19 @@ export function resolveModel(proxyModelId: string, accounts: AiProxyAccountConfi
             );
         }
 
+        // The provider-slug reading is tried FIRST and therefore still wins, so an
+        // account whose slug is literally `anthropic` keeps answering
+        // `anthropic/claude-sonnet-5` exactly as it does today.
         const providerRoute = resolveProviderUpstreamModel(providerSlug, upstreamId, accounts);
 
         if (providerRoute) {
             return providerRoute;
+        }
+
+        const catalogRoute = resolveCatalogGatedUpstreamModel(trimmed, accounts);
+
+        if (catalogRoute) {
+            return catalogRoute;
         }
 
         throw new Error(
@@ -118,14 +156,34 @@ export function resolveModel(proxyModelId: string, accounts: AiProxyAccountConfi
         (item) => item.name === parsed.accountName && item.providerSlug === parsed.providerSlug
     );
 
-    if (!account) {
-        throw new Error(
-            `No enabled account for model '${proxyModelId}' (account='${parsed.accountName}', provider='${parsed.providerSlug}'). ${FULL_MODEL_ID_HINT}`
-        );
+    if (account) {
+        return {
+            ...parsed,
+            account,
+        };
     }
 
-    return {
-        ...parsed,
-        account,
-    };
+    // `@proxy/<slug>/anthropic/claude-sonnet-5` lands here: `parseProxyModelId`
+    // read the PROVIDER SLUG as the account name and the vendor prefix as the
+    // provider, because it counts slashes and an OpenRouter id contains one. This
+    // is the utils-to-proxy path, and without the retry it is broken end to end.
+    const shorthandRoute = resolveProviderUpstreamModel(
+        parsed.accountName,
+        `${parsed.providerSlug}/${parsed.upstreamId}`,
+        accounts
+    );
+
+    if (shorthandRoute) {
+        return shorthandRoute;
+    }
+
+    const catalogRoute = resolveCatalogGatedUpstreamModel(trimmed, accounts);
+
+    if (catalogRoute) {
+        return catalogRoute;
+    }
+
+    throw new Error(
+        `No enabled account for model '${proxyModelId}' (account='${parsed.accountName}', provider='${parsed.providerSlug}'). ${FULL_MODEL_ID_HINT}`
+    );
 }

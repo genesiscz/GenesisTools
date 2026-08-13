@@ -94,3 +94,83 @@ describe("resolve-model", () => {
         expect(route.upstreamId).toBe("grok-build");
     });
 });
+
+/**
+ * OpenRouter ids contain a slash, which collides head-on with this module's
+ * `<account>/<provider>/<model>` grammar. These cases pin BOTH directions: what
+ * newly resolves, and what must keep throwing.
+ */
+describe("resolve-model with openrouter accounts", () => {
+    const openRouterAccount = (name: string): AiProxyAccountConfig => ({
+        name,
+        provider: "openrouter",
+        providerSlug: "openrouter",
+        enabled: true,
+    });
+
+    it("resolves the fully qualified four-segment id", () => {
+        const route = resolveModel("default/openrouter/anthropic/claude-sonnet-5", [openRouterAccount("default")]);
+
+        expect(route.accountName).toBe("default");
+        expect(route.providerSlug).toBe("openrouter");
+        expect(route.upstreamId).toBe("anthropic/claude-sonnet-5");
+    });
+
+    /**
+     * This is the shape `core/model-ref.ts` produces for
+     * `@proxy/<slug>/openrouter/anthropic/...`: the account name is missing, so
+     * `parseProxyModelId` reads "openrouter" as the account and "anthropic" as the
+     * provider. Without the retry the utils-to-proxy path is broken end to end.
+     */
+    it("resolves the provider-slug shorthand the @proxy path produces", () => {
+        const route = resolveModel("openrouter/anthropic/claude-sonnet-5", [openRouterAccount("default")]);
+
+        expect(route.accountName).toBe("default");
+        expect(route.providerSlug).toBe("openrouter");
+        expect(route.upstreamId).toBe("anthropic/claude-sonnet-5");
+    });
+
+    it("resolves a bare openrouter id, slash preserved", () => {
+        const route = resolveModel("anthropic/claude-sonnet-5", [openRouterAccount("default")]);
+
+        expect(route.accountName).toBe("default");
+        expect(route.upstreamId).toBe("anthropic/claude-sonnet-5");
+    });
+
+    /** The provider-slug reading is tried first, so it still wins where it applies. */
+    it("prefers an account whose providerSlug is literally the vendor prefix", () => {
+        const accounts: AiProxyAccountConfig[] = [
+            openRouterAccount("router"),
+            { name: "direct", provider: "anthropic-subscription", providerSlug: "anthropic", enabled: true },
+        ];
+
+        const route = resolveModel("anthropic/claude-sonnet-5", accounts);
+
+        expect(route.accountName).toBe("direct");
+        expect(route.providerSlug).toBe("anthropic");
+        expect(route.upstreamId).toBe("claude-sonnet-5");
+    });
+
+    it("reports two openrouter accounts as ambiguous rather than guessing", () => {
+        const accounts = [openRouterAccount("personal"), openRouterAccount("work")];
+
+        expect(() => resolveModel("anthropic/claude-sonnet-5", accounts)).toThrow("Ambiguous model");
+    });
+
+    /**
+     * 🛑 The gate. Ungated, this would stop throwing a clear local error and become
+     * an upstream 404 charged through a BILLED account. OpenRouter serves
+     * `x-ai/grok-4.5`, never `xai/grok-4.5`, so the catalog says no.
+     */
+    it("still throws for a slashed id openrouter does not serve", () => {
+        expect(() => resolveModel("xai/grok-4.5", [openRouterAccount("default")])).toThrow(
+            "No enabled account for model"
+        );
+    });
+
+    it("still throws when no openrouter account exists at all", () => {
+        expect(() => resolveModel("anthropic/claude-sonnet-5", [grokAccount("martin")])).toThrow(
+            "No enabled account for model"
+        );
+    });
+});
