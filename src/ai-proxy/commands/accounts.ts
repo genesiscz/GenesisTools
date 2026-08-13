@@ -1,7 +1,7 @@
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
-import { apiKeyStatus, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
+import { apiKeyStatus, defaultApiKeyEnvName, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
 import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
 import type {
     AiProxyAccountConfig,
@@ -326,7 +326,11 @@ async function chooseCredential(input: {
     out.log.info(RESTART_HINT);
 }
 
-export async function runAccountsAllowEnv(name: string, allow: boolean): Promise<void> {
+export async function runAccountsAllowEnv(
+    name: string,
+    allow: boolean,
+    options: { envName?: string } = {}
+): Promise<void> {
     const config = await loadConfig();
     const account = config.accounts.find((item) => item.name === name);
 
@@ -341,13 +345,23 @@ export async function runAccountsAllowEnv(name: string, allow: boolean): Promise
         return;
     }
 
+    if (options.envName && !allow) {
+        out.log.warn("--env only applies when opting in — pass allow-env without --off.");
+        return;
+    }
+
     const hadOverride = Boolean(account.apiKey);
+    const previousEnvName = account.apiKeyEnv;
 
     if (allow) {
         // A stored key would win anyway, so keeping both would leave the config
         // claiming an intention the proxy does not act on.
         delete account.apiKey;
         account.allowEnvApiKey = true;
+
+        if (options.envName) {
+            account.apiKeyEnv = options.envName;
+        }
     } else {
         delete account.allowEnvApiKey;
     }
@@ -355,13 +369,18 @@ export async function runAccountsAllowEnv(name: string, allow: boolean): Promise
     await saveConfig(config);
 
     if (allow) {
-        out.log.success(`"${name}" may now resolve its billed API key from the environment.`);
+        const envName = defaultApiKeyEnvName(account);
+        out.log.success(`"${name}" may now resolve its billed API key from the environment (${envName}).`);
+
+        if (options.envName && previousEnvName && previousEnvName !== options.envName) {
+            out.log.warn(`Was reading from ${previousEnvName} — now reads from ${options.envName}.`);
+        }
 
         if (hadOverride) {
             out.log.warn("Removed the key that was stored on the account — the environment key is used instead.");
         }
 
-        out.log.warn("Every call on this account spends metered money on whatever key the environment holds.");
+        out.log.warn(`Every call on this account spends metered money on whatever key ${envName} holds.`);
     } else {
         out.log.success(`"${name}" will no longer pick up a billed API key from the environment.`);
 

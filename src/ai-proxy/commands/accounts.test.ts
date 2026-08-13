@@ -130,6 +130,33 @@ describe("runAccountsAllowEnv", () => {
 
         expect((await readAccount("grok"))?.allowEnvApiKey).toBeUndefined();
     });
+
+    it("--env points the account at a custom variable name", async () => {
+        await seed(account({ provider: "openrouter", providerSlug: "openrouter" }));
+
+        await runAccountsAllowEnv("work", true, { envName: "GT_OPENROUTER_API_KEY" });
+
+        const stored = await readAccount("work");
+        expect(stored?.allowEnvApiKey).toBe(true);
+        expect(stored?.apiKeyEnv).toBe("GT_OPENROUTER_API_KEY");
+    });
+
+    it("--env replaces a previously-named variable", async () => {
+        await seed(account({ provider: "openrouter", providerSlug: "openrouter", apiKeyEnv: "OLD_KEY_NAME" }));
+
+        await runAccountsAllowEnv("work", true, { envName: "NEW_KEY_NAME" });
+
+        expect((await readAccount("work"))?.apiKeyEnv).toBe("NEW_KEY_NAME");
+    });
+
+    it("--env is refused together with --off — there is nothing to opt a variable into", async () => {
+        await seed(account({ provider: "openrouter", providerSlug: "openrouter" }));
+
+        await runAccountsAllowEnv("work", false, { envName: "GT_OPENROUTER_API_KEY" });
+
+        expect((await readAccount("work"))?.apiKeyEnv).toBeUndefined();
+        expect((await readAccount("work"))?.allowEnvApiKey).toBeUndefined();
+    });
 });
 
 function openrouterAccount(overrides: Partial<AiProxyAccountConfig> = {}): AiProxyAccountConfig {

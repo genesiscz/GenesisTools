@@ -367,8 +367,9 @@ accountsCmd
     .command("allow-env <name>")
     .description("Non-interactive form of set-key's env choice (clears any stored key; --off revokes)")
     .option("--off", "revoke the opt-in")
-    .action(async (name: string, options: { off?: boolean }) => {
-        await runAccountsAllowEnv(name, !options.off);
+    .option("--env <NAME>", "Read the key from this env var instead of the provider's default name")
+    .action(async (name: string, options: { off?: boolean; env?: string }) => {
+        await runAccountsAllowEnv(name, !options.off, { envName: options.env });
     });
 
 accountsCmd
