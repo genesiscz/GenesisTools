@@ -1,11 +1,13 @@
 #!/usr/bin/env bun
 
 import {
+    type AccountsRoutingPatch,
     runAccountsAllowEnv,
     runAccountsList,
     runAccountsRemove,
     runAccountsSetEnabled,
     runAccountsSetKey,
+    runAccountsSetRouting,
     runAccountsStatus,
     runAccountsTest,
 } from "@app/ai-proxy/commands/accounts";
@@ -297,6 +299,19 @@ program
         await runUsageCommand(options);
     });
 
+function parseCsvOption(value?: string): string[] | undefined {
+    if (!value) {
+        return undefined;
+    }
+
+    const items = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+    return items.length > 0 ? items : undefined;
+}
+
 const accountsCmd = program.command("accounts").description("Manage configured accounts");
 
 accountsCmd
@@ -355,6 +370,65 @@ accountsCmd
     .action(async (name: string, options: { off?: boolean }) => {
         await runAccountsAllowEnv(name, !options.off);
     });
+
+accountsCmd
+    .command("set-routing <name>")
+    .description("Pin an OpenRouter account's provider routing (order/only/ignore/sort/fallbacks)")
+    .option("--order <providers>", "Comma-separated provider names, most preferred first")
+    .option("--only <providers>", "Comma-separated provider names — route ONLY to these")
+    .option("--ignore <providers>", "Comma-separated provider names to never route to")
+    .option("--sort <mode>", "price|throughput|latency", (value: string) => {
+        if (value !== "price" && value !== "throughput" && value !== "latency") {
+            throw new Error(`--sort must be price, throughput, or latency (got "${value}")`);
+        }
+
+        return value;
+    })
+    .option("--allow-fallbacks", "Allow OpenRouter to fall back beyond the pinned/allowed providers")
+    .option("--no-allow-fallbacks", "Refuse fallback — only the pinned/allowed providers may serve the request")
+    .option("--require-parameters", "Only route to providers supporting every parameter in the request")
+    .option("--no-require-parameters", "Allow providers that silently drop unsupported parameters")
+    .option("--data-collection <mode>", "allow|deny", (value: string) => {
+        if (value !== "allow" && value !== "deny") {
+            throw new Error(`--data-collection must be allow or deny (got "${value}")`);
+        }
+
+        return value;
+    })
+    .option("--fallback-models <ids>", "Comma-separated OpenRouter model ids to try if the primary one fails")
+    .option("--clear", "Remove all provider-routing pins for this account")
+    .action(
+        async (
+            name: string,
+            options: {
+                order?: string;
+                only?: string;
+                ignore?: string;
+                sort?: "price" | "throughput" | "latency";
+                allowFallbacks?: boolean;
+                requireParameters?: boolean;
+                dataCollection?: "allow" | "deny";
+                fallbackModels?: string;
+                clear?: boolean;
+            },
+            command: Command
+        ) => {
+            const patch: AccountsRoutingPatch = {
+                order: parseCsvOption(options.order),
+                only: parseCsvOption(options.only),
+                ignore: parseCsvOption(options.ignore),
+                sort: options.sort,
+                allowFallbacks:
+                    command.getOptionValueSource("allowFallbacks") === "cli" ? options.allowFallbacks : undefined,
+                requireParameters:
+                    command.getOptionValueSource("requireParameters") === "cli" ? options.requireParameters : undefined,
+                dataCollection: options.dataCollection,
+                fallbackModels: parseCsvOption(options.fallbackModels),
+            };
+
+            await runAccountsSetRouting(name, patch, { clear: options.clear });
+        }
+    );
 
 accountsCmd
     .command("remove <name>")

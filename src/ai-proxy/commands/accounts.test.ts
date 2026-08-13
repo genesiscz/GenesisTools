@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAccountsAllowEnv, runAccountsSetKey } from "@app/ai-proxy/commands/accounts";
+import { runAccountsAllowEnv, runAccountsSetKey, runAccountsSetRouting } from "@app/ai-proxy/commands/accounts";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
@@ -129,5 +129,104 @@ describe("runAccountsAllowEnv", () => {
         await runAccountsAllowEnv("grok", true);
 
         expect((await readAccount("grok"))?.allowEnvApiKey).toBeUndefined();
+    });
+});
+
+function openrouterAccount(overrides: Partial<AiProxyAccountConfig> = {}): AiProxyAccountConfig {
+    return account({ name: "router", provider: "openrouter", providerSlug: "openrouter", ...overrides });
+}
+
+describe("runAccountsSetRouting", () => {
+    it("writes a provider pin onto an account with no prior routing config", async () => {
+        await seed(openrouterAccount());
+
+        await runAccountsSetRouting("router", { order: ["Morph", "DeepInfra"], allowFallbacks: false }, {});
+
+        const stored = await readAccount("router");
+        expect(stored?.openrouter?.provider).toEqual({ order: ["Morph", "DeepInfra"], allow_fallbacks: false });
+    });
+
+    it("merges into an existing routing config without clobbering the models filter", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: {
+                    models: { include: ["anthropic/*"] },
+                    provider: { order: ["Morph"], allow_fallbacks: false },
+                },
+            })
+        );
+
+        await runAccountsSetRouting("router", { ignore: ["Together"] }, {});
+
+        const stored = await readAccount("router");
+        expect(stored?.openrouter?.models).toEqual({ include: ["anthropic/*"] });
+        // order/allow_fallbacks were not part of this patch and must survive.
+        expect(stored?.openrouter?.provider).toEqual({
+            order: ["Morph"],
+            allow_fallbacks: false,
+            ignore: ["Together"],
+        });
+    });
+
+    it("sets the fallbackModels list independently of the provider block", async () => {
+        await seed(openrouterAccount());
+
+        await runAccountsSetRouting("router", { fallbackModels: ["a/b", "c/d"] }, {});
+
+        const stored = await readAccount("router");
+        expect(stored?.openrouter?.fallbackModels).toEqual(["a/b", "c/d"]);
+        // No provider fields were patched and none pre-existed — no stray `provider: {}`.
+        expect(stored?.openrouter?.provider).toBeUndefined();
+    });
+
+    it("--clear removes the pin but keeps an unrelated models filter", async () => {
+        await seed(
+            openrouterAccount({
+                openrouter: {
+                    models: { include: ["anthropic/*"] },
+                    provider: { order: ["Morph"], allow_fallbacks: false },
+                    fallbackModels: ["a/b"],
+                },
+            })
+        );
+
+        await runAccountsSetRouting("router", {}, { clear: true });
+
+        const stored = await readAccount("router");
+        expect(stored?.openrouter?.provider).toBeUndefined();
+        expect(stored?.openrouter?.fallbackModels).toBeUndefined();
+        expect(stored?.openrouter?.models).toEqual({ include: ["anthropic/*"] });
+    });
+
+    it("--clear drops the whole openrouter block when nothing else is left", async () => {
+        await seed(openrouterAccount({ openrouter: { provider: { order: ["Morph"] } } }));
+
+        await runAccountsSetRouting("router", {}, { clear: true });
+
+        expect((await readAccount("router"))?.openrouter).toBeUndefined();
+    });
+
+    it("changes nothing when no routing fields and no --clear are given", async () => {
+        await seed(openrouterAccount({ openrouter: { provider: { order: ["Morph"] } } }));
+
+        await runAccountsSetRouting("router", {}, {});
+
+        expect((await readAccount("router"))?.openrouter?.provider).toEqual({ order: ["Morph"] });
+    });
+
+    it("refuses to pin routing on a non-openrouter account", async () => {
+        await seed(account({ provider: "xai-api-key" }));
+
+        await runAccountsSetRouting("work", { order: ["Morph"] }, {});
+
+        expect((await readAccount("work"))?.openrouter).toBeUndefined();
+    });
+
+    it("changes nothing for an account that does not exist", async () => {
+        await seed(openrouterAccount());
+
+        await runAccountsSetRouting("missing", { order: ["Morph"] }, {});
+
+        expect((await loadConfig()).accounts).toHaveLength(1);
     });
 });

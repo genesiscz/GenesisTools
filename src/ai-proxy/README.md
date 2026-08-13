@@ -191,6 +191,20 @@ when streaming) is injected so the ledger can book OpenRouter's own reported cha
 estimate. `account.openrouter.provider` and `fallbackModels` are injected only for top-level keys
 the client did not set — a client-supplied `provider` block reaches the upstream verbatim.
 
+**Setting the account-level pin from the CLI** (writes `account.openrouter.provider` /
+`fallbackModels`; hot-reloads on the next request, no restart):
+
+```bash
+tools ai-proxy accounts set-routing router --order Morph,DeepInfra,Fireworks --no-allow-fallbacks
+tools ai-proxy accounts set-routing router --ignore Chutes,Together --sort price
+tools ai-proxy accounts set-routing router --fallback-models qwen/qwen3.7-flash,deepseek/deepseek-v4-flash
+tools ai-proxy accounts set-routing router --clear
+```
+
+`--order/--only/--ignore/--fallback-models` take a comma-separated list; each flag patches only
+the fields it names, leaving the rest (and the `models` filter) untouched. `--clear` removes the
+routing pin entirely, keeping any `models` filter on the account.
+
 > ⚠️ **`openrouter` is a non-subscription provider, so an omitted `allowedProviders` on a client
 > ("all non-subscription providers") grants that client this account's BILLED key.** Scope it
 > explicitly, or bound it with `monthlyCostCapUsd`.

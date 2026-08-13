@@ -3,10 +3,15 @@ import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { type AccountListRow, displayAccountsTable, displayAccountTestResult } from "@app/ai-proxy/lib/display";
 import { apiKeyStatus, findEnvSourceFile } from "@app/ai-proxy/lib/providers/api-key-state";
 import { createProvider, isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
-import type { AiProxyAccountConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
+import type {
+    AiProxyAccountConfig,
+    AiProxyOpenRouterAccountConfig,
+    AiProxyProviderType,
+} from "@app/ai-proxy/lib/types";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { CODEX_AUTH_PATH, extractPlanType, readCodexAuthJson } from "@genesiscz/utils/ai/openai/codex-auth";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
 function cmd(replaceCommand: string[]): string {
@@ -366,6 +371,107 @@ export async function runAccountsAllowEnv(name: string, allow: boolean): Promise
     }
 
     out.log.info(RESTART_HINT);
+}
+
+/** Parsed, CLI-agnostic form of the `set-routing` flags — the thin door does the flag parsing. */
+export interface AccountsRoutingPatch {
+    order?: string[];
+    only?: string[];
+    ignore?: string[];
+    sort?: "price" | "throughput" | "latency";
+    allowFallbacks?: boolean;
+    requireParameters?: boolean;
+    dataCollection?: "allow" | "deny";
+    fallbackModels?: string[];
+}
+
+const HOT_RELOAD_HINT = "The running proxy re-reads config.json on its next request — no restart needed.";
+
+function hasRoutingPatch(patch: AccountsRoutingPatch): boolean {
+    return Boolean(
+        patch.order ||
+            patch.only ||
+            patch.ignore ||
+            patch.sort ||
+            patch.allowFallbacks !== undefined ||
+            patch.requireParameters !== undefined ||
+            patch.dataCollection ||
+            patch.fallbackModels
+    );
+}
+
+export async function runAccountsSetRouting(
+    name: string,
+    patch: AccountsRoutingPatch,
+    options: { clear?: boolean } = {}
+): Promise<void> {
+    const config = await loadConfig();
+    const account = config.accounts.find((item) => item.name === name);
+
+    if (!account) {
+        out.log.warn(`Account not found: ${name}`);
+        out.log.info(cmd(["accounts", "list"]));
+        return;
+    }
+
+    if (account.provider !== "openrouter") {
+        out.log.warn(`Account "${name}" is ${account.provider} — provider-routing pins are an OpenRouter feature.`);
+        return;
+    }
+
+    if (options.clear) {
+        if (account.openrouter) {
+            delete account.openrouter.provider;
+            delete account.openrouter.fallbackModels;
+
+            if (Object.keys(account.openrouter).length === 0) {
+                delete account.openrouter;
+            }
+        }
+
+        await saveConfig(config);
+        out.log.success(`Cleared provider routing for "${name}" — it now uses OpenRouter's own default routing.`);
+        out.log.info(HOT_RELOAD_HINT);
+        return;
+    }
+
+    if (!hasRoutingPatch(patch)) {
+        out.log.warn("No routing fields given — nothing changed.");
+        out.log.info(cmd(["accounts", "set-routing", name, "--order", "Morph,DeepInfra", "--no-allow-fallbacks"]));
+        return;
+    }
+
+    const existing: AiProxyOpenRouterAccountConfig = account.openrouter ?? {};
+    const mergedProvider = {
+        ...existing.provider,
+        ...(patch.order ? { order: patch.order } : {}),
+        ...(patch.only ? { only: patch.only } : {}),
+        ...(patch.ignore ? { ignore: patch.ignore } : {}),
+        ...(patch.sort ? { sort: patch.sort } : {}),
+        ...(patch.allowFallbacks !== undefined ? { allow_fallbacks: patch.allowFallbacks } : {}),
+        ...(patch.requireParameters !== undefined ? { require_parameters: patch.requireParameters } : {}),
+        ...(patch.dataCollection ? { data_collection: patch.dataCollection } : {}),
+    };
+
+    account.openrouter = {
+        ...existing,
+        ...(Object.keys(mergedProvider).length > 0 ? { provider: mergedProvider } : {}),
+        ...(patch.fallbackModels ? { fallbackModels: patch.fallbackModels } : {}),
+    };
+
+    await saveConfig(config);
+
+    out.log.success(`Updated provider routing for "${name}".`);
+
+    if (account.openrouter.provider) {
+        out.log.info(`  provider: ${SafeJSON.stringify(account.openrouter.provider) ?? "{}"}`);
+    }
+
+    if (account.openrouter.fallbackModels) {
+        out.log.info(`  fallbackModels: ${SafeJSON.stringify(account.openrouter.fallbackModels) ?? "[]"}`);
+    }
+
+    out.log.info(HOT_RELOAD_HINT);
 }
 
 export async function runAccountsRemove(name: string): Promise<void> {
