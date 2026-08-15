@@ -9,13 +9,13 @@
  * with exact jsonl path + line so another agent can jump straight to the event.
  */
 
-import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
-import { extractProjectName, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
+import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { escapeShellArg } from "@genesiscz/utils/string";
 
 // =============================================================================
 // Types
@@ -359,49 +359,59 @@ function excerptAroundError(body: string, firstError: string | undefined, max: n
 // files whose ONLY incident is one of those were previously invisible to the nomatch-only prefilter.
 const RG_PREFILTER = String.raw`(?:zsh|\(eval\)):\d+: (?:no matches found:|=[^\s]* not found|bad pattern|parse error near|event not found)|no matches found: |zsh quirks|nobareglobqual|One bad glob kills`;
 
-async function listCandidateFiles(projectsDir: string, project?: string): Promise<string[]> {
-    const roots: string[] = [];
-    if (project) {
-        // encoded dir or leaf name — let rg search the whole projects dir with a path filter later
-        roots.push(projectsDir);
-    } else {
-        roots.push(projectsDir);
+interface RgResult {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+}
+
+async function runRg(args: string[]): Promise<RgResult> {
+    const proc = Bun.spawn(["rg", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+
+    return { exitCode, stdout, stderr };
+}
+
+function splitFileList(stdout: string): string[] {
+    return stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+}
+
+/**
+ * The search ROOT, not a post-hoc path filter. `--project Foo` used to keep any path
+ * containing "Foo", so it also matched the encoded project `FooBar`, and the non-rg
+ * branch ignored the filter entirely. Resolving the directory up front also stops the
+ * scan from reading every other project before discarding it.
+ */
+function resolveScanRoot(projectsDir: string, project?: string): string {
+    if (!project) {
+        return projectsDir;
     }
 
-    return await new Promise((resolve, reject) => {
-        const args = ["-l", "--glob", "*.jsonl", "--regexp", RG_PREFILTER, ...roots];
-        const child = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
-        let out = "";
-        let err = "";
-        child.stdout.on("data", (c: Buffer) => {
-            out += c.toString();
-        });
-        child.stderr.on("data", (c: Buffer) => {
-            err += c.toString();
-        });
-        child.on("error", reject);
-        child.on("close", (code) => {
-            // rg exit 1 = no matches
-            if (code !== 0 && code !== 1) {
-                reject(new Error(`rg prefilter failed (exit ${code}): ${err.slice(0, 500)}`));
-                return;
-            }
+    const resolved = resolveProjectDir(project);
 
-            let files = out
-                .split("\n")
-                .map((l) => l.trim())
-                .filter(Boolean);
+    if (!resolved) {
+        throw new Error(`No Claude project directory matches "${project}" under ${projectsDir}`);
+    }
 
-            if (project) {
-                const needle = project.startsWith("-") ? project : `-${project}`;
-                files = files.filter(
-                    (f) => f.includes(needle) || f.includes(`/${project}/`) || f.includes(`-${project}/`)
-                );
-            }
+    return resolved;
+}
 
-            resolve(files);
-        });
-    });
+async function listCandidateFiles(root: string): Promise<string[]> {
+    const result = await runRg(["-l", "--glob", "*.jsonl", "--regexp", RG_PREFILTER, root]);
+
+    // rg exit 1 = no matches, which is an answer, not a failure.
+    if (result.exitCode !== 0 && result.exitCode !== 1) {
+        throw new Error(`rg prefilter failed (exit ${result.exitCode}): ${result.stderr.slice(0, 500)}`);
+    }
+
+    return splitFileList(result.stdout);
 }
 
 // =============================================================================
@@ -636,6 +646,13 @@ async function scanFile(
                     continue;
                 }
 
+                // Resolve and RETIRE the pending tool_use here, before any filtering: a
+                // successful Bash call takes one of the `continue`s below, and leaving its
+                // entry behind grew `pending` for the whole file on command-heavy sessions.
+                const tu = pending.get(b.tool_use_id) ?? null;
+                pending.delete(b.tool_use_id);
+                const command = tu?.command ?? null;
+
                 let body = "";
                 if (typeof b.content === "string") {
                     body = b.content;
@@ -672,9 +689,6 @@ async function scanFile(
                 if (combinedErrs.length === 0 && failedPatterns.length === 0) {
                     continue;
                 }
-
-                const tu = pending.get(b.tool_use_id);
-                const command = tu?.command ?? null;
 
                 // Unpaired results (Read/Grep/other tools) only count when the harness
                 // flagged them as errors — otherwise they QUOTE old incidents (reading a
@@ -744,8 +758,6 @@ async function scanFile(
                         facets,
                     })
                 );
-
-                pending.delete(b.tool_use_id);
             }
         }
     }
@@ -760,7 +772,10 @@ function makeFinding(
         repeatCount?: number;
     }
 ): ShellQuirkFinding {
-    const quote = (s: string): string => SafeJSON.stringify(s, { strict: true }) ?? `"${s}"`;
+    // JSON quoting is NOT shell quoting: command substitutions, backticks and $vars are all
+    // still live inside double quotes, and both the path and the error line come from
+    // transcript-controlled text that a user is invited to copy and run.
+    const quote = escapeShellArg;
     const locate = {
         sed:
             partial.toolUseLine != null
@@ -795,36 +810,27 @@ export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}
     const includeSubagents = options.includeSubagents ?? true;
     const useRg = options.useRgPrefilter ?? true;
 
+    const scanRoot = resolveScanRoot(projectsDir, options.project);
+
     let candidates: string[];
     if (useRg) {
-        candidates = await listCandidateFiles(projectsDir, options.project);
+        candidates = await listCandidateFiles(scanRoot);
     } else {
-        // Fallback: every jsonl under projectsDir via rg --files
-        candidates = await new Promise((resolve, reject) => {
-            const child = spawn("rg", ["--files", "--glob", "*.jsonl", projectsDir], {
-                stdio: ["ignore", "pipe", "pipe"],
-            });
-            let out = "";
-            child.stdout.on("data", (c: Buffer) => {
-                out += c.toString();
-            });
-            child.on("error", reject);
-            child.on("close", () => {
-                resolve(
-                    out
-                        .split("\n")
-                        .map((l) => l.trim())
-                        .filter(Boolean)
-                );
-            });
-        });
+        // Fallback: every jsonl under the resolved root via rg --files
+        const listed = await runRg(["--files", "--glob", "*.jsonl", scanRoot]);
+
+        if (listed.exitCode !== 0 && listed.exitCode !== 1) {
+            throw new Error(`rg --files failed (exit ${listed.exitCode}): ${listed.stderr.slice(0, 500)}`);
+        }
+
+        candidates = splitFileList(listed.stdout);
     }
 
     if (!includeSubagents) {
         candidates = candidates.filter((f) => !isSubagentPath(f));
     }
 
-    logger.info({ candidates: candidates.length, projectsDir }, "extractShellQuirks: candidates");
+    logger.info({ candidates: candidates.length, scanRoot }, "extractShellQuirks: candidates");
 
     const all: ShellQuirkFinding[] = [];
     let filesWithHits = 0;

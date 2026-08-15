@@ -402,13 +402,22 @@ export function registerHistoryCommand(program: Command): void {
                 output?: string;
                 json?: boolean;
                 md?: boolean;
-            }) => {
-                const project = options.project;
-                out.println(pc.dim("Scanning Claude session JSONLs for zsh/bash shell quirks…"));
+            },
+            cmd: Command
+            ) => {
+                // The parent `history` command also declares `-p, --project`, and commander
+                // binds a shared flag to the PARENT: without this fallback the subcommand
+                // never saw --project and silently scanned every project.
+                const parentOpts = cmd.parent?.opts<{ project?: string; all?: boolean }>();
+                const project = options.project ?? parentOpts?.project;
+                const scanAll = options.all ?? parentOpts?.all;
+                // Progress narration goes to stderr: stdout carries the machine result, and
+                // `--json` piped into a parser used to arrive wrapped in human text.
+                out.printlnErr(pc.dim("Scanning Claude session JSONLs for zsh/bash shell quirks…"));
 
                 const maxFindings = options.max ? parseInt(options.max, 10) : undefined;
                 const result = await extractShellQuirks({
-                    project: options.all ? undefined : project,
+                    project: scanAll ? undefined : project,
                     includeSubagents: !options.excludeAgents,
                     includeRuleCodification: options.ruleCodification !== false,
                     dedupe: options.dedupe !== false,
@@ -416,12 +425,12 @@ export function registerHistoryCommand(program: Command): void {
                     excerptChars: parseInt(options.excerpt, 10) || 1200,
                     onProgress: (done, total, file) => {
                         if (done === total || done % 25 === 0) {
-                            out.println(pc.dim(`  ${done}/${total}  ${basename(file)}`));
+                            out.printlnErr(pc.dim(`  ${done}/${total}  ${basename(file)}`));
                         }
                     },
                 });
 
-                out.println(
+                out.printlnErr(
                     pc.green(
                         `Done: ${result.findings.length} findings in ${result.filesWithHits}/${result.filesScanned} files (${result.elapsedMs} ms)`
                     )
@@ -455,7 +464,7 @@ export function registerHistoryCommand(program: Command): void {
                 if (options.output) {
                     mkdirSync(dirname(options.output), { recursive: true });
                     writeFileSync(options.output, md, "utf8");
-                    out.println(pc.cyan(`Wrote ${options.output}`));
+                    out.printlnErr(pc.cyan(`Wrote ${options.output}`));
                     return;
                 }
 
