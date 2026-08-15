@@ -54,6 +54,54 @@ export function registerDiscoveryCommands(program: Command): void {
         });
 
     program
+        .command("dump")
+        .description("Windows + every on-screen element with scroll-clip visibility (measurement JSON)")
+        .requiredOption("--app <name>", "app process name")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts) => {
+            const result = runAx(["dump", "--app", opts.app]);
+
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+
+            out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+        });
+
+    program
+        .command("typography")
+        .description("Rendered font name/size and sRGB rgba for every static text — contrast + size checks")
+        .requiredOption("--app <name>", "app process name")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts) => {
+            const result = runAx(["typography", "--app", opts.app]);
+
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+
+            out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+        });
+
+    program
+        .command("hittest")
+        .description("Which element the system actually delivers a click at this screen point to (no --app)")
+        .requiredOption("--at <x,y>", "screen coordinates, e.g. 640,480")
+        .option("--pretty", "indent JSON output (default compact)")
+        .action((opts) => {
+            const result = runAx(["hittest", "--at", opts.at]);
+
+            if (!result.ok) {
+                logger.error(String(result.error));
+                process.exit(1);
+            }
+
+            out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
+        });
+
+    program
         .command("find")
         .description(
             "Search for elements. Note: many apps (Chromium browsers, SwiftUI) expose visible text via AXDescription — try --desc or --q when --title finds nothing."
@@ -146,6 +194,7 @@ export function registerDiscoveryCommands(program: Command): void {
         .option("--width <n>", "resize: new width (points)")
         .option("--height <n>", "resize: new height (points)")
         .option("--window <title>", "target a specific window by title substring")
+        .option("--no-raise", "act on the window without pulling it forward first")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
@@ -154,6 +203,11 @@ export function registerDiscoveryCommands(program: Command): void {
                 if (opts[k] != null) {
                     axArgs.push(`--${k}`, String(opts[k]));
                 }
+            }
+
+            // Commander maps `--no-raise` to `raise: false`.
+            if (opts.raise === false) {
+                axArgs.push("--no-raise");
             }
             const result = runAx(axArgs);
             if (opts.json) {

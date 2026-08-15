@@ -110,10 +110,18 @@ export function registerInteractCommands(program: Command): void {
             .description("Activate app and optionally focus a specific element")
             .requiredOption("--app <name>", "app process name")
     )
+        .option("--no-activate", "focus the element WITHOUT raising the app (never steals the user's window)")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
-            const result = runAx(["focus", "--app", opts.app, ...targetArgs(opts)]);
+            const axArgs = ["focus", "--app", opts.app, ...targetArgs(opts)];
+
+            // Commander maps `--no-activate` to `activate: false`.
+            if (opts.activate === false) {
+                axArgs.push("--no-activate");
+            }
+
+            const result = runAx(axArgs);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
                 process.exit(result.ok === false ? 1 : 0);
@@ -161,10 +169,15 @@ export function registerInteractCommands(program: Command): void {
         .option("--end", "move the cursor to the end of the field before typing (append)")
         .option("--return", "press Return after typing")
         .option("--delay <ms>", "ms between keystrokes (default 8)")
+        .option("--to-pid <pid>", "deliver the keystrokes to THIS process only, not the global HID tap")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
             const axArgs = ["type", "--app", opts.app, "--text", opts.text, ...targetArgs(opts)];
+            if (opts.toPid) {
+                axArgs.push("--to-pid", String(opts.toPid));
+            }
+
             if (opts.clear) {
                 axArgs.push("--clear");
             }
@@ -202,6 +215,7 @@ export function registerInteractCommands(program: Command): void {
         )
         .option("--app <name>", "activate this app before sending keys")
         .option("--hold <ms>", "ms between key down and up")
+        .option("--to-pid <pid>", "deliver the combo to THIS process only, not the global HID tap")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
@@ -211,6 +225,9 @@ export function registerInteractCommands(program: Command): void {
             }
             if (opts.hold) {
                 axArgs.push("--hold", opts.hold);
+            }
+            if (opts.toPid) {
+                axArgs.push("--to-pid", String(opts.toPid));
             }
             const result = runAx(axArgs);
             if (opts.json) {

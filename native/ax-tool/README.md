@@ -18,15 +18,19 @@ Binary lands at `.build/release/ax-tool`. Requires Swift 5.9+, macOS 13+.
 
 Needs **Accessibility** access for the calling process (System Settings > Privacy & Security > Accessibility). `screenshot` additionally needs **Screen Recording**.
 
-## Commands (17)
+## Commands (24)
 
 | Group | Commands |
 |-------|----------|
-| Discovery | `list`, `tree`, `dump`, `find`, `window`, `attrs`, `actions`, `preflight` |
+| Discovery | `apps`, `list`, `tree`, `dump`, `find`, `window`, `attrs`, `actions`, `preflight` |
 | Measurement | `typography`, `hittest` |
 | Inspection | `get` |
-| Interaction | `press`, `perform`, `set`, `click`, `focus`, `type`, `hotkey`, `screenshot` |
-| State | `snapshot`, `restore` |
+| Interaction | `press`, `perform`, `set`, `click`, `scroll`, `focus`, `type`, `hotkey`, `screenshot` |
+| Vision | `ocr` |
+| State | `snapshot`, `restore`, `record` |
+
+`hittest` takes screen coordinates and no `--app`. `apps`, `hotkey`, `snapshot`, `restore`,
+`record` and `ocr --image` also run without one.
 
 All output is JSON on stdout: `{"ok": true, ...}` or `{"ok": false, "error": "..."}`.
 

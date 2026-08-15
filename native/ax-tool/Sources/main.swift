@@ -958,7 +958,8 @@ func cmdFocus(appName: String) {
     // the user works: this call was the single largest source of stolen
     // windows in an automated run, because focusing an element does not
     // actually require owning the keyboard.
-    if !args.contains("--no-activate") {
+    let noActivate = args.contains("--no-activate")
+    if !noActivate {
         _ = bringFrontmost(pid)
     }
 
@@ -973,10 +974,12 @@ func cmdFocus(appName: String) {
         result.merge(elementInfo(el)) { _, new in new }
         jsonOutput(result)
     } else {
-        if let w = axWindows(app).first {
+        // AXRaise pulls the window forward just as surely as activating does, so the
+        // no-target form has to honour --no-activate too or the flag's promise is empty.
+        if !noActivate, let w = axWindows(app).first {
             let _ = performActionWithTimeout(w, action: kAXRaiseAction as String, timeoutMs: 2000)
         }
-        jsonOutput(["ok": true, "action": "focus", "app": appName])
+        jsonOutput(["ok": true, "action": "focus", "app": appName, "raised": !noActivate])
     }
 }
 
@@ -2202,6 +2205,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool apps [--all]                                    List running apps (valid --app values)
       ax-tool list    --app <name> [--depth <n=10>]           List elements (flat, max 2000)
       ax-tool tree    --app <name> [--depth <n=10>]           Hierarchical tree (nested JSON)
+      ax-tool dump    --app <name>                            Windows + on-screen elements, scroll-clipped
+      ax-tool typography --app <name>                         Rendered font + sRGB rgba per static text
+      ax-tool hittest --at <x,y>                              Which element gets a click at that point
+                      (screen coordinates; takes no --app)
       ax-tool get     --app <name> <target>                    Read element attributes
       ax-tool set     --app <name> <target> --value <v>       Set + HARD VERIFY (reads field back, 1 retry)
       ax-tool press   --app <name> <target>                   Press (AXPress) an element
@@ -2210,8 +2217,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool perform --app <name> <target> --action <a>      Perform any AX action
       ax-tool find    --app <name> [--role R] [--title T] [--value V] [--desc D] [--subrole S]
                       [--text Q] [--q Q] [--window W] [--exact]
-      ax-tool window  --app <name> [--action move|resize|minimize|maximize|close|focus]
-      ax-tool focus   --app <name> [<target>]                 Activate app + focus element
+      ax-tool window  --app <name> [--action move|resize|minimize|maximize|close|focus] [--no-raise]
+                      --no-raise: act on the window without pulling it forward first
+      ax-tool focus   --app <name> [<target>] [--no-activate] Activate app + focus element
+                      --no-activate: focus WITHOUT raising the app (never steals the user's window)
       ax-tool click   --app <name> <target>                   CGEvent click at element center
       ax-tool type    --app <name> --text <str> [<target>]    Type + HARD VERIFY ([--clear] [--end] [--return])
                       (inserts at the CURRENT cursor; --end jumps to end first, --clear replaces all)
@@ -2226,6 +2235,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot
       ax-tool record [--out <f.jsonl>] [--duration <s>]       Stream user activity as NDJSON
                       (clicks resolved to AX elements; keys; scrolls; SIGINT to stop)
+
+    Safety flags: --to-pid <pid> confines synthetic key/mouse events to ONE process
+    instead of the global HID tap (an invalid value is rejected, never downgraded).
+    --no-activate / --no-raise keep automation from stealing the user's window.
 
     Target: --id <axId>, --q <query> (universal cascade), or any combo of
     --role/--title/--desc/--subrole [--window W] [--exact].
@@ -2249,6 +2262,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool screenshot --app Genesis --window "Genesis" --path /tmp/g.png --crop 0,0,1800,300
       ax-tool hotkey --keys cmd,w --app "Brave Browser"
       ax-tool window --app Finder --action move --x 100 --y 100
+      ax-tool hittest --at 640,480
+      ax-tool typography --app Genesis
+      ax-tool focus --app Genesis --id auth-email --no-activate
+      ax-tool type --app Genesis --text hi --to-pid 4213
     """
     print(help)
     exit(args.count < 2 ? 2 : 0)
@@ -2288,6 +2305,16 @@ if command == "record" {
     cmdRecord()
     exit(0)
 }
+// `hittest` asks the window server what is under a SCREEN point — it does not resolve an
+// app, so requiring `--app` here made the documented `ax-tool hittest --at 640,480` unusable.
+if command == "hittest" {
+    guard let raw = argValue("--at"), case let parts = raw.split(separator: ","), parts.count == 2,
+          let hx = Double(parts[0]), let hy = Double(parts[1]) else {
+        errorExit("hittest requires --at <x,y>")
+    }
+    cmdHitTest(x: hx, y: hy)
+    exit(0)
+}
 
 guard let appName = argValue("--app") else {
     errorExit("--app <name> required")
@@ -2308,11 +2335,18 @@ guard let appName = argValue("--app") else {
 /// single most valuable thing to have available here.
 extension CGEvent {
     func postRouted() {
-        if let raw = argValue("--to-pid"), let pid = pid_t(raw) {
-            self.postToPid(pid)
-        } else {
+        guard let raw = argValue("--to-pid") else {
             self.post(tap: .cghidEventTap)
+            return
         }
+
+        // A malformed --to-pid must NOT silently fall back to the global tap: the caller
+        // asked for a contained delivery, and the fallback types into the frontmost app.
+        guard let pid = pid_t(raw), pid > 0 else {
+            errorExit("--to-pid must be a positive process id (got \"\(raw)\")")
+        }
+
+        self.postToPid(pid)
     }
 }
 
@@ -2407,8 +2441,10 @@ func cmdDump(appName: String) {
         }
         walkClipped(w, clip: nil)
     }
-    printJSON(["windows": windowDicts, "elements": elementDicts],
-              fallback: "{\"windows\":[],\"elements\":[]}")
+    // Every response carries `ok` — src/control/lib/runner.ts parses stdout as AxResult
+    // and reads a missing `ok` as a failure, so a bare payload here is unconsumable.
+    printJSON(["ok": true, "windows": windowDicts, "elements": elementDicts],
+              fallback: "{\"ok\":false,\"error\":\"dump serialization failed\"}")
 }
 
 /// Rendered font and colour for every static text, from
@@ -2443,10 +2479,19 @@ func cmdTypography(appName: String) {
                         fontName = (fontInfo["AXFontName"] as? String) ?? ""
                         fontSize = (fontInfo["AXFontSize"] as? Double) ?? 0
                     }
+                    // AX attributes arrive as CFTypeRef: `as!` here crashed the whole sweep
+                    // whenever one app answered with something that was not a CGColor. And
+                    // `components` is colour-space dependent (grayscale gives two), so the
+                    // documented RGBA contract needs an explicit conversion, not raw values.
                     var rgba: [Double] = []
-                    if let colorRef = attrs[NSAttributedString.Key("AXForegroundColor")] {
+                    if let colorRef = attrs[NSAttributedString.Key("AXForegroundColor")],
+                       CFGetTypeID(colorRef as CFTypeRef) == CGColor.typeID {
                         let cg = colorRef as! CGColor
-                        rgba = (cg.components ?? []).map { Double($0) }
+                        if let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+                           let converted = cg.converted(to: srgb, intent: .defaultIntent, options: nil),
+                           let comps = converted.components, comps.count == 4 {
+                            rgba = comps.map { Double($0) }
+                        }
                     }
                     out.append([
                         "value": String(value.prefix(80)),
@@ -2458,7 +2503,8 @@ func cmdTypography(appName: String) {
         for c in axChildren(el) { walk(c, depth: depth + 1) }
     }
     for w in axWindows(app) { walk(w) }
-    printJSON(out, fallback: "[]")
+    printJSON(["ok": true, "typography": out],
+              fallback: "{\"ok\":false,\"error\":\"typography serialization failed\"}")
 }
 
 /// Which element does the system actually deliver a click at this point to?
@@ -2530,12 +2576,6 @@ case "dump":
     cmdDump(appName: appName)
 case "typography":
     cmdTypography(appName: appName)
-case "hittest":
-    guard let raw = argValue("--at"), case let parts = raw.split(separator: ","), parts.count == 2,
-          let hx = Double(parts[0]), let hy = Double(parts[1]) else {
-        errorExit("hittest requires --at <x,y>")
-    }
-    cmdHitTest(x: hx, y: hy)
 case "preflight":
     cmdPreflight(appName: appName, maxDepth: maxDepth)
 case "ocr":

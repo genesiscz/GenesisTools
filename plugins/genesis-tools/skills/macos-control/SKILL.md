@@ -163,6 +163,11 @@ tools control click --app Genesis --subrole AXMinimizeButton --window Genesis
 | `typography` | AXAttributedStringForRange | Rendered font/size/colour — legibility and contrast checks with no screenshots |
 | `hittest --at x,y` | AXUIElementCopyElementAtPosition | Is a control actually reachable, or is something drawn on top of it |
 
+Every row above is reachable as `tools control <command>`. `hittest` takes screen
+coordinates and no `--app`. `type` and `hotkey` accept `--to-pid <pid>`, which confines the
+synthetic events to that one process instead of the global HID tap; an invalid pid is
+rejected rather than downgraded to the global tap. `window` accepts `--no-raise`.
+
 ### `click` scroll-safety
 
 `click` checks if the element center is within any visible window bounds. If the element is scrolled out of view (e.g. below the fold in a scroll area), it falls back automatically:
