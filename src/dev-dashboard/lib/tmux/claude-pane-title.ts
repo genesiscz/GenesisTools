@@ -14,6 +14,12 @@ const CLAUDE_PANE_TITLE_RE = /^[✳*⠀-⣿]\s*(.+)$/u;
 /** Stock title before the user runs `/rename` — never promote this to a session name. */
 const CLAUDE_DEFAULT_TITLES = new Set(["claude code", "claude"]);
 
+/**
+ * The Claude topic as the user typed it. Marker extraction ONLY — punctuation is display
+ * text and must survive: a topic of `Fix v1.2 bug` used to render as `Fix v1-2 bug`
+ * because this shared the tmux-name sanitizer below, which also made a bound session
+ * disagree with the UI's own fallback parse of the same title.
+ */
 export function parseClaudePaneTitle(title: string | undefined | null): string | null {
     if (!title) {
         return null;
@@ -31,16 +37,22 @@ export function parseClaudePaneTitle(title: string | undefined | null): string |
         return null;
     }
 
-    // tmux session names cannot contain `:` or `.` — both are target-syntax separators.
-    // tmux 3.6a even silently munges a renamed session's dots to `_`, which would desync
-    // the stored binding name from the real session. Collapse whitespace; keep the rest.
-    const name = match[1].replace(/[:.]/g, "-").replace(/\s+/g, " ").trim();
+    const topic = match[1].replace(/\s+/g, " ").trim();
 
-    if (!name || CLAUDE_DEFAULT_TITLES.has(name.toLowerCase())) {
+    if (!topic || CLAUDE_DEFAULT_TITLES.has(topic.toLowerCase())) {
         return null;
     }
 
-    return name;
+    return topic;
+}
+
+/**
+ * Sanitize a topic for use as a tmux SESSION NAME. tmux names cannot contain `:` or `.` —
+ * both are target-syntax separators, and tmux 3.6a silently munges a renamed session's dots
+ * to `_`, which desyncs the stored binding name from the real session.
+ */
+export function tmuxSessionNameFromTopic(topic: string): string {
+    return topic.replace(/[:.]/g, "-").replace(/\s+/g, " ").trim();
 }
 
 export function isClaudeForegroundCommand(command: string | undefined): boolean {

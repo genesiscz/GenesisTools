@@ -52,8 +52,8 @@ export function tmuxRoutes(): RouteDef[] {
                     }
                 }
 
-                // Argument order preserved: `listTtyd()` can rename tmux sessions mid-call, and
-                // this list is deliberately the pre-rename snapshot.
+                // `listTtyd()` heals stale ttyd attach targets but never renames a tmux session,
+                // so the two listings cannot disagree about session names.
                 const tmuxSessions = await prof.measureAsync("tmux.listSessions", () => listTmuxSessions());
                 const ttydSessions = await prof.measureAsync("tmux.listTtyd", () => listTtyd());
                 const sessions = enrichSessionsForHub(tmuxSessions, ttydSessions, cmuxBySession);

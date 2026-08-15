@@ -650,8 +650,7 @@ export async function listTtyd(): Promise<TtydSession[]> {
     // concurrently. (hydrate stays sequential: prune reads the hydrated registry.)
     const [, panesByTmux] = await Promise.all([
         prof.measureAsync("list.prune", () => pruneDeadSessions()),
-        // One list-sessions call serving THREE consumers: heal's existence set,
-        // syncNames' pane titles, and the lastCommand enrichment below.
+        // One list-sessions call serving heal's existence set and the enrichment below.
         prof.measureAsync("list.activePanes", () => listTmuxSessionActivePanes()),
     ]);
 
@@ -683,7 +682,7 @@ export async function listTtyd(): Promise<TtydSession[]> {
  * OSC escape, so there is no way to honour only the deliberate ones. Surface the topic alongside
  * the name instead and let the name win wherever a single label is shown.
  */
-function claudeTopicForPane(pane: TmuxActivePaneInfo | undefined): string | null {
+export function claudeTopicForPane(pane: TmuxActivePaneInfo | undefined): string | null {
     if (!pane || !isClaudeForegroundCommand(pane.command)) {
         return null;
     }

@@ -21,31 +21,9 @@ import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { TmuxScrollState } from "@genesiscz/utils/tmux/sessions";
 
-export interface TmuxHubSession {
-    name: string;
-    attached: number;
-    windows: number;
-    /** Active-pane facts from tmux itself — the only meta available for a session with no ttyd. */
-    command?: string;
-    cwd?: string;
-    /** Raw `#{pane_title}`: Claude's `<spinner> <topic>`, a shell's own title, or absent. */
-    title?: string;
-    /** Unix seconds. */
-    created?: number;
-    lastActivity?: number;
-    ttydTabIds: string[];
-    ttydTabs: Array<{
-        id: string;
-        port: number;
-        label: string;
-        cwd?: string;
-        lastCommand?: string;
-        title?: string;
-    }>;
-    canAttachInTtyd: boolean;
-    cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;
-    inCmux: boolean;
-}
+// The wire shape is owned by the contract. Re-exported (not re-declared) so a server-side
+// field addition cannot silently drift from what this client reads.
+export type { TmuxHubSession, TtydHubTab } from "@app/dev-dashboard/contract/dto";
 
 /**
  * Shared fetch primitive for the dashboard UI: enforces `res.ok` and parses the

@@ -182,7 +182,9 @@ function SessionRow({
     onRemove?: () => void;
     onRenamed: (nextName: string) => void;
 }) {
-    const alreadyInTtyd = (session.ttydTabs?.length ?? session.ttydTabIds.length) > 0;
+    // `||`, not `??`: an EMPTY ttydTabs array is not an answer, and treating it as one hid
+    // the ttyd state of every session whose bindings only came through ttydTabIds.
+    const alreadyInTtyd = (session.ttydTabs?.length || session.ttydTabIds.length) > 0;
     const primaryTab = session.ttydTabs?.[0];
     // Fall back to tmux's own active-pane facts. Reading these only off the ttyd binding left every
     // unbound session (a plain `tools tmux create`) rendering as a bare name with no meta at all.

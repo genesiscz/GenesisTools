@@ -36,6 +36,24 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const skipBlurCommitRef = useRef(false);
 
+    /**
+     * Enter and blur must agree on what a rename IS. Enter used to forward the raw value,
+     * so it could commit an untrimmed or unchanged name that blur would have rejected.
+     */
+    const commitRename = (tab: ShellTab, raw: string, onRename?: (id: string, name: string) => void): void => {
+        const next = raw.trim();
+
+        if (next.length > 0 && next !== tab.label) {
+            onRename?.(tab.id, next);
+        }
+    };
+
+    /** Open the editor for a tab. Clears the blur guard so a previous edit cannot suppress this one. */
+    const startEditing = (id: string): void => {
+        skipBlurCommitRef.current = false;
+        setEditingId(id);
+    };
+
     const renderTab = (
         tab: ShellTab,
         onSelect: (id: string) => void,
@@ -51,7 +69,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                     onKeyDown={(e) => {
                         if (e.key === "Enter") {
                             skipBlurCommitRef.current = true;
-                            onRename?.(tab.id, e.currentTarget.value);
+                            commitRename(tab, e.currentTarget.value, onRename);
                             setEditingId(null);
                         }
 
@@ -67,14 +85,9 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                             return;
                         }
 
-                        const next = e.currentTarget.value.trim();
-
                         // Commit on blur when the value changed — blur-cancel was dropping renames
                         // when the user clicked away after editing.
-                        if (next.length > 0 && next !== tab.label) {
-                            onRename?.(tab.id, next);
-                        }
-
+                        commitRename(tab, e.currentTarget.value, onRename);
                         setEditingId(null);
                     }}
                     className="dd-tab-edit"
@@ -91,14 +104,14 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
                 className={tab.active ? "dd-tab is-active" : "dd-tab"}
                 onClick={() => {
                     if (tab.active && onRename) {
-                        setEditingId(tab.id);
+                        startEditing(tab.id);
                     } else {
                         onSelect(tab.id);
                     }
                 }}
                 onDoubleClick={() => {
                     if (onRename) {
-                        setEditingId(tab.id);
+                        startEditing(tab.id);
                     }
                 }}
             >

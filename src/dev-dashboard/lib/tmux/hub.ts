@@ -1,17 +1,9 @@
+import type { TtydHubTab } from "@app/dev-dashboard/contract/dto";
 import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { CmuxTmuxSurfaceRef } from "@genesiscz/utils/cmux/tmux-bindings";
 import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
-export interface TtydHubTab {
-    id: string;
-    port: number;
-    /** Identity. Never Claude's topic — see the name-vs-title note in ttyd/manager.ts. */
-    label: string;
-    cwd?: string;
-    lastCommand?: string;
-    /** Claude's live topic, shown alongside the label rather than replacing it. */
-    title?: string;
-}
+export type { TtydHubTab };
 
 export interface TmuxHubSession extends TmuxSessionInfo {
     ttydTabIds: string[];

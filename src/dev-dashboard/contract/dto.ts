@@ -108,6 +108,18 @@ export interface TmuxRestoreResult {
     outcomes: TmuxRestoreOutcome[];
 }
 
+/** One ttyd tab bound to a tmux session. Named so the contract, server and web client share it. */
+export interface TtydHubTab {
+    id: string;
+    port: number;
+    /** Identity. Never Claude's topic — see the name-vs-title note in ttyd/manager.ts. */
+    label: string;
+    cwd?: string;
+    lastCommand?: string;
+    /** Claude's live topic, shown alongside the label rather than replacing it. */
+    title?: string;
+}
+
 /** Surfaced by GET /api/tmux/sessions. Owned here (the web client defined it inline before). */
 export interface TmuxHubSession {
     name: string;
@@ -122,14 +134,7 @@ export interface TmuxHubSession {
     created?: number;
     lastActivity?: number;
     ttydTabIds: string[];
-    ttydTabs: Array<{
-        id: string;
-        port: number;
-        label: string;
-        cwd?: string;
-        lastCommand?: string;
-        title?: string;
-    }>;
+    ttydTabs: TtydHubTab[];
     canAttachInTtyd: boolean;
     cmuxSurfaces: Array<{ workspaceId: string; surfaceId: string; title: string }>;
     inCmux: boolean;

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { isClaudeForegroundCommand, parseClaudePaneTitle } from "@app/dev-dashboard/lib/tmux/claude-pane-title";
+import {
+    isClaudeForegroundCommand,
+    parseClaudePaneTitle,
+    tmuxSessionNameFromTopic,
+} from "@app/dev-dashboard/lib/tmux/claude-pane-title";
 
 describe("parseClaudePaneTitle", () => {
     test("strips working and idle markers", () => {
@@ -16,14 +20,16 @@ describe("parseClaudePaneTitle", () => {
         }
     });
 
-    test("keeps multi-word titles and sanitizes colons", () => {
-        expect(parseClaudePaneTitle("✳ Debug formatting: spacing")).toBe("Debug formatting- spacing");
+    // The topic is DISPLAY text. Routing it through the tmux-name sanitizer corrupted normal
+    // punctuation and made a bound session's label disagree with the UI's own fallback parse.
+    test("keeps punctuation in the displayed topic", () => {
+        expect(parseClaudePaneTitle("✳ Debug formatting: spacing")).toBe("Debug formatting: spacing");
+        expect(parseClaudePaneTitle("✳ Fix v1.2 bug")).toBe("Fix v1.2 bug");
+        expect(parseClaudePaneTitle("✳ Analyze slow HAR file load…")).toBe("Analyze slow HAR file load…");
     });
 
-    test("sanitizes dots — tmux target-syntax separators that 3.6a silently munges to _ on rename", () => {
-        expect(parseClaudePaneTitle("✳ Fix v1.2 bug")).toBe("Fix v1-2 bug");
-        // Unicode ellipsis is NOT a dot — Claude's truncated auto-topic titles keep it.
-        expect(parseClaudePaneTitle("✳ Analyze slow HAR file load…")).toBe("Analyze slow HAR file load…");
+    test("collapses runs of whitespace", () => {
+        expect(parseClaudePaneTitle("✳   spaced   out  ")).toBe("spaced out");
     });
 
     test("rejects non-Claude titles and the stock default", () => {
@@ -34,6 +40,15 @@ describe("parseClaudePaneTitle", () => {
         expect(parseClaudePaneTitle(undefined)).toBeNull();
         expect(parseClaudePaneTitle("✳ Claude Code")).toBeNull();
         expect(parseClaudePaneTitle("⠐ Claude Code")).toBeNull();
+    });
+});
+
+describe("tmuxSessionNameFromTopic", () => {
+    test("replaces tmux target-syntax separators, which 3.6a munges to _ on rename", () => {
+        expect(tmuxSessionNameFromTopic("Fix v1.2 bug")).toBe("Fix v1-2 bug");
+        expect(tmuxSessionNameFromTopic("Debug formatting: spacing")).toBe("Debug formatting- spacing");
+        // Unicode ellipsis is NOT a dot — Claude's truncated auto-topic titles keep it.
+        expect(tmuxSessionNameFromTopic("Analyze slow HAR file load…")).toBe("Analyze slow HAR file load…");
     });
 });
 

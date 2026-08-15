@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import {
     argvTargetsTmux,
+    claudeTopicForPane,
     killAllTtyd,
     killTtyd,
     listTtyd,
@@ -230,5 +231,22 @@ describe("argvTargetsTmux", () => {
 
     test("an empty session name never matches", () => {
         expect(argvTargetsTmux(argv("bridge"), "")).toBe(false);
+    });
+});
+
+// Pure title derivation — no ttyd/tmux binaries needed, so it runs everywhere.
+describe("claudeTopicForPane", () => {
+    test("exposes the Claude topic with its punctuation intact", () => {
+        expect(claudeTopicForPane({ command: "claude", title: "✳ Fix v1.2 bug" })).toBe("Fix v1.2 bug");
+        expect(claudeTopicForPane({ command: "/opt/homebrew/bin/claude", title: "⠐ Debug: spacing" })).toBe(
+            "Debug: spacing"
+        );
+    });
+
+    test("omits non-Claude panes, stock titles and missing panes", () => {
+        expect(claudeTopicForPane({ command: "zsh", title: "✳ testt" })).toBeNull();
+        expect(claudeTopicForPane({ command: "claude", title: "✳ Claude Code" })).toBeNull();
+        expect(claudeTopicForPane({ command: "claude", title: "" })).toBeNull();
+        expect(claudeTopicForPane(undefined)).toBeNull();
     });
 });
