@@ -3,14 +3,10 @@ import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
-import {
-    LONG_TOKEN_MIN_LENGTH,
-    probeLongLivedToken,
-    type TokenVerdict,
-} from "@genesiscz/utils/claude/token-verify";
+import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
-import { env } from "@genesiscz/utils/env";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";

@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { logger } from "@genesiscz/utils/logger";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
 
@@ -114,10 +114,7 @@ function invalidGrantSince(account: string): number | undefined {
  * which reads as "no cooldown" and re-hammers the token endpoint the cooldown
  * exists to protect.
  */
-async function mutateInvalidGrants(
-    account: string,
-    mutate: (all: Record<string, number>) => boolean
-): Promise<void> {
+async function mutateInvalidGrants(account: string, mutate: (all: Record<string, number>) => boolean): Promise<void> {
     const path = invalidGrantPath();
 
     try {

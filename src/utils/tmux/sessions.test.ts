@@ -32,7 +32,9 @@ describe("tmux sessions", () => {
             if (cmd.includes("list-sessions")) {
                 return {
                     exitCode: 0,
-                    stdout: rec("dev-dashboard-abc12345\t1\t2\tclaude\t/Users/me/proj\t1754140000\t1754150000\t✳ testt"),
+                    stdout: rec(
+                        "dev-dashboard-abc12345\t1\t2\tclaude\t/Users/me/proj\t1754140000\t1754150000\t✳ testt"
+                    ),
                 };
             }
 
@@ -114,7 +116,8 @@ describe("tmux sessions", () => {
             if (cmd.includes("list-sessions")) {
                 return {
                     exitCode: 0,
-                    stdout: rec("dev-dashboard-abc12345\tclaude\t✳ testt") + rec("cmux-test\tzsh\t") + rec("blank-cmd\t\t"),
+                    stdout:
+                        rec("dev-dashboard-abc12345\tclaude\t✳ testt") + rec("cmux-test\tzsh\t") + rec("blank-cmd\t\t"),
                 };
             }
 

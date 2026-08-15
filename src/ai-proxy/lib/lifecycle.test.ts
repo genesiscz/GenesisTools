@@ -51,7 +51,12 @@ function spyOnKill(): KillSpy {
         throw new Error(`process.kill(${pid}, ${String(signal)}) must not be reached`);
     }) as typeof process.kill;
 
-    return { signals, restore: () => { process.kill = original; } };
+    return {
+        signals,
+        restore: () => {
+            process.kill = original;
+        },
+    };
 }
 
 const cleanups: Array<() => void> = [];

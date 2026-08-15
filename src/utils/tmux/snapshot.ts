@@ -488,7 +488,11 @@ export async function restoreTmuxSession(
                 continue;
             }
 
-            await runTmux(tmuxBin, ["split-window", "-t", `${targetName}:${wi}`, "-c", pane.cwd ?? cwd], "split-window");
+            await runTmux(
+                tmuxBin,
+                ["split-window", "-t", `${targetName}:${wi}`, "-c", pane.cwd ?? cwd],
+                "split-window"
+            );
 
             if (!opts.skipReplay) {
                 await replayPane(tmuxBin, `${targetName}:${wi}.${pi}`, pane);

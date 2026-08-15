@@ -2,13 +2,7 @@ import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import {
-    blockedEntry,
-    loadPollGate,
-    type PollGate,
-    applyPollGateOutcomes,
-    pruneGate,
-} from "./poll-gate";
+import { applyPollGateOutcomes, blockedEntry, loadPollGate, type PollGate, pruneGate } from "./poll-gate";
 import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile } from "./subscription";
 
 export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";

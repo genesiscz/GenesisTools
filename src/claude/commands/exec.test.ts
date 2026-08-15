@@ -11,11 +11,19 @@ describe("parseExecArgs", () => {
     });
 
     test("-a takes the next word", () => {
-        expect(parseExecArgs(["-a", "work", "git", "status"])).toEqual({ name: "work", skipVerify: false, command: ["git", "status"] });
+        expect(parseExecArgs(["-a", "work", "git", "status"])).toEqual({
+            name: "work",
+            skipVerify: false,
+            command: ["git", "status"],
+        });
     });
 
     test("--account takes the next word", () => {
-        expect(parseExecArgs(["--account", "work", "git"])).toEqual({ name: "work", skipVerify: false, command: ["git"] });
+        expect(parseExecArgs(["--account", "work", "git"])).toEqual({
+            name: "work",
+            skipVerify: false,
+            command: ["git"],
+        });
     });
 
     test("--account=name form", () => {
@@ -23,15 +31,27 @@ describe("parseExecArgs", () => {
     });
 
     test("a child's own -a is NOT ours once the command started", () => {
-        expect(parseExecArgs(["git", "-a", "commit"])).toEqual({ name: undefined, skipVerify: false, command: ["git", "-a", "commit"] });
+        expect(parseExecArgs(["git", "-a", "commit"])).toEqual({
+            name: undefined,
+            skipVerify: false,
+            command: ["git", "-a", "commit"],
+        });
     });
 
     test("a leading -- is stripped", () => {
-        expect(parseExecArgs(["--", "--weird-binary"])).toEqual({ name: undefined, skipVerify: false, command: ["--weird-binary"] });
+        expect(parseExecArgs(["--", "--weird-binary"])).toEqual({
+            name: undefined,
+            skipVerify: false,
+            command: ["--weird-binary"],
+        });
     });
 
     test("-a followed by -- strips the separator too", () => {
-        expect(parseExecArgs(["-a", "work", "--", "env"])).toEqual({ name: "work", skipVerify: false, command: ["env"] });
+        expect(parseExecArgs(["-a", "work", "--", "env"])).toEqual({
+            name: "work",
+            skipVerify: false,
+            command: ["env"],
+        });
     });
 
     test("empty argv yields an empty command so the caller can error", () => {
