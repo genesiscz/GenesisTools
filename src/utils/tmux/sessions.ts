@@ -207,7 +207,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
 
     for (const record of splitTmuxRecords(result.stdout)) {
         const [name, attachedRaw, windowsRaw, command, cwd, createdRaw, activityRaw, ...titleParts] =
-            record.split("\t");
+            splitTmuxFields(record);
         if (!name) {
             continue;
         }
@@ -221,7 +221,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
             windows: Number.parseInt(windowsRaw ?? "0", 10) || 0,
             command: command?.trim() || undefined,
             cwd: cwd?.trim() || undefined,
-            title: flattenPaneTitle(titleParts.join("\t")),
+            title: flattenPaneTitle(titleParts.join(TMUX_FIELD_SEP)),
             created: Number.isFinite(created) ? created : undefined,
             lastActivity: Number.isFinite(lastActivity) ? lastActivity : undefined,
         });
@@ -283,7 +283,7 @@ export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActi
     const panes = new Map<string, TmuxActivePaneInfo>();
 
     for (const record of splitTmuxRecords(result.stdout)) {
-        const [name, commandRaw = "", ...titleParts] = record.split("\t");
+        const [name, commandRaw = "", ...titleParts] = splitTmuxFields(record);
 
         if (!name) {
             continue;
@@ -291,7 +291,7 @@ export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActi
 
         panes.set(name, {
             command: commandRaw.trim(),
-            title: flattenPaneTitle(titleParts.join("\t")) ?? "",
+            title: flattenPaneTitle(titleParts.join(TMUX_FIELD_SEP)) ?? "",
         });
     }
 
@@ -299,17 +299,31 @@ export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActi
 }
 
 /**
- * ASCII RS (U+001E). `#{pane_title}` is arbitrary user text and a title containing a
- * NEWLINE used to terminate its own record, so the rest of the title parsed as another
- * session — a title with tabs in it could fabricate a convincing phantom session in the
- * dashboard. Newlines cannot be escaped inside a tmux format string, so each record is
- * PREFIXED with a control byte no terminal writes into a title and records are split on
- * that instead of on `\n`.
+ * ASCII RS (U+001E) between records, US (U+001F) between fields.
+ *
+ * Two different corruptions, both from values that are arbitrary user text:
+ *
+ *  - `#{pane_title}` containing a NEWLINE used to terminate its own record, so the rest
+ *    parsed as another session — with tabs in it, a convincing phantom one.
+ *  - `#{pane_current_path}` containing a TAB shifted every field after it. Verified
+ *    against tmux 3.6a: a cwd of `…/tab\tpath` yields NINE tab-separated fields, so the
+ *    timestamps land one column late and the title absorbs the overflow. Putting the
+ *    title last only ever protected the title.
+ *
+ * Neither can be escaped inside a tmux format string, so the delimiters are control
+ * bytes instead — both pass through `list-sessions -F` intact, and no shell, path or
+ * terminal title writes them.
  */
 const TMUX_RECORD_SEP = "\x1e";
+const TMUX_FIELD_SEP = "\x1f";
 
 export function formatWithRecordSeparator(fields: string[]): string {
-    return `${TMUX_RECORD_SEP}${fields.join("\t")}`;
+    return `${TMUX_RECORD_SEP}${fields.join(TMUX_FIELD_SEP)}`;
+}
+
+/** Split one RS-framed record into its fields. */
+export function splitTmuxFields(record: string): string[] {
+    return record.split(TMUX_FIELD_SEP);
 }
 
 /** Split RS-framed `list-sessions` output; tmux still terminates each record with a newline. */

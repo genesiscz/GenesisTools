@@ -14,9 +14,13 @@ import {
     setTmuxSpawnSyncForTests,
 } from "@genesiscz/utils/tmux/sessions";
 
-/** One RS-framed `list-sessions` record, exactly as tmux emits it with our `-F` string. */
+/**
+ * One RS-framed, US-delimited `list-sessions` record, exactly as tmux emits it with our
+ * `-F` string. Fields are written here with `|` for legibility and swapped to the real
+ * separator, so a literal TAB in a test value stays part of its field.
+ */
 function rec(fields: string): string {
-    return `\x1e${fields}\n`;
+    return `\x1e${fields.split("|").join("\x1f")}\n`;
 }
 
 describe("tmux sessions", () => {
@@ -32,9 +36,7 @@ describe("tmux sessions", () => {
             if (cmd.includes("list-sessions")) {
                 return {
                     exitCode: 0,
-                    stdout: rec(
-                        "dev-dashboard-abc12345\t1\t2\tclaude\t/Users/me/proj\t1754140000\t1754150000\t✳ testt"
-                    ),
+                    stdout: rec("dev-dashboard-abc12345|1|2|claude|/Users/me/proj|1754140000|1754150000|✳ testt"),
                 };
             }
 
@@ -59,7 +61,7 @@ describe("tmux sessions", () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
-                return { exitCode: 0, stdout: rec("cmux-test\t0\t1\t\t\tnope\t\t") };
+                return { exitCode: 0, stdout: rec("cmux-test|0|1|||nope||") };
             }
 
             return { exitCode: 0, stdout: "" };
@@ -77,8 +79,8 @@ describe("tmux sessions", () => {
                 return {
                     exitCode: 0,
                     stdout:
-                        rec("real\t1\t1\tclaude\t/x\t1\t2\tline one\nphantom\t9\t9\tsh\t/evil\t1\t2\tspoofed") +
-                        rec("second\t0\t1\tzsh\t/y\t3\t4\tplain"),
+                        rec("real|1|1|claude|/x|1|2|line one\nphantom\t9\t9\tsh\t/evil\t1\t2\tspoofed") +
+                        rec("second|0|1|zsh|/y|3|4|plain"),
                 };
             }
 
@@ -95,13 +97,40 @@ describe("tmux sessions", () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
-                return { exitCode: 0, stdout: rec("tabbed\t1\t1\tclaude\t/x\t1\t2\t✳ a\tb") };
+                return { exitCode: 0, stdout: rec("tabbed|1|1|claude|/x|1|2|✳ a\tb") };
             }
 
             return { exitCode: 0, stdout: "" };
         });
 
         expect((await listTmuxSessions())[0].title).toBe("✳ a b");
+    });
+
+    // A TAB in the cwd used to shift every field after it: verified against tmux 3.6a, a
+    // cwd of `…/tab\tpath` produced NINE tab-separated fields, so the timestamps landed one
+    // column late and the title absorbed the overflow. Fields are US-delimited now.
+    test("listTmuxSessions does not let a tab in the cwd shift the later fields", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        setTmuxSpawnSyncForTests((cmd) => {
+            if (cmd.includes("list-sessions")) {
+                return { exitCode: 0, stdout: rec("tabcwd|1|1|sleep|/tmp/tab\tpath|1786821282|1786821283|✳ topic") };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        expect(await listTmuxSessions()).toEqual([
+            {
+                name: "tabcwd",
+                attached: 1,
+                windows: 1,
+                command: "sleep",
+                cwd: "/tmp/tab\tpath",
+                created: 1786821282,
+                lastActivity: 1786821283,
+                title: "✳ topic",
+            },
+        ]);
     });
 
     test("listTmuxSessions returns empty when tmux fails", async () => {
@@ -117,7 +146,7 @@ describe("tmux sessions", () => {
                 return {
                     exitCode: 0,
                     stdout:
-                        rec("dev-dashboard-abc12345\tclaude\t✳ testt") + rec("cmux-test\tzsh\t") + rec("blank-cmd\t\t"),
+                        rec("dev-dashboard-abc12345|claude|✳ testt") + rec("cmux-test|zsh|") + rec("blank-cmd||"),
                 };
             }
 
@@ -137,7 +166,7 @@ describe("tmux sessions", () => {
             if (cmd.includes("list-sessions")) {
                 return {
                     exitCode: 0,
-                    stdout: rec("dev-dashboard-abc12345\tclaude\t✳ testt") + rec("cmux-test\tzsh\t"),
+                    stdout: rec("dev-dashboard-abc12345|claude|✳ testt") + rec("cmux-test|zsh|"),
                 };
             }
 
@@ -159,7 +188,7 @@ describe("tmux sessions", () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
-                return { exitCode: 0, stdout: rec("foo\t0\t1") };
+                return { exitCode: 0, stdout: rec("foo|0|1") };
             }
 
             return { exitCode: 0, stdout: "" };
@@ -211,7 +240,7 @@ describe("tmux sessions", () => {
             calls.push(cmd);
 
             if (cmd.includes("list-sessions")) {
-                return { exitCode: 0, stdout: rec("foo\t1\t1") };
+                return { exitCode: 0, stdout: rec("foo|1|1") };
             }
 
             return { exitCode: 0, stdout: "" };
