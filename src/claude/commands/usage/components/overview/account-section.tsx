@@ -3,7 +3,7 @@ import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct, isResetImminent } from "
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
 import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
-import { formatCoarseSpan, formatRenewsAt } from "@app/claude/lib/usage/subscription";
+import { formatCoarseSpan, formatRenewsAt, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
@@ -29,6 +29,27 @@ function shortStaleReason(reason: string): string {
     }
 
     return "fetch failing";
+}
+
+/**
+ * Whether the poller has stopped fetching this account because its subscription
+ * can no longer run Claude Code. The reason string it stores is our own
+ * (`planReason` in usage/api.ts), not an API error, so classifying it by text
+ * would fail the moment that sentence is reworded — the plan fields the poller
+ * already carries on every row are the durable signal.
+ */
+function isPlanDead(account: AccountUsage): boolean {
+    return !planAllowsClaudeCode(account);
+}
+
+/**
+ * The plan behind a dead account, e.g. "claude_free (canceled)". Preferred over
+ * the stored `label`, which is a login-time snapshot and keeps advertising the
+ * paid plan long after the subscription lapsed.
+ */
+function planStateText(account: AccountUsage): string {
+    const status = account.subscriptionStatus ? `(${account.subscriptionStatus})` : null;
+    return [account.subscriptionPlan, status].filter(Boolean).join(" ") || "plan expired";
 }
 
 function formatResetCountdown(resetsAt: string | null): string | null {
@@ -153,17 +174,26 @@ function bucketLabel(limit: NormalizedLimit): string {
 interface BucketRowProps {
     limit: NormalizedLimit;
     layout: RowLayout;
+    /**
+     * The plan behind this account is dead, so the numbers are frozen history
+     * from the last poll before it lapsed, not live headroom. Rendered gray
+     * throughout: a green 2% bar on an account that cannot run a single turn
+     * is the most misleading thing this view can draw.
+     */
+    frozen?: boolean;
 }
 
-function BucketRow({ limit, layout }: BucketRowProps) {
+function BucketRow({ limit, layout, frozen = false }: BucketRowProps) {
     const countdown = formatResetCountdown(limit.resets_at);
     const notUsed = !limit.resets_at && limit.percent === 0;
-    const projected = calcProjection(limit.percent, limit.resets_at, limit.bucket);
+    // A burn projection off frozen numbers forecasts a rate nothing is spending.
+    const projected = frozen ? null : calcProjection(limit.percent, limit.resets_at, limit.bucket);
     const pct = Math.round(Math.max(0, Math.min(limit.percent, 100)));
     // Headroom decides the bar and percent color; the countdown below keeps
     // its own imminent-green, which is where reset timing belongs.
-    const imminent = isResetImminent(limit.bucket, limit.resets_at);
-    const color = severityColor(limit.severity);
+    const imminent = !frozen && isResetImminent(limit.bucket, limit.resets_at);
+    const color = frozen ? "gray" : severityColor(limit.severity);
+    const muted = notUsed || frozen;
 
     const projStr = projected !== null && projected >= 100 ? (projected > 999 ? "(≥999%)" : `(~${projected}%)`) : "";
     const projColor = projected !== null ? colorForPct(projected) : undefined;
@@ -172,9 +202,9 @@ function BucketRow({ limit, layout }: BucketRowProps) {
     return (
         <Box flexDirection="column">
             <Box>
-                <Text dimColor={notUsed}>{fitLabel(bucketLabel(limit), layout.nameWidth)}</Text>
+                <Text dimColor={muted}>{fitLabel(bucketLabel(limit), layout.nameWidth)}</Text>
                 <UsageBar utilization={limit.percent} width={layout.barWidth} color={color} />
-                <Text bold color={notUsed ? undefined : color} dimColor={notUsed}>
+                <Text bold color={notUsed ? undefined : color} dimColor={muted}>
                     {`${pct}%`.padStart(5)}
                 </Text>
                 {projStr ? (
@@ -200,20 +230,22 @@ function BucketRow({ limit, layout }: BucketRowProps) {
 interface SpendRowProps {
     spend: NormalizedSpend;
     layout: RowLayout;
+    /** See BucketRow.frozen — the balance is history once the plan is dead. */
+    frozen?: boolean;
 }
 
-function SpendRow({ spend, layout }: SpendRowProps) {
+function SpendRow({ spend, layout, frozen = false }: SpendRowProps) {
     const label = BUCKET_LABELS.extra_usage ?? "extra credits";
     const balance = formatSpendBalance(spend);
     const pct = Math.round(Math.max(0, Math.min(spend.percent, 100)));
-    const color = severityColor(spend.severity);
+    const color = frozen ? "gray" : severityColor(spend.severity);
 
     return (
         <Box flexDirection="column">
             <Box>
-                <Text>{fitLabel(label, layout.nameWidth)}</Text>
+                <Text dimColor={frozen}>{fitLabel(label, layout.nameWidth)}</Text>
                 <UsageBar utilization={spend.percent} width={layout.barWidth} color={color} />
-                <Text bold color={color}>
+                <Text bold color={color} dimColor={frozen}>
                     {`${pct}%`.padStart(5)}
                 </Text>
             </Box>
@@ -279,13 +311,17 @@ export function estimateAccountHeight(account: AccountUsage, prominentBuckets: s
     return lines;
 }
 
-function staleHeaderText(account: AccountUsage): string | null {
+export function staleHeaderText(account: AccountUsage): string | null {
     if (!account.stale) {
         return null;
     }
 
     const ago = formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true });
-    return `⚠ stale ${ago} · ${shortStaleReason(account.stale.reason)}`;
+    // A plan-gated account is not FAILING to fetch — the poller deliberately
+    // never sends the request. Calling that "fetch failing" sends the reader
+    // hunting for a network bug that does not exist.
+    const reason = isPlanDead(account) ? "plan expired" : shortStaleReason(account.stale.reason);
+    return `⚠ stale ${ago} · ${reason}`;
 }
 
 /**
@@ -358,6 +394,17 @@ export function headerExtras({ account, staleText, width, now = Date.now() }: He
         used += 2 + grant.length;
     }
 
+    // A canceled plan has no next renewal, and the stored label still names the
+    // paid tier it used to be — printing "none · renews in 29d" over a dead
+    // account is the exact opposite of what the row means.
+    if (isPlanDead(account)) {
+        const plan = planStateText(account);
+        return {
+            grantText: grantFits ? grant : null,
+            renewsText: used + 2 + plan.length <= width ? plan : null,
+        };
+    }
+
     // Plan and renewal read as one fact ("max 20x · renews in 28d"); on a tight
     // line the countdown is dropped first and the plan label alone survives.
     const renews = formatRenewsAt(account.subscriptionCreatedAt);
@@ -392,11 +439,20 @@ interface AccountHeaderProps {
     account: AccountUsage;
     dotColor: string | undefined;
     staleText?: string | null;
+    /** Red once the plan is what went stale — yellow reads as "retry pending". */
+    staleColor?: string;
     renewsText?: string | null;
     grantText?: string | null;
 }
 
-function AccountHeader({ account, dotColor, staleText, renewsText, grantText }: AccountHeaderProps) {
+function AccountHeader({
+    account,
+    dotColor,
+    staleText,
+    staleColor = "yellow",
+    renewsText,
+    grantText,
+}: AccountHeaderProps) {
     return (
         <Box>
             <Text color={dotColor} dimColor={dotColor === undefined}>
@@ -405,7 +461,7 @@ function AccountHeader({ account, dotColor, staleText, renewsText, grantText }: 
             <Text bold color="cyan">
                 {account.accountName}
             </Text>
-            {staleText ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
+            {staleText ? <Text color={staleColor}>{`  ${staleText}`}</Text> : null}
             {grantText ? <Text color="red">{`  ${grantText}`}</Text> : null}
             {renewsText ? <Text dimColor>{`  ${renewsText}`}</Text> : null}
         </Box>
@@ -452,6 +508,7 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
 
     const staleText = staleHeaderText(account);
     const staleInline = staleText !== null && staleFitsHeader(account, sectionWidth);
+    const planDead = isPlanDead(account);
 
     const spend = normalizeSpend(account.usage);
     const visibleLimits = visibleLimitsFor(account, prominentBuckets);
@@ -461,15 +518,23 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
         <Box flexDirection="column" marginBottom={1}>
             <AccountHeader
                 account={account}
-                dotColor={account.stale ? "yellow" : dotColor}
+                // A dead plan outranks staleness: stale means "come back later",
+                // dead means "this account is out until you renew it".
+                dotColor={planDead ? "red" : account.stale ? "yellow" : dotColor}
                 staleText={staleInline ? staleText : null}
+                staleColor={planDead ? "red" : "yellow"}
                 {...headerExtras({ account, staleText: staleInline ? staleText : null, width: sectionWidth })}
             />
-            {staleText && !staleInline ? <Text color="yellow">{`  ${staleText}`}</Text> : null}
+            {staleText && !staleInline ? <Text color={planDead ? "red" : "yellow"}>{`  ${staleText}`}</Text> : null}
             {visibleLimits.map((limit) => (
-                <BucketRow key={`${limit.bucket}:${limit.scope_model ?? ""}`} limit={limit} layout={layout} />
+                <BucketRow
+                    key={`${limit.bucket}:${limit.scope_model ?? ""}`}
+                    limit={limit}
+                    layout={layout}
+                    frozen={planDead}
+                />
             ))}
-            {spend?.enabled ? <SpendRow spend={spend} layout={layout} /> : null}
+            {spend?.enabled ? <SpendRow spend={spend} layout={layout} frozen={planDead} /> : null}
         </Box>
     );
 }
