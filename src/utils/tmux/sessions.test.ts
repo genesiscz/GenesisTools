@@ -383,14 +383,14 @@ describe("tmux spawn wedge guard", () => {
         expect(TMUX_SPAWN_GUARD).toEqual({ timeout: 10_000, killSignal: "SIGKILL" });
     });
 
-    test.each([["src/utils/tmux/sessions.ts"], ["src/utils/tmux/snapshot.ts"]])(
-        "%s spawns through the shared guard, never bare options",
-        async (path) => {
-            const source = await Bun.file(path).text();
+    test.each([
+        ["src/utils/tmux/sessions.ts"],
+        ["src/utils/tmux/snapshot.ts"],
+    ])("%s spawns through the shared guard, never bare options", async (path) => {
+        const source = await Bun.file(path).text();
 
-            for (const call of source.match(/Bun\.spawn\((?:.|\n)*?\}\)/g) ?? []) {
-                expect(call).toContain("TMUX_SPAWN_GUARD");
-            }
+        for (const call of source.match(/Bun\.spawn\((?:.|\n)*?\}\)/g) ?? []) {
+            expect(call).toContain("TMUX_SPAWN_GUARD");
         }
-    );
+    });
 });
