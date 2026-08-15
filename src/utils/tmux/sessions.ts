@@ -187,7 +187,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
         tmuxBin,
         "list-sessions",
         "-F",
-        [
+        formatWithRecordSeparator([
             "#{session_name}",
             "#{session_attached}",
             "#{session_windows}",
@@ -196,7 +196,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
             "#{session_created}",
             "#{session_activity}",
             "#{pane_title}",
-        ].join("\t"),
+        ]),
     ]);
 
     if (result.exitCode !== 0) {
@@ -205,14 +205,9 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
 
     const sessions: TmuxSessionInfo[] = [];
 
-    for (const line of result.stdout.split("\n")) {
-        const trimmed = line.trimEnd();
-        if (!trimmed.trim()) {
-            continue;
-        }
-
+    for (const record of splitTmuxRecords(result.stdout)) {
         const [name, attachedRaw, windowsRaw, command, cwd, createdRaw, activityRaw, ...titleParts] =
-            trimmed.split("\t");
+            record.split("\t");
         if (!name) {
             continue;
         }
@@ -226,7 +221,7 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
             windows: Number.parseInt(windowsRaw ?? "0", 10) || 0,
             command: command?.trim() || undefined,
             cwd: cwd?.trim() || undefined,
-            title: titleParts.join("\t").trim() || undefined,
+            title: flattenPaneTitle(titleParts.join("\t")),
             created: Number.isFinite(created) ? created : undefined,
             lastActivity: Number.isFinite(lastActivity) ? lastActivity : undefined,
         });
@@ -278,7 +273,7 @@ export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActi
         tmuxBin,
         "list-sessions",
         "-F",
-        "#{session_name}\t#{pane_current_command}\t#{pane_title}",
+        formatWithRecordSeparator(["#{session_name}", "#{pane_current_command}", "#{pane_title}"]),
     ]);
 
     if (result.exitCode !== 0) {
@@ -287,14 +282,8 @@ export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActi
 
     const panes = new Map<string, TmuxActivePaneInfo>();
 
-    for (const line of result.stdout.split("\n")) {
-        const trimmed = line.trimEnd();
-
-        if (!trimmed) {
-            continue;
-        }
-
-        const [name, commandRaw = "", ...titleParts] = trimmed.split("\t");
+    for (const record of splitTmuxRecords(result.stdout)) {
+        const [name, commandRaw = "", ...titleParts] = record.split("\t");
 
         if (!name) {
             continue;
@@ -302,11 +291,38 @@ export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActi
 
         panes.set(name, {
             command: commandRaw.trim(),
-            title: titleParts.join("\t").trim(),
+            title: flattenPaneTitle(titleParts.join("\t")) ?? "",
         });
     }
 
     return panes;
+}
+
+/**
+ * ASCII RS (U+001E). `#{pane_title}` is arbitrary user text and a title containing a
+ * NEWLINE used to terminate its own record, so the rest of the title parsed as another
+ * session — a title with tabs in it could fabricate a convincing phantom session in the
+ * dashboard. Newlines cannot be escaped inside a tmux format string, so each record is
+ * PREFIXED with a control byte no terminal writes into a title and records are split on
+ * that instead of on `\n`.
+ */
+const TMUX_RECORD_SEP = "\x1e";
+
+export function formatWithRecordSeparator(fields: string[]): string {
+    return `${TMUX_RECORD_SEP}${fields.join("\t")}`;
+}
+
+/** Split RS-framed `list-sessions` output; tmux still terminates each record with a newline. */
+export function splitTmuxRecords(stdout: string): string[] {
+    return stdout
+        .split(TMUX_RECORD_SEP)
+        .map((record) => record.replace(/\n+$/, ""))
+        .filter((record) => record.trim().length > 0);
+}
+
+/** Collapse a multi-line / padded pane title into the single display line callers expect. */
+function flattenPaneTitle(raw: string | undefined): string | undefined {
+    return raw?.replace(/\s+/g, " ").trim() || undefined;
 }
 
 export async function sessionExists(sessionName: string): Promise<boolean> {
@@ -442,11 +458,14 @@ export async function renameTmuxSession(fromName: string, toName: string): Promi
         throw new Error("tmux session name cannot be empty");
     }
 
-    if (!(await sessionExists(fromName))) {
+    // One list-sessions for both checks — `sessionExists` is a full listing per call.
+    const liveNames = new Set((await listTmuxSessions()).map((session) => session.name));
+
+    if (!liveNames.has(fromName)) {
         throw new Error(`tmux session ${fromName} does not exist`);
     }
 
-    if (fromName !== trimmed && (await sessionExists(trimmed))) {
+    if (fromName !== trimmed && liveNames.has(trimmed)) {
         throw new Error(`tmux session ${trimmed} already exists`);
     }
 

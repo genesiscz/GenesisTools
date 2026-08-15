@@ -1,13 +1,14 @@
 import { getConfig } from "@app/dev-dashboard/config";
 import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import { isMeaningfulCommand } from "@app/dev-dashboard/lib/ttyd/naming";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { renderTree, type TreeNode } from "@genesiscz/utils/prompts/p/tree";
 import { listTmuxSessions } from "@genesiscz/utils/tmux/sessions";
 import { captureTmuxSnapshot, type TmuxPaneSnapshot, type TmuxSessionSnapshot } from "@genesiscz/utils/tmux/snapshot";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { printSessionHeaderParts, type TtydSessionBinding } from "./sessions-format";
+import { formatTtydBranch, printSessionHeaderParts, type TtydSessionBinding } from "./sessions-format";
 
 export type { TtydSessionBinding } from "./sessions-format";
 
@@ -30,15 +31,9 @@ export async function loadTtydBindingsByTmux(): Promise<Map<string, TtydSessionB
             }
 
             // Skip stale registry rows whose ttyd process is gone (config lags until the
-            // dashboard heals). `kill -0` is a pure existence probe.
-            if (typeof session.pid === "number" && session.pid > 0) {
-                const alive = Bun.spawnSync(["kill", "-0", String(session.pid)], {
-                    stdio: ["ignore", "ignore", "ignore"],
-                });
-
-                if (alive.exitCode !== 0) {
-                    continue;
-                }
+            // dashboard heals). In-process signal 0 — no fork/exec per registered session.
+            if (typeof session.pid === "number" && session.pid > 0 && !isProcessAlive(session.pid)) {
+                continue;
             }
 
             const binding: TtydSessionBinding = {
@@ -51,8 +46,10 @@ export async function loadTtydBindingsByTmux(): Promise<Map<string, TtydSessionB
             existing.push(binding);
             map.set(session.tmuxSessionName, existing);
         }
-    } catch {
-        // Dashboard config missing or unreadable — CLI still lists bare tmux sessions.
+    } catch (err) {
+        // Dashboard config missing or unreadable — CLI still lists bare tmux sessions, but a
+        // corrupt config silently dropping every ttyd binding must be diagnosable from the logs.
+        logger.debug({ err }, "tmux sessions: could not read ttyd bindings from the dashboard config");
     }
 
     return map;
@@ -75,7 +72,7 @@ export async function runList(flags: ListFlags): Promise<void> {
     const ttydByTmux = await loadTtydBindingsByTmux();
 
     if (flags.detailed) {
-        const snapshot = captureTmuxSnapshot({ prefix: flags.prefix });
+        const snapshot = await captureTmuxSnapshot({ prefix: flags.prefix });
 
         const branches = resolveGitBranches(snapshot);
 
@@ -108,7 +105,12 @@ export async function runList(flags: ListFlags): Promise<void> {
 
             if (ttydTabs && ttydTabs.length > 0) {
                 windowNodes.push({
-                    text: formatTtydBranch(ttydTabs),
+                    text: formatTtydBranch(ttydTabs, {
+                        head: pc.cyan,
+                        label: pc.white,
+                        command: pc.yellow,
+                        separator: pc.dim,
+                    }),
                 });
             }
 
@@ -168,20 +170,6 @@ function printSessionHeader(
     out.println(
         `${pc.cyan(name)} ${pc.dim("(")}${attach}${pc.dim(`, ${windows}`)}${ttyd ? pc.cyan(ttyd) : ""}${pc.dim(")")}`
     );
-}
-
-function formatTtydBranch(tabs: TtydSessionBinding[]): string {
-    const parts = tabs.map((t) => {
-        const bits = [`:${t.port}`, pc.white(t.label)];
-
-        if (t.lastCommand) {
-            bits.push(pc.yellow(t.lastCommand));
-        }
-
-        return bits.join(" ");
-    });
-
-    return `${pc.cyan("ttyd")} ${parts.join(pc.dim(" · "))}`;
 }
 
 function buildPaneDetailNodes(

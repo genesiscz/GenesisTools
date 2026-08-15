@@ -29,7 +29,7 @@ export function tmuxPresetsRoutes(): RouteDef[] {
                         return { kind: "json", status: 400, body: { error: "name is required" } };
                     }
 
-                    return { kind: "json", status: 200, body: { preset: savePreset(body) } };
+                    return { kind: "json", status: 200, body: { preset: await savePreset(body) } };
                 } catch (err) {
                     logger.warn({ err, route: "POST /api/tmux/presets/save" }, "tmux presets: save failed");
 

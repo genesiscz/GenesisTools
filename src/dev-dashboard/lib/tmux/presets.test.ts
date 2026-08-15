@@ -43,8 +43,8 @@ describe("dev-dashboard tmux presets lib", () => {
         setTmuxBinForTests(null);
     });
 
-    it("captures + saves a preset with the exact session/window/pane counts", () => {
-        const summary = savePreset({ name: "dev", note: "morning" }, store);
+    it("captures + saves a preset with the exact session/window/pane counts", async () => {
+        const summary = await savePreset({ name: "dev", note: "morning" }, store);
 
         expect(summary.name).toBe("dev");
         expect(summary.note).toBe("morning");
@@ -54,31 +54,31 @@ describe("dev-dashboard tmux presets lib", () => {
         expect(summary.bytes).toBeGreaterThan(0);
     });
 
-    it("lists saved presets", () => {
-        savePreset({ name: "dev" }, store);
+    it("lists saved presets", async () => {
+        await savePreset({ name: "dev" }, store);
         const list = listPresets(store);
 
         expect(list).toHaveLength(1);
         expect(list[0]?.name).toBe("dev");
     });
 
-    it("throws when no tmux sessions are captured", () => {
+    it("throws when no tmux sessions are captured", async () => {
         setTmuxSnapshotSpawnForTests(makeSpawn(""));
 
-        expect(() => savePreset({ name: "empty" }, store)).toThrow(/No tmux sessions to capture/);
+        expect(savePreset({ name: "empty" }, store)).rejects.toThrow(/No tmux sessions to capture/);
     });
 
-    it("deletes a preset and the list shrinks", () => {
-        savePreset({ name: "dev" }, store);
+    it("deletes a preset and the list shrinks", async () => {
+        await savePreset({ name: "dev" }, store);
         expect(deletePreset("dev", store)).toEqual({ removed: true });
         expect(listPresets(store)).toHaveLength(0);
     });
 
-    it("re-saving the same name overwrites (force) without throwing", () => {
-        savePreset({ name: "dev" }, store);
+    it("re-saving the same name overwrites (force) without throwing", async () => {
+        await savePreset({ name: "dev" }, store);
         // Second capture: only "alpha" (1 window, 2 panes).
         setTmuxSnapshotSpawnForTests(makeSpawn(LIST_PANES_PAYLOAD.split("\n").slice(0, 2).join("\n")));
-        const second = savePreset({ name: "dev" }, store);
+        const second = await savePreset({ name: "dev" }, store);
 
         expect(second.sessions).toBe(1);
         expect(second.windows).toBe(1);

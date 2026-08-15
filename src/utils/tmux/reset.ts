@@ -40,7 +40,7 @@ export interface ResetResult {
     failures: Array<{ name: string; error: unknown }>;
 }
 
-type CaptureFn = (prefix?: string) => TmuxSessionSnapshot[];
+type CaptureFn = (prefix?: string) => Promise<TmuxSessionSnapshot[]>;
 
 export function sanitize(value: string): string {
     return value.replace(/[^A-Za-z0-9._-]+/g, "_");
@@ -60,10 +60,10 @@ export function backupStamp(now: Date): string {
  * `--matching <pattern>` (prefix, many) are mutually exclusive; exactly one is
  * required. `capture` is injectable so resolution is unit-testable without tmux.
  */
-export function selectResetTargets(
+export async function selectResetTargets(
     opts: { sessionId?: string; matching?: string },
     capture: CaptureFn = (prefix) => captureTmuxSnapshot({ prefix })
-): ResetSelection {
+): Promise<ResetSelection> {
     const sessionId = opts.sessionId?.trim();
     const matching = opts.matching?.trim();
 
@@ -76,7 +76,7 @@ export function selectResetTargets(
     }
 
     if (matching) {
-        const sessions = capture(matching);
+        const sessions = await capture(matching);
 
         if (sessions.length === 0) {
             return { ok: false, error: `No tmux sessions match prefix "${matching}".` };
@@ -93,7 +93,7 @@ export function selectResetTargets(
         };
     }
 
-    const captured = capture(sessionId);
+    const captured = await capture(sessionId);
     const exact = captured.filter((s) => s.name === sessionId);
 
     if (exact.length === 0) {

@@ -8,14 +8,13 @@ import {
     sessionExists,
     setTmuxSpawnSyncForTests,
     type TmuxSpawnResult,
-    type TmuxSpawnSync,
 } from "@genesiscz/utils/tmux/sessions";
 
 /**
- * Snapshot capture/replay stays synchronous: it runs in CLI flows (presets
- * save/restore, reset) with no event loop to protect, and its pane walk is a
- * tight sequential pipeline. Only the shared create/kill/exists calls above go
- * through the async sessions module.
+ * Capture is ASYNC because it is not CLI-only: `POST /api/tmux/presets/save` reaches
+ * `captureTmuxSnapshot` through `savePreset`, and a sync pane walk (one `capture-pane`
+ * per pane) froze the whole dev-dashboard event loop for the duration of the sweep.
+ * Test doubles stay synchronous — they never block on I/O.
  */
 type SyncTmuxSpawn = (cmd: string[], opts?: { cwd?: string }) => TmuxSpawnResult;
 
@@ -70,24 +69,31 @@ const PANE_LIST_FORMAT = [
     "#{pane_pid}",
 ].join("\t");
 
-const defaultSpawnSync: SyncTmuxSpawn = (cmd, opts) => {
-    const result = Bun.spawnSync(cmd, {
-        cwd: opts?.cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    return {
-        exitCode: result.exitCode,
-        stdout: result.stdout.toString(),
-        stderr: result.stderr.toString(),
-    };
-};
+let spawnImpl: SyncTmuxSpawn | null = null;
 
-let spawnImpl: SyncTmuxSpawn = defaultSpawnSync;
+/**
+ * Run one external command off the event loop, unless a test double is installed —
+ * doubles are pure functions, so awaiting their result is enough.
+ */
+async function spawnTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSpawnResult> {
+    if (spawnImpl) {
+        return spawnImpl(cmd, opts);
+    }
+
+    const proc = Bun.spawn(cmd, { cwd: opts?.cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+
+    return { exitCode, stdout, stderr };
+}
 
 /** Override spawn for tests. Also forwards to sessions.ts so create/kill mock too. */
 export function setTmuxSnapshotSpawnForTests(impl: SyncTmuxSpawn | null): void {
-    spawnImpl = impl ?? defaultSpawnSync;
-    setTmuxSpawnSyncForTests(impl satisfies TmuxSpawnSync | null);
+    spawnImpl = impl;
+    setTmuxSpawnSyncForTests(impl);
 }
 
 export interface CaptureOptions {
@@ -97,7 +103,7 @@ export interface CaptureOptions {
     skipHistory?: boolean;
 }
 
-export function captureTmuxSnapshot(opts: CaptureOptions = {}): TmuxSessionSnapshot[] {
+export async function captureTmuxSnapshot(opts: CaptureOptions = {}): Promise<TmuxSessionSnapshot[]> {
     let tmuxBin: string;
 
     try {
@@ -107,12 +113,17 @@ export function captureTmuxSnapshot(opts: CaptureOptions = {}): TmuxSessionSnaps
         return [];
     }
 
-    const result = spawnImpl([tmuxBin, "list-panes", "-a", "-F", PANE_LIST_FORMAT]);
+    const result = await spawnTmux([tmuxBin, "list-panes", "-a", "-F", PANE_LIST_FORMAT]);
 
     if (result.exitCode !== 0) {
         logger.debug({ exitCode: result.exitCode, stderr: result.stderr }, "captureTmuxSnapshot: list-panes failed");
         return [];
     }
+
+    // ONE process table for the whole sweep. This used to be a full `ps -ax` per pane,
+    // which is what made capture cost grow with pane count.
+    const psResult = await spawnTmux(["ps", "-o", "pid=,ppid=,args=", "-ax"]);
+    const processTable = psResult.exitCode === 0 ? psResult.stdout : "";
 
     const sessionMap = new Map<string, TmuxSessionSnapshot>();
     const windowMap = new Map<string, TmuxWindowSnapshot>();
@@ -168,10 +179,10 @@ export function captureTmuxSnapshot(opts: CaptureOptions = {}): TmuxSessionSnaps
 
         const lastShellCommand = opts.skipHistory
             ? undefined
-            : parseLastShellCommand(tmuxBin, sessionName, windowIndex, paneIndexRaw ?? "0");
+            : await parseLastShellCommand(tmuxBin, sessionName, windowIndex, paneIndexRaw ?? "0");
 
         const panePid = Number.parseInt(panePidRaw ?? "0", 10) || 0;
-        const launchCommand = panePid ? resolveLaunchCommand(panePid) : undefined;
+        const launchCommand = panePid ? resolveLaunchCommand(panePid, processTable) : undefined;
 
         window.panes.push({
             index: Number.parseInt(paneIndexRaw ?? "0", 10) || 0,
@@ -205,14 +216,9 @@ function shortenCommand(args: string): string {
  * full command line (e.g. `ccc --resume abc123`). Returns undefined when the
  * shell has no child (idle prompt) or the lookup fails.
  */
-function resolveLaunchCommand(shellPid: number): string | undefined {
-    const result = spawnImpl(["ps", "-o", "pid=,ppid=,args=", "-ax"]);
-    if (result.exitCode !== 0) {
-        return undefined;
-    }
-
+function resolveLaunchCommand(shellPid: number, processTable: string): string | undefined {
     const children = new Map<number, { pid: number; args: string }[]>();
-    for (const line of result.stdout.split("\n")) {
+    for (const line of processTable.split("\n")) {
         const m = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
         if (!m) {
             continue;
@@ -256,14 +262,14 @@ function resolveLaunchCommand(shellPid: number): string | undefined {
  * `cd <cwd>`. Skip for cmd `tmux` / `claude` / `zsh` etc. would be premature here;
  * the parser already returns nothing when it can't find a recognizable prompt line.
  */
-function parseLastShellCommand(
+async function parseLastShellCommand(
     tmuxBin: string,
     sessionName: string,
     windowIndex: number,
     paneIndex: string
-): string | undefined {
+): Promise<string | undefined> {
     const target = `${sessionName}:${windowIndex}.${paneIndex}`;
-    const result = spawnImpl([tmuxBin, "capture-pane", "-p", "-S", "-200", "-t", target]);
+    const result = await spawnTmux([tmuxBin, "capture-pane", "-p", "-S", "-200", "-t", target]);
 
     if (result.exitCode !== 0) {
         return undefined;
@@ -304,7 +310,7 @@ const CONTROL_JUNK_RE = /\d+;\d+[A-Za-z]|;\d*n|\b997;\d/;
  * Oh-my-zsh / similar put `dir git:(branch)` on the same line after `➜` with no command —
  * that must not be treated as a typed command.
  */
-const PROMPT_REMANT_RE = /^[\w./-]+\s+git:\([^)]*\)/;
+const PROMPT_REMNANT_RE = /^[\w./-]+\s+git:\([^)]*\)/;
 
 function extractPromptCommand(line: string): string | undefined {
     const match = PROMPT_LINE.exec(stripAnsi(line));
@@ -356,7 +362,7 @@ export function isPlausibleLastShellCommand(cmd: string): boolean {
         return false;
     }
 
-    if (PROMPT_REMANT_RE.test(trimmed)) {
+    if (PROMPT_REMNANT_RE.test(trimmed)) {
         return false;
     }
 
@@ -404,8 +410,8 @@ export interface RestoreOutcome {
     reason?: string;
 }
 
-function runTmux(tmuxBin: string, args: string[], op: string): string {
-    const result = spawnImpl([tmuxBin, ...args]);
+async function runTmux(tmuxBin: string, args: string[], op: string): Promise<string> {
+    const result = await spawnTmux([tmuxBin, ...args]);
     if (result.exitCode !== 0) {
         throw new Error(`tmux ${op} failed (exit ${result.exitCode}): ${result.stderr || "(no stderr)"}`);
     }
@@ -436,11 +442,11 @@ export async function restoreTmuxSession(
     await createTmuxSession(targetName, firstCwd, env.paths.getShell("/bin/zsh"));
 
     if (firstWindow?.name) {
-        runTmux(tmuxBin, ["rename-window", "-t", `${targetName}:0`, firstWindow.name], "rename-window");
+        await runTmux(tmuxBin, ["rename-window", "-t", `${targetName}:0`, firstWindow.name], "rename-window");
     }
 
     if (firstPane && !opts.skipReplay) {
-        replayPane(tmuxBin, `${targetName}:0.0`, firstPane);
+        await replayPane(tmuxBin, `${targetName}:0.0`, firstPane);
     }
 
     for (let pi = 1; pi < (firstWindow?.panes.length ?? 0); pi += 1) {
@@ -449,10 +455,10 @@ export async function restoreTmuxSession(
             continue;
         }
 
-        runTmux(tmuxBin, ["split-window", "-t", `${targetName}:0`, "-c", pane.cwd ?? firstCwd], "split-window");
+        await runTmux(tmuxBin, ["split-window", "-t", `${targetName}:0`, "-c", pane.cwd ?? firstCwd], "split-window");
 
         if (!opts.skipReplay) {
-            replayPane(tmuxBin, `${targetName}:0.${pi}`, pane);
+            await replayPane(tmuxBin, `${targetName}:0.${pi}`, pane);
         }
     }
 
@@ -470,10 +476,10 @@ export async function restoreTmuxSession(
             newWindowArgs.push("-n", window.name);
         }
 
-        runTmux(tmuxBin, newWindowArgs, "new-window");
+        await runTmux(tmuxBin, newWindowArgs, "new-window");
 
         if (firstWindowPane && !opts.skipReplay) {
-            replayPane(tmuxBin, `${targetName}:${wi}.0`, firstWindowPane);
+            await replayPane(tmuxBin, `${targetName}:${wi}.0`, firstWindowPane);
         }
 
         for (let pi = 1; pi < window.panes.length; pi += 1) {
@@ -482,10 +488,10 @@ export async function restoreTmuxSession(
                 continue;
             }
 
-            runTmux(tmuxBin, ["split-window", "-t", `${targetName}:${wi}`, "-c", pane.cwd ?? cwd], "split-window");
+            await runTmux(tmuxBin, ["split-window", "-t", `${targetName}:${wi}`, "-c", pane.cwd ?? cwd], "split-window");
 
             if (!opts.skipReplay) {
-                replayPane(tmuxBin, `${targetName}:${wi}.${pi}`, pane);
+                await replayPane(tmuxBin, `${targetName}:${wi}.${pi}`, pane);
             }
         }
     }
@@ -498,13 +504,13 @@ export async function restoreTmuxSession(
     };
 }
 
-function replayPane(tmuxBin: string, target: string, pane: TmuxPaneSnapshot): void {
+async function replayPane(tmuxBin: string, target: string, pane: TmuxPaneSnapshot): Promise<void> {
     const cmd = pane.lastShellCommand;
     if (!cmd) {
         return;
     }
 
-    runTmux(tmuxBin, ["send-keys", "-t", target, cmd], "send-keys");
+    await runTmux(tmuxBin, ["send-keys", "-t", target, cmd], "send-keys");
 }
 
 function resolveTargetName(baseName: string, suffix?: string): string {

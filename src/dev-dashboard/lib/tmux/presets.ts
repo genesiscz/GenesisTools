@@ -38,7 +38,7 @@ export function listPresets(store?: TmuxPresetStore): TmuxPresetSummary[] {
     return resolveStore(store).list();
 }
 
-export function savePreset(input: SavePresetInput, store?: TmuxPresetStore): TmuxPresetSummary {
+export async function savePreset(input: SavePresetInput, store?: TmuxPresetStore): Promise<TmuxPresetSummary> {
     const s = resolveStore(store);
     const name = input.name.trim();
 
@@ -46,7 +46,7 @@ export function savePreset(input: SavePresetInput, store?: TmuxPresetStore): Tmu
         throw new Error("Preset name is required.");
     }
 
-    const sessions = captureTmuxSnapshot({ prefix: input.prefix });
+    const sessions = await captureTmuxSnapshot({ prefix: input.prefix });
 
     if (sessions.length === 0) {
         throw new Error(

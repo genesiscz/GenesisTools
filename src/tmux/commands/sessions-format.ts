@@ -19,16 +19,31 @@ export function printSessionHeaderParts(
     };
 }
 
-export function formatTtydBranchForTest(tabs: TtydSessionBinding[]): string {
+/** Colorization, injected so the CLI and the test share ONE formatter instead of two copies. */
+export interface TtydBranchStyle {
+    head: (value: string) => string;
+    label: (value: string) => string;
+    command: (value: string) => string;
+    separator: (value: string) => string;
+}
+
+const PLAIN_STYLE: TtydBranchStyle = {
+    head: (value) => value,
+    label: (value) => value,
+    command: (value) => value,
+    separator: (value) => value,
+};
+
+export function formatTtydBranch(tabs: TtydSessionBinding[], style: TtydBranchStyle = PLAIN_STYLE): string {
     const parts = tabs.map((t) => {
-        const bits = [`:${t.port}`, t.label];
+        const bits = [`:${t.port}`, style.label(t.label)];
 
         if (t.lastCommand) {
-            bits.push(t.lastCommand);
+            bits.push(style.command(t.lastCommand));
         }
 
         return bits.join(" ");
     });
 
-    return `ttyd ${parts.join(" · ")}`;
+    return `${style.head("ttyd")} ${parts.join(style.separator(" · "))}`;
 }

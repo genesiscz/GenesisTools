@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatTtydBranchForTest, printSessionHeaderParts } from "./sessions-format";
+import { formatTtydBranch, printSessionHeaderParts } from "./sessions-format";
 
 describe("tmux sessions ttyd formatting", () => {
     test("header parts include ttyd ports when bound", () => {
@@ -17,8 +17,19 @@ describe("tmux sessions ttyd formatting", () => {
     });
 
     test("ttyd branch lists port + label", () => {
-        expect(formatTtydBranchForTest([{ id: "a", port: 1, label: "bridge", lastCommand: "claude" }])).toBe(
+        expect(formatTtydBranch([{ id: "a", port: 1, label: "bridge", lastCommand: "claude" }])).toBe(
             "ttyd :1 bridge claude"
         );
+    });
+
+    test("ttyd branch applies the injected style to every segment", () => {
+        const styled = formatTtydBranch([{ id: "a", port: 1, label: "bridge", lastCommand: "claude" }], {
+            head: (v) => `<h>${v}</h>`,
+            label: (v) => `<l>${v}</l>`,
+            command: (v) => `<c>${v}</c>`,
+            separator: (v) => `<s>${v}</s>`,
+        });
+
+        expect(styled).toBe("<h>ttyd</h> :1 <l>bridge</l> <c>claude</c>");
     });
 });

@@ -48,7 +48,7 @@ export function registerSessionCommand(program: Command): void {
 }
 
 export async function runReset(sessionId: string | undefined, flags: ResetCliFlags): Promise<void> {
-    const selection = selectResetTargets({ sessionId, matching: flags.matching });
+    const selection = await selectResetTargets({ sessionId, matching: flags.matching });
 
     if (!selection.ok) {
         out.error(selection.error);

@@ -20,12 +20,12 @@ export function registerPresetSaveCommand(parent: Command): void {
         .option("-f, --force", "Overwrite an existing preset of the same name")
         .option("--skip-history", "Skip per-pane last-shell-command parsing (smaller / faster)")
         .option("--note <text>", "Free-form note stored on the preset")
-        .action((name: string | undefined, flags: SaveFlags) => {
-            runSavePreset(name, flags);
+        .action(async (name: string | undefined, flags: SaveFlags) => {
+            await runSavePreset(name, flags);
         });
 }
 
-export function runSavePreset(rawName: string | undefined, flags: SaveFlags): void {
+export async function runSavePreset(rawName: string | undefined, flags: SaveFlags): Promise<void> {
     const name = (rawName?.trim() || defaultPresetName()).trim();
     const store = new TmuxPresetStore();
 
@@ -40,7 +40,7 @@ export function runSavePreset(rawName: string | undefined, flags: SaveFlags): vo
         return;
     }
 
-    const sessions = captureTmuxSnapshot({
+    const sessions = await captureTmuxSnapshot({
         prefix: flags.prefix,
         skipHistory: flags.skipHistory,
     });

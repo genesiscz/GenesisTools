@@ -7,8 +7,8 @@ function snap(name: string, attached = false): TmuxSessionSnapshot {
 }
 
 describe("selectResetTargets", () => {
-    test("rejects when both sessionId and matching are given", () => {
-        const result = selectResetTargets({ sessionId: "foo", matching: "bar" }, () => []);
+    test("rejects when both sessionId and matching are given", async () => {
+        const result = await selectResetTargets({ sessionId: "foo", matching: "bar" }, async () => []);
         expect(result.ok).toBe(false);
 
         if (!result.ok) {
@@ -16,8 +16,8 @@ describe("selectResetTargets", () => {
         }
     });
 
-    test("rejects when neither sessionId nor matching is given", () => {
-        const result = selectResetTargets({}, () => []);
+    test("rejects when neither sessionId nor matching is given", async () => {
+        const result = await selectResetTargets({}, async () => []);
         expect(result.ok).toBe(false);
 
         if (!result.ok) {
@@ -25,9 +25,9 @@ describe("selectResetTargets", () => {
         }
     });
 
-    test("matching path captures by prefix and reports single=false", () => {
+    test("matching path captures by prefix and reports single=false", async () => {
         const captured = [snap("dev-1"), snap("dev-2", true)];
-        const result = selectResetTargets({ matching: "dev-" }, (prefix) => {
+        const result = await selectResetTargets({ matching: "dev-" }, async (prefix) => {
             expect(prefix).toBe("dev-");
             return captured;
         });
@@ -42,8 +42,8 @@ describe("selectResetTargets", () => {
         }
     });
 
-    test("matching path errors when nothing matches", () => {
-        const result = selectResetTargets({ matching: "ghost-" }, () => []);
+    test("matching path errors when nothing matches", async () => {
+        const result = await selectResetTargets({ matching: "ghost-" }, async () => []);
         expect(result.ok).toBe(false);
 
         if (!result.ok) {
@@ -51,9 +51,9 @@ describe("selectResetTargets", () => {
         }
     });
 
-    test("sessionId path keeps only the exact match, dropping prefix siblings", () => {
+    test("sessionId path keeps only the exact match, dropping prefix siblings", async () => {
         const captured = [snap("api"), snap("api-worker"), snap("api-2")];
-        const result = selectResetTargets({ sessionId: "api" }, () => captured);
+        const result = await selectResetTargets({ sessionId: "api" }, async () => captured);
 
         expect(result.ok).toBe(true);
 
@@ -65,9 +65,9 @@ describe("selectResetTargets", () => {
         }
     });
 
-    test("sessionId path errors when the exact session is absent", () => {
+    test("sessionId path errors when the exact session is absent", async () => {
         const captured = [snap("api-worker")];
-        const result = selectResetTargets({ sessionId: "api" }, () => captured);
+        const result = await selectResetTargets({ sessionId: "api" }, async () => captured);
 
         expect(result.ok).toBe(false);
 

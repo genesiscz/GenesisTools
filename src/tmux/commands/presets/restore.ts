@@ -2,7 +2,7 @@ import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
-import { sessionExists } from "@genesiscz/utils/tmux/sessions";
+import { listTmuxSessions } from "@genesiscz/utils/tmux/sessions";
 import { restoreTmuxSession, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
 import { PresetNotFoundError, TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
@@ -59,9 +59,12 @@ export async function runRestorePreset(name: string, flags: RestoreFlags): Promi
 
     out.println(pc.bold(`Restore plan for preset ${pc.cyan(name)}:`));
 
+    // One listing for the whole plan — `sessionExists` spawns a full list-sessions per name.
+    const liveNames = new Set((await listTmuxSessions()).map((session) => session.name));
+
     for (const session of targets) {
         const targetName = flags.suffix ? `${session.name}${flags.suffix}` : session.name;
-        const clash = await sessionExists(targetName);
+        const clash = liveNames.has(targetName);
         const note = clash ? pc.yellow("(skip — already exists)") : pc.dim(`(${countPanes(session)} pane(s))`);
         out.println(`  ${clash ? pc.dim(targetName) : pc.cyan(targetName)} ${note}`);
     }
