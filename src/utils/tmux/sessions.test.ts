@@ -145,8 +145,7 @@ describe("tmux sessions", () => {
             if (cmd.includes("list-sessions")) {
                 return {
                     exitCode: 0,
-                    stdout:
-                        rec("dev-dashboard-abc12345|claude|✳ testt") + rec("cmux-test|zsh|") + rec("blank-cmd||"),
+                    stdout: rec("dev-dashboard-abc12345|claude|✳ testt") + rec("cmux-test|zsh|") + rec("blank-cmd||"),
                 };
             }
 
