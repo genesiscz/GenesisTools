@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { getClaudeUsageStorage } from "./storage";
 
@@ -118,23 +119,82 @@ export async function savePollGate(gate: PollGate): Promise<void> {
 }
 
 /**
+ * Read-modify-write the gate under ONE lock.
+ *
+ * `clearPollGate` runs from `tools claude login` / `config` while a poll is already
+ * in flight in another process. Unlocked, the poll's later write reinstates the block
+ * a re-login just lifted (leaving a recovered account blocked for a full window), and
+ * the inverse race erases a freshly recorded failure. Return null to leave the file
+ * untouched.
+ */
+async function mutatePollGate(mutate: (gate: PollGate) => PollGate | null): Promise<void> {
+    const storage = getClaudeUsageStorage();
+
+    try {
+        await storage.withFileLock({
+            file: join(storage.getCacheDir(), GATE_KEY),
+            fn: async () => {
+                const next = mutate(await loadPollGate());
+
+                if (next) {
+                    await storage.putCacheFile(GATE_KEY, next, GATE_TTL);
+                }
+            },
+            timeout: 10_000,
+        });
+    } catch (err) {
+        logger.debug({ err }, "[usage] poll gate could not be updated");
+    }
+}
+
+/**
  * Clear the backoff for one account (or all of them). Called after a re-login,
  * so a recovered account is polled on the very next run instead of waiting out
  * a 6h block earned while it was dead.
  */
+/**
+ * Apply ONE poll's outcomes to the gate, re-reading it inside the lock.
+ *
+ * The poll loads the gate, then spends seconds on the network. Writing the whole
+ * object back afterwards reinstated a block that a re-login had cleared in the
+ * meantime. Applying the delta to the CURRENT gate keeps both facts: the account
+ * is no longer serving out its old backoff, and this poll's own failure counts once.
+ */
+export async function applyPollGateOutcomes(args: {
+    successes: readonly string[];
+    failures: readonly { account: string; reason: string }[];
+    now: number;
+    /** Configured account names, for pruning. Omit on a FILTERED poll — it knows nothing
+     * about the accounts it excluded and pruning would wipe their backoff. */
+    knownAccounts?: readonly string[];
+}): Promise<void> {
+    await mutatePollGate((gate) => {
+        let next = args.knownAccounts ? pruneGate(gate, args.knownAccounts) : gate;
+
+        for (const account of args.successes) {
+            next = recordSuccess(next, account);
+        }
+
+        for (const { account, reason } of args.failures) {
+            next = recordFailure(next, account, reason, args.now);
+        }
+
+        return next;
+    });
+}
+
 export async function clearPollGate(account?: string): Promise<void> {
-    const gate = await loadPollGate();
+    await mutatePollGate((gate) => {
+        if (!account) {
+            logger.debug("[usage] poll gate cleared for all accounts");
+            return {};
+        }
 
-    if (!account) {
-        await savePollGate({});
-        logger.debug("[usage] poll gate cleared for all accounts");
-        return;
-    }
+        if (!gate[account]) {
+            return null;
+        }
 
-    if (!gate[account]) {
-        return;
-    }
-
-    await savePollGate(recordSuccess(gate, account));
-    logger.debug(`[usage] poll gate cleared for ${account}`);
+        logger.debug(`[usage] poll gate cleared for ${account}`);
+        return recordSuccess(gate, account);
+    });
 }

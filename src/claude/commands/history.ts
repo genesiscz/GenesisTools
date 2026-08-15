@@ -391,19 +391,20 @@ export function registerHistoryCommand(program: Command): void {
         .option("--json", "Machine-readable findings JSON on stdout")
         .option("--md", "Print markdown to stdout (default when no --output/--json)")
         .action(
-            async (options: {
-                project?: string;
-                all?: boolean;
-                excludeAgents?: boolean;
-                ruleCodification?: boolean;
-                dedupe?: boolean;
-                max?: string;
-                excerpt: string;
-                output?: string;
-                json?: boolean;
-                md?: boolean;
-            },
-            cmd: Command
+            async (
+                options: {
+                    project?: string;
+                    all?: boolean;
+                    excludeAgents?: boolean;
+                    ruleCodification?: boolean;
+                    dedupe?: boolean;
+                    max?: string;
+                    excerpt: string;
+                    output?: string;
+                    json?: boolean;
+                    md?: boolean;
+                },
+                cmd: Command
             ) => {
                 // The parent `history` command also declares `-p, --project`, and commander
                 // binds a shared flag to the PARENT: without this fallback the subcommand

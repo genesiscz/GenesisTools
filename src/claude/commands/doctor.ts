@@ -18,7 +18,7 @@ import {
     readKeychainPayload,
     resolveKeychainAccountUuid,
 } from "@genesiscz/utils/claude/keychain";
-import { type TokenVerdict, verifyLongLivedToken } from "@genesiscz/utils/claude/token-verify";
+import { probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -111,11 +111,12 @@ export async function doctorCommand(): Promise<void> {
         return;
     }
 
-    // One live probe per DISTINCT token (1 haiku token each).
+    // One READ-ONLY probe per distinct token. Deliberately not the inference-based
+    // verifier: a diagnostic must not spend quota or move the limit state it reports on.
     const verdicts = new Map<string, TokenVerdict>();
     await Promise.all(
         [...new Set(groups.map((g) => g.token))].map(async (token) => {
-            verdicts.set(token, await verifyLongLivedToken(token));
+            verdicts.set(token, await probeLongLivedToken(token));
         })
     );
 

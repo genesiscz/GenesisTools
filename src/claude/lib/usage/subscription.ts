@@ -10,8 +10,33 @@ import { logger } from "@genesiscz/utils/logger";
  * once per account and persisted forever — every later render is pure math.
  */
 
-/** Accounts whose profile fetch failed this process; don't retry them every poll. */
-const failedAnchors = new Set<string>();
+/**
+ * When each account's profile fetch last failed, NOT a permanent blocklist.
+ *
+ * A `Set` here suppressed the account for the life of the process, so in a long-running
+ * poller one transient network blip disabled the six-hourly plan re-read forever — and
+ * `config refresh` could not undo it either, because clearing `subscriptionCheckedAt`
+ * does not touch this. Failures now expire.
+ */
+const anchorFailures = new Map<string, number>();
+
+/** How long a failed profile read suppresses retries. Short: the recheck window is 6h. */
+const ANCHOR_RETRY_BACKOFF_MS = 30 * 60 * 1000;
+
+function markAnchorFailure(name: string, now: number = Date.now()): void {
+    anchorFailures.set(name, now);
+}
+
+/** Drop the backoff so the next poll retries immediately (a login/refresh changed the facts). */
+export function clearAnchorFailure(name: string): void {
+    anchorFailures.delete(name);
+}
+
+function anchorFailureIsFresh(name: string, now: number): boolean {
+    const failedAt = anchorFailures.get(name);
+
+    return failedAt !== undefined && now - failedAt < ANCHOR_RETRY_BACKOFF_MS;
+}
 
 /**
  * How long a stored plan reading stays trusted. A subscription can lapse at any
@@ -38,16 +63,16 @@ export function planAllowsClaudeCode(entry: { subscriptionPlan?: string; subscri
 }
 
 /**
- * Whether this account's stored profile reading is old enough to re-read.
- * Accounts whose profile already failed in THIS process are never due again:
- * retrying a broken login once per poll is what the recheck window exists to
- * avoid.
+ * Whether this account's stored profile reading is old enough to re-read. An account
+ * that failed RECENTLY is not due — retrying a broken login on every poll is what the
+ * backoff exists to avoid — but the suppression expires, so a transient failure costs
+ * one backoff window rather than the rest of the process's life.
  */
 export function isAnchorDue(
     account: Pick<AIAccountEntry, "name" | "subscriptionCreatedAt" | "subscriptionCheckedAt">,
     now: number = Date.now()
 ): boolean {
-    if (failedAnchors.has(account.name)) {
+    if (anchorFailureIsFresh(account.name, now)) {
         return false;
     }
 
@@ -78,7 +103,7 @@ export async function refreshSubscriptionProfile(
     const profile = await fetchOAuthProfile(token);
 
     if (!profile) {
-        failedAnchors.add(account.name);
+        markAnchorFailure(account.name, now);
         logger.debug(`[subscription:${account.name}] profile unavailable`);
         return false;
     }
@@ -97,7 +122,7 @@ export async function refreshSubscriptionProfile(
             `[subscription:${account.name}] plan ${patch.subscriptionPlan ?? "unknown"} (${patch.subscriptionStatus ?? "unknown"}), anchor ${patch.subscriptionCreatedAt ?? "unknown"}`
         );
     } catch (err) {
-        failedAnchors.add(account.name);
+        markAnchorFailure(account.name, now);
         logger.warn(
             `[subscription:${account.name}] could not persist profile: ${err instanceof Error ? err.message : err}`
         );
@@ -106,6 +131,7 @@ export async function refreshSubscriptionProfile(
 
     // Mirror into the in-memory entry the caller is still holding.
     Object.assign(account, patch);
+    clearAnchorFailure(account.name);
     return true;
 }
 
@@ -114,8 +140,21 @@ export async function refreshSubscriptionProfile(
  * resolving each token here. Used by `tools claude config refresh`; the poller
  * calls `refreshSubscriptionProfile` with its own token instead.
  */
-export async function ensureSubscriptionAnchors(config: AIConfig, accounts: AIAccountEntry[]): Promise<void> {
+export async function ensureSubscriptionAnchors(
+    config: AIConfig,
+    accounts: AIAccountEntry[],
+    opts: { force?: boolean } = {}
+): Promise<void> {
     const now = Date.now();
+
+    // `config refresh` is a deliberate user action: it re-reads even an account whose
+    // last attempt failed, which is exactly when someone reaches for it.
+    if (opts.force) {
+        for (const account of accounts) {
+            clearAnchorFailure(account.name);
+        }
+    }
+
     const due = accounts.filter((a) => isAnchorDue(a, now));
 
     if (due.length === 0) {
@@ -130,7 +169,7 @@ export async function ensureSubscriptionAnchors(config: AIConfig, accounts: AIAc
                 });
                 await refreshSubscriptionProfile(config, account, token, now);
             } catch (err) {
-                failedAnchors.add(account.name);
+                markAnchorFailure(account.name, now);
                 logger.debug(`[subscription:${account.name}] token unavailable for profile read: ${err}`);
             }
         })

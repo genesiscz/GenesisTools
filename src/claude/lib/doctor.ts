@@ -136,8 +136,8 @@ export function groupSessions(processes: PinnedProcess[]): SessionGroup[] {
 }
 
 /**
- * Assign problems to one session group. `tokenVerdict` comes from a live
- * probe (verifyLongLivedToken); bucket states come from the usage cache.
+ * Assign problems to one session group. `tokenVerdict` comes from a read-only
+ * probe (probeLongLivedToken); bucket states come from the usage cache.
  * "unreachable" never becomes a verdict — it is reported as unverified.
  */
 export function diagnoseGroup(

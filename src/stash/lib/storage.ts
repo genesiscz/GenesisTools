@@ -6,7 +6,7 @@ export class StashStorage {
     private readonly base: string;
 
     constructor(base?: string) {
-        const envRoot = process.env.GENESIS_TOOLS_STASH_ROOT;
+        const envRoot = env.getTrimmed("GENESIS_TOOLS_STASH_ROOT");
         this.base = base ?? envRoot ?? join(env.tools.getHome(), ".genesis-tools", "stash");
     }
 

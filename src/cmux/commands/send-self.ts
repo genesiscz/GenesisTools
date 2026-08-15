@@ -1,4 +1,5 @@
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -25,24 +26,26 @@ export function resolveSelfTarget(
     return null;
 }
 
+/** One `tmux send-keys`, off the event loop, with stderr captured for the failure message. */
+async function runTmuxSendKeys(argv: string[], label: string): Promise<void> {
+    const proc = Bun.spawn(argv, { stdio: ["ignore", "ignore", "pipe"] });
+    const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+    if (exitCode !== 0) {
+        throw new Error(`${label} failed: ${stderr.trim() || `exit ${exitCode}`}`);
+    }
+}
+
 async function sendTmux(pane: string, text: string, enter: boolean, enterDelayMs: number): Promise<void> {
     const tmux = resolveTmuxBin();
-    const literal = Bun.spawnSync([tmux, "send-keys", "-t", pane, "-l", "--", text]);
-
-    if (literal.exitCode !== 0) {
-        throw new Error(`tmux send-keys failed: ${literal.stderr.toString().trim()}`);
-    }
+    await runTmuxSendKeys([tmux, "send-keys", "-t", pane, "-l", "--", text], "tmux send-keys");
 
     if (!enter) {
         return;
     }
 
     await Bun.sleep(enterDelayMs);
-    const key = Bun.spawnSync([tmux, "send-keys", "-t", pane, "Enter"]);
-
-    if (key.exitCode !== 0) {
-        throw new Error(`tmux send-keys Enter failed: ${key.stderr.toString().trim()}`);
-    }
+    await runTmuxSendKeys([tmux, "send-keys", "-t", pane, "Enter"], "tmux send-keys Enter");
 }
 
 async function sendCmux(
@@ -82,7 +85,7 @@ export function registerSendSelfCommand(program: Command): void {
                     throw new Error(`--target must be auto, tmux or cmux (got ${opts.target})`);
                 }
 
-                const target = resolveSelfTarget(process.env, prefer);
+                const target = resolveSelfTarget(env.getProcessEnv(), prefer);
 
                 if (!target) {
                     throw new Error(

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { hasValidLongLivedToken, LONG_TOKEN_MIN_LENGTH, verifyLongLivedToken } from "./token-verify";
+import {
+    hasValidLongLivedToken,
+    LONG_TOKEN_MIN_LENGTH,
+    probeLongLivedToken,
+    verifyLongLivedToken,
+} from "./token-verify";
 
 const realFetch = globalThis.fetch;
 
@@ -76,5 +81,68 @@ describe("verifyLongLivedToken", () => {
         expect(headers["user-agent"]).toContain("claude-cli");
         expect(headers.authorization).toBe("Bearer tok");
         expect(seen?.signal).toBeDefined();
+    });
+});
+
+describe("probeLongLivedToken", () => {
+    function recordingFetch(status: number): Array<{ url: string; method: string; body: unknown }> {
+        const calls: Array<{ url: string; method: string; body: unknown }> = [];
+        stubFetch(async (input, init) => {
+            calls.push({ url: String(input), method: init?.method ?? "GET", body: init?.body });
+            return new Response("{}", { status });
+        });
+
+        return calls;
+    }
+
+    // The point of this probe: a diagnostic must not spend quota or create
+    // provider-side history. A GET with no body cannot.
+    test("reads the profile endpoint with GET and sends no request body", async () => {
+        const calls = recordingFetch(200);
+
+        expect(await probeLongLivedToken("tok")).toBe("ok");
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url).toBe("https://api.anthropic.com/api/oauth/profile");
+        expect(calls[0].method).toBe("GET");
+        expect(calls[0].body).toBeUndefined();
+        expect(calls[0].url).not.toContain("/v1/messages");
+    });
+
+    test("401 and 403 are invalid", async () => {
+        stubFetch(async () => new Response("", { status: 401 }));
+        expect(await probeLongLivedToken("tok")).toBe("invalid");
+
+        stubFetch(async () => new Response("", { status: 403 }));
+        expect(await probeLongLivedToken("tok")).toBe("invalid");
+    });
+
+    test("429 is authenticated but limited", async () => {
+        stubFetch(async () => new Response("", { status: 429 }));
+        expect(await probeLongLivedToken("tok")).toBe("limited");
+    });
+
+    test("any other non-ok status is unreachable, not an auth verdict", async () => {
+        stubFetch(async () => new Response("", { status: 500 }));
+        expect(await probeLongLivedToken("tok")).toBe("unreachable");
+    });
+
+    test("a network failure is unreachable", async () => {
+        stubFetch(async () => {
+            throw new Error("ECONNREFUSED");
+        });
+        expect(await probeLongLivedToken("tok")).toBe("unreachable");
+    });
+
+    // Negative control: capture-time verification is SUPPOSED to bill one token,
+    // so the read-only probe must not have replaced it everywhere.
+    test("verifyLongLivedToken still posts to the inference endpoint", async () => {
+        const calls: Array<{ url: string; method: string }> = [];
+        stubFetch(async (input, init) => {
+            calls.push({ url: String(input), method: init?.method ?? "GET" });
+            return new Response("{}", { status: 200 });
+        });
+
+        expect(await verifyLongLivedToken("tok")).toBe("ok");
+        expect(calls[0]).toEqual({ url: "https://api.anthropic.com/v1/messages", method: "POST" });
     });
 });

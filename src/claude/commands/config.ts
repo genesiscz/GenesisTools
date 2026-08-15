@@ -921,7 +921,7 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            await ensureSubscriptionAnchors(aiConfig, accounts);
+            await ensureSubscriptionAnchors(aiConfig, accounts, { force: true });
 
             const fresh = await AIConfig.load();
 
@@ -1036,7 +1036,7 @@ export function registerConfigCommand(program: Command): void {
             }
 
             // A fresh grant retires both cooldowns the dead one earned.
-            clearInvalidGrant(accountName);
+            await clearInvalidGrant(accountName);
             await clearPollGate(accountName);
 
             out.println();

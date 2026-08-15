@@ -88,6 +88,7 @@ export function registerRedactCommand(program: Command): void {
 
                 const backupDir = options.inPlace ? join("/tmp", `har-redact-backup-${Date.now()}`) : null;
                 const reports: FileReport[] = [];
+                const usedBackupNames = new Set<string>();
 
                 for (const file of files) {
                     const inputPath = resolve(file);
@@ -114,7 +115,10 @@ export function registerRedactCommand(program: Command): void {
                         const json = SafeJSON.stringify(redacted, { strict: true });
 
                         if (options.inPlace && backupDir) {
-                            backupFile = join(backupDir, basename(inputPath));
+                            // Two inputs can share a basename (/one/capture.har, /two/capture.har).
+                            // Keyed only on it, the second backup overwrote the first and BOTH
+                            // printed restore commands then copied the same original back.
+                            backupFile = uniqueBackupPath(backupDir, inputPath, usedBackupNames);
                             await Bun.write(backupFile, Bun.file(inputPath));
                             await Bun.write(inputPath, json);
                             outputFile = inputPath;
@@ -193,4 +197,29 @@ export function registerRedactCommand(program: Command): void {
                 }
             }
         );
+}
+
+/**
+ * A backup path that is unique within one run. Falls back to a numeric suffix so two
+ * inputs with the same basename never overwrite each other's original.
+ */
+function uniqueBackupPath(backupDir: string, inputPath: string, used: Set<string>): string {
+    const name = basename(inputPath);
+
+    if (!used.has(name)) {
+        used.add(name);
+        return join(backupDir, name);
+    }
+
+    const stem = name.replace(/\.har$/i, "");
+    const ext = name.slice(stem.length);
+
+    for (let n = 2; ; n += 1) {
+        const candidate = `${stem}.${n}${ext}`;
+
+        if (!used.has(candidate)) {
+            used.add(candidate);
+            return join(backupDir, candidate);
+        }
+    }
 }

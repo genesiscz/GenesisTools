@@ -6,10 +6,8 @@ import {
     blockedEntry,
     loadPollGate,
     type PollGate,
+    applyPollGateOutcomes,
     pruneGate,
-    recordFailure,
-    recordSuccess,
-    savePollGate,
 } from "./poll-gate";
 import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile } from "./subscription";
 
@@ -405,14 +403,18 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
         )
     );
 
-    let nextGate = gate;
+    const gateSuccesses: string[] = [];
+    const gateFailures: Array<{ account: string; reason: string }> = [];
+
     const usages = results.map((r, i) => {
         const account = accounts[i];
 
         if (r.status === "fulfilled") {
-            const cleared = recordSuccess(nextGate, account.name);
-            gateDirty = gateDirty || cleared !== nextGate;
-            nextGate = cleared;
+            if (gate[account.name]) {
+                gateSuccesses.push(account.name);
+                gateDirty = true;
+            }
+
             return r.value;
         }
 
@@ -422,7 +424,7 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
         if (suppressed) {
             logger.debug(`[usage:${account.name}] not polled: ${reason}`);
         } else {
-            nextGate = recordFailure(nextGate, account.name, String(r.reason), now);
+            gateFailures.push({ account: account.name, reason: String(r.reason) });
             gateDirty = true;
 
             // Only the FIRST failure in a streak is worth a console line. After
@@ -446,7 +448,12 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
     });
 
     if (gateDirty) {
-        await savePollGate(nextGate);
+        await applyPollGateOutcomes({
+            successes: gateSuccesses,
+            failures: gateFailures,
+            now,
+            knownAccounts: accountFilter === undefined ? accounts.map((a) => a.name) : undefined,
+        });
     }
 
     return usages;

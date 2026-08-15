@@ -25,8 +25,53 @@ export function hasValidLongLivedToken(tokens: { longLivedToken?: string }): boo
 }
 
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 /** A blackholed connection must not hang an interactive login forever. */
 const VERIFY_TIMEOUT_MS = 15_000;
+
+/**
+ * Read-only liveness probe: a GET that spends nothing.
+ *
+ * `verifyLongLivedToken` below proves the token by making a real inference request. That
+ * is right at CAPTURE time — the user just pasted a token and asked "is it good?" — but
+ * wrong for a DIAGNOSTIC, which must not consume quota, create provider-side history, or
+ * perturb the rate-limit state it was invoked to report on. `tools claude doctor` uses
+ * this one; nothing here writes.
+ */
+export async function probeLongLivedToken(token: string): Promise<TokenVerdict> {
+    try {
+        const res = await fetch(PROFILE_URL, {
+            method: "GET",
+            headers: {
+                authorization: `Bearer ${token}`,
+                "anthropic-beta": "oauth-2025-04-20",
+                accept: "application/json",
+                "user-agent": "claude-cli/2.1.214 (external, cli)",
+            },
+            signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+        });
+
+        if (res.status === 401 || res.status === 403) {
+            logger.debug(`[token-verify] probe: token rejected with ${res.status}`);
+            return "invalid";
+        }
+
+        if (res.status === 429) {
+            return "limited";
+        }
+
+        if (!res.ok) {
+            // Not an auth verdict — say so rather than inventing one.
+            logger.warn(`[token-verify] probe returned ${res.status}, treating as unreachable`);
+            return "unreachable";
+        }
+
+        return "ok";
+    } catch (error) {
+        logger.debug({ error }, "[token-verify] probe request failed");
+        return "unreachable";
+    }
+}
 
 /** One-token call: proves the token authenticates. 429 means authenticated but rate-limited. */
 export async function verifyLongLivedToken(token: string): Promise<TokenVerdict> {

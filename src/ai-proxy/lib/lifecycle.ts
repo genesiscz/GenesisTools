@@ -178,6 +178,22 @@ export async function runAiProxyDown(): Promise<DownResult> {
         return { stopped: false, message: "ai-proxy is not running" };
     }
 
+    if (pidState.status === "unverified") {
+        // Alive, but `ps` could not tell us WHAT it is. Signalling on that basis is the
+        // same bet as signalling a `foreign` pid — if the recorded pid was recycled, we
+        // kill a stranger. The record is left alone: it may well still be our proxy.
+        logger.warn({ pidState }, "ai-proxy down: refusing to signal a pid whose identity is unverifiable");
+
+        return {
+            stopped: false,
+            pid: pidState.pid,
+            message:
+                `Refusing to stop pid ${pidState.pid}: it is running but could not be identified ` +
+                `(reading its command line failed). Check it yourself with \`ps -p ${pidState.pid} -o command=\` ` +
+                `and, if it is the proxy, stop it with \`kill ${pidState.pid}\`.`,
+        };
+    }
+
     const targetPid = pidState.pid;
 
     try {

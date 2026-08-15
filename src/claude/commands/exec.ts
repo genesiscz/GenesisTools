@@ -3,8 +3,13 @@ import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
-import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
+import {
+    LONG_TOKEN_MIN_LENGTH,
+    probeLongLivedToken,
+    type TokenVerdict,
+} from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -13,8 +18,33 @@ import pc from "picocolors";
 export interface ExecArgs {
     /** Account named with -a/--account, if any. */
     name?: string;
+    /** `--no-verify`: skip the pre-launch token probe. */
+    skipVerify?: boolean;
     /** The command to run, argv-style. */
     command: string[];
+}
+
+export type LaunchGate = { launch: true } | { launch: false; reason: string; fix: string };
+
+/**
+ * May a pinned token launch the child?
+ *
+ * This command's whole promise is that the child bills the named account. A token that
+ * is the right LENGTH but expired does not fail loudly: Claude Code 401s and silently
+ * falls back to the keychain login, so the run bills someone else. Only a definitive
+ * `invalid` blocks — an unreachable probe must not ground a CI job that would otherwise
+ * have worked, and `limited` still authenticates as the right identity.
+ */
+export function launchGateForVerdict(verdict: TokenVerdict, accountName: string): LaunchGate {
+    if (verdict === "invalid") {
+        return {
+            launch: false,
+            reason: `The stored token for "${accountName}" is no longer accepted (401/403).`,
+            fix: `tools claude login-long ${accountName}`,
+        };
+    }
+
+    return { launch: true };
 }
 
 /**
@@ -24,21 +54,37 @@ export interface ExecArgs {
  */
 export function parseExecArgs(args: string[]): ExecArgs {
     let name: string | undefined;
+    let skipVerify = false;
     let rest = args;
 
-    if (rest[0] === "-a" || rest[0] === "--account") {
-        name = rest[1];
-        rest = rest.slice(2);
-    } else if (rest[0]?.startsWith("--account=")) {
-        name = rest[0].slice("--account=".length);
-        rest = rest.slice(1);
+    // Leading flags only, in any order — once a non-flag word appears the rest is the child's.
+    for (;;) {
+        if (rest[0] === "-a" || rest[0] === "--account") {
+            name = rest[1];
+            rest = rest.slice(2);
+            continue;
+        }
+
+        if (rest[0]?.startsWith("--account=")) {
+            name = rest[0].slice("--account=".length);
+            rest = rest.slice(1);
+            continue;
+        }
+
+        if (rest[0] === "--no-verify") {
+            skipVerify = true;
+            rest = rest.slice(1);
+            continue;
+        }
+
+        break;
     }
 
     if (rest[0] === "--") {
         rest = rest.slice(1);
     }
 
-    return { name, command: rest };
+    return { name, skipVerify, command: rest };
 }
 
 /**
@@ -98,7 +144,7 @@ async function resolveAccount(eligible: AIAccountEntry[], name: string | undefin
 }
 
 export async function execCommand(args: string[]): Promise<never> {
-    const { name, command } = parseExecArgs(args);
+    const { name, skipVerify, command } = parseExecArgs(args);
 
     if (command.length === 0) {
         out.error(pc.red("Nothing to run."));
@@ -129,6 +175,20 @@ export async function execCommand(args: string[]): Promise<never> {
         process.exit(1);
     }
 
+    // Read-only probe (a GET, no billing) BEFORE the spawn: this is the last point at
+    // which a wrong-identity run can still be prevented rather than merely reported.
+    if (!skipVerify) {
+        const gate = launchGateForVerdict(await probeLongLivedToken(token), account.name);
+
+        if (!gate.launch) {
+            out.error(pc.red(`  ${gate.reason}`));
+            out.printlnErr(pc.dim(`  Nothing was run. Recapture it with: ${pc.cyan(gate.fix)}`));
+            out.printlnErr(pc.dim(`  Or skip this check with ${pc.cyan("--no-verify")}.`));
+            await out.flush();
+            process.exit(1);
+        }
+    }
+
     await ensureOnboardingSkippedForOAuthToken();
 
     // Only narrate to a terminal: a captured stderr (a release tool collecting
@@ -143,7 +203,7 @@ export async function execCommand(args: string[]): Promise<never> {
         const proc = Bun.spawn({
             cmd: command,
             stdio: ["inherit", "inherit", "inherit"],
-            env: { ...process.env, ...pinnedLaunchEnv(account, token) },
+            env: { ...env.getProcessEnv(), ...pinnedLaunchEnv(account, token) },
         });
 
         process.exit(await proc.exited);
@@ -164,7 +224,7 @@ export function registerExecCommand(program: Command): void {
         .description(
             "Run any command with an account's long-lived token in its environment " +
                 "(so `claude -p` in hooks and CI never depends on the keychain login). " +
-                "Usage: tools claude exec [-a <account>] [--] <command> [args...]"
+                "Usage: tools claude exec [-a <account>] [--no-verify] [--] <command> [args...]"
         )
         .allowUnknownOption(true)
         .allowExcessArguments(true)

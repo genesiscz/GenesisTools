@@ -342,6 +342,8 @@ describe("doctor never mutates", () => {
         "getSharedAccountsUsage",
         // Writes the AI config.
         "updateAccount",
+        // Bills a real inference request; the read-only door is probeLongLivedToken.
+        "verifyLongLivedToken",
     ];
 
     test.each([
@@ -357,5 +359,9 @@ describe("doctor never mutates", () => {
 
     test("the doctor command reads the cache through peekSharedUsage", async () => {
         expect(await Bun.file("src/claude/commands/doctor.ts").text()).toContain("peekSharedUsage");
+    });
+
+    test("the doctor command probes tokens read-only", async () => {
+        expect(await Bun.file("src/claude/commands/doctor.ts").text()).toContain("probeLongLivedToken");
     });
 });

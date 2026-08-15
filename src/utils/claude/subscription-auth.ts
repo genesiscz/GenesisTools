@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { retry } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { logger } from "@genesiscz/utils/logger";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
@@ -82,7 +84,7 @@ function isTransientRefreshError(error: unknown): boolean {
 const INVALID_GRANT_COOLDOWN_MS = 10 * 60 * 1000;
 
 function invalidGrantPath(): string {
-    return join(env.tools.getHome() || env.tools.getHome(), ".genesis-tools", "ai", "invalid-grant.json");
+    return join(env.tools.getHome(), ".genesis-tools", "ai", "invalid-grant.json");
 }
 
 function readInvalidGrants(): Record<string, number> {
@@ -102,30 +104,54 @@ function invalidGrantSince(account: string): number | undefined {
     return readInvalidGrants()[account];
 }
 
-function markInvalidGrant(account: string): void {
+/**
+ * Read-modify-write the cooldown file under its own lock, writing atomically.
+ *
+ * Both halves matter and neither is theoretical. Usage polling runs as a fresh
+ * process per minute while `tools claude login` / `config` clear cooldowns from
+ * another terminal, so an unlocked read-modify-write drops one of two concurrent
+ * updates. And a reader that catches a HALF-WRITTEN file falls back to `{}`,
+ * which reads as "no cooldown" and re-hammers the token endpoint the cooldown
+ * exists to protect.
+ */
+async function mutateInvalidGrants(
+    account: string,
+    mutate: (all: Record<string, number>) => boolean
+): Promise<void> {
+    const path = invalidGrantPath();
+
     try {
-        const all = readInvalidGrants();
-        all[account] = Date.now();
-        writeFileSync(invalidGrantPath(), SafeJSON.stringify(all, null, 2), { mode: 0o600 });
+        await withFileLock(`${path}.lock`, async () => {
+            const all = readInvalidGrants();
+
+            if (!mutate(all)) {
+                return;
+            }
+
+            atomicWriteFileSync(path, SafeJSON.stringify(all, null, 2) ?? "{}", { mode: 0o600 });
+        });
     } catch (err) {
-        logger.warn({ err, account }, "[token-refresh] could not persist invalid_grant cooldown");
+        logger.warn({ err, account }, "[token-refresh] could not update invalid_grant cooldown");
     }
 }
 
-/** Drop the cooldown after a successful refresh or a re-login. */
-export function clearInvalidGrant(account: string): void {
-    try {
-        const all = readInvalidGrants();
+async function markInvalidGrant(account: string): Promise<void> {
+    await mutateInvalidGrants(account, (all) => {
+        all[account] = Date.now();
+        return true;
+    });
+}
 
+/** Drop the cooldown after a successful refresh or a re-login. */
+export async function clearInvalidGrant(account: string): Promise<void> {
+    await mutateInvalidGrants(account, (all) => {
         if (!(account in all)) {
-            return;
+            return false;
         }
 
         delete all[account];
-        writeFileSync(invalidGrantPath(), SafeJSON.stringify(all, null, 2), { mode: 0o600 });
-    } catch (err) {
-        logger.debug({ err, account }, "[token-refresh] could not clear invalid_grant cooldown");
-    }
+        return true;
+    });
 }
 
 /**
@@ -237,7 +263,7 @@ export function pruneJournal(path: string): void {
 }
 
 function journalPath(): string {
-    return join(env.tools.getHome() || env.tools.getHome(), ".genesis-tools", "ai", "token-journal.jsonl");
+    return join(env.tools.getHome(), ".genesis-tools", "ai", "token-journal.jsonl");
 }
 
 /**
@@ -430,7 +456,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                         newTokens = await claudeOAuth.refresh(recovery.refreshToken);
                         logger.info(`[token-refresh] ${name}: journal recovery succeeded`);
                     } catch (recoveryErr) {
-                        markInvalidGrant(name);
+                        await markInvalidGrant(name);
                         logger.warn(
                             `[token-refresh] ${name}: journal recovery failed: ` +
                                 `${recoveryErr instanceof Error ? recoveryErr.message : recoveryErr}`
@@ -438,7 +464,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                         throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
                     }
                 } else {
-                    markInvalidGrant(name);
+                    await markInvalidGrant(name);
                     throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
                 }
             } else {
@@ -464,7 +490,7 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
             },
         };
 
-        clearInvalidGrant(name);
+        await clearInvalidGrant(name);
         logger.info(
             `[token-refresh] ${name}: refreshed successfully ` +
                 `(new expires ${new Date(newTokens.expiresAt).toISOString()})`

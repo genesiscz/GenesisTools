@@ -11,10 +11,15 @@ import type { AiConfigData } from "../config/schema";
  * a ref written in one tool's config resolves identically in another.
  *
  *   <modelId>                        bare, resolved through the defaults ladder
- *   <providerId>/<modelId>           provider-scoped, that provider's default account
+ *   <provider>/<modelId>             provider-scoped, that provider's default account
  *   @account/<accountId>             an account, model from the defaults ladder
  *   @account/<accountId>:<modelId>   an account and an explicit model
  *   @proxy/<slug>/<modelId>          through the local ai-proxy gateway
+ *
+ * The provider half is either an exact plugin id (`anthropic`, `xai`) or a normalized
+ * provider DISPLAY name (`grok`, which no plugin is called). An exact plugin id always
+ * wins; the display name is only a fallback, resolved by inverting the same name function
+ * the UI prints, so there is no hand-kept alias table to drift.
  *
  * Parsing is STRUCTURAL only: it says what shape the caller wrote, never whether
  * the account or model exists. Existence is `resolveModel`'s job, because that
@@ -33,7 +38,10 @@ export type ModelRefKind = "bare" | "provider" | "account" | "proxy";
 export interface ParsedModelRef {
     kind: ModelRefKind;
     accountId?: string;
-    /** Provider plugin id (`anthropic`, `grok-sub`, …). Free-form: plugin ids are strings. */
+    /**
+     * The provider half as written: an exact plugin id (`anthropic`, `grok-sub`, …) or a
+     * normalized provider display name (`grok`). Free-form — resolution decides which.
+     */
     providerId?: string;
     /** ai-proxy provider slug, for `@proxy/` refs. */
     slug?: string;
@@ -47,7 +55,7 @@ const PROXY_PREFIX = "@proxy/";
 
 const GRAMMAR = [
     "  <modelId>                        e.g. opus",
-    "  <providerId>/<modelId>           e.g. anthropic/claude-opus-4-5",
+    "  <provider>/<modelId>             e.g. anthropic/claude-opus-4-5, grok/grok-4.5",
     "  @account/<accountId>             e.g. @account/acc_work",
     "  @account/<accountId>:<modelId>   e.g. @account/acc_work:opus",
     "  @proxy/<slug>/<modelId>          e.g. @proxy/grok/grok-4.5",
