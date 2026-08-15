@@ -12,6 +12,7 @@ import {
     scrollTmuxToFraction,
     sessionExists,
     setTmuxSpawnSyncForTests,
+    TMUX_SPAWN_GUARD,
 } from "@genesiscz/utils/tmux/sessions";
 
 /**
@@ -370,4 +371,26 @@ describe("tmux sessions", () => {
         expect(calls.some((cmd) => cmd.includes("history-bottom"))).toBe(true);
         expect(calls.some((cmd) => cmd.includes("scroll-up") && cmd.includes("1000"))).toBe(true);
     });
+});
+
+/**
+ * A wedged tmux server blocks forever and spins a core; snapshot capture now runs from an
+ * HTTP handler, so an unguarded spawn there leaves the dashboard request pending. The guard
+ * lives in ONE exported constant precisely so a second spawner cannot quietly omit it.
+ */
+describe("tmux spawn wedge guard", () => {
+    test("bounds every call and kills with SIGKILL", () => {
+        expect(TMUX_SPAWN_GUARD).toEqual({ timeout: 10_000, killSignal: "SIGKILL" });
+    });
+
+    test.each([["src/utils/tmux/sessions.ts"], ["src/utils/tmux/snapshot.ts"]])(
+        "%s spawns through the shared guard, never bare options",
+        async (path) => {
+            const source = await Bun.file(path).text();
+
+            for (const call of source.match(/Bun\.spawn\((?:.|\n)*?\}\)/g) ?? []) {
+                expect(call).toContain("TMUX_SPAWN_GUARD");
+            }
+        }
+    );
 });

@@ -96,17 +96,24 @@ function chainTmuxCommands(commands: string[][]): string[] {
 //   PROFILE=tmux tools dev-dashboard …
 const prof = profiler.scope("tmux");
 
+/**
+ * Bound every tmux call. A wedged tmux server makes `list-sessions` (and friends) block
+ * forever, spinning a core at ~100% CPU; if the parent process is then killed mid-call the
+ * child is orphaned and keeps spinning. 10s is far above any healthy tmux command, so this
+ * only ever fires on a genuine wedge. SIGKILL because a spinning `list-sessions` ignores TERM.
+ *
+ * Exported so every module that spawns tmux uses the SAME guard — snapshot.ts grew its own
+ * spawn when capture went async and silently lost this, which put an unbounded subprocess
+ * back on the dashboard's request path.
+ */
+export const TMUX_SPAWN_GUARD = { timeout: 10_000, killSignal: "SIGKILL" } as const;
+
 const defaultSpawn: TmuxSpawnSync = async (cmd, opts) => {
-    // Bound every tmux call. A wedged tmux server makes `list-sessions` (and friends) block
-    // forever, spinning a core at ~100% CPU; if the parent process is then killed mid-call the
-    // child is orphaned and keeps spinning. 10s is far above any healthy tmux command, so this
-    // only ever fires on a genuine wedge. SIGKILL because a spinning `list-sessions` ignores TERM.
     const proc = Bun.spawn(cmd, {
         cwd: opts?.cwd,
         env: buildTmuxSpawnEnv(),
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10_000,
-        killSignal: "SIGKILL",
+        ...TMUX_SPAWN_GUARD,
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([

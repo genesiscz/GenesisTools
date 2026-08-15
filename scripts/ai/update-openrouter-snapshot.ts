@@ -41,7 +41,7 @@ if (!response.ok) {
     throw new Error(`OpenRouter models API error: ${response.status} ${response.statusText}`);
 }
 
-const payload = (await response.json()) as { data?: FeedModel[] };
+const payload = SafeJSON.parse(await response.text(), { strict: true }) as { data?: FeedModel[] };
 const feed = payload.data ?? [];
 
 if (feed.length === 0) {

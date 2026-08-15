@@ -371,7 +371,8 @@ export async function fetchOpenRouterCatalog(
             throw new Error(`OpenRouter models API error: ${response.status}`);
         }
 
-        const catalog = toCatalog(await response.json(), new Date().toISOString());
+        // The public feed is an external machine boundary: strict parse, never comment-tolerant.
+        const catalog = toCatalog(SafeJSON.parse(await response.text(), { strict: true }), new Date().toISOString());
 
         if (!catalog || catalog.models.length === 0) {
             throw new Error("OpenRouter models API returned no usable models");
