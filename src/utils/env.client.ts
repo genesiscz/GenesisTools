@@ -55,6 +55,10 @@ export const env = {
         getUiPort: () => getTrimmed("YOUTUBE_UI_PORT"),
     },
 
+    spotify: {
+        getUiPort: () => getTrimmed("SPOTIFY_UI_PORT"),
+    },
+
     extension: {
         /** EXT_DEV=1 enables the dev-reload WebSocket in the extension build. */
         isDevReload: () => isFlag("EXT_DEV"),

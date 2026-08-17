@@ -1,6 +1,9 @@
 {
     "exclude": [
         "src/mcp-tsc/test-dummy*.ts",
+        // Browser payloads pasted verbatim into evaluate_script; they run inside the
+        // Spotify web player, not here, and carry no type annotations by design.
+        "src/spotify/page",
         "src/claude-history-dashboard",
         "src/dashboard",
         "src/debugging-master/dashboard",
@@ -8,6 +11,10 @@
         "src/clarity/ui",
         "src/dev-dashboard/ui",
         "src/shops/ui",
+        // Its own `declare module "@tanstack/react-router"` Register would merge with
+        // youtube's in a repo-wide pass and both would lose. Typechecked on its own via
+        // `bun run typecheck:all` (src/spotify/ui/tsconfig.json).
+        "src/spotify/ui",
         "src/Internal/commands/reas/ui"
     ],
     "compilerOptions": {

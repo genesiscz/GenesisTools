@@ -122,6 +122,20 @@
             }
         },
         {
+            "includes": ["src/spotify/page/**"],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "noRestrictedGlobals": "off"
+                    },
+                    "suspicious": {
+                        "noImplicitAnyLet": "off",
+                        "noAssignInExpressions": "off"
+                    }
+                }
+            }
+        },
+        {
             "includes": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "**/*.data.ts"],
             "plugins": []
         }

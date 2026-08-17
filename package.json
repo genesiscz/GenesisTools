@@ -8,7 +8,7 @@
     ],
     "scripts": {
         "prepare": "git config core.hooksPath .githooks",
-        "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit",
+        "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit && tsgo -p src/spotify/ui/tsconfig.json --noEmit",
         "tsgo": "tsgo --noEmit",
         "tsc": "tsgo --noEmit",
         "lint": "biome check .",

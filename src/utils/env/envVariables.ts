@@ -338,6 +338,22 @@ export const env = {
         isDevTopupAllowed: () => isFlag("YOUTUBE_ALLOW_DEV_TOPUP"),
     },
 
+    spotify: {
+        ...envClient.spotify,
+        /** Override the profile registry path (tests point this at a temp dir). */
+        getConfigPath: () => getTrimmed("SPOTIFY_CONFIG_PATH"),
+        /** Override the parsed-history cache directory. */
+        getCacheDir: () => getTrimmed("SPOTIFY_CACHE_DIR"),
+        /** Default profile when no `--profile` is passed. */
+        getProfile: () => getTrimmed("SPOTIFY_PROFILE"),
+        /** Last.fm API key; without it the enricher scrapes the public tag page. */
+        getLastfmApiKey: () => getTrimmed("LASTFM_API_KEY"),
+        /** Where a first run looks for `streaming-history/` and `data/` before ~/Documents. */
+        getExportDir: () => getTrimmed("SPOTIFY_EXPORT_DIR"),
+        /** CDP endpoint of the logged-in browser `play run` drives (default http://127.0.0.1:9222). */
+        getBrowserUrl: () => getTrimmed("SPOTIFY_BROWSER_URL"),
+    },
+
     db: envClient.db,
 
     // Generic Stripe accessors only — which env var maps to which product/price
