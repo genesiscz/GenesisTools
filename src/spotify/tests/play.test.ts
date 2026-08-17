@@ -8,6 +8,7 @@ import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { playDir } from "@app/spotify/lib/paths";
+import { emptyReason } from "@app/spotify/lib/play/driver";
 import { appendJournal, clearJournal, journalPath, progressFor } from "@app/spotify/lib/play/journal";
 import { FIND_PLAYER, parsePayloadResult } from "@app/spotify/lib/play/payloads";
 import {
@@ -95,6 +96,32 @@ describe("loadTracks", () => {
 
     test("names a missing file", () => {
         expect(() => loadTracks(join(root, "nope.json"))).toThrow("not found");
+    });
+});
+
+/**
+ * `play run` printed a bare "nothing to do" and exited 0 whenever the selection came out
+ * empty. A mistyped range is the likeliest way to get there, and a silent no-op that exits
+ * successfully is indistinguishable from a run that worked.
+ */
+describe("emptyReason", () => {
+    test("a range past the end of the file names the file's size", () => {
+        expect(emptyReason({ start: 5, end: 1, total: 2, skipped: 0 })).toContain("past the last track");
+        expect(emptyReason({ start: 5, end: 1, total: 2, skipped: 0 })).toContain("0-1");
+    });
+
+    // Checked before the inverted-range case: `--end` defaults to the last index, so a bare
+    // `--start 5` would otherwise be reported against a number the user never typed.
+    test("a start inside the file, after an explicit end, reports the inversion", () => {
+        expect(emptyReason({ start: 5, end: 2, total: 10, skipped: 0 })).toBe("--start 5 is after --end 2");
+    });
+
+    test("an exhausted resume journal points at --restart", () => {
+        expect(emptyReason({ start: 0, end: 2, total: 3, skipped: 3 })).toContain("--restart");
+    });
+
+    test("an empty tracks file says so rather than blaming the flags", () => {
+        expect(emptyReason({ start: 0, end: -1, total: 0, skipped: 0 })).toBe("the tracks file is empty");
     });
 });
 

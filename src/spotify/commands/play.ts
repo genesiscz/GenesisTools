@@ -164,7 +164,12 @@ export function registerPlay(program: Command): void {
                 .option("--note <text>", "a reminder of what this plan is for")
         ),
         "--top",
-        "how many tracks to seed into the plan (default 30)"
+        // Spells out the independence because `--from top` and `--top <n>` share a word for two
+        // unrelated things: a seed source and a count. A tester had to read both help blocks
+        // side by side to convince themselves `--top 20` did not also select the source. It
+        // happens to work today only because `--from` defaults to `top`, which is exactly the
+        // kind of coincidence that teaches the wrong model.
+        "how many tracks to seed into the plan, unrelated to `--from top` (default 30)"
     ).action(
         (
             name: string,

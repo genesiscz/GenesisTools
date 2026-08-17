@@ -79,6 +79,38 @@ async function evaluate(client: Client, fn: string): Promise<string> {
     return toolText(await client.callTool({ name: "evaluate_script", arguments: { function: fn } }));
 }
 
+export interface EmptyRangeInput {
+    start: number;
+    end: number;
+    total: number;
+    skipped: number;
+}
+
+/** Why the selection came out empty, in the user's terms rather than the loop's. */
+export function emptyReason({ start, end, total, skipped }: EmptyRangeInput): string {
+    if (!total) {
+        return "the tracks file is empty";
+    }
+
+    // Checked BEFORE the inverted-range case on purpose. `--end` defaults to the last index, so
+    // a bare `--start 5` on a two-track file would otherwise report "after --end 1", which is
+    // true but compares against a number the user never typed. Naming the file's size is the
+    // fact they need, and when start IS within the file an inverted range is the real problem.
+    if (start > total - 1) {
+        return `--start ${start} is past the last track (${total} in the file, so 0-${total - 1})`;
+    }
+
+    if (start > end) {
+        return `--start ${start} is after --end ${end}`;
+    }
+
+    if (skipped >= total) {
+        return `--resume skipped all ${total}; use --restart to play them again`;
+    }
+
+    return `nothing in ${start}-${end} is left to play`;
+}
+
 export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewResult> {
     const t0 = Date.now();
     const say = (m: string) => opts.onLog(`[${((Date.now() - t0) / 1000).toFixed(1).padStart(6)}s] ${m}`);
@@ -97,7 +129,11 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
     log.info({ tracksFile: opts.tracksFile, browserUrl: opts.browserUrl, count: queue.length }, "play run starting");
 
     if (!queue.length) {
-        say("nothing to do");
+        // "nothing to do" on its own reads like success, and a mistyped range is the most
+        // likely way to get here: `--start 5 --end 2` selects nothing, and so does `--start 5`
+        // on a three-track list. Saying only that the queue is empty leaves the user to guess
+        // whether the plan is wrong, the resume journal ate everything, or the flags did.
+        say(`nothing to do — ${emptyReason({ start: opts.start, end, total: tracks.length, skipped: skip.size })}`);
 
         return { total: 0, ok: 0, failed: [], aborted: false };
     }
