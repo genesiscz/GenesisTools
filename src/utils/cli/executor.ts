@@ -1,4 +1,5 @@
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -28,6 +29,26 @@ function helpWidth(): number {
     const columns = process.stdout.columns;
 
     return Number.isFinite(columns) && (columns ?? 0) > 0 ? (columns as number) : 80;
+}
+
+/**
+ * The description Commander itself would print, including the trailing `(default: …)`.
+ *
+ * Commander appends defaults at RENDER time from `option.defaultValue`; they are not part of
+ * `option.description`. Reading only the description therefore produced two help renderers
+ * that disagreed: `play plan new --help` said `--from <source> … (default: "top")` while the
+ * same option one level up in `play plan --help` showed no default at all. A usability tester
+ * could not tell whether `--from` was required, and had to make an extra help call to find
+ * out — for the one flag that decides which music gets sampled.
+ */
+function describeOption(option: { description: string; defaultValue?: unknown; defaultValueDescription?: string }) {
+    if (option.defaultValue === undefined) {
+        return option.description;
+    }
+
+    const shown = option.defaultValueDescription ?? SafeJSON.stringify(option.defaultValue);
+
+    return `${option.description} (default: ${shown})`;
 }
 
 /**
@@ -76,7 +97,7 @@ export function enhanceHelp(cmd: Command): void {
                 }
                 lines.push(`\n  ${pc.bold(sub.name())}:`);
                 for (const opt of opts) {
-                    const [first, ...rest] = wrapDescription(opt.description, available);
+                    const [first, ...rest] = wrapDescription(describeOption(opt), available);
                     lines.push(`    ${pc.dim(opt.flags.padEnd(HELP_FLAG_WIDTH))} ${first}`);
                     for (const line of rest) {
                         lines.push(`    ${" ".repeat(HELP_FLAG_WIDTH)} ${line}`);

@@ -65,6 +65,46 @@ describe("enhanceHelp subcommand options", () => {
         }
     });
 
+    /**
+     * Commander appends `(default: …)` at render time from `option.defaultValue`; it is not
+     * part of `option.description`. Reading only the description gave two renderers that
+     * disagreed about the SAME option: the per-command help showed the default, the parent's
+     * summary did not. A usability tester could not tell whether `--from` was required and
+     * had to make an extra help call to find out.
+     */
+    test("shows option defaults, the way commander's own help does", () => {
+        const program = new Command("root").exitOverride();
+        program.command("child").description("a child").option("--from <source>", "where to seed from", "top");
+        enhanceHelp(program);
+
+        let captured = "";
+        program.configureOutput({
+            writeOut: (text) => {
+                captured += text;
+            },
+        });
+        program.outputHelp();
+
+        expect(captured).toContain('default: "top"');
+    });
+
+    test("an option with no default gains no default text", () => {
+        const program = new Command("root").exitOverride();
+        program.command("child").description("a child").option("--plain <x>", "no default here");
+        enhanceHelp(program);
+
+        let captured = "";
+        program.configureOutput({
+            writeOut: (text) => {
+                captured += text;
+            },
+        });
+        program.outputHelp();
+
+        expect(captured).toContain("no default here");
+        expect(captured).not.toContain("default:");
+    });
+
     test("indents continuation lines past the flag column", () => {
         const lines = helpWithSubcommandOptions().split("\n");
         const start = lines.findIndex((l) => l.includes("--from <source>"));
