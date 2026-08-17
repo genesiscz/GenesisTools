@@ -34,7 +34,7 @@ import { renderHarvestGuide } from "@app/spotify/render/pipeline";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -109,6 +109,31 @@ function showPlan(plan: PlayPlan): void {
     }
 
     ui.dim(`  plan     ${planPath()}`);
+}
+
+const log = logger.child({ component: "spotify:play" });
+
+/**
+ * The TRACKS cell for one row of `plan list`, which must never take the whole listing down.
+ *
+ * `loadTracks` throws on anything it cannot parse, and this ran inside the render loop, so a
+ * single plan pointing at an empty or truncated tracks file made `plan list` fail outright
+ * with `JSON Parse error: Unexpected EOF` and no indication of WHICH plan was at fault. The
+ * one command a person uses to find their way out of a broken plan was the one the broken plan
+ * disabled. A bad file is now just a red cell on its own row.
+ */
+function trackCountCell(tracks: string | undefined): string {
+    if (!tracks || !existsSync(tracks)) {
+        return pc.red("missing");
+    }
+
+    try {
+        return String(loadTracks(tracks).length);
+    } catch (error) {
+        log.debug({ error, tracks }, "unreadable tracks file while listing plans");
+
+        return pc.red("unreadable");
+    }
 }
 
 export function registerPlay(program: Command): void {
@@ -198,14 +223,20 @@ export function registerPlay(program: Command): void {
             const isDefaultNow = newestPlan()?.name === created.name;
 
             emit(o.json, { ...created, seeded, isDefaultNow }, (r) => {
-                ui.ok(`plan "${r.name}" created${r.isDefaultNow ? " — `play run` will use it" : ""}`);
+                ui.ok(`plan "${r.name}" created`);
 
                 if (seeded) {
                     ui.kv("tracks", `${seeded} seeded → ${r.plan.tracks}`);
                 }
 
                 showPlan(r.plan);
-                ui.dim(`  next     tools spotify play run${r.isDefaultNow ? "" : ` --plan ${r.name}`}`);
+                // Always names the plan, even when it is currently the newest. The old message
+                // promised "`play run` will use it", which is true only until something else
+                // touches another plan: "newest" is most-recently-written, so EDITING an older
+                // plan makes it newest again. A tester created a plan, saw that promise, and
+                // then watched a different plan hold the newest marker. Naming the plan is
+                // advice that stays true.
+                ui.dim(`  next     tools spotify play run --plan ${r.name}`);
             });
         }
     );
@@ -228,12 +259,11 @@ export function registerPlay(program: Command): void {
                 renderCliHeader("Playback plans", playDir());
                 const table = createBoxTable(["", "NAME", "CREATED", "TRACKS", "WINDOWS", "NOTE"]);
                 for (const [i, p] of rows.entries()) {
-                    const count = p.plan.tracks && existsSync(p.plan.tracks) ? loadTracks(p.plan.tracks).length : null;
                     table.push([
                         i === 0 ? formatDotStatus("ok", "") : "",
                         pc.white(p.name),
                         p.date,
-                        count === null ? pc.red("missing") : String(count),
+                        trackCountCell(p.plan.tracks),
                         p.plan.windows.map(([s, d]) => `${s}:${d}`).join(","),
                         truncateDisplay(p.plan.note ?? "", 28),
                     ]);
@@ -249,8 +279,13 @@ export function registerPlay(program: Command): void {
         // Deliberately says "newest", not "active". There is no active-plan pointer by design
         // (see the header of lib/play/plan.ts), so calling it active invites the reader to go
         // looking for the command that sets it. `play run` picks the newest by the same rule.
-        .description("show the newest plan; any flag updates it")
-        .option("--plan <name>", "show or update this plan instead of the newest")
+        //
+        // The wording spells out that a bare call only READS, because "any flag updates it"
+        // plus "--plan <name>" in the same breath gave no way to tell whether `--plan foo`
+        // alone was safe to run out of curiosity. A tester ran it expecting a read-only view,
+        // then spent real effort deciding whether it had rewritten someone else's plan.
+        .description("show a plan; only --windows/--seek/--play/--tracks/--queue/--between change it")
+        .option("--plan <name>", "which plan to show or change (default: the newest); alone, it only shows")
         .option("--windows <spec>", "sample windows as start:duration pairs, e.g. 10:3,20:3,30:3")
         .option("--seek <sec>", "single-window start (shorthand for --windows <sec>:<play>)")
         .option("--play <sec>", "single-window duration")
@@ -382,11 +417,16 @@ export function registerPlay(program: Command): void {
         );
 
     play.command("status")
-        .description("progress for a tracks file — done, failed, where to resume")
+        .description("progress for a plan or tracks file — done, failed, where to resume")
+        // `--plan` is here because `run` and `plan set` both take it, and a user who has just
+        // created a plan by name reaches for the same flag to check on it. Without it the only
+        // way in was the tracks-file path, which nothing tells you unless you go back and
+        // re-read the output of `plan set`. The mismatch surfaced only as `unknown option`.
+        .option("--plan <name>", "which plan to report on (default: the newest)")
         .option("--tracks <path>", "tracks JSON (default: the plan's)")
         .option("--json", "machine-readable output")
-        .action((o: { tracks?: string; json?: boolean }) => {
-            const plan = loadPlan();
+        .action((o: { plan?: string; tracks?: string; json?: boolean }) => {
+            const plan = loadPlan(o.plan);
             const tracksFile = o.tracks ?? plan.tracks;
 
             if (!tracksFile) {

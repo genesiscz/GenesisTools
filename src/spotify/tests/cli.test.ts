@@ -921,6 +921,92 @@ describe("export", () => {
     });
 });
 
+/**
+ * Three defects three usability testers hit while building plans from `--help` alone. Each was
+ * invisible from the code and only showed up when someone tried to use the thing.
+ */
+describe("play plans, from a stranger's point of view", () => {
+    test("status takes --plan, like run and plan set do", async () => {
+        const wanted = join(root, "plan-status-wanted.tracks.json");
+        const newer = join(root, "plan-status-newer.tracks.json");
+        writeFileSync(wanted, SafeJSON.stringify([{ uri: "spotify:track:aaa", name: "A" }]));
+        writeFileSync(
+            newer,
+            SafeJSON.stringify([
+                { uri: "spotify:track:aab", name: "B" },
+                { uri: "spotify:track:aac", name: "C" },
+            ])
+        );
+
+        await ok(["play", "plan", "new", "statusable", "--tracks", wanted]);
+        // A SECOND, newer plan with a different track count. Without it this test proves
+        // nothing: `statusable` would be the newest, so a `status` that ignored `--plan`
+        // entirely would still report the right number and pass. Verified by mutation — the
+        // first version of this test survived reverting the fix.
+        await Bun.sleep(10);
+        await ok(["play", "plan", "new", "distraction", "--tracks", newer]);
+
+        // 1 track, not 2, is the whole assertion: it can only come from resolving the NAME.
+        const r = await ok(["play", "status", "--plan", "statusable", "--json"]);
+        expect(SafeJSON.parse(r.stdout)).toMatchObject({ total: 1 });
+
+        // And the default still follows the newest, so the fix did not quietly change it.
+        const bare = await ok(["play", "status", "--json"]);
+        expect(SafeJSON.parse(bare.stdout)).toMatchObject({ total: 2 });
+    });
+
+    /** Where a named plan actually landed, asked of the tool rather than guessed. */
+    async function planFileFor(name: string): Promise<string> {
+        const listed = await okJson<{ name: string; path: string }[]>(["play", "plan", "list", "--json"]);
+        const found = listed.find((p) => p.name === name);
+        if (!found) {
+            throw new Error(`no plan "${name}" in ${listed.map((p) => p.name).join(", ") || "(none)"}`);
+        }
+
+        return found.path;
+    }
+
+    // `loadTracks` throws on unparseable input, and that throw used to happen inside the render
+    // loop of `plan list` — so one plan pointing at a truncated file took down the listing for
+    // ALL plans, with nothing naming the culprit. The recovery command was the casualty.
+    test("one unreadable tracks file does not take down the whole listing", async () => {
+        const good = join(root, "good.tracks.json");
+        const bad = join(root, "bad.tracks.json");
+        writeFileSync(good, SafeJSON.stringify([{ uri: "spotify:track:bbb", name: "B" }]));
+        writeFileSync(bad, SafeJSON.stringify([{ uri: "spotify:track:ddd", name: "D" }]));
+        await ok(["play", "plan", "new", "intact", "--tracks", good]);
+        await ok(["play", "plan", "new", "broken", "--tracks", bad]);
+
+        // Truncated AFTER the plan was made, which is the realistic shape: an interrupted write
+        // or a hand-edited file, not something `plan new` would have accepted in the first place.
+        writeFileSync(bad, "");
+
+        const r = await ok(["play", "plan", "list"]);
+        expect(r.all).toContain("intact");
+        expect(r.all).toContain("broken");
+        expect(r.all).toContain("unreadable");
+    });
+
+    // `plan set --plan <name>` with no other flag reads. The help now promises this outright,
+    // because a tester ran it expecting a read and then could not tell whether it had rewritten
+    // a different plan. A promise in help text is worth exactly as much as its test.
+    test("plan set with only --plan does not write", async () => {
+        const tracks = join(root, "readonly.tracks.json");
+        writeFileSync(tracks, SafeJSON.stringify([{ uri: "spotify:track:ccc", name: "C" }]));
+        await ok(["play", "plan", "new", "untouched", "--tracks", tracks]);
+
+        const planFile = await planFileFor("untouched");
+        const before = readFileSync(planFile, "utf8");
+        await ok(["play", "plan", "set", "--plan", "untouched"]);
+        expect(readFileSync(planFile, "utf8")).toBe(before);
+
+        // The negative control: with a real flag it MUST write, or the guard above would pass
+        // just as happily on a `set` that had stopped working altogether.
+        await ok(["play", "plan", "set", "--plan", "untouched", "--between", "900"]);
+        expect(readFileSync(planFile, "utf8")).not.toBe(before);
+    });
+});
+
 describe("play thresholds in aggregations", () => {
     // `plays` and `shortPlays` split at the 30-second royalty threshold, which is a fixed
     // meaning: `--min-ms` chooses which events are counted at all, not what "a play" is called.
