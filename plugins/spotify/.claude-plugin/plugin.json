@@ -1,0 +1,9 @@
+{
+    "name": "spotify",
+    "version": "1.0.0",
+    "description": "Deep analytics over a personal Spotify listening history and taste compatibility between two people, via `tools spotify`.",
+    "author": {
+        "name": "GenesisTools"
+    },
+    "skills": "./skills/"
+}

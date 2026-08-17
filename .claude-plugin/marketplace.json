@@ -36,6 +36,19 @@
             "commands": [
                 "./commands/security-audit-linux-server.md"
             ]
+        },
+        {
+            "name": "spotify",
+            "description": "Deep analytics over a personal Spotify listening history and taste compatibility between two people, via `tools spotify`.",
+            "version": "1.0.0",
+            "author": {
+                "name": "GenesisTools"
+            },
+            "source": "./plugins/spotify",
+            "category": "productivity",
+            "skills": [
+                "./skills/"
+            ]
         }
     ]
 }
