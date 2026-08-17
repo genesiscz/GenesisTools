@@ -1,25 +1,8 @@
-import { existsSync } from "node:fs";
 import { hostname } from "node:os";
-import { dirname, resolve } from "node:path";
+import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import type { GitContext, TodoContext } from "./types";
 
-export function findProjectRoot(from: string): string | null {
-    let dir = resolve(from);
-
-    while (true) {
-        if (existsSync(resolve(dir, ".git"))) {
-            return dir;
-        }
-
-        const parent = dirname(dir);
-
-        if (parent === dir) {
-            return null;
-        }
-
-        dir = parent;
-    }
-}
+export { findProjectRoot };
 
 async function git(args: string[], cwd: string): Promise<string | null> {
     try {
