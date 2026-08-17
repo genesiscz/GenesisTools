@@ -161,6 +161,36 @@ async function collect(providers: MCPProvider[]): Promise<{
 }
 
 /**
+ * Build the registry payload of `list --json` without printing it. This is the
+ * programmatic entrypoint `tools scripts` consumes to construct mcporter
+ * ServerDefinitions in-process instead of spawning `tools mcp-manager`.
+ */
+export async function buildListJson(providers: MCPProvider[], options: ListOptions = {}): Promise<ListJsonOutput> {
+    const { byName, scanned, failed } = await collect(providers);
+    const servers: ServerJsonEntry[] = [];
+
+    for (const [name, instances] of byName.entries()) {
+        const enabledCount = instances.filter((s) => s.enabled).length;
+        const status = enabledCount === instances.length ? "enabled" : enabledCount > 0 ? "partial" : "disabled";
+
+        if (options.enabledOnly && enabledCount === 0) {
+            continue;
+        }
+
+        servers.push({
+            name,
+            enabled: enabledCount > 0,
+            status,
+            providers: instances.map((i) => ({ provider: i.provider, enabled: i.enabled })),
+            connection: toConnection(pickConfig(instances)),
+        });
+    }
+
+    servers.sort((a, b) => a.name.localeCompare(b.name));
+    return { servers, providersScanned: scanned, providersFailed: failed };
+}
+
+/**
  * List all MCP servers across all providers.
  *
  * With `--json` this becomes the programmatic registry other tools read (the
@@ -168,33 +198,17 @@ async function collect(providers: MCPProvider[]): Promise<{
  * the JSON carries connection details the human listing never printed.
  */
 export async function listServers(providers: MCPProvider[], options: ListOptions = {}): Promise<void> {
-    const { byName, scanned, failed } = await collect(providers);
-
     if (options.json) {
-        const servers: ServerJsonEntry[] = [];
-
-        for (const [name, instances] of byName.entries()) {
-            const enabledCount = instances.filter((s) => s.enabled).length;
-            const status = enabledCount === instances.length ? "enabled" : enabledCount > 0 ? "partial" : "disabled";
-
-            if (options.enabledOnly && enabledCount === 0) {
-                continue;
-            }
-
-            servers.push({
-                name,
-                enabled: enabledCount > 0,
-                status,
-                providers: instances.map((i) => ({ provider: i.provider, enabled: i.enabled })),
-                connection: toConnection(pickConfig(instances)),
-            });
-        }
-
-        servers.sort((a, b) => a.name.localeCompare(b.name));
-        logger.debug({ count: servers.length, scanned, failed }, "mcp-manager list --json");
-        out.result({ servers, providersScanned: scanned, providersFailed: failed } satisfies ListJsonOutput);
+        const payload = await buildListJson(providers, options);
+        logger.debug(
+            { count: payload.servers.length, scanned: payload.providersScanned, failed: payload.providersFailed },
+            "mcp-manager list --json"
+        );
+        out.result(payload);
         return;
     }
+
+    const { byName } = await collect(providers);
 
     if (byName.size === 0) {
         logger.info("No MCP servers found.");

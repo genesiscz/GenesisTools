@@ -9,10 +9,7 @@ p.setBackend(inquirerBackend);
 
 import { Command } from "commander";
 import { showHelp } from "./utils/command.utils.js";
-import { ClaudeProvider } from "./utils/providers/claude.js";
-import { CodexProvider } from "./utils/providers/codex.js";
-import { CursorProvider } from "./utils/providers/cursor.js";
-import { GeminiProvider } from "./utils/providers/gemini.js";
+import { defaultProviders } from "./utils/providers/index.js";
 import type { MCPProvider } from "./utils/providers/types.js";
 
 // Handle --readme flag early (before Commander parses)
@@ -60,7 +57,7 @@ configureLogger({
  * Get all available providers
  */
 function getProviders(): MCPProvider[] {
-    return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider()];
+    return defaultProviders();
 }
 
 /**
