@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+@import '@ui/theme/styles.css';
+@source "../../utils/ui";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Chart series colours. Declared as theme tokens rather than hardcoded hexes at the call
+   site so every chart in the dashboard draws from one palette, and a theme change moves
+   them together. Ordered for categorical use: adjacent entries stay distinguishable. */
+.cyberpunk {
+    --chart-1: #22d3ee;
+    --chart-2: #a78bfa;
+    --chart-3: #34d399;
+    --chart-4: #fbbf24;
+    --chart-5: #fb7185;
+    --chart-6: #60a5fa;
+    --chart-grid: rgba(148, 163, 184, 0.16);
+    --chart-axis: rgba(148, 163, 184, 0.55);
+}
+
+.scan-lines {
+    background-image: repeating-linear-gradient(
+        0deg,
+        rgba(34, 211, 238, 0.04) 0,
+        rgba(34, 211, 238, 0.04) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+}
+
+.theme-glow-hover {
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.theme-glow-hover:hover {
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.18);
+    transform: translateY(-1px);
+}
+
+/* Heat cells for the weekly clock and the year calendar. Six steps, matching the terminal
+   renderer's ramp so the two never disagree about what "dark" means. */
+.heat-0 { background: color-mix(in oklch, var(--color-muted) 40%, transparent); }
+.heat-1 { background: color-mix(in oklch, var(--chart-1) 12%, transparent); }
+.heat-2 { background: color-mix(in oklch, var(--chart-1) 28%, transparent); }
+.heat-3 { background: color-mix(in oklch, var(--chart-1) 46%, transparent); }
+.heat-4 { background: color-mix(in oklch, var(--chart-1) 68%, transparent); }
+.heat-5 { background: color-mix(in oklch, var(--chart-1) 92%, transparent); }

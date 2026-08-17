@@ -15,7 +15,13 @@
  */
 import { $ } from "bun";
 
-const SCOPE = ["src/clarity/ui", "src/shops/ui", "src/Internal/commands/reas/ui", "src/dev-dashboard/ui/src"];
+const SCOPE = [
+    "src/clarity/ui",
+    "src/shops/ui",
+    "src/spotify/ui",
+    "src/Internal/commands/reas/ui",
+    "src/dev-dashboard/ui/src",
+];
 
 const HARD = "bg-zinc-|border-zinc-|text-zinc-|bg-neutral-|border-neutral-|text-neutral-|border-white/|bg-white/[0-9]";
 const WARN = "text-gray-|bg-gray-|border-gray-|text-slate-|bg-slate-|border-slate-";

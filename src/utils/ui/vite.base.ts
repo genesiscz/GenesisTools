@@ -24,6 +24,12 @@ export interface DashboardViteConfig {
     /** Extra sibling directories under @app to watch for SSR hot-reload (e.g. ["azure-devops"]).
      *  The tool's own directory and utils/ are watched automatically. */
     watchDirs?: string[];
+    /**
+     * Dev-server bind address. Defaults to `true` (every interface), which is what these
+     * dashboards have always done. Pass `"127.0.0.1"` for a dashboard that serves personal data
+     * and has no authentication, so it is not readable by everything on the network.
+     */
+    host?: boolean | string;
 }
 
 /**
@@ -238,6 +244,7 @@ export function createDashboardViteConfig({
     tanstackStartOptions,
     reactOptions,
     watchDirs: extraWatchDirs = [],
+    host = true,
 }: DashboardViteConfig): UserConfig {
     const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
     const allAliases: Record<string, string> = {
@@ -269,7 +276,7 @@ export function createDashboardViteConfig({
         plugins: [...corePlugins, ...extraPlugins],
         server: {
             port,
-            host: true,
+            host,
             fs: {
                 allow: [root, resolve(__dirname, "../../..")],
             },
