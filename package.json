@@ -197,6 +197,7 @@
         "marked-alert": "^2.1.2",
         "marked-highlight": "^2.2.4",
         "marked-katex-extension": "^5.1.8",
+        "mcporter": "^0.12.3",
         "mdream": "^0.15.3",
         "minimatch": "^10.0.1",
         "object-hash": "^3.0.0",
