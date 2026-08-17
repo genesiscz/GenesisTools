@@ -208,13 +208,44 @@ describe("named plans", () => {
             const created = make("throwaway");
             const sidecar = created.path.replace(/\.json$/, ".tracks.json");
             writeFileSync(sidecar, "[]");
-            writePlan("throwaway", { ...created.plan, tracks: sidecar });
+            writePlan("throwaway", { ...created.plan, tracks: sidecar, seededTracks: sidecar });
 
             const removed = removePlan("throwaway");
 
             expect(removed.tracks).toBe(sidecar);
             expect(existsSync(created.path)).toBe(false);
             expect(existsSync(sidecar)).toBe(false);
+        });
+
+        /**
+         * The review finding that made provenance necessary: path shape is not proof. A user
+         * can point `--tracks` straight at the conventional sidecar name, or let the tool seed
+         * a list and then curate it. Both leave a file that LOOKS tool-owned. Deleting it is
+         * unrecoverable, so only the recorded provenance may authorise it.
+         */
+        test("a file at the conventional sidecar path is kept when provenance is absent", () => {
+            const created = make("lookalike");
+            const sidecar = created.path.replace(/\.json$/, ".tracks.json");
+            writeFileSync(sidecar, '[{"uri":"spotify:track:mine","name":"curated by hand"}]');
+            // tracks points at it, but seededTracks does NOT: the user supplied this path.
+            writePlan("lookalike", { ...created.plan, tracks: sidecar });
+
+            const removed = removePlan("lookalike");
+
+            expect(removed.tracks).toBeUndefined();
+            expect(existsSync(sidecar)).toBe(true);
+        });
+
+        // Plans written before provenance existed carry no marker, so they keep their file.
+        test("a legacy plan keeps its tracks file", () => {
+            const created = make("legacy");
+            const sidecar = created.path.replace(/\.json$/, ".tracks.json");
+            writeFileSync(sidecar, "[]");
+            writePlan("legacy", { ...created.plan, tracks: sidecar });
+
+            removePlan("legacy");
+
+            expect(existsSync(sidecar)).toBe(true);
         });
 
         // The one that would be unforgivable: a plan may point --tracks at a list the user

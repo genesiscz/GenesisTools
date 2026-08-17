@@ -197,6 +197,8 @@ export function registerPlay(program: Command): void {
             const limit = limitOf(o, 30);
             let tracksPath = o.tracks;
             let seeded = 0;
+            /** Set only when this tool writes the tracks file itself; see PlayPlan.seededTracks. */
+            let seededPath: string | undefined;
 
             if (!tracksPath) {
                 const source = parseSeedSource(o.from);
@@ -216,6 +218,10 @@ export function registerPlay(program: Command): void {
 
                 tracksPath = writeSeedFile(safe, tracks);
                 seeded = tracks.length;
+                // Recorded at the moment this tool wrote the file, which is the only point at
+                // which ownership is actually known. `plan rm` deletes a sidecar only on this
+                // evidence; a `--tracks` path supplied by the user never sets it.
+                seededPath = tracksPath;
             }
 
             const created = writePlan(safe, {
@@ -224,6 +230,7 @@ export function registerPlay(program: Command): void {
                 tracks: tracksPath,
                 betweenMs: numberOption(o.between, "between", DEFAULT_PLAN.betweenMs, { min: 0, integer: true }),
                 note: o.note ?? (seeded ? `${seeded} × ${parseSeedSource(o.from)}` : undefined),
+                ...(seededPath ? { seededTracks: seededPath } : {}),
             });
 
             // The newest plan is the one `play run` uses, and this one is newest by construction.

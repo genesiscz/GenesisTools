@@ -33,6 +33,18 @@ export interface PlayPlan {
     betweenMs: number;
     /** Free text shown in `play plan list`, e.g. "gems, 30 of them, 30s each". */
     note?: string;
+    /**
+     * The tracks file THIS tool seeded, recorded when it wrote it. `plan rm` deletes the
+     * sidecar only when this matches `tracks`.
+     *
+     * Provenance is recorded rather than inferred from the path, because the conventional
+     * `<date>-<name>.tracks.json` name is not proof of ownership: a user can point `--tracks`
+     * straight at it, or (far more likely) let the tool seed a list and then curate it by
+     * hand. Both leave a file that looks tool-owned and is not, and deleting it is
+     * unrecoverable. Plans written before this field existed simply lack it, so they keep
+     * their tracks file — the conservative direction.
+     */
+    seededTracks?: string;
 }
 
 export const DEFAULT_PLAN: PlayPlan = {
@@ -102,6 +114,10 @@ function readPlanFile(path: string): PlayPlan {
         tracks: raw.tracks,
         betweenMs: raw.betweenMs ?? DEFAULT_PLAN.betweenMs,
         note: raw.note,
+        // Read back explicitly: this whitelist rebuilds the plan field by field, so anything
+        // missing here is silently dropped on the way out. Losing this one would make every
+        // plan look legacy and quietly turn `plan rm`'s sidecar cleanup off for good.
+        seededTracks: raw.seededTracks,
     };
 }
 
@@ -195,8 +211,10 @@ export function removePlan(name: string): RemovedPlan {
         throw new Error(`no plan named "${safePlanName(name)}". List them: tools spotify play plan list`);
     }
 
-    const seeded = found.path.replace(/\.json$/, TRACKS_SUFFIX);
-    const ownsSidecar = found.plan.tracks === seeded && existsSync(seeded);
+    // Ownership comes from the recorded provenance, never from the path. The guard sits
+    // immediately above the irreversible call, which is where this repo requires it.
+    const seeded = found.plan.seededTracks;
+    const ownsSidecar = !!seeded && seeded === found.plan.tracks && existsSync(seeded);
 
     unlinkSync(found.path);
     if (ownsSidecar) {
