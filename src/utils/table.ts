@@ -88,11 +88,18 @@ const CLI_HEADER_TEXT_MAX_WIDTH = 31;
  */
 export function createBoxTable(headers: string[]): Table.Table {
     return new Table({
-        chars: { ...BOX_TABLE_CHARS },
+        // Borders are greyed by colouring the characters, NOT by cli-table3's `style.border`.
+        // That option paints through its own colour library, which consults neither the TTY
+        // check nor NO_COLOR, so `tools spotify doctor > report.txt` wrote raw escape
+        // sequences into the file while every other command in the same tool piped clean.
+        // Headers already went through picocolors, which is why `style.head` is empty.
+        chars: Object.fromEntries(
+            Object.entries(BOX_TABLE_CHARS).map(([name, char]) => [name, pc.gray(char)])
+        ) as typeof BOX_TABLE_CHARS,
         head: headers.map((header) => pc.cyan(pc.bold(header))),
         style: {
             head: [],
-            border: ["gray"],
+            border: [],
             "padding-left": 1,
             "padding-right": 1,
         },

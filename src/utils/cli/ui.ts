@@ -32,9 +32,17 @@ export const ui = {
     header(msg: string): void {
         write(chalk.bold(msg));
     },
-    /** Print a 2-column key/value pair, right-padded key for tidy alignment. */
+    /**
+     * Print a 2-column key/value pair, right-padded key for tidy alignment.
+     *
+     * `padEnd` leaves NO separator once the key is as long as `keyWidth`, so the 9-character
+     * key "remaining" rendered as `remaining2 → resume at index 0`. Only that case gets an
+     * extra space: adding one unconditionally would move every other line a column to the
+     * right, and callers hand-pad continuation lines to match this one.
+     */
     kv(key: string, value: string, keyWidth = 9): void {
-        write(`  ${chalk.dim(key.padEnd(keyWidth))}${value}`);
+        const separator = key.length >= keyWidth ? " " : "";
+        write(`  ${chalk.dim(key.padEnd(keyWidth))}${separator}${value}`);
     },
     /** Section break — a blank line plus a dim rule. Used before lists/diffs. */
     section(title: string): void {

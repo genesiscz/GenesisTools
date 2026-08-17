@@ -19,12 +19,55 @@ export function isInteractive(): boolean {
  *
  * Call once on the root program after all commands are registered.
  */
+const HELP_FLAG_WIDTH = 30;
+const HELP_INDENT = 4;
+const HELP_MIN_TEXT_WIDTH = 30;
+
+/** Terminal width, with the usual fallback for a pipe or a dumb terminal. */
+function helpWidth(): number {
+    const columns = process.stdout.columns;
+
+    return Number.isFinite(columns) && (columns ?? 0) > 0 ? (columns as number) : 80;
+}
+
+/**
+ * Wrap a description under a hanging indent aligned with the flag column.
+ *
+ * Commander wraps its OWN option lists; this block bypassed it and printed each description
+ * on one line, so `play plan --help` emitted a 263-character line for `--from` (it names all
+ * five seed sources inline). At any normal width that is unreadable, and it is the help for
+ * the flag a new user most needs.
+ */
+function wrapDescription(description: string, available: number): string[] {
+    const words = description.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+        return [""];
+    }
+
+    const lines: string[] = [];
+    let current = "";
+    for (const word of words) {
+        // A single word longer than the column is emitted whole rather than broken: these are
+        // paths, URLs and flag names, and hyphenating them makes them uncopyable.
+        if (current && `${current} ${word}`.length > available) {
+            lines.push(current);
+            current = word;
+        } else {
+            current = current ? `${current} ${word}` : word;
+        }
+    }
+    lines.push(current);
+
+    return lines;
+}
+
 export function enhanceHelp(cmd: Command): void {
     cmd.showHelpAfterError(true);
 
     const subs = cmd.commands as Command[];
     if (subs.length > 0) {
         cmd.addHelpText("after", () => {
+            const available = Math.max(HELP_MIN_TEXT_WIDTH, helpWidth() - HELP_INDENT - HELP_FLAG_WIDTH - 1);
             const lines: string[] = [pc.dim("\nSubcommand Options:")];
             for (const sub of cmd.commands as Command[]) {
                 const opts = sub.options.filter((o) => o.long !== "--help");
@@ -33,7 +76,11 @@ export function enhanceHelp(cmd: Command): void {
                 }
                 lines.push(`\n  ${pc.bold(sub.name())}:`);
                 for (const opt of opts) {
-                    lines.push(`    ${pc.dim(opt.flags.padEnd(30))} ${opt.description}`);
+                    const [first, ...rest] = wrapDescription(opt.description, available);
+                    lines.push(`    ${pc.dim(opt.flags.padEnd(HELP_FLAG_WIDTH))} ${first}`);
+                    for (const line of rest) {
+                        lines.push(`    ${" ".repeat(HELP_FLAG_WIDTH)} ${line}`);
+                    }
                 }
             }
             return lines.join("\n");

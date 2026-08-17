@@ -44,4 +44,30 @@ describe("ui (high-density stderr status)", () => {
         // Default keyWidth = 9 → "  a        1\n"  (2 leading spaces, key padded to 9, then value)
         expect(writes.join("")).toMatch(/ {2}a {8}1/);
     });
+
+    // padEnd gives no separator once the key IS keyWidth, so a 9-character key ran straight
+    // into its value: `remaining2 → resume at index 0`. Short keys must keep their column,
+    // because callers hand-pad continuation lines to line up with it.
+    test("kv separates a key that fills the whole width, without moving shorter ones", () => {
+        const writes: string[] = [];
+        const orig = process.stderr.write.bind(process.stderr);
+        process.stderr.write = ((chunk: unknown) => {
+            writes.push(typeof chunk === "string" ? chunk : String(chunk));
+            return true;
+        }) as unknown as typeof process.stderr.write;
+        try {
+            ui.kv("remaining", "40");
+            ui.kv("toolongforthecolumn", "x");
+            ui.kv("short", "y");
+        } finally {
+            process.stderr.write = orig;
+        }
+
+        const out = writes.join("");
+        expect(out).toContain("remaining 40");
+        expect(out).not.toMatch(/remaining40/);
+        expect(out).toContain("toolongforthecolumn x");
+        // Unchanged: 5-character key still padded to the same column as before.
+        expect(out).toMatch(/ {2}short {4}y/);
+    });
 });

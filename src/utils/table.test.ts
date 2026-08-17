@@ -52,6 +52,35 @@ describe("createBoxTable", () => {
         expect(text).toContain("┌");
         expect(text).toContain("│");
     });
+
+    /**
+     * Borders must be coloured through picocolors, never through cli-table3's `style.border`.
+     * That option paints with its own colour library, which consults neither the TTY check nor
+     * NO_COLOR, so `tools spotify doctor > report.txt` wrote escape sequences into the file
+     * while every other command in the same tool redirected cleanly.
+     *
+     * These tests run under bun test, where stdout is not a TTY, so picocolors is already
+     * disabled: any escape sequence surviving here came from something that ignores it.
+     */
+    it("emits no escape sequences when the output is not a terminal", () => {
+        const table = createBoxTable(["NAME", "STATUS"]);
+        table.push(["alice", "ok"]);
+
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ESC is the point
+        expect(table.toString()).not.toMatch(/\x1b\[/);
+    });
+
+    // The negative control: the borders must still be THERE, just uncoloured. A fix that
+    // dropped the box characters would also pass the assertion above.
+    it("still draws its borders when colour is off", () => {
+        // Two columns and a row, so every character in the set is actually reachable: the
+        // column joins (┬ ┼ ┴) only appear once there is more than one column.
+        const table = createBoxTable(["NAME", "STATUS"]);
+        table.push(["alice", "ok"]);
+        const drawn = new Set(table.toString().match(/[─│┌┐└┘├┤┬┴┼]/g) ?? []);
+
+        expect([...drawn].sort().join("")).toBe([..."─│┌┐└┘├┤┬┴┼"].sort().join(""));
+    });
 });
 
 describe("truncateDisplay", () => {
