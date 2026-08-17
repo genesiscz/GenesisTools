@@ -10,7 +10,7 @@
  * `--plan <name>` says otherwise, which keeps the single-plan workflow reading as
  * "set it once, then `play run --resume`" with no extra state to get out of sync.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { playDir } from "@app/spotify/lib/paths";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -168,6 +168,44 @@ export function writePlan(name: string, plan: PlayPlan, date = new Date().toISOS
     atomicWriteFileSync(path, `${SafeJSON.stringify(plan, null, 2)}\n`);
 
     return { name: safe, date: existing?.date ?? date, path, plan };
+}
+
+export interface RemovedPlan {
+    name: string;
+    path: string;
+    /** The seeded sidecar, when one was removed with it. */
+    tracks?: string;
+}
+
+/**
+ * Delete one plan by name, and the sidecar this tool seeded for it.
+ *
+ * A usability tester avoided experimenting at all because there was no way back: plans could
+ * be created but never removed, so a wrong guess was a permanent row in `plan list`. That
+ * turns a cheap command into one people are afraid to run.
+ *
+ * The sidecar is removed ONLY when it is the file this tool generated inside the play
+ * directory for this plan. A plan can point `--tracks` at anything, including a list the user
+ * curated somewhere else, and deleting that because they tidied up a plan would be the kind
+ * of loss no undo covers.
+ */
+export function removePlan(name: string): RemovedPlan {
+    const found = findPlan(name);
+    if (!found) {
+        throw new Error(`no plan named "${safePlanName(name)}". List them: tools spotify play plan list`);
+    }
+
+    const seeded = found.path.replace(/\.json$/, TRACKS_SUFFIX);
+    const ownsSidecar = found.plan.tracks === seeded && existsSync(seeded);
+
+    unlinkSync(found.path);
+    if (ownsSidecar) {
+        unlinkSync(seeded);
+    }
+
+    log.info({ name: found.name, path: found.path, tracks: ownsSidecar ? seeded : null }, "removed plan");
+
+    return { name: found.name, path: found.path, ...(ownsSidecar ? { tracks: seeded } : {}) };
 }
 
 export function planPath(): string {

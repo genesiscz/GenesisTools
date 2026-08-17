@@ -25,6 +25,7 @@ import {
     type PlayWindow,
     parseWindows,
     planPath,
+    removePlan,
     safePlanName,
     savePlan,
     writePlan,
@@ -182,7 +183,8 @@ export function registerPlay(program: Command): void {
             if (findPlan(safe)) {
                 throw new Error(
                     `a plan named "${safe}" already exists. Change it with ` +
-                        `\`play plan set --plan ${safe} …\`, or delete its file: ${findPlan(safe)?.path}`
+                        `\`tools spotify play plan set --plan ${safe} …\`, ` +
+                        `or remove it: \`tools spotify play plan rm ${safe}\``
                 );
             }
 
@@ -271,6 +273,28 @@ export function registerPlay(program: Command): void {
 
                 out.println(table.toString());
                 ui.dim("  ● = the newest, which `play run` uses · pick another with `play run --plan <name>`");
+            });
+        });
+
+    planCmd
+        .command("rm <name>")
+        .alias("remove")
+        .description("delete a plan (and the track list this tool seeded for it)")
+        .option("--json", "machine-readable output")
+        .action((name: string, o: { json?: boolean }) => {
+            const removed = removePlan(name);
+
+            emit(o.json, removed, (r) => {
+                ui.ok(`removed plan "${r.name}"`);
+                ui.dim(`  ${r.path}`);
+
+                if (r.tracks) {
+                    ui.dim(`  ${r.tracks}`);
+                } else {
+                    // Saying so out loud, because the alternative reading is that the tool
+                    // deleted a curated track list the user pointed the plan at.
+                    ui.dim("  its tracks file was not seeded by this tool, so it was left alone");
+                }
             });
         });
 

@@ -19,6 +19,7 @@ import {
     newestPlan,
     type PlayWindow,
     parseWindows,
+    removePlan,
     writePlan,
 } from "@app/spotify/lib/play/plan";
 import { SEED_SOURCES } from "@app/spotify/lib/play/seed";
@@ -169,6 +170,55 @@ describe("named plans", () => {
 
     test("loadPlan names the plan it could not find", () => {
         expect(() => loadPlan("nope")).toThrow('no plan named "nope"');
+    });
+
+    /**
+     * Plans could be created but never removed, so a wrong guess was a permanent row in
+     * `plan list`. A usability tester said outright that this stopped them experimenting.
+     */
+    describe("removePlan", () => {
+        test("removes the plan and the sidecar this tool seeded for it", () => {
+            const created = make("throwaway");
+            const sidecar = created.path.replace(/\.json$/, ".tracks.json");
+            writeFileSync(sidecar, "[]");
+            writePlan("throwaway", { ...created.plan, tracks: sidecar });
+
+            const removed = removePlan("throwaway");
+
+            expect(removed.tracks).toBe(sidecar);
+            expect(existsSync(created.path)).toBe(false);
+            expect(existsSync(sidecar)).toBe(false);
+        });
+
+        // The one that would be unforgivable: a plan may point --tracks at a list the user
+        // curated elsewhere, and tidying up a plan must never delete it.
+        test("leaves a tracks file it did not seed alone", () => {
+            // Deliberately outside the play directory: this is the user's own curated list,
+            // which is exactly the file that must survive removing a plan that referenced it.
+            const created = make("borrowed");
+            const curated = join(root, "my-own-list.json");
+            writeFileSync(curated, "[]");
+            writePlan("borrowed", { ...created.plan, tracks: curated });
+
+            const removed = removePlan("borrowed");
+
+            expect(removed.tracks).toBeUndefined();
+            expect(existsSync(created.path)).toBe(false);
+            expect(existsSync(curated)).toBe(true);
+        });
+
+        test("removing one plan leaves the others in place", () => {
+            make("keeper");
+            make("goner");
+
+            removePlan("goner");
+
+            expect(listPlans().map((p) => p.name)).toEqual(["keeper"]);
+        });
+
+        test("names the plan it could not find", () => {
+            expect(() => removePlan("ghost")).toThrow('no plan named "ghost"');
+        });
     });
 });
 

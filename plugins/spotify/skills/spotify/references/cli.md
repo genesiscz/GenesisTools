@@ -179,12 +179,23 @@ track does not have to be in Liked Songs. Needs the browser running with remote 
 (default endpoint `http://127.0.0.1:9222`) and an open `open.spotify.com` tab, or it opens one.
 
 ```bash
-tools spotify play plan                       # show the plan; any flag below updates it
-tools spotify play plan --windows 10:3,20:3,30:3 --tracks <file> [--queue|--no-queue] [--between <ms>]
-tools spotify play run   [--resume | --restart] [--start <i>] [--end <i>] [--browser-url <url>]
-tools spotify play status                     # done / failed / where to resume
+tools spotify play plan new <name> --from top|gems|forgotten|unplayed|recent [-n <count>] [--windows <spec>]
+tools spotify play plan list                  # every plan, newest first; ● marks the one `run` uses
+tools spotify play plan set  [--plan <name>]  # show it; ONLY --windows/--seek/--play/--tracks/--queue/--between change it
+tools spotify play plan rm   <name>           # delete it, and the track list this tool seeded for it
+tools spotify play run    [--plan <name>] [--resume | --restart] [--start <i>] [--end <i>] [--browser-url <url>] [--volume <pct>]
+tools spotify play status [--plan <name>]     # done / failed / where to resume
 tools spotify play harvest                    # same library-download guide as `tools spotify harvest`
 ```
+
+Plans are named files at `~/.genesis-tools/spotify/play/<date>-<name>.json`, seeded from a
+report by `--from` so there is no JSON to hand-write. There is no "active plan" pointer:
+`run` and `status` use the **newest** plan, meaning the most recently WRITTEN one, so editing
+an older plan makes it the one they pick. Name the plan with `--plan` when it matters.
+
+`plan rm` deletes the plan and the `.tracks.json` this tool seeded beside it. A tracks file
+you pointed at yourself with `--tracks` is never deleted, and the command says which case it
+took.
 
 A window is `start:duration` in seconds — `40:30` means "seek to 0:40, listen for 30s".
 The tracks file is `[{uri, name?, artists?, windows?}]` or `{all: [...]}`; a track's own
