@@ -1,8 +1,11 @@
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
-import { paneList, type SurfaceSplitResult, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
+import { paneList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
+import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
+
+export type { SplitTree };
 
 const EDGE_TOLERANCE_PX = 2;
 
@@ -112,40 +115,17 @@ async function materializeWorkspace(
         return { converged: true, maxCellDelta: 0 };
     }
 
-    const initialLayout = await paneList(workspaceRef);
-    if (initialLayout.panes.length !== 1) {
-        throw new Error(`Expected new workspace to start with 1 pane, got ${initialLayout.panes.length}`);
-    }
-    const rootPane = initialLayout.panes[0];
-    const rootSurface = rootPane.selected_surface_ref;
+    const paneRefByIndex = await applySplitTree(buildSplitTree(ws.panes), workspaceRef);
 
-    const tree = buildSplitTree(ws.panes);
-    const paneRefByIndex = new Map<number, string>();
-    await applyTree(tree, rootSurface, workspaceRef, paneRefByIndex);
-
-    // applyTree resizes the new border immediately after each split, so by the time
-    // the topology is fully built every saved fraction is already in place. Verify
-    // and report any panes that ended up off (most likely cmux clamped a resize at
-    // a minimum-pane-size limit).
-    const finalLayout = await paneList(workspaceRef);
-    let maxDelta = 0;
-    for (const savedPane of ws.panes) {
-        const newRef = paneRefByIndex.get(savedPane.index);
-        if (!newRef) {
-            logger.warn(
-                { savedIndex: savedPane.index, mappedKeys: [...paneRefByIndex.keys()] },
-                "[restore] saved pane index has no new pane mapping"
-            );
-            continue;
-        }
-        const live = finalLayout.panes.find((p) => p.ref === newRef);
-        if (!live) {
-            continue;
-        }
-        const dCols = Math.abs(savedPane.columns - live.columns);
-        const dRows = Math.abs(savedPane.rows - live.rows);
-        maxDelta = Math.max(maxDelta, dCols, dRows);
-    }
+    // applySplitTree resizes the new border immediately after each split, so by the
+    // time the topology is fully built every saved fraction is already in place.
+    // Verify and report any panes that ended up off (most likely cmux clamped a
+    // resize at a minimum-pane-size limit).
+    const maxDelta = await measureCellDelta(
+        workspaceRef,
+        ws.panes.map((pane) => ({ paneIndex: pane.index, columns: pane.columns, rows: pane.rows })),
+        paneRefByIndex
+    );
 
     for (const savedPane of ws.panes) {
         const paneRef = paneRefByIndex.get(savedPane.index);
@@ -157,23 +137,6 @@ async function materializeWorkspace(
 
     return { converged: maxDelta <= 1, maxCellDelta: maxDelta };
 }
-
-export type SplitTree =
-    | { kind: "leaf"; savedPaneIndex: number }
-    | {
-          kind: "vsplit";
-          left: SplitTree;
-          right: SplitTree;
-          /** Saved fraction of the parent's width occupied by the left subtree (0..1). */
-          leftFraction: number;
-      }
-    | {
-          kind: "hsplit";
-          top: SplitTree;
-          bottom: SplitTree;
-          /** Saved fraction of the parent's height occupied by the top subtree (0..1). */
-          topFraction: number;
-      };
 
 export interface RectPane {
     index: number;
@@ -196,7 +159,7 @@ export function buildSplitTree(panes: Pane[]): SplitTree {
 
 function divideRects(rects: RectPane[]): SplitTree {
     if (rects.length === 1) {
-        return { kind: "leaf", savedPaneIndex: rects[0].index };
+        return { kind: "leaf", paneIndex: rects[0].index };
     }
 
     const minX = Math.min(...rects.map((r) => r.x));
@@ -242,194 +205,6 @@ function divideRects(rects: RectPane[]): SplitTree {
         `Pane layout is not representable as nested binary splits (${rects.length} rects). ` +
             "This usually means the saved layout was modified after capture."
     );
-}
-
-/**
- * Walk the split tree and recreate the layout in cmux. After EACH split we resize the
- * just-created border to match the saved fraction — at that moment only two panes share
- * that border, so cmux's `resize-pane` can move it freely. This is critical because once
- * deeper splits exist, `pane.resize` rejects requests with "no adjacent border" for any
- * border that isn't directly between this pane and one sibling pane in the binary tree.
- *
- * Doing the resize at split time means we never need a global convergence loop afterward.
- */
-async function applyTree(
-    tree: SplitTree,
-    anchorSurface: string,
-    workspaceRef: string,
-    map: Map<number, string>
-): Promise<void> {
-    if (tree.kind === "leaf") {
-        const layout = await paneList(workspaceRef);
-        const pane = layout.panes.find((p) => p.surface_refs.includes(anchorSurface));
-        if (!pane) {
-            throw new Error(`Could not locate pane containing surface ${anchorSurface}`);
-        }
-        logger.debug({ anchor: anchorSurface, paneRef: pane.ref, savedIndex: tree.savedPaneIndex }, "[restore] leaf");
-        map.set(tree.savedPaneIndex, pane.ref);
-        return;
-    }
-
-    const direction = tree.kind === "vsplit" ? "right" : "down";
-    const split = await splitFromSurface(direction, anchorSurface, workspaceRef);
-    logger.debug(
-        { direction, anchor: anchorSurface, newPane: split.pane_ref, newSurface: split.surface_ref },
-        "[restore] split"
-    );
-
-    await resizeNewBorder(tree, anchorSurface, split.pane_ref, workspaceRef);
-
-    if (tree.kind === "vsplit") {
-        await applyTree(tree.left, anchorSurface, workspaceRef, map);
-        await applyTree(tree.right, split.surface_ref, workspaceRef, map);
-        return;
-    }
-
-    await applyTree(tree.top, anchorSurface, workspaceRef, map);
-    await applyTree(tree.bottom, split.surface_ref, workspaceRef, map);
-}
-
-/**
- * Resize the brand-new border between `anchorSurface`'s pane and the just-split-off
- * `newPaneRef` until the saved fraction is reached (within 1 cell). cmux's `resize-pane`
- * `--amount` is in PIXELS — not cells, despite the "tmux-compatible alias" framing — and
- * each call doesn't necessarily move the border by exactly `amount` pixels (cmux clamps
- * to neighbour minimum sizes and rounds to whole cells), so we re-read after each call
- * and loop. We always resize the NEW pane: its border opposite the workspace edge IS the
- * split boundary we just created, which means cmux always sees an "adjacent border" to
- * move (no `invalid_state: no adjacent border` errors).
- */
-async function resizeNewBorder(
-    tree: Exclude<SplitTree, { kind: "leaf" }>,
-    anchorSurface: string,
-    newPaneRef: string,
-    workspaceRef: string
-): Promise<void> {
-    const MAX_ATTEMPTS = 8;
-    let lastDelta = Number.POSITIVE_INFINITY;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-        const layout = await paneList(workspaceRef);
-        const oldPane = layout.panes.find((p) => p.surface_refs.includes(anchorSurface));
-        const newPane = layout.panes.find((p) => p.ref === newPaneRef);
-        if (!oldPane || !newPane) {
-            logger.warn(
-                { anchorSurface, newPaneRef, kind: tree.kind },
-                "[restore] could not locate split pair — aborting resize"
-            );
-            return;
-        }
-
-        // We pick which pane to resize based on direction. cmux's `resize-pane <dir>`
-        // requires the pane to have a *neighbor* in that direction:
-        //   -L on a left-edge pane errors ("no adjacent border in direction left")
-        //   -D on a bottom-edge pane errors ("no adjacent border in direction down")
-        // After a fresh split, the NEW pane is on the right/bottom. So:
-        //   • Move the border to the LEFT (shrink old / grow new) → -L on NEW
-        //   • Move the border to the RIGHT (grow old / shrink new) → -R on OLD
-        //   • Move the border UP (shrink old top / grow new bottom) → -U on NEW
-        //   • Move the border DOWN (grow old top / shrink new bottom) → -D on OLD
-        // This way the chosen pane is always the one with a guaranteed neighbor in the
-        // resize direction.
-        if (tree.kind === "vsplit") {
-            const totalCols = oldPane.columns + newPane.columns;
-            const targetOldCols = Math.round(totalCols * tree.leftFraction);
-            const deltaCells = oldPane.columns - targetOldCols;
-            if (Math.abs(deltaCells) <= 1) {
-                return;
-            }
-            if (Math.abs(deltaCells) >= lastDelta) {
-                logger.warn(
-                    { newPane: newPane.ref, deltaCells, lastDelta, attempt },
-                    "[restore] vsplit resize made no progress — bailing"
-                );
-                return;
-            }
-            lastDelta = Math.abs(deltaCells);
-            const target = deltaCells > 0 ? newPane : oldPane;
-            const dir = deltaCells > 0 ? "-L" : "-R";
-            const cellWidthPx = oldPane.cell_width_px || newPane.cell_width_px || 8;
-            const amountPx = Math.max(1, Math.abs(deltaCells) * cellWidthPx);
-            logger.debug(
-                {
-                    targetPane: target.ref,
-                    dir,
-                    amountPx,
-                    deltaCells,
-                    oldCols: oldPane.columns,
-                    newCols: newPane.columns,
-                    targetCols: targetOldCols,
-                    fraction: tree.leftFraction,
-                },
-                "[restore] vsplit resize"
-            );
-            const moved = await tryResize(workspaceRef, target.ref, dir, amountPx);
-            if (!moved) {
-                return;
-            }
-            continue;
-        }
-
-        const totalRows = oldPane.rows + newPane.rows;
-        const targetOldRows = Math.round(totalRows * tree.topFraction);
-        const deltaCells = oldPane.rows - targetOldRows;
-        if (Math.abs(deltaCells) <= 1) {
-            return;
-        }
-        if (Math.abs(deltaCells) >= lastDelta) {
-            logger.warn(
-                { newPane: newPane.ref, deltaCells, lastDelta, attempt },
-                "[restore] hsplit resize made no progress — bailing"
-            );
-            return;
-        }
-        lastDelta = Math.abs(deltaCells);
-        const target = deltaCells > 0 ? newPane : oldPane;
-        const dir = deltaCells > 0 ? "-U" : "-D";
-        const cellHeightPx = oldPane.cell_height_px || newPane.cell_height_px || 17;
-        const amountPx = Math.max(1, Math.abs(deltaCells) * cellHeightPx);
-        logger.debug(
-            {
-                targetPane: target.ref,
-                dir,
-                amountPx,
-                deltaCells,
-                oldRows: oldPane.rows,
-                newRows: newPane.rows,
-                targetRows: targetOldRows,
-                fraction: tree.topFraction,
-            },
-            "[restore] hsplit resize"
-        );
-        const moved = await tryResize(workspaceRef, target.ref, dir, amountPx);
-        if (!moved) {
-            return;
-        }
-    }
-    logger.warn({ tree: tree.kind }, "[restore] split resize loop exhausted attempts");
-}
-
-async function tryResize(
-    workspaceRef: string,
-    paneRef: string,
-    direction: "-L" | "-R" | "-U" | "-D",
-    amount: number
-): Promise<boolean> {
-    try {
-        await runCmuxOk([
-            "resize-pane",
-            "--workspace",
-            workspaceRef,
-            "--pane",
-            paneRef,
-            direction,
-            "--amount",
-            String(amount),
-        ]);
-        return true;
-    } catch (error) {
-        logger.warn({ error, paneRef, direction, amount }, "[restore] split-time resize failed");
-        return false;
-    }
 }
 
 async function populatePane(
@@ -491,21 +266,6 @@ async function populatePane(
             await replayTerminal(savedSurface, workspaceRef, surfaceRef, opts);
         }
     }
-}
-
-async function splitFromSurface(
-    direction: "right" | "down",
-    surfaceRef: string,
-    workspaceRef: string
-): Promise<SurfaceSplitResult> {
-    return runCmuxJSON<SurfaceSplitResult>([
-        "new-split",
-        direction,
-        "--workspace",
-        workspaceRef,
-        "--surface",
-        surfaceRef,
-    ]);
 }
 
 function shellQuote(path: string): string {

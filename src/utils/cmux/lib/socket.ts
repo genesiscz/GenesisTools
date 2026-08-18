@@ -113,10 +113,16 @@ export interface PaneListPane {
     surface_refs: string[];
     selected_surface_ref: string;
     focused: boolean;
-    columns: number;
-    rows: number;
-    cell_width_px: number;
-    cell_height_px: number;
+    /**
+     * Cell geometry is ABSENT for a pane cmux has not rendered yet — a freshly split
+     * pane reports only `pixel_frame` for the first ~150ms, until the pty resize lands.
+     * Verified on cmux 0.63.2. Treating these as numbers produced `resize-pane
+     * --amount NaN` on every split. `pixel_frame` is always present, so prefer it.
+     */
+    columns?: number;
+    rows?: number;
+    cell_width_px?: number;
+    cell_height_px?: number;
     pixel_frame: { x: number; y: number; width: number; height: number };
 }
 

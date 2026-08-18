@@ -217,11 +217,24 @@ async function capturePanes(
             surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options, callerSurfaceRef));
         }
 
+        // A pane cmux has not rendered reports no cell geometry, only pixels. The saved
+        // columns/rows are a convergence YARDSTICK for restore, so derive them from the
+        // pixel frame rather than writing a hole into the profile.
+        const columns = paneInfo.columns ?? Math.round(paneInfo.pixel_frame.width / (paneInfo.cell_width_px || 8));
+        const rows = paneInfo.rows ?? Math.round(paneInfo.pixel_frame.height / (paneInfo.cell_height_px || 17));
+
+        if (paneInfo.columns === undefined || paneInfo.rows === undefined) {
+            logger.debug(
+                { pane: paneInfo.ref, columns, rows },
+                "[snapshot] pane had no cell geometry — derived it from the pixel frame"
+            );
+        }
+
         panes.push({
             ref: paneInfo.ref,
             index: paneInfo.index,
-            columns: paneInfo.columns,
-            rows: paneInfo.rows,
+            columns,
+            rows,
             pixel_frame: paneInfo.pixel_frame,
             selected_surface_index: selectedIndex,
             surfaces,
