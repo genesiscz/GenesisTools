@@ -204,6 +204,53 @@ function summarize(id: string, mtimeMs: number, records: TranscriptRecord[], cwd
     };
 }
 
+export interface TranscriptTail {
+    /** Last user prompt the transcript recorded. */
+    lastPrompt: string | null;
+    /** The rate-limit message the session died on, when it died on one. */
+    limitStop: string | null;
+    /** The cwd the session last reported working in. */
+    cwd: string | null;
+}
+
+/**
+ * The tail facts of ONE transcript, for callers that already know which files they
+ * care about (a picker over cached metadata, a snapshot) and only need the parts
+ * cheap metadata extraction does not carry. Reads the last TAIL_BYTES only.
+ * Returns null when the file cannot be read.
+ */
+export async function readTranscriptTail(path: string): Promise<TranscriptTail | null> {
+    try {
+        const size = Bun.file(path).size;
+        const records = await readTailRecords(path, size);
+        const cwds = records.filter((r) => typeof r.cwd === "string").map((r) => r.cwd as string);
+        const limit = endedOnLimit(records);
+
+        let lastPrompt: string | null = null;
+
+        for (const record of records) {
+            if (record.type === "last-prompt" && typeof record.lastPrompt === "string") {
+                lastPrompt = record.lastPrompt;
+            } else if (record.type === "user" && !record.isApiErrorMessage) {
+                const text = messageText(record);
+
+                if (text) {
+                    lastPrompt = text;
+                }
+            }
+        }
+
+        return {
+            lastPrompt: lastPrompt?.replace(/\s+/g, " ").trim() || null,
+            limitStop: limit ? (messageText(limit) ?? "Rate limit reached") : null,
+            cwd: cwds.at(-1) ?? null,
+        };
+    } catch (err) {
+        logger.debug({ err, path }, "[limit-kill] reading transcript tail failed");
+        return null;
+    }
+}
+
 export interface FindOptions {
     maxAgeMs?: number;
     /** How many recent sessions to summarize. */

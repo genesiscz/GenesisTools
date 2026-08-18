@@ -9,6 +9,7 @@ import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 p.setBackend(inquirerBackend);
 
 import { Command } from "commander";
+import { registerCmuxCommand } from "./commands/cmux";
 import { registerCodeCommand } from "./commands/code";
 import { registerConfigCommand } from "./commands/config";
 import { registerDaemonCommand } from "./commands/daemon";
@@ -64,6 +65,7 @@ registerLogoutCommand(program);
 registerSpendingCommand(program);
 registerStartCommand(program);
 registerTeamsCommand(program);
+registerCmuxCommand(program);
 
 addGlobalVerboseOption(program);
 
