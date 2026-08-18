@@ -19,7 +19,7 @@ describe("buildSplitTree", () => {
         const tree = buildSplitTree([pane(0, 0, 0, 1000, 800)]);
         expect(tree.kind).toBe("leaf");
         if (tree.kind === "leaf") {
-            expect(tree.savedPaneIndex).toBe(0);
+            expect(tree.paneIndex).toBe(0);
         }
     });
 

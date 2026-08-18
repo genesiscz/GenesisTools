@@ -439,6 +439,24 @@ For all three, the CLI counterparts work correctly — they route through V2 and
 
 Filed upstream as [manaflow-ai/cmux#3189](https://github.com/manaflow-ai/cmux/issues/3189).
 
+### A freshly split pane has NO `columns` / `rows` for ~150ms
+
+`pane.list` returns a new pane immediately, but only with `pixel_frame`. The cell fields
+(`columns`, `rows`, `cell_width_px`, `cell_height_px`) are absent until the pty resize
+lands, about one render tick later:
+
+```jsonc
+// immediately after `cmux new-split right`
+{"ref":"pane:8","index":1,"pixel_frame":{"x":1173,"y":28,"width":883,"height":1227}, ...}
+// same pane 150ms later
+{"ref":"pane:8","index":1,"columns":109,"rows":70,"cell_width_px":16, ...}
+```
+
+Verified on cmux 0.63.2, 2026-08-18. This is why `PaneListPane` types those four fields as
+optional and `resizeStep()` (`src/utils/cmux/split-tree.ts`) does its arithmetic in pixels:
+the cell-based version computed `NaN`, sent `resize-pane --amount NaN`, failed silently, and
+left every split at cmux's default 50/50 no matter what fraction was requested.
+
 ### `cmux new-workspace`'s `--name` is best-effort
 
 cmux often replaces it with `Martin@MacBook-Pro:~/path/cwd`. Always follow up:
