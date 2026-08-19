@@ -123,7 +123,7 @@ Roles and subroles are fuzzy by default, so `"button"` matches `AXButton`. `exac
 
 **Result semantics:** the top-level `ok` is true only when *every* step succeeded. `failedSteps` carries the count, and `steps[]` carries per-step results, each with its own result JSON and wall-clock timing in ms.
 
-`restore: true` snapshots before the run and restores afterwards, which is what keeps a plan from leaving your mouse and focus somewhere strange.
+`restore: true` snapshots before the run and restores afterward, which is what keeps a plan from leaving your mouse and focus somewhere strange.
 
 ## Recording a plan instead of writing one
 

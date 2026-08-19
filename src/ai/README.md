@@ -33,9 +33,11 @@ tools ai image "a red bicycle in the rain" -o bike.png
 
 `translate`: `--to <lang>` (required), `--from <lang>` (auto-detect when omitted), `--provider <provider>` (`local-hf`, `cloud`, `darwinkit`), `-c, --clipboard`.
 
-`summarize`: `--max-length <n>`, `--provider <provider>`, `-c, --clipboard`. The file argument accepts `-` for stdin, and omitting it reads the clipboard.
+`summarize`: `--max-length <n>`, `-c, --clipboard`. The file argument accepts `-` for stdin, and omitting it reads the clipboard.
 
-`classify`: `--categories <list>` (comma-separated), `--provider <provider>`.
+`classify`: `--categories <list>` (comma-separated).
+
+⚠️ **`summarize` and `classify` register `--provider`, but currently ignore it.** `summarize` calls `AI.summarize(input, { maxLength })` and `classify` calls `classifyText(input, categories)`, neither of which receives the flag (`src/ai/index.ts:163` and `:276`). Passing it silently gets you the default implementation, so do not rely on it to steer either verb. It is documented here rather than omitted so nobody assumes the flag works. `translate` does honour `--provider`.
 
 `image`: `-o, --output <path>`, `--model <model>` (default `stabilityai/stable-diffusion-xl-base-1.0`).
 

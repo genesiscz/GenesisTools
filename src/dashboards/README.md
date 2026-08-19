@@ -41,11 +41,17 @@ tools dashboards restart --except shops,youtube
 
 `up` starts **API servers first**, then the UIs that call them. `down` reverses it: **UIs first, API servers last**. A UI that starts before its API shows errors until it retries, and an API killed before its UI produces a wall of failed requests. Doing it in order avoids both.
 
-## Where the port list comes from
+## What this tool manages, and what the registry knows
 
-Nothing here is hardcoded per tool. The registry is [`src/utils/ui/dashboards.ts`](../utils/ui/dashboards.ts), which holds browser dashboards in `DASHBOARDS` and non-browser listeners (HTTP APIs, extensions, proxies) in `WEB_SERVICES`. Ports must be unique across both, and `findPortConflicts()` enforces that.
+Two separate lists, and the distinction matters.
 
-`tools dashboards list` prints the registry, which is the answer to "what is supposed to be on port 3073".
+**The lifecycle list is `TARGETS` in [`src/dashboards/index.ts`](index.ts).** It is hardcoded, and every one of `up`, `down`, `restart`, `status` and `list` iterates it. Each entry pairs a key with the argv used to launch that dashboard, for example `{ key: "shops", args: ["shops", "ui"] }`, because there is no way to derive "how do I start this" from a port number.
+
+❗ **Adding a dashboard to the registry alone does not make this tool manage it.** It will not start, stop or appear in `list` until it also has a `TARGETS` entry. If you add a dashboard and `tools dashboards status` never mentions it, that is why.
+
+**The port and metadata registry is [`src/utils/ui/dashboards.ts`](../utils/ui/dashboards.ts)**, which holds browser dashboards in `DASHBOARDS` and non-browser listeners (HTTP APIs, extensions, proxies) in `WEB_SERVICES`. Ports must be unique across both, and `findPortConflicts()` enforces that. Never hardcode a port for a repo web server; look it up there.
+
+`list` joins the two: it walks `TARGETS` and pulls each entry's display name and port out of `DASHBOARDS`. So `list` answers "what does this tool manage, and where does it listen", not "what is in the registry".
 
 ## Notes
 

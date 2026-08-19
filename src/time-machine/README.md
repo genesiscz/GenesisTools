@@ -10,12 +10,18 @@
 
 ```bash
 tools time-machine -- bun run test
-tools time-machine -- bun test src/auth/token.test.ts
+tools time-machine -- bun scripts/test.ts src/auth/token.test.ts
 tools time-machine --depth 100 -- bun run tsgo
 tools time-machine --good v1.4.0 -- bun run test
 ```
 
-Everything after `--` is the command under test. Quote nothing, escape nothing: the shell hands the argv straight through.
+Everything after `--` is the command under test. The `--` marker ends option parsing, so the
+tool forwards those arguments to the command unchanged. Your shell still parses the line first,
+so use normal quoting when a command needs grouped arguments: `-- sh -c 'a && b'`.
+
+> 🛑 Use `bun run test` or `bun scripts/test.ts <paths>` in this repo, never bare `bun test`.
+> The wrapper repairs the dependency tree first, which matters here because this tool checks out
+> other commits and a stale `node_modules` would fail every one of them for the wrong reason.
 
 ## Arguments and options
 
@@ -37,8 +43,18 @@ Everything after `--` is the command under test. Quote nothing, escape nothing: 
 
 The command's exit code is the verdict: zero is good, non-zero is bad. That means the command has to be a real gate. `bun run test` works. Something that always exits zero and only prints failures does not.
 
-## ⚠️ Before you run it
+## ✅ Your working tree is never touched
 
-Bisecting checks out other commits in your working tree. Commit or stash your work first. A dirty tree either blocks the checkout or, worse, makes every run test a mixture of old committed code and your new uncommitted code, which produces a confident and wrong answer.
+The bisect does not check out commits over your files. It creates one temporary git worktree
+(`createTempWorktree` in `lib/git.ts`), checks each candidate commit out **there**, runs the
+command in that directory, and removes the worktree in a `finally` block. Your working tree,
+branch and index are never modified, so you do not need to commit or stash first.
 
-If the command needs dependencies that changed across the range, the run may fail for install reasons rather than code reasons. Include the install in the command when that is a risk: `-- sh -c 'bun install && bun run test'`.
+The one place your uncommitted changes do matter is the **first probe**. Before searching
+history, the tool runs the command against your current working tree to confirm it actually
+fails. If your uncommitted edits are what break it, that probe fails for your reasons, and the
+history walk then reports the last commit where the command passed without them.
+
+⚠️ If the command needs dependencies that changed across the range, a run can fail for install
+reasons rather than code reasons, and the temporary worktree starts without `node_modules`.
+Include the install in the command when that is a risk: `-- sh -c 'bun install && bun run test'`.

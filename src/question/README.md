@@ -2,7 +2,7 @@
 
 > **Capture and review the questions fired at agents mid-session, with their answers.**
 
-A substantive answer given halfway through a long session is lost in scrollback within an hour. This is the sink that keeps it: a local store of question and answer pairs, written by an agent as it works and readable afterwards.
+A substantive answer given halfway through a long session is lost in scrollback within an hour. This is the sink that keeps it: a local store of question and answer pairs, written by an agent as it works and readable afterward.
 
 ---
 

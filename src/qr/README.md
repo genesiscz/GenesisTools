@@ -43,4 +43,4 @@ tools qr wifi --ssid Hidden --pass "s3cret" --hidden
 
 - `--small` matters more than it sounds. A full-size QR for a long URL can exceed a normal terminal height, and a QR that scrolls cannot be scanned.
 - The WiFi payload follows the standard `WIFI:` URI scheme that iOS and Android camera apps understand natively. No app is needed on the phone.
-- ⚠️ The password appears in your shell history when you pass `--pass`. On a shared machine, prefix the command with a space if your shell is configured to skip those, or clear the history entry afterwards.
+- ⚠️ The password appears in your shell history when you pass `--pass`. On a shared machine, prefix the command with a space if your shell is configured to skip those, or clear the history entry afterward.

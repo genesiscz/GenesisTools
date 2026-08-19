@@ -40,6 +40,8 @@ const firstArg = args[0]?.toLowerCase();
  */
 if (firstArg === "--readme") {
     out.print(await Bun.file(resolve(import.meta.dir, "README.md")).text());
+    // print() only queues the write, so exiting here can truncate a piped stdout.
+    await out.flush();
     process.exit(0);
 }
 

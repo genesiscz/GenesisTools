@@ -43,7 +43,9 @@ Every option applies to every subcommand.
 
 ## `list` versus `check`
 
-`list` reads and normalizes configuration. It spawns nothing, so it is instant and completely safe. Use it to answer "is this server even configured, and with what command and env".
+`list` reads and normalizes configuration. It spawns nothing, so it is instant and completely safe. Use it to answer "is this server configured, and how is it reached". It prints four columns: `SERVER`, `TRANSPORT`, `SOURCE` and `TARGET`, where `TARGET` is the command plus its args for a stdio server, or the URL for a remote one.
+
+❗ **`list` does not print a server's environment.** Env vars are deliberately not rendered, because an MCP server's env is usually where its API token lives and this output ends up in terminal scrollback and CI logs. When a server fails on credentials, `check` tells you it failed to connect; read the config file itself for the value.
 
 `check` actually starts each server and completes an MCP handshake. That is the only way to distinguish "configured" from "working", and it is why it takes real time. A server whose command is missing, whose token expired, or which crashes on startup only shows up here.
 

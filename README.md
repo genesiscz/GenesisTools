@@ -88,7 +88,7 @@ repo on your `PATH`. On macOS and Linux it appends its lines to `~/.zshrc` and `
 (Git Bash, MSYS, Cygwin) it sets `GENESIS_TOOLS_PATH` and extends the user `PATH` via `setx`
 and PowerShell.
 
-Reload your shell afterwards:
+Reload your shell afterward:
 
 ```bash
 source ~/.zshrc    # zsh

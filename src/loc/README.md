@@ -39,7 +39,19 @@ Each line is classified as code, blank or comment. Comment detection is per lang
 
 `--by ext` is the escape hatch for files the language table does not know. Grouping by extension always works, even for a file type the tool has no comment rules for.
 
+## The two exclusion flags, together
+
+They control different things, so combining them is meaningful:
+
+| Invocation | What is counted |
+|------------|-----------------|
+| (default) | `.gitignore` is honoured, dotfiles are skipped |
+| `--no-gitignore` | `.gitignore` rules are ignored, so build output and caches count. Dotfiles are still skipped. |
+| `--include-hidden` | Dotfiles and dot-directories count. `.gitignore` is still honoured. |
+| both | Everything the walk can see, minus the two hard exclusions below |
+
+**`.git` and `node_modules` are excluded whichever flags you pass.** Counting them is never what you wanted, and walking them is slow.
+
 ## Notes
 
-- Even with `--no-gitignore`, `.git` and `node_modules` stay excluded. Counting them is never what you wanted, and walking them is slow.
 - `--json` is the stable interface. The table layout is for humans and may change.
