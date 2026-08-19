@@ -38,6 +38,46 @@ export function padVisible(text: string, width: number, align: "left" | "right" 
     return align === "left" ? text + " ".repeat(pad) : " ".repeat(pad) + text;
 }
 
+/**
+ * Cut an ANSI-colored string to a visible width, keeping the escape sequences.
+ *
+ * A prompt that redraws itself counts the lines it wrote. One line wider than the
+ * terminal wraps into two, the count is then wrong, and the redraw clears the wrong
+ * rows. So every line of such a prompt must pass through here first.
+ */
+export function truncateVisible(text: string, max: number): string {
+    if (max <= 0) {
+        return "";
+    }
+
+    if (visibleWidth(text) <= max) {
+        return text;
+    }
+
+    const budget = max - 1;
+    let out = "";
+    let width = 0;
+    let index = 0;
+
+    while (index < text.length && width < budget) {
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code matching
+        const ansi = /^\x1b\[[0-9;]*m/.exec(text.slice(index));
+
+        if (ansi) {
+            out += ansi[0];
+            index += ansi[0].length;
+            continue;
+        }
+
+        out += text[index];
+        width += 1;
+        index += 1;
+    }
+
+    // Reset, or the truncated cut leaves the rest of the line colored.
+    return `${out}…\x1b[0m`;
+}
+
 export interface TableSelectColumn {
     label: string;
     align?: "left" | "right";

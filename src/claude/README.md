@@ -43,8 +43,9 @@ account it originally ran as. Built for the machine-died case, and for pulling a
 threads back up on purpose.
 
 ```bash
-tools claude cmux                       # pick from the 12 most recently ACTIVE sessions
-tools claude cmux --last 20 --all-projects
+tools claude cmux                       # pick from the 12 most recently ACTIVE sessions, any project
+tools claude cmux --last 30             # reach further back
+tools claude cmux --this-project        # only this directory's project
 tools claude cmux --dry-run             # print the plan, touch nothing
 tools claude cmux snapshot before-reboot
 tools claude cmux restore before-reboot

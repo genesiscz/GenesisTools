@@ -14,7 +14,7 @@ export function registerCmuxCommand(program: Command): void {
                 "under the account it was pinned to"
         )
         .option("--last <n>", "How many recent sessions to offer, newest activity first", "12")
-        .option("--all-projects", "Offer sessions from every project, not just this directory's")
+        .option("--this-project", "Only offer sessions from this directory's project (default: every project)")
         .addOption(
             new Option("--layout <mode>", "capped: grid + overflow workspaces | grid: one workspace | tabs: stack")
                 .choices(["capped", "grid", "tabs"])
@@ -34,7 +34,7 @@ export function registerCmuxCommand(program: Command): void {
         .description("Save the currently-active sessions as a named set you can restore after a crash")
         .option("--last <n>", "Max sessions to consider", "20")
         .option("--within <hours>", "Only sessions with transcript activity this recent", "12")
-        .option("--all-projects", "Consider sessions from every project")
+        .option("--this-project", "Only consider sessions from this directory's project")
         .option("-y, --yes", "Capture everything found without the picker")
         .action(snapshotCommand);
 

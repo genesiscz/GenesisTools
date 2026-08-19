@@ -13,7 +13,7 @@ import pc from "picocolors";
 
 export interface RestoreOptions {
     last: string;
-    allProjects?: boolean;
+    thisProject?: boolean;
     layout: LayoutMode;
     perWorkspace: string;
     perProject: boolean;
@@ -41,11 +41,11 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
         process.exit(1);
     }
 
-    const candidates = await gatherCandidates(snapshotName, limit, opts.allProjects === true, opts.dryRun === true);
+    const candidates = await gatherCandidates(snapshotName, limit, opts.thisProject === true, opts.dryRun === true);
 
     if (candidates.length === 0) {
         out.printlnErr(pc.yellow(snapshotName ? "That snapshot has no sessions." : "No resumable sessions found."));
-        out.printlnErr(pc.dim(suggestCommand("tools claude cmux", { add: ["--all-projects"] })));
+        out.printlnErr(pc.dim(suggestCommand("tools claude cmux", { add: ["--last", "40"] })));
         return;
     }
 
@@ -116,7 +116,7 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
 async function gatherCandidates(
     snapshotName: string | undefined,
     limit: number,
-    allProjects: boolean,
+    thisProjectOnly: boolean,
     readOnly: boolean
 ): Promise<RestoreCandidate[]> {
     const spinner = p.spinner();
@@ -127,7 +127,8 @@ async function gatherCandidates(
         // (last prompt, rate-limit death) for the ones that still exist on disk.
         const live = await listCandidates({
             limit: snapshotName ? Math.max(limit, 200) : limit,
-            allProjects: snapshotName ? true : allProjects,
+            // A snapshot names its own sessions, so it always scans everything.
+            thisProjectOnly: snapshotName ? false : thisProjectOnly,
             readOnly,
             onProgress: (processed, total) => {
                 if (total > 0) {

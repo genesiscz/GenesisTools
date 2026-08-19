@@ -7,6 +7,7 @@
 
 import * as readline from "node:readline";
 import { Writable } from "node:stream";
+import { truncateVisible } from "@genesiscz/utils/prompts/clack/table-select";
 import pc from "picocolors";
 
 // Silent writable stream to prevent readline from echoing input
@@ -38,6 +39,26 @@ const S_RADIO_INACTIVE = pc.dim("○");
 const S_BAR = pc.dim("│");
 
 export const cancelSymbol = Symbol("cancel");
+
+/** Header, search, hint, blank, blank, selected, footer, plus the "N more" line. */
+const CHROME_LINES = 8;
+
+/** Terminal size, with the fallbacks a pipe needs. */
+function viewport(): { rows: number; columns: number } {
+    return { rows: process.stdout.rows || 24, columns: process.stdout.columns || 80 };
+}
+
+/**
+ * How many item rows fit on screen.
+ *
+ * The redraw moves the cursor up by the number of lines it wrote. A frame taller than
+ * the terminal scrolls the top away, the cursor cannot move above row 0, and every
+ * keypress then paints a fresh copy below the old one instead of replacing it. That is
+ * the duplication you see on ↑/↓ in a short pane, so the frame must always fit.
+ */
+export function visibleItemBudget(maxVisible: number, rows: number): number {
+    return Math.max(1, Math.min(maxVisible, rows - CHROME_LINES - 1));
+}
 
 /**
  * Interactive search multiselect prompt.
@@ -92,6 +113,9 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
 
             const lines: string[] = [];
             const filtered = getFiltered();
+            // Re-read every frame: the pane can be resized between keypresses.
+            const { rows, columns } = viewport();
+            const itemBudget = visibleItemBudget(maxVisible, rows);
 
             // Header
             const icon = state === "active" ? S_STEP_ACTIVE : state === "cancel" ? S_STEP_CANCEL : S_STEP_SUBMIT;
@@ -109,9 +133,9 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
                 // Items
                 const visibleStart = Math.max(
                     0,
-                    Math.min(cursor - Math.floor(maxVisible / 2), filtered.length - maxVisible)
+                    Math.min(cursor - Math.floor(itemBudget / 2), filtered.length - itemBudget)
                 );
-                const visibleEnd = Math.min(filtered.length, visibleStart + maxVisible);
+                const visibleEnd = Math.min(filtered.length, visibleStart + itemBudget);
                 const visibleItems = filtered.slice(visibleStart, visibleEnd);
 
                 if (filtered.length === 0) {
@@ -168,8 +192,13 @@ export async function searchMultiselect<T>(options: SearchMultiselectOptions<T>)
                 lines.push(`${S_BAR}  ${pc.strikethrough(pc.dim("Cancelled"))}`);
             }
 
-            process.stdout.write(`${lines.join("\n")}\n`);
-            lastRenderHeight = lines.length;
+            // Two hard limits, both about the redraw arithmetic: no line may wrap (a
+            // wrapped line is two physical rows but counts as one), and the frame may
+            // never be taller than the screen (a scrolled frame cannot be cleared).
+            const painted = lines.map((line) => truncateVisible(line, columns - 1)).slice(0, rows - 1);
+
+            process.stdout.write(`${painted.join("\n")}\n`);
+            lastRenderHeight = painted.length;
         };
 
         const cleanup = (): void => {

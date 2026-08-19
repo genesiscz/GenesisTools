@@ -10,8 +10,12 @@ import { logger } from "@genesiscz/utils/logger";
 export interface ListCandidatesOptions {
     /** How many sessions to offer, newest activity first. */
     limit: number;
-    /** Scan every project instead of only the one for the current directory. */
-    allProjects: boolean;
+    /**
+     * Limit the scan to the current directory's project. Off by default: after a crash
+     * the sessions you want back are spread across every repo you had open, and scoping
+     * to one project hides most of them.
+     */
+    thisProjectOnly?: boolean;
     /** Drop sessions older than this. */
     maxAgeMs?: number;
     /** Read the pin journal without compacting it — for callers that must not mutate (`--dry-run`). */
@@ -31,7 +35,7 @@ const DEFAULT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  * survive the cut pay for a tail read (last prompt, rate-limit death, live cwd).
  */
 export async function listCandidates(opts: ListCandidatesOptions): Promise<RestoreCandidate[]> {
-    const project = opts.allProjects ? undefined : resolveProjectFilter();
+    const project = opts.thisProjectOnly ? resolveProjectFilter() : undefined;
     const listing = await getSessionListing({
         project,
         excludeSubagents: true,
@@ -80,19 +84,30 @@ async function toCandidate(
 }
 
 /**
- * The path tail below the project root, when the session ran in a worktree or a
- * package rather than the repo root. The project NAME is the root directory's
- * basename, so the last occurrence of it in the cwd marks the root.
+ * Which directory the session actually ran in, when that is not the project root.
+ *
+ * Two shapes matter, and both are worktrees:
+ *  - NESTED (`GenesisTools/.worktrees/fix`) — the tail below the project root.
+ *  - SIBLING (`col-fe-col-297040-burn-auth`) — a directory next to the repo. Claude
+ *    Code still files it under the project `col-fe`, so without this the row reads as
+ *    the plain repo and several worktrees look identical. The redundant `col-fe-`
+ *    prefix is dropped, leaving the part that tells them apart.
+ *
+ * Returns null when the session ran in the project root, where there is nothing to add.
  */
 export function subdirOf(cwd: string, project: string): string | null {
     const marker = `/${project}/`;
     const at = cwd.lastIndexOf(marker);
 
-    if (at === -1) {
+    if (at !== -1) {
+        return cwd.slice(at + marker.length) || null;
+    }
+
+    const dir = basename(cwd);
+
+    if (!dir || dir === project) {
         return null;
     }
 
-    const rest = cwd.slice(at + marker.length);
-
-    return rest || null;
+    return dir.startsWith(`${project}-`) ? dir.slice(project.length + 1) : dir;
 }

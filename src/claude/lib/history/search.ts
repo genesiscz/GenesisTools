@@ -1334,9 +1334,14 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     const scope = projectDir ? options.project || projectDir.split(sep).pop() || "unknown" : "all projects";
 
     // 1. Discover JSONL files (scoped to project dir if available)
+    //
+    // `allProjects: true` is not optional here. Without it discoverSessionFiles falls
+    // back to resolveProjectFilter(), so "no project" would silently mean "the current
+    // directory's project" — the opposite of this option's documented default, and the
+    // reason `--all-projects` returned only the local project's sessions.
     const files = projectDir
         ? discoverSessionFilesInDir(projectDir, { excludeSubagents })
-        : await discoverSessionFiles({ excludeSubagents });
+        : await discoverSessionFiles({ excludeSubagents, allProjects: true });
 
     // 2. Incrementally index: only parse new/changed files
     const total = files.length;

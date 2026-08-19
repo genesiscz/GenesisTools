@@ -21,7 +21,7 @@ import pc from "picocolors";
 export interface SnapshotOptions {
     last: string;
     within: string;
-    allProjects?: boolean;
+    thisProject?: boolean;
     yes?: boolean;
 }
 
@@ -49,7 +49,7 @@ export async function snapshotCommand(name: string | undefined, opts: SnapshotOp
     spinner.start("Scanning recent sessions...");
     const candidates = await listCandidates({
         limit: Number.parseInt(opts.last, 10) || 20,
-        allProjects: opts.allProjects === true,
+        thisProjectOnly: opts.thisProject === true,
         maxAgeMs: hours * 3_600_000,
     });
     spinner.stop(
