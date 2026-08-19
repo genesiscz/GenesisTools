@@ -5,6 +5,7 @@ import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
     browserUrl,
+    type PaneListPane,
     paneList,
     type WindowEntry,
     type WorkspaceEntry,
@@ -190,6 +191,11 @@ function filterWorkspaces(
     return filtered;
 }
 
+/** The cell size any rendered pane reports; they all share one font. */
+function cellSizeOf(panes: PaneListPane[], field: "cell_width_px" | "cell_height_px"): number | undefined {
+    return panes.find((pane) => pane[field])?.[field];
+}
+
 async function capturePanes(
     workspaceRef: string,
     options: SnapshotOptions,
@@ -220,8 +226,16 @@ async function capturePanes(
         // A pane cmux has not rendered reports no cell geometry, only pixels. The saved
         // columns/rows are a convergence YARDSTICK for restore, so derive them from the
         // pixel frame rather than writing a hole into the profile.
-        const columns = paneInfo.columns ?? Math.round(paneInfo.pixel_frame.width / (paneInfo.cell_width_px || 8));
-        const rows = paneInfo.rows ?? Math.round(paneInfo.pixel_frame.height / (paneInfo.cell_height_px || 17));
+        //
+        // The cell size comes from a SIBLING pane, because all four cell fields go
+        // missing together: reading `paneInfo.cell_width_px` here always finds nothing
+        // and the hardcoded default would apply. On this display the real cell is
+        // 16 x 34 px against defaults of 8 x 17, so the derived numbers came out ~2x
+        // too large and restore then reported an exact layout as unconverged.
+        const cellWidthPx = paneInfo.cell_width_px || cellSizeOf(layout.panes, "cell_width_px") || 8;
+        const cellHeightPx = paneInfo.cell_height_px || cellSizeOf(layout.panes, "cell_height_px") || 17;
+        const columns = paneInfo.columns ?? Math.round(paneInfo.pixel_frame.width / cellWidthPx);
+        const rows = paneInfo.rows ?? Math.round(paneInfo.pixel_frame.height / cellHeightPx);
 
         if (paneInfo.columns === undefined || paneInfo.rows === undefined) {
             logger.debug(

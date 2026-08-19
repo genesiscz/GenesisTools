@@ -82,6 +82,7 @@ async function toCandidate(
         mtimeMs: record.mtime,
         account: pin?.account ?? null,
         model: pin?.model ?? null,
+        auth: pin?.auth,
         pinned: pin !== undefined,
     };
 }

@@ -22,6 +22,8 @@ export interface ApplyEvents {
 
 export interface ApplyOutcome {
     workspaces: Array<{ title: string; ref: string; panes: number; sessions: number }>;
+    /** Sessions cmux would not give a surface for; they were NOT launched. */
+    skipped: string[];
 }
 
 export async function applyRestorePlan(
@@ -29,7 +31,7 @@ export async function applyRestorePlan(
     opts: ApplyOptions,
     events: ApplyEvents = {}
 ): Promise<ApplyOutcome> {
-    const outcome: ApplyOutcome = { workspaces: [] };
+    const outcome: ApplyOutcome = { workspaces: [], skipped: [] };
     const windowRef = opts.newWindow ? await createWindow() : undefined;
 
     for (const [index, workspace] of plan.workspaces.entries()) {
@@ -40,14 +42,15 @@ export async function applyRestorePlan(
             panes: workspace.panes.length,
         });
 
-        const ref = await materialize(workspace, windowRef, opts);
+        const built = await materialize(workspace, windowRef, opts);
+        outcome.skipped.push(...built.skipped);
         outcome.workspaces.push({
             title: workspace.title,
-            ref,
+            ref: built.ref,
             panes: workspace.panes.length,
-            sessions: workspace.panes.reduce((n, pane) => n + pane.sessions.length, 0),
+            sessions: workspace.panes.reduce((n, pane) => n + pane.sessions.length, 0) - built.skipped.length,
         });
-        events.onWorkspaceDone?.({ title: workspace.title, ref });
+        events.onWorkspaceDone?.({ title: workspace.title, ref: built.ref });
     }
 
     return outcome;
@@ -82,12 +85,14 @@ async function materialize(
     workspace: PlannedWorkspace,
     windowRef: string | undefined,
     opts: ApplyOptions
-): Promise<string> {
+): Promise<{ ref: string; skipped: string[] }> {
     const created = await createWorkspaceWithName({
         name: workspace.title,
         cwd: workspace.cwd,
         window: windowRef,
     });
+
+    const skipped: string[] = [];
 
     await withFocusedWorkspace(created.workspace_ref, async () => {
         const paneRefByIndex = await applySplitTree(buildGridTree(workspace.panes.length), created.workspace_ref);
@@ -100,14 +105,15 @@ async function materialize(
                     { paneIndex: pane.paneIndex, workspace: workspace.title },
                     "[claude-cmux] pane index has no live pane — skipping its sessions"
                 );
+                skipped.push(...pane.sessions.map((session) => session.candidate.sessionId));
                 continue;
             }
 
-            await fillPane(pane, paneRef, created.workspace_ref, opts);
+            skipped.push(...(await fillPane(pane, paneRef, created.workspace_ref, opts)));
         }
     });
 
-    return created.workspace_ref;
+    return { ref: created.workspace_ref, skipped };
 }
 
 /**
@@ -115,7 +121,12 @@ async function materialize(
  * the rest become extra tabs in it (`tabs` layout). CLI `new-surface` rather than the
  * raw RPC, which ignores its pane parameter and stacks everything into the focused one.
  */
-async function fillPane(pane: PlannedPane, paneRef: string, workspaceRef: string, opts: ApplyOptions): Promise<void> {
+async function fillPane(
+    pane: PlannedPane,
+    paneRef: string,
+    workspaceRef: string,
+    opts: ApplyOptions
+): Promise<string[]> {
     const layout = await paneList(workspaceRef);
     const live = layout.panes.find((p) => p.ref === paneRef);
 
@@ -136,18 +147,32 @@ async function fillPane(pane: PlannedPane, paneRef: string, workspaceRef: string
             "terminal",
         ]);
 
+        // cmux put the tab in the wrong pane. Using it anyway would start a session in a
+        // pane that already holds another one, silently, with the only trace in a log
+        // file. Stop adding tabs here instead: the sessions that did land are launched,
+        // and the ones that did not are reported to the caller.
         if (created.pane_ref !== paneRef) {
             logger.warn(
-                { requested: paneRef, got: created.pane_ref },
-                "[claude-cmux] new-surface landed in an unexpected pane"
+                { requested: paneRef, got: created.pane_ref, surfaceRef: created.surface_ref },
+                "[claude-cmux] new-surface landed in an unexpected pane — dropping the extra tabs"
             );
+            break;
         }
 
         surfaceRefs.push(created.surface_ref);
     }
 
+    const skipped: string[] = [];
+
     for (const [index, session] of pane.sessions.entries()) {
         const surfaceRef = surfaceRefs[index];
+
+        // No surface means the tab above was dropped. Reusing an earlier surface would
+        // start two sessions in one shell, so this one is reported instead of launched.
+        if (!surfaceRef) {
+            skipped.push(session.candidate.sessionId);
+            continue;
+        }
 
         await runCmuxOk(["rename-tab", "--workspace", workspaceRef, "--surface", surfaceRef, paneTitle(session)]).catch(
             (error) => {
@@ -167,4 +192,6 @@ async function fillPane(pane: PlannedPane, paneRef: string, workspaceRef: string
         );
         await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
     }
+
+    return skipped;
 }

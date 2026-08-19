@@ -100,6 +100,34 @@ describe("buildLaunchCommand", () => {
     });
 });
 
+describe("buildLaunchCommand auth modes", () => {
+    test("a --keychain session resumes through --keychain, not the token path", () => {
+        const command = buildLaunchCommand(session({ pinned: true, auth: "keychain" }, { account: "work" }));
+
+        expect(command).toContain("tools claude start 'work' --keychain --");
+    });
+
+    test("a token session stays on the token path", () => {
+        const command = buildLaunchCommand(session({ pinned: true, auth: "token" }, { account: "work" }));
+
+        expect(command).toContain("tools claude start 'work' --");
+        expect(command).not.toContain("--keychain");
+    });
+
+    test("a pin written before auth was recorded keeps the token path it always used", () => {
+        const command = buildLaunchCommand(session({ pinned: true }, { account: "work" }));
+
+        expect(command).not.toContain("--keychain");
+    });
+
+    test("a keychain session with no account still resumes as a bare claude", () => {
+        const command = buildLaunchCommand(session({ pinned: true, auth: "keychain" }));
+
+        expect(command).toContain("&& claude --resume");
+        expect(command).not.toContain("tools claude start");
+    });
+});
+
 describe("paneTitle", () => {
     test("leads with the session name, since the command line can only carry the id", () => {
         expect(paneTitle(session({ title: "burn the auth callback" }))).toBe("burn the auth callback · 8b6e69bf");

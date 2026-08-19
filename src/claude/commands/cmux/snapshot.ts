@@ -1,4 +1,5 @@
 import { candidateHint, candidateLabel, labelWidths } from "@app/claude/lib/cmux/display";
+import { positiveIntFlag } from "@app/claude/lib/cmux/flags";
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { listCandidates } from "@app/claude/lib/cmux/sessions";
 import {
@@ -48,7 +49,7 @@ export async function snapshotCommand(name: string | undefined, opts: SnapshotOp
     const spinner = p.spinner();
     spinner.start("Scanning recent sessions...");
     const candidates = await listCandidates({
-        limit: Number.parseInt(opts.last, 10) || 20,
+        limit: positiveIntFlag(opts.last, "--last"),
         thisProjectOnly: opts.thisProject === true,
         maxAgeMs: hours * 3_600_000,
     });

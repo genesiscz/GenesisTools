@@ -28,6 +28,13 @@ interface HookInput {
 interface SessionPin {
     sessionId: string;
     account: string | null;
+    /**
+     * How the session authenticated. `tools claude start` exports the OAuth token for a
+     * token launch and exports nothing for `--keychain`, while BOTH set the account name.
+     * Restoring a keychain session through the token path would bill another credential,
+     * so the mode has to be recorded, not inferred from the account.
+     */
+    auth: "token" | "keychain";
     model: string | null;
     cwd: string;
     workspaceId: string | null;
@@ -109,6 +116,7 @@ function main(raw: string): void {
         sessionId: input.session_id,
         // Absent means a plain keychain login, which is a real answer, not a missing one.
         account: process.env.TOOLS_CLAUDE_ACCOUNT || null,
+        auth: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "token" : "keychain",
         model: modelFromAncestors(),
         cwd: input.cwd || process.cwd(),
         workspaceId: process.env.CMUX_WORKSPACE_ID || null,

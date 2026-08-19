@@ -1,11 +1,9 @@
+import { positiveIntFlag } from "@app/claude/lib/cmux/flags";
 import { loadPins, pinsPath } from "@app/claude/lib/cmux/pins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
-
-/** Rows shown by default; the journal holds every session ever launched. */
-const DEFAULT_ROWS = 15;
 
 export interface PinsOptions {
     limit: string;
@@ -20,8 +18,9 @@ export interface PinsOptions {
  * is what the footer says when there is nothing to show.
  */
 export async function pinsCommand(opts: PinsOptions): Promise<void> {
-    const pins = await loadPins();
-    const limit = Number.parseInt(opts.limit, 10) || DEFAULT_ROWS;
+    // A command whose name says it shows things must not rewrite the journal it reads.
+    const pins = await loadPins({ readOnly: true });
+    const limit = positiveIntFlag(opts.limit, "--limit");
     const recent = [...pins.values()].sort((a, b) => b.at - a.at).slice(0, limit);
 
     if (opts.json) {

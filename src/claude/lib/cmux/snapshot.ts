@@ -59,7 +59,16 @@ export async function loadSnapshot(name: string): Promise<SessionSnapshot> {
 }
 
 export async function deleteSnapshot(name: string): Promise<void> {
-    await unlink(snapshotPath(name));
+    try {
+        await unlink(snapshotPath(name));
+    } catch (err) {
+        // A typo deserves the same sentence `loadSnapshot` gives, not a Node stack trace.
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            throw new Error(`No snapshot named "${name}".`);
+        }
+
+        throw err;
+    }
 }
 
 export interface SnapshotSummary {
@@ -144,8 +153,10 @@ export async function snapshotCandidates(
             limitStop: null,
             subdir: null,
             mtimeMs: Date.parse(snapshot.capturedAt) || 0,
-            account: pin?.account ?? entry.account,
-            model: pin?.model ?? entry.model,
+            // `??` would fall through on a pin that says `null` (ran on the keychain),
+            // resurrecting the account captured in the snapshot. A pin always wins whole.
+            account: pin ? pin.account : entry.account,
+            model: pin ? pin.model : entry.model,
             pinned: pin !== undefined || entry.account !== null,
         } satisfies RestoreCandidate;
     });

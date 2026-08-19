@@ -6,9 +6,22 @@ export type PinSource = "hook" | "manual";
  * claude process (where TOOLS_CLAUDE_ACCOUNT is visible). `account: null` means the
  * session ran on the plain keychain login, which is a real answer, not a missing one.
  */
+/**
+ * How the session authenticated.
+ *
+ * `token` is `tools claude start <account>`, which exports CLAUDE_CODE_OAUTH_TOKEN.
+ * `keychain` is `--keychain`, where the account's secondary login is injected into the
+ * macOS keychain and no token is exported. Both set TOOLS_CLAUDE_ACCOUNT to the same
+ * name, so the account alone cannot tell them apart, and resuming a keychain session
+ * on a token bills a different credential than the one it ran on.
+ * Absent on pins written before this was recorded.
+ */
+export type PinAuth = "token" | "keychain";
+
 export interface SessionPin {
     sessionId: string;
     account: string | null;
+    auth?: PinAuth;
     model: string | null;
     cwd: string;
     /** cmux's stable workspace UUID (CMUX_WORKSPACE_ID), when the session ran inside cmux. */
@@ -37,6 +50,8 @@ export interface RestoreCandidate {
     mtimeMs: number;
     account: string | null;
     model: string | null;
+    /** How the pinned session authenticated; absent for sessions with no pin. */
+    auth?: PinAuth;
     /** True when a pin record exists; distinguishes "keychain login" from "never recorded". */
     pinned: boolean;
 }

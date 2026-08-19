@@ -208,8 +208,6 @@ export const env = {
         isRoot: () => getRaw("USER") === "root",
         getTermProgram: () => getTrimmed("TERM_PROGRAM"),
         getCmuxBundleId: () => getTrimmed("CMUX_BUNDLE_ID"),
-        /** cmux's stable per-workspace UUID, exported into every surface's shell. */
-        getCmuxWorkspaceId: () => getTrimmed("CMUX_WORKSPACE_ID"),
         getDarwinKitTimeoutMs: () => parseIntEnv("DARWINKIT_TIMEOUT_MS", 0),
     },
 
@@ -297,15 +295,6 @@ export const env = {
     question: {
         getConfigPath: () => getTrimmed("QUESTION_CONFIG_PATH"),
         getLogBase: () => getTrimmed("QUESTION_LOG_BASE"),
-    },
-
-    claudeCode: {
-        /**
-         * The account name `tools claude start` pinned this Claude Code process to.
-         * Set in the launch env, so it is visible to hooks and the statusline, which
-         * are children of claude. Absent means a plain keychain login.
-         */
-        getPinnedAccount: () => getTrimmed("TOOLS_CLAUDE_ACCOUNT"),
     },
 
     boards: {

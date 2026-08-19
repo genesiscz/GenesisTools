@@ -7,15 +7,28 @@ export interface LaunchCommandOptions {
 }
 
 /**
- * True when the session is known to have run on the plain keychain login.
+ * True when the session is known to have run on a keychain login, with no account name.
  *
  * A null account has two meanings, and collapsing them resumes a session under
  * the wrong credential. `pinned` is what separates them: pinned with no account
  * is the hook reporting "this ran with TOOLS_CLAUDE_ACCOUNT unset", a real
  * answer; unpinned is "nobody ever recorded this session".
  */
-function ranOnKeychain(session: PlannedSession): boolean {
+function ranOnBareKeychain(session: PlannedSession): boolean {
     return session.account === null && session.candidate.pinned;
+}
+
+/**
+ * True when the session ran as a NAMED account through the keychain (`--keychain`).
+ *
+ * Both auth modes export the same TOOLS_CLAUDE_ACCOUNT, so the account name alone
+ * cannot tell them apart. Without the recorded mode, `tools claude start work` would
+ * resume a `--keychain work` session on work's long-lived token instead: a different
+ * credential than the one the session ran on. Pins written before `auth` existed have
+ * no opinion, and keep the token path they have always used.
+ */
+function ranOnNamedKeychain(session: PlannedSession): boolean {
+    return session.account !== null && session.candidate.auth === "keychain";
 }
 
 /**
@@ -36,11 +49,17 @@ function ranOnKeychain(session: PlannedSession): boolean {
  * session's directory after claude exits, ready for a relaunch.
  */
 export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandOptions = {}): string {
-    const keychain = ranOnKeychain(session);
+    const keychain = ranOnBareKeychain(session);
     const parts = keychain ? ["claude"] : ["tools", "claude", "start"];
 
     if (session.account) {
         parts.push(shellSingleQuote(session.account));
+
+        // Same account, same auth mode: `--keychain` injects the account's secondary
+        // login instead of exporting its token, which is how the session ran.
+        if (ranOnNamedKeychain(session)) {
+            parts.push("--keychain");
+        }
     } else if (opts.autopick && !session.candidate.pinned) {
         parts.push("-a");
     }
