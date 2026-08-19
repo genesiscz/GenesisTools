@@ -4,7 +4,10 @@ CLI for **bi-directional messaging across a swarm of LLM agents** (main agent â†
 
 For the *protocol-level* documentation aimed at the agents themselves (when to call which command, mode choices, etc.), see [`plugins/genesis-tools/skills/agents-talk/SKILL.md`](../../plugins/genesis-tools/skills/agents-talk/SKILL.md) (`/gt:agents-talk`).
 
-For the design background and research, see [`.claude/plans/2026-06-29-AgentsTalk-design.md`](../../.claude/plans/2026-06-29-AgentsTalk-design.md).
+The design background and research live in `.claude/plans/2026-06-29-AgentsTalk-design.md`. That
+directory is gitignored, so the file is local to the machine it was written on and is not part of
+a clone. The design decisions it records that still matter are summarised under
+[Why a CLI, not an MCP server?](#why-a-cli-not-an-mcp-server) below.
 
 ## Commands
 
