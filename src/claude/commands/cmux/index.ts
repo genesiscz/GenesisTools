@@ -1,4 +1,5 @@
 import { type Command, Option } from "commander";
+import { focusCommand } from "./focus";
 import { pinsCommand } from "./pins";
 import { restoreCommand } from "./restore";
 import { forgetCommand, listCommand, snapshotCommand } from "./snapshot";
@@ -30,6 +31,15 @@ export function registerCmuxCommand(program: Command): void {
         .option("--dry-run", "Print the plan and stop")
         .option("-y, --yes", "Skip the picker and the confirmation")
         .action(restoreCommand);
+
+    cmux.command("focus <session>")
+        .description("Focus the cmux pane a session is already open in, and raise the app")
+        .option("--no-activate", "Focus the pane without bringing the cmux app to the front")
+        .option("--first", "Take the best match instead of asking when several panes match")
+        .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
+        .option("--dry-run", "Print what would be focused and stop")
+        .option("--json", "Emit the match as JSON instead of a status line")
+        .action(focusCommand);
 
     cmux.command("snapshot [name]")
         .description("Save the currently-active sessions as a named set you can restore after a crash")
