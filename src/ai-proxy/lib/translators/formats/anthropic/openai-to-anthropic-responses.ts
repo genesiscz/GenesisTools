@@ -42,7 +42,22 @@ function usageFrom(raw: unknown): AnthropicUsage {
 
     const promptTokens = typeof raw.prompt_tokens === "number" ? raw.prompt_tokens : 0;
     const completionTokens = typeof raw.completion_tokens === "number" ? raw.completion_tokens : 0;
-    const usage: AnthropicUsage = { input_tokens: promptTokens, output_tokens: completionTokens };
+
+    // Anthropic counts thinking INSIDE output_tokens; OpenAI keeps reasoning out of
+    // completion_tokens and reports it under completion_tokens_details. Reporting
+    // completion_tokens alone made a grok-4.6:xhigh turn look like 139 output tokens
+    // when it actually produced 1763 — a 12x undercount in every client's cost and
+    // context display, and worst exactly on the reasoning models people reach for.
+    const completionDetails = isObject(raw.completion_tokens_details) ? raw.completion_tokens_details : undefined;
+    const reasoningTokens =
+        completionDetails && typeof completionDetails.reasoning_tokens === "number"
+            ? completionDetails.reasoning_tokens
+            : 0;
+
+    const usage: AnthropicUsage = {
+        input_tokens: promptTokens,
+        output_tokens: completionTokens + reasoningTokens,
+    };
 
     const details = isObject(raw.prompt_tokens_details) ? raw.prompt_tokens_details : undefined;
 
