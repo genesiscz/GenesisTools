@@ -20,6 +20,7 @@ describe("estimateCostUsd", () => {
         });
         expect(cost).toBeCloseTo(2.0, 10);
         expect(estimateCostUsd("grok-4.5-latest", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
+        expect(estimateCostUsd("grok-4.6", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
     });
 
     it("never open-ended-prefix-matches: unknown family variants stay unpriced", () => {

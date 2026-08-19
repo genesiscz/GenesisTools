@@ -239,6 +239,7 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
  * against xAI docs / LiteLLM 2026-07.
  */
 const XAI_WINDOWS: Record<string, number> = {
+    "grok-4.6": 500_000,
     "grok-4.5": 500_000,
     "grok-4.3": 1_000_000,
     "grok-4-fast": 2_000_000,
@@ -252,7 +253,7 @@ const XAI_WINDOWS: Record<string, number> = {
 
 const XAI_DEFAULT_WINDOW = 131_072;
 
-const XAI_VISION_MODELS = new Set(["grok-4.5", "grok-4.3"]);
+const XAI_VISION_MODELS = new Set(["grok-4.6", "grok-4.5", "grok-4.3"]);
 
 /** id → thinking mode; anything unlisted reasons optionally. */
 const XAI_THINKING: Record<string, CatalogEntry["thinking"]> = {

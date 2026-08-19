@@ -102,10 +102,13 @@ describe("static catalog", () => {
     test("input modalities default per provider and deviate per entry", () => {
         const opus = byId("claude-opus-5");
         const grok45 = byId("grok-4.5");
+        const grok46 = byId("grok-4.6");
         const grok3 = byId("grok-3");
 
         expect(opus && inputModalitiesFor(opus)).toEqual(["text", "image"]);
         expect(grok45 && inputModalitiesFor(grok45)).toEqual(["text", "image"]);
+        expect(grok46 && inputModalitiesFor(grok46)).toEqual(["text", "image"]);
+        expect(grok46?.contextWindow).toBe(500_000);
         expect(grok3 && inputModalitiesFor(grok3)).toBeUndefined();
     });
 

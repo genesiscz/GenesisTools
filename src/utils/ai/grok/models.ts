@@ -22,7 +22,7 @@ function seed(
 }
 
 /**
- * Curation for advertised model lists (2026-07-24): retired/legacy families
+ * Curation for advertised model lists (2026-08-19): retired/legacy families
  * and low-value variants stay OUT of pickers. Unlisted ids remain callable by
  * exact id — this only trims what clients see.
  */
@@ -52,6 +52,7 @@ export interface GrokModelSpecs {
  * carries context but not modalities.
  */
 const GROK_MODEL_SPECS: Record<string, GrokModelSpecs> = {
+    "grok-4.6": { contextWindow: 500_000, inputModalities: ["text", "image"] },
     "grok-4.5": { contextWindow: 500_000, inputModalities: ["text", "image"] },
     "grok-4.3": { contextWindow: 1_000_000, inputModalities: ["text", "image"] },
     "grok-4-fast": { contextWindow: 2_000_000, inputModalities: ["text"] },
@@ -65,6 +66,7 @@ export function grokModelSpecs(id: string): GrokModelSpecs | undefined {
 }
 
 export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
+    seed("grok-4.6", "high", "medium", "optional", "ok"),
     seed("grok-4.5", "high", "medium", "optional", "ok"),
     seed("grok-build", "high", "slow", "reasoning", "ok"),
     seed("grok-composer-2.5-fast", "high", "fast", "reasoning", "ok"),

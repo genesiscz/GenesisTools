@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-07-21T17:58:05.989Z",
-  "grokVersion": "0.2.106",
+  "updatedAt": "2026-08-19T12:51:04.438Z",
+  "grokVersion": "1.0.3",
   "accounts": [
     {
       "accountName": "martin",
@@ -9,6 +9,15 @@
       "pickerModels": [
         {
           "id": "grok-4.5",
+          "source": "picker",
+          "visibility": "high",
+          "speed": "medium",
+          "thinking": "optional",
+          "probeStatus": "ok",
+          "httpCode": 200
+        },
+        {
+          "id": "grok-4.6",
           "source": "picker",
           "visibility": "high",
           "speed": "medium",
