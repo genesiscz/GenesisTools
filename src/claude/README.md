@@ -9,6 +9,7 @@ Claude-focused utilities for local Claude Code workflows:
 - Manage Claude auth/config
 - Migrate Claude assets to Codex (`migrate-to codex`)
 - Reopen a set of sessions as cmux workspaces (`cmux`)
+- Run Claude Code on a non-Anthropic model through ai-proxy (`proxy`)
 
 ---
 
@@ -33,6 +34,39 @@ tools claude migrate-to codex
 # Reopen recent sessions as cmux panes
 tools claude cmux
 ```
+
+---
+
+## `proxy` — Claude Code on a proxied model
+
+Launches Claude Code against a model served by `tools ai-proxy` (Grok, GitHub Copilot,
+OpenRouter, xAI) instead of api.anthropic.com. The proxy answers the Anthropic Messages API
+natively; see `src/ai-proxy/README.md` for the translation.
+
+```bash
+tools claude proxy martin/grok -m 4.5        # <account>/<provider> plus a model filter
+tools claude proxy work/xai/grok-4.6         # or a full proxy model id
+tools claude run martin/grok -m 4.5          # `run` routes here when the name has a slash
+tools claude proxy martin/grok --list        # list matching models, launch nothing
+tools claude proxy martin/grok -- -c         # args after -- go to claude
+```
+
+`[target]` is an `<account>/<provider>` prefix or a full proxy id; `-m/--model` filters inside it
+(every whitespace-separated token must appear, so `-m "composer fast"` works). Several matches
+open a picker in a TTY and fail with the list otherwise.
+
+A **full id on a known account launches even when the catalog does not list it**, with a warning.
+The proxy advertises a curated list but routes any id whose account exists, so
+`martin/grok/grok-4.6` answered chat while `ai-proxy models` still hid it. A typo in the account
+or provider segment still fails locally rather than becoming an upstream 404.
+
+The proxy is started if it is not already answering; `--no-start` turns that into an error
+instead. The launch clears `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from the child
+environment — either one would outrank the proxy token and silently bill the real Anthropic
+account.
+
+`tools claude start` (alias `run`) is unchanged for Anthropic accounts. The split is the slash: no
+Anthropic account name has one, every ai-proxy target does.
 
 ---
 

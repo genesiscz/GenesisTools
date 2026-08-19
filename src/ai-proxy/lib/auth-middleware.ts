@@ -15,12 +15,18 @@ function tokensMatch(presented: string, expected: string): boolean {
 export function extractBearerToken(req: Request): string | null {
     const header = req.headers.get("Authorization");
 
-    if (!header) {
-        return null;
+    if (header) {
+        const match = header.match(/^Bearer\s+(.+)$/i);
+
+        if (match?.[1]) {
+            return match[1];
+        }
     }
 
-    const match = header.match(/^Bearer\s+(.+)$/i);
-    return match?.[1] ?? null;
+    // Anthropic-shaped clients (Claude Code with ANTHROPIC_API_KEY, the Anthropic
+    // SDKs) send the key as x-api-key and never set Authorization. Accepting it
+    // here means every route authenticates the same way, whichever door is used.
+    return req.headers.get("x-api-key");
 }
 
 export function requireProxyApiKey(req: Request, proxyApiKey: string): Response | null {

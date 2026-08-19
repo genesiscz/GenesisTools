@@ -30,6 +30,42 @@ Model: genesiscz/github-copilot/claude-sonnet-4
 
 Start with `ai-proxy serve --translate-cursor auto`. If Agent mode breaks, try `--no-translate` or `--translate-cursor on`.
 
+## Claude Code / Anthropic clients (`POST /v1/messages`)
+
+The proxy also answers the **Anthropic Messages API**, so Claude Code (and any Anthropic SDK) can
+drive a proxied model. Routes: `POST /v1/messages` and `POST /v1/messages/count_tokens`.
+
+```bash
+tools claude proxy martin/grok -m 4.5      # pick + launch Claude Code on that model
+tools claude run martin/grok/grok-4.5      # same thing; a slashed name means "ai-proxy target"
+tools claude proxy work/xai --list         # just list what that account serves
+```
+
+Point a client at it by hand with:
+
+```text
+ANTHROPIC_BASE_URL=http://127.0.0.1:8317
+ANTHROPIC_AUTH_TOKEN=<proxyApiKey>      # x-api-key works too
+ANTHROPIC_MODEL=martin/grok/grok-4.5
+```
+
+How it works (`lib/anthropic-messages.ts`):
+
+- The request is normalized down to OpenAI chat/completions (`system` → system message,
+  `tools[].input_schema` → `function.parameters`, `tool_result` → `role: "tool"`), then routed
+  through the normal `resolveModel` → account → provider path.
+- The answer is translated back up: an OpenAI completion becomes an Anthropic message, and an
+  OpenAI SSE stream becomes `message_start` / `content_block_*` / `message_delta` / `message_stop`
+  frames. `reasoning_content` is forwarded as real `thinking` blocks.
+- **Usage rows book the OpenAI-shaped exchange**, not the Anthropic frames, so billing and the
+  call timeline stay on the one shape they parse.
+- Upstreams that report no streaming usage (Grok drops `stream_options`) get an estimate rather
+  than `0`, so Claude Code's context meter and auto-compact still work.
+
+Caveats: `count_tokens` is a ~4-chars-per-token estimate (no upstream here exposes a counter),
+thinking blocks carry no `signature`, and a model whose catalog entry says `supportsTools: false`
+cannot edit files — `tools claude proxy` warns before launching one.
+
 ## Model ids
 
 Canonical format:

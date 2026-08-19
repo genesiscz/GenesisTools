@@ -1,6 +1,7 @@
+import { anthropicMessagesPipeline, countAnthropicInputTokens } from "@app/ai-proxy/lib/anthropic-messages";
 import { handleAudioTranscriptions } from "@app/ai-proxy/lib/audio";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
-import { clientProviderDenial, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
+import { clientProviderDenial, type ResolvedClient, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
@@ -112,6 +113,113 @@ function trackProxyRequest(input: {
     scheduleBillingSync(input.route.account, input.runtime.providers);
 }
 
+function jsonError(status: number, error: Record<string, unknown>): Response {
+    return new Response(SafeJSON.stringify({ error }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+/**
+ * Read a model-bearing POST body once, with the size and shape guards every
+ * inference route needs. Shared by /v1/chat/completions, /v1/responses and
+ * /v1/messages so a guard added for one door is never missing from another.
+ */
+async function readModelBody(req: Request): Promise<{ bodyText: string; model: string } | { error: Response }> {
+    const contentLength = req.headers.get("content-length");
+
+    if (contentLength) {
+        const declaredBytes = Number.parseInt(contentLength, 10);
+
+        if (Number.isFinite(declaredBytes) && declaredBytes > MAX_REQUEST_BODY_BYTES) {
+            return { error: jsonError(413, { message: "Request body too large" }) };
+        }
+    }
+
+    const bodyText = await req.text();
+
+    if (Buffer.byteLength(bodyText, "utf8") > MAX_REQUEST_BODY_BYTES) {
+        return { error: jsonError(413, { message: "Request body too large" }) };
+    }
+
+    let parsed: { model?: string };
+
+    try {
+        parsed = SafeJSON.parse(bodyText, { strict: true }) as { model?: string };
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: invalid JSON body");
+        return { error: jsonError(400, { message: "Invalid JSON body" }) };
+    }
+
+    if (!parsed.model) {
+        return { error: jsonError(400, { message: "Missing model" }) };
+    }
+
+    const invalidImagePayload = findInvalidImageDataPayload(parsed as Record<string, unknown>);
+
+    if (invalidImagePayload !== null) {
+        logger.warn(
+            { model: parsed.model, payloadPreview: invalidImagePayload },
+            "ai-proxy: rejecting image content with invalid base64 payload"
+        );
+
+        return {
+            error: jsonError(400, {
+                message:
+                    `Image content part carries an invalid base64 payload (${SafeJSON.stringify(invalidImagePayload)}) — ` +
+                    "the image bytes never reached the proxy. This usually means the client stringified an object " +
+                    'into the data URL (e.g. AI SDK v2-compat file parts becoming "[object Object]").',
+                type: "invalid_request_error",
+                code: "invalid_image_data",
+            }),
+        };
+    }
+
+    return { bodyText, model: parsed.model };
+}
+
+/** Model → account route plus a live provider, with the per-client denial and quota gates. */
+async function authorizeModelRoute({
+    client,
+    config,
+    model,
+    providers,
+}: {
+    client: ResolvedClient;
+    config: AiProxyConfig;
+    model: string;
+    providers: Map<string, ProxyProvider>;
+}): Promise<{ route: ResolvedRoute; provider: ProxyProvider } | { error: Response }> {
+    const route = resolveModel(model, config.accounts);
+    const denial = clientProviderDenial(client, route.account.provider);
+
+    if (denial) {
+        logger.warn({ client: client.name, model, denial }, "ai-proxy: provider denied");
+        return { error: jsonError(403, { message: denial, type: "forbidden", code: "provider_not_allowed" }) };
+    }
+
+    const quota = checkClientQuota(client);
+
+    if (!quota.ok) {
+        logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: quota exceeded");
+        return {
+            error: jsonError(429, {
+                message: quota.reason,
+                type: "quota_exceeded",
+                code: "monthly_quota_exceeded",
+            }),
+        };
+    }
+
+    const provider = await acquireProvider(providers, route);
+
+    if (!provider) {
+        return { error: providerUnavailableResponse(route) };
+    }
+
+    return { route, provider };
+}
+
 export function startAiProxyServer(runtime: AiProxyRuntime) {
     const clientProblems = validateClients(runtime.config.clients);
 
@@ -180,6 +288,117 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                 );
             }
 
+            // Claude Code and the Anthropic SDKs speak /v1/messages, not
+            // /v1/chat/completions. Every provider behind this proxy speaks
+            // OpenAI, so the body is translated both ways (anthropic-messages.ts).
+            if (path === "/v1/messages/count_tokens" && req.method === "POST") {
+                const client = await resolveClient(req, config);
+
+                if (!client) {
+                    return jsonError(401, { message: "Invalid proxy API key", type: "auth_error" });
+                }
+
+                const countBody = await req.text();
+
+                return new Response(SafeJSON.stringify({ input_tokens: countAnthropicInputTokens(countBody) }), {
+                    headers: { "Content-Type": "application/json" },
+                });
+            }
+
+            if (path === "/v1/messages" && req.method === "POST") {
+                const client = await resolveClient(req, config);
+
+                if (!client) {
+                    return jsonError(401, { message: "Invalid proxy API key", type: "auth_error" });
+                }
+
+                const requestStarted = performance.now();
+                const body = await readModelBody(req);
+
+                if ("error" in body) {
+                    return body.error;
+                }
+
+                const { bodyText, model } = body;
+
+                try {
+                    const routed = await authorizeModelRoute({
+                        client,
+                        config,
+                        model,
+                        providers: runtime.providers,
+                    });
+
+                    if ("error" in routed) {
+                        return routed.error;
+                    }
+
+                    const { route, provider } = routed;
+
+                    const { response, responseBody, timeline, openAiBodyText } = await anthropicMessagesPipeline({
+                        startedAt: requestStarted,
+                        provider,
+                        upstreamModel: route.upstreamId,
+                        proxyModel: model,
+                        req,
+                        bodyText,
+                    });
+                    const elapsedMs = Math.round(performance.now() - requestStarted);
+
+                    // The usage layer only parses the OpenAI shape, and the exchange it
+                    // should book is the one the upstream actually saw.
+                    trackProxyRequest({
+                        runtime,
+                        route,
+                        client: client.name,
+                        proxyModel: model,
+                        path,
+                        status: response.status,
+                        elapsedMs,
+                        bodyText: openAiBodyText,
+                        responseBody,
+                        timeline,
+                        translate: "anthropic",
+                        tags: readRequestTags(req.headers),
+                    });
+
+                    logger.info(
+                        {
+                            path,
+                            model,
+                            upstreamModel: route.upstreamId,
+                            status: response.status,
+                            elapsedMs,
+                            ...readRequestTags(req.headers),
+                            userAgent: req.headers.get("User-Agent") ?? undefined,
+                        },
+                        "ai-proxy: request"
+                    );
+
+                    return response;
+                } catch (err) {
+                    const mapped = mapProxyRequestError(err);
+                    logger.warn(
+                        {
+                            path,
+                            model,
+                            elapsedMs: Math.round(performance.now() - requestStarted),
+                            status: mapped.status,
+                            error: err,
+                        },
+                        "ai-proxy: request failed"
+                    );
+
+                    return new Response(
+                        SafeJSON.stringify({
+                            type: "error",
+                            error: { type: "invalid_request_error", message: mapped.message },
+                        }),
+                        { status: mapped.status, headers: { "Content-Type": "application/json" } }
+                    );
+                }
+            }
+
             if ((path === "/v1/chat/completions" || path === "/v1/responses") && req.method === "POST") {
                 const client = await resolveClient(req, config);
 
@@ -191,104 +410,27 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                 }
 
                 const requestStarted = performance.now();
-                const contentLength = req.headers.get("content-length");
+                const body = await readModelBody(req);
 
-                if (contentLength) {
-                    const declaredBytes = Number.parseInt(contentLength, 10);
-
-                    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_REQUEST_BODY_BYTES) {
-                        return new Response(SafeJSON.stringify({ error: { message: "Request body too large" } }), {
-                            status: 413,
-                            headers: { "Content-Type": "application/json" },
-                        });
-                    }
+                if ("error" in body) {
+                    return body.error;
                 }
 
-                const bodyText = await req.text();
-
-                if (Buffer.byteLength(bodyText, "utf8") > MAX_REQUEST_BODY_BYTES) {
-                    return new Response(SafeJSON.stringify({ error: { message: "Request body too large" } }), {
-                        status: 413,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
-
-                let parsed: { model?: string };
-                try {
-                    parsed = SafeJSON.parse(bodyText, { strict: true }) as { model?: string };
-                } catch (err) {
-                    logger.debug({ err }, "ai-proxy: invalid JSON body");
-                    return new Response(SafeJSON.stringify({ error: { message: "Invalid JSON body" } }), {
-                        status: 400,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
-
-                if (!parsed.model) {
-                    return new Response(SafeJSON.stringify({ error: { message: "Missing model" } }), {
-                        status: 400,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
-
-                const invalidImagePayload = findInvalidImageDataPayload(parsed as Record<string, unknown>);
-
-                if (invalidImagePayload !== null) {
-                    logger.warn(
-                        { path, model: parsed.model, payloadPreview: invalidImagePayload },
-                        "ai-proxy: rejecting image content with invalid base64 payload"
-                    );
-                    return new Response(
-                        SafeJSON.stringify({
-                            error: {
-                                message:
-                                    `Image content part carries an invalid base64 payload (${SafeJSON.stringify(invalidImagePayload)}) — ` +
-                                    "the image bytes never reached the proxy. This usually means the client stringified an object " +
-                                    'into the data URL (e.g. AI SDK v2-compat file parts becoming "[object Object]").',
-                                type: "invalid_request_error",
-                                code: "invalid_image_data",
-                            },
-                        }),
-                        { status: 400, headers: { "Content-Type": "application/json" } }
-                    );
-                }
+                const { bodyText, model } = body;
 
                 try {
-                    const route = resolveModel(parsed.model, config.accounts);
+                    const routed = await authorizeModelRoute({
+                        client,
+                        config,
+                        model,
+                        providers: runtime.providers,
+                    });
 
-                    const denial = clientProviderDenial(client, route.account.provider);
-
-                    if (denial) {
-                        logger.warn({ client: client.name, model: parsed.model, denial }, "ai-proxy: provider denied");
-                        return new Response(
-                            SafeJSON.stringify({
-                                error: { message: denial, type: "forbidden", code: "provider_not_allowed" },
-                            }),
-                            { status: 403, headers: { "Content-Type": "application/json" } }
-                        );
+                    if ("error" in routed) {
+                        return routed.error;
                     }
 
-                    const quota = checkClientQuota(client);
-
-                    if (!quota.ok) {
-                        logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: quota exceeded");
-                        return new Response(
-                            SafeJSON.stringify({
-                                error: {
-                                    message: quota.reason,
-                                    type: "quota_exceeded",
-                                    code: "monthly_quota_exceeded",
-                                },
-                            }),
-                            { status: 429, headers: { "Content-Type": "application/json" } }
-                        );
-                    }
-
-                    const provider = await acquireProvider(runtime.providers, route);
-
-                    if (!provider) {
-                        return providerUnavailableResponse(route);
-                    }
+                    const { route, provider } = routed;
 
                     if (path === "/v1/responses") {
                         const { response, responseBody, timeline, captureFailure } = await identityPipeline({
@@ -305,7 +447,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             runtime,
                             route,
                             client: client.name,
-                            proxyModel: parsed.model,
+                            proxyModel: model,
                             path,
                             status: response.status,
                             elapsedMs,
@@ -320,7 +462,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         logger.info(
                             {
                                 path,
-                                model: parsed.model,
+                                model,
                                 upstreamModel: route.upstreamId,
                                 status: response.status,
                                 elapsedMs,
@@ -352,7 +494,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         thinkingMode,
                         provider,
                         upstreamModel: route.upstreamId,
-                        proxyModel: parsed.model,
+                        proxyModel: model,
                         req,
                         bodyText,
                     });
@@ -362,7 +504,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         runtime,
                         route,
                         client: client.name,
-                        proxyModel: parsed.model,
+                        proxyModel: model,
                         path,
                         status: response.status,
                         elapsedMs,
@@ -378,7 +520,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     logger.info(
                         {
                             path,
-                            model: parsed.model,
+                            model,
                             upstreamModel: route.upstreamId,
                             status: response.status,
                             translate: mode,
@@ -396,7 +538,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     logger.warn(
                         {
                             path,
-                            model: parsed.model,
+                            model,
                             elapsedMs: Math.round(performance.now() - requestStarted),
                             status: mapped.status,
                             error: err,

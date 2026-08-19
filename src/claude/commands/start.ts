@@ -41,6 +41,7 @@ import {
     sweepStaleTeammateWrappers,
 } from "../lib/teammate-wrapper";
 import { pickSessionForResume } from "./resume";
+import { runProxySession } from "./run";
 
 interface StartOptions {
     pick?: boolean;
@@ -1036,6 +1037,15 @@ export function registerStartCommand(program: Command): void {
             if (nameArg?.startsWith("-")) {
                 nameArg = undefined;
                 passthrough = operands;
+            }
+
+            // No Anthropic account name contains a slash, but every ai-proxy target
+            // does (`martin/grok`, `work/xai/grok-4.6`). That makes the split
+            // unambiguous, so `claude run martin/grok -m 4.6` reaches the proxy
+            // launcher without a second command name to remember.
+            if (nameArg?.includes("/")) {
+                await runProxySession(nameArg, { model: opts.model }, passthrough);
+                return;
             }
 
             try {
