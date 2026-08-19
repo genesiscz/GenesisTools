@@ -6,6 +6,7 @@ import { listCandidates } from "@app/claude/lib/cmux/sessions";
 import { loadSnapshot, snapshotCandidates } from "@app/claude/lib/cmux/snapshot";
 import type { LayoutMode, RestoreCandidate, RestorePlan } from "@app/claude/lib/cmux/types";
 import * as p from "@clack/prompts";
+import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
@@ -14,6 +15,7 @@ import pc from "picocolors";
 export interface RestoreOptions {
     last: string;
     thisProject?: boolean;
+    allProjects?: boolean;
     layout: LayoutMode;
     perWorkspace: string;
     perProject: boolean;
@@ -41,7 +43,10 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
         process.exit(1);
     }
 
-    const candidates = await gatherCandidates(snapshotName, limit, opts.thisProject === true, opts.dryRun === true);
+    // Asked BEFORE the scan: indexing every project's transcripts is the slow step, and
+    // this is the answer that decides how much of it is worth doing.
+    const scope = await resolveScope(opts, snapshotName !== undefined);
+    const candidates = await gatherCandidates(snapshotName, limit, scope === "this", opts.dryRun === true);
 
     if (candidates.length === 0) {
         out.printlnErr(pc.yellow(snapshotName ? "That snapshot has no sessions." : "No resumable sessions found."));
@@ -111,6 +116,48 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
     if (!opts.enter) {
         out.printlnErr(pc.dim("--no-enter: each pane has its command queued at the prompt, press Enter to launch."));
     }
+}
+
+export type SessionScope = "this" | "all";
+
+/**
+ * Which projects to offer sessions from.
+ *
+ * A flag always wins. Otherwise an interactive run asks, because the honest answer
+ * changes with the task: reopening today's work in one repo wants this project, and
+ * recovering from a crash wants every repo you had open. Non-interactive runs take
+ * every project, which is the documented default.
+ */
+export async function resolveScope(opts: RestoreOptions, fromSnapshot: boolean): Promise<SessionScope> {
+    if (opts.thisProject) {
+        return "this";
+    }
+
+    // A snapshot already names its sessions, and they can come from several projects.
+    if (opts.allProjects || fromSnapshot || opts.yes || !isInteractive()) {
+        return "all";
+    }
+
+    const project = resolveProjectFilter();
+    const picked = await p.select({
+        message: "Which sessions should I offer?",
+        initialValue: "all",
+        options: [
+            { value: "all", label: "Every project", hint: "what you had open after a crash spans repos" },
+            {
+                value: "this",
+                label: project ? `Only ${project}` : "Only this directory's project",
+                hint: "faster: it indexes one project's transcripts",
+            },
+        ],
+    });
+
+    if (p.isCancel(picked)) {
+        p.cancel("Cancelled — nothing restored.");
+        process.exit(0);
+    }
+
+    return picked as SessionScope;
 }
 
 async function gatherCandidates(

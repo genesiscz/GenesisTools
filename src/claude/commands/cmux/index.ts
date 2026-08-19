@@ -14,7 +14,8 @@ export function registerCmuxCommand(program: Command): void {
                 "under the account it was pinned to"
         )
         .option("--last <n>", "How many recent sessions to offer, newest activity first", "12")
-        .option("--this-project", "Only offer sessions from this directory's project (default: every project)")
+        .option("--this-project", "Only offer sessions from this directory's project (skips the scope question)")
+        .option("--all-projects", "Offer sessions from every project (skips the scope question)")
         .addOption(
             new Option("--layout <mode>", "capped: grid + overflow workspaces | grid: one workspace | tabs: stack")
                 .choices(["capped", "grid", "tabs"])

@@ -72,8 +72,11 @@ async function toCandidate(
         cwd,
         project,
         branch: record.gitBranch,
-        title: record.customTitle || record.summary || record.firstPrompt,
-        lastPrompt: tail?.lastPrompt ?? null,
+        title:
+            cleanPromptText(record.customTitle) ??
+            cleanPromptText(record.summary) ??
+            cleanPromptText(record.firstPrompt),
+        lastPrompt: cleanPromptText(tail?.lastPrompt),
         limitStop: tail?.limitStop ?? null,
         subdir: subdirOf(cwd, project),
         mtimeMs: record.mtime,
@@ -81,6 +84,47 @@ async function toCandidate(
         model: pin?.model ?? null,
         pinned: pin !== undefined,
     };
+}
+
+/** Harness blocks whose CONTENT is noise, not something the user typed. */
+const NOISE_BLOCKS =
+    /<(local-command-caveat|local-command-stdout|system-reminder|command-name|command-message|command-args)>[\s\S]*?<\/\1>/g;
+
+/** Lines pasted from a terminal screenshot: the Claude Code status line and its neighbours. */
+const NOISE_LINES = [/bypass permissions/i, /\d+k\/\d+k\(/, /^\s*claude-[a-z]+-[\d.]/i, /for agents\s*$/];
+
+/** Long enough to identify a session, short enough that the picker keeps its columns. */
+const TITLE_MAX = 120;
+
+/**
+ * A session's prompt text, with the parts the user did not write removed.
+ *
+ * The raw first prompt is whatever the transcript recorded, and that is often harness
+ * boilerplate: a `<local-command-caveat>` block for a session opened with a slash
+ * command, or a pasted status line above the real question. Both then became the row
+ * title AND the cmux tab name, which is how a tab ended up called
+ * `<local-command-caveat>Caveat: T…`.
+ */
+export function cleanPromptText(raw: string | null | undefined): string | null {
+    if (!raw) {
+        return null;
+    }
+
+    const text = raw
+        .replace(NOISE_BLOCKS, " ")
+        // Any leftover tag: keep what it wrapped, drop the markup.
+        .replace(/<\/?[a-z][\w-]*>/gi, " ")
+        .split("\n")
+        .filter((line) => !NOISE_LINES.some((pattern) => pattern.test(line)))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    if (!text) {
+        return null;
+    }
+
+    return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text;
 }
 
 /**

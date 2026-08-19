@@ -64,6 +64,15 @@ export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandO
 export function paneTitle(session: PlannedSession): string {
     const { candidate } = session;
     const where = candidate.subdir ? `${candidate.project}/${candidate.subdir}` : candidate.project;
+    // The name you gave the session first, because the command line can only carry the
+    // session ID: `claude --resume <name>` is not a lookup, it opens a picker with the
+    // name as a search term, which would stall an unattended restore. So the tab is
+    // where the readable name lives. The short ID stays to tell two alike names apart.
+    const name = candidate.title?.replace(/\s+/g, " ").trim();
+    const lead = name ? (name.length > TAB_NAME_MAX ? `${name.slice(0, TAB_NAME_MAX - 1)}…` : name) : where;
 
-    return `${where} · ${candidate.sessionId.slice(0, 8)}`;
+    return `${lead} · ${candidate.sessionId.slice(0, 8)}`;
 }
+
+/** cmux tabs are narrow; past this the name is cut before the ID, not after. */
+const TAB_NAME_MAX = 32;

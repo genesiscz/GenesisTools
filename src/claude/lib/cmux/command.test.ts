@@ -101,11 +101,26 @@ describe("buildLaunchCommand", () => {
 });
 
 describe("paneTitle", () => {
-    test("names the project and the short session id", () => {
+    test("leads with the session name, since the command line can only carry the id", () => {
+        expect(paneTitle(session({ title: "burn the auth callback" }))).toBe("burn the auth callback · 8b6e69bf");
+    });
+
+    test("falls back to the project when the session has no name", () => {
         expect(paneTitle(session())).toBe("App · 8b6e69bf");
     });
 
-    test("includes the worktree subdirectory when there is one", () => {
+    test("falls back to the worktree path when there is one and no name", () => {
         expect(paneTitle(session({ subdir: ".worktrees/fix" }))).toBe("App/.worktrees/fix · 8b6e69bf");
+    });
+
+    test("cuts a long name but always keeps the id", () => {
+        const title = paneTitle(session({ title: "x".repeat(80) }));
+
+        expect(title.endsWith("· 8b6e69bf")).toBe(true);
+        expect(title.length).toBeLessThan(48);
+    });
+
+    test("collapses newlines, which would break the tab title", () => {
+        expect(paneTitle(session({ title: "first line\nsecond line" }))).toBe("first line second line · 8b6e69bf");
     });
 });

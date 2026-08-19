@@ -7,7 +7,6 @@ import { paneList, rpc, windowList } from "@genesiscz/utils/cmux/lib/socket";
 import { applySplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { createWorkspaceWithName } from "@genesiscz/utils/cmux/workspace";
 import { logger } from "@genesiscz/utils/logger";
-import { localeExportPrefix } from "@genesiscz/utils/terminal/locale";
 
 export interface ApplyOptions extends LaunchCommandOptions {
     /** Send the launch command with a newline. False leaves it queued at the prompt. */
@@ -156,8 +155,12 @@ async function fillPane(pane: PlannedPane, paneRef: string, workspaceRef: string
             }
         );
 
+        // No locale exports in front of the command. A fresh cmux pane already starts
+        // with a UTF-8 LANG from the login shell (measured on cmux 0.63.2: LANG=
+        // en_US.UTF-8, LC_ALL and LC_CTYPE empty, which claude renders fine), so the
+        // three exports only made the line the user reads harder to read.
         const command = buildLaunchCommand(session, opts);
-        const payload = `${localeExportPrefix()}${command}${opts.enter ? "\n" : ""}`;
+        const payload = `${command}${opts.enter ? "\n" : ""}`;
         logger.debug(
             { workspaceRef, surfaceRef, sessionId: session.candidate.sessionId, enter: opts.enter },
             "[claude-cmux] sending launch command"
