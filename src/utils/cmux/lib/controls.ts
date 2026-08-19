@@ -1,4 +1,5 @@
 import { type CmuxRunResult, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { rpc } from "@genesiscz/utils/cmux/lib/socket";
 
 type CmuxCommandRunner = (args: string[]) => Promise<CmuxRunResult>;
 
@@ -20,6 +21,23 @@ export async function focusCmuxPane({ paneId, runner = runCmuxOk, workspaceId }:
 
     await runner(["select-workspace", "--workspace", workspaceId]);
     await runner(["focus-pane", "--workspace", workspaceId, "--pane", paneId]);
+}
+
+/**
+ * Make `surfaceId` the visible tab inside its pane.
+ *
+ * `focus-pane` leaves whatever tab was already selected on top, so focusing a pane is not
+ * enough when the thing you were looking for lives on a background surface.
+ *
+ * There is no CLI verb for this. `cmux --help` lists no focus-surface command, and
+ * `tab-action --action focus` answers `invalid_params: Unknown tab action` (verified against
+ * cmux 0.63.2), so this goes through the raw `surface.focus` RPC. Its parameter is
+ * `surface_id`; passing `surface` fails with `Missing or invalid surface_id`.
+ */
+export async function focusCmuxSurface(surfaceId: string): Promise<void> {
+    assertNonBlank(surfaceId, "surfaceId");
+
+    await rpc("surface.focus", { surface_id: surfaceId });
 }
 
 // `pane.workspaceId` and `surface.id` from the live snapshot are already the

@@ -12,6 +12,14 @@ const SESSION_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const RESUME_ID_RE = /--resume[=\s]+['"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})['"]?/gi;
 
 /**
+ * The ` · 8b6e69bf` marker `paneTitle()` puts at the end of every restored tab title.
+ *
+ * Anchored at the end because that function truncates a long name and never the id, so the
+ * marker is always the last thing in the title.
+ */
+const TITLE_SHORT_ID_RE = /·\s*([0-9a-f]{8})\s*$/i;
+
+/**
  * Shortest prefix accepted as "this is a session id, not a word".
  *
  * A restored pane's screen holds the whole resume command, so a 3-character query
@@ -23,6 +31,7 @@ const MIN_ID_PREFIX = 8;
 export type FocusMatchKind =
     | "resume-command"
     | "resume-prefix"
+    | "title-id"
     | "session-id"
     | "id-prefix"
     | "pane-title"
@@ -41,7 +50,14 @@ export interface FocusTarget {
     paneId: string;
     paneTitle: string;
     cwd?: string;
-    /** Session ids found in this pane's text, newest occurrence last. Empty when none. */
+    /**
+     * The surface (tab) the match came from, when it was not the pane's own visible text.
+     *
+     * Focusing the pane alone leaves whatever tab was already selected on top, so a caller
+     * has to focus this surface too or it reports success while the match stays hidden.
+     */
+    surfaceId?: string;
+    /** Session ids this pane shows, the one it is RESUMING first. Empty when none. */
     sessionIds: string[];
     /** Which signal matched, for the "focused X because Y" line and for --json. */
     matchedOn: FocusMatchKind;
@@ -50,15 +66,38 @@ export interface FocusTarget {
     active: boolean;
 }
 
+/** One block of text to match against, and the surface it came from when it came from one. */
+interface PaneScope {
+    surfaceId?: string;
+    title: string;
+    screen: string;
+}
+
+/**
+ * The pane's own text first, then its surfaces with the visible one ahead of the rest.
+ *
+ * Scoring per scope rather than over one merged blob is what lets a match name the tab it
+ * came from. Selected-first settles ties in favour of the tab the user already sees, so a
+ * focus never switches tabs unless a background one is a strictly better match.
+ */
+function paneScopes(pane: CmuxLivePane): PaneScope[] {
+    const surfaces = [...pane.surfaces].sort((a, b) => Number(b.selected) - Number(a.selected));
+
+    return [
+        { title: pane.title, screen: pane.preview ?? "" },
+        ...surfaces.map((surface) => ({
+            surfaceId: surface.id,
+            title: surface.title,
+            screen: [surface.preview ?? "", surface.url ?? ""].join("\n"),
+        })),
+    ];
+}
+
 /** Every scrap of text a pane exposes: its own title plus each surface's title and screen. */
 function paneHaystack(pane: CmuxLivePane): string {
-    const parts = [pane.title, pane.preview ?? ""];
-
-    for (const surface of pane.surfaces) {
-        parts.push(surface.title, surface.preview ?? "", surface.url ?? "");
-    }
-
-    return parts.join("\n");
+    return paneScopes(pane)
+        .map((scope) => `${scope.title}\n${scope.screen}`)
+        .join("\n");
 }
 
 export function sessionIdsIn(text: string): string[] {
@@ -93,20 +132,30 @@ export function resumedSessionIdsIn(text: string): string[] {
     return [...new Set(ids)];
 }
 
-function scorePane({
-    pane,
-    query,
-    workspaceName,
-}: {
-    pane: CmuxLivePane;
-    query: string;
-    workspaceName: string;
-}): { kind: FocusMatchKind; score: number } | null {
-    const haystack = paneHaystack(pane);
-    const resumed = resumedSessionIdsIn(haystack);
-    const ids = sessionIdsIn(haystack);
-    const needle = query.toLowerCase();
+/**
+ * Session ids this pane shows, the one it is resuming first.
+ *
+ * Callers render `sessionIds[0]` as "the session in this pane", so the pane's own session
+ * has to come first. Screen order will not do that: a pane can print another session's id
+ * above its own resume command, and then the status line, the picker hint and the table all
+ * name a session the user did not ask about.
+ */
+export function paneSessionIds(text: string): string[] {
+    const resumed = resumedSessionIdsIn(text);
+
+    return [...resumed, ...sessionIdsIn(text).filter((id) => !resumed.includes(id))];
+}
+
+interface PaneMatch {
+    kind: FocusMatchKind;
+    score: number;
+    surfaceId?: string;
+}
+
+function scoreScope(scope: PaneScope, needle: string): { kind: FocusMatchKind; score: number } | null {
+    const haystack = `${scope.title}\n${scope.screen}`;
     const longEnough = needle.length >= MIN_ID_PREFIX;
+    const resumed = resumedSessionIdsIn(haystack);
 
     // The pane is running this session, not talking about it. Nothing outranks that.
     if (resumed.includes(needle)) {
@@ -116,6 +165,19 @@ function scorePane({
     if (longEnough && resumed.some((id) => id.startsWith(needle))) {
         return { kind: "resume-prefix", score: 95 };
     }
+
+    // `restore` stamps the short id into the tab title, and the title outlives the resume
+    // command: cmux only exposes the visible viewport, so an active Claude TUI scrolls that
+    // command away within seconds and a full-id query would then find nothing. The title is
+    // the one durable marker for a long-running session, so it ranks just under seeing the
+    // command itself.
+    const titleId = scope.title.match(TITLE_SHORT_ID_RE)?.[1]?.toLowerCase();
+
+    if (longEnough && titleId && needle.startsWith(titleId)) {
+        return { kind: "title-id", score: 90 };
+    }
+
+    const ids = sessionIdsIn(haystack);
 
     // The id is on screen but not in a resume command: an agent pane that printed the id,
     // a log, a note. Real evidence, but weaker than the pane actually running it.
@@ -127,18 +189,8 @@ function scorePane({
         return { kind: "id-prefix", score: 65 };
     }
 
-    if (pane.title.toLowerCase().includes(needle)) {
+    if (scope.title.toLowerCase().includes(needle)) {
         return { kind: "pane-title", score: 60 };
-    }
-
-    if (workspaceName.toLowerCase().includes(needle)) {
-        return { kind: "workspace", score: 50 };
-    }
-
-    const cwd = pane.cwd;
-
-    if (cwd && (cwd.toLowerCase().includes(needle) || basename(cwd).toLowerCase() === needle)) {
-        return { kind: "cwd", score: 40 };
     }
 
     // Last resort: the query is somewhere on the screen. Useful for "the pane where I
@@ -148,6 +200,42 @@ function scorePane({
     }
 
     return null;
+}
+
+function scorePane({
+    pane,
+    query,
+    workspaceName,
+}: {
+    pane: CmuxLivePane;
+    query: string;
+    workspaceName: string;
+}): PaneMatch | null {
+    const needle = query.toLowerCase();
+    let best: PaneMatch | null = null;
+
+    for (const scope of paneScopes(pane)) {
+        const hit = scoreScope(scope, needle);
+
+        if (hit && (!best || hit.score > best.score)) {
+            best = { ...hit, surfaceId: scope.surfaceId };
+        }
+    }
+
+    // Pane-level signals. Compared by score rather than checked in sequence, so their
+    // precedence against the per-scope kinds does not depend on evaluation order.
+    if (workspaceName.toLowerCase().includes(needle) && (!best || best.score < 50)) {
+        best = { kind: "workspace", score: 50 };
+    }
+
+    const cwd = pane.cwd;
+    const cwdMatches = cwd && (cwd.toLowerCase().includes(needle) || basename(cwd).toLowerCase() === needle);
+
+    if (cwdMatches && (!best || best.score < 40)) {
+        best = { kind: "cwd", score: 40 };
+    }
+
+    return best;
 }
 
 /**
@@ -194,7 +282,8 @@ export function findFocusTargets(
             paneId: pane.id,
             paneTitle: pane.title,
             cwd: pane.cwd,
-            sessionIds: sessionIdsIn(paneHaystack(pane)),
+            surfaceId: hit.surfaceId,
+            sessionIds: paneSessionIds(paneHaystack(pane)),
             matchedOn: hit.kind,
             score: hit.score,
             active: pane.active,
@@ -217,7 +306,7 @@ export function findFocusTargets(
 /**
  * True when the top match is the only one worth focusing without asking.
  *
- * One pane RESUMING the session wins even when other panes merely print its id. Anything
+ * One pane that HOLDS the session wins even when other panes merely print its id. Anything
  * else needs the top score to stand alone.
  */
 export function isUnambiguous(targets: FocusTarget[]): boolean {
@@ -231,19 +320,26 @@ export function isUnambiguous(targets: FocusTarget[]): boolean {
 
     const [first, second] = targets;
 
-    // A resume match is the pane RUNNING the session. One of those beats any number of
-    // panes that merely printed the id, which is the common case when an agent pane has
-    // been discussing session ids.
-    if (isResumeMatch(first)) {
-        return !isResumeMatch(second);
+    // One pane demonstrably running the session beats any number of panes that merely
+    // printed the id, which is the common case when an agent pane has been discussing
+    // session ids.
+    if (ownsSession(first)) {
+        return !ownsSession(second);
     }
 
     return first.score > second.score;
 }
 
-/** True when the pane is running the session, not just showing its id. */
-export function isResumeMatch(target: FocusTarget): boolean {
-    return target.matchedOn === "resume-command" || target.matchedOn === "resume-prefix";
+/**
+ * True when the pane demonstrably holds the session rather than mentioning its id.
+ *
+ * Either the resume command is still on screen, or `restore` stamped the id into the tab
+ * title. Both are written by this tool; a bare id in some text is not.
+ */
+function ownsSession(target: FocusTarget): boolean {
+    return (
+        target.matchedOn === "resume-command" || target.matchedOn === "resume-prefix" || target.matchedOn === "title-id"
+    );
 }
 
 export function describeMatch(target: FocusTarget): string {
@@ -252,6 +348,8 @@ export function describeMatch(target: FocusTarget): string {
             return "resuming this session";
         case "resume-prefix":
             return "resuming this session (id prefix)";
+        case "title-id":
+            return "session id in the tab title";
         case "session-id":
             return "session id on screen";
         case "id-prefix":

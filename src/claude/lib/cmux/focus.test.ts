@@ -3,10 +3,11 @@ import {
     describeMatch,
     findFocusTargets,
     isUnambiguous,
+    paneSessionIds,
     resumedSessionIdsIn,
     sessionIdsIn,
 } from "@app/claude/lib/cmux/focus";
-import type { CmuxLivePane, CmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const SESSION_B = "f013e93c-a367-46e6-add2-4c026b9cf667";
@@ -16,12 +17,33 @@ function resumeScreen(sessionId: string, cwd = "/Users/Martin/Tresors/Projects/G
     return `Last login: Wed Aug 19 12:48:46 on ttys025\ncd -- '${cwd}' && tools claude start -- --resume '${sessionId}'`;
 }
 
+/** A restored tab title, as `paneTitle()` writes it: the readable name, then the short id. */
+function restoredTitle(sessionId: string, name = "burn the auth callback"): string {
+    return `${name} · ${sessionId.slice(0, 8)}`;
+}
+
+/** What a restored pane looks like once its Claude TUI has scrolled the resume command away. */
+function busyTuiScreen(): string {
+    return "╭─ Claude Code ─╮\n│ > continue    │\n╰───────────────╯";
+}
+
 function pane(overrides: Partial<CmuxLivePane> & Pick<CmuxLivePane, "id" | "workspaceId">): CmuxLivePane {
     return {
         title: "zsh",
         active: false,
         surfaceCount: 1,
         surfaces: [],
+        ...overrides,
+    };
+}
+
+function surface(overrides: Partial<CmuxLiveSurface> & Pick<CmuxLiveSurface, "id">): CmuxLiveSurface {
+    return {
+        title: "zsh",
+        type: "terminal",
+        index: 0,
+        selected: false,
+        active: false,
         ...overrides,
     };
 }
@@ -45,6 +67,26 @@ describe("sessionIdsIn", () => {
 
     test("finds nothing in text with no id", () => {
         expect(sessionIdsIn("just a prompt")).toEqual([]);
+    });
+});
+
+describe("paneSessionIds", () => {
+    test("the session the pane is RESUMING comes first, whatever the screen order", () => {
+        // Callers render sessionIds[0] as "the session in this pane". A pane that printed
+        // another id above its own resume command would otherwise report that other one in
+        // the status line, the picker hint and the table.
+        const text = `I looked up ${SESSION_B} for you\n${resumeScreen(SESSION_A)}`;
+
+        expect(sessionIdsIn(text)).toEqual([SESSION_B, SESSION_A]);
+        expect(paneSessionIds(text)).toEqual([SESSION_A, SESSION_B]);
+    });
+
+    test("keeps screen order when nothing is being resumed", () => {
+        expect(paneSessionIds(`${SESSION_B} then ${SESSION_A}`)).toEqual([SESSION_B, SESSION_A]);
+    });
+
+    test("never repeats an id that is both resumed and mentioned", () => {
+        expect(paneSessionIds(`${SESSION_A}\n${resumeScreen(SESSION_A)}`)).toEqual([SESSION_A]);
     });
 });
 
@@ -84,6 +126,7 @@ describe("findFocusTargets", () => {
         for (const target of targets) {
             expect(target.matchedOn).not.toBe("resume-command");
             expect(target.matchedOn).not.toBe("resume-prefix");
+            expect(target.matchedOn).not.toBe("title-id");
             expect(target.matchedOn).not.toBe("session-id");
             expect(target.matchedOn).not.toBe("id-prefix");
         }
@@ -205,6 +248,108 @@ describe("findFocusTargets", () => {
         expect(targets[0].paneId).toBe("pane:33");
     });
 
+    test("a full id still finds a busy pane whose resume command has scrolled away", () => {
+        // cmux only exposes the visible viewport, so an active Claude TUI displaces the
+        // `--resume <uuid>` line within seconds. Before this, `focus <full-uuid>` reported
+        // no match for exactly the long-running sessions you most want to jump to.
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    title: restoredTitle(SESSION_A),
+                    preview: busyTuiScreen(),
+                }),
+            ]),
+            SESSION_A
+        );
+
+        expect(targets).toHaveLength(1);
+        expect(targets[0].matchedOn).toBe("title-id");
+    });
+
+    test("the tab-title id beats a pane that only printed the id, with no prompt", () => {
+        const targets = findFocusTargets(
+            snapshot([
+                pane({ id: "pane:2", workspaceId: "workspace:11", preview: `the session is ${SESSION_A}` }),
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    title: restoredTitle(SESSION_A),
+                    preview: busyTuiScreen(),
+                }),
+            ]),
+            SESSION_A
+        );
+
+        expect(targets[0].paneId).toBe("pane:33");
+        expect(targets[0].matchedOn).toBe("title-id");
+        expect(isUnambiguous(targets)).toBe(true);
+    });
+
+    test("a tab-title id only matches queries at least 8 characters long", () => {
+        const panes = [
+            pane({ id: "pane:33", workspaceId: "workspace:11", title: restoredTitle(SESSION_A), preview: "" }),
+        ];
+
+        expect(findFocusTargets(snapshot(panes), SESSION_A.slice(0, 8))[0].matchedOn).toBe("title-id");
+        expect(findFocusTargets(snapshot(panes), SESSION_A.slice(0, 7))[0].matchedOn).toBe("pane-title");
+    });
+
+    test("a match on a background tab carries that surface, so the caller can raise it", () => {
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    preview: "some other tab's output",
+                    surfaces: [
+                        surface({ id: "surface:45", selected: true, title: "zsh" }),
+                        surface({ id: "surface:46", title: "hidden", preview: resumeScreen(SESSION_A) }),
+                    ],
+                }),
+            ]),
+            SESSION_A
+        );
+
+        expect(targets[0].matchedOn).toBe("resume-command");
+        expect(targets[0].surfaceId).toBe("surface:46");
+    });
+
+    test("a match on the pane's own text carries no surface, so no tab gets switched", () => {
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    preview: resumeScreen(SESSION_A),
+                    surfaces: [surface({ id: "surface:45", selected: true, preview: resumeScreen(SESSION_A) })],
+                }),
+            ]),
+            SESSION_A
+        );
+
+        expect(targets[0].surfaceId).toBeUndefined();
+    });
+
+    test("the visible tab wins a tie against a background tab", () => {
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    surfaces: [
+                        surface({ id: "surface:46", title: "build" }),
+                        surface({ id: "surface:45", selected: true, title: "build" }),
+                    ],
+                }),
+            ]),
+            "build"
+        );
+
+        expect(targets[0].surfaceId).toBe("surface:45");
+    });
+
     test("an empty or whitespace query matches nothing", () => {
         const panes = [pane({ id: "pane:33", workspaceId: "workspace:11", preview: resumeScreen(SESSION_A) })];
 
@@ -286,6 +431,7 @@ describe("describeMatch", () => {
         const kinds = [
             "resume-command",
             "resume-prefix",
+            "title-id",
             "session-id",
             "id-prefix",
             "pane-title",

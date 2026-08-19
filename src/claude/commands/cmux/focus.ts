@@ -2,7 +2,7 @@ import { describeMatch, type FocusTarget, findFocusTargets, isUnambiguous } from
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
-import { focusCmuxPane } from "@genesiscz/utils/cmux/lib/controls";
+import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/controls";
 import { fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -144,6 +144,9 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
 
     if (targets.length === 0) {
         if (opts.json) {
+            // Same failure as the human path below, so it has to carry the same exit code.
+            // `{ focused: null }` on exit 0 reads as success to anything scripting this.
+            process.exitCode = 1;
             out.result(SafeJSON.stringify({ query, focused: null, matches: [] }, null, 2));
             return;
         }
@@ -162,6 +165,9 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
 
     if (!isUnambiguous(targets) && !opts.first) {
         if (opts.json) {
+            // Nothing was focused, and `--json` has no TTY to disambiguate on, so this is
+            // the same failure the non-TTY human path exits 1 for.
+            process.exitCode = 1;
             out.result(SafeJSON.stringify({ query, focused: null, ambiguous: true, matches: targets }, null, 2));
             return;
         }
@@ -213,6 +219,17 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
     }
 
     await focusCmuxPane({ workspaceId: target.workspaceId, paneId: target.paneId });
+
+    if (target.surfaceId) {
+        // The match came from a background tab. Without this the pane is focused and the
+        // command claims success while the user still looks at a different surface.
+        try {
+            await focusCmuxSurface(target.surfaceId);
+        } catch (err) {
+            log.warn({ err, surfaceId: target.surfaceId }, "could not focus the matched surface");
+            out.printlnErr(pc.dim("  The pane is focused, but its matching tab could not be raised."));
+        }
+    }
 
     const activated = opts.activate === false ? false : await activateApp();
 
