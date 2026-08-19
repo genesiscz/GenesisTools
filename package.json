@@ -11,9 +11,9 @@
         "typecheck:all": "tsgo --noEmit && tsgo -p src/claude-history-dashboard/tsconfig.json --noEmit && tsgo -p src/spotify/ui/tsconfig.json --noEmit",
         "tsgo": "tsgo --noEmit",
         "tsc": "tsgo --noEmit",
-        "lint": "biome check .",
+        "lint": "bun run lint:biome && bun run lint:rules",
         "check:ui-palette": "bun scripts/check-ui-palette.ts",
-        "lint:fix": "biome check --write .",
+        "lint:fix": "biome check --write . && bun scripts/ci/lint-rules.ts",
         "lint:dashboard": "cd src/claude-history-dashboard && biome check .",
         "lint:dashboard:fix": "cd src/claude-history-dashboard && biome check --write .",
         "format": "biome format --write .",
@@ -25,7 +25,9 @@
         "test:task": "bun scripts/test.ts --parallel src/task/tests/",
         "test:e2e": "RUN_E2E=1 RUN_AGENTS_E2E=1 bun scripts/test.ts --timeout 300000 $(git ls-files '*.e2e.test.ts' '*/matrix-e2e.test.ts' | tr '\n' ' ')",
         "test:coverage": "bun run test --coverage --coverage-reporter=lcov --coverage-dir=coverage",
-        "postinstall": "bun scripts/apply-patches.ts"
+        "postinstall": "bun scripts/apply-patches.ts",
+        "lint:biome": "biome check .",
+        "lint:rules": "bun scripts/ci/lint-rules.ts"
     },
     "devDependencies": {
         "@anthropic-ai/claude-code": "^2.1.45",

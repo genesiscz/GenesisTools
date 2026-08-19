@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 /**
@@ -20,7 +22,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3100;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-const TEST_DB_PATH = process.env.SQLITE_PATH ?? "/tmp/dash-e2e/dashboard-e2e.sqlite";
+// The e2e support module derives the same default, so both sides agree without
+// sharing an import across the config/runtime boundary.
+const TEST_DB_PATH = process.env.SQLITE_PATH ?? join(tmpdir(), "dash-e2e", "dashboard-e2e.sqlite");
 
 const E2E_ENV = {
     NODE_ENV: "development",

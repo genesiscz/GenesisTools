@@ -26,7 +26,7 @@ describe("diarize-models config", () => {
 
         expect(sandboxHome).not.toBe(homedir());
         expect(DIARIZE_MODEL_DIR.startsWith(sandboxHome)).toBe(true);
-        // biome-ignore lint/plugin: asserts against the REAL home on purpose — the whole point is that the sandbox is elsewhere
+        // lint-rules-ignore: asserts against the REAL home on purpose — the whole point is that the sandbox is elsewhere
         expect(DIARIZE_MODEL_DIR.startsWith(`${homedir()}/.genesis-tools`)).toBe(false);
     });
 

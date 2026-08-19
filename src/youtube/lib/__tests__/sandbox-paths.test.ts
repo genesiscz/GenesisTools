@@ -15,7 +15,7 @@ import { env } from "@genesiscz/utils/env";
  */
 describe("youtube default paths", () => {
     const sandboxHome = env.tools.getHome();
-    // biome-ignore lint/plugin: asserts against the REAL home on purpose — the whole point is that the sandbox is elsewhere
+    // lint-rules-ignore: asserts against the REAL home on purpose — the whole point is that the sandbox is elsewhere
     const realPrefix = `${homedir()}/.genesis-tools`;
 
     it("resolves under GENESIS_TOOLS_HOME, not the real home", () => {

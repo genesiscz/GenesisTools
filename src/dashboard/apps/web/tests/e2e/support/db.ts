@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 
 /**
@@ -6,7 +8,7 @@ import Database from "better-sqlite3";
  * page you load. See playwright.config.ts + src/lib/auth/requireUser.ts.
  */
 export const E2E_USER_ID = "dev-user";
-export const TEST_DB_PATH = process.env.SQLITE_PATH ?? "/tmp/dash-e2e/dashboard-e2e.sqlite";
+export const TEST_DB_PATH = process.env.SQLITE_PATH ?? join(tmpdir(), "dash-e2e", "dashboard-e2e.sqlite");
 
 export function openTestDb(): Database.Database {
     const db = new Database(TEST_DB_PATH);

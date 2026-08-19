@@ -11,7 +11,11 @@ export function byFor(sessionId: string | null, sessionName: string | null = nul
         agent: sessionId === null ? "unknown" : "claude-code",
         aiAgent: null,
         branch: "test-branch",
+        // Fixture data, never opened: both are recorded verbatim into events, so a real
+        // tmpdir() would make every expected value machine-dependent.
+        // lint-rules-ignore: fixture path, never touches the filesystem
         cwd: "/tmp/test",
+        // lint-rules-ignore: fixture path, never touches the filesystem
         repoRoot: "/tmp/test",
         project: "TestProj",
         commitSha: null,

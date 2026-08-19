@@ -131,10 +131,23 @@ jobs:
       # gave), just without its own runner. Timeouts are fail-fast tripwires
       # from real data (biome ~12s w/ GritQL plugins on 10 cores → expect
       # ~30–45s on 4-core GH runners, dashboard ~1s, tsc ~8s) + headroom.
-      - name: Run Biome check (main)
+      # Split from the repo-rule checker so each has its own timing and tripwire.
+      # `bun run lint` still runs both for humans; CI wants them separable,
+      # because a combined number cannot say which half regressed.
+      # Lint rules are per-file and syntactic, so on a PR only the diff needs
+      # checking — unlike the typecheck above, which must stay whole-tree. The
+      # base commit is fetched at depth 1 because a full-history checkout would
+      # pull 350+ MiB and cost more than the linting it saves. Both commands
+      # fall back to a full scan if the diff is unavailable for any reason.
+      - name: Fetch PR base for changed-file linting
+        if: runner.os == 'Linux' && github.event_name == 'pull_request'
+        run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
+
+      - name: Run Biome check + repo lint rules
         if: runner.os == 'Linux'
         timeout-minutes: 3
-        run: bun run lint
+        shell: bash
+        run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha }}"
 
       - name: Run Biome check (dashboard)
         if: runner.os == 'Linux'
@@ -155,6 +168,11 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/ai-credentials-guard.sh
+
+      - name: PID recycling guard
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bash scripts/ci/pid-safety-guard.sh
 
       - name: Package boundary guard
         if: runner.os == 'Linux'

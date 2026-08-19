@@ -10,6 +10,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -719,7 +720,7 @@ export function buildPreflightReport(appArg?: string): Record<string, unknown> {
                 duration: 6,
                 activeFps: 15,
                 threshold: 0.1,
-                videoOut: "/tmp/run.mp4",
+                videoOut: join(tmpdir(), "run.mp4"),
                 noRemote: true,
                 captureEngine: "cg",
             },
