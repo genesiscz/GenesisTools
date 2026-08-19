@@ -81,7 +81,7 @@ Commands:
   dashboard <input>      Fetch dashboard and list its queries
   list                   List cached work items
   workitem-create        Create a new work item (interactive or from template)
-  timelog                Manage time log entries (add, list, types, import)
+  timelog                Manage time log entries (add, list, delete, types, import)
   history                Work item history commands (show, search, sync)
 
 Query Options:
@@ -113,6 +113,7 @@ Workitem-Create Options:
 Timelog Subcommands:
   timelog add            Add a time log entry
   timelog list           List time logs for a work item
+  timelog delete         Delete a time log entry and roll back effort
   timelog types          List available time types
   timelog import <file>  Import time logs from JSON file
 

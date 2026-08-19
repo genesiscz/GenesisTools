@@ -26,6 +26,7 @@ export type ResolvedTimeLog = {
 
 export type DeleteTimeLogResult =
     | { status: "cancelled" }
+    | { status: "needs-resolution"; timeLogId: string }
     | { status: "dry-run"; timeLogId: string; resolved: ResolvedTimeLog | null; plan: EffortRestorePlan | null }
     | {
           status: "deleted";
@@ -140,6 +141,19 @@ export async function resolveTimeLogForDelete(opts: {
         return { workItemId: unscopedHit.workItemId, minutes: unscopedHit.minutes, source: "query" };
     }
 
+    const unbounded = await opts.timeLogApi.queryTimeLogs({
+        projectId: opts.projectId,
+        userId: opts.user.userId,
+    });
+    const unboundedHit = unbounded.find((entry) => entry.timeLogId === opts.timeLogId && isLiveQueryEntry(entry));
+
+    if (unboundedHit) {
+        logger.debug(
+            `[timelog-delete] resolved ${opts.timeLogId} from unbounded user query #${unboundedHit.workItemId} ${unboundedHit.minutes}m`
+        );
+        return { workItemId: unboundedHit.workItemId, minutes: unboundedHit.minutes, source: "query" };
+    }
+
     logger.debug(`[timelog-delete] could not resolve ${opts.timeLogId} to a work item`);
     return null;
 }
@@ -154,15 +168,22 @@ export async function deleteTimeLogEntryWithEffort(opts: DeleteTimeLogOptions): 
     let plan: EffortRestorePlan | null = null;
 
     if (!opts.noEffort) {
-        resolved = await resolveTimeLogForDelete({
-            timeLogApi: opts.timeLogApi,
-            timeLogId: opts.timeLogId,
-            user: opts.user,
-            projectId: opts.projectId,
-            workItemId: opts.workItemId,
-            knownMinutes: opts.knownMinutes,
-            journalPath,
-        });
+        try {
+            resolved = await resolveTimeLogForDelete({
+                timeLogApi: opts.timeLogApi,
+                timeLogId: opts.timeLogId,
+                user: opts.user,
+                projectId: opts.projectId,
+                workItemId: opts.workItemId,
+                knownMinutes: opts.knownMinutes,
+                journalPath,
+            });
+        } catch (err) {
+            logger.warn(
+                { error: err, timeLogId: opts.timeLogId },
+                "[timelog-delete] failed to resolve the time log; delete will skip effort restore"
+            );
+        }
 
         if (resolved) {
             try {
@@ -194,6 +215,13 @@ export async function deleteTimeLogEntryWithEffort(opts: DeleteTimeLogOptions): 
         return { status: "dry-run", timeLogId: opts.timeLogId, resolved, plan };
     }
 
+    if (!opts.noEffort && !resolved) {
+        logger.warn(
+            `[timelog-delete] refusing to delete ${opts.timeLogId} without a work item or minutes; pass --workitem or --no-effort`
+        );
+        return { status: "needs-resolution", timeLogId: opts.timeLogId };
+    }
+
     if (opts.confirm) {
         const ok = await opts.confirm();
 
@@ -211,6 +239,7 @@ export async function deleteTimeLogEntryWithEffort(opts: DeleteTimeLogOptions): 
         effort = await updateWorkItemEffort(opts.devopsApi, resolved.workItemId, -resolved.minutes, {
             timeLogIds: [opts.timeLogId],
             journalPath,
+            journal: false,
             values: { remaining: plan.remainingAfter, completed: plan.completedAfter },
         });
     }
@@ -228,7 +257,7 @@ export async function deleteTimeLogEntryWithEffort(opts: DeleteTimeLogOptions): 
 }
 
 export function printDeleteResult(result: DeleteTimeLogResult, opts: { noEffort?: boolean }): void {
-    if (result.status === "cancelled") {
+    if (result.status === "cancelled" || result.status === "needs-resolution") {
         return;
     }
 
@@ -243,6 +272,15 @@ export function printDeleteResult(result: DeleteTimeLogResult, opts: { noEffort?
     }
 
     if (!result.resolved) {
+        if (result.status === "dry-run") {
+            out.warn(
+                pc.yellow(
+                    "  ⚠ Could not resolve work item or minutes. The row would be deleted and Remaining/Completed would not change."
+                )
+            );
+            return;
+        }
+
         out.warn(
             pc.yellow(
                 "  ⚠ Could not resolve work item or minutes for this entry. The row is gone; Remaining/Completed were not changed."

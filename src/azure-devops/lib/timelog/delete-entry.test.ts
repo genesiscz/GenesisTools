@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EffortApi } from "@app/azure-devops/timelog-effort";
-import { appendEffortJournal } from "@app/azure-devops/timelog-effort-journal";
+import { appendEffortJournal, readEffortJournal } from "@app/azure-devops/timelog-effort-journal";
 import type { JsonPatchOperation, TimeLogEntry, TimeLogQueryEntry, TimeLogUser } from "@app/azure-devops/types";
 import { env } from "@genesiscz/utils/env";
 import { type DeleteTimeLogOptions, deleteTimeLogEntryWithEffort, type TimeLogDeleteApi } from "./delete-entry";
@@ -70,6 +70,8 @@ function makeApis(args: {
     completed: number | null;
     entries?: TimeLogEntry[];
     query?: TimeLogQueryEntry[];
+    queries?: TimeLogQueryEntry[][];
+    queryError?: Error;
     updateError?: Error;
     deleteError?: Error;
 }): {
@@ -82,6 +84,7 @@ function makeApis(args: {
     const patches: JsonPatchOperation[][] = [];
     let remaining = args.remaining;
     let completed = args.completed;
+    let queryCall = 0;
 
     const devops: EffortApi = {
         async getWorkItem() {
@@ -129,6 +132,17 @@ function makeApis(args: {
         },
         async queryTimeLogs() {
             calls.push("query");
+
+            if (args.queryError) {
+                throw args.queryError;
+            }
+
+            if (args.queries) {
+                const page = args.queries[Math.min(queryCall, args.queries.length - 1)] ?? [];
+                queryCall += 1;
+                return page;
+            }
+
             return args.query ?? [queryEntry()];
         },
     };
@@ -304,17 +318,91 @@ describe("deleteTimeLogEntryWithEffort", () => {
         }
     });
 
-    test("unresolved id still deletes the row", async () => {
+    test("unresolved id refuses to delete unless --no-effort", async () => {
         const journalPath = join(root, "unresolved.jsonl");
         const apis = makeApis({ remaining: 8, completed: 6, entries: [], query: [] });
         const result = await deleteTimeLogEntryWithEffort(baseOpts(apis, { journalPath }));
-        expect(result.status).toBe("deleted");
-        expect(apis.calls).toContain("delete");
+        expect(result.status).toBe("needs-resolution");
+        expect(apis.calls).not.toContain("delete");
         expect(apis.calls).not.toContain("update");
+    });
+
+    test("single-id journal fallback uses journal minutes when the live row is gone", async () => {
+        const journalPath = join(root, "journal-fallback.jsonl");
+        await appendEffortJournal(
+            {
+                ts: "2026-08-19T13:03:11.482Z",
+                workItemId: 303818,
+                timeLogIds: ["log-1"],
+                minutes: 90,
+                remainingBefore: 5,
+                completedBefore: 1,
+                remainingAfter: 3.5,
+                completedAfter: 2.5,
+            },
+            journalPath
+        );
+        const apis = makeApis({ remaining: 3.5, completed: 2.5, entries: [], query: [] });
+        const result = await deleteTimeLogEntryWithEffort(baseOpts(apis, { journalPath }));
+        expect(result.status).toBe("deleted");
+        expect(apis.calls.filter((c) => c === "query")).toHaveLength(0);
 
         if (result.status === "deleted") {
-            expect(result.plan).toBeNull();
-            expect(result.effort).toBeNull();
+            expect(result.resolved).toEqual({ workItemId: 303818, minutes: 90, source: "journal" });
+            expect(result.plan?.reason).toBe("exact-journal");
+            expect(apis.patches[0].map((op) => op.value)).toEqual([5, 1]);
         }
+    });
+
+    test("falls back to the unscoped project query when the user query misses", async () => {
+        const journalPath = join(root, "unscoped.jsonl");
+        const apis = makeApis({
+            remaining: 8,
+            completed: 6,
+            entries: [],
+            queries: [[], [queryEntry()]],
+        });
+        const result = await deleteTimeLogEntryWithEffort(baseOpts(apis, { journalPath }));
+        expect(result.status).toBe("deleted");
+        expect(apis.calls.filter((c) => c === "query")).toHaveLength(2);
+
+        if (result.status === "deleted") {
+            expect(result.resolved).toEqual({ workItemId: 296936, minutes: 120, source: "query" });
+        }
+    });
+
+    test("a thrown resolve does not delete the row", async () => {
+        const apis = makeApis({
+            remaining: 8,
+            completed: 6,
+            entries: [],
+            queryError: new Error("TimeLog API Error 500: boom"),
+        });
+        const result = await deleteTimeLogEntryWithEffort(baseOpts(apis));
+        expect(result.status).toBe("needs-resolution");
+        expect(apis.calls).not.toContain("delete");
+        expect(apis.calls).not.toContain("update");
+    });
+
+    test("rollback does not append a new journal row", async () => {
+        const journalPath = join(root, "no-rollback-journal.jsonl");
+        await appendEffortJournal(
+            {
+                ts: "2026-08-19T13:03:11.482Z",
+                workItemId: 296936,
+                timeLogIds: ["log-1"],
+                minutes: 120,
+                remainingBefore: 10,
+                completedBefore: 4,
+                remainingAfter: 8,
+                completedAfter: 6,
+            },
+            journalPath
+        );
+        const apis = makeApis({ remaining: 8, completed: 6 });
+        await deleteTimeLogEntryWithEffort(baseOpts(apis, { workItemId: 296936, knownMinutes: 120, journalPath }));
+        const records = readEffortJournal(journalPath);
+        expect(records).toHaveLength(1);
+        expect(records[0].minutes).toBe(120);
     });
 });

@@ -31,7 +31,7 @@ export type EffortApi = {
 };
 
 /**
- * Apply signed hours to Remaining / Completed.
+ * Apply signed minutes to Remaining / Completed.
  * Positive minutes decrement Remaining and increment Completed.
  * Negative minutes reverse that. Both fields floor at 0.
  */
@@ -133,6 +133,11 @@ export async function updateWorkItemEffort(
                 await appendEffortJournal(record, opts?.journalPath ?? effortJournalPath());
             } catch (err) {
                 logger.warn({ error: err, workItemId }, "[effort] Failed to append effort journal");
+                out.warn(
+                    pc.yellow(
+                        `  ⚠ Effort fields updated for #${workItemId}, but the local journal was not written. A later delete may only restore Remaining/Completed approximately.`
+                    )
+                );
             }
         }
 

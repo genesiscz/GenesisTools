@@ -92,6 +92,8 @@ export function registerDeleteSubcommand(parent: Command): void {
                     process.exit(1);
                 }
 
+                const id = timeLogId;
+
                 if (!options.yes && !options.dryRun && !isInteractive()) {
                     out.error("Confirm required in non-interactive mode. Re-run with --yes.");
                     out.info(
@@ -106,7 +108,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                 const result = await deleteTimeLogEntryWithEffort({
                     timeLogApi: api,
                     devopsApi: new Api(config),
-                    timeLogId,
+                    timeLogId: id,
                     user,
                     projectId: config.projectId,
                     workItemId,
@@ -118,7 +120,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                             ? undefined
                             : async () => {
                                   const ok = await p.confirm({
-                                      message: `Delete time log entry ${timeLogId.substring(0, 8)}...?`,
+                                      message: `Delete time log entry ${id.substring(0, 8)}...?`,
                                   });
                                   return !p.isCancel(ok) && !!ok;
                               },
@@ -127,6 +129,13 @@ export function registerDeleteSubcommand(parent: Command): void {
                 if (result.status === "cancelled") {
                     p.cancel("Cancelled");
                     return;
+                }
+
+                if (result.status === "needs-resolution") {
+                    out.error(
+                        "Could not resolve work item or minutes for this time log. Pass --workitem <id> or --no-effort to delete the row only."
+                    );
+                    process.exit(1);
                 }
 
                 printDeleteResult(result, { noEffort });
