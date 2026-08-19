@@ -296,6 +296,30 @@ describe("findFocusTargets", () => {
         expect(findFocusTargets(snapshot(panes), SESSION_A.slice(0, 7))[0].matchedOn).toBe("pane-title");
     });
 
+    test("the MATCHED tab's session is reported, not the visible tab's", () => {
+        // Two resumed surfaces in one pane. Ordering session ids by scope alone would put
+        // the selected tab's session first, so the status line, the picker hint and the JSON
+        // would all name session A while the command focuses B's tab.
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    surfaces: [
+                        surface({ id: "surface:45", selected: true, preview: resumeScreen(SESSION_A) }),
+                        surface({ id: "surface:46", preview: resumeScreen(SESSION_B) }),
+                    ],
+                }),
+            ]),
+            SESSION_B
+        );
+
+        expect(targets[0].surfaceId).toBe("surface:46");
+        expect(targets[0].sessionIds[0]).toBe(SESSION_B);
+        // Still a full inventory of the pane, just ordered by what matched.
+        expect(targets[0].sessionIds).toContain(SESSION_A);
+    });
+
     test("a match on a background tab carries that surface, so the caller can raise it", () => {
         const targets = findFocusTargets(
             snapshot([

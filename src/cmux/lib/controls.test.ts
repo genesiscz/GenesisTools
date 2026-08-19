@@ -4,6 +4,7 @@ import {
     buildRenameTabArgs,
     buildRenameWorkspaceArgs,
     focusCmuxPane,
+    focusCmuxSurface,
     renameCmuxSurface,
     renameCmuxWorkspace,
 } from "@genesiscz/utils/cmux/lib/controls";
@@ -36,6 +37,40 @@ describe("cmux controls", () => {
     test("focusCmuxPane rejects blank identifiers", async () => {
         await expect(focusCmuxPane({ workspaceId: "", paneId: "pane:2" })).rejects.toThrow("workspaceId");
         await expect(focusCmuxPane({ workspaceId: "workspace:1", paneId: "" })).rejects.toThrow("paneId");
+    });
+
+    test("focusCmuxSurface sends surface.focus with a surface_id parameter", async () => {
+        // Pinned here rather than only through the command, because this is a raw RPC with
+        // no CLI equivalent: cmux answers `Missing or invalid surface_id` for the obvious
+        // `{ surface }` spelling, and a typo would fail silently in the daemon while every
+        // command-level test kept passing against its mock.
+        const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+
+        await focusCmuxSurface({
+            surfaceId: "surface:46",
+            sendRpc: async (method, params) => {
+                calls.push({ method, params });
+                return {};
+            },
+        });
+
+        expect(calls).toEqual([{ method: "surface.focus", params: { surface_id: "surface:46" } }]);
+    });
+
+    test("focusCmuxSurface rejects a blank surface id before it reaches the daemon", async () => {
+        let sent = 0;
+
+        await expect(
+            focusCmuxSurface({
+                surfaceId: "  ",
+                sendRpc: async () => {
+                    sent++;
+                    return {};
+                },
+            })
+        ).rejects.toThrow("surfaceId");
+
+        expect(sent).toBe(0);
     });
 });
 

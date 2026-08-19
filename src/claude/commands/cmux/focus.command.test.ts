@@ -44,7 +44,7 @@ mock.module("@genesiscz/utils/cmux/lib/controls", () => ({
     focusCmuxPane: async ({ workspaceId, paneId }: { workspaceId: string; paneId: string }) => {
         events.push(`focus-pane ${workspaceId} ${paneId}`);
     },
-    focusCmuxSurface: async (surfaceId: string) => {
+    focusCmuxSurface: async ({ surfaceId }: { surfaceId: string }) => {
         events.push(`focus-surface ${surfaceId}`);
     },
 }));

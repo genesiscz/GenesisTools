@@ -3,10 +3,18 @@ import { rpc } from "@genesiscz/utils/cmux/lib/socket";
 
 type CmuxCommandRunner = (args: string[]) => Promise<CmuxRunResult>;
 
+type CmuxRpcSender = (method: string, params: Record<string, unknown>) => Promise<unknown>;
+
 interface FocusCmuxPaneOptions {
     workspaceId: string;
     paneId: string;
     runner?: CmuxCommandRunner;
+}
+
+interface FocusCmuxSurfaceOptions {
+    surfaceId: string;
+    /** Injectable so a test can pin the method name and parameter without a live daemon. */
+    sendRpc?: CmuxRpcSender;
 }
 
 function assertNonBlank(value: string, name: string): void {
@@ -34,10 +42,10 @@ export async function focusCmuxPane({ paneId, runner = runCmuxOk, workspaceId }:
  * cmux 0.63.2), so this goes through the raw `surface.focus` RPC. Its parameter is
  * `surface_id`; passing `surface` fails with `Missing or invalid surface_id`.
  */
-export async function focusCmuxSurface(surfaceId: string): Promise<void> {
+export async function focusCmuxSurface({ surfaceId, sendRpc = rpc }: FocusCmuxSurfaceOptions): Promise<void> {
     assertNonBlank(surfaceId, "surfaceId");
 
-    await rpc("surface.focus", { surface_id: surfaceId });
+    await sendRpc("surface.focus", { surface_id: surfaceId });
 }
 
 // `pane.workspaceId` and `surface.id` from the live snapshot are already the

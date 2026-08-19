@@ -224,7 +224,7 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
         // The match came from a background tab. Without this the pane is focused and the
         // command claims success while the user still looks at a different surface.
         try {
-            await focusCmuxSurface(target.surfaceId);
+            await focusCmuxSurface({ surfaceId: target.surfaceId });
         } catch (err) {
             log.warn({ err, surfaceId: target.surfaceId }, "could not focus the matched surface");
             out.printlnErr(pc.dim("  The pane is focused, but its matching tab could not be raised."));

@@ -93,11 +93,13 @@ function paneScopes(pane: CmuxLivePane): PaneScope[] {
     ];
 }
 
-/** Every scrap of text a pane exposes: its own title plus each surface's title and screen. */
-function paneHaystack(pane: CmuxLivePane): string {
-    return paneScopes(pane)
-        .map((scope) => `${scope.title}\n${scope.screen}`)
-        .join("\n");
+function scopeText(scope: PaneScope): string {
+    return `${scope.title}\n${scope.screen}`;
+}
+
+/** Every scrap of text a pane exposes, for the full session-id inventory. */
+function paneText(pane: CmuxLivePane): string {
+    return paneScopes(pane).map(scopeText).join("\n");
 }
 
 export function sessionIdsIn(text: string): string[] {
@@ -135,25 +137,36 @@ export function resumedSessionIdsIn(text: string): string[] {
 /**
  * Session ids this pane shows, the one it is resuming first.
  *
- * Callers render `sessionIds[0]` as "the session in this pane", so the pane's own session
- * has to come first. Screen order will not do that: a pane can print another session's id
- * above its own resume command, and then the status line, the picker hint and the table all
- * name a session the user did not ask about.
+ * Callers render `sessionIds[0]` as "the session in this pane", so the session that was
+ * matched has to come first. Neither screen order nor scope order gets there on its own: a
+ * pane can print another session's id above its own resume command, and a pane whose visible
+ * tab resumes one session can have the MATCHED session on a background tab. In both cases the
+ * status line, the picker hint and the table would name a session the user did not ask about.
+ *
+ * `matched` is the text of the scope that actually matched; `rest` is the remainder of the
+ * pane, kept so the field is still a full inventory of what the pane shows.
  */
-export function paneSessionIds(text: string): string[] {
-    const resumed = resumedSessionIdsIn(text);
-
-    return [...resumed, ...sessionIdsIn(text).filter((id) => !resumed.includes(id))];
+export function paneSessionIds(matched: string, rest = ""): string[] {
+    return [
+        ...new Set([
+            ...resumedSessionIdsIn(matched),
+            ...sessionIdsIn(matched),
+            ...resumedSessionIdsIn(rest),
+            ...sessionIdsIn(rest),
+        ]),
+    ];
 }
 
 interface PaneMatch {
     kind: FocusMatchKind;
     score: number;
     surfaceId?: string;
+    /** Text of the scope that matched, so the caller can order session ids by it. */
+    matchedText: string;
 }
 
 function scoreScope(scope: PaneScope, needle: string): { kind: FocusMatchKind; score: number } | null {
-    const haystack = `${scope.title}\n${scope.screen}`;
+    const haystack = scopeText(scope);
     const longEnough = needle.length >= MIN_ID_PREFIX;
     const resumed = resumedSessionIdsIn(haystack);
 
@@ -211,28 +224,30 @@ function scorePane({
     query: string;
     workspaceName: string;
 }): PaneMatch | null {
+    const scopes = paneScopes(pane);
     const needle = query.toLowerCase();
     let best: PaneMatch | null = null;
 
-    for (const scope of paneScopes(pane)) {
+    for (const scope of scopes) {
         const hit = scoreScope(scope, needle);
 
         if (hit && (!best || hit.score > best.score)) {
-            best = { ...hit, surfaceId: scope.surfaceId };
+            best = { ...hit, surfaceId: scope.surfaceId, matchedText: scopeText(scope) };
         }
     }
 
     // Pane-level signals. Compared by score rather than checked in sequence, so their
-    // precedence against the per-scope kinds does not depend on evaluation order.
+    // precedence against the per-scope kinds does not depend on evaluation order. These
+    // match the pane as a whole, so its own text is the scope session ids get ordered by.
     if (workspaceName.toLowerCase().includes(needle) && (!best || best.score < 50)) {
-        best = { kind: "workspace", score: 50 };
+        best = { kind: "workspace", score: 50, matchedText: scopeText(scopes[0]) };
     }
 
     const cwd = pane.cwd;
     const cwdMatches = cwd && (cwd.toLowerCase().includes(needle) || basename(cwd).toLowerCase() === needle);
 
     if (cwdMatches && (!best || best.score < 40)) {
-        best = { kind: "cwd", score: 40 };
+        best = { kind: "cwd", score: 40, matchedText: scopeText(scopes[0]) };
     }
 
     return best;
@@ -283,7 +298,7 @@ export function findFocusTargets(
             paneTitle: pane.title,
             cwd: pane.cwd,
             surfaceId: hit.surfaceId,
-            sessionIds: paneSessionIds(paneHaystack(pane)),
+            sessionIds: paneSessionIds(hit.matchedText, paneText(pane)),
             matchedOn: hit.kind,
             score: hit.score,
             active: pane.active,
