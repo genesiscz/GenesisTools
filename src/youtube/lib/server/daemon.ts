@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { clearPortFile, SERVER_BASE_DIR } from "@app/youtube/lib/server/port-file";
 import { logger } from "@genesiscz/utils/logger";
+import { clearPidFile, readLivePid, writePidFile } from "@genesiscz/utils/process/pidfile";
 
 export const PID_FILE = join(SERVER_BASE_DIR, "server.pid");
 
@@ -16,36 +17,21 @@ export function writePid({ pid = process.pid, pidFile = PID_FILE }: { pid?: numb
         mkdirSync(directory, { recursive: true });
     }
 
-    writeFileSync(pidFile, String(pid));
+    writePidFile(pidFile, { pid });
 }
 
+/**
+ * The server's pid when it is still running, else null. The record written by
+ * `writePid` carries the owner's command line, so a pid the kernel later
+ * recycled onto an unrelated program reads as stale rather than as our server.
+ */
 export function readPid({ pidFile = PID_FILE }: PidFileOptions = {}): number | null {
-    if (!existsSync(pidFile)) {
-        return null;
-    }
-
-    const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
-
-    if (Number.isNaN(pid)) {
-        return null;
-    }
-
-    try {
-        process.kill(pid, 0);
-        return pid;
-    } catch (err) {
-        if (process.platform === "win32" && err instanceof Error && "code" in err) {
-            return err.code === "EPERM" ? pid : null;
-        }
-
-        return null;
-    }
+    return readLivePid(pidFile);
 }
 
+/** Unconditional: the caller clears stale records it does not own. */
 export function clearPid({ pidFile = PID_FILE }: PidFileOptions = {}): void {
-    if (existsSync(pidFile)) {
-        unlinkSync(pidFile);
-    }
+    clearPidFile(pidFile, { force: true });
 }
 
 export function registerSignalHandlers(onShutdown: () => Promise<void> | void): void {

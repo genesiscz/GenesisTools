@@ -81,13 +81,16 @@ export function stopUiServerOnPort(publicPort: number, opts: StopUiServerOptions
 
         for (const childPid of children) {
             try {
+                // pid-verified: parent verified by isUiServerCommand's live ps read; children came from pgrep -P on it in the same pass
                 process.kill(childPid, "SIGTERM");
             } catch (err) {
                 logger.debug({ err, childPid }, "failed to stop dashboard vite child");
             }
         }
 
+        // pid-verified: same live ps verification as the child kill above
         try {
+            // pid-verified: same live ps verification as the child kill above
             process.kill(pid, "SIGTERM");
         } catch (err) {
             logger.debug({ err, pid }, "failed to stop dashboard ui-server");

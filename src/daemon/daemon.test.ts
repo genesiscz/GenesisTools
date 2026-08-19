@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attemptStaleTakeover, verifyPidfileOwnership } from "./daemon";
+import { env } from "@genesiscz/utils/env";
+import { readPidRecord } from "@genesiscz/utils/process/pidfile";
+import { attemptStaleTakeover, getDaemonPid, isDaemonCommand, verifyPidfileOwnership } from "./daemon";
 
 /**
  * Waits for `marker` to appear in `stream`, reading incrementally so callers don't have to
@@ -105,7 +107,10 @@ describe("daemon pidfile atomic takeover", () => {
         expect(results.filter((won) => won === true)).toHaveLength(1);
 
         expect(existsSync(pidFile)).toBe(true);
-        expect(readFileSync(pidFile, "utf-8").trim()).toBe(String(process.pid));
+        // The winner rewrites the slot as an identity-bearing record, not the
+        // bare number the loser validated as stale.
+        expect(readPidRecord(pidFile)?.pid).toBe(process.pid);
+        expect(readPidRecord(pidFile)?.command).toContain("bun");
         expect(readdirSync(dir)).toEqual(["daemon.pid"]);
     });
 
@@ -121,6 +126,59 @@ describe("daemon pidfile atomic takeover", () => {
         expect(won).toBe(false);
         expect(readFileSync(pidFile, "utf-8").trim()).toBe("12345"); // restored, not clobbered
         expect(readdirSync(dir)).toEqual(["daemon.pid"]); // no temp litter
+    });
+
+    test("a recycled pid owned by an unrelated program reads as stale, not as a live daemon", async () => {
+        // Regression test for the Aug 19 incident: the pidfile still held pid
+        // 891 from a daemon that had died without cleanup, macOS had since
+        // handed 891 to WiFiCloudAssetsXPCService, and `kill(pid, 0)` happily
+        // confirmed "alive". Every launchd respawn then exited with
+        // EXIT_ALREADY_RUNNING — 4284 restarts in ~12h with nothing polling.
+        const foreign = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+
+        try {
+            writeFileSync(pidFile, String(foreign.pid));
+
+            await env.testing.withOverrides({ GENESIS_TOOLS_DAEMON_DIR: dir }, () => {
+                expect(getDaemonPid()).toBeNull();
+            });
+        } finally {
+            foreign.kill();
+            await foreign.exited;
+        }
+    });
+
+    test("a live pid running a real daemon entrypoint still reads as the owner", async () => {
+        // The negative control: the staleness check must not hand the pidfile
+        // to a second daemon while the first one is still running.
+        const proc = Bun.spawn(["bun", "run", "src/daemon/daemon.ts"], {
+            env: { ...process.env, GENESIS_TOOLS_DAEMON_DIR: dir },
+            stderr: "pipe",
+        });
+
+        try {
+            expect(await waitForStderrMarker(proc.stderr, "[daemon] scheduler started")).toBe(true);
+
+            await env.testing.withOverrides({ GENESIS_TOOLS_DAEMON_DIR: dir }, () => {
+                expect(getDaemonPid()).toBe(proc.pid);
+            });
+        } finally {
+            proc.kill("SIGTERM");
+            await proc.exited;
+        }
+    });
+
+    test("isDaemonCommand accepts every launch shape and rejects a recycled-pid stranger", () => {
+        expect(isDaemonCommand("/Users/m/.bun/bin/bun run /repo/src/daemon/daemon.ts")).toBe(true);
+        expect(isDaemonCommand("bun run /repo/src/daemon/index.ts start")).toBe(true);
+        expect(isDaemonCommand("/usr/local/bin/tools daemon start")).toBe(true);
+        expect(
+            isDaemonCommand(
+                "/System/Library/PrivateFrameworks/WiFiPolicy.framework/XPCServices/" +
+                    "WiFiCloudAssetsXPCService.xpc/Contents/MacOS/WiFiCloudAssetsXPCService"
+            )
+        ).toBe(false);
+        expect(isDaemonCommand("/usr/bin/sleep 30")).toBe(false);
     });
 
     test("verifyPidfileOwnership reports loss when the pidfile is stolen out from under us", () => {

@@ -159,7 +159,11 @@ async function maybeKillProcessesForPort(
         }
     }
 
-    const results = await killProcesses(pidsToKill);
+    // Carry each pid's SCAN-TIME command through the prompt above, so the kill
+    // can tell a still-running target from a number the kernel reissued while
+    // the user was deciding.
+    const scanned = new Map(processes.map((processInfo) => [processInfo.pid, processInfo.command]));
+    const results = await killProcesses(pidsToKill.map((pid) => ({ pid, command: scanned.get(pid) ?? "" })));
 
     for (const result of results) {
         if (result.status === "killed") {
@@ -255,7 +259,12 @@ async function cleanPorts(options: { yes?: boolean }): Promise<void> {
         }
     }
 
-    const results = await killProcesses([...new Set(orphaned.map((snapshot) => snapshot.pid))]);
+    const results = await killProcesses(
+        [...new Map(orphaned.map((snapshot) => [snapshot.pid, snapshot.command]))].map(([pid, command]) => ({
+            pid,
+            command,
+        }))
+    );
     displayCleanResults(orphaned, results);
 }
 

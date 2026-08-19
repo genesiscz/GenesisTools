@@ -5,6 +5,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { formatDuration, parseDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { isProcessAlive as canonicalIsProcessAlive } from "@genesiscz/utils/process-alive";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { formatTable } from "@genesiscz/utils/table";
@@ -18,6 +19,12 @@ import pc from "picocolors";
 interface TimerEntry {
     id: string;
     pid: number;
+    /**
+     * The timer process's command line at spawn. A cancel runs minutes or hours
+     * later, so the pid alone cannot tell a still-running timer from a number
+     * the kernel has since handed to something else.
+     */
+    pidCommand?: string | null;
     title: string;
     durationMs: number;
     endTime: number;
@@ -213,6 +220,7 @@ async function startBackgroundTimer(opts: TimerOptions): Promise<void> {
     const entry: TimerEntry = {
         id,
         pid,
+        pidCommand: readProcessCommand(pid),
         title,
         durationMs,
         endTime: Date.now() + durationMs,
@@ -315,9 +323,18 @@ async function listTimers(): Promise<void> {
     out.println(formatTable(rows, ["ID", "Title", "Remaining", "Cycle", "Actions", "PID"]));
 }
 
+/**
+ * A timer still running under the pid we recorded — not a pid the kernel
+ * reissued. `live` only: `unverified` means the identity could not be read, and
+ * this gates a SIGTERM.
+ */
+function timerStillOurs(entry: TimerEntry): boolean {
+    return classifyPid(entry.pid, entry.pidCommand ?? undefined).status === "live";
+}
+
 async function cancelTimer(idOrIndex?: string): Promise<void> {
     const data = await getActiveTimers();
-    const alive = data.timers.filter((t) => isProcessAlive(t.pid));
+    const alive = data.timers.filter(timerStillOurs);
 
     if (alive.length === 0) {
         out.println(pc.dim("No active timers to cancel."));
@@ -365,7 +382,17 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
         return;
     }
 
+    // Re-check at signal time, not just at list time: the picker above is
+    // user-paced, so the timer can exit and its pid be reissued while the
+    // prompt is open.
+    if (!timerStillOurs(target)) {
+        await removeActiveTimer(target.id);
+        out.println(pc.yellow(`Timer ${target.title} (${target.id}) already ended — cleared the record.`));
+        return;
+    }
+
     try {
+        // pid-verified: timerStillOurs re-checked immediately above; only classifyPid "live" reaches here
         process.kill(target.pid, "SIGTERM");
     } catch {
         // Process may have already exited

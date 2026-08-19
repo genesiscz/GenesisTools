@@ -4,7 +4,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import { classifyAgentState } from "../classify";
 import type { AgentEvent, AgentSnapshot } from "../types";
 
@@ -17,6 +17,8 @@ interface TaskLine {
 
 interface TaskMeta {
     pid?: number;
+    /** Command line captured when the pid was recorded — see session-store.ts `updatePid`. */
+    pidCommand?: string;
     exitCode?: number;
     lastActivityAt?: number;
 }
@@ -128,7 +130,15 @@ export async function readTaskSnapshots(opts: ReadTaskOptions): Promise<AgentSna
                         // jsonl lacks a trailing exit line, this run is over.
                         pidAlive = false;
                     } else if (typeof meta.pid === "number") {
-                        pidAlive = isProcessAlive(meta.pid);
+                        // The session store captures `pidCommand` beside the pid
+                        // (session-store.ts updatePid), so use it: a bare liveness
+                        // probe reports a long-dead session as still running once
+                        // the kernel reissues its number.
+                        // `foreign` is NOT alive — that is the recycled pid this
+                        // whole change exists to stop reading as a running session,
+                        // and session-store.ts already treats dead and foreign alike.
+                        const status = classifyPid(meta.pid, meta.pidCommand ?? undefined).status;
+                        pidAlive = status === "live" || status === "unverified";
                     }
                 }
             }

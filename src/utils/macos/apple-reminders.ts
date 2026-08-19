@@ -198,6 +198,7 @@ function killChild(dk: DarwinKit): void {
 
     if (child?.pid && child.pid > 0) {
         try {
+            // pid-verified: child.pid from a handle held in this scope; a handle cannot be recycled
             process.kill(child.pid, "SIGKILL");
         } catch (error) {
             const code = (error as NodeJS.ErrnoException | undefined)?.code;

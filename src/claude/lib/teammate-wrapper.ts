@@ -16,6 +16,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { processStartMs } from "@genesiscz/utils/process-identity";
 import { shellSingleQuote } from "./shell-quote";
 
 /**
@@ -157,26 +159,7 @@ const WRAPPER_MODE = 0o700;
  * When the process started, from `ps -o etime=` ([[dd-]hh:]mm:ss). null when
  * it cannot be determined; callers must treat that as "identity unknown".
  */
-export function processStartMs(pid: number): number | null {
-    try {
-        const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "etime="]);
-        const etime = new TextDecoder().decode(proc.stdout).trim();
-        const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(etime);
-
-        if (!match) {
-            return null;
-        }
-
-        const [, days, hours, minutes, seconds] = match;
-        const elapsedMs =
-            (((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
-
-        return Date.now() - elapsedMs;
-    } catch (error) {
-        logger.debug({ error, pid }, "[teammate-wrapper] ps etime lookup failed");
-        return null;
-    }
-}
+export { processStartMs };
 
 /** `<pid>-<startMs>-<rand>`: the sweep compares the recorded start EXACTLY, so a reused pid is detectable. 0 = start unknown. */
 function wrapperId(): string {
@@ -269,13 +252,7 @@ export function removeTeammateWrapper(path: string | undefined): void {
 
 /** True when a process with this pid exists (signal 0 probes without killing). */
 function pidAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        // EPERM means it exists but is not ours; anything else (ESRCH) is gone.
-        return (error as NodeJS.ErrnoException).code === "EPERM";
-    }
+    return isProcessAlive(pid);
 }
 
 /**

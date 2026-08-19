@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import lockfile from "proper-lockfile";
 
 export interface LockOptions {
@@ -134,9 +135,7 @@ export async function getLockHolderPid(rawLockPath: string): Promise<number | nu
             return null;
         }
 
-        // Check if process is alive (signal 0 = existence check)
-        process.kill(pid, 0);
-        return pid;
+        return isProcessAlive(pid) ? pid : null;
     } catch {
         return null;
     }

@@ -1,7 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
+import {
+    buildPidRecord,
+    clearPidFile,
+    ownsPidFile,
+    readLivePid,
+    readSignalablePid,
+    serializePidRecord,
+} from "@genesiscz/utils/process/pidfile";
 import { getLogsBaseDir, getPidFile } from "./lib/config";
 import { runSchedulerLoop } from "./lib/scheduler";
 
@@ -94,7 +102,7 @@ export async function attemptStaleTakeover(pidFile: string, expectedContent: str
     }
 
     try {
-        await writeFile(pidFile, String(process.pid), { flag: "wx" });
+        await writeFile(pidFile, serializePidRecord(buildPidRecord()), { flag: "wx" });
     } catch (err) {
         if (isEexist(err)) {
             return false;
@@ -126,7 +134,7 @@ async function claimPidfile(pidFile: string): Promise<void> {
         // Fresh create first — also the recovery path when a previous racer's
         // takeover left the slot momentarily empty.
         try {
-            await writeFile(pidFile, String(process.pid), { flag: "wx" });
+            await writeFile(pidFile, serializePidRecord(buildPidRecord()), { flag: "wx" });
             return;
         } catch (err) {
             if (!isEexist(err)) {
@@ -182,10 +190,8 @@ export async function startDaemon(): Promise<void> {
     log.info({ pid: process.pid }, "[daemon] starting");
 
     const cleanup = () => {
-        if (existsSync(pidFile)) {
-            unlinkSync(pidFile);
-        }
-
+        // Guarded: a daemon that lost its claim must not delete the winner's file.
+        clearPidFile(pidFile);
         log.info("[daemon] stopped");
     };
 
@@ -201,33 +207,46 @@ export async function startDaemon(): Promise<void> {
     }
 }
 
+/**
+ * True when a command line is recognisably one of OUR daemon processes.
+ *
+ * Two launch shapes reach `startDaemon()`, and both must match: launchd runs
+ * `bun run <repo>/src/daemon/daemon.ts`, while `tools daemon [start]` runs the
+ * loop in-process from `<repo>/src/daemon/index.ts`. A compiled/aliased
+ * front-end (`tools daemon …`) is covered by the second pattern.
+ */
+export function isDaemonCommand(command: string): boolean {
+    const normalized = command.replace(/\\/g, "/");
+
+    return (
+        /(^|[\s/])daemon\/(daemon|index)\.tsx?(\s|$)/.test(normalized) ||
+        /(^|[\s/])tools\s+daemon(\s|$)/.test(normalized)
+    );
+}
+
+/**
+ * The pid of a live daemon, or null when the pidfile is stale.
+ *
+ * `kill(pid, 0)` alone cannot tell "our daemon is running" from "the kernel
+ * recycled that number onto an unrelated program". On 2026-08-19 the pidfile
+ * still held pid 891 from a daemon that had died without cleanup; macOS had
+ * since handed 891 to WiFiCloudAssetsXPCService, so every launchd respawn read
+ * it as a live owner and exited — 4284 restarts in ~12h, and nothing polled
+ * Claude usage the whole time. The pidfile module records the owner's command
+ * line and reports "foreign" for exactly that case; `isDaemonCommand` covers
+ * the legacy bare-number files written before it did.
+ */
 export function getDaemonPid(): number | null {
-    const pidFile = getPidFile();
+    return readLivePid(getPidFile(), { expected: isDaemonCommand });
+}
 
-    if (!existsSync(pidFile)) {
-        return null;
-    }
-
-    try {
-        const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
-
-        try {
-            process.kill(pid, 0);
-            return pid;
-        } catch (err) {
-            // EPERM means the process exists but belongs to another user —
-            // that's "alive" on every platform, not just win32; treating it
-            // as dead would green-light a pidfile takeover against a live owner.
-            if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EPERM") {
-                return pid;
-            }
-
-            return null;
-        }
-    } catch (err) {
-        logger.debug({ err, pidFile }, "[daemon] failed to read/parse PID file");
-        return null;
-    }
+/**
+ * The daemon pid ONLY when its identity is confirmed. Use this before any
+ * signal; `getDaemonPid` counts `unverified` as ours so a second daemon refuses
+ * to start, which is the right call there and the wrong one before a SIGKILL.
+ */
+export function getSignalableDaemonPid(): number | null {
+    return readSignalablePid(getPidFile(), { expected: isDaemonCommand });
 }
 
 /**
@@ -238,16 +257,7 @@ export function getDaemonPid(): number | null {
  * calls this once per tick and self-terminates on the first failed check.
  */
 export function verifyPidfileOwnership(pidFile: string): boolean {
-    if (!existsSync(pidFile)) {
-        return false;
-    }
-
-    try {
-        const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
-        return pid === process.pid;
-    } catch {
-        return false;
-    }
+    return ownsPidFile(pidFile);
 }
 
 if (import.meta.main) {

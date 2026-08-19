@@ -1,10 +1,12 @@
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
 export const RESTART_TIMEOUT_MS = 10_000;
 
 /** Kill a process, ignoring ESRCH (already dead). Re-throws other errors. */
 export function safeSigterm(pid: number): void {
     try {
+        // pid-verified: seam helper; callers pass a pid already verified by getSignalableDaemonPid or a live launchctl query
         process.kill(pid, "SIGTERM");
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
@@ -39,17 +41,13 @@ export type EscalationSeams = {
 };
 
 export function defaultIsAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (err) {
-        // EPERM = alive but another user's; only ESRCH means gone.
-        return (err as NodeJS.ErrnoException).code === "EPERM";
-    }
+    return isProcessAlive(pid);
 }
 
 export function defaultKill(pid: number, signal: NodeJS.Signals): void {
+    // pid-verified: seam default; same contract as safeSigterm above
     try {
+        // pid-verified: seam default; callers pass a pid verified by getSignalableDaemonPid or a live launchctl query
         process.kill(pid, signal);
     } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;

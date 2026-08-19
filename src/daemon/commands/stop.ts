@@ -1,4 +1,4 @@
-import { getDaemonPid } from "@app/daemon/daemon";
+import { getSignalableDaemonPid } from "@app/daemon/daemon";
 import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
 import type { EscalationStep } from "@app/daemon/lib/wait-for-restart";
 import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
@@ -19,7 +19,9 @@ export function registerStopCommand(program: Command): void {
         .option("--uninstall", "Also uninstall from launchd (permanent stop)")
         .action(async (opts: { uninstall?: boolean }) => {
             const status = await getDaemonStatus();
-            const fgPid = getDaemonPid();
+            // This path escalates SIGTERM → SIGTERM → SIGKILL, so it needs a
+            // confirmed identity, not merely a live-looking pid.
+            const fgPid = getSignalableDaemonPid();
             const pid = status.pid ?? fgPid;
 
             if (!pid && !status.running) {

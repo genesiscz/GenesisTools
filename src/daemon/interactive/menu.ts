@@ -1,7 +1,7 @@
 import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
-import { getDaemonPid, startDaemon } from "../daemon";
+import { getDaemonPid, getSignalableDaemonPid, startDaemon } from "../daemon";
 import { loadConfig, removeTask, setTaskEnabled, upsertTask } from "../lib/config";
 import { formatInterval } from "../lib/interval";
 import { getDaemonStatus, installLaunchd, uninstallLaunchd } from "../lib/launchd";
@@ -230,13 +230,15 @@ async function handleStart(): Promise<void> {
 }
 
 function handleStop(): void {
-    const pid = getDaemonPid();
+    // Signalling, so the identity has to be confirmed, not just plausible.
+    const pid = getSignalableDaemonPid();
 
     if (!pid) {
         p.log.info("Daemon is not running.");
         return;
     }
 
+    // pid-verified: getSignalableDaemonPid, which requires a confirmed identity rather than a live-looking pid
     process.kill(pid, "SIGTERM");
     p.log.success(`Sent SIGTERM to daemon (PID ${pid})`);
 }

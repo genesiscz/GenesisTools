@@ -197,6 +197,7 @@ export async function runAiProxyDown(): Promise<DownResult> {
     const targetPid = pidState.pid;
 
     try {
+        // pid-verified: inspectProxyPid classified this pid live; foreign and unverified were refused earlier
         process.kill(targetPid, "SIGTERM");
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -206,7 +207,9 @@ export async function runAiProxyDown(): Promise<DownResult> {
     await Bun.sleep(500);
 
     if (isProcessAlive(targetPid)) {
+        // pid-verified: escalation on the pid inspectProxyPid already confirmed
         try {
+            // pid-verified: escalation on the pid inspectProxyPid already confirmed
             process.kill(targetPid, "SIGKILL");
         } catch (err) {
             logger.warn({ err, pid: targetPid }, "ai-proxy down: SIGKILL failed");

@@ -16,7 +16,11 @@ export function ProcessMonitorRoute() {
     });
 
     const killMutation = useMutation({
-        mutationFn: (pid: number) => processesApi.kill(pid),
+        // Send the name the row displayed. The table refetches every 5s and the
+        // user takes as long as they like over the confirm dialog, so the pid can
+        // belong to a different process by the time this fires; the server
+        // compares against the live command and refuses a mismatch.
+        mutationFn: ({ pid, command }: { pid: number; command: string }) => processesApi.kill(pid, command),
         onSettled: () => {
             queryClient.invalidateQueries({ queryKey: ["processes"] });
         },
@@ -24,7 +28,7 @@ export function ProcessMonitorRoute() {
 
     const handleKill = (process: ProcessInfo) => {
         if (window.confirm(`Kill ${process.name} (pid ${process.pid})?`)) {
-            killMutation.mutate(process.pid);
+            killMutation.mutate({ pid: process.pid, command: process.name });
         }
     };
 
@@ -36,7 +40,7 @@ export function ProcessMonitorRoute() {
                     sort={sort}
                     onSortChange={setSort}
                     onKill={handleKill}
-                    killingPid={killMutation.isPending ? killMutation.variables : null}
+                    killingPid={killMutation.isPending ? killMutation.variables.pid : null}
                 />
             ) : (
                 <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">

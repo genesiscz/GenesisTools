@@ -82,10 +82,22 @@ describe("friendlyProcessName", () => {
 
 describe("killProcess guards", () => {
     test("refuses pid <= 1, non-integer, NaN without throwing", () => {
-        expect(killProcess(1)).toBe(false);
-        expect(killProcess(0)).toBe(false);
-        expect(killProcess(-5)).toBe(false);
-        expect(killProcess(Number.NaN)).toBe(false);
-        expect(killProcess(1.5)).toBe(false);
+        expect(killProcess(1, "bun")).toBe(false);
+        expect(killProcess(0, "bun")).toBe(false);
+        expect(killProcess(-5, "bun")).toBe(false);
+        expect(killProcess(Number.NaN, "bun")).toBe(false);
+        expect(killProcess(1.5, "bun")).toBe(false);
+    });
+
+    test("fails closed when no expected command is supplied", () => {
+        // The command is what proves the pid is still the process the caller
+        // listed. Without it there is nothing to verify against, so the kill
+        // must be refused rather than performed unchecked.
+        expect(killProcess(process.pid, "")).toBe(false);
+        expect(killProcess(process.pid, "   ")).toBe(false);
+    });
+
+    test("refuses a live pid whose command does not match", () => {
+        expect(killProcess(process.pid, "definitely-not-this-process")).toBe(false);
     });
 });

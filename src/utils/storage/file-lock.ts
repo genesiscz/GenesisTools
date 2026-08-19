@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { buildPidRecord, type PidRecord, parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
@@ -84,7 +85,7 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
     }
 
     try {
-        await writeFile(lockPath, String(process.pid), { flag: "wx" });
+        await writeFile(lockPath, serializePidRecord(buildPidRecord()), { flag: "wx" });
     } catch (err) {
         if (isEexist(err)) {
             return false;
@@ -120,7 +121,7 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
 
     // Atomic exclusive create — fails with EEXIST if another process holds it
     try {
-        await writeFile(lockPath, String(process.pid), { flag: "wx" });
+        await writeFile(lockPath, serializePidRecord(buildPidRecord()), { flag: "wx" });
         return true;
     } catch (err) {
         if (!isEexist(err)) {
@@ -128,18 +129,21 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
             throw err;
         }
 
-        // Lock file exists — check if the owning process is still alive
-        let lockPid: number;
+        // Lock file exists — check if the owning process is still alive.
+        // The raw bytes are kept so the steal below compares exactly what was
+        // validated here, whatever record format the holder wrote.
+        let content: string;
+        let record: PidRecord | null;
 
         try {
-            const content = await Bun.file(lockPath).text();
-            lockPid = parseInt(content.trim(), 10);
+            content = await Bun.file(lockPath).text();
+            record = parsePidRecord(content);
         } catch {
             // Can't read the lock file — assume it's held
             return false;
         }
 
-        if (Number.isNaN(lockPid)) {
+        if (record === null) {
             // Lock file has no valid PID content. writeFile with `flag:"wx"` is
             // O_CREAT|O_EXCL followed by a separate write() syscall, so a
             // legitimate owner is empty for microseconds; but a SIGKILL between
@@ -150,34 +154,39 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
             // orphaned and safe to steal.
             await sleep(ORPHANED_PID_RECHECK_MS);
 
-            let recheckPid = Number.NaN;
-
             try {
-                const recheckContent = await Bun.file(lockPath).text();
-                recheckPid = parseInt(recheckContent.trim(), 10);
+                content = await Bun.file(lockPath).text();
+                record = parsePidRecord(content);
             } catch {
                 return false;
             }
 
-            if (!Number.isNaN(recheckPid)) {
-                // Owner finished its write during the grace — fall through to
-                // the normal alive/dead check below.
-                lockPid = recheckPid;
-            } else {
+            if (record === null) {
                 // Still empty after grace — orphaned. Steal (expecting the
                 // empty artifact we validated).
                 logger.debug(`Stealing orphaned lock at ${lockPath} (no PID content)`);
-                return await attemptRenameSteal(lockPath, "");
+                return await attemptRenameSteal(lockPath, content);
             }
+            // Owner finished its write during the grace — fall through to the
+            // normal alive/dead check below.
         }
 
-        if (isProcessAlive(lockPid)) {
+        // Identity, not just liveness: a holder that died and had its number
+        // reissued would otherwise look alive forever, and every acquirer would
+        // time out against a lock nobody holds.
+        const identity = classifyPid(record.pid, record.command ?? undefined);
+
+        if (identity.status === "live" || identity.status === "unverified") {
             return false;
         }
 
-        // Stale lock (process is dead) — steal exactly the artifact we validated
-        logger.debug(`Stealing stale lock at ${lockPath} (PID ${lockPid} is dead)`);
-        return await attemptRenameSteal(lockPath, String(lockPid));
+        if (identity.status === "foreign") {
+            logger.debug(`Stealing stale lock at ${lockPath} (PID ${record.pid} was reused by ${identity.command})`);
+        } else {
+            logger.debug(`Stealing stale lock at ${lockPath} (PID ${record.pid} is dead)`);
+        }
+
+        return await attemptRenameSteal(lockPath, content);
     }
 }
 
@@ -190,10 +199,11 @@ function releaseLock(lockPath: string): void {
             return;
         }
 
-        // Only delete if we still own it (our PID is in the file)
-        const content = readFileSync(lockPath, "utf-8").trim();
-
-        if (content === String(process.pid)) {
+        // Only delete if we still own it (our PID is in the file). Parsed, not
+        // string-compared: the lock records the holder's command line too, so a
+        // literal `content === String(process.pid)` would never match and every
+        // holder would leak its lock until the next acquirer stole it.
+        if (parsePidRecord(readFileSync(lockPath, "utf-8"))?.pid === process.pid) {
             unlinkSync(lockPath);
         }
     } catch (error) {

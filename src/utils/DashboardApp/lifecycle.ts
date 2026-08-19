@@ -454,14 +454,19 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
     if (pid === filePid) {
         const identity = classifyDashboardPid(config.key);
 
-        if (identity?.status === "foreign") {
+        // `foreign` is a stranger and `unverified` is an unknown. Neither is a
+        // confirmed identity, and this path escalates to SIGKILL, so only a
+        // positive `live` may proceed.
+        if (identity && identity.status !== "live") {
             logger.warn(
-                { key: config.key, pid, command: identity.command },
-                "dashboard down: recorded pid belongs to another process (pid reuse) — not killing"
+                { key: config.key, pid, status: identity.status, command: identity.command },
+                "dashboard down: recorded pid is not confirmed as ours — not killing"
             );
             clearPid(config.key);
             out.info(
-                `${config.name ?? config.key} is not running — recorded pid ${pid} now belongs to another process. Cleared the stale record.`
+                identity.status === "foreign"
+                    ? `${config.name ?? config.key} is not running — recorded pid ${pid} now belongs to another process. Cleared the stale record.`
+                    : `${config.name ?? config.key} could not be confirmed as the owner of pid ${pid}, so it was not signalled. Cleared the stale record.`
             );
             return { stopped: false };
         }
@@ -469,6 +474,7 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
 
     if (isProcessAlive(pid)) {
         try {
+            // pid-verified: pid is a fresh getPortOwner result, or was cleared by classifyDashboardPid's foreign check above
             process.kill(pid, "SIGTERM");
         } catch (err) {
             logger.warn({ err, pid }, `[${config.key}] SIGTERM failed`);
@@ -488,7 +494,9 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
         }
 
         if (isProcessAlive(pid) && force) {
+            // pid-verified: escalation on the pid already verified before the SIGTERM above
             try {
+                // pid-verified: escalation on the pid already verified before the SIGTERM above
                 process.kill(pid, "SIGKILL");
             } catch (err) {
                 logger.warn({ err, pid }, `[${config.key}] SIGKILL failed`);

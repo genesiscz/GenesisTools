@@ -5,15 +5,24 @@
  *   PID:  ~/.genesis-tools/dashboards/<key>.pid
  *   Log:  ~/.genesis-tools/logs/<key>.bg.log
  *
- * Pattern ported from src/youtube/lib/server/daemon.ts. We keep DashboardApp's
- * pidFile module self-contained instead of importing youtube/lib so the
- * dependency graph stays one-way (youtube → DashboardApp, never back).
+ * The pid-reuse handling that used to live here (a bespoke `<pid>\n<command>`
+ * file plus a local classifier) now comes from `@genesiscz/utils/process/pidfile`,
+ * which is the one place that knows how to make a pid verifiable. This module
+ * keeps the key-addressed API its callers use; files in the old two-line
+ * format are still read, and get rewritten as records on the next `writePid`.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { classifyPid, type PidIdentity, readProcessCommand } from "@genesiscz/utils/process-identity";
+import {
+    clearPidFile,
+    inspectPidFile,
+    readLivePid,
+    readPidRecord,
+    writePidFile,
+} from "@genesiscz/utils/process/pidfile";
+import type { PidIdentity } from "@genesiscz/utils/process-identity";
 
 const DASHBOARDS_DIR = join(env.tools.getHome(), ".genesis-tools", "dashboards");
 const LOGS_DIR = join(env.tools.getHome(), ".genesis-tools", "logs");
@@ -40,24 +49,12 @@ function ensureDir(file: string): void {
 export function writePid(key: string, pid: number): void {
     const file = pidFilePath(key);
     ensureDir(file);
-
-    // Line 2 captures the pid's command line so later reads can detect pid
-    // reuse (see classifyDashboardPid). Old single-line files stay parseable.
-    const command = readProcessCommand(pid);
-    writeFileSync(file, command === null ? String(pid) : `${pid}\n${command}`);
+    writePidFile(file, { pid });
 }
 
 /** The command line captured when the pid file was written, if any. */
 export function readPidCommand(key: string): string | null {
-    const file = pidFilePath(key);
-
-    if (!existsSync(file)) {
-        return null;
-    }
-
-    const lines = readFileSync(file, "utf-8").split("\n");
-    const command = lines.slice(1).join("\n").trim();
-    return command.length > 0 ? command : null;
+    return readPidRecord(pidFilePath(key))?.command ?? null;
 }
 
 /**
@@ -66,61 +63,39 @@ export function readPidCommand(key: string): string | null {
  * or `ps` unavailable) should be treated as running, matching old behavior.
  */
 export function classifyDashboardPid(key: string): PidIdentity | null {
-    const pid = readPidRaw(key);
+    const state = inspectPidFile(pidFilePath(key));
 
-    if (pid === null) {
+    if (state.status === "none") {
         return null;
     }
 
-    return classifyPid(pid, readPidCommand(key) ?? undefined);
+    // `foreign` must report the command of whoever holds the pid NOW — that is
+    // what the caller shows the user, not the identity we recorded.
+    const command = state.status === "foreign" ? state.command : (state.record.command ?? undefined);
+
+    return { status: state.status, pid: state.pid, command };
 }
 
 export function readPidRaw(key: string): number | null {
-    const file = pidFilePath(key);
-
-    if (!existsSync(file)) {
-        return null;
-    }
-
-    const raw = readFileSync(file, "utf-8").trim();
-    const pid = Number.parseInt(raw, 10);
-
-    if (Number.isNaN(pid) || pid <= 0) {
-        return null;
-    }
-
-    return pid;
+    return readPidRecord(pidFilePath(key))?.pid ?? null;
 }
 
 /**
  * Returns the PID written for this dashboard if (a) the file exists and (b)
- * the PID is alive. Returns null otherwise — the file is left in place (caller
- * decides whether to clear stale entries via `clearPid`).
+ * the PID is alive and still that dashboard. Returns null otherwise — the file
+ * is left in place (caller decides whether to clear stale entries via
+ * `clearPid`).
  */
 export function readPid(key: string): number | null {
-    const pid = readPidRaw(key);
-
-    if (pid === null) {
-        return null;
-    }
-
-    try {
-        process.kill(pid, 0);
-        return pid;
-    } catch (err) {
-        if (process.platform === "win32" && err instanceof Error && "code" in err) {
-            return (err as { code?: string }).code === "EPERM" ? pid : null;
-        }
-
-        return null;
-    }
+    return readLivePid(pidFilePath(key));
 }
 
+/**
+ * Unconditional: callers clear records that belong to a pid which was recycled
+ * onto someone else, so this must not be gated on still owning the file.
+ */
 export function clearPid(key: string): void {
-    const file = pidFilePath(key);
-    if (existsSync(file)) {
-        unlinkSync(file);
-    }
+    clearPidFile(pidFilePath(key), { force: true });
 }
 
 /**

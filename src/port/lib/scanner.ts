@@ -3,6 +3,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessStatus } from "./types";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -1128,26 +1131,52 @@ export function findOrphanedPorts(): PortSnapshot[] {
 }
 
 function isProcessAliveLocal(pid: number): boolean {
-    // Local wrapper kept for backwards-compat with the file-lock-style
-    // semantics already used in this file. New code should prefer
-    // `import { isProcessAlive } from "@genesiscz/utils/process-alive"`.
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
+    // Thin alias kept so this file's existing call sites read unchanged. The
+    // old inline probe collapsed EPERM into "dead", which reported live
+    // processes owned by another user as gone.
+    return isProcessAlive(pid);
 }
 
-export async function killProcesses(pids: number[]): Promise<KillResult[]> {
+export interface KillTarget {
+    pid: number;
+    /**
+     * The command this pid had WHEN IT WAS SCANNED, not when the kill was
+     * requested. `tools port` puts a multiselect and a confirm prompt between
+     * the two, so re-reading here would record whatever holds the number by
+     * then and cheerfully signal it. The identity has to come from before that
+     * window, which means the caller has to carry it in.
+     */
+    command: string;
+}
+
+export async function killProcesses(targets: KillTarget[]): Promise<KillResult[]> {
+    const pids = targets.map((target) => target.pid);
+
     if (IS_WINDOWS) {
         return killProcessesWindows(pids);
     }
 
     const results: KillResult[] = [];
+    const identities = new Map(targets.map((target) => [target.pid, target.command]));
 
     for (const pid of pids) {
+        // Compare the CURRENT command against the one the scan recorded. A pid
+        // that was reissued while the prompt sat open no longer matches, and
+        // gets reported as already gone rather than signalled.
+        const expected = identities.get(pid);
+        const live = readProcessCommand(pid);
+
+        if (live === null || (expected && live !== expected)) {
+            if (live !== null) {
+                logger.warn({ pid, expected, live }, "[port] pid was reused since the scan; not signalling it");
+            }
+
+            results.push({ pid, status: "killed" });
+            continue;
+        }
+
         try {
+            // pid-verified: the live command was compared against the scan-time identity immediately above
             process.kill(pid, "SIGTERM");
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -1176,7 +1205,19 @@ export async function killProcesses(pids: number[]): Promise<KillResult[]> {
             continue;
         }
 
+        // A process that dies during the grace period can have its number
+        // reissued inside that same window, so re-check against the identity
+        // captured before the first SIGTERM.
+        const expected = identities.get(pid);
+
+        if (expected && readProcessCommand(pid) !== expected) {
+            logger.warn({ pid, expected }, "[port] pid was reused during the grace period; not sending SIGKILL");
+            results.push({ pid, status: "killed" });
+            continue;
+        }
+
         try {
+            // pid-verified: re-compared against the pre-SIGTERM snapshot immediately above
             process.kill(pid, "SIGKILL");
             results.push({ pid, status: "force-killed" });
         } catch (error) {

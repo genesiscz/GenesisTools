@@ -44,13 +44,25 @@ export function processesRoutes(): RouteDef[] {
             pattern: "/api/processes/kill",
             handler: async (ctx) => {
                 try {
-                    const { pid } = await ctx.readJson<{ pid?: number }>();
+                    const { pid, command } = await ctx.readJson<{ pid?: number; command?: string }>();
 
                     if (typeof pid !== "number") {
                         return { kind: "json", status: 400, body: { ok: false, error: "missing numeric pid" } };
                     }
 
-                    return { kind: "json", status: 200, body: { ok: killProcess(pid) } };
+                    // REQUIRED, not optional. The command the client listed for this
+                    // pid is the only thing standing between this route and "SIGTERM
+                    // whatever number you post at me" — a pid can be reissued between
+                    // the table render and the click.
+                    if (typeof command !== "string" || command.trim() === "") {
+                        return {
+                            kind: "json",
+                            status: 400,
+                            body: { ok: false, error: "missing command — required to verify the pid before killing" },
+                        };
+                    }
+
+                    return { kind: "json", status: 200, body: { ok: killProcess(pid, command) } };
                 } catch (err) {
                     logger.warn({ error: err, route: "POST /api/processes/kill" }, "process kill failed");
                     return errorResult(err);

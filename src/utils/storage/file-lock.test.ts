@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parsePidRecord } from "@genesiscz/utils/process/pidfile";
 import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
 
 describe("file-lock: stale/orphaned lock handling", () => {
@@ -110,9 +111,14 @@ describe("file-lock: stale/orphaned lock handling", () => {
         expect(winners).toHaveLength(1);
 
         // Exactly one lock file remains, owned by us (the single process all
-        // racers ran in), and no leftover `.stale-*` temp files.
+        // racers ran in), and no leftover `.stale-*` temp files. The winner
+        // rewrites the slot as an identity-bearing record, not the bare number
+        // the losers validated as stale.
         expect(existsSync(lockPath)).toBe(true);
-        expect(readFileSync(lockPath, "utf-8").trim()).toBe(String(process.pid));
+
+        const held = parsePidRecord(readFileSync(lockPath, "utf-8"));
+        expect(held?.pid).toBe(process.pid);
+        expect(held?.command ?? "").toContain("bun");
 
         expect(readdirSync(dir)).toEqual(["target.lock"]);
     });

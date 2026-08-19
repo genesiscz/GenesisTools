@@ -89,6 +89,7 @@ function setupDiagnosticHandlers(): void {
     // Track if process is being killed externally
     const originalKill = process.kill.bind(process);
     const wrappedKill: typeof process.kill = (pid, signal) => {
+        // pid-verified: diagnostic wrapper around process.kill; it logs and delegates, it does not choose a target
         logger.warn({ component: "mcp-tsc", pid: process.pid, targetPid: pid, signal }, "process.kill() called");
 
         if (pid !== undefined && signal !== undefined) {

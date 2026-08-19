@@ -161,6 +161,7 @@ export async function killPortOwner(owner: PortOwner, opts: { force?: boolean } 
     const force = opts.force ?? true;
 
     try {
+        // pid-verified: owner.pid comes from a getPortOwner (live lsof) call in this function
         process.kill(owner.pid, "SIGTERM");
     } catch (error) {
         logger.debug({ pid: owner.pid, signal: "SIGTERM", error }, "failed to signal process");
@@ -180,7 +181,9 @@ export async function killPortOwner(owner: PortOwner, opts: { force?: boolean } 
         return;
     }
 
+    // pid-verified: escalation on the same live-lsof pid verified above
     try {
+        // pid-verified: escalation on the same live-lsof pid verified above
         process.kill(owner.pid, "SIGKILL");
     } catch (error) {
         logger.debug({ pid: owner.pid, signal: "SIGKILL", error }, "failed to force-kill process");

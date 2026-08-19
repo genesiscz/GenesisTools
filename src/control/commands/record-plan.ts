@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { ensureBinary, RECORD_DIR, RECORD_SESSION, recordSource } from "../lib/runner";
@@ -38,6 +39,13 @@ interface SessionState {
     mode: "commands" | "activity" | "all";
     startedAt: number;
     activityPid?: number;
+    /**
+     * The recorder's command line as of `start`. `stop` runs in a different
+     * process, possibly hours later, so the pid alone cannot say whether the
+     * recorder is still there or whether the kernel handed that number to
+     * something else in the meantime.
+     */
+    activityCommand?: string | null;
     src?: string;
 }
 
@@ -368,10 +376,28 @@ function stopActivityRecorder(session: SessionState): void {
     if (!session.activityPid) {
         return;
     }
+
+    // Never signal a pid straight out of the session file. Between `start` and
+    // `stop` the recorder may have exited and the kernel may have reissued its
+    // number, in which case this SIGTERM would hit a stranger.
+    // Only a POSITIVELY identified recorder gets signalled. `unverified` (no
+    // recorded command, or `ps` unreadable) means the identity is unknown, not
+    // confirmed, and an unknown pid may be a stranger.
+    const identity = classifyPid(session.activityPid, session.activityCommand ?? undefined);
+
+    if (identity.status !== "live") {
+        logger.debug(
+            { pid: session.activityPid, status: identity.status, recorded: session.activityCommand },
+            "record-plan: recorder pid not confirmed as ours; not signalling it"
+        );
+        return;
+    }
+
     try {
+        // pid-verified: classifyPid returned "live" against the command recorded at start; every other status returned above
         process.kill(session.activityPid, "SIGTERM");
-    } catch {
-        // already gone
+    } catch (err) {
+        logger.debug({ err, pid: session.activityPid }, "record-plan: recorder already gone");
     }
 }
 
@@ -441,6 +467,7 @@ export function registerRecordPlanCommand(program: Command): void {
                     const child = spawn(bin, recArgs, { detached: true, stdio: "ignore" });
                     child.unref();
                     session.activityPid = child.pid;
+                    session.activityCommand = child.pid === undefined ? null : readProcessCommand(child.pid);
                 }
                 writeFileSync(RECORD_SESSION, SafeJSON.stringify(session));
                 return session;

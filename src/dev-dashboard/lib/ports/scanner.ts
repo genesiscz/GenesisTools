@@ -123,6 +123,7 @@ export function killPort(pid: number, expectedCommand?: string): KillPortResult 
     }
 
     try {
+        // pid-verified: liveCommand(pid) matched expectedCommand immediately above
         process.kill(pid, "SIGTERM");
         logger.info({ pid, cmd }, "port-killer: SIGTERM delivered");
         return { ok: true, killed: true };

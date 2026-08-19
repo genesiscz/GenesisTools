@@ -511,6 +511,7 @@ export function killTree(pid: number): void {
     }
 
     try {
+        // pid-verified: pid and its pgrep -P children were resolved in this call; killing the tree of a process we spawned
         process.kill(pid, "SIGKILL");
     } catch (e) {
         // ESRCH: already exited — exactly what we want

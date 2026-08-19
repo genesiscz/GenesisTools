@@ -178,10 +178,13 @@ export const processesApi = {
 
         return jsonFetch<ProcessesRes>(`/api/processes?${params.toString()}`);
     },
-    kill: (pid: number) =>
+    // `command` is what the table showed for this pid. The server re-reads the
+    // pid's live command and refuses the kill on a mismatch, so a pid the kernel
+    // reissued between render and click cannot be signalled.
+    kill: (pid: number, command?: string) =>
         jsonFetch<{ ok: boolean }>("/api/processes/kill", {
             method: "POST",
-            body: SafeJSON.stringify({ pid }),
+            body: SafeJSON.stringify({ pid, command }),
         }),
 };
 

@@ -8,6 +8,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { profiler } from "@genesiscz/utils/profile";
 import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -96,9 +97,7 @@ async function isSessionAliveBatch(sessions: TtydSession[]): Promise<Map<string,
                     return [session.id, false];
                 }
 
-                try {
-                    process.kill(session.pid, 0);
-                } catch {
+                if (!isProcessAlive(session.pid)) {
                     return [session.id, false];
                 }
 
@@ -203,6 +202,7 @@ async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
     try {
         await killWithEscalation({
             kill(signal) {
+                // pid-verified: processMatchesSessionAsync confirmed the argv session-id marker before this
                 process.kill(pid, signal);
             },
             on(event, listener) {
@@ -211,27 +211,22 @@ async function stopTtydProcess(tracked: Tracked, id: string): Promise<void> {
                 }
 
                 const poll = async (): Promise<void> => {
-                    try {
-                        process.kill(pid, 0);
-
-                        // A live PID isn't necessarily still ttyd — the OS can reuse a PID
-                        // within the escalation grace window. Confirm ownership before
-                        // continuing to treat it as the process we're waiting to exit.
-                        if (!(await processMatchesSessionAsync(tracked.session))) {
-                            listener();
-                            return;
-                        }
-
-                        setTimeout(() => void poll(), 200);
-                    } catch (err) {
-                        // ESRCH means the process is actually gone; anything else (e.g. EPERM,
-                        // pid reused by a process we can't signal) means it's still alive.
-                        if (err && typeof err === "object" && "code" in err && err.code === "ESRCH") {
-                            listener();
-                        } else {
-                            setTimeout(() => void poll(), 200);
-                        }
+                    // isProcessAlive reports ESRCH as gone and everything else
+                    // (EPERM, a pid reused by a process we cannot signal) as alive.
+                    if (!isProcessAlive(pid)) {
+                        listener();
+                        return;
                     }
+
+                    // A live PID isn't necessarily still ttyd — the OS can reuse a PID
+                    // within the escalation grace window. Confirm ownership before
+                    // continuing to treat it as the process we're waiting to exit.
+                    if (!(await processMatchesSessionAsync(tracked.session))) {
+                        listener();
+                        return;
+                    }
+
+                    setTimeout(() => void poll(), 200);
                 };
 
                 void poll();
@@ -598,12 +593,8 @@ async function healStaleTtydTmuxTargets(liveTmuxSessions: ReadonlySet<string>): 
             }
 
             // Process dead → pruneDeadSessions owns that path.
-            if (tracked.session.pid > 0) {
-                try {
-                    process.kill(tracked.session.pid, 0);
-                } catch {
-                    return null;
-                }
+            if (tracked.session.pid > 0 && !isProcessAlive(tracked.session.pid)) {
+                return null;
             }
 
             return tracked;
