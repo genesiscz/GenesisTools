@@ -37,6 +37,46 @@ export function readProcessCommand(pid: number): string | null {
     }
 }
 
+/**
+ * When the process at `pid` started, in epoch ms, or null if it cannot be read.
+ *
+ * Derived from `ps -o etime=`, so it carries that command's one-second
+ * granularity: two readings for the SAME live process differ by up to about a
+ * second, never more. Compare with {@link START_MS_TOLERANCE}, never for
+ * equality.
+ *
+ * This is the signal a command-line comparison cannot give you. A pid recycled
+ * onto a process with identical argv still has a different start time, so this
+ * is what separates "our daemon" from "a second copy launched the same way".
+ */
+export function processStartMs(pid: number): number | null {
+    if (process.platform === "win32") {
+        return null;
+    }
+
+    try {
+        const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "etime="], { stdout: "pipe", stderr: "pipe" });
+        const etime = proc.stdout.toString().trim();
+        const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(etime);
+
+        if (!match) {
+            return null;
+        }
+
+        const [, days, hours, minutes, seconds] = match;
+        const elapsedMs =
+            (((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+
+        return Date.now() - elapsedMs;
+    } catch (err) {
+        logger.debug({ err, pid }, "process-identity: ps etime lookup failed");
+        return null;
+    }
+}
+
+/** `ps -o etime=` resolves to whole seconds, so allow two of them either way. */
+export const START_MS_TOLERANCE = 2000;
+
 export type PidIdentityStatus =
     /** Alive and the command line matches the expectation. */
     | "live"
