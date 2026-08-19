@@ -38,12 +38,16 @@ export function registerCmuxCommand(program: Command): void {
         .option("-y, --yes", "Capture everything found without the picker")
         .action(snapshotCommand);
 
-    cmux.command("list").description("List saved snapshots").action(listCommand);
+    cmux.command("list")
+        .description("List saved snapshots")
+        .option("--json", "Emit the snapshots as JSON instead of a table")
+        .action(listCommand);
 
     cmux.command("forget <name>").description("Delete a saved snapshot").action(forgetCommand);
 
     cmux.command("pins")
         .description("Show the session → account pins the genesis-tools plugin hook has recorded")
         .option("--limit <n>", "How many recent pins to show", "15")
+        .option("--json", "Emit the pins as JSON instead of a table")
         .action(pinsCommand);
 }

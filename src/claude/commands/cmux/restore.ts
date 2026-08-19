@@ -34,7 +34,14 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
         process.exit(1);
     }
 
-    const candidates = await gatherCandidates(snapshotName, limit, opts.allProjects === true);
+    // Zero and negative slip past the layout planners' `> 0` special cases and
+    // silently select a different layout, so a typo must be reported, not absorbed.
+    if (!Number.isFinite(perWorkspace) || perWorkspace <= 0) {
+        out.error(pc.red(`--per-workspace must be a positive number (got "${opts.perWorkspace}").`));
+        process.exit(1);
+    }
+
+    const candidates = await gatherCandidates(snapshotName, limit, opts.allProjects === true, opts.dryRun === true);
 
     if (candidates.length === 0) {
         out.printlnErr(pc.yellow(snapshotName ? "That snapshot has no sessions." : "No resumable sessions found."));
@@ -51,7 +58,7 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
 
     const plan = buildRestorePlan(picked, {
         layout: opts.layout,
-        perWorkspace: Number.isFinite(perWorkspace) ? perWorkspace : 4,
+        perWorkspace,
         perProject: opts.perProject,
         forceAccount: opts.account,
     });
@@ -109,7 +116,8 @@ export async function restoreCommand(snapshotName: string | undefined, opts: Res
 async function gatherCandidates(
     snapshotName: string | undefined,
     limit: number,
-    allProjects: boolean
+    allProjects: boolean,
+    readOnly: boolean
 ): Promise<RestoreCandidate[]> {
     const spinner = p.spinner();
     spinner.start(snapshotName ? `Loading snapshot "${snapshotName}"...` : "Scanning recent sessions...");
@@ -120,6 +128,7 @@ async function gatherCandidates(
         const live = await listCandidates({
             limit: snapshotName ? Math.max(limit, 200) : limit,
             allProjects: snapshotName ? true : allProjects,
+            readOnly,
             onProgress: (processed, total) => {
                 if (total > 0) {
                     spinner.message(`Indexing transcripts ${processed}/${total}...`);
@@ -133,7 +142,7 @@ async function gatherCandidates(
         }
 
         const snapshot = await loadSnapshot(snapshotName);
-        const candidates = await snapshotCandidates(snapshot, live);
+        const candidates = await snapshotCandidates(snapshot, live, { readOnly });
         spinner.stop(`Snapshot "${snapshot.name}" — ${candidates.length} session${candidates.length === 1 ? "" : "s"}`);
 
         return candidates;
@@ -196,7 +205,8 @@ function printPlan(plan: RestorePlan, opts: RestoreOptions): void {
             for (const [index, session] of pane.sessions.entries()) {
                 const marker = index === 0 ? "  ·" : "  +";
                 const where = placeOf(session.candidate);
-                const account = session.account ?? (opts.autopick ? "auto" : "ask");
+                const unrecorded = opts.autopick ? "auto" : "ask";
+                const account = session.account ?? (session.candidate.pinned ? "keychain" : unrecorded);
                 out.printlnErr(
                     `${pc.dim(marker)} ${session.candidate.sessionId.slice(0, 8)} ${pc.dim(where)} ${pc.magenta(account)}`
                 );

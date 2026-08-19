@@ -1,4 +1,5 @@
 import { loadPins, pinsPath } from "@app/claude/lib/cmux/pins";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
@@ -8,6 +9,7 @@ const DEFAULT_ROWS = 15;
 
 export interface PinsOptions {
     limit: string;
+    json?: boolean;
 }
 
 /**
@@ -20,6 +22,12 @@ export interface PinsOptions {
 export async function pinsCommand(opts: PinsOptions): Promise<void> {
     const pins = await loadPins();
     const limit = Number.parseInt(opts.limit, 10) || DEFAULT_ROWS;
+    const recent = [...pins.values()].sort((a, b) => b.at - a.at).slice(0, limit);
+
+    if (opts.json) {
+        out.result(SafeJSON.stringify(recent, null, 2));
+        return;
+    }
 
     if (pins.size === 0) {
         out.printlnErr(pc.yellow("No session pins recorded yet."));
@@ -34,7 +42,6 @@ export async function pinsCommand(opts: PinsOptions): Promise<void> {
         return;
     }
 
-    const recent = [...pins.values()].sort((a, b) => b.at - a.at).slice(0, limit);
     renderCliHeader("Claude session pins", "which account each session ran as");
 
     const table = createBoxTable(["SESSION", "ACCOUNT", "MODEL", "RECORDED", "CWD"]);

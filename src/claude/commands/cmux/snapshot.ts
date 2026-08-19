@@ -12,6 +12,7 @@ import {
 import type { RestoreCandidate } from "@app/claude/lib/cmux/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -112,8 +113,17 @@ async function pick(candidates: RestoreCandidate[], opts: SnapshotOptions): Prom
     return selected as RestoreCandidate[];
 }
 
-export async function listCommand(): Promise<void> {
+export interface ListOptions {
+    json?: boolean;
+}
+
+export async function listCommand(opts: ListOptions = {}): Promise<void> {
     const snapshots = await listSnapshots();
+
+    if (opts.json) {
+        out.result(SafeJSON.stringify(snapshots, null, 2));
+        return;
+    }
 
     if (snapshots.length === 0) {
         out.printlnErr(pc.yellow("No snapshots saved yet."));

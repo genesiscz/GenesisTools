@@ -7,6 +7,18 @@ export interface LaunchCommandOptions {
 }
 
 /**
+ * True when the session is known to have run on the plain keychain login.
+ *
+ * A null account has two meanings, and collapsing them resumes a session under
+ * the wrong credential. `pinned` is what separates them: pinned with no account
+ * is the hook reporting "this ran with TOOLS_CLAUDE_ACCOUNT unset", a real
+ * answer; unpinned is "nobody ever recorded this session".
+ */
+function ranOnKeychain(session: PlannedSession): boolean {
+    return session.account === null && session.candidate.pinned;
+}
+
+/**
  * The shell line a restored pane runs.
  *
  * `--resume <id>` goes AFTER `--` so claude receives it verbatim. Passing it as
@@ -15,23 +27,35 @@ export interface LaunchCommandOptions {
  * not do. `tools claude start` still sees the flag through its passthrough and skips
  * its own resume prompts.
  *
+ * A keychain session resumes as a bare `claude`, which is exactly how it ran the
+ * first time. Routing it through `tools claude start` would put it in front of the
+ * account picker (or, with `-a`, silently onto a token account), so the pane would
+ * come back billed to someone else.
+ *
  * `cd` is a separate statement rather than a subshell so the pane is left in the
  * session's directory after claude exits, ready for a relaunch.
  */
 export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandOptions = {}): string {
-    const parts = ["tools", "claude", "start"];
+    const keychain = ranOnKeychain(session);
+    const parts = keychain ? ["claude"] : ["tools", "claude", "start"];
 
     if (session.account) {
         parts.push(shellSingleQuote(session.account));
-    } else if (opts.autopick) {
+    } else if (opts.autopick && !session.candidate.pinned) {
         parts.push("-a");
     }
 
     if (session.model) {
-        parts.push("-m", shellSingleQuote(session.model));
+        // `-m` is the wrapper's flag; claude itself spells it `--model`.
+        parts.push(keychain ? "--model" : "-m", shellSingleQuote(session.model));
     }
 
-    parts.push("--", "--resume", shellSingleQuote(session.candidate.sessionId));
+    // A bare `claude` takes `--resume` directly; only the wrapper needs the separator.
+    if (!keychain) {
+        parts.push("--");
+    }
+
+    parts.push("--resume", shellSingleQuote(session.candidate.sessionId));
 
     return `cd -- ${shellSingleQuote(session.candidate.cwd)} && ${parts.join(" ")}`;
 }
