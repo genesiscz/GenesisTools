@@ -119,10 +119,11 @@ export async function listSnapshots(): Promise<SnapshotSummary[]> {
  */
 export async function snapshotCandidates(
     snapshot: SessionSnapshot,
-    live: RestoreCandidate[]
+    live: RestoreCandidate[],
+    opts: { readOnly?: boolean } = {}
 ): Promise<RestoreCandidate[]> {
     const liveById = new Map(live.map((candidate) => [candidate.sessionId, candidate]));
-    const pins = await loadPins();
+    const pins = await loadPins({ readOnly: opts.readOnly });
 
     return snapshot.entries.map((entry) => {
         const known = liveById.get(entry.sessionId);

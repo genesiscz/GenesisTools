@@ -48,6 +48,43 @@ describe("buildLaunchCommand", () => {
         );
     });
 
+    describe("a session pinned with no account ran on the plain keychain", () => {
+        // `pinned: true, account: null` is the hook reporting "TOOLS_CLAUDE_ACCOUNT
+        // was unset" — a real answer. `pinned: false` is "nobody recorded this".
+        // Collapsing them resumes a keychain session billed to a token account.
+        test("resumes as a bare claude, never through the account picker", () => {
+            const command = buildLaunchCommand(session({ pinned: true }));
+
+            expect(command).toBe(
+                "cd -- '/Users/me/Projects/App' && claude --resume '8b6e69bf-0efc-4990-ba3e-b77262498421'"
+            );
+            expect(command).not.toContain("tools claude start");
+        });
+
+        test("is never autopicked onto a token account", () => {
+            const command = buildLaunchCommand(session({ pinned: true }), { autopick: true });
+
+            expect(command).not.toContain("-a");
+            expect(command).not.toContain("tools claude start");
+        });
+
+        test("spells the model claude's way, not the wrapper's", () => {
+            expect(buildLaunchCommand(session({ pinned: true }, { model: "opus" }))).toContain("--model 'opus'");
+        });
+
+        test("an UNPINNED session still goes through the wrapper", () => {
+            expect(buildLaunchCommand(session({ pinned: false }), { autopick: true })).toContain(
+                "tools claude start -a --"
+            );
+        });
+
+        test("a pinned session that names an account still goes through the wrapper", () => {
+            expect(buildLaunchCommand(session({ pinned: true }, { account: "work" }))).toContain(
+                "tools claude start 'work' --"
+            );
+        });
+    });
+
     test("quotes paths and account names containing quotes or spaces", () => {
         const command = buildLaunchCommand(session({ cwd: "/tmp/it's here" }, { account: "a b" }));
 

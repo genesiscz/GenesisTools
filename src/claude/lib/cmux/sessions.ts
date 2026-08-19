@@ -14,6 +14,8 @@ export interface ListCandidatesOptions {
     allProjects: boolean;
     /** Drop sessions older than this. */
     maxAgeMs?: number;
+    /** Read the pin journal without compacting it — for callers that must not mutate (`--dry-run`). */
+    readOnly?: boolean;
     onProgress?: (processed: number, total: number, file: string) => void;
 }
 
@@ -47,7 +49,7 @@ export async function listCandidates(opts: ListCandidatesOptions): Promise<Resto
         "[claude-cmux] session candidates selected"
     );
 
-    const pins = await loadPins();
+    const pins = await loadPins({ readOnly: opts.readOnly });
 
     return Promise.all(recent.map((record) => toCandidate(record, pins)));
 }

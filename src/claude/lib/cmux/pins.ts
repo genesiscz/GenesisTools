@@ -24,8 +24,17 @@ export async function recordPin(pin: SessionPin): Promise<void> {
     await appendFile(path, `${SafeJSON.stringify(pin)}\n`, "utf8");
 }
 
+export interface LoadPinsOptions {
+    /**
+     * Skip compaction. Reading the journal normally rewrites it once it passes
+     * COMPACT_THRESHOLD, which makes an otherwise read-only caller (`--dry-run`)
+     * mutate durable state. Those callers pass this.
+     */
+    readOnly?: boolean;
+}
+
 /** Every pin, newest write per session id. Missing or torn lines are skipped, never fatal. */
-export async function loadPins(): Promise<Map<string, SessionPin>> {
+export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, SessionPin>> {
     const path = pinsPath();
     let text: string;
 
@@ -66,7 +75,7 @@ export async function loadPins(): Promise<Map<string, SessionPin>> {
         }
     }
 
-    if (lines > COMPACT_THRESHOLD) {
+    if (!opts.readOnly && lines > COMPACT_THRESHOLD) {
         await compact(path, pins).catch((err) => {
             logger.warn({ err, path }, "[cmux-pins] compaction failed; the journal keeps growing");
         });

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadPins, pinsPath, recordPin } from "@app/claude/lib/cmux/pins";
 import type { SessionPin } from "@app/claude/lib/cmux/types";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let home: string;
 let envSnapshot: ReturnType<typeof env.testing.snapshot>;
@@ -76,5 +77,45 @@ describe("pins", () => {
         const pins = await loadPins();
 
         expect([...pins.keys()].sort()).toEqual(["a", "c"]);
+    });
+
+    describe("readOnly", () => {
+        const SESSIONS = 100;
+        const LINES = 4100; // past COMPACT_THRESHOLD (4000)
+
+        /** Repeated re-pins of the same sessions, so compaction genuinely shrinks the file. */
+        async function writeOversizedJournal(): Promise<string> {
+            const lines = Array.from({ length: LINES }, (_, i) =>
+                SafeJSON.stringify(pin({ sessionId: `s${i % SESSIONS}`, at: i }))
+            );
+            await mkdir(dirname(pinsPath()), { recursive: true });
+            await writeFile(pinsPath(), `${lines.join("\n")}\n`, "utf8");
+
+            return readFile(pinsPath(), "utf8");
+        }
+
+        async function journalLines(): Promise<number> {
+            return (await readFile(pinsPath(), "utf8")).trimEnd().split("\n").length;
+        }
+
+        test("a normal read still compacts an oversized journal", async () => {
+            await writeOversizedJournal();
+            expect(await journalLines()).toBe(LINES);
+
+            await loadPins();
+
+            expect(await journalLines()).toBe(SESSIONS);
+        });
+
+        test("readOnly leaves the journal byte-identical", async () => {
+            // `--dry-run` reaches loadPins through listCandidates. Compaction there
+            // would make an inspection mutate durable state.
+            const before = await writeOversizedJournal();
+
+            const pins = await loadPins({ readOnly: true });
+
+            expect(pins.size).toBe(SESSIONS);
+            expect(await readFile(pinsPath(), "utf8")).toBe(before);
+        });
     });
 });
