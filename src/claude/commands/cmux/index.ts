@@ -1,6 +1,5 @@
 import { type Command, Option } from "commander";
-import { type HookAction, hookCommand } from "./hook-command";
-import { recordCommand } from "./record";
+import { pinsCommand } from "./pins";
 import { restoreCommand } from "./restore";
 import { forgetCommand, listCommand, snapshotCommand } from "./snapshot";
 
@@ -43,12 +42,8 @@ export function registerCmuxCommand(program: Command): void {
 
     cmux.command("forget <name>").description("Delete a saved snapshot").action(forgetCommand);
 
-    cmux.command("hook [action]")
-        .description("status | install | remove — the SessionStart hook that records each session's account")
-        .action((action: string | undefined) => hookCommand((action as HookAction) ?? "status"));
-
-    // The hook body itself: reads Claude Code's SessionStart payload on stdin.
-    cmux.command("record", { hidden: true })
-        .description("Internal: record this session's account pin from a SessionStart hook payload")
-        .action(recordCommand);
+    cmux.command("pins")
+        .description("Show the session → account pins the genesis-tools plugin hook has recorded")
+        .option("--limit <n>", "How many recent pins to show", "15")
+        .action(pinsCommand);
 }

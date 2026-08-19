@@ -10,6 +10,10 @@
           {
             "type": "command",
             "command": "bun ${CLAUDE_PLUGIN_ROOT}/hooks/agents-talk-hint.ts"
+          },
+          {
+            "type": "command",
+            "command": "bun ${CLAUDE_PLUGIN_ROOT}/hooks/record-session-account.ts"
           }
         ]
       }

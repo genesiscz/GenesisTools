@@ -73,17 +73,20 @@ it, `--new-window` builds in a fresh cmux window, `-y` skips the picker.
 ### The account pin
 
 Nothing in Claude Code's transcripts records which account a session ran as, so it is
-recorded at session start by a hook:
+recorded at session start by `hooks/record-session-account.ts` in the **genesis-tools
+plugin** — no settings.json editing, it ships with the plugin's other SessionStart hooks.
+
+The hook reads `TOOLS_CLAUDE_ACCOUNT` (exported by `tools claude start`), walks up to the
+claude process for its `--model`, and appends `session id → account` plus cwd and cmux
+workspace to `~/.genesis-tools/claude-code/session-pins.jsonl`.
 
 ```bash
-tools claude cmux hook install   # adds a SessionStart hook to ~/.claude/settings.json
-tools claude cmux hook           # status + how many pins exist
+tools claude cmux pins           # what has been recorded, newest first
 ```
 
-The hook writes `session id → account` (plus model, cwd and cmux workspace) to
-`~/.genesis-tools/claude-code/session-pins.jsonl`. It only knows about sessions started
-after it was installed; sessions without a pin show as `unpinned` and ask which account to
-use when their pane launches.
+Only sessions started after the hook landed have pins. Sessions without one show as
+`unpinned` and ask which account to use when their pane launches (or take `--account` /
+`-a`). Plugin edits need a push plus `/plugin update` before Claude Code picks them up.
 
 ---
 
