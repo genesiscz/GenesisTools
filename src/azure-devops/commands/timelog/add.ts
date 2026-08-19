@@ -206,7 +206,9 @@ ${types.map((t) => `  - ${t.description}`).join("\n")}
 
                 // Update Remaining/Completed Work on the work item
                 const devopsApi = new Api(config);
-                const effort = await updateWorkItemEffort(devopsApi, effectiveWorkItemId, totalMinutes);
+                const effort = await updateWorkItemEffort(devopsApi, effectiveWorkItemId, totalMinutes, {
+                    timeLogIds: ids,
+                });
 
                 if (effort) {
                     out.println(`  Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);

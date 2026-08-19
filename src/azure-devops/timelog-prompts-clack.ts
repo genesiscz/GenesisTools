@@ -162,7 +162,7 @@ export async function runInteractiveAddClack(
 
     // Update Remaining/Completed Work on the work item
     const devopsApi = new Api(config);
-    const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMinutes);
+    const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMinutes, { timeLogIds: ids });
 
     if (effort) {
         p.log.info(`Remaining: ${effort.remaining}h | Completed: ${effort.completed}h`);

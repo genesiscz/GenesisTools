@@ -16,7 +16,7 @@ Usage: tools azure-devops timelog <command> [options]
 Commands:
   add      Add a time log entry to a work item
   list     List time logs (per work item or date range query)
-  delete   Delete a time log entry by ID
+  delete   Delete a time log entry and roll back Remaining/Completed
   types    List available time types
   import   Import time logs from JSON file
 
@@ -28,8 +28,10 @@ Examples:
   tools azure-devops timelog list --day 2026-01-30
   tools azure-devops timelog list --since 2026-01-01 --upto 2026-01-31 --user "Martin"
   tools azure-devops timelog list --day 2026-01-30 --format table
-  tools azure-devops timelog delete <timeLogId>
+  tools azure-devops timelog delete <timeLogId> --yes
+  tools azure-devops timelog delete <timeLogId> --dry-run
   tools azure-devops timelog delete --workitem 268935   (interactive picker)
+  tools azure-devops timelog delete <timeLogId> --no-effort --yes
   tools azure-devops timelog types
   tools azure-devops timelog import entries.json
 

@@ -162,6 +162,7 @@ Examples:
   # Time logging
   tools azure-devops timelog add --workitem 268935 --hours 2 --type "Development"
   tools azure-devops timelog list --workitem 268935
+  tools azure-devops timelog delete <timeLogId> --yes
   tools azure-devops timelog types
 
 History Commands:

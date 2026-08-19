@@ -274,6 +274,7 @@ export function registerImportSubcommand(parent: Command): void {
             const failed: string[] = [];
             const createdWorkItemIds: number[] = [];
             const minutesPerWorkItem = new Map<number, number>();
+            const idsPerWorkItem = new Map<number, string[]>();
 
             for (const entry of precheckPassed) {
                 try {
@@ -290,6 +291,7 @@ export function registerImportSubcommand(parent: Command): void {
                         entry.workItemId,
                         (minutesPerWorkItem.get(entry.workItemId) ?? 0) + entry.minutes
                     );
+                    idsPerWorkItem.set(entry.workItemId, [...(idsPerWorkItem.get(entry.workItemId) ?? []), ...ids]);
                     const title = workitemTitles.get(entry.workItemId);
                     const wiLabel = title ? `#${entry.workItemId} ${title}` : `#${entry.workItemId}`;
                     const parts = [wiLabel, formatMinutes(entry.minutes), entry.timeType, entry.date];
@@ -321,7 +323,9 @@ export function registerImportSubcommand(parent: Command): void {
                 const devopsApi = new Api(config);
 
                 for (const [workItemId, totalMins] of minutesPerWorkItem) {
-                    const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMins);
+                    const effort = await updateWorkItemEffort(devopsApi, workItemId, totalMins, {
+                        timeLogIds: idsPerWorkItem.get(workItemId) ?? [],
+                    });
 
                     if (effort) {
                         out.println(
