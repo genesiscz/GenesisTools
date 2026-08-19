@@ -284,72 +284,73 @@ generates the matching `fail2ban` commands.
 
 ## 🛠️ Tool catalogue
 
-Every row is a real tool in this checkout, described from its own `--help`. Run
-`tools <name> --readme` for the long form: 72 of the 97 usable tools ship a `README.md`.
+Every row is a real tool in this checkout, described from its own `--help`. Each name links to
+that tool's own `README.md`, which you can also print in the terminal with
+`tools <name> --readme`. All 97 usable tools ship one.
 
 ### AI and LLM
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `ai` | Unified AI toolkit: translate, summarize, classify, generate images, manage accounts and models. | `translate` `summarize` `image` `classify` `models` `config` |
-| `ai-proxy` | OpenAI-compatible local proxy in front of Grok, GitHub Copilot, and other providers, with a client ledger. | `up` `down` `serve` `status` `models` `calls` `clients` `usage` `link` `config` |
-| `ai-spend` | Claude Code token and cost analytics across every local session. | `summary` `sessions` `today` |
-| `ask` | Multi-provider LLM chat, one-shot or interactive, with optional audio input via `--sst`. | flags only (`-m`, `-p`, `-f`, `-o`) |
-| `usage` | Token and cost analytics for `ask`, by provider, model, and day. | flags only (`--days`, `--provider`, `--format`) |
-| `say` | Text to speech with pluggable backends (macOS, xAI Grok, OpenAI) and per-app config profiles. | `voices` `models` `config` |
-| `transcribe` | Transcribe audio files with AI, locally or in the cloud. | flags only |
-| `darwinkit` | Apple on-device ML from the terminal: NLP, embeddings, OCR, clustering, biometry, iCloud. | 40+ verbs, see `--help` |
-| `redact` | Reversibly redact secrets and PII from text before pasting it into an AI, then restore the reply. | `restore` |
-| `json` | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema. | `convert` (default) `schema` |
-| `json-schema` | Infer a skeleton, TypeScript interfaces, or JSON Schema from JSON on a file or stdin. | flags only (`-m`, `--pretty`) |
-| `mcp-web-reader` | Fetch a page and convert HTML to Markdown with pluggable engines. Works as CLI and MCP server. | flags only (`--engine`, `--mode`) |
-| `repo-map` | Token-efficient repo symbol map for agents, in the style of aider. | flags only |
-| `indexer` | Semantic code indexer with AST-aware chunking and hybrid search. | `add` `search` `sync` `watch` `graph` `context` `mcp-serve` |
+| [`ai`](src/ai/README.md) | Unified AI toolkit: translate, summarize, classify, generate images, manage accounts and models. | `translate` `summarize` `image` `classify` `models` `config` |
+| [`ai-proxy`](src/ai-proxy/README.md) | OpenAI-compatible local proxy in front of Grok, GitHub Copilot, and other providers, with a client ledger. | `up` `down` `serve` `status` `models` `calls` `clients` `usage` `link` `config` |
+| [`ai-spend`](src/ai-spend/README.md) | Claude Code token and cost analytics across every local session. | `summary` `sessions` `today` |
+| [`ask`](src/ask/README.md) | Multi-provider LLM chat, one-shot or interactive, with optional audio input via `--sst`. | flags only (`-m`, `-p`, `-f`, `-o`) |
+| [`usage`](src/usage/README.md) | Token and cost analytics for `ask`, by provider, model, and day. | flags only (`--days`, `--provider`, `--format`) |
+| [`say`](src/say/README.md) | Text to speech with pluggable backends (macOS, xAI Grok, OpenAI) and per-app config profiles. | `voices` `models` `config` |
+| [`transcribe`](src/transcribe/README.md) | Transcribe audio files with AI, locally or in the cloud. | flags only |
+| [`darwinkit`](src/darwinkit/README.md) | Apple on-device ML from the terminal: NLP, embeddings, OCR, clustering, biometry, iCloud. | 40+ verbs, see `--help` |
+| [`redact`](src/redact/README.md) | Reversibly redact secrets and PII from text before pasting it into an AI, then restore the reply. | `restore` |
+| [`json`](src/json/README.md) | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema. | `convert` (default) `schema` |
+| [`json-schema`](src/json-schema/README.md) | Infer a skeleton, TypeScript interfaces, or JSON Schema from JSON on a file or stdin. | flags only (`-m`, `--pretty`) |
+| [`mcp-web-reader`](src/mcp-web-reader/README.md) | Fetch a page and convert HTML to Markdown with pluggable engines. Works as CLI and MCP server. | flags only (`--engine`, `--mode`) |
+| [`repo-map`](src/repo-map/README.md) | Token-efficient repo symbol map for agents, in the style of aider. | flags only |
+| [`indexer`](src/indexer/README.md) | Semantic code indexer with AST-aware chunking and hybrid search. | `add` `search` `sync` `watch` `graph` `context` `mcp-serve` |
 
 ### Agents and AI coding sessions
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `claude` | Everything around Claude Code: history, resume, accounts and OAuth, desktop sync, usage, MCP server, cmux restore. | `history` `resume` `tail` `summarize` `usage` `config` `login` `start` `mcp` `code` `cmux` `teams` `doctor` |
-| `cc` | Resume a Claude Code session by short ID, name, or content search. | (single command) |
-| `codex` | Spawn, monitor, and steer Codex app-server sessions. | `spawn` `steer` `read` `review` `approve` `deny` `tail` `sessions` |
-| `cursor` | Ask Cursor Agent a question about the codebase and stream the answer, tool calls on stderr and answer on stdout. | flags only (`--mode`, `--model`, `--raw`) |
-| `cursor-context` | Strip tool-use parameters and results from Cursor SpecStory exports to save tokens. | flags only |
-| `agents` | Cross-agent communication: register, message, request, discover, listen across a swarm. | `login` `message` `request` `discover` `listen` |
-| `agent-watch` | Notify you when background agents finish, stall, or need input. | `watch` `status` `list` |
-| `boards` | Dev-dashboard annotation boards: push screenshot sets, create boards, listen for work. | `init` `add` `push` `board-from-set` `watch` `operator` |
-| `question` | Capture and review the questions fired at agents mid-session, with their answers. | `record` `log` `tail` `config` |
-| `task` | PTY-aware command wrapper with ordered log capture, built for long-lived dev servers. | `run` `get` `logs` `tail` `wait` `sessions` `dashboard` |
-| `scripts` | Script MCP tool calls directly, with no agent loop, using types generated from each server. | `servers` `tools` `call` `create` `run` `regen` `remote` `doctor` |
-| `debugging-master` | Instrumentation primitives plus a token-efficient log reader for runtime debugging. | `start` `get` `expand` `diff` `sessions` `cleanup` `dashboard` |
-| `stash` | Global cross-project code-overlay manager: save a chunk of working-tree changes and reapply it anywhere. | `save` `apply` `unapply` `list` `diff` `versions` `doctor` |
-| `learn-from-fable` | Staged pipeline that distills Fable 5's working style from local session transcripts into the Fable Pack. | `bootstrap` `mine` `eval` `consolidate` `spec` `skill` |
+| [`claude`](src/claude/README.md) | Everything around Claude Code: history, resume, accounts and OAuth, desktop sync, usage, MCP server, cmux restore. | `history` `resume` `tail` `summarize` `usage` `config` `login` `start` `mcp` `code` `cmux` `teams` `doctor` |
+| [`cc`](src/cc/README.md) | Resume a Claude Code session by short ID, name, or content search. | (single command) |
+| [`codex`](src/codex/README.md) | Spawn, monitor, and steer Codex app-server sessions. | `spawn` `steer` `read` `review` `approve` `deny` `tail` `sessions` |
+| [`cursor`](src/cursor/README.md) | Ask Cursor Agent a question about the codebase and stream the answer, tool calls on stderr and answer on stdout. | flags only (`--mode`, `--model`, `--raw`) |
+| [`cursor-context`](src/cursor-context/README.md) | Strip tool-use parameters and results from Cursor SpecStory exports to save tokens. | flags only |
+| [`agents`](src/agents/README.md) | Cross-agent communication: register, message, request, discover, listen across a swarm. | `login` `message` `request` `discover` `listen` |
+| [`agent-watch`](src/agent-watch/README.md) | Notify you when background agents finish, stall, or need input. | `watch` `status` `list` |
+| [`boards`](src/boards/README.md) | Dev-dashboard annotation boards: push screenshot sets, create boards, listen for work. | `init` `add` `push` `board-from-set` `watch` `operator` |
+| [`question`](src/question/README.md) | Capture and review the questions fired at agents mid-session, with their answers. | `record` `log` `tail` `config` |
+| [`task`](src/task/README.md) | PTY-aware command wrapper with ordered log capture, built for long-lived dev servers. | `run` `get` `logs` `tail` `wait` `sessions` `dashboard` |
+| [`scripts`](src/scripts/README.md) | Script MCP tool calls directly, with no agent loop, using types generated from each server. | `servers` `tools` `call` `create` `run` `regen` `remote` `doctor` |
+| [`debugging-master`](src/debugging-master/README.md) | Instrumentation primitives plus a token-efficient log reader for runtime debugging. | `start` `get` `expand` `diff` `sessions` `cleanup` `dashboard` |
+| [`stash`](src/stash/README.md) | Global cross-project code-overlay manager: save a chunk of working-tree changes and reapply it anywhere. | `save` `apply` `unapply` `list` `diff` `versions` `doctor` |
+| [`learn-from-fable`](src/learn-from-fable/README.md) | Staged pipeline that distills Fable 5's working style from local session transcripts into the Fable Pack. | `bootstrap` `mine` `eval` `consolidate` `spec` `skill` |
 
 ### Git and code history
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `git` | Commit analysis: query commits by range, extract work-item IDs by regex, manage author identities, branch cleanup. | `commits` `configure-authors` `configure-workitem-patterns` `health` `branch-gc` `monster` |
-| `git-commit` | Generate commit messages with AI, optionally staging first and pushing after. | flags only (`--stage`, `--detail`) |
-| `git-last-commits-diff` | Render diffs between recent commits, formatted for feeding to an AI. | flags only (`--commits`, `--output`, `--clipboard`) |
-| `git-rebase-multiple` | Safe branch-hierarchy rebasing with backup refs, fork-point tags, and full rollback. | flags only (`--status`, `--dry-run`, `--abort`, `--continue`, `--cleanup`) |
-| `git-rebranch` | Split a messy branch into several clean branches by grouping commits. | flags only (`--dry-run`) |
-| `git-rename-commits` | Interactively rename the last N commit messages, with a confirmation screen before the rewrite. | flags only (`--commits`) |
-| `last-changes` | Show uncommitted changes grouped by modification time, so you can see what you touched when. | flags only |
-| `collect-files-for-ai` | Copy files changed in git (by commit count, staged, unstaged, or all) into a folder for AI context. | flags only (`-c`, `--staged`, `--flat`) |
-| `files-to-prompt` | Turn a directory tree into one AI-friendly prompt (XML, Markdown, or plain), with filters. | flags only (`-e`, `--markdown`, `--cxml`, `--flat-folder`) |
-| `time-machine` | Auto-bisect a failing command across history to find the last green commit. | flags only |
-| `regret-grep` | Warn when the current diff repeats a bug you already fixed. | `index` `check` |
-| `apoptosis` | Programmed cell death for dead code: flag zero-signal files and suggest deletion after a grace window. | `status` `kill` `rescue` `reset` |
-| `loc` | Count files and code, blank, and comment lines by language, respecting `.gitignore`. | flags only |
+| [`git`](src/git/README.md) | Commit analysis: query commits by range, extract work-item IDs by regex, manage author identities, branch cleanup. | `commits` `configure-authors` `configure-workitem-patterns` `health` `branch-gc` `monster` |
+| [`git-commit`](src/git-commit/README.md) | Generate commit messages with AI, optionally staging first and pushing after. | flags only (`--stage`, `--detail`) |
+| [`git-last-commits-diff`](src/git-last-commits-diff/README.md) | Render diffs between recent commits, formatted for feeding to an AI. | flags only (`--commits`, `--output`, `--clipboard`) |
+| [`git-rebase-multiple`](src/git-rebase-multiple/README.md) | Safe branch-hierarchy rebasing with backup refs, fork-point tags, and full rollback. | flags only (`--status`, `--dry-run`, `--abort`, `--continue`, `--cleanup`) |
+| [`git-rebranch`](src/git-rebranch/README.md) | Split a messy branch into several clean branches by grouping commits. | flags only (`--dry-run`) |
+| [`git-rename-commits`](src/git-rename-commits/README.md) | Interactively rename the last N commit messages, with a confirmation screen before the rewrite. | flags only (`--commits`) |
+| [`last-changes`](src/last-changes/README.md) | Show uncommitted changes grouped by modification time, so you can see what you touched when. | flags only |
+| [`collect-files-for-ai`](src/collect-files-for-ai/README.md) | Copy files changed in git (by commit count, staged, unstaged, or all) into a folder for AI context. | flags only (`-c`, `--staged`, `--flat`) |
+| [`files-to-prompt`](src/files-to-prompt/README.md) | Turn a directory tree into one AI-friendly prompt (XML, Markdown, or plain), with filters. | flags only (`-e`, `--markdown`, `--cxml`, `--flat-folder`) |
+| [`time-machine`](src/time-machine/README.md) | Auto-bisect a failing command across history to find the last green commit. | flags only |
+| [`regret-grep`](src/regret-grep/README.md) | Warn when the current diff repeats a bug you already fixed. | `index` `check` |
+| [`apoptosis`](src/apoptosis/README.md) | Programmed cell death for dead code: flag zero-signal files and suggest deletion after a grace window. | `status` `kill` `rescue` `reset` |
+| [`loc`](src/loc/README.md) | Count files and code, blank, and comment lines by language, respecting `.gitignore`. | flags only |
 
 ### GitHub and CI
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `github` | Token-efficient GitHub client: issues, PRs, review threads, code search, notifications, activity, raw files, stack-safe merges. | `issue` `pr` `merge` `comments` `search` `code` `get` `review` `notifications` `activity` `status` |
-| `github-release-notes` | Fetch release notes from any GitHub repository into Markdown. | flags only (`--limit`, `--oldest`) |
-| `jenkins-mcp` | Jenkins CLI and MCP server: paste a job path or full Jenkins URL, read stages, logs, changes, and monitor the queue. | `stages` `log` `info` `changes` `jobs` `monitor` |
+| [`github`](src/github/README.md) | Token-efficient GitHub client: issues, PRs, review threads, code search, notifications, activity, raw files, stack-safe merges. | `issue` `pr` `merge` `comments` `search` `code` `get` `review` `notifications` `activity` `status` |
+| [`github-release-notes`](src/github-release-notes/README.md) | Fetch release notes from any GitHub repository into Markdown. | flags only (`--limit`, `--oldest`) |
+| [`jenkins-mcp`](src/jenkins-mcp/README.md) | Jenkins CLI and MCP server: paste a job path or full Jenkins URL, read stages, logs, changes, and monitor the queue. | `stages` `log` `info` `changes` `jobs` `monitor` |
 
 `tools github merge` exists specifically because `gh pr merge --delete-branch` closes the
 children of a PR stack instead of retargeting them (`cli/cli#1168`). It retargets dependents
@@ -359,58 +360,58 @@ onto the merged base first, then optionally deletes the head branch.
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `mcp-manager` | Manage MCP servers across Claude, Gemini, Codex, and Cursor from one unified config, with backups and visual diffs. | `config` `sync` `sync-from-providers` `list` `enable` `disable` `install` `show` `remove` `rename` `backup-all` `config-json` |
-| `mcp-doctor` | Health-check and benchmark the MCP servers you already have configured. | `list` `check` `tools` |
-| `mcp-debug` | Debug MCP server configuration by running commands and printing JSON to stdout plus diagnostics to stderr, so you can see the env, cwd, and PATH your client passes. | flags only (`--env`) |
-| `mcp-ripgrep` | MCP server exposing ripgrep: search, advanced search, count matches, list files, list file types. | server only |
-| `mcp-tsc` | TypeScript diagnostics as both a CLI and an MCP server, using the compiler API or a language server. | flags only (`--lsp`, `--warnings`, `--mcp`) |
+| [`mcp-manager`](src/mcp-manager/README.md) | Manage MCP servers across Claude, Gemini, Codex, and Cursor from one unified config, with backups and visual diffs. | `config` `sync` `sync-from-providers` `list` `enable` `disable` `install` `show` `remove` `rename` `backup-all` `config-json` |
+| [`mcp-doctor`](src/mcp-doctor/README.md) | Health-check and benchmark the MCP servers you already have configured. | `list` `check` `tools` |
+| [`mcp-debug`](src/mcp-debug/README.md) | Debug MCP server configuration by running commands and printing JSON to stdout plus diagnostics to stderr, so you can see the env, cwd, and PATH your client passes. | flags only (`--env`) |
+| [`mcp-ripgrep`](src/mcp-ripgrep/README.md) | MCP server exposing ripgrep: search, advanced search, count matches, list files, list file types. | server only |
+| [`mcp-tsc`](src/mcp-tsc/README.md) | TypeScript diagnostics as both a CLI and an MCP server, using the compiler API or a language server. | flags only (`--lsp`, `--warnings`, `--mcp`) |
 
 ### Frontend and web debugging
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `har-analyzer` | Token-efficient HAR analysis with a reference system, progressive disclosure, security scan, waterfall, and PII redaction. | `load` `list` `show` `expand` `domain` `errors` `security` `waterfall` `diff` `export` `redact` `sessions` `mcp` |
-| `react-compiler-debug` | Inspect what `babel-plugin-react-compiler` generates, to see whether and why a component was memoized. | flags only (`--code`, `--with-original`, `--target`, `--mode`) |
-| `npm-package-diff` | Diff two versions of an npm package: parallel install into temp dirs, then terminal, unified, HTML, JSON, or side-by-side output. | flags only (`--filter`, `--format`, `--patch`, `--use-delta`) |
+| [`har-analyzer`](src/har-analyzer/README.md) | Token-efficient HAR analysis with a reference system, progressive disclosure, security scan, waterfall, and PII redaction. | `load` `list` `show` `expand` `domain` `errors` `security` `waterfall` `diff` `export` `redact` `sessions` `mcp` |
+| [`react-compiler-debug`](src/react-compiler-debug/README.md) | Inspect what `babel-plugin-react-compiler` generates, to see whether and why a component was memoized. | flags only (`--code`, `--with-original`, `--target`, `--mode`) |
+| [`npm-package-diff`](src/npm-package-diff/README.md) | Diff two versions of an npm package: parallel install into temp dirs, then terminal, unified, HTML, JSON, or side-by-side output. | flags only (`--filter`, `--format`, `--patch`, `--use-delta`) |
 
 ### Work tracking and time
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `azure-devops` | Azure DevOps work items, queries, dashboards, and time logs, with caching and change detection. | `configure` `query` `workitem` `workitem-create` `list` `dashboard` `timelog` `history` |
-| `timely` | Timely time tracking: OAuth login, accounts and projects, events, auto-tracked memories, monthly exports. | `login` `status` `accounts` `projects` `events` `memories` `create` `export-month` `cache` |
-| `clarity` | CA PPM Clarity timesheet management, filled from Azure DevOps time logs and Timely activity. | `configure` `timesheet` `fill` `link-workitems` `ui` |
-| `timer` | Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks. | `list` `cancel` |
-| `todo` | Task tracking for AI-assisted sessions, backed by SQLite, with a full status lifecycle. | `add` `list` `show` `start` `block` `complete` `reopen` `edit` `search` `sync` `export` `import` |
+| [`azure-devops`](src/azure-devops/README.md) | Azure DevOps work items, queries, dashboards, and time logs, with caching and change detection. | `configure` `query` `workitem` `workitem-create` `list` `dashboard` `timelog` `history` |
+| [`timely`](src/timely/README.md) | Timely time tracking: OAuth login, accounts and projects, events, auto-tracked memories, monthly exports. | `login` `status` `accounts` `projects` `events` `memories` `create` `export-month` `cache` |
+| [`clarity`](src/clarity/README.md) | CA PPM Clarity timesheet management, filled from Azure DevOps time logs and Timely activity. | `configure` `timesheet` `fill` `link-workitems` `ui` |
+| [`timer`](src/timer/README.md) | Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks. | `list` `cancel` |
+| [`todo`](src/todo/README.md) | Task tracking for AI-assisted sessions, backed by SQLite, with a full status lifecycle. | `add` `list` `show` `start` `block` `complete` `reopen` `edit` `search` `sync` `export` `import` |
 
 ### Web dashboards and data
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `dashboards` | Orchestrate every GenesisTools web dashboard at once. | `up` `down` `restart` `status` `list` |
-| `dashboard` | Start the personal productivity dashboard, installing its dependencies if needed, then open it. | `up` `down` `restart` `status` `attach` `logs` `open` `install` |
-| `dev-dashboard` | Personal dev dashboard wiring ttyd, cmux, and Obsidian together, with auth, tunnel, and pairing. | `ui` `configure` `auth` `agent` `tunnel` `pair` |
-| `youtube` | The largest tool here: channels, videos, transcripts, downloads, summarisation, Q&A, a browser extension, a queue, and an MCP server. | `channels` `videos` `transcribe` `download` `pipeline` `queue` `ask` `analyze` `extension` `server` `ui` `mcp` `config` |
-| `shops` | Grocery, drogerie, and pharmacy price intelligence across Czech e-shops, with crawlers, matching, and a dashboard. | `get` `crawl` `sitemap-sync` `match` `list` `watch` `notify` `daemon` `db` `ui` `mcp` |
-| `instagram` | Inspect public Instagram profiles, and fetch stories and highlights with your own session. | `profile` `highlights` `stories` `highlight` `session` |
-| `spotify` | Spotify listening analytics from your own export, plus cross-library compatibility with a partner. | `profile` `analytics` `harvest` `build` `enrich` `history-merge` `export` `doctor` |
-| `tradingview` | Stream TradingView live quotes, indicators, charts, and scans. | `quotes` `alerts` `indicator` `charts` `indicators` `scan` |
-| `rohlik-spending` | Total up your spending on rohlik.cz from delivered orders and line items. | flags only |
+| [`dashboards`](src/dashboards/README.md) | Orchestrate every GenesisTools web dashboard at once. | `up` `down` `restart` `status` `list` |
+| [`dashboard`](src/dashboard/README.md) | Start the personal productivity dashboard, installing its dependencies if needed, then open it. | `up` `down` `restart` `status` `attach` `logs` `open` `install` |
+| [`dev-dashboard`](src/dev-dashboard/README.md) | Personal dev dashboard wiring ttyd, cmux, and Obsidian together, with auth, tunnel, and pairing. | `ui` `configure` `auth` `agent` `tunnel` `pair` |
+| [`youtube`](src/youtube/README.md) | The largest tool here: channels, videos, transcripts, downloads, summarisation, Q&A, a browser extension, a queue, and an MCP server. | `channels` `videos` `transcribe` `download` `pipeline` `queue` `ask` `analyze` `extension` `server` `ui` `mcp` `config` |
+| [`shops`](src/shops/README.md) | Grocery, drogerie, and pharmacy price intelligence across Czech e-shops, with crawlers, matching, and a dashboard. | `get` `crawl` `sitemap-sync` `match` `list` `watch` `notify` `daemon` `db` `ui` `mcp` |
+| [`instagram`](src/instagram/README.md) | Inspect public Instagram profiles, and fetch stories and highlights with your own session. | `profile` `highlights` `stories` `highlight` `session` |
+| [`spotify`](src/spotify/README.md) | Spotify listening analytics from your own export, plus cross-library compatibility with a partner. | `profile` `analytics` `harvest` `build` `enrich` `history-merge` `export` `doctor` |
+| [`tradingview`](src/tradingview/README.md) | Stream TradingView live quotes, indicators, charts, and scans. | `quotes` `alerts` `indicator` `charts` `indicators` `scan` |
+| [`rohlik-spending`](src/rohlik-spending/README.md) | Total up your spending on rohlik.cz from delivered orders and line items. | flags only |
 
 ### macOS and system
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `macos` | Umbrella CLI for macOS native frameworks. | `mail` `calendar` `reminders` `messages` `voice-memos` `sleep` `swap` `clones` `control` |
-| `control` | macOS UI automation through the Accessibility API, plus screen recording with timed actions. | `list` `tree` `find` `click` `type` `hotkey` `scroll` `screenshot` `ocr` `capture` `record-plan` `assert` |
-| `macos-eslogger` | Monitor macOS Endpoint Security events in real time with category and JSON-path filters. Needs root and Full Disk Access. | flags only (`-e`, `-c`, `--filter-event`) |
-| `macos-resources` | Live TUI dashboard of process CPU, RAM, and open-file usage, with alert thresholds. | flags only (`--process`, `--cpulimit`, `--notify`) |
-| `doctor` | Diagnose and fix common macOS dev-machine problems. | `find` `log` `stats` `wipe-cache` |
-| `du` | Clone-aware disk usage for APFS. Measures the real on-disk footprint of trees full of clonefiles, where plain `du` lies. | `clonesize` `volume` `clones` `bench` |
-| `fsevents-profile` | Profile filesystem events to find the directories generating the most churn. | flags only (`-d`, `-t`, `--watchers`) |
-| `watch` | Watch files matching a glob and show content changes in real time, like `tail -f` with patterns. | flags only (`-s`, `-f`, `-n`) |
-| `watchman` | Monitor files through Facebook's Watchman for instant change detection. | flags only (`-c`) |
-| `wakeup` | Wake-on-LAN helper plus a small wake relay you can run on an always-on host. | `config` `server` `register` `login` `wake` `send` `daemon` |
+| [`macos`](src/macos/README.md) | Umbrella CLI for macOS native frameworks. | `mail` `calendar` `reminders` `messages` `voice-memos` `sleep` `swap` `clones` `control` |
+| [`control`](src/control/README.md) | macOS UI automation through the Accessibility API, plus screen recording with timed actions. | `list` `tree` `find` `click` `type` `hotkey` `scroll` `screenshot` `ocr` `capture` `record-plan` `assert` |
+| [`macos-eslogger`](src/macos-eslogger/README.md) | Monitor macOS Endpoint Security events in real time with category and JSON-path filters. Needs root and Full Disk Access. | flags only (`-e`, `-c`, `--filter-event`) |
+| [`macos-resources`](src/macos-resources/README.md) | Live TUI dashboard of process CPU, RAM, and open-file usage, with alert thresholds. | flags only (`--process`, `--cpulimit`, `--notify`) |
+| [`doctor`](src/doctor/README.md) | Diagnose and fix common macOS dev-machine problems. | `find` `log` `stats` `wipe-cache` |
+| [`du`](src/du/README.md) | Clone-aware disk usage for APFS. Measures the real on-disk footprint of trees full of clonefiles, where plain `du` lies. | `clonesize` `volume` `clones` `bench` |
+| [`fsevents-profile`](src/fsevents-profile/README.md) | Profile filesystem events to find the directories generating the most churn. | flags only (`-d`, `-t`, `--watchers`) |
+| [`watch`](src/watch/README.md) | Watch files matching a glob and show content changes in real time, like `tail -f` with patterns. | flags only (`-s`, `-f`, `-n`) |
+| [`watchman`](src/watchman/README.md) | Monitor files through Facebook's Watchman for instant change detection. | flags only (`-c`) |
+| [`wakeup`](src/wakeup/README.md) | Wake-on-LAN helper plus a small wake relay you can run on an always-on host. | `config` `server` `register` `login` `wake` `send` `daemon` |
 
 > 🛑 `tools voice-memos` no longer exists as its own tool. Voice Memos moved under the macOS
 > umbrella: use `tools macos voice-memos`.
@@ -419,37 +420,37 @@ onto the merged base first, then optionally deletes the head branch.
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `port` | Inspect, list, watch, and clean the processes owning local ports, with interactive kill. | `ps` `clean` `watch` |
-| `tmux` | Inspect, create, reset, attach, and snapshot tmux sessions. | `attach` `create` `sessions` `session` `presets` |
-| `cmux` | Save, inspect, and restore cmux workspace profiles. | `profiles` `send-self` |
+| [`port`](src/port/README.md) | Inspect, list, watch, and clean the processes owning local ports, with interactive kill. | `ps` `clean` `watch` |
+| [`tmux`](src/tmux/README.md) | Inspect, create, reset, attach, and snapshot tmux sessions. | `attach` `create` `sessions` `session` `presets` |
+| [`cmux`](src/cmux/README.md) | Save, inspect, and restore cmux workspace profiles. | `profiles` `send-self` |
 
 ### Scheduling, automation, notifications
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `automate` | Chain any `tools` commands into named, reusable presets, with variables, conditions, branching, and SQLite run history. | `preset` `step` `task` `daemon` `configure` |
-| `daemon` | General-purpose background task scheduler that owns the scheduled work, with an installable service unit. | `start` `stop` `restart` `status` `install` `uninstall` `config` `logs` |
-| `notify` | Send macOS notifications through `terminal-notifier`, with action hooks and an interactive config. | `config` |
-| `telegram` | Telegram MTProto user-account client: listen for messages, auto-respond, browse contacts and history, TUI watcher. | `configure` `listen` `contacts` `history` `watch` |
-| `telegram-bot` | Telegram Bot API client for notifications and remote control. Simpler auth than the user client. | `configure` `send` `start` |
+| [`automate`](src/automate/README.md) | Chain any `tools` commands into named, reusable presets, with variables, conditions, branching, and SQLite run history. | `preset` `step` `task` `daemon` `configure` |
+| [`daemon`](src/daemon/README.md) | General-purpose background task scheduler that owns the scheduled work, with an installable service unit. | `start` `stop` `restart` `status` `install` `uninstall` `config` `logs` |
+| [`notify`](src/notify/README.md) | Send macOS notifications through `terminal-notifier`, with action hooks and an interactive config. | `config` |
+| [`telegram`](src/telegram/README.md) | Telegram MTProto user-account client: listen for messages, auto-respond, browse contacts and history, TUI watcher. | `configure` `listen` `contacts` `history` `watch` |
+| [`telegram-bot`](src/telegram-bot/README.md) | Telegram Bot API client for notifications and remote control. Simpler auth than the user client. | `configure` `send` `start` |
 
 ### Shell and small utilities
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| `tools` | The interactive browser itself: fuzzy search every tool, read its README, list subcommands, copy the command. | (interactive) |
-| `zsh` | Shell enhancement manager: installs one hook line into your rc files, with toggleable feature modules. | `install` `uninstall` `enable` `disable` `list` `hook` |
-| `aliases` | Mine shell history for the command chains and single commands you actually repeat, and propose aliases. | `analyze` `apply` `decay` `status` `reset` |
-| `config` | Manage GenesisTools configuration. | `packages` |
-| `update` | Update GenesisTools: git pull, `bun install` with a clean retry, optional plugin refresh. | (single command) |
-| `benchmark` | Save command recipes and run them through hyperfine, keeping per-run history so you can see timings drift. | `add` `remove` `list` `show` `edit` `history` |
-| `markdown-cli` | Render Markdown to good-looking terminal output, with watch mode and themes. | flags only (`--watch`, `--no-color`) |
-| `hash` | Compute and verify file checksums (md5, sha1, sha256, sha512, blake3), coreutils-compatible. | flags only |
-| `jwt` | Decode and inspect a JWT offline, humanizing `exp` / `iat` / `nbf` into local and relative time. It does not verify signatures. | flags only |
-| `qr` | Render QR codes in the terminal for a URL, arbitrary text, or a WiFi network. | `wifi` |
-| `tz` | Convert a time across timezones from natural language, for example `tz '3pm PST in Prague'`. | flags only |
-| `envdiff` | Diff `.env` against `.env.example`: missing, extra, and changed keys with masked values, plus `--sync` to scaffold. | flags only |
-| `secrets` | Scan for hardcoded API keys, tokens, and private keys. | `scan` |
+| [`tools`](src/tools/README.md) | The interactive browser itself: fuzzy search every tool, read its README, list subcommands, copy the command. | (interactive) |
+| [`zsh`](src/zsh/README.md) | Shell enhancement manager: installs one hook line into your rc files, with toggleable feature modules. | `install` `uninstall` `enable` `disable` `list` `hook` |
+| [`aliases`](src/aliases/README.md) | Mine shell history for the command chains and single commands you actually repeat, and propose aliases. | `analyze` `apply` `decay` `status` `reset` |
+| [`config`](src/config/README.md) | Manage GenesisTools configuration. | `packages` |
+| [`update`](src/update/README.md) | Update GenesisTools: git pull, `bun install` with a clean retry, optional plugin refresh. | (single command) |
+| [`benchmark`](src/benchmark/README.md) | Save command recipes and run them through hyperfine, keeping per-run history so you can see timings drift. | `add` `remove` `list` `show` `edit` `history` |
+| [`markdown-cli`](src/markdown-cli/README.md) | Render Markdown to good-looking terminal output, with watch mode and themes. | flags only (`--watch`, `--no-color`) |
+| [`hash`](src/hash/README.md) | Compute and verify file checksums (md5, sha1, sha256, sha512, blake3), coreutils-compatible. | flags only |
+| [`jwt`](src/jwt/README.md) | Decode and inspect a JWT offline, humanizing `exp` / `iat` / `nbf` into local and relative time. It does not verify signatures. | flags only |
+| [`qr`](src/qr/README.md) | Render QR codes in the terminal for a URL, arbitrary text, or a WiFi network. | `wifi` |
+| [`tz`](src/tz/README.md) | Convert a time across timezones from natural language, for example `tz '3pm PST in Prague'`. | flags only |
+| [`envdiff`](src/envdiff/README.md) | Diff `.env` against `.env.example`: missing, extra, and changed keys with masked values, plus `--sync` to scaffold. | flags only |
+| [`secrets`](src/secrets/README.md) | Scan for hardcoded API keys, tokens, and private keys. | `scan` |
 
 ### Not user-facing
 

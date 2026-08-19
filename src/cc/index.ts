@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { resolve } from "node:path";
+import { out } from "@genesiscz/utils/logger";
 
 const SUBCOMMANDS = new Set([
     "tail",
@@ -31,6 +32,16 @@ const SMART_ALIASES = new Set(["opus", "fable"]);
 const claude = resolve(import.meta.dir, "../claude/index.ts");
 const args = process.argv.slice(2);
 const firstArg = args[0]?.toLowerCase();
+
+/**
+ * `cc` has no commander program, so it never gets runTool's `--readme`. Serve
+ * this tool's own README instead of forwarding the flag to `claude resume`,
+ * which would reject it as an unknown option.
+ */
+if (firstArg === "--readme") {
+    out.print(await Bun.file(resolve(import.meta.dir, "README.md")).text());
+    process.exit(0);
+}
 
 const cmd = SUBCOMMANDS.has(firstArg ?? "")
     ? ["bun", "run", claude, ...args]
