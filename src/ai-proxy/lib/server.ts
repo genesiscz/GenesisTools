@@ -8,7 +8,7 @@ import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
-import { findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
+import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
@@ -335,13 +335,20 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
                     const { route, provider } = routed;
 
+                    // Stamped on the Anthropic body: normalizeAnthropicToOpenAI drops only
+                    // metadata/anthropic_version/top_k/thinking, so reasoning_effort rides
+                    // through to the OpenAI body the provider forwards. Without this, an
+                    // id like martin/grok/grok-4.6:xhigh would honour its effort suffix on
+                    // /v1/chat/completions but silently ignore it for Claude Code.
+                    const routedBody = applyReasoningEffortToBody(bodyText, route.reasoningEffort);
+
                     const { response, responseBody, timeline, openAiBodyText } = await anthropicMessagesPipeline({
                         startedAt: requestStarted,
                         provider,
                         upstreamModel: route.upstreamId,
                         proxyModel: model,
                         req,
-                        bodyText,
+                        bodyText: routedBody,
                     });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -431,6 +438,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     }
 
                     const { route, provider } = routed;
+                    const routedBody = applyReasoningEffortToBody(bodyText, route.reasoningEffort);
 
                     if (path === "/v1/responses") {
                         const { response, responseBody, timeline, captureFailure } = await identityPipeline({
@@ -439,7 +447,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             upstreamModel: route.upstreamId,
                             path: "responses",
                             req,
-                            bodyText,
+                            bodyText: routedBody,
                         });
                         const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -451,7 +459,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             path,
                             status: response.status,
                             elapsedMs,
-                            bodyText,
+                            bodyText: routedBody,
                             responseBody,
                             timeline,
                             captureFailure,
@@ -496,7 +504,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         upstreamModel: route.upstreamId,
                         proxyModel: model,
                         req,
-                        bodyText,
+                        bodyText: routedBody,
                     });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -508,7 +516,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         path,
                         status: response.status,
                         elapsedMs,
-                        bodyText,
+                        bodyText: routedBody,
                         responseBody,
                         timeline,
                         captureFailure,

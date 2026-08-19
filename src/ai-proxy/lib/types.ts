@@ -258,11 +258,15 @@ export interface AiProxyConfig {
     accounts: AiProxyAccountConfig[];
 }
 
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "minimal" | "max";
+
 export interface ResolvedRoute {
     accountName: string;
     providerSlug: string;
     upstreamId: string;
     account: AiProxyAccountConfig;
+    /** Set when the proxy model id ends with `:<effort>` (e.g. grok-4.6:xhigh). */
+    reasoningEffort?: ReasoningEffort;
 }
 
 export interface ProxyModelMeta {

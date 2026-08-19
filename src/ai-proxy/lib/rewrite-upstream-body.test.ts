@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+    applyReasoningEffortToBody,
     findInvalidImageDataPayload,
     GROK_IMAGE_FALLBACK_MODEL,
     grokModelSupportsImages,
@@ -301,6 +302,40 @@ describe("rewrite-upstream-body", () => {
         expect(parsed.model).toBe("grok-build");
         expect(rewritten.imageRouted).toBe(false);
         expect(parsed.messages[0]?.content?.[0]?.type).toBe("image_url");
+    });
+});
+
+describe("applyReasoningEffortToBody", () => {
+    it("stamps reasoning_effort when absent", () => {
+        const next = applyReasoningEffortToBody(SafeJSON.stringify({ model: "grok-4.6", messages: [] }), "xhigh");
+        const parsed = SafeJSON.parse(next) as { reasoning_effort?: string };
+
+        expect(parsed.reasoning_effort).toBe("xhigh");
+    });
+
+    it("does not overwrite an explicit reasoning_effort", () => {
+        const next = applyReasoningEffortToBody(
+            SafeJSON.stringify({ model: "grok-4.6", reasoning_effort: "low" }),
+            "xhigh"
+        );
+        const parsed = SafeJSON.parse(next) as { reasoning_effort?: string };
+
+        expect(parsed.reasoning_effort).toBe("low");
+    });
+
+    it("fills reasoning.effort when that object already exists", () => {
+        const next = applyReasoningEffortToBody(
+            SafeJSON.stringify({ model: "grok-4.6", reasoning: { generate_summary: true } }),
+            "xhigh"
+        );
+        const parsed = SafeJSON.parse(next) as {
+            reasoning_effort?: string;
+            reasoning?: { effort?: string; generate_summary?: boolean };
+        };
+
+        expect(parsed.reasoning_effort).toBe("xhigh");
+        expect(parsed.reasoning?.effort).toBe("xhigh");
+        expect(parsed.reasoning?.generate_summary).toBe(true);
     });
 });
 

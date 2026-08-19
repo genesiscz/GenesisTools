@@ -731,6 +731,43 @@ export function prepareGrokUpstreamBody(
     }
 }
 
+/**
+ * Stamp `reasoning_effort` (and `reasoning.effort` when that object exists)
+ * from a `:<effort>` model-id suffix. An explicit body field wins.
+ */
+export function applyReasoningEffortToBody(bodyText: string, effort?: string): string {
+    if (!effort) {
+        return bodyText;
+    }
+
+    try {
+        const parsed = SafeJSON.parse(bodyText, { strict: true });
+
+        if (!isObject(parsed)) {
+            return bodyText;
+        }
+
+        const next: JsonObject = { ...parsed };
+        let changed = false;
+
+        if (typeof next.reasoning_effort !== "string" || !next.reasoning_effort.trim()) {
+            next.reasoning_effort = effort;
+            changed = true;
+        }
+
+        if (isObject(next.reasoning)) {
+            if (typeof next.reasoning.effort !== "string" || !next.reasoning.effort.trim()) {
+                next.reasoning = { ...next.reasoning, effort };
+                changed = true;
+            }
+        }
+
+        return changed ? SafeJSON.stringify(next) : bodyText;
+    } catch {
+        return bodyText;
+    }
+}
+
 export function rewriteBodyModel(bodyText: string, upstreamModel: string): string {
     try {
         const parsed = SafeJSON.parse(bodyText, { strict: true });
