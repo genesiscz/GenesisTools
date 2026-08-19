@@ -3,7 +3,20 @@ import * as controls from "@genesiscz/utils/cmux/lib/controls";
 import { attachTmuxToCmux } from "@genesiscz/utils/cmux/send-tmux";
 import * as workspace from "@genesiscz/utils/cmux/workspace";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
-import { setTmuxSpawnSyncForTests } from "@genesiscz/utils/tmux/sessions";
+import { formatWithRecordSeparator, setTmuxSpawnSyncForTests } from "@genesiscz/utils/tmux/sessions";
+
+/**
+ * One `list-sessions` record as tmux really emits it.
+ *
+ * Built with the production formatter on purpose. This mock used to hand-write tab-separated
+ * fields, so when `listTmuxSessions` moved to RS/US control bytes the fake output stopped
+ * parsing: the whole line became the session name, `sessionExists` answered false, and the
+ * test failed on a session it had just declared. Sharing the formatter makes that drift
+ * impossible to reintroduce.
+ */
+function listSessionsStdout(fields: string[]): string {
+    return `${formatWithRecordSeparator(fields)}\n`;
+}
 
 describe("attachTmuxToCmux", () => {
     afterEach(() => {
@@ -16,7 +29,7 @@ describe("attachTmuxToCmux", () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
             if (cmd.includes("list-sessions")) {
-                return { exitCode: 0, stdout: "my-session\t1\t1\n" };
+                return { exitCode: 0, stdout: listSessionsStdout(["my-session", "1", "1"]) };
             }
 
             return { exitCode: 0, stdout: "" };
