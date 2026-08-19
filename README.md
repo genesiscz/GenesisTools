@@ -5,13 +5,13 @@
   <a href="https://deepwiki.com/genesiscz/GenesisTools"><img src="https://img.shields.io/badge/DeepWiki-AI_Docs-blue?style=for-the-badge&logo=readthedocs&logoColor=white" alt="DeepWiki" /></a>
   <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Bun-000000?style=for-the-badge&logo=bun&logoColor=white" alt="Bun" />
-  <img src="https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge" alt="MIT License" />
-  
-  <h3>✨ A powerful collection of development utilities for the modern developer ✨</h3>
-  
+
+  <h3>One <code>tools</code> command, 97 self-contained CLIs.</h3>
+
   <p>
-    <strong>Simplify your workflow with tools for Git operations, AI file analysis, release notes generation, and more!</strong>
+    <strong>A personal-scale toolkit for AI-assisted development: LLM plumbing, agent orchestration,
+    git surgery, MCP server management, macOS automation, and time tracking.</strong>
   </p>
 
 </div>
@@ -20,368 +20,46 @@
 
 ## 📚 Table of Contents
 
--   [🎯 Claude Code Plugin](#-claude-code-plugin)
-    -   [Commands](#commands) — `setup`, `github-pr`, `claude-history`, `question`
-    -   [Skills](#skills) — `github`, `azure-devops`, `timelog`, `analyze-har`, and 10 more
+-   [What this is](#what-this-is)
 -   [🚀 Quick Start](#-quick-start)
--   [🛠️ Available Tools](#️-available-tools)
-    -   [🔍 Git & Version Control](#-git--version-control)
-    -   [🤖 AI & Analysis](#-ai--analysis)
-    -   [📊 Monitoring & Watching](#-monitoring--watching)
-    -   [🍎 macOS & System](#-macos--system)
-    -   [⚡ Productivity & Automation](#-productivity--automation)
-    -   [🛠️ Shell & Infrastructure](#️-shell--infrastructure)
-    -   [📦 Package Management](#-package-management)
--   [💡 Tool Details](#-tool-details)
+-   [🧭 How the CLI works](#-how-the-cli-works)
+-   [🎯 Claude Code plugin](#-claude-code-plugin)
+    -   [Commands](#commands-4)
+    -   [Skills](#skills-24)
+    -   [Agents and hooks](#agents-and-hooks)
+    -   [The genesis-tools MCP server](#the-genesis-tools-mcp-server)
+    -   [Second plugin: genesis-tools-server](#second-plugin-genesis-tools-server)
+-   [🛠️ Tool catalogue](#️-tool-catalogue)
+    -   [AI and LLM](#ai-and-llm)
+    -   [Agents and AI coding sessions](#agents-and-ai-coding-sessions)
+    -   [Git and code history](#git-and-code-history)
+    -   [GitHub and CI](#github-and-ci)
+    -   [MCP servers and tooling](#mcp-servers-and-tooling)
+    -   [Frontend and web debugging](#frontend-and-web-debugging)
+    -   [Work tracking and time](#work-tracking-and-time)
+    -   [Web dashboards and data](#web-dashboards-and-data)
+    -   [macOS and system](#macos-and-system)
+    -   [Processes and terminals](#processes-and-terminals)
+    -   [Scheduling, automation, notifications](#scheduling-automation-notifications)
+    -   [Shell and small utilities](#shell-and-small-utilities)
+    -   [Not user-facing](#not-user-facing)
+-   [💡 Flagship tools in detail](#-flagship-tools-in-detail)
+-   [🗂️ Where things are stored](#️-where-things-are-stored)
+-   [🌐 Web servers and ports](#-web-servers-and-ports)
+-   [🧪 Development](#-development)
 
 ---
 
-## 🎯 Claude Code Plugin
-
-GenesisTools includes a Claude Code plugin with **5 commands** and **14 skills** to enhance your AI-assisted development workflow. Commands are invoked explicitly with `/gt:<name>`. Skills activate automatically when you mention relevant topics.
-
-### Installation for Claude Code
-
-```bash
-# Add this repository as a marketplace in your Claude Code settings
-# The marketplace file is at: .claude-plugin/marketplace.json
-```
-
-### Commands
-
-Commands are invoked manually with `/gt:<name>`:
-
-```bash
-/gt:setup                                        # Install GenesisTools globally
-/gt:github-pr 42 -u                              # Fix unresolved PR review comments
-/gt:github-pr https://github.com/org/repo/pull/42 --open
-/gt:claude-history "refactored auth" --summary-only
-/gt:question "how does the caching layer work?"
-```
-
-| Command | Description |
-|---------|-------------|
-| [`gt:setup`](#gtsetup) | Interactive setup guide for installing GenesisTools globally |
-| [`gt:github-pr`](#gtgithub-pr) | Fetch PR review comments, triage with AI, implement fixes, commit, reply |
-| [`gt:automate`](#gtautomate) | Build or run multi-step `tools` CLI automation presets |
-| [`gt:timelog`](#gttimelog) | Sync Timely → Azure DevOps timelogs and fill Clarity PPM timesheets |
-| [`gt:claude-history`](#gtclaude-history-command) | Search conversation history by keywords, files, commits, or time range |
-| [`gt:question`](#gtquestion) | Answer a question and preserve the Q→A to the local question store for later review |
-
-### Skills
-
-Skills activate automatically when you mention relevant topics in conversation:
-
-| Skill | Triggers On | What It Does |
-|-------|------------|--------------|
-| [`gt:github`](#gtgithub) | GitHub URLs, "get PR", "search issues", "CI billing" | Read/search GitHub issues, PRs, code, notifications, Actions costs |
-| [`gt:azure-devops`](#gtazure-devops) | "get workitem", "show query", Azure DevOps URLs | Fetch work items, run queries, create items. Defers time-logging to `/gt:timelog`. |
-| [`gt:claude-history`](#gtclaude-history-skill) | "we discussed", "find conversation", "search history" | Search past Claude Code conversations by topic, file, or tool |
-| [`gt:summarize`](#gtsummarize) | "summarize session", "extract learnings", "postmortem" | Summarize Claude Code sessions into docs, changelogs, or memory |
-| [`gt:analyze-har`](#gtanalyze-har) | "analyze HAR", `.har` file paths, "debug network" | Token-efficient HAR analysis with progressive detail levels |
-| [`gt:react-compiler-debug`](#gtreact-compiler-debug) | "react compiler", "why isn't this memoized" | Inspect React Compiler output, debug bail-outs |
-| [`gt:typescript-error-fixer`](#gttypescript-error-fixer) | "fix type errors", "eliminate any types" | Systematic 4-phase TS error fixing with zero `any` tolerance |
-| [`gt:git-rebaser`](#gtgit-rebaser) | "rebase branches", "cascade rebase", "update child branches" | Guided rebase cascade for branch hierarchies with `--onto` |
-| [`gt:living-docs`](#gtliving-docs) | "bootstrap docs", "validate documentation", "audit docs" | Self-maintaining documentation system with context rules |
-| [`debugging-master`](#debugging-master) | "debug runtime", "why is this slow", "add logging" | Hypothesis-driven runtime debugging with instrumentation toolkit |
-
----
-
-### Command Details
-
-#### `gt:setup`
-
-Interactive setup guide that walks through cloning GenesisTools, installing dependencies, and configuring the global `tools` command.
-
-```bash
-/gt:setup
-```
-
-Checks prerequisites (Bun), asks where to clone, runs `install.sh`, and verifies the installation.
-
-#### `gt:github-pr`
-
-End-to-end PR review fix workflow using `--llm` session mode for efficient thread management.
-
-```bash
-/gt:github-pr 42              # All threads on PR #42
-/gt:github-pr 42 -u           # Only unresolved threads
-/gt:github-pr 42 --open       # Also open review in Cursor
-/gt:github-pr 42 --open-only  # Open in Cursor, wait for input
-```
-
-**What it does:** Fetches review threads → spawns Explore agents to verify each claim against actual source code → assigns verdicts (`VALID`, `FALSE_POSITIVE`, `BY_DESIGN`, `ALREADY_FIXED`) → presents analysis report → asks which to fix → implements fixes → commits → replies to threads on GitHub.
-
-Also supports **multi-PR analysis** — provide multiple URLs and it spawns parallel agents, writes per-PR plans, and presents a consolidated report.
-
-#### `gt:automate`
-
-Build or run multi-step `tools` CLI automation presets. Converted from an auto-triggering skill to an explicit command — invoke it when you actually want to create or run a preset, so its guidance doesn't load into every session.
-
-```bash
-/gt:automate run monthly-invoice-search --var startDate=2026-02-01
-/gt:automate list
-/gt:automate create     # Interactive builder
-```
-
-Chains any `tools` commands with variables, conditions (`if`), branching, and built-in actions (`log`, `prompt`, `shell`, `set`). Supports `{{ vars.x }}`, `{{ steps.id.output }}`, `{{ env.HOME }}` expressions. Error strategies: stop / continue / skip.
-
-#### `gt:timelog`
-
-Sync Timely auto-tracking → Azure DevOps time logs → Clarity PPM timesheets. Command-only (no auto-triggering) so its large workflow guidance doesn't preload every session — `gt:azure-devops` defers to `/gt:timelog` when the user wants to log time.
-
-```bash
-/gt:timelog 2026-03-20
-/gt:timelog --from 2026-03-18 --to 2026-03-20
-```
-
-Analyzes Timely events, linked/unlinked memories, and git commits to propose entries; maps activities to work items via commit messages, branch names, and fixed mappings; supports the prepare-import staging workflow for multi-day batch syncing; bridges ADO → Clarity with `tools clarity fill`; generates monthly reports in `.claude/timelog/`.
-
-#### `gt:claude-history` (command)
-
-Search Claude Code conversation history from the command line.
-
-```bash
-/gt:claude-history "refactored auth" --summary-only
-/gt:claude-history --file "config.ts" --since "7 days ago"
-/gt:claude-history --commit "27a6fa9"
-```
-
-Supports keyword search, file-based search, commit-based search, tool filtering, regex, and relevance ranking.
-
-#### `gt:question`
-
-Answer a question, then preserve the Q→A to the local question store so it can be reviewed later (`tools question log` / `tools question tail`). Also fires automatically right after you answer an important question interjected mid-session.
-
-```bash
-/gt:question "how does the caching layer work?"
-/gt:question "what's the difference between timelog add and prepare-import?"
-```
-
-Captured via the `question_answer` MCP tool, falling back to the `tools question record` CLI.
-
-#### genesis-tools MCP server (`tools claude mcp`)
-
-The plugin's own MCP server (stdio) exposes two capabilities: `question_answer` (the Q&A capture tool above) and `boards` (dev-dashboard annotation boards — `boards_list_boards`, `boards_wait_for_work`, `boards_compose_board`, etc.). Both are enabled by default. To restrict which capabilities are registered, set `GENESIS_TOOLS_MCP_CAPABILITIES` to a comma-delimited list of capability names in the server's environment (e.g. in `~/.claude.json`'s `mcpServers.genesis-tools.env`):
-
-```bash
-GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,boards   # both (default when unset)
-GENESIS_TOOLS_MCP_CAPABILITIES=question_answer          # only the Q&A tool
-GENESIS_TOOLS_MCP_CAPABILITIES=boards                   # only boards tools
-```
-
----
-
-### Skill Details
-
-#### `gt:github`
-
-Search, fetch, and analyze GitHub issues, PRs, code, notifications, and CI costs.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- **Issues/PRs**: Fetch with comments, filter by reactions/author/date, exclude bots
-- **Search**: Issues, PRs, repositories, and code with advanced filtering
-- **PR reviews**: Threaded review comments with severity detection, reply and resolve
-- **Notifications**: Filter by reason/type/repo, mark read/done, open in browser
-- **Activity feed**: Your or others' recent GitHub activity
-- **File content**: Fetch raw files from any GitHub URL with line ranges
-- **GitHub Actions**: Workflow run history, CI cost breakdown, billing analysis, cancel/rerun
-
-```bash
-tools github issue https://github.com/org/repo/issues/123 --last 10
-tools github search "memory leak" --repo org/repo --state open --min-reactions 5
-tools github notifications --reason mention --open
-tools github review 42 --llm -u       # LLM-optimized review thread fetching
-tools github activity --since 7d --type Push,PullRequest
-tools github get https://github.com/org/repo/blob/main/src/index.ts --lines 10-50
-```
-
-</details>
-
-#### `gt:azure-devops`
-
-Fetch, manage, and analyze Azure DevOps work items, queries, dashboards, and time logs.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- **Work items**: Fetch by ID, query by name/ID/URL, download with attachments and inline images
-- **Queries**: Fuzzy name matching, state/severity filtering, batch download
-- **Analysis**: Spawn Explore agents per work item, produce `.analysis.md` reports
-- **History**: Track who changed what, time-in-state calculations, WIQL search, bulk sync
-- **Work item creation**: Interactive, from template, from query patterns, or quick CLI mode
-- **Time logging**: Add entries, prepare-import staging, bulk import with validation
-
-```bash
-tools azure-devops workitem 261575 --task-folders --images
-tools azure-devops query "Open Bugs" --download-workitems --category react19
-tools azure-devops history show 261575 --assigned-to "Martin"
-tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-```
-
-</details>
-
-#### `gt:claude-history` (skill)
-
-Find or reference past Claude Code conversations by topic, file, date, tool, or vague recollection.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- Keyword search with fuzzy or exact matching, regex support
-- Filter by file modified, tool used, project, date range
-- Summarize sessions in 7 modes: documentation, changelog, debug-postmortem, onboarding, learnings, memorization, short-memory
-- Web-based dashboard for visual exploration
-
-```bash
-tools claude history "backup mcp-manager refactor"
-tools claude history --file "config.ts" --tool Edit --since "7 days ago"
-tools claude history summarize --current --mode debug-postmortem
-tools claude history dashboard
-```
-
-</details>
-
-#### `gt:summarize`
-
-Summarize Claude Code sessions using LLM-powered templates with 7 output modes.
-
-<details>
-<summary><b>Modes</b></summary>
-
-| Mode | Output |
-|------|--------|
-| `documentation` | Full technical doc with problem, changes, patterns, lessons |
-| `changelog` | Added/Changed/Fixed/Removed with file paths |
-| `debug-postmortem` | Symptoms → investigation → dead ends → root cause → fix |
-| `onboarding` | Architecture overview for new developers |
-| `learnings` | Benchmarks tables, key findings, actionable items |
-| `memorization` | Knowledge entries organized by topic tags |
-| `short-memory` | Concise 500-2000 char bullets for MEMORY.md |
-
-Supports `--thorough` chunked processing for large sessions, `--priority` modes for smart truncation, and multiple output destinations (file, clipboard, Apple Notes).
-
-</details>
-
-#### `gt:analyze-har`
-
-Token-efficient HAR (HTTP Archive) analysis with a progressive reference system.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- **Never read HAR files directly** — always use `tools har-analyzer` (10-100x more token-efficient)
-- Reference system: large data gets ref IDs, subsequent views show previews
-- Progressive detail: dashboard → list → domain drill-down → entry detail → full body
-- Security scan: find JWT tokens, API keys, insecure cookies
-- ASCII waterfall timing charts, redirect chain tracking, entry diffing
-
-```bash
-tools har-analyzer load capture.har        # Parse + dashboard
-tools har-analyzer errors                  # All 4xx/5xx with body previews
-tools har-analyzer domain api.example.com  # Drill into specific API
-tools har-analyzer show e14 --raw          # Full entry detail
-tools har-analyzer security                # Find sensitive data
-```
-
-</details>
-
-#### `gt:react-compiler-debug`
-
-Inspect what `babel-plugin-react-compiler` generates from React components.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- Compile files or inline code to see optimized output
-- Understand `useMemoCache`, cache slots, and compiler primitives
-- Diagnose bail-out patterns (mutable refs in render, JSX in try/catch, `for-await`, etc.)
-- Verbose mode shows compiler events
-
-```bash
-tools react-compiler-debug src/Component.tsx --with-original
-tools react-compiler-debug --code "const Foo = ({ x }) => <div>{x}</div>"
-```
-
-</details>
-
-#### `gt:typescript-error-fixer`
-
-Fix all TypeScript compilation errors systematically with zero tolerance for `any` types.
-
-<details>
-<summary><b>Workflow</b></summary>
-
-1. **Discovery** — Run `tsgo --noEmit`, parse all errors, group by file
-2. **Planning** — Analyze dependencies, prioritize type definition files first
-3. **Subagent deployment** — One agent per file, each researches actual types (never guesses)
-4. **Verification** — Re-run compiler, confirm zero new errors
-
-Uses `tools mcp-tsc` for fast per-file checks and LSP hover/goToDefinition for type research.
-
-</details>
-
-#### `gt:git-rebaser`
-
-Guided cascade rebase for branch hierarchies with `git rebase --onto`.
-
-<details>
-<summary><b>Workflow</b></summary>
-
-1. **Gather info** — target branch, parent branch, child branches
-2. **Analyze state** — commit counts, fork points, unique commits per branch
-3. **Rebase parent** — onto target with confirmation, or find pre-rebase ref via reflog/cherry/manual
-4. **Cascade children** — `git rebase --onto <parent> $OLD_PARENT <child>` for each, with commit reporting
-5. **Final report** — tree visualization of the new branch hierarchy
-
-Every destructive step requires explicit user confirmation. Stops on conflicts with guidance.
-
-</details>
-
-#### `gt:living-docs`
-
-Self-maintaining documentation system. Bootstraps, validates, refines, and optimizes codebase documentation using context rules.
-
-<details>
-<summary><b>Operating modes</b></summary>
-
-| Mode | What it does |
-|------|-------------|
-| **Bootstrap** | Scan codebase, create doc chunks per functional area, wire CLAUDE.md context rules |
-| **Validate** | Check all file paths, function names, patterns — flag drift |
-| **Update** | After code changes, update only affected doc references |
-| **Refine** | Audit trigger keywords, test activation, optimize for token efficiency |
-| **Migrate** | Convert old trigger formats to context rules |
-
-Philosophy: docs are a search index, not a textbook. Only document what can't be found easily.
-
-</details>
-
-#### `debugging-master`
-
-Hypothesis-driven runtime debugging with a structured instrumentation toolkit. Instrument code → reproduce → analyze real data.
-
-<details>
-<summary><b>Key capabilities</b></summary>
-
-- **Instrumentation API**: `dbg.dump()`, `dbg.timerStart/End()`, `dbg.checkpoint()`, `dbg.snapshot()`, `dbg.assert()`
-- **Progressive detail**: L1 compact timeline → L2 schema view → L3 full data with JMESPath queries
-- **Session management**: Named sessions, hypothesis tagging, session comparison (diff)
-- **Cleanup**: Automated removal of `#region @dbg` blocks, log archiving
-- **Multi-language**: TypeScript and PHP support
-- **HTTP mode**: For browser debugging via fetch-based logging
-
-```bash
-tools debugging-master start --session fix-auth-bug
-tools debugging-master get -l dump,error --last 5
-tools debugging-master expand d2 --query 'data.user.email'
-tools debugging-master diff --session auth-fail --against auth-pass
-tools debugging-master cleanup
-```
-
-</details>
+## What this is
+
+GenesisTools is a TypeScript monorepo that Bun executes directly, with no build step. Every tool
+lives in its own folder under `src/` and runs in its own process. The `tools` executable is the
+only entry point you need.
+
+The catalogue below is taken from what actually exists in this checkout: 100 discoverable
+entries, of which `src/utils` is the shared package barrel (`@genesiscz/utils`, not a runnable
+tool) and `src/Internal` plus `src/t3chat-length` are private. That leaves **97 usable tools**.
+Running `tools` with no arguments prints the same total of discovered entries in its header.
 
 ---
 
@@ -389,1926 +67,900 @@ tools debugging-master cleanup
 
 ### Prerequisites
 
-> 📌 **Important**: BunJS is required as some tools use Bun-specific APIs
+> 📌 **Bun is required.** Many tools use Bun-only APIs (`Bun.spawn`, `Bun.file`, `bun:sqlite`),
+> so Node.js is not a substitute.
 
 ```bash
-# Install Bun if you haven't already
 curl -fsSL https://bun.sh/install | bash
 ```
 
 ### Installation
 
 ```bash
-cd ~
-# Clone and install GenesisTools
 git clone https://github.com/genesiscz/GenesisTools.git
 cd GenesisTools
 
-# Install dependencies and make tools globally available
 bun install && ./install.sh
-
-# Reload your shell configuration
-source ~/.zshrc  # For Zsh users
-source ~/.bashrc # For Bash users
 ```
 
-### 🎯 First Command
+`install.sh` checks for Bun, installs dependencies if `node_modules` is missing, then puts the
+repo on your `PATH`. On macOS and Linux it appends its lines to `~/.zshrc` and `~/.bashrc`. On Windows
+(Git Bash, MSYS, Cygwin) it sets `GENESIS_TOOLS_PATH` and extends the user `PATH` via `setx`
+and PowerShell.
+
+Reload your shell afterwards:
 
 ```bash
-# List all available tools
+source ~/.zshrc    # zsh
+source ~/.bashrc   # bash
+```
+
+### First command
+
+```bash
 tools
+```
 
-# Pick a tool from the interactive list - it auto-copies to clipboard! 📋
+That opens the Tools Browser: a searchable list of every tool, with per-tool actions
+(run, view README, list subcommands, copy the command to the clipboard).
+
+### Staying current
+
+```bash
+tools update       # git pull, bun install with a clean retry, optional plugin refresh
 ```
 
 ---
 
-## 🛠️ Available Tools
+## 🧭 How the CLI works
 
-### 🔍 Git & Version Control
+**Discovery.** `tools` scans `src/` and treats as a tool:
 
-| Tool                                                   | Description                                     |
-| ------------------------------------------------------ | ----------------------------------------------- |
-| **[Git Commit](#11--git-commit)**                      | 🤖 AI-powered commit messages with auto-staging |
-| **[Git Last Commits Diff](#1--git-last-commits-diff)** | 📝 View diffs between recent commits            |
-| **[GitHub Release Notes](#3--github-release-notes)**   | 📋 Generate beautiful release notes             |
-| **[Last Changes](#13--last-changes)**                  | 📅 Show uncommitted changes grouped by time     |
-| **[Git Rename Commits](#18--git-rename-commits)**      | 🔄 Interactively rename commit messages         |
-| **[Git Rebranch](#23--git-rebranch)**                  | ✂️ Split a messy branch into clean branches      |
-| **[Git Rebase Multiple](#21--git-rebase-multiple)**    | 🌳 Safe branch hierarchy rebasing with rollback |
-| **[Git Analysis](#26--git)**                           | 🕵️ Query commits + manage authors/workitem regex |
-| **[GitHub CLI](#52--github)**                          | 🐙 Issues, PRs, reviews, and code search         |
+-   any directory containing `index.ts` or `index.tsx` (tool name is the directory name),
+-   any standalone `.ts` or `.tsx` file directly in `src/` (tool name is the filename).
 
-### 🤖 AI & Analysis
+Nothing is registered by hand, so adding a folder with an `index.ts` adds a tool.
 
-| Tool                                                 | Description                                   |
-| ---------------------------------------------------- | --------------------------------------------- |
-| **[Collect Files for AI](#2--collect-files-for-ai)** | 🤖 Aggregate project files for AI analysis    |
-| **[Files to Prompt](#8--files-to-prompt)**           | 💬 Convert files to AI-friendly prompts       |
-| **[Hold-AI](#10--hold-ai-tool)**                     | ⏸️ Control AI responses via WebSocket         |
-| **[JSON/TOON Converter](#19--jsontoon-converter)**   | 🔄 Convert JSON ↔ TOON for token optimization |
-| **[MCP Ripgrep](#9--mcp-ripgrep)**                   | ⚡ Lightning-fast code search server          |
-| **[MCP Web Reader](#12--mcp-web-reader)**            | 🌐 Fetch raw HTML or Markdown (Jina/local)    |
-| **[MCP TSC](#15--mcp-tsc)**                          | 🔍 TypeScript diagnostics (CLI & MCP)         |
-| **[MCP Manager](#17--mcp-manager)**                  | ⚙️ Cross-platform MCP configuration manager   |
-| **[Azure DevOps](#20--azure-devops)**                | 🔷 Fetch and manage Azure DevOps work items   |
-| **[React Compiler Debug](#22--react-compiler-debug)** | ⚛️ Inspect React Compiler output              |
-| **[HAR Analyzer](#24--har-analyzer)**                 | 🔍 Token-efficient HAR file analysis          |
-| **[JSON Schema](#25--json-schema)**                   | 📐 Infer schemas from JSON data               |
-| **[Ask](#27--ask)**                                   | 💬 Multi-provider LLM chat CLI                |
-| **[Automate](#28--automate)**                         | 🔗 Chain GenesisTools commands into presets  |
-| **[Claude](#29--claude)**                             | 🧠 Claude Code history, resume, desktop sync |
-| **[Cursor](#30--cursor)**                             | ➤ Dispatch a prompt to Cursor Agent CLI       |
-| **[Cursor Context](#31--cursor-context)**             | 🧹 Strip tool inputs/outputs from SpecStory logs |
-| **[Debugging Master](#32--debugging-master)**         | 🩺 LLM debugging instrumentation + log reader |
-| **[Timely](#33--timely)**                             | ⏱️ Timely time-tracking CLI                  |
-| **[Clarity](#34--clarity)**                           | 📆 Fill CA PPM Clarity timesheets from ADO   |
-| **[Transcribe](#35--transcribe)**                     | 🎙️ Multi-provider audio/video transcription  |
-| **[YouTube](#36--youtube)**                           | ▶️ Transcribe YouTube videos                 |
-| **[Jenkins MCP](#37--jenkins-mcp)**                   | 🔧 MCP server for Jenkins builds and queue    |
-| **[MCP Debug](#38--mcp-debug)**                       | 🐛 Debug MCP server env / cwd / PATH issues   |
+**Invocation.**
 
-### 📊 Monitoring & Watching
+```bash
+tools                       # interactive browser
+tools <name> [args...]      # run a tool
+tools <name> --help         # commander help for that tool
+tools <name> --readme       # print the tool's README.md, when it ships one
+tools <name> -v             # promote debug logging to the console
+tools <partial-name>        # fuzzy match, then pick from a shortlist
+```
 
-| Tool                                          | Description                                     |
-| --------------------------------------------- | ----------------------------------------------- |
-| **[macOS ESLogger](#16--macos-eslogger)**     | 🔐 Monitor macOS Endpoint Security events       |
-| **[Watchman](#5--watchman)**                  | 👁️ Monitor file changes with Facebook Watchman  |
-| **[Watch](#6--watch-formerly-watch-glob)**    | 🔄 Real-time file monitoring with glob patterns |
-| **[FSEvents Profile](#14--fsevents-profile)** | 📊 Profile macOS filesystem events              |
-| **[Port](#39--port)**                         | 🔌 Inspect, kill, and watch local port owners   |
-| **[macOS Resources](#40--macos-resources)**   | 📈 Live CPU / RAM / open-files dashboard        |
+Two tools live as loose scripts inside a folder without an `index.ts` and are addressed by
+path instead of by name:
 
-### 🍎 macOS & System
+```bash
+tools hold-ai/server        # WebSocket hold/release server
+tools hold-ai/client        # the client an AI calls to block on your input
+```
 
-| Tool                                    | Description                                      |
-| --------------------------------------- | ------------------------------------------------ |
-| **[macOS Native](#41--macos)**          | 📬 Mail, Calendar, Reminders, Messages CLI        |
-| **[Voice Memos](#42--voice-memos)**     | 🎙️ List, play, export, transcribe Voice Memos   |
-| **[DarwinKit](#43--darwinkit)**         | 🧪 Apple on-device ML primitives from the shell  |
-| **[Say](#47--say)**                     | 🗣️ TTS with per-app mute and volume             |
-| **[Notify](#46--notify)**               | 🔔 Multi-channel notifications (banner/TG/hook)  |
+**Global flags** are added by the shared `runTool` wrapper, so they exist on every commander
+entrypoint: `-v, --verbose`, `--readme`, `-h, --help`. Tools that opt in also accept `--trace`
+(and `-vv` as a shorthand).
 
-### ⚡ Productivity & Automation
+**Output contract.** `out.result()` and `out.print()` are the only writers to stdout, so piping
+a tool's machine-readable output is always safe. Diagnostics, spinners, prompts, and status
+lines go to stderr. Every run also appends structured JSON to a day-stamped log file.
 
-| Tool                                  | Description                                   |
-| ------------------------------------- | --------------------------------------------- |
-| **[Timer](#44--timer)**               | ⏲️ Focus timer with Pomodoro + notifications |
-| **[Todo](#45--todo)**                 | ✅ Task tracking for AI-assisted sessions    |
-| **[Telegram](#48--telegram)**         | 📨 MTProto user-account Telegram client      |
-| **[Telegram Bot](#49--telegram-bot)** | 🤖 Telegram Bot API for notifications         |
-| **[Markdown CLI](#50--markdown-cli)** | 📄 Render markdown in the terminal, with watch |
-| **[Daemon](#51--daemon)**             | 🕑 Background task scheduler                  |
-
-### 🛠️ Shell & Infrastructure
-
-| Tool                                    | Description                                 |
-| --------------------------------------- | ------------------------------------------- |
-| **[Zsh](#53--zsh)**                     | 🐚 Shell hook manager with toggleable features |
-| **[Rohlík Spending](#54--rohlik-spending)** | 🛒 Analyze Rohlík grocery spending         |
-| **[Tools Browser](#55--tools)**         | 🧰 Interactive launcher for every tool      |
-| **[Update](#56--update)**               | 🔄 Update GenesisTools to the latest version |
-| **[Benchmark](#57--benchmark)**         | 📐 Save and compare timed command recipes   |
-| **[Usage](#58--usage)**                 | 💵 Token & cost analytics for `ask`         |
-
-### 📦 Package Management
-
-| Tool                                         | Description                              |
-| -------------------------------------------- | ---------------------------------------- |
-| **[NPM Package Diff](#7--npm-package-diff)** | 🎨 Beautiful package version comparisons |
+**Recovery.** If a tool dies with a module-resolution error (a stale or partial
+`node_modules`), the wrapper recognises the error shape and offers to run `bun install` for
+you. Set `TOOLS_SKIP_AUTOINSTALL=1` to suppress that.
 
 ---
 
-## 💡 Tool Details
+## 🎯 Claude Code plugin
 
-### 1. 📝 Git Last Commits Diff
+The repo ships two Claude Code plugins through the marketplace file at
+`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (currently version 1.0.43),
+contains **4 commands**, **24 skills**, **2 subagents**, **4 hook registrations**, and a stdio
+**MCP server**.
 
-> Display beautiful diffs between recent commits or working changes - perfect for AI input!
+Commands are invoked explicitly as `/gt:<name>`, which comes from each command file's own
+`name:` frontmatter. Skills load themselves when the conversation matches their trigger
+description, and they resolve by plugin and directory (`genesis-tools:<skill>`), so the `gt:`
+prefix that 14 of the 24 skill files still carry in their frontmatter has no effect on how they
+are addressed.
 
-<details>
-<summary><b>🎯 Quick Example</b></summary>
+### Installation for Claude Code
 
-```bash
-# Diff last 2 commits
-tools git-last-commits-diff /path/to/repo --commits 2
+Add this repository as a plugin marketplace, then install the plugin:
 
-# Interactive commit selection
-tools git-last-commits-diff /path/to/repo
-
-# Copy diff to clipboard
-tools git-last-commits-diff . --commits 3 --clipboard
+```
+/plugin marketplace add genesiscz/GenesisTools
+/plugin install genesis-tools
 ```
 
-</details>
+Because the plugin is installed from the GitHub remote, local edits to `plugins/` only take
+effect after you push and run `/plugin update`.
 
-<details>
-<summary><b>⚙️ Options</b></summary>
+### Commands (4)
 
-| Option             | Description                          |
-| ------------------ | ------------------------------------ |
-| `<directory>`      | 📁 Path to Git repository (required) |
-| `--commits, -c`    | 🔢 Number of recent commits to diff  |
-| `--output, -o`     | 💾 Save diff to file                 |
-| `--clipboard, -cl` | 📋 Copy diff to clipboard            |
-| `--help, -h`       | ❓ Show help message                 |
+| Command | Argument hint | What it does |
+|---------|---------------|--------------|
+| `/gt:setup` | `[optional: setup details]` | Install GenesisTools so `tools` works globally. Checks Bun, asks where to clone, runs `install.sh`, verifies. |
+| `/gt:github-pr` | `<pr-number-or-url> [-u] [-w] [--save] [--open] [--open-only]` | Fix PR review comments: fetch threads, verify each claim against the source, pick which to fix, implement, commit, reply. |
+| `/gt:automate` | `[run\|list\|show\|create] [name-or-args]` | Build or run multi-step `tools` CLI automation presets. |
+| `/gt:timelog` | `[date or range]` | Sync Timely to Azure DevOps time logs, then fill Clarity PPM timesheets. |
 
-</details>
+`/gt:github-pr` also handles multiple PRs in one invocation: pass several URLs and it works
+them in parallel, writes a per-PR plan, and presents one consolidated report.
+
+`/gt:automate` and `/gt:timelog` are deliberately commands rather than skills. Their guidance
+is large, and as skills they would load into sessions that never needed them.
+
+### Skills (24)
+
+| Skill | What it does |
+|-------|--------------|
+| `agents-talk` | Cross-agent messaging protocol via `tools agents`. Invoke before spawning subagents that must talk to each other. |
+| `analyze-har` | Token-efficient HAR analysis. The rule it enforces: never `cat` or `jq` a HAR file. |
+| `azure-devops` | Work items, queries, dashboards. Defers time logging to `/gt:timelog`. |
+| `claude-history` | Find a past Claude Code conversation by topic, file, or date. |
+| `debugging-master` | Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation (Node/TS, PHP, browser). |
+| `git-rebaser` | Cascade rebase for a parent branch plus the children stacked on it, using `git rebase --onto`. |
+| `github` | Read or search GitHub, and analyze GitHub Actions runs, failures, and billing. |
+| `handoff-to` | Offload work to another model or agent and pick which one (Codex/GPT, sonnet, opus, fable). |
+| `handoff-to-codex` | Hand a review or implementation to Codex and drive the session: spawn, steer, approve, verify. |
+| `improve-agents-md` | Empirically evaluate and trim `CLAUDE.md` / `AGENTS.md` by testing which rules a clean model already follows. |
+| `living-docs` | Self-maintaining docs system: bootstrap, validate, refine minimal doc chunks. |
+| `macos-control` | Drive native macOS apps through the Accessibility API, and record short screen captures reviewed frame by frame. |
+| `mcp-scripting` | Call MCP tools from a plain TypeScript script via `tools scripts`, with types generated from each server's live `tools/list`. |
+| `plan-it` | Write implementation plans hardened with an executor-proof contract, so a weaker model can execute them. |
+| `question` | Answer a question, then preserve the question and answer for later review. |
+| `react-compiler-debug` | Inspect `babel-plugin-react-compiler` output and explain memoization decisions. |
+| `research` | Answer questions that need information from outside the local codebase. |
+| `stash` | Save, apply, and unapply named code overlays across projects with `tools stash`. |
+| `summarize` | Summarize a Claude Code session into learnings, a postmortem, a changelog, or onboarding docs. |
+| `task` | Run long-lived interactive commands (dev servers, Metro, Vite) with PTY capture and an agent-friendly log tail. |
+| `timely` | Turn a day of Timely auto-tracked memories into time-log entries via a plan/apply workflow. |
+| `todo` | Task tracking for the current session through `tools todo`. |
+| `typescript-error-fixer` | Fix TypeScript compile errors and eliminate `any`, one agent per file. |
+| `wrap-up` | Write the state doc that lets a fresh agent resume cold: an Obsidian wrap-up or a repo handoff. |
+
+### Agents and hooks
+
+Two subagents ship with the plugin:
+
+-   **`agent-driver`** drives one external worker session end to end (spawn, watch, steer,
+    resolve approvals, verify, tear down) so the worker's event stream stays out of the
+    orchestrator's context. One instance per worker session.
+-   **`explore`** does deep codebase exploration and writes a persistent report, so findings
+    survive the subagent exiting.
+
+Four hook registrations in `plugins/genesis-tools/hooks/hooks.json`:
+
+| Event | Script | Purpose |
+|-------|--------|---------|
+| `SessionStart` | `track-session-files.ts` | Start the per-session record of modified files. |
+| `SessionStart` | `agents-talk-hint.ts` | Remind the agent to invoke `agents-talk` before spawning subagents that need to communicate. |
+| `SessionStart` | `record-session-account.ts` | Record which Claude account the session is billing. |
+| `PostToolUse` (`Edit\|Write\|MultiEdit`) | `track-session-files.ts` | Append each edited file to that session's record. |
+
+The session file record lands in
+`~/.genesis-tools/claude-code/sessions/<session-id>.json`, which is what makes
+"commit only the files you touched this session" possible.
+
+### The genesis-tools MCP server
+
+```bash
+tools claude mcp        # stdio MCP server
+```
+
+It registers **27 tools across 4 capability groups**:
+
+| Capability | Tools | Purpose |
+|------------|-------|---------|
+| `question_answer` | `question_answer` | Capture a question and your complete answer to the local question store, reviewable later with `tools question log` / `tools question tail`. |
+| `handoff` | `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action` | Cross-agent task handoff: post a task list, claim it, check items off with proof, finish. |
+| `annotate` | `annotate_image` | Annotate an image (arrows, boxes, labels) for review. |
+| `boards` | 21 `boards_*` tools | Dev-dashboard annotation boards: create and compose boards, push screenshot sets, list and answer work, wait for new annotations. |
+
+All four groups are enabled when `GENESIS_TOOLS_MCP_CAPABILITIES` is unset. Set it to a
+comma-delimited list of capability names to restrict registration, for example in
+`~/.claude.json` under `mcpServers.genesis-tools.env`:
+
+```bash
+GENESIS_TOOLS_MCP_CAPABILITIES=question_answer,handoff   # only these two groups
+GENESIS_TOOLS_MCP_CAPABILITIES=boards                    # only the boards tools
+```
+
+> ⚠️ The `tools claude mcp --help` string still says "exposes question_answer + boards". The
+> registry is the authority, and it registers all four groups.
+
+### Second plugin: genesis-tools-server
+
+`genesis-tools-server` (version 1.0.0, category `security`) ships exactly one command:
+a comprehensive Linux server security audit that analyzes logs, detects attack patterns,
+identifies malicious IPs, checks security tool status, runs malware and rootkit scans, and
+generates the matching `fail2ban` commands.
 
 ---
 
-### 2. 🤖 Collect Files for AI
+## 🛠️ Tool catalogue
 
-> Smart file collection tool that gathers changed files for AI analysis with intelligent filtering.
+Every row is a real tool in this checkout, described from its own `--help`. Run
+`tools <name> --readme` for the long form: 72 of the 97 usable tools ship a `README.md`.
 
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
+### AI and LLM
 
-```bash
-# Collect files from last 5 commits
-tools collect-files-for-ai ./my-repo -c 5
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `ai` | Unified AI toolkit: translate, summarize, classify, generate images, manage accounts and models. | `translate` `summarize` `image` `classify` `models` `config` |
+| `ai-proxy` | OpenAI-compatible local proxy in front of Grok, GitHub Copilot, and other providers, with a client ledger. | `up` `down` `serve` `status` `models` `calls` `clients` `usage` `link` `config` |
+| `ai-spend` | Claude Code token and cost analytics across every local session. | `summary` `sessions` `today` |
+| `ask` | Multi-provider LLM chat, one-shot or interactive, with optional audio input via `--sst`. | flags only (`-m`, `-p`, `-f`, `-o`) |
+| `usage` | Token and cost analytics for `ask`, by provider, model, and day. | flags only (`--days`, `--provider`, `--format`) |
+| `say` | Text to speech with pluggable backends (macOS, xAI Grok, OpenAI) and per-app config profiles. | `voices` `models` `config` |
+| `transcribe` | Transcribe audio files with AI, locally or in the cloud. | flags only |
+| `darwinkit` | Apple on-device ML from the terminal: NLP, embeddings, OCR, clustering, biometry, iCloud. | 40+ verbs, see `--help` |
+| `redact` | Reversibly redact secrets and PII from text before pasting it into an AI, then restore the reply. | `restore` |
+| `json` | Convert between JSON and TOON (30 to 60 percent fewer tokens), or infer a schema. | `convert` (default) `schema` |
+| `json-schema` | Infer a skeleton, TypeScript interfaces, or JSON Schema from JSON on a file or stdin. | flags only (`-m`, `--pretty`) |
+| `mcp-web-reader` | Fetch a page and convert HTML to Markdown with pluggable engines. Works as CLI and MCP server. | flags only (`--engine`, `--mode`) |
+| `repo-map` | Token-efficient repo symbol map for agents, in the style of aider. | flags only |
+| `indexer` | Semantic code indexer with AST-aware chunking and hybrid search. | `add` `search` `sync` `watch` `graph` `context` `mcp-serve` |
 
-# Collect only staged files
-tools collect-files-for-ai . --staged
+### Agents and AI coding sessions
 
-# Collect with flat structure (no subdirectories)
-tools collect-files-for-ai . --all --flat
-```
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `claude` | Everything around Claude Code: history, resume, accounts and OAuth, desktop sync, usage, MCP server, cmux restore. | `history` `resume` `tail` `summarize` `usage` `config` `login` `start` `mcp` `code` `cmux` `teams` `doctor` |
+| `cc` | Resume a Claude Code session by short ID, name, or content search. | (single command) |
+| `codex` | Spawn, monitor, and steer Codex app-server sessions. | `spawn` `steer` `read` `review` `approve` `deny` `tail` `sessions` |
+| `cursor` | Ask Cursor Agent a question about the codebase and stream the answer, tool calls on stderr and answer on stdout. | flags only (`--mode`, `--model`, `--raw`) |
+| `cursor-context` | Strip tool-use parameters and results from Cursor SpecStory exports to save tokens. | flags only |
+| `agents` | Cross-agent communication: register, message, request, discover, listen across a swarm. | `login` `message` `request` `discover` `listen` |
+| `agent-watch` | Notify you when background agents finish, stall, or need input. | `watch` `status` `list` |
+| `boards` | Dev-dashboard annotation boards: push screenshot sets, create boards, listen for work. | `init` `add` `push` `board-from-set` `watch` `operator` |
+| `question` | Capture and review the questions fired at agents mid-session, with their answers. | `record` `log` `tail` `config` |
+| `task` | PTY-aware command wrapper with ordered log capture, built for long-lived dev servers. | `run` `get` `logs` `tail` `wait` `sessions` `dashboard` |
+| `scripts` | Script MCP tool calls directly, with no agent loop, using types generated from each server. | `servers` `tools` `call` `create` `run` `regen` `remote` `doctor` |
+| `debugging-master` | Instrumentation primitives plus a token-efficient log reader for runtime debugging. | `start` `get` `expand` `diff` `sessions` `cleanup` `dashboard` |
+| `stash` | Global cross-project code-overlay manager: save a chunk of working-tree changes and reapply it anywhere. | `save` `apply` `unapply` `list` `diff` `versions` `doctor` |
+| `learn-from-fable` | Staged pipeline that distills Fable 5's working style from local session transcripts into the Fable Pack. | `bootstrap` `mine` `eval` `consolidate` `spec` `skill` |
 
-</details>
+### Git and code history
 
-<details>
-<summary><b>⚙️ Modes & Options</b></summary>
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `git` | Commit analysis: query commits by range, extract work-item IDs by regex, manage author identities, branch cleanup. | `commits` `configure-authors` `configure-workitem-patterns` `health` `branch-gc` `monster` |
+| `git-commit` | Generate commit messages with AI, optionally staging first and pushing after. | flags only (`--stage`, `--detail`) |
+| `git-last-commits-diff` | Render diffs between recent commits, formatted for feeding to an AI. | flags only (`--commits`, `--output`, `--clipboard`) |
+| `git-rebase-multiple` | Safe branch-hierarchy rebasing with backup refs, fork-point tags, and full rollback. | flags only (`--status`, `--dry-run`, `--abort`, `--continue`, `--cleanup`) |
+| `git-rebranch` | Split a messy branch into several clean branches by grouping commits. | flags only (`--dry-run`) |
+| `git-rename-commits` | Interactively rename the last N commit messages, with a confirmation screen before the rewrite. | flags only (`--commits`) |
+| `last-changes` | Show uncommitted changes grouped by modification time, so you can see what you touched when. | flags only |
+| `collect-files-for-ai` | Copy files changed in git (by commit count, staged, unstaged, or all) into a folder for AI context. | flags only (`-c`, `--staged`, `--flat`) |
+| `files-to-prompt` | Turn a directory tree into one AI-friendly prompt (XML, Markdown, or plain), with filters. | flags only (`-e`, `--markdown`, `--cxml`, `--flat-folder`) |
+| `time-machine` | Auto-bisect a failing command across history to find the last green commit. | flags only |
+| `regret-grep` | Warn when the current diff repeats a bug you already fixed. | `index` `check` |
+| `apoptosis` | Programmed cell death for dead code: flag zero-signal files and suggest deletion after a grace window. | `status` `kill` `rescue` `reset` |
+| `loc` | Count files and code, blank, and comment lines by language, respecting `.gitignore`. | flags only |
 
-**🎨 Collection Modes** (choose one):
+### GitHub and CI
 
--   `--commits, -c NUM` - Files from last NUM commits
--   `--staged, -s` - Only staged files
--   `--unstaged, -u` - Only unstaged files
--   `--all, -a` - All uncommitted files (default)
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `github` | Token-efficient GitHub client: issues, PRs, review threads, code search, notifications, activity, raw files, stack-safe merges. | `issue` `pr` `merge` `comments` `search` `code` `get` `review` `notifications` `activity` `status` |
+| `github-release-notes` | Fetch release notes from any GitHub repository into Markdown. | flags only (`--limit`, `--oldest`) |
+| `jenkins-mcp` | Jenkins CLI and MCP server: paste a job path or full Jenkins URL, read stages, logs, changes, and monitor the queue. | `stages` `log` `info` `changes` `jobs` `monitor` |
 
-**📁 Output Options**:
+`tools github merge` exists specifically because `gh pr merge --delete-branch` closes the
+children of a PR stack instead of retargeting them (`cli/cli#1168`). It retargets dependents
+onto the merged base first, then optionally deletes the head branch.
 
--   `--target, -t DIR` - Custom output directory
--   `--flat, -f` - Copy files without preserving directory structure
+### MCP servers and tooling
 
-</details>
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `mcp-manager` | Manage MCP servers across Claude, Gemini, Codex, and Cursor from one unified config, with backups and visual diffs. | `config` `sync` `sync-from-providers` `list` `enable` `disable` `install` `show` `remove` `rename` `backup-all` `config-json` |
+| `mcp-doctor` | Health-check and benchmark the MCP servers you already have configured. | `list` `check` `tools` |
+| `mcp-debug` | Debug MCP server configuration by running commands and printing JSON to stdout plus diagnostics to stderr, so you can see the env, cwd, and PATH your client passes. | flags only (`--env`) |
+| `mcp-ripgrep` | MCP server exposing ripgrep: search, advanced search, count matches, list files, list file types. | server only |
+| `mcp-tsc` | TypeScript diagnostics as both a CLI and an MCP server, using the compiler API or a language server. | flags only (`--lsp`, `--warnings`, `--mcp`) |
+
+### Frontend and web debugging
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `har-analyzer` | Token-efficient HAR analysis with a reference system, progressive disclosure, security scan, waterfall, and PII redaction. | `load` `list` `show` `expand` `domain` `errors` `security` `waterfall` `diff` `export` `redact` `sessions` `mcp` |
+| `react-compiler-debug` | Inspect what `babel-plugin-react-compiler` generates, to see whether and why a component was memoized. | flags only (`--code`, `--with-original`, `--target`, `--mode`) |
+| `npm-package-diff` | Diff two versions of an npm package: parallel install into temp dirs, then terminal, unified, HTML, JSON, or side-by-side output. | flags only (`--filter`, `--format`, `--patch`, `--use-delta`) |
+
+### Work tracking and time
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `azure-devops` | Azure DevOps work items, queries, dashboards, and time logs, with caching and change detection. | `configure` `query` `workitem` `workitem-create` `list` `dashboard` `timelog` `history` |
+| `timely` | Timely time tracking: OAuth login, accounts and projects, events, auto-tracked memories, monthly exports. | `login` `status` `accounts` `projects` `events` `memories` `create` `export-month` `cache` |
+| `clarity` | CA PPM Clarity timesheet management, filled from Azure DevOps time logs and Timely activity. | `configure` `timesheet` `fill` `link-workitems` `ui` |
+| `timer` | Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks. | `list` `cancel` |
+| `todo` | Task tracking for AI-assisted sessions, backed by SQLite, with a full status lifecycle. | `add` `list` `show` `start` `block` `complete` `reopen` `edit` `search` `sync` `export` `import` |
+
+### Web dashboards and data
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `dashboards` | Orchestrate every GenesisTools web dashboard at once. | `up` `down` `restart` `status` `list` |
+| `dashboard` | Start the personal productivity dashboard, installing its dependencies if needed, then open it. | `up` `down` `restart` `status` `attach` `logs` `open` `install` |
+| `dev-dashboard` | Personal dev dashboard wiring ttyd, cmux, and Obsidian together, with auth, tunnel, and pairing. | `ui` `configure` `auth` `agent` `tunnel` `pair` |
+| `youtube` | The largest tool here: channels, videos, transcripts, downloads, summarisation, Q&A, a browser extension, a queue, and an MCP server. | `channels` `videos` `transcribe` `download` `pipeline` `queue` `ask` `analyze` `extension` `server` `ui` `mcp` `config` |
+| `shops` | Grocery, drogerie, and pharmacy price intelligence across Czech e-shops, with crawlers, matching, and a dashboard. | `get` `crawl` `sitemap-sync` `match` `list` `watch` `notify` `daemon` `db` `ui` `mcp` |
+| `instagram` | Inspect public Instagram profiles, and fetch stories and highlights with your own session. | `profile` `highlights` `stories` `highlight` `session` |
+| `spotify` | Spotify listening analytics from your own export, plus cross-library compatibility with a partner. | `profile` `analytics` `harvest` `build` `enrich` `history-merge` `export` `doctor` |
+| `tradingview` | Stream TradingView live quotes, indicators, charts, and scans. | `quotes` `alerts` `indicator` `charts` `indicators` `scan` |
+| `rohlik-spending` | Total up your spending on rohlik.cz from delivered orders and line items. | flags only |
+
+### macOS and system
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `macos` | Umbrella CLI for macOS native frameworks. | `mail` `calendar` `reminders` `messages` `voice-memos` `sleep` `swap` `clones` `control` |
+| `control` | macOS UI automation through the Accessibility API, plus screen recording with timed actions. | `list` `tree` `find` `click` `type` `hotkey` `scroll` `screenshot` `ocr` `capture` `record-plan` `assert` |
+| `macos-eslogger` | Monitor macOS Endpoint Security events in real time with category and JSON-path filters. Needs root and Full Disk Access. | flags only (`-e`, `-c`, `--filter-event`) |
+| `macos-resources` | Live TUI dashboard of process CPU, RAM, and open-file usage, with alert thresholds. | flags only (`--process`, `--cpulimit`, `--notify`) |
+| `doctor` | Diagnose and fix common macOS dev-machine problems. | `find` `log` `stats` `wipe-cache` |
+| `du` | Clone-aware disk usage for APFS. Measures the real on-disk footprint of trees full of clonefiles, where plain `du` lies. | `clonesize` `volume` `clones` `bench` |
+| `fsevents-profile` | Profile filesystem events to find the directories generating the most churn. | flags only (`-d`, `-t`, `--watchers`) |
+| `watch` | Watch files matching a glob and show content changes in real time, like `tail -f` with patterns. | flags only (`-s`, `-f`, `-n`) |
+| `watchman` | Monitor files through Facebook's Watchman for instant change detection. | flags only (`-c`) |
+| `wakeup` | Wake-on-LAN helper plus a small wake relay you can run on an always-on host. | `config` `server` `register` `login` `wake` `send` `daemon` |
+
+> 🛑 `tools voice-memos` no longer exists as its own tool. Voice Memos moved under the macOS
+> umbrella: use `tools macos voice-memos`.
+
+### Processes and terminals
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `port` | Inspect, list, watch, and clean the processes owning local ports, with interactive kill. | `ps` `clean` `watch` |
+| `tmux` | Inspect, create, reset, attach, and snapshot tmux sessions. | `attach` `create` `sessions` `session` `presets` |
+| `cmux` | Save, inspect, and restore cmux workspace profiles. | `profiles` `send-self` |
+
+### Scheduling, automation, notifications
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `automate` | Chain any `tools` commands into named, reusable presets, with variables, conditions, branching, and SQLite run history. | `preset` `step` `task` `daemon` `configure` |
+| `daemon` | General-purpose background task scheduler that owns the scheduled work, with an installable service unit. | `start` `stop` `restart` `status` `install` `uninstall` `config` `logs` |
+| `notify` | Send macOS notifications through `terminal-notifier`, with action hooks and an interactive config. | `config` |
+| `telegram` | Telegram MTProto user-account client: listen for messages, auto-respond, browse contacts and history, TUI watcher. | `configure` `listen` `contacts` `history` `watch` |
+| `telegram-bot` | Telegram Bot API client for notifications and remote control. Simpler auth than the user client. | `configure` `send` `start` |
+
+### Shell and small utilities
+
+| Tool | What it does | Key subcommands |
+|------|--------------|-----------------|
+| `tools` | The interactive browser itself: fuzzy search every tool, read its README, list subcommands, copy the command. | (interactive) |
+| `zsh` | Shell enhancement manager: installs one hook line into your rc files, with toggleable feature modules. | `install` `uninstall` `enable` `disable` `list` `hook` |
+| `aliases` | Mine shell history for the command chains and single commands you actually repeat, and propose aliases. | `analyze` `apply` `decay` `status` `reset` |
+| `config` | Manage GenesisTools configuration. | `packages` |
+| `update` | Update GenesisTools: git pull, `bun install` with a clean retry, optional plugin refresh. | (single command) |
+| `benchmark` | Save command recipes and run them through hyperfine, keeping per-run history so you can see timings drift. | `add` `remove` `list` `show` `edit` `history` |
+| `markdown-cli` | Render Markdown to good-looking terminal output, with watch mode and themes. | flags only (`--watch`, `--no-color`) |
+| `hash` | Compute and verify file checksums (md5, sha1, sha256, sha512, blake3), coreutils-compatible. | flags only |
+| `jwt` | Decode and inspect a JWT offline, humanizing `exp` / `iat` / `nbf` into local and relative time. It does not verify signatures. | flags only |
+| `qr` | Render QR codes in the terminal for a URL, arbitrary text, or a WiFi network. | `wifi` |
+| `tz` | Convert a time across timezones from natural language, for example `tz '3pm PST in Prague'`. | flags only |
+| `envdiff` | Diff `.env` against `.env.example`: missing, extra, and changed keys with masked values, plus `--sync` to scaffold. | flags only |
+| `secrets` | Scan for hardcoded API keys, tokens, and private keys. | `scan` |
+
+### Not user-facing
+
+| Entry | Why it is here |
+|-------|----------------|
+| `utils` | The `@genesiscz/utils` package barrel. It is discovered because it has an `index.ts`, but running it does nothing. |
+| `Internal` | Private tools, explicitly marked "not for public use". |
+| `t3chat-length` | Internal scratch tool. It prints `[]` unless you edit `myInputJson` in its source first. |
 
 ---
 
-### 3. 📋 GitHub Release Notes
+## 💡 Flagship tools in detail
 
-> Generate beautiful, markdown-formatted release notes from any GitHub repository.
+Each of these has its own README with the full option matrix. What follows is the shape of
+each tool and the commands worth knowing.
 
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
+### 🐙 GitHub
+
+[`src/github/README.md`](src/github/README.md)
 
 ```bash
-# Generate release notes
-tools github-release-notes facebook/react releases.md
-
-# From GitHub URL
-tools github-release-notes https://github.com/microsoft/vscode releases.md
-
-# Limit releases & sort oldest first
-tools github-release-notes vercel/next.js notes.md --limit=10 --oldest
+tools github issue https://github.com/org/repo/issues/123 --last 10
+tools github pr 456 --no-bots --last 20
+tools github search "memory leak" --repo org/repo --state open
+tools github code "createOpenAI(" --repo org/repo
+tools github get https://github.com/org/repo/blob/main/src/index.ts
+tools github notifications --reason mention --open
+tools github activity --since 7d
+tools github status                      # auth, rate limit, cache stats
 ```
 
-</details>
-
-<details>
-<summary><b>💡 Pro Tip</b></summary>
-
-Set `GITHUB_TOKEN` environment variable to avoid rate limits:
+Review threads have a dedicated surface, including an LLM session mode that hands out short
+refs instead of repeating whole threads:
 
 ```bash
-export GITHUB_TOKEN=your_github_token
+tools github review 137                          # all threads
+tools github review 137 -u                       # unresolved only
+tools github review 137 --llm -u -s pr137         # compact summary with refs
+tools github review expand t1,t3 -s pr137         # expand specific threads
+tools github review respond t1 "Fixed in abc123" --resolve -s pr137
+tools github review resolve t1,t2,t3 -s pr137     # batch resolve
+tools github review sessions
 ```
 
-</details>
+### 🔷 Azure DevOps
 
----
+[`src/azure-devops/README.md`](src/azure-devops/README.md)
 
-### 4. 🔢 T3Chat Length
-
-> 🔒 **Internal Tool** - Analyzes T3Chat message lengths and thread sizes.
-
-<details>
-<summary><b>ℹ️ Note</b></summary>
-
-This tool is for internal use. Modify `myInputJson` in `src/t3chat-length/index.ts` before running:
+Everything is a subcommand. The old flag-style interface (`--workitem 12345`,
+`--query <id>`) is gone.
 
 ```bash
-tools t3chat-length
+tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+tools azure-devops workitem 261575 --task-folders --images
+tools azure-devops workitem 12345,12346,12347
+tools azure-devops query "Open Bugs" --download-workitems --category react19
+tools azure-devops workitem-create
+tools azure-devops list
+tools azure-devops dashboard <url-or-id>
+tools azure-devops timelog add -w 268935 -h 2 -t "Development"
+tools azure-devops history show 261575 --assigned-to "Martin"
 ```
 
-</details>
+Aliases exist for the long names: `config`, `wi`, `create`, `ls`.
 
----
-
-### 5. 👁️ Watchman
-
-> Monitor files using Facebook's Watchman for instant change detection.
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
+Prerequisites are the Azure CLI plus its DevOps extension:
 
 ```bash
-# Watch current directory
-tools watchman -c
-
-# Watch specific directory
-tools watchman /path/to/project
-
-# Interactive directory selection
-tools watchman
+az extension add --name azure-devops
+az login --allow-no-subscriptions --use-device-code
 ```
 
-</details>
+Caching has two layers. Work item files are kept for 365 days, but a 5-minute freshness window
+decides whether a fetch hits the API again, so a re-read inside 5 minutes is free and a later
+one refreshes. Queries and dashboards are cached for 180 days, the queries list and project
+metadata for 30 days. `--force` bypasses all of it. Project config and downloaded task files
+live under `.claude/azure/`, searched up to three parent levels from the current directory.
 
----
+### 🔍 HAR Analyzer
 
-### 6. 🔄 Watch
+[`src/har-analyzer/README.md`](src/har-analyzer/README.md)
 
-> Real-time file monitoring with powerful glob patterns - like `tail -f` on steroids! 🚀
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🎯 Watch files matching any glob pattern
--   📡 Real-time content updates
--   🆕 Auto-detect new files
--   🏠 Tilde expansion support (`~`)
--   ⚡ Configurable polling intervals
--   📊 Directory & file summaries
-
-</details>
-
-<details>
-<summary><b>🎯 Examples</b></summary>
+A HAR file is usually megabytes of JSON. This tool never makes you read it. Any value longer
+than 200 characters (`REF_THRESHOLD` in `src/utils/references.ts`) is shown once, then replaced
+by a ref ID plus a preview. Static asset bodies (CSS, JS, images, fonts) are skipped entirely
+unless you pass `--include-all`.
 
 ```bash
-# Watch TypeScript files
-tools watch "src/**/*.ts"
-
-# Multiple file types with verbose mode
-tools watch "~/projects/**/*.{js,ts,tsx}" -v -n 100
-
-# Follow mode (like tail -f)
-tools watch "logs/**/*.log" -f
-
-# Fast polling with custom line count
-tools watch "src/**/*" --seconds 1 -n 200
+tools har-analyzer load capture.har               # parse and show the dashboard
+tools har-analyzer list --status 4xx,5xx --domain api.example.com
+tools har-analyzer show e14                       # entry detail
+tools har-analyzer show e14 --raw --section body  # full content
+tools har-analyzer expand e14.rs.body --schema    # structure before content
+tools har-analyzer domain api.example.com
+tools har-analyzer errors
+tools har-analyzer waterfall
+tools har-analyzer security                       # JWTs, API keys, insecure cookies
+tools har-analyzer diff e5 e14
+tools har-analyzer export --domain api.example.com --sanitize -o api-only.har
+tools har-analyzer redact capture.har --dry-run    # report what would be redacted
+tools har-analyzer redact capture.har -o clean.har # write a redacted copy
+tools har-analyzer sessions
+tools har-analyzer mcp                            # MCP server mode
 ```
 
-</details>
+Output format is switchable with `--format md|json|toon`, and `--full` bypasses the reference
+system entirely.
 
-<details>
-<summary><b>⚙️ Options</b></summary>
+`redact` never rewrites your file unless you ask. Default is a new file via `-o`, `--dry-run`
+reports without writing, and `--in-place` rewrites the original after saving a backup to `/tmp`
+and printing the restore command. Redaction kinds (`password`, `secret`, `token`, `session`,
+`email`, `username`, `cookie`, `jwt`) are selectable with `--only` and `--skip`.
 
-| Option      | Alias | Description      | Default |
-| ----------- | ----- | ---------------- | ------- |
-| `--seconds` | `-s`  | Polling interval | `3`     |
-| `--verbose` | `-v`  | Detailed logging | `false` |
-| `--follow`  | `-f`  | Tail mode        | `false` |
-| `--lines`   | `-n`  | Lines to display | `50`    |
+> ⚠️ A HAR captured from a logged-in browser contains live cookies and bearer tokens. Run
+> `redact` or `export --sanitize` before sharing one.
 
-</details>
+### 🧠 Claude
 
----
-
-### 7. 🎨 NPM Package Diff
-
-> **🚀 Lightning-fast, beautiful diffs between NPM package versions**
-
-A powerful command-line tool that creates temporary directories, installs package versions in parallel, watches for file changes during installation, and shows beautiful diffs with multiple output formats.
-
-![Features](https://img.shields.io/badge/Features-12+-brightgreen?style=for-the-badge) ![Output Formats](https://img.shields.io/badge/Output_Formats-5-blue?style=for-the-badge) ![Performance](https://img.shields.io/badge/Performance-Parallel-orange?style=for-the-badge)
-
-<details>
-<summary><b>🌟 Key Features</b></summary>
-
-**🎨 Visual Excellence**
-
--   Beautiful colored terminal diffs with syntax highlighting
--   Side-by-side and line-by-line comparisons
--   Interactive HTML reports with toggle views
--   Delta integration for GitHub-style diffs
-
-**📊 Smart Analysis**
-
--   File size comparisons and statistics
--   Addition/deletion line counts
--   Glob pattern filtering (include/exclude)
--   Binary file detection and skipping
-
-**⚡ Performance**
-
--   Parallel package installation
--   Efficient file watching during install
--   Configurable timeouts
--   Multi-package manager support (npm, yarn, pnpm, bun)
-
-</details>
-
-<details>
-<summary><b>🎯 Examples</b></summary>
+[`src/claude/README.md`](src/claude/README.md)
 
 ```bash
-# Basic comparison
+tools claude history "timelog"              # search conversation history
+tools claude history --file config.ts --since "7 days ago"
+tools claude resume                         # pick a session to resume
+tools claude tail                           # live-tail the current session or an agent
+tools claude summarize <session-id>
+tools claude usage                          # interactive usage TUI
+tools claude spending                       # token and cost analytics (alias of ai-spend)
+tools claude config                         # accounts and notification settings
+tools claude login [name]                   # OAuth login for an extra account
+tools claude start <name> -- --model opus    # launch Claude Code on a saved token
+tools claude teams                          # list agent teams and re-attach teammates
+tools claude cmux                           # reopen recent sessions as cmux workspaces
+tools claude code unpack                    # unpack, diff, bisect published CLI bundles
+tools claude doctor                         # find sessions billing the wrong account
+tools claude mcp                            # the MCP server described above
+```
+
+`tools claude exec` runs any command with a chosen account's long-lived token in its
+environment, so `claude -p` inside a hook or CI job never depends on whatever the keychain
+happens to hold.
+
+### 🤖 AI subsystem
+
+The `ai` tool is the user-facing face of a layered subsystem under `src/utils/ai/`:
+credentials in an encrypted vault, one config store, one provider plugin per vendor, one model
+resolution ladder, one transport, and one usage recorder.
+
+```bash
+tools ai models                             # catalogue with pricing
+tools ai translate "text" --to cs
+tools ai summarize file.md
+tools ai image "a red bicycle in the rain"
+tools ai classify "the build fails on CI" --categories bug,feature,question
+tools ai config account add
+tools ai config account list
+tools ai config account test <id-or-name>
+tools ai config default set <task> <model-ref>
+tools ai config secret rotate
+tools ai config doctor                      # per-account credential diagnosis
+```
+
+Credentials are never stored in plaintext. Config holds references into an AES-256-GCM vault
+at `~/.genesis-tools/security/vault.json`, and the master key comes from an environment
+variable, the OS keychain, or an opt-in key file, in that order.
+
+> ⚠️ `doctor` and `account test` are read-only by contract. Both once spent single-use
+> Anthropic refresh tokens simply by diagnosing an account, so the guard now lives in the
+> shared auth path, immediately before the call that would spend the token.
+
+### 🔗 AI Proxy
+
+[`src/ai-proxy/README.md`](src/ai-proxy/README.md)
+
+An OpenAI-compatible endpoint on localhost that fronts providers you already pay for, so any
+OpenAI-shaped client can reach a Grok or GitHub Copilot subscription.
+
+```bash
+tools ai-proxy config                       # interactive config menu
+tools ai-proxy up                           # start in the background
+tools ai-proxy status
+tools ai-proxy models                       # the proxy IDs clients can call
+tools ai-proxy calls --limit 20             # request log, newest first
+tools ai-proxy calls --slower-than 5        # only calls that took 5s or more
+tools ai-proxy clients                      # per-user client keys and usage ledger
+tools ai-proxy introspect                   # copy-paste inventory for Cursor BYOK
+tools ai-proxy link                         # register the proxy as an ai account
+tools ai-proxy down
+```
+
+Once linked, `@proxy/<slug>/<model>` resolves as a model reference anywhere in the AI
+subsystem.
+
+### 📇 Scripts (MCP without an agent loop)
+
+[`src/scripts/README.md`](src/scripts/README.md)
+
+When a job means calling the same MCP tool fifty times, an agent loop is the wrong shape. This
+tool generates typed bindings from a server's live `tools/list` and lets you write a plain
+TypeScript script against them.
+
+```bash
+tools scripts servers                       # what MCP servers are configured
+tools scripts tools <server>                # list a server's tools
+tools scripts describe <server> <tool>      # full input schema
+tools scripts call <server> <tool> '{"k":"v"}'
+tools scripts create my-script
+tools scripts run my-script
+tools scripts regen                         # refresh generated types
+tools scripts doctor
+```
+
+Scripts are stored under `~/.genesis-tools/scripts`.
+
+### 🖥️ Task (run interactive processes for agents)
+
+[`src/task/README.md`](src/task/README.md)
+
+Dev servers, Metro, Vite, and anything else that assumes a TTY and never exits. `task` gives
+each one a PTY, captures ordered logs, and exposes a tail an agent can read without drowning.
+
+```bash
+tools task run --session web -- bun dev
+tools task sessions
+tools task logs --session web -t 100        # last 100 lines
+tools task logs --session web --grep error
+tools task tail --session web               # follow live
+tools task get --session web                # state, files, flags cheat sheet
+tools task wait --session web --exit-on-match "ready in"
+tools task clean
+tools task dashboard
+```
+
+Because `task` records the real exit code, it also solves the pipeline problem: `mytool | head`
+reports `head`'s status, not the tool's.
+
+### 🩺 Debugging Master
+
+[`src/debugging-master/README.md`](src/debugging-master/README.md)
+
+```bash
+tools debugging-master start --session fix-auth-bug
+tools debugging-master get -l dump,error --last 5
+tools debugging-master expand d2 --query 'data.user.email'
+tools debugging-master snippet
+tools debugging-master diff --session auth-fail --against auth-pass
+tools debugging-master tail
+tools debugging-master cleanup --blocks      # remove the @dbg blocks from source
+tools debugging-master cleanup --clean-logs  # archive the session logs
+```
+
+Instrumentation is temporary by design: `dbg.dump()`, `dbg.timerStart()` / `dbg.timerEnd()`,
+`dbg.checkpoint()`, `dbg.snapshot()`, and `dbg.assert()` go in, and `cleanup` takes them out
+again. `cleanup` is opt-in on purpose: bare `cleanup` does nothing, you pick `--blocks`,
+`--clean-logs`, or both. Logs read back at three levels of detail, from a compact timeline to
+full data with JMESPath projections. TypeScript and PHP are instrumented directly, browsers
+over HTTP.
+
+### 💾 Clone-aware disk usage
+
+```bash
+tools du clonesize ~/Projects                # real footprint, clones counted once
+tools du clones ~/Projects                   # which trees share blocks
+tools du volume                              # per-volume accounting
+tools du bench                               # the benchmark harness
+```
+
+On APFS, `bun install` uses `clonefile(2)`, so twenty worktrees can share one physical copy of
+`node_modules`. Plain `du` counts those bytes twenty times. This tool counts them once.
+
+> 🛑 Before changing anything under `src/du/`, read `.claude/docs/benchmarks-du.md` and append
+> a dated section for the change. The native core is syscall-bound and sits in the hot loop of
+> multi-million-file scans, so an unmeasured feature is a silent regression.
+
+### 🔌 MCP Manager
+
+[`src/mcp-manager/README.md`](src/mcp-manager/README.md)
+
+```bash
+tools mcp-manager                            # interactive
+tools mcp-manager config                     # edit the unified config
+tools mcp-manager list                       # every server across every provider
+tools mcp-manager sync                       # unified config -> providers
+tools mcp-manager sync-from-providers        # providers -> unified config
+tools mcp-manager enable github
+tools mcp-manager disable github
+tools mcp-manager install github
+tools mcp-manager show github
+tools mcp-manager backup-all
+tools mcp-manager rename old new
+```
+
+Supported providers: Claude (`~/.claude.json`, global and per-project), Gemini Code Assist
+(`~/.gemini/settings.json`), Codex (`~/.codex/config.toml`), and Cursor (`~/.cursor/mcp.json`).
+The unified config is `~/.genesis-tools/mcp-manager/config.json`. Every write is backed up
+first, shown as a diff, and reverted automatically if you reject it.
+
+### 🎨 npm Package Diff
+
+[`src/npm-package-diff/README.md`](src/npm-package-diff/README.md)
+
+```bash
 tools npm-package-diff react 18.0.0 18.2.0
-
-# Compare all JavaScript files
-tools npm-package-diff lodash 4.17.20 4.17.21 --filter="**/*.js"
-
-# Generate a patch file
+tools npm-package-diff lodash 4.17.20 4.17.21 --filter "**/*.js"
 tools npm-package-diff express 4.17.0 4.18.0 --patch express.patch
-
-# Create interactive HTML report
 tools npm-package-diff @types/node 18.0.0 20.0.0 --format html -o report.html
-
-# Use delta for beautiful diffs
 tools npm-package-diff typescript 4.9.0 5.0.0 --use-delta
-
-# Compare with statistics
 tools npm-package-diff webpack 4.46.0 5.88.0 --stats --sizes
 ```
 
-</details>
+Default filter is `**/*.d.ts`, which is usually what you want when checking whether an upgrade
+breaks types. Formats: `terminal`, `unified`, `html`, `json`, `side-by-side`. Package managers
+npm, yarn, pnpm, and bun are all supported.
 
-<details>
-<summary><b>⚙️ Options</b></summary>
+> ✅ Both versions are installed with `--ignore-scripts`, on every package manager. Comparing
+> two versions of an arbitrary package therefore never runs that package's lifecycle scripts.
 
-| Option           | Alias | Description                                             | Default     |
-| ---------------- | ----- | ------------------------------------------------------- | ----------- |
-| `--filter`       | `-f`  | Glob pattern to include files                           | `**/*.d.ts` |
-| `--exclude`      | `-e`  | Glob pattern to exclude files                           | -           |
-| `--output`       | `-o`  | Output file path                                        | console     |
-| `--format`       | `-F`  | Output format (terminal/unified/html/json/side-by-side) | `terminal`  |
-| `--patch`        | `-p`  | Generate patch file                                     | -           |
-| `--verbose`      | `-v`  | Enable verbose logging                                  | `false`     |
-| `--silent`       | `-s`  | Suppress output except errors                           | `false`     |
-| `--stats`        | -     | Show statistics summary                                 | `false`     |
-| `--sizes`        | -     | Compare file sizes                                      | `false`     |
-| `--line-numbers` | -     | Show line numbers                                       | `true`      |
-| `--word-diff`    | -     | Show word-level differences                             | `false`     |
-| `--side-by-side` | -     | Side-by-side view                                       | `false`     |
-| `--context`      | -     | Context lines in diff                                   | `3`         |
-| `--use-delta`    | -     | Use delta for output                                    | `false`     |
-| `--keep`         | `-k`  | Keep temporary directories                              | `false`     |
+### 🗣️ Say
 
-</details>
+[`src/say/README.md`](src/say/README.md)
 
-<details>
-<summary><b>📋 Output Formats (`--format`)</b></summary>
+```bash
+tools say "Build finished"
+tools say "Timer done" --app timer --wait
+tools say "Loud and clear" --volume 60%
+tools say --voice                            # list voices for the current provider
+tools say voices                             # every voice, grouped by provider
+tools say config                             # interactive profile manager
+```
 
--   **🖥️ terminal** - Colored diff with syntax highlighting (default)
--   **📄 unified** - Standard patch format for git apply
--   **🌐 html** - Interactive web page with toggle views
--   **📊 json** - Structured data for programmatic use
--   **↔️ side-by-side** - Split-screen terminal comparison
+Configuration is per app. `--app <name>` loads that profile, unset fields inherit from
+`default`, and the config lives at `~/.genesis-tools/say/config.json`.
 
-</details>
+Four rules that changed from older builds:
+
+-   `--save` persists only the flags you passed explicitly, and it needs a target profile. With
+    `--app` it saves there. In a TTY without `--app` it asks which profile. In a non-TTY without
+    `--app` it errors.
+-   `--save` with no message text saves only. It does not speak, and it does not open the
+    interactive mode.
+-   `--mute` and `--unmute` need `--save` to persist. They are no longer standalone
+    state-writing commands.
+-   `--unset <fields>` ignores those profile fields for one run, or deletes them from the saved
+    profile when combined with `--save`.
+
+Speech is fire-and-forget by default: it plays in a detached process and the command returns.
+Pass `--wait` to block.
+
+### ▶️ YouTube
+
+[`src/youtube/README.md`](src/youtube/README.md)
+
+```bash
+tools youtube transcribe https://www.youtube.com/watch?v=dQw4w9WgXcQ
+tools youtube channels add @somechannel
+tools youtube channels sync
+tools youtube videos list
+tools youtube videos search "pricing"        # across titles, descriptions, transcripts
+tools youtube download <video-or-url>
+tools youtube pipeline <video-or-url>        # takes targets, not a "run" subcommand
+tools youtube queue add <targets...>
+tools youtube queue list
+tools youtube ask "what did they say about pricing?" --channel @somechannel
+tools youtube analyze <video-or-url>
+tools youtube transcripts export <targets...>
+tools youtube ui up                          # web UI (up/down/status/logs/open)
+tools youtube mcp                            # MCP server
+tools youtube extension build                # browser extension
+```
+
+Targets are interchangeable everywhere: a video ID, a full URL, or an `@handle`. Captions are
+used when they exist, with AI transcription as the fallback.
+
+### ⏸️ Hold-AI
+
+[`src/hold-ai/README.md`](src/hold-ai/README.md)
+
+A WebSocket hold/release pair with no `index.ts`, so both halves are addressed by path:
+
+```bash
+tools hold-ai/server        # terminal 1: collects your messages, opens an editor
+tools hold-ai/client        # terminal 2: what the AI runs to block
+```
+
+Type messages, save and exit to send them. Send `OK` on its own to release the AI.
 
 ---
 
-### 8. 💬 Files to Prompt
+## 🗂️ Where things are stored
 
-> Convert your codebase into AI-friendly prompts with intelligent formatting and filtering.
+| Path | Contents |
+|------|----------|
+| `~/.genesis-tools/logs/<YYYY-MM-DD>.log` | Day-stamped pino JSON logs from every tool. First stop when anything misbehaves. |
+| `~/.genesis-tools/<tool>/` | Per-tool config and cache, for example `say/config.json`, `mcp-manager/config.json`, `scripts/`. |
+| `~/.genesis-tools/ai/config.json` | AI accounts, defaults, and aliases (version 4 schema). |
+| `~/.genesis-tools/security/vault.json` | AES-256-GCM credential vault. Config stores references into it, never plaintext. |
+| `~/.genesis-tools/claude-code/sessions/<id>.json` | Files modified per Claude Code session, written by the plugin hooks. |
+| `.claude/azure/` | Per-project Azure DevOps config and downloaded work items. |
 
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🎯 Multiple output formats (XML, Markdown, plain text)
--   📁 Recursive directory processing
--   🔍 Extension and pattern filtering
--   👻 Hidden file handling
--   📊 Line number support
--   🚫 Gitignore respect
--   📂 Flat folder structure copying with renamed files
-
-</details>
-
-<details>
-<summary><b>🎯 Examples</b></summary>
-
-```bash
-# Basic usage
-tools files-to-prompt src/components
-
-# Filter by extensions
-tools files-to-prompt -e js -e ts src/
-
-# Generate markdown with line numbers
-tools files-to-prompt --markdown -n -o output.md project/
-
-# XML format for Claude
-tools files-to-prompt --cxml src/ > prompt.xml
-
-# Copy files to flat folder structure (renames files with directory structure)
-tools files-to-prompt --flat-folder -o flat-output/ src/
-
-# Flat folder with extension filtering
-tools files-to-prompt --flat-folder -e js -e ts -o flat-js-ts/ project/
-
-# Pipe from find command
-find . -name "*.py" | tools files-to-prompt -0
-```
-
-</details>
+Tools that keep durable state use SQLite with a migration runner. Pending migrations are
+applied on every read-write open and applied IDs are tracked in a `_migrations` table, so a
+fresh database is almost never the right fix for anything.
 
 ---
 
-### 9. ⚡ MCP Ripgrep
+## 🌐 Web servers and ports
 
-> Lightning-fast code search server implementing the Model Context Protocol (MCP).
+Ports are not hardcoded per tool. The canonical registry is
+[`src/utils/ui/dashboards.ts`](src/utils/ui/dashboards.ts), which holds browser dashboards in
+`DASHBOARDS` and non-browser listeners (HTTP APIs, extensions, proxies) in `WEB_SERVICES`.
+Ports must be unique across both, and `findPortConflicts()` enforces it.
 
-<details>
-<summary><b>🚀 Capabilities</b></summary>
+| Port | Service |
+|------|---------|
+| 3000 | Personal Dashboard |
+| 3042 | Dev Dashboard (also the boards API) |
+| 3069 | Claude History Browser |
+| 3071 | Clarity Timelog |
+| 3072 | REAS Analyzer |
+| 3073 | Shops CZ |
+| 3074 | YouTube Web UI |
+| 7243 | Log Viewer (debugging-master plus task) |
+| 7251 | DevDashboard Cloud |
+| 8317 | AI Proxy |
+| 9876 | YouTube Server |
+| 9877 | YouTube Extension |
 
--   **search** - Basic pattern search with highlighting
--   **advanced-search** - Extended options (word boundaries, symlinks, etc.)
--   **count-matches** - Count occurrences efficiently
--   **list-files** - List searchable files
--   **list-file-types** - Show supported file types
-
-</details>
-
-<details>
-<summary><b>⚙️ MCP Configuration</b></summary>
-
-Add to your MCP configuration file:
-
-```json
-{
-    "mcpServers": {
-        "ripgrep": {
-            "command": "tools mcp-ripgrep",
-            "args": ["--root", "/Root/Path/For/Project/"],
-            "env": {}
-        }
-    }
-}
-```
-
-</details>
+Bring them all up or down together with `tools dashboards up|down|restart|status`.
 
 ---
 
-### 10. ⏸️ Hold-AI Tool
+## 🧪 Development
 
-> Control AI responses with a WebSocket-based hold/release mechanism.
-
-<details>
-<summary><b>🔧 How It Works</b></summary>
-
-1. **Start Server** → Collects your messages
-2. **AI Connects** → Via client tool
-3. **You Provide Input** → Through editor interface
-4. **Send "OK"** → Releases AI to continue
-
-</details>
-
-<details>
-<summary><b>📝 Usage Flow</b></summary>
+### Running tests
 
 ```bash
-# Terminal 1: Start server
-tools hold-ai/server
-
-# Terminal 2: AI runs client
-tools hold-ai/client
-
-# Server: Opens editor for your input
-# Type messages, save & exit to send
-# Type "OK" alone to complete
+bun run test                     # the wrapper, always use this
+bun scripts/test.ts <paths>      # same wrapper, specific paths
+bun run test:e2e                 # end-to-end suites
+bun run test:coverage
 ```
 
-</details>
+> 🛑 Never run bare `bun test`. The wrapper stat-checks the dependency tree first (about 1ms)
+> and reinstalls when it is missing, partial, or stale, then hands off to `bun test` with argv,
+> output, and exit code untouched. This matters inside a **git worktree**, where any `bunx`
+> call creates a partial `node_modules/` that shadows the parent checkout's complete one. Bare
+> `bun test` then fails across a hundred unrelated files with errors like
+> `Cannot find module 'parse5/lib/common/doctype'`, which looks exactly like your branch broke
+> the world.
 
----
+Working in an isolated worktree adds two more requirements. Verify the base commit first
+(`git log --oneline -1`), because worktrees are often cut from `origin/master` rather than the
+feature branch you were briefed on. Then run `bun install` in the worktree, or its imports
+resolve against the main repo's dependency tree and fabricate failures.
 
-### 12. 🌐 MCP Web Reader
-
-> Fetches web content and converts HTML to Markdown using pluggable engines. Supports AI-powered conversion with ReaderLM-v2. Works as both CLI and MCP server.
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
+### Lint, format, typecheck
 
 ```bash
-# Basic usage (defaults to markdown with turndown engine)
-tools mcp-web-reader "https://example.com"
-
-# Choose conversion engine
-tools mcp-web-reader "https://example.com" --engine turndown   # Default, GFM support
-tools mcp-web-reader "https://example.com" --engine mdream     # Fast, LLM-optimized
-tools mcp-web-reader "https://example.com" --engine readerlm   # AI-powered (requires model)
-
-# Other modes
-tools mcp-web-reader "https://example.com" --mode raw          # Raw HTML
-tools mcp-web-reader "https://example.com" --mode jina         # Jina Reader API
-
-# Token limiting and compaction
-tools mcp-web-reader "https://example.com" --tokens 2048 --save-tokens
+bun run lint                     # biome check .
+bun run lint:fix                 # biome check --write .
+bun run format                   # biome format --write .
+bun run tsgo                     # tsgo --noEmit
+bun run typecheck:all            # plus the dashboard tsconfig
 ```
 
-</details>
-
-<details>
-<summary><b>🤖 ReaderLM Model</b></summary>
-
-The `readerlm` engine uses [ReaderLM-v2](https://huggingface.co/jinaai/ReaderLM-v2), a local AI model (~1GB) for highest quality HTML-to-Markdown conversion.
-
-```bash
-# Check model status
-tools mcp-web-reader --model-info
-
-# Download model (one-time)
-tools mcp-web-reader --download-model
-
-# Download and convert in one command
-tools mcp-web-reader "https://example.com" --engine readerlm --download-model
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Engines Comparison</b></summary>
-
-| Engine | Speed | Quality | Requirements |
-|--------|-------|---------|--------------|
-| `turndown` | Fast | Good | None (default) |
-| `mdream` | Fastest | Good | None |
-| `readerlm` | Slower | Best | ~1GB model download |
-
-</details>
-
-<details>
-<summary><b>⚙️ MCP Tools</b></summary>
-
-Exposed tools with parameters: `url`, `engine`, `depth` (basic|advanced), `save_tokens` (0|1), `tokens`
-
--   `FetchWebRaw` - Raw HTML
--   `FetchWebMarkdown` - Markdown with engine selection
--   `FetchJina` - Jina Reader API
-
-Each returns `{ content: [{ type: "text", text }], meta: { tokens, engine } }`.
-
-</details>
-
----
-
-### 13. 📅 Last Changes
-
-> Shows uncommitted git changes grouped by modification time to help you understand what files were updated and when.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   📅 Time-based grouping (Last hour, Last 3 hours, Today, Yesterday, etc.)
--   🎨 Color-coded git status (modified, added, deleted, renamed)
--   ⏰ Relative and absolute timestamps
--   📋 Detailed status descriptions (staged/unstaged)
--   🔍 Handles untracked files and directories
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Show uncommitted changes grouped by time
-tools last-changes
-
-# Enable verbose logging
-tools last-changes --verbose
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option      | Alias | Description            |
-| ----------- | ----- | ---------------------- |
-| `--verbose` | `-v`  | Enable verbose logging |
-| `--help`    | `-h`  | Show help message      |
-
-</details>
-
-<details>
-<summary><b>📋 Output Format</b></summary>
-
-Groups files by time periods:
-
--   **Last hour** - Files modified in the past hour
--   **Last 3 hours** - Files modified 1-3 hours ago
--   **Last 6 hours** - Files modified 3-6 hours ago
--   **Last 12 hours** - Files modified 6-12 hours ago
--   **Today** - Files modified today but more than 12 hours ago
--   **Yesterday** - Files modified yesterday
--   **Last N days** - Files modified in the past week
--   **Older** - Files modified more than a week ago
-
-Each file shows:
-
--   Git status (M, A, D, R, etc.) with color coding
--   Status description (e.g., "modified (staged & unstaged)")
--   Relative time (e.g., "5 minutes ago")
--   Absolute timestamp (e.g., "Oct 30, 2024, 2:30:45 PM")
-
-</details>
-
----
-
-### 14. 📊 FSEvents Profile
-
-> Profile file system events using macOS fsevents. Helps identify directories with high filesystem activity to diagnose performance issues or find cache/build directories.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   📊 Monitor filesystem events in real-time
--   📈 Aggregate events by directory
--   🏆 Show top N most active directories
--   🔍 Find processes watching fsevents
--   ⚡ Uses native macOS fsevents API for efficiency
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Monitor entire filesystem for default 15 seconds
-tools fsevents-profile
-
-# Monitor specific directory
-tools fsevents-profile /Users
-
-# Monitor for custom duration
-tools fsevents-profile -d 30
-
-# Show top 5 directories instead of default 10
-tools fsevents-profile -t 5 /tmp
-
-# Show processes currently watching fsevents (requires root)
-sudo tools fsevents-profile --watchers
-
-# Enable verbose logging to see events in real-time
-tools fsevents-profile -v /Users/Martin
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option       | Alias | Description                                             | Default |
-| ------------ | ----- | ------------------------------------------------------- | ------- |
-| `--duration` | `-d`  | Monitoring duration in seconds                          | `15`    |
-| `--top`      | `-t`  | Number of top directories to display                    | `10`    |
-| `--path`     | -     | Path to monitor                                         | `"/"`   |
-| `--watchers` | `-w`  | Show processes currently watching fsevents (needs root) | -       |
-| `--verbose`  | `-v`  | Enable verbose logging to see events as they occur      | -       |
-| `--help`     | `-h`  | Show help message                                       | -       |
-
-</details>
-
-<details>
-<summary><b>📋 How It Works</b></summary>
-
-1. Starts an fsevents watcher on the specified path
-2. Collects all file system events during the monitoring period
-3. Aggregates events by parent directory
-4. Displays the top N directories with the most activity
-5. Press Ctrl+C at any time to stop early and see results
-
-</details>
-
-<details>
-<summary><b>💡 Tips</b></summary>
-
--   Common high-activity locations include: caches, build outputs, cloud sync folders
--   Monitoring the root filesystem (`/`) may generate a large number of events
--   The `--watchers` flag requires root privileges to run `fs_usage`
--   Use `--verbose` to see events in real-time as they occur
-
-</details>
-
----
-
-### 16. 🔐 macOS ESLogger
-
-> Monitor macOS Endpoint Security events in real-time using the ESLogger utility - perfect for security monitoring and debugging process execution!
-
-**🚨 macOS Only** - Requires macOS 10.15+ and Full Disk Access permissions
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🔍 **Real-time Event Monitoring**: Monitor system events as they happen
--   🎯 **Advanced Filtering**: Filter events using JSON path expressions
--   📊 **Multiple Event Types**: Process execution, file operations, authentication, and more
--   🏷️ **Event Categories**: Pre-defined groups like process, file, network, security
--   🎨 **Beautiful Output**: Color-coded, formatted event display
--   🔧 **Debug Mode**: Raw JSON output for troubleshooting
--   📝 **Multiple Output**: Console, file logging, or clipboard
--   🖥️ **Interactive Mode**: Easy setup for beginners
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Interactive mode (recommended for beginners)
-tools macos-eslogger
-
-# Monitor process events (exec, fork, exit)
-tools macos-eslogger -c process
-
-# Monitor specific events
-tools macos-eslogger -e exec,fork,authentication
-
-# Filter for specific processes
-tools macos-eslogger -e exec --filter-event '.event.target.path =~ ".*bash.*"'
-
-# Monitor file operations but exclude temp files
-tools macos-eslogger -e open,write --filter-event '.event.file.path !~ ".*tmp.*"'
-
-# Save authentication events to file
-tools macos-eslogger -e authentication -o auth.log
-
-# Debug mode to see raw event structure
-tools macos-eslogger -e exec --debug --dry-run
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Event Categories</b></summary>
-
-| Category   | Events                                     | Description                   |
-| ---------- | ------------------------------------------ | ----------------------------- |
-| `process`  | exec, fork, exit                           | Process lifecycle events      |
-| `file`     | open, close, create, write, unlink, rename | File system operations        |
-| `network`  | uipc_bind, uipc_connect                    | Network/socket operations     |
-| `security` | authentication, sudo, su, setuid...        | Security and privilege events |
-| `session`  | login/logout, screensharing, ssh           | User session events           |
-| `auth`     | authorization events                       | System authorization          |
-
-</details>
-
-<details>
-<summary><b>🔍 Filter Syntax</b></summary>
-
-Use JSON path expressions with dot notation and regex operators:
-
-```bash
-# Regex matching (recommended)
-.event.target.path =~ ".*bash.*"        # Executables containing "bash"
-.event.target.path =~ "^/usr/.*"        # Paths starting with "/usr/"
-.event.process.audit_token.pid == "1234" # Specific PID (exact match)
-
-# Regex exclusion
-.event.target.path !~ ".*tmp.*"         # Exclude temp file paths
-
-# String matching (supports regex if pattern contains special chars)
-.event.target.path == "/bin/bash"       # Exact string match
-```
-
-**Supported Operators:**
-
--   `==` - Exact match (supports regex if pattern contains `.*`)
--   `!=` - Not equal (supports regex if pattern contains `.*`)
--   `=~` - Regex match
--   `!~` - Regex not match
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option           | Alias | Description                                    |
-| ---------------- | ----- | ---------------------------------------------- |
-| `--events, -e`   |       | Comma-separated list of event types to monitor |
-| `--category, -c` |       | Monitor all events in a category               |
-| `--output, -o`   |       | Write output to file instead of stdout         |
-| `--filter-event` |       | Filter events using JSON path expression       |
-| `--include-fork` |       | Auto-include fork events when monitoring exec  |
-| `--debug`        |       | Show raw JSON events for debugging             |
-| `--dry-run`      |       | Show what would be monitored without running   |
-| `--silent`       |       | Suppress non-error messages                    |
-| `--verbose`      |       | Enable verbose logging                         |
-| `--help, -h`     |       | Show help message                              |
-
-</details>
-
-<details>
-<summary><b>🔧 Setup Requirements</b></summary>
-
-**1. macOS Version:** 10.15+ (Catalina or later)
-
-**2. Full Disk Access:** Required for ESLogger to work
-
-```bash
-# Go to: System Settings > Privacy & Security > Full Disk Access
-# Add and enable: /usr/sbin/eslogger
-```
-
-**3. Run with sudo:** ESLogger requires root privileges
-
-```bash
-sudo tools macos-eslogger -e exec
-```
-
-**4. Terminal Session:** Run in a separate terminal from the one you're monitoring
-
-</details>
-
-<details>
-<summary><b>📋 Understanding Events</b></summary>
-
-**Process Events:**
-
--   **exec**: `event.target.path` - Executable being run
--   **fork**: `event.child.executable.path` - Child process created
-
-**File Events:**
-
--   **open/write**: `event.file.path` - File being accessed
--   **create/unlink**: `event.target.path` - File being created/deleted
-
-**Security Events:**
-
--   **authentication**: `event.success` - Auth success/failure
--   **sudo**: `event.command` - Command run with sudo
-
-**Common Paths:**
-
--   `.event.target.path` - Executable path (exec events)
--   `.event.file.path` - File path (file events)
--   `.process.executable.path` - Process that triggered event
--   `.process.audit_token.pid` - Process ID
-
-</details>
-
-<details>
-<summary><b>💡 Pro Tips</b></summary>
-
--   **Shell Builtins**: `which`, `cd`, `echo` don't trigger exec events - use `/usr/bin/which`
--   **Process Groups**: ESLogger suppresses events from its own process group
--   **Performance**: Start with specific events rather than all events
--   **Debugging**: Use `--debug` to see raw event structure for filter creation
--   **Categories**: Use `-c process` for general process monitoring
-
-</details>
-
----
-
-### 15. 🔍 MCP TSC
-
-> TypeScript diagnostics checker that can run as both a CLI tool and an MCP server. It supports checking individual files, directories, or glob patterns against your project's tsconfig.json.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   ✅ **CLI Mode**: Check TypeScript files from the command line
--   ✅ **MCP Server Mode**: Run as a persistent MCP server for AI assistants
--   ✅ **Dual Checking Methods**: Use TypeScript Compiler API or LSP
--   ✅ **Glob Pattern Support**: Check multiple files using patterns
--   ✅ **Persistent LSP**: In MCP mode, LSP stays running for faster checks
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Check a single file
-tools mcp-tsc src/app.ts
-
-# Check all TypeScript files in a directory
-tools mcp-tsc src
-
-# Check files using glob patterns (use quotes!)
-tools mcp-tsc 'src/**/*.ts'
-
-# Use LSP for checking (faster for incremental checks)
-tools mcp-tsc --lsp src/app.ts
-
-# Show warnings too
-tools mcp-tsc --warnings src/app.ts
-
-# Run as MCP server for current directory
-tools mcp-tsc --mcp .
-
-# Run MCP server for a specific project
-tools mcp-tsc --mcp /path/to/project
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option       | Description                                            |
-| ------------ | ------------------------------------------------------ |
-| `--lsp`      | Use typescript-language-server instead of compiler API |
-| `--warnings` | Show warnings in addition to errors                    |
-| `--mcp`      | Run as MCP server (requires project path argument)     |
-
-</details>
-
-<details>
-<summary><b>⚙️ MCP Configuration</b></summary>
-
-Add to your MCP settings (e.g., Claude Desktop config):
-
-```json
-{
-    "mcpServers": {
-        "typescript-diagnostics": {
-            "command": "/path/to/GenesisTools/tools",
-            "args": ["mcp-tsc", "--mcp", "/path/to/your/project"]
-        }
-    }
-}
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ MCP Tool: GetTsDiagnostics</b></summary>
-
-Get TypeScript diagnostics for files matching the specified patterns.
-
-**Parameters:**
-
--   `files` (required): String or array of file paths/glob patterns
-    -   Examples: `"src/app.ts"`, `"src/**/*.ts"`, `["file1.ts", "file2.ts"]`
--   `showWarnings` (optional): Include warnings in addition to errors (default: false)
-
-**Example Requests:**
-
-```typescript
-// Single file
-{ "files": "src/app.ts" }
-
-// Glob pattern
-{ "files": "src/**/*.ts" }
-
-// Multiple files
-{ "files": ["src/app.ts", "src/utils.ts"] }
-
-// With warnings
-{ "files": "src/app.ts", "showWarnings": true }
-```
-
-</details>
-
-<details>
-<summary><b>📋 Exit Codes</b></summary>
-
--   `0`: Success (no errors)
--   `1`: Usage error or no files found
--   `2`: TypeScript errors found
-
-</details>
-
----
-
-### 17. ⚙️ MCP Manager
-
-> Cross-platform MCP (Model Context Protocol) server configuration manager. Manage MCP servers across multiple AI assistants (Claude Desktop, Gemini Code Assist, Codex, Cursor) with automatic backups, visual diffs, and safe operations.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🎯 **Multi-Provider Support**: Manage MCP servers for Claude, Gemini, Codex, and Cursor
--   📦 **Unified Configuration**: Single config file (`~/.genesis-tools/mcp-manager/config.json`) to manage all servers
--   💾 **Automatic Backups**: Creates backups before any changes with automatic restore on rejection
--   👁️ **Visual Diffs**: See exactly what changed before applying updates
--   ✅ **Interactive Confirmation**: Review changes and approve or revert
--   🔄 **Bidirectional Sync**: Sync servers from unified config to providers, or import from providers to unified config
--   🛡️ **Safe Operations**: All changes are reversible with automatic backup restoration
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Interactive mode - choose an action
-tools mcp-manager
-
-# Open/edit unified configuration file
-tools mcp-manager config
-
-# Sync servers from unified config to selected providers
-tools mcp-manager sync
-
-# Sync servers FROM providers TO unified config
-tools mcp-manager sync-from-providers
-
-# List all MCP servers across all providers
-tools mcp-manager list
-
-# Enable/disable servers
-tools mcp-manager enable github
-tools mcp-manager disable github
-
-# Install a server from unified config to a provider
-tools mcp-manager install github
-
-# Show full configuration of a server
-tools mcp-manager show github
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Commands</b></summary>
-
-| Command               | Description                                       |
-| --------------------- | ------------------------------------------------- |
-| `config`              | Open/create unified configuration file            |
-| `sync`                | Sync MCP servers from unified config to providers |
-| `sync-from-providers` | Sync servers FROM providers TO unified config     |
-| `list`                | List all MCP servers across all providers         |
-| `enable`              | Enable an MCP server in a provider                |
-| `disable`             | Disable an MCP server in a provider               |
-| `disable-all`         | Disable an MCP server for all projects (Claude)   |
-| `install`             | Install/add an MCP server to a provider           |
-| `show`                | Show full configuration of an MCP server          |
-
-</details>
-
-<details>
-<summary><b>💡 Workflow</b></summary>
-
-1. **Create Unified Config**: Edit unified config (`~/.genesis-tools/mcp-manager/config.json`) with all your MCP servers
-2. **Sync Servers**:
-    - Sync FROM unified config TO providers: `tools mcp-manager sync`
-    - Sync FROM providers TO unified config: `tools mcp-manager sync-from-providers`
-3. **Review Changes**: See diff and confirm or reject changes
-4. **Automatic Backup**: If rejected, automatically restores from backup
-
-</details>
-
-<details>
-<summary><b>🛡️ Safety Features</b></summary>
-
--   **Automatic Backups**: Created before every write operation
--   **Visual Diffs**: See exactly what will change
--   **Confirmation Prompts**: Approve or reject changes
--   **Automatic Restore**: Reverts changes if rejected
-
-Backups are stored in `~/.mcp-manager/backups/` with timestamps.
-
-</details>
-
-<details>
-<summary><b>📋 Supported Providers</b></summary>
-
--   **Claude Desktop**: `~/.claude.json` (supports global and project-specific configs)
--   **Gemini Code Assist**: `~/.gemini/settings.json`
--   **Codex**: `~/.codex/config.toml` (TOML format)
--   **Cursor**: `~/.cursor/mcp.json`
-
-</details>
-
----
-
-### 18. 🔄 Git Rename Commits
-
-> Interactively rename commit messages for the last N commits with a beautiful confirmation screen before rewriting history.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🎯 Interactive prompts for each commit message
--   📋 Confirmation screen showing old → new mapping
--   🔄 Automatic git rebase to rewrite history
--   ⚠️ Safety warnings about history rewriting
--   🧹 Clean implementation with inline bash commands
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Rename last 3 commits
-tools git-rename-commits --commits 3
-
-# Interactive mode (prompts for number)
-tools git-rename-commits
-
-# Show help
-tools git-rename-commits --help
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option          | Alias | Description                        |
-| --------------- | ----- | ---------------------------------- |
-| `--commits, -c` |       | Number of recent commits to rename |
-| `--help, -h`    |       | Show help message                  |
-
-</details>
-
-<details>
-<summary><b>⚠️ Important Notes</b></summary>
-
-**History Rewriting:**
-
--   ⚠️ Only use on commits that haven't been pushed yet
--   🔄 Changes commit hashes for all renamed commits and their descendants
--   💾 Consider creating a backup branch before renaming
-
-**Workflow:**
-
-1. Specify number of commits (via `-c` or interactively)
-2. Review commits and provide new messages one-by-one
-3. Confirm changes in the summary screen
-4. Git rebase rewrites the commit history
-
-</details>
-
----
-
-### 19. 🔄 JSON/TOON Converter
-
-> Convert data between JSON and TOON (Token-Oriented Object Notation) formats. TOON can reduce token usage by 30-60% compared to standard JSON, making it ideal for LLM applications.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   ✅ **Auto-Detection**: Automatically detects JSON or TOON format
--   ✅ **Bidirectional Conversion**: Convert JSON ↔ TOON seamlessly
--   ✅ **Size Comparison**: Compares TOON with compact JSON and returns the smaller format
--   ✅ **File & Stdin Support**: Works with files or piped input
--   ✅ **Verbose Mode**: Shows format detection, size comparison, and savings statistics
--   ✅ **Error Handling**: Clear, LLM-readable error messages
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Auto-detect format and convert (file)
-tools json data.json
-tools json data.toon
-
-# Auto-detect format and convert (stdin)
-cat data.json | tools json
-echo '{"key":"value"}' | tools json
-
-# Force conversion to TOON
-tools json data.json --to-toon
-cat data.json | tools json --to-toon
-
-# Force conversion to JSON
-tools json data.toon --to-json
-cat data.toon | tools json --to-json
-
-# Verbose mode (shows statistics)
-tools json data.json --verbose
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option          | Alias | Description                                           |
-| --------------- | ----- | ----------------------------------------------------- |
-| `--to-toon, -t` |       | Force conversion to TOON format                       |
-| `--to-json, -j` |       | Force conversion to JSON format                       |
-| `--verbose, -v` |       | Enable verbose logging (shows format detection, etc.) |
-| `--help, -h`    |       | Show help message                                     |
-
-</details>
-
-<details>
-<summary><b>💡 How It Works</b></summary>
-
-**Auto-Detection Mode:**
-
--   Detects input format (JSON or TOON)
--   Converts to the opposite format automatically
--   When converting JSON → TOON, compares sizes and returns the smaller format
-
-**Forced Conversion Mode:**
-
--   Validates input format matches the requested conversion
--   Provides clear error messages if format doesn't match
--   Returns the converted result
-
-**Size Comparison:**
-
--   Compares TOON output with compact JSON (no whitespace)
--   Returns the format with fewer bytes
--   Logs statistics in verbose mode
-
-</details>
-
-<details>
-<summary><b>📋 Example Output</b></summary>
-
-**JSON Input:**
-
-```json
-{
-    "users": [
-        { "id": 1, "name": "Alice", "role": "admin" },
-        { "id": 2, "name": "Bob", "role": "user" }
-    ]
-}
-```
-
-**TOON Output:**
-
-```
-users[2]{id,name,role}:
-  1,Alice,admin
-  2,Bob,user
-```
-
-**Verbose Mode:**
-
-```
-Detected format: JSON
-Compact JSON size: 86 bytes
-TOON size: 52 bytes
-✓ TOON is 39.5% smaller (34 bytes saved)
-Returning TOON format
-```
-
-</details>
-
-<details>
-<summary><b>🎯 Use Cases</b></summary>
-
-**For LLM Applications:**
-
--   Before sending data: Convert JSON to TOON to reduce token usage
--   After receiving data: Convert TOON responses back to JSON
--   In pipelines: Automatically optimize data format
-
-**For Development:**
-
--   Format comparison: See which format is more compact
--   Data transformation: Convert between formats for different tools
-
-</details>
-
----
-
-### 20. 🔷 Azure DevOps
-
-> Fetch, track, and manage Azure DevOps work items, queries, and dashboards with intelligent caching and change detection.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🔷 **Work Item Management**: Fetch individual work items with full details, comments, and relations
--   📊 **Query Support**: Run Azure DevOps queries with change detection between runs
--   📈 **Dashboard Integration**: Extract queries from dashboards automatically
--   💾 **Smart Caching**: 5-minute cache for work items, 180-day cache for queries
--   🔍 **Change Detection**: Automatically detects new items and updates (state, assignee, severity, title)
--   📁 **Task File Generation**: Saves work items as JSON and Markdown files
--   🗂️ **Category Organization**: Organize work items into categories (remembered per item)
--   📦 **Batch Operations**: Fetch multiple work items or download all items from a query
--   🎯 **Filtering**: Filter queries by state and severity
--   📄 **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Configure for your project (first-time setup)
-tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-
-# Fetch a work item
-tools azure-devops --workitem 12345
-
-# Fetch multiple work items
-tools azure-devops --workitem 12345,12346,12347
-
-# Fetch a query with change detection
-tools azure-devops --query d6e14134-9d22-4cbb-b897-b1514f888667
-
-# Filter query results by state
-tools azure-devops --query <id> --state Active,Development
-
-# Download all work items from a query
-tools azure-devops --query <id> --download-workitems
-
-# Organize into categories (remembered per work item)
-tools azure-devops --query <id> --download-workitems --category react19
-tools azure-devops --workitem 12345 --category hotfixes
-
-# Use task folders (each task in its own subfolder)
-tools azure-devops --workitem 12345 --task-folders
-
-# Get dashboard queries
-tools azure-devops --dashboard <url|id>
-
-# List all cached work items
-tools azure-devops --list
-
-# Force refresh (bypass cache)
-tools azure-devops --workitem 12345 --force
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option                  | Alias | Description                                           | Default |
-| ----------------------- | ----- | ----------------------------------------------------- | ------- |
-| `--format <ai\|md\|json>` | -    | Output format                                        | `ai`    |
-| `--force`, `--refresh`  | -    | Force refresh, ignore cache                          | -       |
-| `--state <states>`      | -    | Filter by state (comma-separated)                    | -       |
-| `--severity <sev>`      | -    | Filter by severity (comma-separated)                | -       |
-| `--download-workitems`  | -    | With `--query`: download all work items to tasks/    | -       |
-| `--category <name>`     | -    | Save to tasks/<category>/ (remembered per work item)  | -       |
-| `--task-folders`        | -    | Save in tasks/<id>/ subfolder (only for new files)   | -       |
-| `--help`                | `-h`  | Show help message                                     | -       |
-
-</details>
-
-<details>
-<summary><b>🔧 First-Time Setup</b></summary>
-
-**Prerequisites:**
-
-1. Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
-2. Install Azure DevOps extension:
-   ```bash
-   az extension add --name azure-devops
-   ```
-3. Login with device code:
-   ```bash
-   az login --allow-no-subscriptions --use-device-code
-   ```
-
-**Configure:**
-
-```bash
-tools azure-devops --configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-```
-
-This auto-detects org, project, and projectId from the URL and saves to `.claude/azure/config.json`.
-
-</details>
-
-<details>
-<summary><b>📋 Storage Structure</b></summary>
-
-**Global Cache** (`~/.genesis-tools/azure-devops/cache/`):
-- Query cache: 180 days TTL
-- Work item cache: 5 minutes TTL
-- Dashboard cache: 180 days TTL
-
-**Project Storage** (`.claude/azure/`):
-- `config.json` - Project configuration
-- `tasks/` - Work item files (JSON + Markdown)
-  - Flat: `{id}-{Slug-Title}.json`
-  - With category: `{category}/{id}-{Slug-Title}.json`
-  - With task folders: `{id}/{id}-{Slug-Title}.json`
-
-Config search: Searches up to 3 parent levels from current directory.
-
-</details>
-
-<details>
-<summary><b>💡 Key Features</b></summary>
-
-**Change Detection:**
-- Detects new work items added to queries
-- Highlights changes to state, assignee, severity, title
-- Shows before/after values in AI format
-
-**Category Memory:**
-- Categories are remembered per work item in global cache
-- Future fetches automatically use the same category
-
-**Task Folders:**
-- Only applies to new files
-- Existing files stay in their current location
-- Prevents accidental reorganization
-
-**Batch Download:**
-- Download all work items from a query with one command
-- Automatically fetches full details (comments, relations) for each item
-
-</details>
-
-<details>
-<summary><b>🤖 Claude AI Skill</b></summary>
-
-This tool includes a Claude AI skill that enables AI assistants to automatically use the Azure DevOps tool when users ask about work items, queries, or tasks.
-
-**Installing the Skill:**
-
-```bash
-# Using skill-installer (if available)
-tools skill-installer install azure-devops
-
-# Or manually copy the skill file
-cp skills/azure-devops.skill ~/.codex/skills/
-```
-
-**Skill Features:**
-- Automatic tool invocation when users mention work items, queries, or Azure DevOps URLs
-- Work item analysis with codebase exploration agents
-- Automatic query handling and task organization
-
-The skill triggers on phrases like "get workitem", "fetch task", "show query", "download tasks", "analyze workitem", "analyze task", or Azure DevOps URLs.
-
-</details>
-
----
-
-### 11. 🤖 Git Commit
-
-> Generate AI-powered commit messages for your staged changes, with optional detailed descriptions and push functionality!
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🤖 Generates 4 commit message suggestions using Google Gemini AI
--   📝 Interactive commit message selection
--   📃 Optional detailed commit messages with body text (`--detail`)
--   📦 Optional staging of all changes (`--stage`)
--   🚀 Optional automatic push after commit
--   🔍 Shows diff preview in verbose mode
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Generate commit for already staged changes
-tools git-commit
-
-# Stage all changes first, then commit
-tools git-commit --stage
-
-# Generate detailed commit messages with body text
-tools git-commit --detail
-
-# Stage changes and generate detailed commits
-tools git-commit --stage --detail
-
-# Verbose mode to see diff preview
-tools git-commit --verbose
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option      | Alias | Description                                      |
-| ----------- | ----- | ------------------------------------------------ |
-| `--stage`   | `-s`  | Stage all changes before committing              |
-| `--detail`  | `-d`  | Generate detailed commit messages with body text |
-| `--verbose` | `-v`  | Enable verbose logging                           |
-| `--help`    | `-h`  | Show help message                                |
-
-</details>
-
-<details>
-<summary><b>⚙️ Configuration</b></summary>
-
-**Required Environment Variable:**
-
-```bash
-export OPENROUTER_API_KEY=your_openrouter_api_key
-```
-
-The tool uses Google's Gemini 2.0 Flash Lite model via OpenRouter for fast, high-quality commit messages.
-
-</details>
-
-<details>
-<summary><b>📋 Workflow</b></summary>
-
-1. **Stage Changes (Optional)** → Runs `git add .` if `--stage` is used
-2. **Analyze Diff** → Examines staged changes
-3. **Generate Messages** → AI creates 4 contextual commit messages
-    - With `--detail`: Each message includes a summary line and detailed body
-    - Without `--detail`: Just concise summary lines
-4. **Select Message** → Choose the best one interactively
-5. **Commit** → Creates commit with chosen message
-6. **Push (Optional)** → Asks if you want to push to remote
-
-</details>
-
----
-
-# Useful notes
-
-<details>
-<summary><b>🔌 MCP (Model Context Protocol)</b></summary>
-
-### 🌐 Global MCP Server Installation
-
-For system-wide access to MCP servers:
-
-```bash
-bun add --global \
-  @modelcontextprotocol/inspector \
-  @modelcontextprotocol/server-sequential-thinking \
-  @modelcontextprotocol/server-filesystem \
-  @modelcontextprotocol/server-github \
-  @modelcontextprotocol/server-puppeteer \
-  @modelcontextprotocol/server-brave-search \
-  @executeautomation/playwright-mcp-server \
-  @eslint/mcp \
-  interactive-mcp
-```
-
-### 🔧 MCP Configuration Example for Claude Desktop
-
-> 📌 **Important**: Claude Desktop seems to lose ability to find tools in the $PATH. For that reason, the "command" needs to have the FULL path to the tool (to find where it is, run `which tools` or `which mcp-server-github` for example)
-
-Here's a complete MCP example configuration for Claude Desktop:
-
-```json
-{
-    "mcpServers": {
-        "github": {
-            "command": "/Users/YourName/.bun/bin/mcp-server-github",
-            "args": [],
-            "env": {
-                "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_...."
-            }
-        },
-        "ripgrep": {
-            "command": "/Users/YourName/PathTo/GenesisTools/tools",
-            "args": ["mcp-ripgrep"],
-            "env": {
-                "SHELL": "/bin/zsh"
-            }
-        },
-        "sequential-thinking": {
-            "command": "/opt/homebrew/bin/mcp-server-sequential-thinking",
-            "args": [],
-            "env": {}
-        },
-        "puppeteer": {
-            "command": "/Users/YourName/.bun/bin/mcp-server-puppeteer",
-            "args": [],
-            "env": {}
-        },
-        "brave-search": {
-            "command": "/Users/YourName/.bun/bin/mcp-server-brave-search",
-            "env": {
-                "BRAVE_API_KEY": "BSAIV......"
-            }
-        },
-        "filesystem": {
-            "command": "/Users/YourName/.bun/bin/mcp-server-filesystem",
-            "args": ["/Users/YourName/PathTo/Projects/"]
-        },
-        "context": {
-            "command": "context7-mcp"
-        },
-        "eslint-mcp": {
-            "type": "stdio",
-            "command": "/Users/Yourname/.bun/bin/bun",
-            "args": ["x", "@eslint/mcp@latest"],
-            "env": {}
-        }
-    },
-    "globalShortcut": ""
-}
-```
-
-### 🔧 MCP Configuration Example for Cursor
-
-Here's a complete MCP configuration for Cursor:
-
-```json
-{
-    "mcpServers": {
-        "ripgrep": {
-            "command": "tools mcp-ripgrep",
-            "args": ["--root", "/Users/YourName/Projects/"],
-            "env": {}
-        },
-        "github": {
-            "command": "mcp-server-github",
-            "args": [],
-            "env": {
-                "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_..."
-            }
-        },
-        "sequential-thinking": {
-            "command": "mcp-server-sequential-thinking",
-            "args": [],
-            "env": {}
-        },
-        "puppeteer": {
-            "command": "mcp-server-puppeteer",
-            "args": [],
-            "env": {}
-        },
-        "brave-search": {
-            "command": "mcp-server-brave-search",
-            "env": {
-                "BRAVE_API_KEY": "..."
-            }
-        },
-        "context": {
-            "command": "context7-mcp"
-        },
-        "filesystem": {
-            "command": "mcp-server-filesystem",
-            "args": ["/Users/YourName/Allowed/Directory/"]
-        }
-    }
-}
-```
-
-</details>
-
-## 🐍 Python Package Management Tips
-
-<details>
-<summary><b>Install packages with isolated environments using pipx</b></summary>
-
-```bash
-# Install pipx
-brew install python-argcomplete pipx && pipx ensurepath
-
-# Optional: Enable global access
-sudo pipx ensurepath --global
-
-# For autocomplete
-pipx completions
-echo 'eval "$(register-python-argcomplete pipx)"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-</details>
-
-<details>
-<summary><b>Monitor Process Usage</b></summary>
-
-```bash
-# Install psrecord
-pipx install 'psrecord[plot]'
-
-# Record process usage
-psrecord <pid> --interval 1 --duration 60 --plot usage.png
-```
-
-</details>
-
----
-
-### 21. 🌳 Git Rebase Multiple
-
-> Safe branch hierarchy rebasing with full rollback capability. Rebase a parent branch and automatically rebase all its child branches using correct fork points.
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Interactive mode (recommended)
-tools git-rebase-multiple
-
-# Show current state and backups
-tools git-rebase-multiple --status
-
-# Preview plan without making changes
-tools git-rebase-multiple --dry-run
-
-# Abort and restore all branches
-tools git-rebase-multiple --abort
-
-# Continue after resolving conflicts
-tools git-rebase-multiple --continue
-
-# Cleanup backup refs when done
-tools git-rebase-multiple --cleanup
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--help` | `-h` | Show help message |
-| `--abort` | `-a` | Abort and restore all branches |
-| `--continue` | `-c` | Continue after resolving conflicts |
-| `--status` | `-s` | Show current state and backups |
-| `--cleanup` | | Remove all backup refs and fork tags |
-| `--restore <branch>` | `-r` | Restore single branch from backup |
-| `--dry-run` | | Show execution plan without running |
-
-</details>
-
-<details>
-<summary><b>✨ Features</b></summary>
-
-- **Backup Refs**: Creates `refs/backup/grm/<branch>` refs that survive git gc
-- **Fork Point Tags**: Saves `fork/<child>` tags for accurate `--onto` rebasing
-- **State Persistence**: Tracks progress in `.git/rebase-multiple-state.json`
-- **Verbose Output**: Shows every git command being executed
-- **Full Rollback**: Abort at any point and restore all branches to original state
-- **Auto-Detection**: Automatically finds child branches of the parent being rebased
-
-</details>
-
-<details>
-<summary><b>📖 Example Scenario</b></summary>
-
-```text
-Before:
-  main:     A---B---C---D
-                 \
-  feature:        E---F
-                       \
-  child-1:              G---H
-                       \
-  child-2:              I
-
-After rebasing feature onto main (with children):
-  main:     A---B---C---D
-                         \
-  feature:                E'--F'
-                               \
-  child-1:                      G'--H'
-                               \
-  child-2:                      I'
-```
-
-</details>
-
----
-
-### 22. ⚛️ React Compiler Debug
-
-> Inspect what `babel-plugin-react-compiler` generates from React components. Debug memoization issues and understand compiler optimizations.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🔍 **Compile and inspect**: See exactly what React Compiler generates
--   🎯 **Multiple input modes**: File, inline code, or stdin
--   📊 **Summary output**: Shows if component was memoized and cache slot count
--   📋 **Clipboard support**: Copy output directly to clipboard
--   ⚙️ **Configurable**: Target React 17/18/19, different compilation modes
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Compile a file and see output
-tools react-compiler-debug src/components/MyComponent.tsx
-
-# Compile inline code
-tools react-compiler-debug --code "const Foo = ({ x }) => <div>{x}</div>"
-
-# Show original + compiled (for file input)
-tools react-compiler-debug src/components/MyComponent.tsx --with-original
-
-# Verbose mode (shows compiler events)
-tools react-compiler-debug -v src/components/MyComponent.tsx
-
-# Output to clipboard
-tools react-compiler-debug src/components/MyComponent.tsx --clipboard
-
-# Target specific React version
-tools react-compiler-debug --target 18 src/components/MyComponent.tsx
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option | Alias | Description | Default |
-|--------|-------|-------------|---------|
-| `--code` | `-c` | Compile inline code snippet | - |
-| `--stdin` | `-s` | Read code from stdin | - |
-| `--with-original` | | Include original code before compiled (file/stdin only) | `false` |
-| `--verbose` | `-v` | Show compiler events | `false` |
-| `--clipboard` | | Copy output to clipboard | `false` |
-| `--target` | `-t` | React version target (17, 18, 19) | `19` |
-| `--mode` | `-m` | Compilation mode (infer, all, annotation, syntax) | `infer` |
-
-</details>
-
-<details>
-<summary><b>📋 Reading the Output</b></summary>
-
-The compiled output uses React Compiler primitives:
-
--   `useMemoCache(n)` / `_c(n)` - Creates a cache with n slots
--   `$[0]`, `$[1]`, etc. - Cache slot access
--   `Symbol.for("react.memo_cache_sentinel")` - Cache invalidation marker
-
-**Example Input:**
-```tsx
-const Greeting = ({ name }) => <h1>Hello, {name}!</h1>;
-```
-
-**Example Output:**
-```tsx
-function Greeting(t0) {
-  const $ = _c(2);
-  const { name } = t0;
-  let t1;
-  if ($[0] !== name) {
-    t1 = <h1>Hello, {name}!</h1>;
-    $[0] = name;
-    $[1] = t1;
-  } else {
-    t1 = $[1];
-  }
-  return t1;
-}
-```
-
-The compiler memoizes the JSX based on `name` prop changes.
-
-</details>
-
-<details>
-<summary><b>🤖 Claude AI Skill</b></summary>
-
-This tool includes a Claude AI skill that enables AI assistants to automatically debug React Compiler issues.
-
-**Triggers on:**
-- "react compiler", "compiler output", "see compiled"
-- "memoization debug", "why isn't this memoized"
-- Debugging component optimization issues
-
-**Skill behavior:**
-- Uses `--with-original` when it doesn't already have the source file content
-- Analyzes compiler output to explain memoization decisions
-
-</details>
+Formatting is Biome with a 120-column line width and 4-space indent. Imports are sorted by
+module specifier, named imports are sorted case-insensitively inside the braces, and the
+pre-commit hook runs `biome check --write --staged`.
+
+### Adding a tool
+
+Create `src/<name>/index.ts`. That is the whole registration step.
+
+The conventions that keep a tool consistent with the rest:
+
+-   Parse arguments with `commander`, and end the entrypoint with
+    `await runTool(program, { tool })` from `@genesiscz/utils/cli`.
+-   Put business logic in `src/<name>/lib/`. The CLI commands, HTTP routes, and MCP tool
+    modules are all thin adapters over it. A behaviour must never exist in a route that the
+    CLI cannot reach, or the other way round.
+-   Log through `logger` from `@genesiscz/utils/logger` for diagnostics, and `out` for anything
+    the user reads. `out.result()` and `out.print()` are the only writers to stdout.
+-   Never read `process.env` directly. Use `env` from `@genesiscz/utils/env`.
+-   Use `SafeJSON` from `@genesiscz/utils/json` instead of the `JSON` global. It tolerates
+    comments and trailing commas.
+-   Check `isInteractive()` before prompting, and fall back to a flag with `suggestCommand()`
+    when there is no TTY.
+-   Helpers that other tools could use belong in `src/utils/`, not in the tool folder.
+
+Templates for both prompt libraries live in `.claude/docs/tool-template.md`. Before writing
+web UI, read `.claude/docs/design-system.md`.
+
+### Guardrails in CI
+
+-   `scripts/ci/logging-guard.sh` enforces the logging convention repo-wide: no default,
+    extension, relative-path, or renamed import of the logger module, no serialized results
+    dumped through `logger.*`, and no reintroduced transitional shims.
+-   `scripts/ci/ai-credentials-guard.sh` fails the build on argument-less provider
+    constructors, bare `@ai-sdk` singletons outside `src/utils/ai/providers/`, and any
+    `new Storage("ai")` outside the AI config layer.
+-   `bun run check:ui-palette` rejects raw palette colors in app code, where theme tokens
+    belong.
+
+### A rule worth repeating
+
+**A diagnostic must never mutate.** If the name says it inspects (`doctor`, `test`, `probe`,
+`health`, `check`, `status`, `list`, `show`, `--dry-run`), it may read durable state and report
+on it, and nothing else. No writes, no token rotation, no cache mint that changes what a later
+process sees. When a diagnostic finds a problem it prints the fix command, it does not apply
+the fix. Two commands in this repo once spent single-use OAuth refresh tokens purely by
+diagnosing an account, which meant checking a credential could break it.
 
 ---
 
@@ -2322,688 +974,14 @@ This tool includes a Claude AI skill that enables AI assistants to automatically
 
 ---
 
-### 23. ✂️ Git Rebranch
-
-> Split a messy branch with mixed commits into multiple clean, focused branches via cherry-pick.
-
-<details>
-<summary><b>✨ Features</b></summary>
-
--   🔍 Auto-detects fork point and base branch
--   🏷️ Smart grouping by conventional commit scope/ticket
--   🔎 Searchable multiselect for commit refinement
--   🌳 Creates branches from fork point via cherry-pick
--   📋 Dry run mode for previewing without changes
-
-</details>
-
-<details>
-<summary><b>🎯 Quick Examples</b></summary>
-
-```bash
-# Interactive mode
-tools git-rebranch
-
-# Preview without creating branches
-tools git-rebranch --dry-run
-
-# Show git commands
-tools git-rebranch --verbose
-```
-
-</details>
-
-<details>
-<summary><b>⚙️ Options</b></summary>
-
-| Option        | Alias | Description                                   |
-| ------------- | ----- | --------------------------------------------- |
-| `--dry-run`   |       | Show execution plan without creating branches |
-| `--verbose`   | `-v`  | Show git commands being executed              |
-| `--help-full` | `-?`  | Show detailed help message                    |
-
-</details>
-
----
-
-### 24. 🔍 HAR Analyzer
-
-Token-efficient HTTP Archive (HAR) file analyzer with a **reference system** that eliminates data repetition. Supports progressive disclosure (dashboard → entry list → detail → raw), domain grouping, security audits, timing waterfall, and more.
-
-<details>
-<summary>📖 Usage & Details</summary>
-
-```bash
-# Load a HAR file and show dashboard
-tools har-analyzer load capture.har
-
-# List entries with filters
-tools har-analyzer list --status 4xx,5xx --domain api.example.com
-
-# Show entry detail / full raw content
-tools har-analyzer show e14
-tools har-analyzer show e14 --raw --section body
-
-# Expand a referenced value (or view its schema first)
-tools har-analyzer expand e14.rs.body --schema            # compact skeleton
-tools har-analyzer expand e14.rs.body --schema typescript  # TypeScript interfaces
-tools har-analyzer expand e14.rs.body                      # full content
-
-# Domain drill-down with body previews
-tools har-analyzer domain api.example.com
-
-# Analysis commands
-tools har-analyzer errors       # 4xx/5xx focus with body previews
-tools har-analyzer waterfall    # ASCII timing chart
-tools har-analyzer security     # Find JWT, API keys, insecure cookies
-tools har-analyzer size         # Bandwidth breakdown by content type
-tools har-analyzer headers      # Deduplicated header analysis
-tools har-analyzer redirects    # Redirect chain tracking
-tools har-analyzer cookies      # Cookie flow (set/sent tracking)
-tools har-analyzer diff e5 e14  # Compare two entries
-tools har-analyzer search "error" --scope body
-
-# Export filtered/sanitized subset
-tools har-analyzer export --domain api.example.com --sanitize -o api-only.har
-
-# Interactive mode
-tools har-analyzer        # or tools har-analyzer -i
-
-# MCP server mode
-tools har-analyzer mcp
-```
-
-**Key Features:**
-- **Reference system**: Large data (>200 chars) shown once with a ref ID; subsequent views show preview + size. Use `expand` to re-show full content.
-- **Content skipping**: Static asset bodies (CSS, JS, images, fonts) are skipped by default. Use `--include-all` to override.
-- **Schema inference**: View JSON body structure before expanding full content with `--schema` flag.
-- **Session persistence**: HAR is parsed once and cached; subsequent commands reuse the session.
-- **Output formats**: `--format md|json|toon`, `--full` to bypass refs.
-
-| Command | Purpose |
-|---------|---------|
-| `load <file>` | Parse HAR, show dashboard |
-| `dashboard` | Re-show overview stats |
-| `list` | Compact entry table with filters |
-| `show <eN>` | Entry detail (`--raw` for full content) |
-| `expand <ref>` | Show full referenced data (`--schema` for structure) |
-| `domains` | List domains with stats |
-| `domain <name>` | Drill-down: paths + body previews |
-| `search <query>` | Grep across entries |
-| `errors` | 4xx/5xx focus with body previews |
-| `waterfall` | ASCII timing chart |
-| `security` | Find JWT, API keys, insecure cookies |
-| `size` | Bandwidth breakdown by type |
-| `headers` | Deduplicated header analysis |
-| `redirects` | Redirect chain tracking |
-| `cookies` | Cookie flow tracking |
-| `diff <e1> <e2>` | Compare two entries |
-| `export` | Export filtered HAR subset |
-
-</details>
-
----
-
-### 25. 📐 JSON Schema
-
-Infer schemas from JSON data with multiple output modes: compact JSON Schema, structure skeleton, and TypeScript interfaces. Useful for understanding API response shapes without reading raw data.
-
-<details>
-<summary>📖 Usage & Details</summary>
-
-```bash
-# From file
-tools json-schema data.json
-tools json-schema data.json -m typescript
-tools json-schema data.json -m schema
-
-# From stdin (pipe from API, jq, etc.)
-curl -s https://api.example.com/users | tools json-schema
-cat response.json | tools json-schema -m typescript --pretty
-
-# Copy to clipboard
-tools json-schema data.json -m typescript --clipboard
-```
-
-**Output Modes:**
-
-| Mode | Flag | Output |
-|------|------|--------|
-| Skeleton (default) | `-m skeleton` | `{ users: { id: integer, name: string }[], total: integer }` |
-| TypeScript | `-m typescript` | `interface User { id: number; name: string }` |
-| JSON Schema | `-m schema` | Standard JSON Schema object |
-
-**Options:**
-
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--mode` | `-m` | Output mode: `skeleton`, `typescript`, `schema` | `skeleton` |
-| `--pretty` | `-p` | Multi-line indented output | `false` (compact) |
-| `--clipboard` | | Copy output to clipboard | `false` |
-
-**Smart Features:**
-- Arrays: Merges all items into a unified schema (handles heterogeneous arrays)
-- Optional fields: Marks fields as optional (`?`) when not present in all array items
-- TypeScript naming: Singularizes array parent names (`users` → `User[]`, `categories` → `Category[]`)
-- Compact mode: One interface per line (default), multi-line with `--pretty`
-
-</details>
-
----
-
-### 26. 🕵️ Git
-
-Commit analysis tool: query commits by date range, extract workitem IDs via configurable regex, and manage author identities for clean history slicing. Complements `git-commit` (creates) and `git-last-commits-diff` (renders) with reporting.
-
-```bash
-# Last week of commits with line-change stats
-tools git commits --from 2026-04-13 --to 2026-04-20 --stat
-
-# Emit JSON for dashboards
-tools git commits --from 2026-04-01 --to 2026-04-30 --format json
-
-# Manage configured authors / workitem patterns
-tools git configure-authors
-tools git configure-workitem-patterns --suggest --repo /path/to/repo
-```
-
-See [`src/git/README.md`](src/git/README.md) for the full option list.
-
----
-
-### 27. 💬 Ask
-
-Multi-provider LLM chat client: OpenAI, Anthropic, Google, Groq, OpenRouter, xAI, JinaAI. Streaming, interactive or one-shot, audio transcription, live pricing from OpenRouter, and usage tracking via `tools usage`.
-
-```bash
-# One-shot prompt
-tools ask "Explain this function" --model claude-4-sonnet
-
-# Interactive session
-tools ask
-
-# Transcribe + ask
-tools ask --audio meeting.m4a
-```
-
-See [`src/ask/README.md`](src/ask/README.md) for the full provider matrix and options.
-
----
-
-### 28. 🔗 Automate
-
-Chain any GenesisTools commands into named, reusable **presets**. Scheduled execution via a background daemon, variable interpolation between steps, SQLite run history.
-
-```bash
-# Create / list / inspect
-tools automate preset create
-tools automate preset list
-tools automate preset show my-preset
-
-# Run
-tools automate preset run my-preset
-
-# Schedule as a task
-tools automate task create
-tools automate daemon start
-```
-
-See [`src/automate/README.md`](src/automate/README.md) for the 40+ step types and variable interpolation syntax.
-
----
-
-### 29. 🧠 Claude
-
-Utilities for working *with* Claude Code on the side: search history, resume past sessions, sync with Claude Desktop, inspect usage, and migrate session files between versions.
-
-```bash
-tools claude history --search "timelog"
-tools claude summarize <session-id>
-tools claude tail                      # live-tail current session
-tools claude desktop status            # Desktop app sync health
-tools claude warmup                    # prime prompt cache
-```
-
-See [`src/claude/README.md`](src/claude/README.md) for the full subcommand list.
-
----
-
-### 30. ➤ Cursor
-
-Thin wrapper around `cursor agent` CLI that streams a Cursor answer into your terminal using the GenesisTools unified renderer: tool calls on stderr (colorized), answer text on stdout (clean for piping).
-
-```bash
-tools cursor "which service creates the reservation?"
-tools cursor --mode plan "outline a refactor of the auth layer"
-tools cursor --model gpt-5 "explain this file"
-tools cursor --raw "give me the summary" > answer.md
-```
-
-See [`src/cursor/README.md`](src/cursor/README.md).
-
----
-
-### 31. 🧹 Cursor Context
-
-Strip tool-use **parameters** and/or **results** from Cursor SpecStory exports to save tokens before piping them back into an LLM. Interactive selector per tool, cleaned output copied to clipboard.
-
-```bash
-# Interactive — pick which tools to strip
-tools cursor-context logs/story.log
-
-# Save to file too
-tools cursor-context logs/story.log -o cleaned.log
-```
-
-See [`src/cursor-context/README.md`](src/cursor-context/README.md).
-
----
-
-### 32. 🩺 Debugging Master
-
-LLM debugging toolkit — instrumentation primitives plus a token-efficient log reader. Paired with the `genesis-tools:debugging-master` skill.
-
-```bash
-tools debugging-master start --session "race-in-auth"
-tools debugging-master get --session race --format ai
-tools debugging-master expand --session race --entry <id>
-tools debugging-master diff --session race-a --against race-b
-```
-
-See [`src/debugging-master/README.md`](src/debugging-master/README.md).
-
----
-
-### 33. ⏱️ Timely
-
-Timely time-tracking CLI: OAuth2 login, account/project pickers, events + auto-tracked memories, and monthly exports in table/CSV/JSON/summary formats.
-
-```bash
-tools timely login
-tools timely events --from 2026-04-01 --to 2026-04-07
-tools timely memories --day 2026-04-20
-tools timely export-month 2026-04 --format csv > time.csv
-```
-
-See [`src/timely/README.md`](src/timely/README.md).
-
----
-
-### 34. 📆 Clarity
-
-Fill **CA PPM / Clarity** weekly timesheets from Azure DevOps timelogs + Timely activities. Browser dashboard UI for reviewing the plan, commands for linking ADO workitems to Clarity PPM project codes.
-
-```bash
-tools clarity configure
-tools clarity timesheet         # propose this week
-tools clarity link-workitems    # map ADO -> PPM tasks
-tools clarity fill              # commit to Clarity
-tools clarity ui                # open dashboard on localhost:3071
-```
-
-See [`src/clarity/README.md`](src/clarity/README.md).
-
----
-
-### 35. 🎙️ Transcribe
-
-Audio/video transcription with multiple providers (OpenAI Whisper, Groq, JinaAI, local). Supports mp3/wav/m4a/ogg/flac/aiff/webm/opus/mov/mp4 and outputs text/srt/vtt/json.
-
-```bash
-tools transcribe meeting.m4a
-tools transcribe interview.mp4 --format srt -o interview.srt
-tools transcribe memo.mp3 --clipboard
-tools transcribe call.wav --provider openai --model whisper-1
-```
-
-See [`src/transcribe/README.md`](src/transcribe/README.md).
-
----
-
-### 36. ▶️ YouTube
-
-YouTube video utilities — currently a transcribe subcommand that uses captions when available and falls back to AI transcription.
-
-```bash
-tools youtube transcribe https://www.youtube.com/watch?v=dQw4w9WgXcQ
-tools youtube transcribe dQw4w9WgXcQ
-```
-
-See [`src/youtube/README.md`](src/youtube/README.md).
-
----
-
-### 37. 🔧 Jenkins MCP
-
-Model Context Protocol server exposing Jenkins: list jobs, trigger builds, read logs, watch the queue, stop builds. Requires `JENKINS_URL`, `JENKINS_USER`, `JENKINS_TOKEN` env vars.
-
-```bash
-JENKINS_URL=https://jenkins.example.com \
-JENKINS_USER=me JENKINS_TOKEN=xxxx \
-tools jenkins-mcp
-```
-
-See [`src/jenkins-mcp/README.md`](src/jenkins-mcp/README.md) for the MCP tool list + config snippet.
-
----
-
-### 38. 🐛 MCP Debug
-
-Debug helper for MCP server configurations: runs arbitrary commands and emits **JSON to stdout** (parsed by the MCP client) plus **debug info to stderr** (visible in the client's debug console). Great for verifying what env/cwd the client passes to your server.
-
-```bash
-tools mcp-debug which bun
-tools mcp-debug --env
-COMMANDS="env;which playwright" tools mcp-debug
-```
-
-See [`src/mcp-debug/README.md`](src/mcp-debug/README.md).
-
----
-
-### 39. 🔌 Port
-
-Inspect, list, watch, and clean processes owning local ports. Interactive kill prompts, watch mode, and a `clean` command that kills orphaned listeners.
-
-```bash
-tools port                 # list listening ports
-tools port 3000            # inspect a port
-tools port 3000 --kill     # pick PID(s) to kill
-tools port ps              # dev-focused process listing
-tools port clean           # kill orphaned listeners
-tools port watch           # live port open/close events
-```
-
-See [`src/port/README.md`](src/port/README.md).
-
----
-
-### 40. 📈 macOS Resources
-
-Ink-based TUI dashboard for process CPU / RAM / open-files usage. Filter by process name, set alert thresholds, and optionally fire desktop notifications or voice alerts when breached.
-
-```bash
-tools macos-resources
-tools macos-resources --process chrome --notify
-tools macos-resources --cpulimit 80 --memorylimit 1000
-```
-
-See [`src/macos-resources/README.md`](src/macos-resources/README.md).
-
----
-
-### 41. 📬 macOS Native
-
-Umbrella CLI for macOS native frameworks: Mail, Calendar, Reminders, Messages, Voice Memos, and Sleep data. Consistent interface across every framework via the shared DarwinKit bridge.
-
-```bash
-tools macos mail search "invoice"
-tools macos calendar list Work --from 2026-04-01 --to 2026-04-30
-tools macos reminders add "Buy milk" --list Home --due "tomorrow 18:00"
-tools macos messages search "meeting"
-tools macos voice-memos list
-```
-
-See [`src/macos/README.md`](src/macos/README.md) for the full surface and permission setup.
-
----
-
-### 42. 🎧 Voice Memos
-
-List, play, export, transcribe, and search macOS Voice Memos from the terminal. Uses Apple's on-device `tsrp` transcripts first, AI fallback second.
-
-```bash
-tools voice-memos list
-tools voice-memos play 3
-tools voice-memos export 3 ~/Desktop
-tools voice-memos transcribe 3
-tools voice-memos search "project review"
-```
-
-See [`src/voice-memos/README.md`](src/voice-memos/README.md).
-
----
-
-### 43. 🧪 DarwinKit
-
-Apple on-device ML from the terminal — CLI access to CoreML / NLP / Vision primitives through the shared DarwinKit native bridge. Interactive menu in TTY mode; CLI + `--format json|pretty|raw` for scripting.
-
-```bash
-tools darwinkit                         # interactive menu
-tools darwinkit --help                  # full command list
-tools darwinkit <command> --format json
-```
-
-See [`src/darwinkit/README.md`](src/darwinkit/README.md).
-
----
-
-### 44. ⏲️ Timer
-
-Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks that call `tools notify` / `tools say`.
-
-```bash
-tools timer 25m "Deep work" --notify
-tools timer 25m "Pomodoro" --repeat 4 --bg --notify --say
-tools timer list
-tools timer cancel
-```
-
-See [`src/timer/README.md`](src/timer/README.md).
-
----
-
-### 45. ✅ Todo
-
-Task tracking for AI-assisted development sessions. SQLite backend, status lifecycle (`pending -> in-progress -> completed`), search, JSON export/import.
-
-```bash
-tools todo add "Fix race in token refresh"
-tools todo list
-tools todo start <id>
-tools todo complete <id>
-tools todo search "token"
-```
-
-See [`src/todo/README.md`](src/todo/README.md).
-
----
-
-### 46. 🔔 Notify
-
-Unified notification dispatcher — single command fans out to macOS banners (via `terminal-notifier`), Telegram bots, webhooks, and TTS. Action hooks (`--open`, `--execute`), grouping, DnD bypass, and an interactive `config` wizard.
-
-```bash
-tools notify "Build finished"
-tools notify "Deploy finished" -t "CI" -s "staging" --sound Hero --open https://example.com
-tools notify --ignore-dnd "Server is down"
-tools notify config
-```
-
-See [`src/notify/README.md`](src/notify/README.md).
-
----
-
-### 47. 🗣️ Say
-
-Text-to-speech wrapper for macOS `say` with **per-app mute**, per-app volume memory, auto language/voice detection, and both one-shot + interactive modes.
-
-```bash
-tools say "Build finished"
-tools say "Timer done" --app timer --wait
-tools say --mute --app claude        # mute one caller
-tools say --volume 60% "Loud and clear"
-```
-
-See [`src/say/README.md`](src/say/README.md).
-
----
-
-### 48. 📨 Telegram
-
-Telegram **user-account** client (MTProto). Listen for messages, browse contacts, search chat history, and run a TUI chat watcher. Use `telegram-bot` for the Bot API flavor.
-
-```bash
-tools telegram configure
-tools telegram listen
-tools telegram watch
-tools telegram history --chat @someone --limit 100
-```
-
-See [`src/telegram/README.md`](src/telegram/README.md).
-
----
-
-### 49. 🤖 Telegram Bot
-
-Telegram **Bot API** client for sending notifications and receiving commands. Simpler auth than the user-account flavor — just a bot token + chat ID.
-
-```bash
-tools telegram-bot configure
-tools telegram-bot send "Build finished"
-tools telegram-bot start               # command listener
-```
-
-See [`src/telegram-bot/README.md`](src/telegram-bot/README.md).
-
----
-
-### 50. 📄 Markdown CLI
-
-Render markdown to beautiful CLI output. Watch mode, themes (dark/light/minimal), width control, `--no-color` for plain piping. Same renderer used by the `tools` browser.
-
-```bash
-tools markdown-cli README.md
-tools markdown-cli README.md --watch
-cat README.md | tools markdown-cli --no-color > plain.txt
-```
-
-See [`src/markdown-cli/README.md`](src/markdown-cli/README.md).
-
----
-
-### 51. 🕑 Daemon
-
-General-purpose background task scheduler. Owns cron-like jobs (e.g. scheduled `automate` presets), runs them in the background, and logs their output.
-
-```bash
-tools daemon start
-tools daemon status
-tools daemon logs
-tools daemon install        # LaunchAgent / systemd unit
-```
-
-See [`src/daemon/README.md`](src/daemon/README.md).
-
----
-
-### 52. 🐙 GitHub
-
-Token-efficient GitHub CLI for AI workflows: issues, PRs, review threads, code search, notifications, activity feed, raw file fetches. Built-in SQLite cache, bot filters, reaction filters, and an interactive menu.
-
-```bash
-tools github pr 456 --no-bots --last 20
-tools github review 456 --unresolved-only --group-by-file
-tools github search "flaky test" --type pr --state open
-tools github notifications --state unread --since 7d
-tools github status          # auth + rate limit + cache stats
-```
-
-See [`src/github/README.md`](src/github/README.md).
-
----
-
-### 53. 🐚 Zsh
-
-Shell enhancement manager. Installs a single-line hook into your rc files with two modes (static ~1ms, dynamic ~1s) and toggleable feature modules (notifications, port helpers, TTS, etc.).
-
-```bash
-tools zsh install            # interactive
-tools zsh list               # available features + status
-tools zsh enable notify
-tools zsh disable dotdotdot
-tools zsh uninstall
-```
-
-See [`src/zsh/README.md`](src/zsh/README.md).
-
----
-
-### 54. 🛒 Rohlík Spending
-
-Analyze your spending on [rohlik.cz](https://www.rohlik.cz) (Czech grocery delivery). Captures browser cookies once, then pulls delivered orders + line items and aggregates totals.
-
-```bash
-tools rohlik-spending
-```
-
-See [`src/rohlik-spending/README.md`](src/rohlik-spending/README.md).
-
----
-
-### 55. 🧰 Tools Browser
-
-Interactive launcher for every GenesisTools command. Fuzzy-search, view README in terminal, explore subcommands, copy command to clipboard. Also what you get when you run `tools` with no arguments.
-
-```bash
-tools                        # open the browser
-tools tools                  # same thing, explicitly
-```
-
-See [`src/tools/README.md`](src/tools/README.md).
-
----
-
-### 56. 🔄 Update
-
-Update GenesisTools to the latest version — git pull, bun install (with clean retry), and optional Claude Code plugin refresh.
-
-```bash
-tools update
-```
-
-See [`src/update/README.md`](src/update/README.md).
-
----
-
-### 57. 📐 Benchmark
-
-Lightweight command-benchmarking runner. Save command recipes, run them, and inspect per-run history so you can see how timings drift across releases.
-
-```bash
-tools benchmark              # interactive picker
-tools benchmark add
-tools benchmark run <name>
-tools benchmark history <name>
-```
-
-See [`src/benchmark/README.md`](src/benchmark/README.md).
-
----
-
-### 58. 💵 Usage
-
-Token and cost analytics for the `ask` tool. Reports totals, per-provider / per-model breakdowns, and daily usage from the local SQLite usage DB. Costs are live via OpenRouter pricing.
-
-```bash
-tools usage
-tools usage --days 7
-tools usage --provider openai --format summary
-tools usage --format json | jq '.total'
-```
-
-See [`src/usage/README.md`](src/usage/README.md).
-
----
-
 <div align="center">
 
   ### 🌟 Built with ❤️ by developers, for developers
-  
+
   <p>
     <a href="https://github.com/genesiscz/GenesisTools">⭐ Star this repo</a> •
     <a href="https://github.com/genesiscz/GenesisTools/issues">🐛 Report Bug</a> •
     <a href="https://github.com/genesiscz/GenesisTools/pulls">✨ Contribute</a>
   </p>
-  
+
 </div>
