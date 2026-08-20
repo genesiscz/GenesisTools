@@ -5,6 +5,7 @@ import {
     buildResponsesWebSearchBody,
     domainAllowed,
     emulateWebSearch,
+    emulationStream,
     messageToAnthropicSse,
     nativeWebSearch,
     parseWebSearchServerTool,
@@ -39,12 +40,69 @@ describe("parseWebSearchServerTool", () => {
 
 describe("domainAllowed", () => {
     it("suffix-matches allowed and blocked domains", () => {
-        expect(domainAllowed("https://gist.github.com/a", ["github.com"])).toBe(true);
-        expect(domainAllowed("https://github.com.evil.com/a", ["github.com"])).toBe(false);
-        expect(domainAllowed("https://x.ai/news", ["github.com", "x.ai"])).toBe(true);
-        expect(domainAllowed("https://spam.example/a", undefined, ["spam.example"])).toBe(false);
-        expect(domainAllowed("https://anything.example/a")).toBe(true);
-        expect(domainAllowed("not a url", ["x.ai"])).toBe(false);
+        expect(domainAllowed("https://gist.github.com/a", { allowed: ["github.com"] })).toBe(true);
+        expect(domainAllowed("https://github.com.evil.com/a", { allowed: ["github.com"] })).toBe(false);
+        expect(domainAllowed("https://x.ai/news", { allowed: ["github.com", "x.ai"] })).toBe(true);
+        expect(domainAllowed("https://spam.example/a", { blocked: ["spam.example"] })).toBe(false);
+        expect(domainAllowed("https://anything.example/a", {})).toBe(true);
+        expect(domainAllowed("not a url", { allowed: ["x.ai"] })).toBe(false);
+    });
+});
+
+describe("max_uses hardening", () => {
+    it("clamps client-controlled max_uses and rejects non-integers", () => {
+        const huge = parseWebSearchServerTool({
+            tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5000 }],
+        });
+        expect(huge?.maxUses).toBe(20);
+
+        const fractional = parseWebSearchServerTool({
+            tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3.5 }],
+        });
+        expect(fractional?.maxUses).toBe(8);
+    });
+});
+
+describe("abort handling", () => {
+    it("an aborted signal stops the loop before any upstream call", async () => {
+        const abort = new AbortController();
+        abort.abort();
+        let upstreamCalls = 0;
+
+        await expect(
+            emulateWebSearch({
+                body: { messages: [] },
+                tool: TOOL,
+                signal: abort.signal,
+                search: async () => [],
+                callUpstream: async () => {
+                    upstreamCalls += 1;
+                    return jsonResponse({ content: [], stop_reason: "end_turn" });
+                },
+            })
+        ).rejects.toThrow(/aborted/);
+        expect(upstreamCalls).toBe(0);
+    });
+
+    it("cancelling the emulation stream aborts the signal handed to run", async () => {
+        let seenSignal: AbortSignal | undefined;
+        let release: () => void = () => {};
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+
+        const stream = emulationStream(async (signal) => {
+            seenSignal = signal;
+            await gate;
+            return new Response("late", { status: 500 });
+        });
+
+        const reader = stream.getReader();
+        const cancelled = reader.cancel("client gone");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(seenSignal?.aborted).toBe(true);
+        release();
+        await cancelled;
     });
 });
 
@@ -225,7 +283,10 @@ describe("nativeWebSearch (/responses server-side search)", () => {
             {
                 model: "martin/grok/grok-4.6",
                 stream: true,
-                system: [{ type: "text", text: "You are Claude Code" }, { type: "text", text: "search assistant" }],
+                system: [
+                    { type: "text", text: "You are Claude Code" },
+                    { type: "text", text: "search assistant" },
+                ],
                 messages: [{ role: "user", content: [{ type: "text", text: "Perform a web search for: grok" }] }],
                 tools: [{ type: "web_search_20250305", name: "web_search" }],
             },
@@ -236,9 +297,23 @@ describe("nativeWebSearch (/responses server-side search)", () => {
         expect(built.instructions).toContain("search assistant");
         expect(built.input).toEqual([{ role: "user", content: "Perform a web search for: grok" }]);
         const tools = built.tools as Record<string, unknown>[];
-        expect(tools).toEqual([
-            { type: "web_search", allowed_domains: ["x.ai"], excluded_domains: ["spam.example"] },
-        ]);
+        // The upstream cannot combine the lists — allowed wins.
+        expect(tools).toEqual([{ type: "web_search", allowed_domains: ["x.ai"] }]);
+    });
+
+    it("clamps domain filters to the upstream max of 5", () => {
+        const many = ["a.com", "b.com", "c.com", "d.com", "e.com", "f.com", "g.com"];
+        const allowed = buildResponsesWebSearchBody(
+            { model: "m", messages: [] },
+            { name: "web_search", maxUses: 8, allowedDomains: many }
+        );
+        expect((allowed.tools as Record<string, unknown>[])[0].allowed_domains).toEqual(many.slice(0, 5));
+
+        const excluded = buildResponsesWebSearchBody(
+            { model: "m", messages: [] },
+            { name: "web_search", maxUses: 8, blockedDomains: many }
+        );
+        expect((excluded.tools as Record<string, unknown>[])[0].excluded_domains).toEqual(many.slice(0, 5));
     });
 
     it("translates the completed response into an Anthropic message with citations and search count", async () => {
