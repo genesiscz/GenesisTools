@@ -22,7 +22,7 @@ function seed(
 }
 
 /**
- * Curation for advertised model lists (2026-07-24): retired/legacy families
+ * Curation for advertised model lists (2026-08-19): retired/legacy families
  * and low-value variants stay OUT of pickers. Unlisted ids remain callable by
  * exact id — this only trims what clients see.
  */
@@ -35,6 +35,11 @@ const EXCLUDED_GROK_LIST_PATTERNS: RegExp[] = [
     /^grok-build/,
     /^grok-code-fast/,
     /^grok-composer-(?!2\.5-fast$)/,
+    // An alias for "whatever is current", and the upstream echoes the alias back
+    // rather than the model it routed to (verified 2026-08-19), so a call on it
+    // can never be priced or even attributed. Every model it could resolve to is
+    // already listed under its real id. Still callable by exact id.
+    /^grok-latest$/,
 ];
 
 export function isCuratedGrokModelId(id: string): boolean {
@@ -52,6 +57,7 @@ export interface GrokModelSpecs {
  * carries context but not modalities.
  */
 const GROK_MODEL_SPECS: Record<string, GrokModelSpecs> = {
+    "grok-4.6": { contextWindow: 500_000, inputModalities: ["text", "image"] },
     "grok-4.5": { contextWindow: 500_000, inputModalities: ["text", "image"] },
     "grok-4.3": { contextWindow: 1_000_000, inputModalities: ["text", "image"] },
     "grok-4-fast": { contextWindow: 2_000_000, inputModalities: ["text"] },
@@ -65,6 +71,7 @@ export function grokModelSpecs(id: string): GrokModelSpecs | undefined {
 }
 
 export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
+    seed("grok-4.6", "high", "medium", "optional", "ok"),
     seed("grok-4.5", "high", "medium", "optional", "ok"),
     seed("grok-build", "high", "slow", "reasoning", "ok"),
     seed("grok-composer-2.5-fast", "high", "fast", "reasoning", "ok"),
@@ -180,6 +187,79 @@ export function readModelsCache(path?: string): Record<string, unknown> {
         logger.debug({ err, cachePath }, "grok: failed to parse models cache");
         return {};
     }
+}
+
+/**
+ * The ids the grok CLI's own picker currently offers, read from its live cache.
+ *
+ * This is the ONLY account-agnostic way a new Grok model becomes visible without
+ * someone hand-editing a list: the CLI refreshes `~/.grok/models_cache.json`
+ * from `/v1/models` on its own, so grok-4.6 sat there, unlisted by the proxy,
+ * purely because nothing read it. `enrichFromPickerCache` only decorated records
+ * that already existed; this ADDS the ones that do not.
+ *
+ * `hidden` and `supported_in_api` are honoured — the picker ships entries it does
+ * not want offered, and calling one is an upstream 404.
+ */
+export function pickerCacheRecords(cache: Record<string, unknown>): GrokModelRecord[] {
+    const models = cache.models;
+
+    // Arrays are objects: an array `models` would be walked by index and each
+    // element would pass the entry check below, advertising a numeric id as a
+    // healthy — and unpriced — model.
+    if (typeof models !== "object" || models === null || Array.isArray(models)) {
+        return [];
+    }
+
+    const records: GrokModelRecord[] = [];
+
+    for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
+        if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+            continue;
+        }
+
+        const info = (entry as { info?: unknown }).info;
+        const details = (typeof info === "object" && info !== null && !Array.isArray(info) ? info : {}) as {
+            hidden?: boolean;
+            supported_in_api?: boolean;
+            context_window?: number;
+            api_backend?: string;
+            agent_type?: string;
+        };
+
+        if (details.hidden === true || details.supported_in_api === false) {
+            continue;
+        }
+
+        // Keys are set only when the cache carries a value: an explicitly
+        // undefined key survives object spread, so it would wipe a probed
+        // context_window in the three-source merge. probeStatus stays unset —
+        // nothing was probed here, and a fabricated "ok" would re-advertise an
+        // id whose real probe said "fail".
+        const record: GrokModelRecord = {
+            id,
+            source: "picker",
+            visibility: "high",
+            speed: inferModelSpeed(id),
+            thinking: inferModelThinking(id),
+        };
+
+        if (details.context_window !== undefined) {
+            record.context_window = details.context_window;
+        }
+
+        if (details.api_backend !== undefined) {
+            record.api_backend = details.api_backend;
+        }
+
+        if (details.agent_type !== undefined) {
+            record.agent_type = details.agent_type;
+        }
+
+        records.push(record);
+    }
+
+    return records;
 }
 
 export function enrichFromPickerCache(record: GrokModelRecord, cache: Record<string, unknown>): GrokModelRecord {

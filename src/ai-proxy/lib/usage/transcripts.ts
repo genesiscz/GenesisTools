@@ -23,6 +23,7 @@ import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import type { CallTimeline } from "./call-timeline";
 import type { RequestTags } from "./types";
 
@@ -38,6 +39,15 @@ export interface TranscriptInput {
     stream: boolean;
     requestBody: string;
     responseBody: string;
+    /**
+     * The bytes the CLIENT actually exchanged, when they are not the same shape
+     * as the upstream ones. /v1/messages translates Anthropic <-> OpenAI in both
+     * directions, and recording only the upstream pair left a translation bug
+     * invisible from logs: neither what Claude Code sent nor what it received
+     * appeared anywhere.
+     */
+    clientRequestBody?: string;
+    clientResponseBody?: string;
     tags?: RequestTags;
     /** Phase timings for this turn (dispatch, TTFB, thinking span, text span). */
     timeline?: CallTimeline;
@@ -177,6 +187,163 @@ interface ChatPayload {
     usage?: Record<string, unknown>;
 }
 
+function toolCallFromBlock(block: Record<string, unknown>): OpenAiToolCall {
+    return {
+        id: typeof block.id === "string" ? block.id : undefined,
+        function: {
+            name: typeof block.name === "string" ? block.name : undefined,
+            arguments: typeof block.input === "undefined" ? undefined : (SafeJSON.stringify(block.input) ?? "{}"),
+        },
+    };
+}
+
+function toolCallFromResponsesItem(item: Record<string, unknown>): OpenAiToolCall {
+    return {
+        id: typeof item.call_id === "string" ? item.call_id : undefined,
+        function: {
+            name: typeof item.name === "string" ? item.name : undefined,
+            arguments: typeof item.arguments === "string" ? item.arguments : undefined,
+        },
+    };
+}
+
+/** Anthropic message or Responses JSON — the two shapes choices[0] cannot see. */
+function collectNonChatBody(payload: Record<string, unknown>, parsed: ParsedResponse): void {
+    if (payload.type === "message" && Array.isArray(payload.content)) {
+        for (const block of payload.content) {
+            if (!isObject(block)) {
+                continue;
+            }
+
+            if (block.type === "text" && typeof block.text === "string") {
+                parsed.text += block.text;
+            } else if (block.type === "thinking" && typeof block.thinking === "string") {
+                parsed.thinking += block.thinking;
+            } else if (block.type === "tool_use") {
+                parsed.toolCalls = [...(parsed.toolCalls ?? []), toolCallFromBlock(block)];
+            }
+        }
+
+        parsed.usage = isObject(payload.usage) ? payload.usage : undefined;
+        parsed.finishReason = typeof payload.stop_reason === "string" ? payload.stop_reason : undefined;
+        return;
+    }
+
+    if (Array.isArray(payload.output)) {
+        for (const item of payload.output) {
+            if (!isObject(item)) {
+                continue;
+            }
+
+            if (item.type === "message" && Array.isArray(item.content)) {
+                for (const part of item.content) {
+                    if (isObject(part) && part.type === "output_text" && typeof part.text === "string") {
+                        parsed.text += part.text;
+                    }
+                }
+            } else if (item.type === "reasoning" && Array.isArray(item.summary)) {
+                for (const part of item.summary) {
+                    if (isObject(part) && typeof part.text === "string") {
+                        parsed.thinking += part.text;
+                    }
+                }
+            } else if (item.type === "function_call") {
+                parsed.toolCalls = [...(parsed.toolCalls ?? []), toolCallFromResponsesItem(item)];
+            }
+        }
+
+        parsed.usage = isObject(payload.usage) ? payload.usage : undefined;
+        parsed.finishReason = typeof payload.status === "string" ? payload.status : undefined;
+    }
+}
+
+/** Anthropic and Responses SSE events; returns true when the event was one of them. */
+function collectNonChatSseEvent(payload: Record<string, unknown>, parsed: ParsedResponse): boolean {
+    const type = payload.type;
+
+    if (typeof type !== "string") {
+        return false;
+    }
+
+    if (type === "content_block_delta" && isObject(payload.delta)) {
+        if (payload.delta.type === "text_delta" && typeof payload.delta.text === "string") {
+            parsed.text += payload.delta.text;
+        } else if (payload.delta.type === "thinking_delta" && typeof payload.delta.thinking === "string") {
+            parsed.thinking += payload.delta.thinking;
+        }
+
+        return true;
+    }
+
+    if (type === "content_block_start" && isObject(payload.content_block)) {
+        if (payload.content_block.type === "tool_use") {
+            parsed.toolCalls = [...(parsed.toolCalls ?? []), toolCallFromBlock(payload.content_block)];
+        }
+
+        return true;
+    }
+
+    if (type === "message_delta") {
+        if (isObject(payload.usage)) {
+            parsed.usage = { ...parsed.usage, ...payload.usage };
+        }
+
+        if (isObject(payload.delta) && typeof payload.delta.stop_reason === "string") {
+            parsed.finishReason = payload.delta.stop_reason;
+        }
+
+        return true;
+    }
+
+    if (type === "message_start") {
+        if (isObject(payload.message) && isObject(payload.message.usage)) {
+            parsed.usage = { ...parsed.usage, ...payload.message.usage };
+        }
+
+        return true;
+    }
+
+    if (type === "response.output_text.delta" && typeof payload.delta === "string") {
+        parsed.text += payload.delta;
+        return true;
+    }
+
+    // Reasoning arrives as its own delta stream, never inside output_text — a
+    // streamed Responses transcript recorded no thinking at all without this.
+    if (
+        (type === "response.reasoning_text.delta" ||
+            type === "response.reasoning_summary_text.delta" ||
+            type === "response.reasoning.delta") &&
+        typeof payload.delta === "string"
+    ) {
+        parsed.thinking += payload.delta;
+        return true;
+    }
+
+    if (type === "response.output_item.done" && isObject(payload.item)) {
+        if (payload.item.type === "function_call") {
+            parsed.toolCalls = [...(parsed.toolCalls ?? []), toolCallFromResponsesItem(payload.item)];
+        }
+
+        return true;
+    }
+
+    if (type === "response.completed" && isObject(payload.response)) {
+        if (isObject(payload.response.usage)) {
+            parsed.usage = payload.response.usage;
+        }
+
+        if (typeof payload.response.status === "string") {
+            parsed.finishReason = payload.response.status;
+        }
+
+        return true;
+    }
+
+    // Remaining Anthropic frame types carry nothing to transcribe.
+    return type.startsWith("content_block") || type.startsWith("message_") || type === "ping";
+}
+
 /** Reassemble a streamed or plain response into text + thinking + usage. */
 export function parseResponseBody(body: string, stream: boolean): ParsedResponse {
     const parsed: ParsedResponse = { text: "", thinking: "" };
@@ -189,11 +356,20 @@ export function parseResponseBody(body: string, stream: boolean): ParsedResponse
         try {
             const payload = SafeJSON.parse(body, { strict: true }) as ChatPayload;
             const choice = payload.choices?.[0];
-            parsed.text = choice?.message?.content ?? "";
-            parsed.thinking = choice?.message?.reasoning_content ?? choice?.message?.reasoning ?? "";
-            parsed.usage = payload.usage;
-            parsed.finishReason = choice?.finish_reason;
-            parsed.toolCalls = choice?.message?.tool_calls;
+
+            if (choice) {
+                parsed.text = choice.message?.content ?? "";
+                parsed.thinking = choice.message?.reasoning_content ?? choice.message?.reasoning ?? "";
+                parsed.usage = payload.usage;
+                parsed.finishReason = choice.finish_reason;
+                parsed.toolCalls = choice.message?.tool_calls;
+                return parsed;
+            }
+
+            // Anthropic message and Responses shapes never carried a reply into
+            // the transcript — only choices[0] was read, so 48 of 227 entries on
+            // 2026-08-19 stored an empty content block plus a raw prefix.
+            collectNonChatBody(payload as Record<string, unknown>, parsed);
         } catch (err) {
             logger.debug({ err }, "ai-proxy transcripts: non-JSON response body kept verbatim");
             parsed.text = body.slice(0, MAX_TEXT_CHARS);
@@ -214,6 +390,11 @@ export function parseResponseBody(body: string, stream: boolean): ParsedResponse
 
         try {
             const payload = SafeJSON.parse(data, { strict: true }) as ChatPayload;
+
+            if (collectNonChatSseEvent(payload as Record<string, unknown>, parsed)) {
+                continue;
+            }
+
             const choice = payload.choices?.[0];
             const delta = choice?.delta;
             parsed.text += delta?.content ?? "";
@@ -346,6 +527,13 @@ export function writeTranscript(input: TranscriptInput): TranscriptRef | undefin
     const lines: string[] = [];
     let parentUuid: string | null = null;
 
+    // input.ts is taken AFTER the exchange completes, so it IS the end time.
+    // Request turns are stamped at the start; the assistant turn at the end.
+    // The old code stamped the assistant at ts + elapsedMs — every timestamp
+    // was in the future by exactly the call duration, and a forensic pass
+    // ordered by timestamp reconstructed the wrong sequence.
+    const startTs = new Date(new Date(input.ts).getTime() - input.elapsedMs).toISOString();
+
     for (const message of request.messages ?? []) {
         const uuid = crypto.randomUUID();
         lines.push(
@@ -354,7 +542,7 @@ export function writeTranscript(input: TranscriptInput): TranscriptRef | undefin
                     parentUuid,
                     sessionId,
                     uuid,
-                    timestamp: input.ts,
+                    timestamp: startTs,
                     type: message.role === "assistant" ? "assistant" : "user",
                     callId,
                     message: {
@@ -375,7 +563,7 @@ export function writeTranscript(input: TranscriptInput): TranscriptRef | undefin
                 parentUuid,
                 sessionId,
                 uuid: assistantUuid,
-                timestamp: new Date(new Date(input.ts).getTime() + input.elapsedMs).toISOString(),
+                timestamp: input.ts,
                 type: "assistant",
                 callId,
                 tags: input.tags ?? {},
@@ -387,6 +575,15 @@ export function writeTranscript(input: TranscriptInput): TranscriptRef | undefin
                 provider: input.provider,
                 path: input.path,
                 rawResponse: unparsed,
+                clientExchange:
+                    // Presence, not truthiness: an empty-string body is still an
+                    // exchange worth recording.
+                    input.clientRequestBody != null || input.clientResponseBody != null
+                        ? {
+                              request: input.clientRequestBody?.slice(0, MAX_TEXT_CHARS),
+                              response: input.clientResponseBody?.slice(0, MAX_TEXT_CHARS),
+                          }
+                        : undefined,
                 requestParams: {
                     max_tokens: request.max_tokens,
                     temperature: request.temperature,

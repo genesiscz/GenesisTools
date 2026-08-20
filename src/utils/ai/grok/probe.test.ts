@@ -4,6 +4,8 @@ import { GROK_PROBE_CANDIDATES, GROK_STATIC_CATALOG, inferModelThinking, mergeMo
 describe("grok probe helpers", () => {
     it("includes researched static catalog ids (working only — no fail seeds)", () => {
         expect(GROK_STATIC_CATALOG.some((model) => model.id === "grok-composer-2.5-fast")).toBe(true);
+        expect(GROK_STATIC_CATALOG.some((model) => model.id === "grok-4.6")).toBe(true);
+        expect(GROK_STATIC_CATALOG.find((model) => model.id === "grok-4.6")?.visibility).toBe("high");
         expect(GROK_STATIC_CATALOG.every((model) => model.probeStatus !== "fail")).toBe(true);
         expect(GROK_STATIC_CATALOG.length).toBeGreaterThanOrEqual(20);
     });

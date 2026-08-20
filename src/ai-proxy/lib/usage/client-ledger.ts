@@ -22,6 +22,13 @@ export interface ClientMonthUsage {
      * exact?" answerable after the fact.
      */
     upstream_priced_requests?: number;
+    /**
+     * Of `requests`, how many had their tokens char-estimated because the
+     * upstream streamed no usage. Quotas enforce against this file, so an
+     * invoice reader must be able to tell a measurement from a guess here too,
+     * not only in daily.json.
+     */
+    estimated_requests?: number;
 }
 
 export interface ClientLedgerStore {
@@ -96,6 +103,8 @@ export function recordClientUsage(input: {
         total_tokens?: number;
         /** The upstream's own reported charge, when it reports one. */
         cost_usd?: number;
+        /** Set when the tokens are a char heuristic, not an upstream report. */
+        source?: "estimated";
     };
     /** The account billed upstream. Absent only where no route is known (tests). */
     accountId?: string;
@@ -128,6 +137,10 @@ export function recordClientUsage(input: {
     entry.completion_tokens += input.usage?.completion_tokens ?? 0;
     entry.total_tokens += input.usage?.total_tokens ?? 0;
 
+    if (input.usage?.source === "estimated") {
+        entry.estimated_requests = (entry.estimated_requests ?? 0) + 1;
+    }
+
     // The upstream's own number first: it prices the route actually taken, at the
     // rate actually charged, including a provider this proxy has no rate table
     // for. The local estimate stays the fallback. The write-time invariant is
@@ -139,6 +152,13 @@ export function recordClientUsage(input: {
 
     if (cost === undefined) {
         entry.unpriced_requests += 1;
+        // Live model discovery can outrun the rate table, so say which id billed
+        // nothing. Here rather than at listing time: this fires once per real
+        // call, in the serve process, instead of on every CLI that lists models.
+        logger.warn(
+            { model: input.upstreamModel, client: input.client, rateTable: "src/ai-proxy/lib/billing/pricing.ts" },
+            "ai-proxy: no billing rate for this model — tokens recorded, $0 booked"
+        );
     } else {
         entry.cost_usd += cost;
     }

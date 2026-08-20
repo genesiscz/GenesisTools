@@ -87,7 +87,7 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
     { ids: ["gpt-5.5"], rate: { inputUsdPerMTok: 5, outputUsdPerMTok: 30 } },
     { ids: ["gpt-5-codex"], rate: { inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 } },
     {
-        ids: ["grok-4.5"],
+        ids: ["grok-4.6", "grok-4.5"],
         rate: {
             inputUsdPerMTok: 2,
             outputUsdPerMTok: 6,

@@ -9,6 +9,7 @@
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { formatTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
@@ -240,14 +241,41 @@ export function runCallsCommand(options: CallsOptions): void {
         return;
     }
 
-    const table = createBoxTable(["TIME", "STAGE", "LABEL", "MODEL", "SECS", "IN", "OUT", "STATUS"]);
+    const table = createBoxTable(["TIME", "STAGE", "LABEL", "MODEL", "EFFORT", "TTFB", "SECS", "IN", "OUT", "STATUS"]);
+    const today = new Date().toISOString().slice(0, 10);
+    let lastDay = "";
+
     for (const record of matched) {
         const secs = record.elapsedMs / 1000;
+        const day = record.ts.slice(0, 10);
+
+        // A bare HH:MM:SS silently reads as "today". Older rows get their date on
+        // its own line rather than a repeated column — and once any banner has
+        // printed, the transition back to today needs its own banner too, or
+        // today's rows read as belonging to the previous day.
+        if (day !== lastDay && (day !== today || lastDay !== "")) {
+            table.push([{ colSpan: 10, content: pc.dim(`── ${day} ──`) }]);
+        }
+
+        lastDay = day;
+
+        // Rows from pre-billing builds may lack proxyModel entirely — the
+        // truncateDisplay below already tolerates that; this must too.
+        const { reasoningEffort } = record.proxyModel
+            ? splitReasoningEffortSuffix(record.proxyModel)
+            : { reasoningEffort: undefined };
+        // Receipt → first BODY byte: how long the model itself stayed silent.
+        // Headers land in under a second even when nothing follows for 15s.
+        const ttfbMs = record.timeline?.firstByteMs;
+        const ttfb = ttfbMs === undefined ? "—" : (ttfbMs / 1000).toFixed(1);
+
         table.push([
             record.ts.slice(11, 19),
             truncateDisplay(record.tags?.stage, 12),
             truncateDisplay(record.tags?.label, 28),
             truncateDisplay(record.proxyModel, 34),
+            reasoningEffort ?? "—",
+            ttfbMs !== undefined && ttfbMs >= 10_000 ? pc.yellow(ttfb) : ttfb,
             secs >= 30 ? pc.red(secs.toFixed(1)) : secs.toFixed(1),
             String(record.usage?.prompt_tokens ?? "—"),
             String(record.usage?.completion_tokens ?? "—"),

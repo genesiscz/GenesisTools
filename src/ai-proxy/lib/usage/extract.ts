@@ -30,8 +30,25 @@ function normalizeUsage(raw: unknown): TokenUsage | undefined {
         usage.prompt_tokens = Number(prompt);
     }
 
+    // Grok's CLI proxy keeps reasoning OUT of completion_tokens and reports it
+    // in completion_tokens_details. Booking completion_tokens alone hid
+    // 63,694 output tokens from the ledger between 2026-06-26 and 2026-08-19
+    // (117 rows where prompt+completion != total). But the OpenAI API and
+    // OpenRouter report reasoning INSIDE completion_tokens with the details as
+    // a breakdown, so an unconditional fold double-books their output. Fold
+    // only when the totals prove reasoning was excluded: prompt+completion
+    // falling short of total is exactly the ledger signal above. Anthropic-
+    // shaped usage (output_tokens) already includes thinking; nothing is added.
+    const completionDetails = isObject(raw.completion_tokens_details) ? raw.completion_tokens_details : undefined;
+    const reasoningTokens =
+        raw.completion_tokens != null && completionDetails && typeof completionDetails.reasoning_tokens === "number"
+            ? completionDetails.reasoning_tokens
+            : 0;
+
     if (completion != null) {
-        usage.completion_tokens = Number(completion);
+        const reasoningExcluded =
+            reasoningTokens > 0 && total != null && Number(prompt ?? 0) + Number(completion) < Number(total);
+        usage.completion_tokens = Number(completion) + (reasoningExcluded ? reasoningTokens : 0);
     }
 
     if (total != null) {
@@ -40,6 +57,23 @@ function normalizeUsage(raw: unknown): TokenUsage | undefined {
         usage.total_tokens = (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0);
     }
 
+    // Anthropic-shaped usage reports cache traffic OUTSIDE input_tokens; the
+    // passthrough would otherwise book ~500 prompt tokens for a Claude Code
+    // turn that shipped ~20k through the cache. Kept separate from
+    // prompt_tokens because cache reads price differently.
+    if (typeof raw.cache_read_input_tokens === "number") {
+        usage.cache_read_input_tokens = raw.cache_read_input_tokens;
+    }
+
+    if (typeof raw.cache_creation_input_tokens === "number") {
+        usage.cache_creation_input_tokens = raw.cache_creation_input_tokens;
+    }
+
+    // Recorded verbatim but never booked as cost: two measured samples on
+    // differently-priced grok models (grok-4.3 vs grok-4-fast, 2026-08-19)
+    // returned near-identical tick counts for similar token totals, so the tick
+    // rate basis contradicts the per-model rate table and its unit cannot be
+    // pinned. An opaque number must not enter an invoice.
     if (costTicks != null) {
         usage.cost_in_usd_ticks = Number(costTicks);
     }
@@ -90,7 +124,14 @@ export function extractUsageFromJsonBody(bodyText: string): TokenUsage | undefin
 }
 
 export function extractLatestUsageFromSse(buffer: string): TokenUsage | undefined {
-    let latest: TokenUsage | undefined;
+    // Anthropic splits one call's usage across TWO frames: `message_start`
+    // carries the input/cache counts under `message.usage`, `message_delta`
+    // carries only `output_tokens`. Keeping just the last frame therefore booked
+    // streamed native-Anthropic calls (the passthrough path, i.e. Claude Code's
+    // default) with zero prompt tokens. Raw objects are merged and normalized
+    // ONCE at the end so `total_tokens` is derived from the merged pair rather
+    // than from the output-only frame.
+    let merged: JsonObject | undefined;
 
     for (const line of buffer.split("\n")) {
         if (!line.startsWith("data:")) {
@@ -110,20 +151,25 @@ export function extractLatestUsageFromSse(buffer: string): TokenUsage | undefine
             }
 
             // Responses SSE (WHAM included) nests usage on `response.completed`
-            // events as `response.usage`; chat SSE carries it at the event root.
-            const usage =
-                normalizeUsage(parsed.usage) ??
-                (isObject(parsed.response) ? normalizeUsage(parsed.response.usage) : undefined);
+            // events as `response.usage`; chat SSE carries it at the event root;
+            // Anthropic's `message_start` nests it under `message.usage`.
+            const raw = isObject(parsed.usage)
+                ? parsed.usage
+                : isObject(parsed.response) && isObject(parsed.response.usage)
+                  ? parsed.response.usage
+                  : isObject(parsed.message) && isObject(parsed.message.usage)
+                    ? parsed.message.usage
+                    : undefined;
 
-            if (usage) {
-                latest = usage;
+            if (raw) {
+                merged = { ...merged, ...raw };
             }
         } catch (err) {
             logger.debug({ err, payloadPreview: payload.slice(0, 120) }, "ai-proxy usage: skipped SSE usage payload");
         }
     }
 
-    return latest;
+    return normalizeUsage(merged);
 }
 
 function collectTextFromContent(content: unknown, sink: string[]): void {

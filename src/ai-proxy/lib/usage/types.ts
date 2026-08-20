@@ -5,6 +5,15 @@ export interface TokenUsage {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
+    /**
+     * Anthropic-shaped cache traffic, reported OUTSIDE input_tokens. Without
+     * these the /v1/messages passthrough books a few hundred prompt tokens for
+     * a Claude Code turn that really shipped ~20k through the cache. Recorded,
+     * not priced: the static rate table carries no cache rates, and charging
+     * cache reads at the full input rate would overbill 10x.
+     */
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
     cost_in_usd_ticks?: number;
     /**
      * USD the upstream itself charged for this exchange, as it reported it.

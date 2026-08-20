@@ -10,8 +10,6 @@
             "types": "./index.ts",
             "default": "./index.ts"
         },
-        "./package.json": "./package.json",
-        "./tsconfig.consumer.json": "./tsconfig.consumer.json",
         "./DashboardApp": {
             "bun": "./DashboardApp/index.ts",
             "types": "./DashboardApp/index.ts",
@@ -92,15 +90,15 @@
             "types": "./database/index.ts",
             "default": "./database/index.ts"
         },
-        "./date-locale": {
-            "bun": "./date-locale.ts",
-            "types": "./date-locale.ts",
-            "default": "./date-locale.ts"
-        },
         "./date": {
             "bun": "./date.ts",
             "types": "./date.ts",
             "default": "./date.ts"
+        },
+        "./date-locale": {
+            "bun": "./date-locale.ts",
+            "types": "./date-locale.ts",
+            "default": "./date-locale.ts"
         },
         "./diff": {
             "bun": "./diff.ts",
@@ -177,15 +175,15 @@
             "types": "./ink/index.ts",
             "default": "./ink/index.ts"
         },
-        "./json-schema": {
-            "bun": "./json-schema.ts",
-            "types": "./json-schema.ts",
-            "default": "./json-schema.ts"
-        },
         "./json": {
             "bun": "./json.ts",
             "types": "./json.ts",
             "default": "./json.ts"
+        },
+        "./json-schema": {
+            "bun": "./json-schema.ts",
+            "types": "./json-schema.ts",
+            "default": "./json-schema.ts"
         },
         "./jsonl": {
             "bun": "./jsonl.ts",
@@ -201,6 +199,11 @@
             "bun": "./logger.ts",
             "types": "./logger.ts",
             "default": "./logger.ts"
+        },
+        "./logger/client": {
+            "bun": "./logger/client.ts",
+            "types": "./logger/client.ts",
+            "default": "./logger/client.ts"
         },
         "./macos": {
             "bun": "./macos/index.ts",
@@ -237,25 +240,36 @@
             "types": "./object.ts",
             "default": "./object.ts"
         },
+        "./package.json": "./package.json",
         "./packages": {
             "bun": "./packages.ts",
             "types": "./packages.ts",
             "default": "./packages.ts"
-        },
-        "./paths.client": {
-            "bun": "./paths.client.ts",
-            "types": "./paths.client.ts",
-            "default": "./paths.client.ts"
         },
         "./paths": {
             "bun": "./paths.ts",
             "types": "./paths.ts",
             "default": "./paths.ts"
         },
+        "./paths.client": {
+            "bun": "./paths.client.ts",
+            "types": "./paths.client.ts",
+            "default": "./paths.client.ts"
+        },
+        "./pipeline": {
+            "bun": "./pipeline/index.ts",
+            "types": "./pipeline/index.ts",
+            "default": "./pipeline/index.ts"
+        },
         "./process-alive": {
             "bun": "./process-alive.ts",
             "types": "./process-alive.ts",
             "default": "./process-alive.ts"
+        },
+        "./profile": {
+            "bun": "./profile/index.ts",
+            "types": "./profile/index.ts",
+            "default": "./profile/index.ts"
         },
         "./prompt-helpers": {
             "bun": "./prompt-helpers.ts",
@@ -266,16 +280,6 @@
             "bun": "./prompts/index.ts",
             "types": "./prompts/index.ts",
             "default": "./prompts/index.ts"
-        },
-        "./pipeline": {
-            "bun": "./pipeline/index.ts",
-            "types": "./pipeline/index.ts",
-            "default": "./pipeline/index.ts"
-        },
-        "./profile": {
-            "bun": "./profile/index.ts",
-            "types": "./profile/index.ts",
-            "default": "./profile/index.ts"
         },
         "./qr": {
             "bun": "./qr.ts",
@@ -337,6 +341,7 @@
             "types": "./tokens.ts",
             "default": "./tokens.ts"
         },
+        "./tsconfig.consumer.json": "./tsconfig.consumer.json",
         "./ui": {
             "bun": "./ui/index.ts",
             "types": "./ui/index.ts",
@@ -361,11 +366,6 @@
             "bun": "./wakeful.ts",
             "types": "./wakeful.ts",
             "default": "./wakeful.ts"
-        },
-        "./logger/client": {
-            "bun": "./logger/client.ts",
-            "types": "./logger/client.ts",
-            "default": "./logger/client.ts"
         }
     },
     "dependencies": {

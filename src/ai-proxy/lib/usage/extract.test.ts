@@ -35,6 +35,54 @@ describe("extractLatestUsageFromSse", () => {
         const sse = 'data: {"type":"response.output_text.delta","delta":"x"}\n\n';
         expect(extractLatestUsageFromSse(sse)).toBeUndefined();
     });
+
+    it("merges Anthropic's split usage — message_start holds the input count, message_delta the output", () => {
+        // The native /v1/messages passthrough hands this shape straight to the
+        // ledger. Reading only the last usage frame booked prompt_tokens as
+        // absent, so every streamed Claude Code call was billed output-only.
+        const sse =
+            'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1200,"cache_read_input_tokens":800,"output_tokens":1}}}\n\n' +
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}\n\n' +
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":57}}\n\n';
+
+        expect(extractLatestUsageFromSse(sse)).toEqual({
+            prompt_tokens: 1200,
+            completion_tokens: 57,
+            total_tokens: 1257,
+            // Reported OUTSIDE input_tokens by Anthropic; recorded so the
+            // ledger sees the real prompt volume, kept separate because cache
+            // reads price differently.
+            cache_read_input_tokens: 800,
+        });
+    });
+
+    it("folds reasoning_tokens into completion_tokens when the totals exclude them", () => {
+        // Grok's CLI proxy keeps reasoning out of completion_tokens;
+        // booking completion alone hid 63,694 output tokens from the ledger.
+        const sse =
+            'data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":195,"completion_tokens":2,"total_tokens":324,"completion_tokens_details":{"reasoning_tokens":127},"cost_in_usd_ticks":4318500}}\n\n';
+
+        expect(extractLatestUsageFromSse(sse)).toEqual({
+            prompt_tokens: 195,
+            completion_tokens: 129,
+            total_tokens: 324,
+            cost_in_usd_ticks: 4318500,
+        });
+    });
+
+    it("does not fold when completion_tokens already includes reasoning (OpenAI shape)", () => {
+        // OpenAI and OpenRouter count reasoning INSIDE completion_tokens:
+        // prompt+completion equals total, the details are only a breakdown.
+        // Folding here would double-book every reasoning turn.
+        const sse =
+            'data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":195,"completion_tokens":129,"total_tokens":324,"completion_tokens_details":{"reasoning_tokens":127}}}\n\n';
+
+        expect(extractLatestUsageFromSse(sse)).toEqual({
+            prompt_tokens: 195,
+            completion_tokens: 129,
+            total_tokens: 324,
+        });
+    });
 });
 
 describe("extractUsageFromJsonBody", () => {

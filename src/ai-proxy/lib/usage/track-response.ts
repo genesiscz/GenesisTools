@@ -11,6 +11,7 @@ import {
 import { recordUsageRequest } from "@app/ai-proxy/lib/usage/store";
 import { writeTranscript } from "@app/ai-proxy/lib/usage/transcripts";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
+import { resolveAnthropicSubModel } from "@genesiscz/utils/ai/anthropic/models";
 import { refToId } from "@genesiscz/utils/ai/config/refs";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -23,6 +24,9 @@ export function trackCompletedRequest(input: {
     elapsedMs: number;
     bodyText: string;
     responseBody: string;
+    /** Client-facing bytes when the route translates shapes; see TranscriptInput. */
+    clientRequestBody?: string;
+    clientResponseBody?: string;
     stream?: boolean;
     translate?: string;
     thinking?: string;
@@ -53,18 +57,30 @@ export function trackCompletedRequest(input: {
     // when the last byte landed — prefer it so usage rows reflect real duration.
     const elapsedMs = Math.max(input.elapsedMs, input.timeline?.completedMs ?? 0);
     const ts = new Date().toISOString();
+
+    // "haiku"/"sonnet"/"opus"/"fable" are served as aliases and the rate table
+    // is exact-id, so booking the alias booked $0 (79 of 448 August requests).
+    // Resolve once here so the transcript, usage row and invoice all carry the
+    // concrete id. Unknown ids pass through the resolver unchanged.
+    const upstreamModel =
+        input.route.account.provider === "anthropic-subscription"
+            ? resolveAnthropicSubModel(input.route.upstreamId)
+            : input.route.upstreamId;
+
     const transcript = writeTranscript({
         ts,
         account: input.route.accountName,
         provider: input.route.account.provider,
         proxyModel: input.proxyModel,
-        upstreamModel: input.route.upstreamId,
+        upstreamModel,
         path: input.path,
         status: input.status,
         elapsedMs,
         stream,
         requestBody: input.bodyText,
         responseBody: input.responseBody,
+        clientRequestBody: input.clientRequestBody,
+        clientResponseBody: input.clientResponseBody,
         tags: input.tags,
         timeline: input.timeline,
     });
@@ -75,7 +91,7 @@ export function trackCompletedRequest(input: {
         client: input.client,
         provider: input.route.account.provider,
         proxyModel: input.proxyModel,
-        upstreamModel: input.route.upstreamId,
+        upstreamModel,
         path: input.path,
         status: input.status,
         elapsedMs,
@@ -126,6 +142,9 @@ export function scheduleUsageTracking(input: {
     elapsedMs: number;
     bodyText: string;
     responseBody: Promise<string>;
+    /** Client-facing bytes when the route translates shapes; see TranscriptInput. */
+    clientRequestBody?: string;
+    clientResponseBody?: Promise<string>;
     timeline?: Promise<CallTimeline>;
     captureFailure?: Promise<string | undefined>;
     translate?: string;
@@ -138,6 +157,7 @@ export function scheduleUsageTracking(input: {
                 trackCompletedRequest({
                     ...input,
                     responseBody,
+                    clientResponseBody: await input.clientResponseBody,
                     timeline: await input.timeline,
                     // a stream that never ended still gets a row, with the reason
                     failure: await input.captureFailure,
@@ -163,6 +183,7 @@ export function scheduleUsageTracking(input: {
                 trackCompletedRequest({
                     ...input,
                     responseBody: "",
+                    clientResponseBody: undefined,
                     timeline: await input.timeline,
                     failure: err instanceof Error ? err.message : String(err),
                 });

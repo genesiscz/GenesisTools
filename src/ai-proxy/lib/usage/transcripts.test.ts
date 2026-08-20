@@ -66,6 +66,71 @@ describe("parseResponseBody", () => {
         const body = `data: {"choices":[{"delta":{"content":"kept"}}]}\n\ndata: {oops\n\ndata: [DONE]\n\n`;
         expect(parseResponseBody(body, true).text).toBe("kept");
     });
+
+    it("reads an Anthropic message body (the passthrough stores a real reply now)", () => {
+        // Only choices[0] was read before, so /v1/messages and /v1/responses
+        // replies were stored as an empty content block plus a raw prefix.
+        const parsed = parseResponseBody(
+            '{"type":"message","content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"4"},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"p":"a"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}',
+            false
+        );
+
+        expect(parsed.text).toBe("4");
+        expect(parsed.thinking).toBe("hm");
+        expect(parsed.finishReason).toBe("tool_use");
+        expect(parsed.toolCalls?.[0]?.function?.name).toBe("Read");
+        expect(parsed.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
+    });
+
+    it("reassembles an Anthropic SSE stream", () => {
+        const body = [
+            'data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0}}}',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hm"}}',
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"4"}}',
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}',
+        ].join("\n\n");
+
+        const parsed = parseResponseBody(body, true);
+        expect(parsed.text).toBe("4");
+        expect(parsed.thinking).toBe("hm");
+        expect(parsed.finishReason).toBe("end_turn");
+        expect(parsed.usage).toEqual({ input_tokens: 10, output_tokens: 7 });
+    });
+
+    it("reads a Responses JSON body", () => {
+        const parsed = parseResponseBody(
+            '{"object":"response","status":"completed","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"hm"}]},{"type":"message","content":[{"type":"output_text","text":"4"}]},{"type":"function_call","call_id":"fc_1","name":"Read","arguments":"{}"}],"usage":{"input_tokens":3,"output_tokens":2}}',
+            false
+        );
+
+        expect(parsed.text).toBe("4");
+        expect(parsed.thinking).toBe("hm");
+        expect(parsed.toolCalls?.[0]?.function?.name).toBe("Read");
+    });
+
+    it("reassembles a Responses SSE stream, including reasoning and function calls", () => {
+        // Reasoning streams on its own event type and tool calls only land on
+        // output_item.done — a transcript that only reads output_text.delta
+        // recorded neither.
+        const body = [
+            'data: {"type":"response.reasoning_text.delta","delta":"weigh"}',
+            // The translator also emits this shape; it was dropped before.
+            'data: {"type":"response.reasoning.delta","delta":"-more"}',
+            'data: {"type":"response.output_text.delta","delta":"4"}',
+            'data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"fc_9","name":"Bash","arguments":"{\\"command\\":\\"ls\\"}"}}',
+            'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":5,"output_tokens":3}}}',
+        ].join("\n");
+
+        const parsed = parseResponseBody(body, true);
+
+        expect(parsed.text).toBe("4");
+        expect(parsed.thinking).toBe("weigh-more");
+        expect(parsed.toolCalls?.[0]?.function?.name).toBe("Bash");
+        expect(parsed.toolCalls?.[0]?.function?.arguments).toBe('{"command":"ls"}');
+        expect(parsed.toolCalls?.[0]?.id).toBe("fc_9");
+        expect(parsed.finishReason).toBe("completed");
+        expect(parsed.usage).toEqual({ input_tokens: 5, output_tokens: 3 });
+    });
 });
 
 describe("readRequestTags", () => {

@@ -31,6 +31,11 @@ export class AiProxyStorage extends Storage {
     tunnelLogPath(): string {
         return join(this.getBaseDir(), "tunnel.log");
     }
+
+    /** Per-account probe results. Never committed — see catalog-file.ts. */
+    modelsCatalogPath(): string {
+        return join(this.getBaseDir(), "models-catalog.json");
+    }
 }
 
 let _instance: AiProxyStorage | null = null;

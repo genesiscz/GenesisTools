@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { billedModelIds, estimateCostUsd, legacyBilledIds } from "@app/ai-proxy/lib/billing/pricing";
 import { STATIC_CATALOG } from "@genesiscz/utils/ai/catalog";
-import { GROK_STATIC_CATALOG } from "@genesiscz/utils/ai/grok/models";
+import { GROK_STATIC_CATALOG, isCuratedGrokModelId } from "@genesiscz/utils/ai/grok/models";
 import { OPENAI_SUB_STATIC_CATALOG } from "@genesiscz/utils/ai/openai/sub-models";
 
 describe("estimateCostUsd", () => {
@@ -20,6 +20,7 @@ describe("estimateCostUsd", () => {
         });
         expect(cost).toBeCloseTo(2.0, 10);
         expect(estimateCostUsd("grok-4.5-latest", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
+        expect(estimateCostUsd("grok-4.6", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
     });
 
     it("never open-ended-prefix-matches: unknown family variants stay unpriced", () => {
@@ -88,5 +89,32 @@ describe("billing table coverage", () => {
         );
 
         expect(unmatched).toEqual([]);
+    });
+
+    /**
+     * Models with no per-token list price to look up, so $0 is the honest answer
+     * rather than a gap. Subscription-only ids are not sold per token at all.
+     * Anything else advertised MUST have a rate — see the test below.
+     */
+    const UNPRICEABLE_GROK_IDS = new Set([
+        // Subscription-only: absent from the xAI API catalog, so no public
+        // per-token rate exists to charge.
+        "grok-composer-2.5-fast",
+    ]);
+
+    it("prices every grok model it advertises", () => {
+        // The sibling test above only proved priced -> advertised. Nothing proved
+        // advertised -> priced, which is how grok-composer-2.5-fast and grok-latest
+        // shipped in the picker billing $0 without anyone noticing.
+        const priced = new Set(billedModelIds());
+        const advertised = GROK_STATIC_CATALOG.map((model) => model.id).filter(isCuratedGrokModelId);
+
+        const gaps = advertised.filter((id) => !priced.has(id) && !UNPRICEABLE_GROK_IDS.has(id));
+
+        expect(gaps).toEqual([]);
+    });
+
+    it("does not advertise grok-latest — an alias that cannot be priced or attributed", () => {
+        expect(isCuratedGrokModelId("grok-latest")).toBe(false);
     });
 });
