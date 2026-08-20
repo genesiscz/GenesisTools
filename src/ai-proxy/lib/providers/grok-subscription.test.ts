@@ -34,7 +34,32 @@ function webSearchBody(): string {
 }
 
 describe("GrokSubscriptionProvider.messages server-tool handling", () => {
-    it("without a Brave key, rejects web_search with a self-explaining 400 before dispatch", async () => {
+    it("rejects non-web-search server tools with a self-explaining 400 before dispatch", async () => {
+        const provider = makeProvider();
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [{ role: "user", content: "hi" }],
+            tools: [{ type: "code_execution_20250522", name: "code_execution" }],
+        });
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(res.status).toBe(400);
+
+        const parsed = SafeJSON.parse(await res.text(), { strict: true }) as {
+            type: string;
+            error: { type: string; message: string };
+        };
+        expect(parsed.type).toBe("error");
+        expect(parsed.error.type).toBe("invalid_request_error");
+        expect(parsed.error.message).toContain("code_execution_20250522");
+    });
+
+    it("routes web_search to the emulation path even without a Brave key: 200 SSE, failure as in-stream error", async () => {
         await env.testing.withOverrides({ BRAVE_API_KEY: undefined }, async () => {
             const provider = makeProvider();
             const body = webSearchBody();
@@ -44,49 +69,8 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
                 body
             );
 
-            expect(res.status).toBe(400);
-
-            const parsed = SafeJSON.parse(await res.text(), { strict: true }) as {
-                type: string;
-                error: { type: string; message: string };
-            };
-            expect(parsed.type).toBe("error");
-            expect(parsed.error.type).toBe("invalid_request_error");
-            expect(parsed.error.message).toContain("web_search_20250305");
-            expect(parsed.error.message).toContain("BRAVE_API_KEY");
-        });
-    });
-
-    it("rejects non-web-search server tools even with a Brave key", async () => {
-        await env.testing.withOverrides({ BRAVE_API_KEY: "test-key" }, async () => {
-            const provider = makeProvider();
-            const body = SafeJSON.stringify({
-                model: "grok-4.6",
-                max_tokens: 100,
-                messages: [{ role: "user", content: "hi" }],
-                tools: [{ type: "code_execution_20250522", name: "code_execution" }],
-            });
-            const res = await provider.messages(
-                new Request("http://proxy/v1/messages", { method: "POST", body }),
-                "grok-4.6",
-                body
-            );
-
-            expect(res.status).toBe(400);
-            expect(await res.text()).toContain("code_execution_20250522");
-        });
-    });
-
-    it("with a Brave key, takes the emulation path: 200 SSE, upstream failure as an in-stream error event", async () => {
-        await env.testing.withOverrides({ BRAVE_API_KEY: "test-key" }, async () => {
-            const provider = makeProvider();
-            const body = webSearchBody();
-            const res = await provider.messages(
-                new Request("http://proxy/v1/messages", { method: "POST", body }),
-                "grok-4.6",
-                body
-            );
-
+            // The native /responses path answers 200 and streams; the
+            // unreachable upstream surfaces as an in-stream error event.
             expect(res.status).toBe(200);
             expect(res.headers.get("content-type")).toContain("text/event-stream");
 
