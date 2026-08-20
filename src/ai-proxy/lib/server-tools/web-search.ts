@@ -448,10 +448,11 @@ export function buildResponsesWebSearchBody(
 
     // The caller's output cap, in the name /responses uses. Forwarded because
     // it is the caller's stated limit, but do NOT rely on it here: probed live
-    // 2026-08-20, the same request with max_output_tokens 48 came back
-    // "incomplete" with NO tools and "completed" (5.5k-6.2k output tokens)
-    // WITH the web_search tool, twice. The upstream drops the cap once a
-    // server tool is in play, exactly like max_tool_calls above.
+    // 2026-08-20, three runs per arm, same prompt and max_output_tokens of 48.
+    // With NO tools every run came back "incomplete" (reason
+    // max_output_tokens); with the web_search tool every run came back
+    // "completed" at 5.4k-6.2k output tokens. The upstream drops the cap once
+    // a server tool is in play, exactly like max_tool_calls above.
     if (typeof body.max_tokens === "number") {
         out.max_output_tokens = body.max_tokens;
     }
