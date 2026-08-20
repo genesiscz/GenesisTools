@@ -6,8 +6,9 @@
  * plan --help` produced a 263-character line for `--from`, which names all five seed sources
  * inline, so the help for the flag a new user most needs was the one that wrapped worst.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { enhanceHelp } from "@genesiscz/utils/cli";
+import { setSuggestCommandProgram, suggestCommand } from "@genesiscz/utils/cli/executor";
 import { Command } from "commander";
 
 const LONG =
@@ -116,5 +117,125 @@ describe("enhanceHelp subcommand options", () => {
         const continuation = lines[start + 1]!;
         expect(continuation).toMatch(/^\s{20,}\S/);
         expect(continuation).not.toContain("--");
+    });
+});
+
+/**
+ * `suggestCommand` rebuilds a command line out of raw argv, and `--verbose fetch` has the same
+ * shape as `--env test`: one flag, one bare word. It used to read every bare word after a flag
+ * as that flag's value, so a boolean flag ate whatever followed it.
+ *
+ * `runTool` puts boolean `-v/--verbose` and `--readme` on EVERY tool, which made this reachable
+ * everywhere rather than theoretical: `tools timely -v login` printed
+ * `tools timely -v login login api-key`, a doubled subcommand that does not run.
+ */
+function programWithGlobals(): Command {
+    const program = new Command("tools x");
+    program.option("-v, --verbose", "boolean, like runTool's").option("--env <name>", "takes a value");
+    program.command("fetch").option("--raw", "boolean").option("--session <id>", "takes a value");
+    program.command("search");
+
+    return program;
+}
+
+type Modifications = NonNullable<Parameters<typeof suggestCommand>[1]>;
+
+function suggestWithArgv(tail: string[], modifications: Modifications): string {
+    const saved = process.argv;
+    process.argv = ["bun", "script", ...tail];
+
+    try {
+        return suggestCommand("tools x", modifications);
+    } finally {
+        process.argv = saved;
+    }
+}
+
+describe("suggestCommand", () => {
+    afterEach(() => {
+        setSuggestCommandProgram(undefined);
+    });
+
+    test("a boolean global flag does not swallow the subcommand", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--verbose", "fetch", "--env", "test"], { replaceCommand: ["search"] })).toBe(
+            "tools x --verbose search"
+        );
+    });
+
+    test("a value-taking global flag still carries its value over", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--env", "test", "fetch"], { replaceCommand: ["search"] })).toBe(
+            "tools x --env test search"
+        );
+    });
+
+    test("the combined --flag=value form does not also eat the next token", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--env=test", "fetch"], { replaceCommand: ["search"] })).toBe(
+            "tools x --env=test search"
+        );
+    });
+
+    // Commander lets only the last flag of a short cluster take a value, and `-vv` is the
+    // documented way to raise verbosity twice.
+    test("a short-flag cluster is judged by its last flag", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["-vv", "fetch"], { replaceCommand: ["search"] })).toBe("tools x -vv search");
+    });
+
+    test("`--` ends the global options, so a wrapped command is not mistaken for one", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--unknown", "--", "bash", "-c", "echo hi"], { replaceCommand: ["search"] })).toBe(
+            "tools x --unknown search"
+        );
+    });
+
+    test("keepFlags keeps a boolean flag without the token beside it", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(
+            suggestWithArgv(["fetch", "--raw", "somefile"], { replaceCommand: ["search"], keepFlags: ["--raw"] })
+        ).toBe("tools x --raw search");
+    });
+
+    // `tools stash -v save mystash` used to suggest `tools stash save -v save mystash --mode
+    // all`: the strip only matched at position 0, so a leading global flag hid the subcommand.
+    test("the subcommand strip looks past a leading global flag", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["-v", "fetch", "mine"], { subcommand: ["fetch"], add: ["--raw"] })).toBe(
+            "tools x -v mine --raw"
+        );
+    });
+
+    test("removing a boolean flag keeps the token after it", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--verbose", "fetch"], { remove: ["--verbose"] })).toBe("tools x fetch");
+    });
+
+    test("removing a value-taking flag drops its value too", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--env", "test", "fetch"], { remove: ["--env"] })).toBe("tools x fetch");
+    });
+
+    test("removing the combined --flag=value form drops exactly one token", () => {
+        setSuggestCommandProgram(programWithGlobals());
+
+        expect(suggestWithArgv(["--env=test", "fetch"], { remove: ["--env"] })).toBe("tools x fetch");
+    });
+
+    // Nothing outside runTool registers a program, so the pre-existing guess has to stand there.
+    test("without a registered program, a flag is still assumed to take a value", () => {
+        expect(suggestWithArgv(["--verbose", "fetch"], { replaceCommand: ["search"] })).toBe(
+            "tools x --verbose fetch search"
+        );
     });
 });

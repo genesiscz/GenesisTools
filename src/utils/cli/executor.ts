@@ -136,6 +136,100 @@ export function buildCommand(base: string, args: Record<string, string | boolean
 }
 
 /**
+ * The running tool's Commander program, registered by `runTool`.
+ *
+ * `suggestCommand` rebuilds a command line out of raw argv, where `--verbose fetch` and
+ * `--env test` are the same shape: one flag, one bare word. Only the flag's arity separates
+ * them, and Commander already knows it. Every tool goes through `runTool`, which adds boolean
+ * `-v/--verbose` and `--readme` to every program, so without this the suggestion swallowed the
+ * subcommand whenever a user passed one (`tools timely -v login` suggested `tools timely -v
+ * login login api-key`).
+ */
+let suggestProgram: Command | undefined;
+
+export function setSuggestCommandProgram(command: Command | undefined): void {
+    suggestProgram = command;
+}
+
+/**
+ * Whether `flag` consumes the token after it. Without a registered program every flag falls
+ * back to true, the behaviour from before registration existed.
+ *
+ * Two search modes, because the callers stand in different argv positions. `keepFlags` and
+ * `remove` name options that live on child commands, so they search the whole tree. Leading
+ * (pre-subcommand) positions pass `rootOnly`: only global options are legal there, and letting
+ * a subcommand's same-named option answer would swallow the subcommand itself as the flag's
+ * value — which is also why an unmatched flag answers false in that mode.
+ */
+function flagTakesValue(flag: string, opts?: { rootOnly?: boolean }): boolean {
+    if (!suggestProgram) {
+        return true;
+    }
+
+    // `-abc` is a cluster of short flags, and Commander lets only the last one take a value.
+    const name = flag.length > 2 && /^-[^-]/.test(flag) ? `-${flag[flag.length - 1]}` : flag;
+
+    const search = (cmd: Command, recurse: boolean): boolean | undefined => {
+        for (const option of cmd.options) {
+            if (option.short === name || option.long === name) {
+                return option.required || option.optional;
+            }
+        }
+
+        if (!recurse) {
+            return undefined;
+        }
+
+        for (const sub of cmd.commands as Command[]) {
+            const found = search(sub, true);
+            if (found !== undefined) {
+                return found;
+            }
+        }
+
+        return undefined;
+    };
+
+    const found = search(suggestProgram, !opts?.rootOnly);
+
+    if (found !== undefined) {
+        return found;
+    }
+
+    return !opts?.rootOnly;
+}
+
+/** Split argv into the global options at its front and everything from the subcommand onward. */
+function splitLeadingOptions(args: string[]): { leading: string[]; rest: string[] } {
+    const leading: string[] = [];
+    let i = 0;
+
+    while (i < args.length) {
+        const arg = args[i];
+        // A bare word is the subcommand; everything after `--` is a payload for a wrapped
+        // command (`tools task run --session x -- bash -c …`), never a global option.
+        if (arg === "--" || !arg.startsWith("-")) {
+            break;
+        }
+
+        leading.push(arg);
+        i++;
+
+        if (
+            !arg.includes("=") &&
+            flagTakesValue(arg, { rootOnly: true }) &&
+            i < args.length &&
+            !args[i].startsWith("-")
+        ) {
+            leading.push(args[i]);
+            i++;
+        }
+    }
+
+    return { leading, rest: args.slice(i) };
+}
+
+/**
  * Build a modified version of the current CLI command by adding/removing/replacing flags.
  * Uses process.argv to reconstruct the original command.
  *
@@ -166,60 +260,45 @@ export function suggestCommand(
     // process.argv = [bun, script, ...args]
     let args = process.argv.slice(2);
 
-    // Strip leading subcommand tokens that are already in toolName
+    // Strip leading subcommand tokens that are already in toolName. Global options may sit in
+    // front of them (`tools stash -v save …`), so they are lifted out first and put back after;
+    // matching at position 0 instead made `-v` suppress the strip and print `save` twice.
     if (modifications.subcommand?.length) {
         const sub = modifications.subcommand;
+        const { leading, rest } = splitLeadingOptions(args);
         let matchLen = 0;
 
-        for (let i = 0; i < sub.length && i < args.length; i++) {
-            if (args[i] === sub[i]) {
+        for (let i = 0; i < sub.length && i < rest.length; i++) {
+            if (rest[i] === sub[i]) {
                 matchLen++;
             } else {
                 break;
             }
         }
 
-        args = args.slice(matchLen);
+        args = [...leading, ...rest.slice(matchLen)];
     }
 
     // Replace subcommand: keep global options (flags before the command name),
     // then replace everything from the command name onward with new args
     if (modifications.replaceCommand) {
-        const originalArgs = args;
-        const globalArgs: string[] = [];
-        let i = 0;
-        while (i < args.length) {
-            if (args[i].startsWith("-")) {
-                globalArgs.push(args[i]);
-                // If next arg doesn't start with -, it's the flag's value
-                if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
-                    globalArgs.push(args[i + 1]);
-                    i += 2;
-                } else {
-                    i++;
-                }
-            } else {
-                break; // Found the subcommand
-            }
-        }
+        const { leading, rest } = splitLeadingOptions(args);
+        const globalArgs = [...leading];
+
         // Also preserve keepFlags from anywhere in the original args
         if (modifications.keepFlags?.length) {
             const keepSet = new Set(modifications.keepFlags);
-            for (let j = i; j < originalArgs.length; j++) {
-                const arg = originalArgs[j];
+            for (let j = 0; j < rest.length; j++) {
+                const arg = rest[j];
                 // Handle --flag=value syntax
                 const eqIdx = arg.indexOf("=");
                 const flagName = eqIdx > 0 ? arg.slice(0, eqIdx) : arg;
                 if (keepSet.has(flagName)) {
-                    if (eqIdx > 0) {
-                        // Combined form: --flag=value
-                        globalArgs.push(arg);
-                    } else {
-                        globalArgs.push(arg);
-                        if (j + 1 < originalArgs.length && !originalArgs[j + 1].startsWith("-")) {
-                            globalArgs.push(originalArgs[j + 1]);
-                            j++;
-                        }
+                    globalArgs.push(arg);
+                    // The combined `--flag=value` form already carries its value.
+                    if (eqIdx < 0 && flagTakesValue(arg) && j + 1 < rest.length && !rest[j + 1].startsWith("-")) {
+                        globalArgs.push(rest[j + 1]);
+                        j++;
                     }
                 }
             }
@@ -238,8 +317,8 @@ export function suggestCommand(
             const eqIdx = args[i].indexOf("=");
             const flagName = eqIdx > 0 ? args[i].slice(0, eqIdx) : args[i];
             if (removeSet.has(flagName)) {
-                // Skip the flag. If it was bare (no `=value`), also skip its trailing value arg.
-                if (eqIdx < 0 && i + 1 < args.length && !args[i + 1].startsWith("-")) {
+                // Skip the flag. If it was bare (no `=value`) and takes one, also skip its value.
+                if (eqIdx < 0 && flagTakesValue(args[i]) && i + 1 < args.length && !args[i + 1].startsWith("-")) {
                     i++;
                 }
                 continue;

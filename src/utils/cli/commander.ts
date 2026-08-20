@@ -4,7 +4,7 @@ import { setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import { printReadmeAndExit } from "@genesiscz/utils/readme";
 import type { Command } from "commander";
-import { enhanceHelp } from "./executor";
+import { enhanceHelp, setSuggestCommandProgram } from "./executor";
 // `logger` itself is intentionally NOT imported here — runTool only drives the
 // console gate / base binding via the setters above (importing the logger
 // value into commander.ts would risk a commander↔logger value cycle).
@@ -195,6 +195,8 @@ export async function runTool(
     if (!program.options.some((o) => o.long === "--readme")) {
         program.option("--readme", "Print this tool's README and exit");
     }
+
+    setSuggestCommandProgram(program);
 
     const readmeInArgv = argvRequestsReadme(argv.slice(2));
     if (readmeInArgv) {
