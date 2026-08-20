@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -138,10 +138,16 @@ describe("indexTeamTranscripts in-process sidechains", () => {
 
     test("a newer sidechain wins over an older standalone jsonl of the same agent", () => {
         const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
-        writeTranscript(dir, "b9799f97-ead9-4d25-ada1-51635a3e924f", "pageobjects-fable");
+        const standaloneId = "b9799f97-ead9-4d25-ada1-51635a3e924f";
+        writeTranscript(dir, standaloneId, "pageobjects-fable");
         const side = writeSidechain(dir, "pageobjects-fable", "MePAS selectors confirmed correct.");
-        // sidechain write is later in wall time than the standalone fixture
         expect(side).toContain("subagents");
+
+        // Back-to-back writes can land on the same mtime, and the standalone
+        // file is indexed first, so a tie would keep it and fail this test for
+        // a reason that has nothing to do with the rule under test.
+        const hour = new Date(Date.now() - 3_600_000);
+        utimesSync(join(dir, `${standaloneId}.jsonl`), hour, hour);
 
         const found = indexTeamTranscripts(dir, TEAM).get("pageobjects-fable");
         expect(found?.sidechain).toBe(true);

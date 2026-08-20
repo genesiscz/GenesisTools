@@ -316,7 +316,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
                 );
             }
 
-            if (!process.env.TMUX) {
+            if (!env.get("TMUX")) {
                 Bun.spawnSync([tmux, "attach-session", "-t", leadLive.tmuxSession], {
                     stdout: "inherit",
                     stderr: "inherit",
@@ -331,12 +331,19 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             };
         }
 
+        // Discovery cannot always name the lead's pane for a team whose
+        // teammates are all in-process: lead records carry no teamName or
+        // parentSessionId, and there are no teammate panes to locate it by.
+        // The sidechain transcript still knows the lead SESSION, so hand that
+        // over instead of leaving the user with nothing actionable.
         const ageSec = Math.max(0, Math.round((Date.now() - opts.teammate.transcript!.mtimeMs) / 1000));
+        const leadSession = opts.teammate.transcript!.sessionId;
         return {
             action: "noop",
             detail:
                 `in-process teammate still live (transcript updated ${ageSec}s ago) with no tmux pane to focus. ` +
-                `Tail: tools claude tail -a ${opts.teammate.member.name}`,
+                `Tail: tools claude tail -a ${opts.teammate.member.name}` +
+                (leadSession ? `  Focus the lead: tools claude cmux focus ${leadSession}` : ""),
             command,
         };
     }

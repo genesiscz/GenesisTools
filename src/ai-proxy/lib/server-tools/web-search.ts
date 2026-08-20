@@ -436,6 +436,17 @@ export function buildResponsesWebSearchBody(
         logger.debug({}, "ai-proxy: web_search offered with tool_choice none — answering without searching");
     }
 
+    // `any` and `tool` naming this tool both mean "you must call it". The
+    // upstream defaults to auto, which may skip the only offered tool.
+    const mandatory =
+        isObject(body.tool_choice) &&
+        (body.tool_choice.type === "any" ||
+            (body.tool_choice.type === "tool" && body.tool_choice.name === tool.name));
+
+    if (mandatory) {
+        out.tool_choice = "required";
+    }
+
     // The caller's output cap, in the name /responses uses. Dropping it let a
     // native search generate (and spend) past what the request authorized.
     if (typeof body.max_tokens === "number") {

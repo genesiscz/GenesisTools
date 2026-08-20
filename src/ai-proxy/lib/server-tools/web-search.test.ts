@@ -374,6 +374,27 @@ describe("nativeWebSearch (/responses server-side search)", () => {
             TOOL
         );
         expect(forbidden.tools).toEqual([]);
+        expect(forbidden.tool_choice).toBeUndefined();
+    });
+
+    it("forces the search when tool_choice makes it mandatory", () => {
+        // `any` and `tool` naming it both mean the model must call it; the
+        // upstream would otherwise default to auto and could skip it.
+        expect(buildResponsesWebSearchBody({ messages: [], tool_choice: { type: "any" } }, TOOL).tool_choice).toBe(
+            "required"
+        );
+        expect(
+            buildResponsesWebSearchBody({ messages: [], tool_choice: { type: "tool", name: "web_search" } }, TOOL)
+                .tool_choice
+        ).toBe("required");
+
+        // A different tool name is not this tool, and auto stays the default.
+        expect(
+            buildResponsesWebSearchBody({ messages: [], tool_choice: { type: "tool", name: "Read" } }, TOOL).tool_choice
+        ).toBeUndefined();
+        expect(
+            buildResponsesWebSearchBody({ messages: [], tool_choice: { type: "auto" } }, TOOL).tool_choice
+        ).toBeUndefined();
     });
 
     it("clamps domain filters to the upstream max of 5", () => {
