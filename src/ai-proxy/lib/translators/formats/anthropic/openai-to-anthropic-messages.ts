@@ -86,7 +86,22 @@ export interface AnthropicMessagesBody {
     stream?: boolean;
     tools?: AnthropicTool[];
     tool_choice?: AnthropicToolChoice;
+    thinking?: { type: "enabled"; budget_tokens: number };
 }
+
+/**
+ * Claude Code's effort vocabulary mapped onto Anthropic thinking budgets.
+ * Bands follow the ratios Anthropic's own docs use for low/medium/high; the
+ * two extremes extend the ladder in the same 2x steps.
+ */
+const THINKING_BUDGET_BY_EFFORT: Record<string, number> = {
+    minimal: 1024,
+    low: 4096,
+    medium: 8192,
+    high: 16384,
+    xhigh: 32768,
+    max: 65536,
+};
 
 export interface OpenAiToAnthropicOptions {
     /** Concrete Anthropic model id to forward (e.g. claude-haiku-4-5-20251001). */
@@ -386,6 +401,26 @@ export function openAiChatToAnthropicMessages(
 
     if (typeof body.stream === "boolean") {
         result.stream = body.stream;
+    }
+
+    // A `:xhigh` model-suffix stamps reasoning_effort on the OpenAI body, but
+    // this allowlist never carried it, so the suffix was a silent no-op for
+    // every claude-sub model (1,704 recorded calls rode this path). Anthropic's
+    // equivalent is a thinking budget. Extended thinking rejects temperature ≠ 1
+    // and top_p below 0.95, so a request that pins its own sampling keeps it and
+    // skips thinking — silently overriding the client's sampling would be the
+    // worse translation.
+    if (typeof body.reasoning_effort === "string" && result.temperature === undefined && result.top_p === undefined) {
+        const budget = THINKING_BUDGET_BY_EFFORT[body.reasoning_effort.trim().toLowerCase()];
+        const maxTokens = typeof result.max_tokens === "number" ? result.max_tokens : DEFAULT_MAX_TOKENS;
+
+        // Anthropic requires budget_tokens >= 1024 and < max_tokens.
+        if (budget !== undefined && maxTokens > 2048) {
+            result.thinking = {
+                type: "enabled",
+                budget_tokens: Math.min(budget, Math.floor(maxTokens / 2)),
+            };
+        }
     }
 
     const tools = mapTools(body.tools);

@@ -46,9 +46,33 @@ export function wrapReasoningForFoldedJson(reasoning: string, answer: string | n
     return body.trimEnd();
 }
 
-const CURSOR_THINKING_BLOCK_RE =
-    /(?:<(?:think|thinking)\b[^>]*>[\s\S]*?(?:<\/(?:think|thinking)>|$)|<details\b[^>]*>\s*<summary\b[^>]*>\s*(?:<strong>)?Thinking(?:<\/strong>)?\s*<\/summary>[\s\S]*?(?:<\/details>|$))\s*/gi;
+const FOLDED_DETAILS_RE =
+    /<details\b[^>]*>\s*<summary\b[^>]*>\s*(?:<strong>)?Thinking(?:<\/strong>)?\s*<\/summary>([\s\S]*?)(?:<\/details>|$)\s*/gi;
 
-export function stripCursorThinkingBlocks(content: string): string {
-    return content.replace(CURSOR_THINKING_BLOCK_RE, "").replace(/^\r\n+/, "");
+/**
+ * Pulls the reasoning back out of a folded `<details>` wrapper this proxy wrote
+ * into assistant `content`, so it can ride upstream as `reasoning_content`
+ * instead of being deleted. Only the proxy's own marker matches: `<think>` tags
+ * the model itself emitted are the model's output and stay untouched. The
+ * predecessor (`stripCursorThinkingBlocks`) erased both wholesale, which removed
+ * the model's reasoning from history every turn — the mechanism behind it
+ * re-reading files it had already read and repeating announced work.
+ */
+export function extractFoldedThinking(content: string): { content: string; reasoning: string | null } {
+    const reasoningParts: string[] = [];
+    const stripped = content.replace(FOLDED_DETAILS_RE, (_match, inner: string) => {
+        const trimmed = inner.trim();
+
+        if (trimmed.length > 0) {
+            reasoningParts.push(trimmed);
+        }
+
+        return "";
+    });
+
+    if (reasoningParts.length === 0) {
+        return { content, reasoning: null };
+    }
+
+    return { content: stripped.replace(/^\r\n+/, ""), reasoning: reasoningParts.join("\n\n") };
 }

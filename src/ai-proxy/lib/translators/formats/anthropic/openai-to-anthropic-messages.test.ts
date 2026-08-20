@@ -25,6 +25,34 @@ describe("openAiChatToAnthropicMessages", () => {
         expect(body.messages).toEqual([{ role: "user", content: [{ type: "text", text: "Hi" }] }]);
     });
 
+    it("maps reasoning_effort to an Anthropic thinking budget", () => {
+        // A :xhigh model suffix stamps reasoning_effort on the body; the
+        // allowlist dropped it, so the suffix was a no-op on claude-sub.
+        const body = openAiChatToAnthropicMessages(
+            { messages: [{ role: "user", content: "yo" }], max_tokens: 80000, reasoning_effort: "xhigh" },
+            { model: MODEL }
+        );
+
+        expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 32768 });
+    });
+
+    it("skips the thinking budget when the client pins a temperature", () => {
+        // Extended thinking rejects temperature != 1; keeping the client's
+        // sampling wins over silently overriding it.
+        const body = openAiChatToAnthropicMessages(
+            {
+                messages: [{ role: "user", content: "yo" }],
+                max_tokens: 64000,
+                reasoning_effort: "high",
+                temperature: 0.2,
+            },
+            { model: MODEL }
+        );
+
+        expect(body.thinking).toBeUndefined();
+        expect(body.temperature).toBe(0.2);
+    });
+
     it("defaults max_tokens when the request omits it", () => {
         const body = openAiChatToAnthropicMessages(
             { messages: [{ role: "user", content: "yo" }] },

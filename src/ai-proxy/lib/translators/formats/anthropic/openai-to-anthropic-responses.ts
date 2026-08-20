@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
 /**
@@ -42,7 +43,28 @@ function usageFrom(raw: unknown): AnthropicUsage {
 
     const promptTokens = typeof raw.prompt_tokens === "number" ? raw.prompt_tokens : 0;
     const completionTokens = typeof raw.completion_tokens === "number" ? raw.completion_tokens : 0;
-    const usage: AnthropicUsage = { input_tokens: promptTokens, output_tokens: completionTokens };
+
+    // Anthropic counts thinking INSIDE output_tokens; Grok's CLI proxy keeps
+    // reasoning out of completion_tokens and reports it under
+    // completion_tokens_details. Reporting completion_tokens alone made a
+    // grok-4.6:xhigh turn look like 139 output tokens when it actually produced
+    // 1763 — a 12x undercount in every client's cost and context display. The
+    // OpenAI API and OpenRouter instead report reasoning INSIDE
+    // completion_tokens, so the fold only applies when the totals prove
+    // reasoning was excluded (prompt+completion falls short of total).
+    const completionDetails = isObject(raw.completion_tokens_details) ? raw.completion_tokens_details : undefined;
+    const reasoningTokens =
+        completionDetails && typeof completionDetails.reasoning_tokens === "number"
+            ? completionDetails.reasoning_tokens
+            : 0;
+    const totalTokens = typeof raw.total_tokens === "number" ? raw.total_tokens : undefined;
+    const reasoningExcluded =
+        reasoningTokens > 0 && totalTokens != null && promptTokens + completionTokens < totalTokens;
+
+    const usage: AnthropicUsage = {
+        input_tokens: promptTokens,
+        output_tokens: completionTokens + (reasoningExcluded ? reasoningTokens : 0),
+    };
 
     const details = isObject(raw.prompt_tokens_details) ? raw.prompt_tokens_details : undefined;
 
@@ -151,6 +173,8 @@ export interface AnthropicStreamState {
     outputChars: number;
     /** Prompt-token estimate to fall back on; see createAnthropicStreamState. */
     fallbackInputTokens: number;
+    /** One warning per stream when an upstream emits both reasoning fields. */
+    warnedDualReasoning: boolean;
 }
 
 /**
@@ -171,6 +195,7 @@ export function createAnthropicStreamState(model: string, fallbackInputTokens = 
         seenTools: new Map(),
         outputChars: 0,
         fallbackInputTokens,
+        warnedDualReasoning: false,
     };
 }
 
@@ -242,6 +267,19 @@ export function anthropicStreamChunk(state: AnthropicStreamState, chunk: Record<
 
     if (typeof choice.finish_reason === "string") {
         state.stopReason = openAiFinishToAnthropicStop(choice.finish_reason);
+    }
+
+    // Both fields feed ONE thinking block. If an upstream ever emits both in one
+    // stream, their concatenation shows up client-side as two voices glued
+    // mid-word (forensics 2026-08-19, session 8d0d38f3, "A→B boundary") — flag it
+    // the moment it happens instead of leaving the next forensic pass guessing.
+    if (
+        typeof delta.reasoning_content === "string" &&
+        typeof delta.reasoning === "string" &&
+        !state.warnedDualReasoning
+    ) {
+        state.warnedDualReasoning = true;
+        logger.warn("ai-proxy: upstream emitted BOTH reasoning_content and reasoning in one stream");
     }
 
     const reasoning = delta.reasoning_content ?? delta.reasoning;

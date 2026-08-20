@@ -78,6 +78,56 @@ describe("openAiCompletionToAnthropicMessage", () => {
         expect(message.usage).toEqual({ input_tokens: 20, output_tokens: 5, cache_read_input_tokens: 80 });
     });
 
+    it("folds reasoning tokens into output_tokens, as Anthropic counts them", () => {
+        // Real numbers from martin/grok/grok-4.6:xhigh — completion_tokens alone
+        // reported 139 for a turn that produced 1763 tokens.
+        const message = openAiCompletionToAnthropicMessage(
+            {
+                choices: [{ message: { content: "hi" }, finish_reason: "stop" }],
+                usage: {
+                    prompt_tokens: 243,
+                    completion_tokens: 139,
+                    total_tokens: 2006,
+                    completion_tokens_details: { reasoning_tokens: 1624 },
+                },
+            },
+            { model: MODEL }
+        );
+
+        expect(message.usage).toEqual({ input_tokens: 243, output_tokens: 1763 });
+    });
+
+    it("does not fold when completion_tokens already includes reasoning (OpenAI shape)", () => {
+        // OpenAI and OpenRouter count reasoning INSIDE completion_tokens:
+        // prompt+completion equals total, and the details are only a breakdown.
+        const message = openAiCompletionToAnthropicMessage(
+            {
+                choices: [{ message: { content: "hi" }, finish_reason: "stop" }],
+                usage: {
+                    prompt_tokens: 243,
+                    completion_tokens: 1763,
+                    total_tokens: 2006,
+                    completion_tokens_details: { reasoning_tokens: 1624 },
+                },
+            },
+            { model: MODEL }
+        );
+
+        expect(message.usage).toEqual({ input_tokens: 243, output_tokens: 1763 });
+    });
+
+    it("leaves output_tokens alone when the upstream reports no reasoning", () => {
+        const message = openAiCompletionToAnthropicMessage(
+            {
+                choices: [{ message: { content: "hi" }, finish_reason: "stop" }],
+                usage: { prompt_tokens: 10, completion_tokens: 4 },
+            },
+            { model: MODEL }
+        );
+
+        expect(message.usage).toEqual({ input_tokens: 10, output_tokens: 4 });
+    });
+
     it("never returns an empty content array", () => {
         const message = openAiCompletionToAnthropicMessage(
             { choices: [{ message: { content: null }, finish_reason: "stop" }] },
