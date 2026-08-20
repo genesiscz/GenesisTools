@@ -8,7 +8,7 @@ import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
-import { findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
+import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
@@ -91,6 +91,8 @@ function trackProxyRequest(input: {
     responseBody: Promise<string>;
     timeline?: Promise<CallTimeline>;
     captureFailure?: Promise<string | undefined>;
+    clientRequestBody?: string;
+    clientResponseBody?: Promise<string>;
     translate?: string;
     thinking?: string;
     tags?: RequestTags;
@@ -104,6 +106,8 @@ function trackProxyRequest(input: {
         elapsedMs: input.elapsedMs,
         bodyText: input.bodyText,
         responseBody: input.responseBody,
+        clientRequestBody: input.clientRequestBody,
+        clientResponseBody: input.clientResponseBody,
         timeline: input.timeline,
         captureFailure: input.captureFailure,
         translate: input.translate,
@@ -335,18 +339,47 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
                     const { route, provider } = routed;
 
-                    const { response, responseBody, timeline, openAiBodyText } = await anthropicMessagesPipeline({
-                        startedAt: requestStarted,
-                        provider,
-                        upstreamModel: route.upstreamId,
-                        proxyModel: model,
-                        req,
-                        bodyText,
-                    });
+                    // Stamped on the Anthropic body: normalizeAnthropicToOpenAI keeps
+                    // reasoning_effort, so it rides through to the OpenAI body the
+                    // provider forwards. Without this, an
+                    // id like martin/grok/grok-4.6:xhigh would honour its effort suffix on
+                    // /v1/chat/completions but silently ignore it for Claude Code.
+                    //
+                    // On the translated path, and on passthroughs whose upstream
+                    // tolerates the field (grok's CLI proxy — otherwise the suffix
+                    // was silently inert on exactly the door Claude Code uses).
+                    // Never for a real Anthropic Messages endpoint, where
+                    // `reasoning_effort` is not a field — stamping it there sends an
+                    // OpenAI-ism to api.anthropic.com and risks a 400 on every
+                    // effort-suffixed request.
+                    const translatesToOpenAi = !provider.messages;
+                    const stampEffort = translatesToOpenAi || provider.messagesAcceptsReasoningEffort === true;
+                    const routedBody = stampEffort
+                        ? applyReasoningEffortToBody(bodyText, route.reasoningEffort)
+                        : bodyText;
+
+                    if (route.reasoningEffort && !stampEffort) {
+                        logger.debug(
+                            { proxyModel: model, provider: provider.id, effort: route.reasoningEffort },
+                            "ai-proxy: dropped the effort suffix — this provider passes the Anthropic body through"
+                        );
+                    }
+
+                    const { response, responseBody, timeline, openAiBodyText, clientResponseBody, captureFailure } =
+                        await anthropicMessagesPipeline({
+                            startedAt: requestStarted,
+                            provider,
+                            upstreamModel: route.upstreamId,
+                            proxyModel: model,
+                            req,
+                            bodyText: routedBody,
+                        });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
                     // The usage layer only parses the OpenAI shape, and the exchange it
-                    // should book is the one the upstream actually saw.
+                    // should book is the one the upstream actually saw. The Anthropic
+                    // pair rides along separately so a translation bug is visible in the
+                    // transcript instead of only in the client's UI.
                     trackProxyRequest({
                         runtime,
                         route,
@@ -357,8 +390,13 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         elapsedMs,
                         bodyText: openAiBodyText,
                         responseBody,
+                        clientRequestBody: routedBody,
+                        clientResponseBody,
                         timeline,
                         translate: "anthropic",
+                        // A stream that stalled and was cut short is not a
+                        // success; the other two routes already forward this.
+                        captureFailure,
                         tags: readRequestTags(req.headers),
                     });
 
@@ -431,6 +469,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                     }
 
                     const { route, provider } = routed;
+                    const routedBody = applyReasoningEffortToBody(bodyText, route.reasoningEffort);
 
                     if (path === "/v1/responses") {
                         const { response, responseBody, timeline, captureFailure } = await identityPipeline({
@@ -439,7 +478,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             upstreamModel: route.upstreamId,
                             path: "responses",
                             req,
-                            bodyText,
+                            bodyText: routedBody,
                         });
                         const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -451,11 +490,15 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             path,
                             status: response.status,
                             elapsedMs,
-                            bodyText,
+                            bodyText: routedBody,
                             responseBody,
                             timeline,
                             captureFailure,
                             translate: "off",
+                            // Verbatim client bytes, pre effort-stamp. Without this
+                            // the 2026-08-19 field-loss audit could not quantify
+                            // anything on the OpenAI doors (0 of 3,068 recoverable).
+                            clientRequestBody: bodyText,
                             tags: readRequestTags(req.headers),
                         });
 
@@ -486,6 +529,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         configMode: config.translation.thinking,
                         flagMode: runtime.serveOptions.thinking,
                         headerMode: req.headers.get("x-ai-proxy-thinking"),
+                        rules: config.translation.thinkingRules,
+                        userAgent: req.headers.get("user-agent"),
                     });
 
                     const { response, responseBody, timeline, captureFailure } = await handleChatCompletions({
@@ -496,7 +541,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         upstreamModel: route.upstreamId,
                         proxyModel: model,
                         req,
-                        bodyText,
+                        bodyText: routedBody,
                     });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -508,12 +553,15 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         path,
                         status: response.status,
                         elapsedMs,
-                        bodyText,
+                        bodyText: routedBody,
                         responseBody,
                         timeline,
                         captureFailure,
                         translate: mode,
                         thinking: thinkingMode,
+                        // Verbatim client bytes, pre effort-stamp — see the
+                        // /v1/responses call above.
+                        clientRequestBody: bodyText,
                         tags: readRequestTags(req.headers),
                     });
 

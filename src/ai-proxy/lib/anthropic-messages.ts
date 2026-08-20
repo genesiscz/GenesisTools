@@ -1,18 +1,22 @@
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { safeStreamControllerError } from "@app/ai-proxy/lib/safe-stream-controller";
+import { withSseKeepalive } from "@app/ai-proxy/lib/sse-keepalive";
 import { normalizeAnthropicToOpenAI } from "@app/ai-proxy/lib/translators/formats/anthropic/normalize";
 import {
     type AnthropicStreamState,
     anthropicStreamChunk,
     anthropicStreamEnd,
+    anthropicStreamStart,
     createAnthropicStreamState,
     openAiCompletionToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/openai-to-anthropic-responses";
 import { type CallTimeline, TimelineCollector } from "@app/ai-proxy/lib/usage/call-timeline";
+import { captureResponseBody } from "@app/ai-proxy/lib/usage/capture-response";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { type ProfilerScope, profiler } from "@genesiscz/utils/profile";
 import { estimateTokens } from "@genesiscz/utils/tokens";
 
 /**
@@ -25,9 +29,17 @@ import { estimateTokens } from "@genesiscz/utils/tokens";
  * whole usage/billing layer on the single shape it already parses.
  */
 
+/** Anthropic's own cadence through quiet stretches of a stream. */
+const PING_INTERVAL_MS = 10_000;
+
+/** Matches the transcript's own text cap — capturing more than it stores is waste. */
+const CLIENT_CAPTURE_MAX_CHARS = 1_000_000;
+
 export interface AnthropicMessagesResult extends PipelineResult {
     /** The translated request body, for the usage row (the client's body is Anthropic-shaped). */
     openAiBodyText: string;
+    /** The Anthropic frames the client actually received, for triage. */
+    clientResponseBody: Promise<string>;
 }
 
 function errorResponse(status: number, message: string, type = "invalid_request_error"): Response {
@@ -37,15 +49,32 @@ function errorResponse(status: number, message: string, type = "invalid_request_
     });
 }
 
+/** The failure triple every error path needs: pipeline result from a clone, client body from the original. */
+function errorPipelineResult(
+    failure: Response,
+    rawText: string,
+    startedAt: number | undefined,
+    timeline: Promise<CallTimeline>
+): PipelineResult & { clientResponseBody: Promise<string> } {
+    return {
+        ...pipelineResult(failure.clone(), rawText, startedAt, timeline),
+        clientResponseBody: failure.text(),
+    };
+}
+
 /**
  * Anthropic's `max_tokens` is required and Claude Code sends a large one; the
  * OpenAI field name differs per upstream, so both are set and providers drop
  * whichever they reject.
  */
 export function anthropicBodyToOpenAiBody(parsed: Record<string, unknown>, upstreamModel: string): string {
-    const body: Record<string, unknown> = { ...parsed };
+    // A spread is SHALLOW, so `body.messages` was the caller's own array and
+    // `normalizeAnthropicToOpenAI` unshifted the system turn straight into it.
+    // Calling this twice on one body produced two system messages, and the
+    // transcript capture recorded a request nobody had actually sent.
+    const body: Record<string, unknown> = structuredClone(parsed);
 
-    normalizeAnthropicToOpenAI(body, /claude/i.test(upstreamModel));
+    normalizeAnthropicToOpenAI(body);
 
     body.model = upstreamModel;
 
@@ -116,6 +145,7 @@ async function messagesJson({
     proxyModel,
     req,
     openAiBodyText,
+    prof,
     startedAt,
 }: {
     provider: ProxyProvider;
@@ -123,18 +153,23 @@ async function messagesJson({
     proxyModel: string;
     req: Request;
     openAiBodyText: string;
+    prof: ProfilerScope;
     startedAt?: number;
-}): Promise<PipelineResult> {
+}): Promise<PipelineResult & { clientResponseBody: Promise<string> }> {
     const collector = new TimelineCollector(startedAt ?? performance.now());
+    const endDispatch = prof.start("messages.upstream-dispatch");
     const upstream = await provider.chatCompletions(req, upstreamModel, openAiBodyText);
     collector.markUpstreamHeaders();
+    endDispatch();
 
+    const endBody = prof.start("messages.upstream-body");
     const rawText = await upstream.text();
+    endBody();
     collector.push(rawText);
     const timeline = Promise.resolve(collector.finish());
 
     if (!upstream.ok) {
-        return pipelineResult(
+        return errorPipelineResult(
             errorResponse(upstream.status, `Upstream ${upstream.status}: ${rawText.slice(0, 500)}`, "api_error"),
             rawText,
             startedAt,
@@ -150,20 +185,21 @@ async function messagesJson({
         }
 
         const message = openAiCompletionToAnthropicMessage(parsed, { model: proxyModel });
+        const clientText = SafeJSON.stringify(message) ?? "";
 
-        return pipelineResult(
-            new Response(SafeJSON.stringify(message), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            }),
-            rawText,
-            startedAt,
-            timeline
-        );
+        return {
+            ...pipelineResult(
+                new Response(clientText, { status: 200, headers: { "Content-Type": "application/json" } }),
+                rawText,
+                startedAt,
+                timeline
+            ),
+            clientResponseBody: Promise.resolve(clientText),
+        };
     } catch (err) {
         logger.warn({ err, proxyModel, upstreamModel }, "ai-proxy: /v1/messages JSON translation failed");
 
-        return pipelineResult(
+        return errorPipelineResult(
             errorResponse(502, "Upstream returned a body the Anthropic translator could not read.", "api_error"),
             rawText,
             startedAt,
@@ -179,6 +215,7 @@ async function messagesSse({
     req,
     openAiBodyText,
     fallbackInputTokens,
+    prof,
     startedAt,
 }: {
     provider: ProxyProvider;
@@ -187,17 +224,20 @@ async function messagesSse({
     req: Request;
     openAiBodyText: string;
     fallbackInputTokens: number;
+    prof: ProfilerScope;
     startedAt?: number;
-}): Promise<PipelineResult> {
+}): Promise<PipelineResult & { clientResponseBody: Promise<string> }> {
     const collector = new TimelineCollector(startedAt ?? performance.now());
+    const endDispatch = prof.start("messages.upstream-dispatch");
     const upstream = await provider.chatCompletions(req, upstreamModel, openAiBodyText);
     collector.markUpstreamHeaders();
+    endDispatch();
 
     if (!upstream.ok || !upstream.body) {
         const rawText = await upstream.text();
         collector.push(rawText);
 
-        return pipelineResult(
+        return errorPipelineResult(
             errorResponse(
                 upstream.ok ? 502 : upstream.status,
                 `Upstream ${upstream.status}: ${rawText.slice(0, 500)}`,
@@ -214,6 +254,11 @@ async function messagesSse({
         resolveBody = resolve;
     });
 
+    let resolveClientBody: (body: string) => void = () => {};
+    const clientResponseBody = new Promise<string>((resolve) => {
+        resolveClientBody = resolve;
+    });
+
     let resolveTimeline: (timeline: CallTimeline) => void = () => {};
     const timeline = new Promise<CallTimeline>((resolve) => {
         resolveTimeline = resolve;
@@ -221,16 +266,37 @@ async function messagesSse({
 
     const upstreamBody = upstream.body;
 
+    // Defense in depth, NOT a leak fix. Measured on Bun 1.3: a real client
+    // disconnect fires `req.signal` abort AND this stream's `cancel()` about 1ms
+    // apart, and every provider forwards `signal: req.signal` upstream, so the
+    // read already rejects and the `finally` already clears the ping. This
+    // handler covers the paths where only the body is cancelled (no signal
+    // abort) and a provider that forgets to forward the signal.
+    let abortUpstream: (reason?: unknown) => void = () => {};
+
     const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
             const encoder = new TextEncoder();
             const decoder = new TextDecoder();
             const reader = upstreamBody.getReader();
             const state: AnthropicStreamState = createAnthropicStreamState(proxyModel, fallbackInputTokens);
+            // Three phases, so a slow turn can be attributed without argument:
+            // how long the upstream stayed silent, how fast the client saw its
+            // first CONTENT frame (the synthetic message_start does not count),
+            // and how long the whole stream took.
+            const endTtfb = prof.start("messages.upstream-ttfb");
+            const endFirstContent = prof.start("messages.upstream-first-content");
+            const endToClientFirstFrame = prof.start("messages.client-first-frame");
+            const endStream = prof.start("messages.stream-total");
+            let sawContent = false;
+            let clientSawFirstFrame = false;
+            let sawKeepalive = false;
+            let endOfStream = false;
 
             // The usage layer books the UPSTREAM exchange, so the capture buffer
             // holds the OpenAI bytes we read, not the Anthropic bytes we write.
             let upstreamBuffer = "";
+            let clientBuffer = "";
             let buffer = "";
             let streamSucceeded = false;
 
@@ -239,23 +305,87 @@ async function messagesSse({
                     return;
                 }
 
+                // Bounded: this is a SECOND full copy of a stream the usage layer
+                // already retains, and its only consumer (the transcript) caps
+                // the text anyway. An unbounded copy made a long reply cost twice
+                // its own size in memory for no extra recorded detail.
+                if (clientBuffer.length < CLIENT_CAPTURE_MAX_CHARS) {
+                    clientBuffer += frames;
+                }
+
                 controller.enqueue(encoder.encode(frames));
+            };
+
+            // The real Anthropic API opens with message_start before the model has
+            // produced anything, and Claude Code renders nothing until it arrives.
+            // Emitting it lazily on the first content delta meant a reasoning model
+            // that thinks for 40s looked completely dead for 40s.
+            emit(anthropicStreamStart(state));
+
+            // Anthropic sends `ping` through quiet stretches. Grok's first byte lands
+            // ~16s in and thinking can run a further 20s; without traffic the client
+            // (and any proxy in between) is free to treat that silence as a dead
+            // connection.
+            const ping = setInterval(() => {
+                try {
+                    emit('event: ping\ndata: {"type":"ping"}\n\n');
+                } catch (err) {
+                    logger.debug({ err }, "ai-proxy: /v1/messages ping enqueue failed (stream closing)");
+                    // The controller is gone; retrying every 10s only logs.
+                    abortUpstream(err);
+                }
+            }, PING_INTERVAL_MS);
+
+            abortUpstream = (reason?: unknown): void => {
+                clearInterval(ping);
+                reader.cancel(reason).catch((err) => {
+                    logger.debug({ err, model: proxyModel }, "ai-proxy: /v1/messages upstream cancel failed");
+                });
             };
 
             try {
                 while (true) {
                     const { done, value } = await reader.read();
 
+                    // A stream can end WITHOUT a trailing newline, leaving a whole
+                    // `data:` frame in `buffer`. Breaking out here discarded it and
+                    // truncated the reply mid-word — the user saw sentences cut off
+                    // ("...deleting client.ts, session.ts, oauthEnv."). Instead, flush
+                    // the decoder, terminate the residual line and let the SAME parsing
+                    // below consume it. The reference translator has always done this
+                    // (anthropic-to-openai-completions.ts:299-303).
                     if (done) {
-                        break;
+                        const tail = decoder.decode();
+
+                        if (tail.length > 0) {
+                            upstreamBuffer += tail;
+                            buffer += tail;
+                            collector.push(tail);
+                        }
+
+                        if (buffer.trim().length === 0) {
+                            break;
+                        }
+
+                        buffer += "\n";
+                        endOfStream = true;
                     }
 
-                    const text = decoder.decode(value, { stream: true });
+                    const text = done ? "" : decoder.decode(value, { stream: true });
+
+                    if (text.length > 0 && upstreamBuffer.length === 0) {
+                        // The number that settles "is it us or them": everything before
+                        // this is the upstream thinking, everything after is our translation.
+                        endTtfb();
+                    }
+
                     upstreamBuffer += text;
                     buffer += text;
-                    // The timeline parser reads OpenAI `choices[0].delta` frames, so it
-                    // gets the upstream bytes — the same ones the usage row books.
-                    collector.push(text);
+                    if (text.length > 0) {
+                        // The timeline parser reads OpenAI `choices[0].delta` frames, so
+                        // it gets the upstream bytes — the same ones the usage row books.
+                        collector.push(text);
+                    }
 
                     const lines = buffer.split("\n");
                     buffer = lines.pop() ?? "";
@@ -264,6 +394,16 @@ async function messagesSse({
                         const trimmed = line.trimStart();
 
                         if (!trimmed.startsWith("data:")) {
+                            // An SSE comment. Upstream sends `: keepalive` while it has
+                            // nothing yet, which is the signature of a stalled turn.
+                            if (trimmed.startsWith(":") && !sawKeepalive && !sawContent) {
+                                sawKeepalive = true;
+                                logger.debug(
+                                    { model: proxyModel, comment: trimmed.slice(0, 40) },
+                                    "ai-proxy: upstream sent an SSE keepalive before any content"
+                                );
+                            }
+
                             continue;
                         }
 
@@ -277,7 +417,31 @@ async function messagesSse({
                             const chunk = SafeJSON.parse(payload, { strict: true });
 
                             if (isObject(chunk)) {
-                                emit(anthropicStreamChunk(state, chunk));
+                                const frames = anthropicStreamChunk(state, chunk);
+
+                                // `upstream-ttfb` above stops on the first byte of ANY
+                                // kind, and an idle upstream sends `: keepalive` comments
+                                // that carry no model output — so a stall could otherwise
+                                // read as a fast first byte. This stops on the first byte
+                                // that actually renders.
+                                const firstContent = frames.length > 0 && !sawContent;
+
+                                if (firstContent) {
+                                    sawContent = true;
+                                    endFirstContent();
+                                }
+
+                                emit(frames);
+
+                                // The client-facing half of the same first-content
+                                // moment, taken AFTER the enqueue. Ending this phase
+                                // on any first frame made it stop at the synthetic
+                                // message_start, which is emitted immediately — the
+                                // column always read ~0ms and meant nothing.
+                                if (firstContent) {
+                                    clientSawFirstFrame = true;
+                                    endToClientFirstFrame();
+                                }
                             }
                         } catch (err) {
                             logger.debug(
@@ -285,6 +449,10 @@ async function messagesSse({
                                 "ai-proxy: /v1/messages skipped an unparseable upstream SSE line"
                             );
                         }
+                    }
+
+                    if (endOfStream) {
+                        break;
                     }
                 }
 
@@ -300,7 +468,21 @@ async function messagesSse({
                     );
                 }
             } finally {
+                clearInterval(ping);
+
+                if (!sawContent) {
+                    // Never fired in the loop; stop it here so the timer is not left
+                    // dangling and the stat reflects the full, contentless turn.
+                    endFirstContent();
+                }
+
+                if (!clientSawFirstFrame) {
+                    endToClientFirstFrame();
+                }
+
+                endStream();
                 resolveBody(upstreamBuffer);
+                resolveClientBody(clientBuffer);
                 resolveTimeline(collector.finish());
 
                 if (streamSucceeded) {
@@ -315,14 +497,66 @@ async function messagesSse({
                 }
             }
         },
+        cancel(reason) {
+            logger.debug({ reason, model: proxyModel }, "ai-proxy: /v1/messages client cancelled — releasing upstream");
+            abortUpstream(reason);
+        },
     });
 
-    return pipelineResult(
-        new Response(stream, { status: 200, headers: sseHeaders() }),
-        responseBody,
-        startedAt,
-        timeline
-    );
+    return {
+        ...pipelineResult(
+            new Response(stream, { status: 200, headers: sseHeaders() }),
+            responseBody,
+            startedAt,
+            timeline
+        ),
+        clientResponseBody,
+    };
+}
+
+/**
+ * No translation at all: the client's Anthropic bytes go up, the upstream's
+ * Anthropic bytes come back.
+ *
+ * Usage tracking still books the exchange, but the bodies here are Anthropic on
+ * BOTH sides, so they are recorded as the client exchange rather than fed to the
+ * OpenAI-shaped usage parser, which would read them as empty.
+ */
+async function anthropicPassthrough({
+    provider,
+    upstreamModel,
+    req,
+    bodyText,
+    prof,
+    startedAt,
+}: {
+    provider: ProxyProvider;
+    upstreamModel: string;
+    req: Request;
+    bodyText: string;
+    prof: ProfilerScope;
+    startedAt?: number;
+}): Promise<AnthropicMessagesResult> {
+    const collector = new TimelineCollector(startedAt ?? performance.now());
+    const endDispatch = prof.start("messages.passthrough-dispatch");
+    const upstream = await provider.messages?.(req, upstreamModel, bodyText);
+    collector.markUpstreamHeaders();
+    endDispatch();
+
+    if (!upstream) {
+        throw new Error("provider.messages disappeared between the capability check and the call");
+    }
+
+    const captured = captureResponseBody(upstream, startedAt);
+
+    return {
+        response: withSseKeepalive(captured.response),
+        responseBody: captured.responseBody,
+        timeline: captured.timeline,
+        captureFailure: captured.captureFailure,
+        openAiBodyText: bodyText,
+        clientResponseBody: captured.responseBody,
+    };
 }
 
 export async function anthropicMessagesPipeline({
@@ -341,6 +575,7 @@ export async function anthropicMessagesPipeline({
     /** performance.now() taken when the proxy received the request (timeline anchor). */
     startedAt?: number;
 }): Promise<AnthropicMessagesResult> {
+    const prof = profiler.scope("ai-proxy");
     const parsed = SafeJSON.parse(bodyText, { strict: true });
 
     if (!isObject(parsed)) {
@@ -348,7 +583,16 @@ export async function anthropicMessagesPipeline({
     }
 
     const wantsStream = parsed.stream === true;
-    const openAiBodyText = anthropicBodyToOpenAiBody(parsed, upstreamModel);
+
+    // Both ends already speak Anthropic: translating down to OpenAI and back
+    // would only lose fields OpenAI cannot carry. Forward untouched.
+    if (provider.messages) {
+        return anthropicPassthrough({ provider, upstreamModel, req, bodyText, prof, startedAt });
+    }
+
+    const openAiBodyText = prof.measure("messages.translate-request", () =>
+        anthropicBodyToOpenAiBody(parsed, upstreamModel)
+    );
 
     const result = wantsStream
         ? await messagesSse({
@@ -358,9 +602,10 @@ export async function anthropicMessagesPipeline({
               req,
               openAiBodyText,
               fallbackInputTokens: countAnthropicInputTokens(bodyText),
+              prof,
               startedAt,
           })
-        : await messagesJson({ provider, upstreamModel, proxyModel, req, openAiBodyText, startedAt });
+        : await messagesJson({ provider, upstreamModel, proxyModel, req, openAiBodyText, prof, startedAt });
 
     return { ...result, openAiBodyText };
 }

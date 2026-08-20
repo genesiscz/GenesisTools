@@ -22,10 +22,25 @@ export interface AiProxyListenConfig {
     port: number;
 }
 
+export interface ThinkingRule {
+    /** Case-insensitive regex tested against the request's User-Agent. */
+    uaRegex?: string;
+    /** Matches every request; put it last. */
+    catchAll?: boolean;
+    /** "auto" lets the door decide — on the chat door that is "raw" (passthrough). */
+    mode: ThinkingPresentationMode | "auto";
+}
+
 export interface AiProxyTranslationConfig {
     cursorAgent: CursorTranslationMode;
     /** raw = passthrough; cursor = reasoning_content only (native thinking UI); folded = <details> in content */
     thinking: ThinkingPresentationMode;
+    /**
+     * Ordered per-client rules matched on User-Agent; first match wins, falling
+     * back to `thinking`. Example:
+     * `[{ "uaRegex": "Cursor", "mode": "cursor" }, { "catchAll": true, "mode": "auto" }]`
+     */
+    thinkingRules?: ThinkingRule[];
 }
 
 export type PublicExposureMode = "none" | "cloudflared" | "tailscale" | "custom";
@@ -258,11 +273,15 @@ export interface AiProxyConfig {
     accounts: AiProxyAccountConfig[];
 }
 
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "minimal" | "max";
+
 export interface ResolvedRoute {
     accountName: string;
     providerSlug: string;
     upstreamId: string;
     account: AiProxyAccountConfig;
+    /** Set when the proxy model id ends with `:<effort>` (e.g. grok-4.6:xhigh). */
+    reasoningEffort?: ReasoningEffort;
 }
 
 export interface ProxyModelMeta {
