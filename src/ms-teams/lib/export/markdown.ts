@@ -1,6 +1,10 @@
 import { formatDateTime } from "@genesiscz/utils/date";
+import { logger } from "@genesiscz/utils/logger";
+import { teamsHtmlToMarkdown } from "../html-to-markdown";
 import { isImageAttachment } from "../media";
-import type { ThreadExport } from "../types";
+import type { Attachment, ExportedMessage, ThreadExport } from "../types";
+
+const log = logger.scoped("ms-teams").log;
 
 export function renderMarkdown(thread: ThreadExport): string {
     const lines: string[] = [];
@@ -30,10 +34,12 @@ export function renderMarkdown(thread: ThreadExport): string {
             lines.push("");
         }
 
+        const body = message.system ? "" : messageBodyMarkdown(message);
+
         if (message.system) {
             lines.push(`*${message.system}*`);
-        } else if (message.text.trim()) {
-            lines.push(message.text);
+        } else if (body) {
+            lines.push(body);
         } else if (message.attachments.length === 0) {
             lines.push("_(no text)_");
         }
@@ -44,6 +50,10 @@ export function renderMarkdown(thread: ThreadExport): string {
         }
 
         for (const attachment of message.attachments) {
+            if (attachmentShownInMarkdown(body, attachment)) {
+                continue;
+            }
+
             const href = attachment.localPath ?? attachment.url;
 
             if (!href) {
@@ -63,4 +73,32 @@ export function renderMarkdown(thread: ThreadExport): string {
     }
 
     return `${lines.join("\n").trim()}\n`;
+}
+
+function messageBodyMarkdown(message: ExportedMessage): string {
+    if (message.html?.trim()) {
+        try {
+            const converted = teamsHtmlToMarkdown(message.html, message.attachments);
+
+            if (converted) {
+                return converted;
+            }
+        } catch (err) {
+            log.debug({ err, messageId: message.id }, "[ms-teams] html to markdown failed");
+        }
+    }
+
+    return message.text.trim();
+}
+
+function attachmentShownInMarkdown(markdown: string, attachment: Attachment): boolean {
+    if (attachment.localPath && markdown.includes(attachment.localPath)) {
+        return true;
+    }
+
+    if (attachment.itemId && markdown.includes(attachment.itemId)) {
+        return true;
+    }
+
+    return false;
 }
