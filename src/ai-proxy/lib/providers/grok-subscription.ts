@@ -25,7 +25,7 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
 import { findServerTools } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
-import { tagAmbiguousNoArgTools } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
+import { tagConfusableTools } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
     formatBillingSummary,
@@ -165,7 +165,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // which keeps the stream a stream — the tag never reaches the
             // client. Non-streaming replies name every call already.
             if (body.stream === true) {
-                taggedTools = tagAmbiguousNoArgTools(body);
+                taggedTools = tagConfusableTools(body);
             }
 
             outBody = SafeJSON.stringify(body);

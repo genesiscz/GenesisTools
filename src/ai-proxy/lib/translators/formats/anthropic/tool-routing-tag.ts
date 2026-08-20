@@ -13,19 +13,39 @@ function isJsonRecord(value: unknown): value is JsonRecord {
  */
 export const TOOL_ROUTING_TAG = "__tool_route";
 
-/**
- * A tool that can legally be called with `{}` — no required parameters. Two of
- * them in one request produce byte-identical argument objects, which is the one
- * case the merged-stream splitter cannot resolve.
- */
-function callableWithEmptyArgs(tool: JsonRecord): boolean {
-    if (typeof tool.name !== "string" || !isJsonRecord(tool.input_schema)) {
-        return false;
+interface SchemaShape {
+    tool: JsonRecord;
+    name: string;
+    required: string[];
+    properties: string[];
+}
+
+function schemaShape(tool: unknown): SchemaShape | undefined {
+    if (!isJsonRecord(tool) || typeof tool.name !== "string" || !isJsonRecord(tool.input_schema)) {
+        return undefined;
     }
 
-    const required = tool.input_schema.required;
+    const schema = tool.input_schema;
 
-    return !Array.isArray(required) || required.length === 0;
+    return {
+        tool,
+        name: tool.name,
+        required: Array.isArray(schema.required) ? schema.required.filter((r) => typeof r === "string") : [],
+        properties: isJsonRecord(schema.properties) ? Object.keys(schema.properties) : [],
+    };
+}
+
+/**
+ * Whether one argument object can legally belong to BOTH tools. An object with
+ * key set K fits a tool when required ⊆ K ⊆ properties, so a shared object
+ * exists exactly when `A.required ∪ B.required ⊆ A.properties ∩ B.properties`.
+ * Two no-argument tools are the degenerate case (∅ ⊆ ∅); Glob and Grep are the
+ * live one — both accept `{pattern, path}`, so `{"pattern":"*.ts"}` fits either.
+ */
+function confusable(a: SchemaShape, b: SchemaShape): boolean {
+    const shared = new Set(a.properties.filter((key) => b.properties.includes(key)));
+
+    return [...a.required, ...b.required].every((key) => shared.has(key));
 }
 
 /**
@@ -33,48 +53,55 @@ function callableWithEmptyArgs(tool: JsonRecord): boolean {
  * keeps only the first call's name (raw wire capture, 2026-08-21: one
  * `content_block_start` naming `run_command`, then four complete argument
  * objects as separate `input_json_delta` frames). The splitter recovers a name
- * by matching argument keys against the request's schemas, which works for
- * every call that carries arguments and fails for `{}` — it matches every
- * no-argument tool equally.
+ * by matching argument keys against the request's schemas, which only works
+ * when exactly one tool fits — and fails for every pair of tools that can share
+ * an argument object: two no-argument tools (`{}` fits both), or overlapping
+ * schemas like Glob and Grep (`{"pattern":…}` fits both).
  *
- * So make those calls distinguishable at the source: give each no-argument tool
- * one required property whose only legal value is its own name. The model fills
- * it, the merged stream carries it, the splitter reads the name straight off
- * the object, and {@link stripRoutingTag} removes it before the client sees the
- * call. Streaming is untouched.
+ * So make exactly those calls distinguishable at the source: every tool in some
+ * {@link confusable} pair gets one required property whose only legal value is
+ * its own name. The model fills it, the merged stream carries it, the splitter
+ * reads the name straight off the object, and {@link stripRoutingTag} removes
+ * it before the client sees the call. Streaming is untouched, and tools no
+ * other tool can imitate go up verbatim.
  *
- * Applied only when two or more such tools are offered — one is already
- * unambiguous — and only to those tools, so every other schema goes up verbatim.
+ * With the tag in place every schema-conforming argument object is uniquely
+ * attributable: an untagged tool's object fits no other tool (else the pair
+ * would be confusable and both tagged), and a tagged tool's object names itself.
  * Mutates `body.tools` in place and returns the names it tagged.
  */
-export function tagAmbiguousNoArgTools(body: JsonRecord): Set<string> {
+export function tagConfusableTools(body: JsonRecord): Set<string> {
     const tagged = new Set<string>();
 
     if (!Array.isArray(body.tools)) {
         return tagged;
     }
 
-    const candidates = body.tools.filter(
-        (tool): tool is JsonRecord => isJsonRecord(tool) && callableWithEmptyArgs(tool)
-    );
+    const shapes = body.tools.map(schemaShape).filter((shape): shape is SchemaShape => shape !== undefined);
 
-    if (candidates.length < 2) {
-        return tagged;
+    for (let i = 0; i < shapes.length; i++) {
+        for (let j = i + 1; j < shapes.length; j++) {
+            if (confusable(shapes[i], shapes[j])) {
+                tagged.add(shapes[i].name);
+                tagged.add(shapes[j].name);
+            }
+        }
     }
 
-    for (const tool of candidates) {
-        const name = tool.name as string;
-        const schema = tool.input_schema as JsonRecord;
+    for (const shape of shapes) {
+        if (!tagged.has(shape.name)) {
+            continue;
+        }
+
+        const schema = shape.tool.input_schema as JsonRecord;
         const properties = isJsonRecord(schema.properties) ? { ...schema.properties } : {};
-        const required = Array.isArray(schema.required) ? schema.required.filter((r) => typeof r === "string") : [];
 
         properties[TOOL_ROUTING_TAG] = {
             type: "string",
-            enum: [name],
-            description: `Routing tag required by this endpoint. Always exactly "${name}".`,
+            enum: [shape.name],
+            description: `Routing tag required by this endpoint. Always exactly "${shape.name}".`,
         };
-        tool.input_schema = { ...schema, properties, required: [...required, TOOL_ROUTING_TAG] };
-        tagged.add(name);
+        shape.tool.input_schema = { ...schema, properties, required: [...shape.required, TOOL_ROUTING_TAG] };
     }
 
     return tagged;

@@ -85,13 +85,18 @@ and `grok-subscription` (added 2026-08-19; preserves reasoning continuity — Gr
   deltas (Anthropic SDKs would overwrite the thinking block with the text block), and it merges
   several parallel tool calls into ONE `tool_use` block. The extra calls are re-emitted as their
   own blocks, each named by matching its argument keys against the request's tool schemas.
-- `tagAmbiguousNoArgTools` — key matching cannot separate two tools that both accept `{}`, and the
-  merged stream carries no name for them. When a STREAMING request offers two or more such tools,
-  each gets one required property whose only legal value is its own name; the splitter reads the
-  name off the object and strips the property before the client sees the call. Raw wire capture
-  2026-08-21 confirmed the names are absent from the stream and that no request variant restores
-  them (`tool_choice`, `disable_parallel_tool_use`, `stream_options`, the fine-grained-streaming
-  beta header — all five arms: one `content_block_start`, four argument objects).
+- `tagConfusableTools` — key matching cannot separate two tools that can share an argument
+  object (`A.required ∪ B.required ⊆ A.properties ∩ B.properties`): two no-arg tools both fit
+  `{}`, Glob and Grep both fit `{"pattern":…}`. On STREAMING requests every tool in such a pair
+  gets one required property whose only legal value is its own name; the splitter routes by the
+  tag's value (order-proof, since two tagged objects share the same KEY) and strips it before the
+  client sees the call. Raw wire capture 2026-08-21 confirmed the names are absent from the
+  stream and that no request variant restores them — nine arms tried (`tool_choice`,
+  `disable_parallel_tool_use`, `stream_options`, the fine-grained-streaming beta header,
+  `stream_tool_calls` both ways, `streamToolCalls`, a spoofed `x-grok-client-identifier`): each
+  one `content_block_start`, four argument objects. The grok CLI never hits this: its own binary
+  defaults to `/chat/completions` (with `/responses` as the alternate), formats that carry a name
+  on every tool-call delta; `/v1/messages` is a compatibility shim xAI does not dogfood.
 
 ```text
 Claude Code --Anthropic--> /v1/messages --Anthropic (verbatim)--> api.anthropic.com

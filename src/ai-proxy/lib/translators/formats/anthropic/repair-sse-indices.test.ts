@@ -317,9 +317,9 @@ describe("repairAnthropicSseIndices", () => {
         ];
 
         /** Verbatim shape captured from grok's wire on 2026-08-21: ONE start frame, N complete objects. */
-        function mergedStream(argObjects: string[]): ReadableStream<Uint8Array> {
+        function mergedStream(argObjects: string[], blockName = "run_command"): ReadableStream<Uint8Array> {
             return sseStream([
-                'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call-abc-0","name":"run_command","input":{}}}\n\n',
+                `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call-abc-0","name":"${blockName}","input":{}}}\n\n`,
                 ...argObjects.map(
                     (args) =>
                         `data: ${SafeJSON.stringify({
@@ -389,6 +389,82 @@ describe("repairAnthropicSseIndices", () => {
             const calls = await toolCalls(mergedStream(untagged));
 
             expect(calls.map((c) => c.name)).toEqual(["run_command", "run_command", "run_command", "read_file"]);
+        });
+
+        it("swaps by the tag's VALUE when two tagged objects arrive in the wrong order", async () => {
+            // Both objects carry the tag KEY, so key fitting sees them as
+            // interchangeable — a block declared list_agents whose first object
+            // is tagged list_tasks would silently emit list_tasks's arguments
+            // under list_agents and duplicate list_agents from the orphan.
+            // Only the tag's value can order them.
+            const calls = await toolCalls(
+                mergedStream(
+                    [`{"${TOOL_ROUTING_TAG}":"list_tasks"}`, `{"${TOOL_ROUTING_TAG}":"list_agents"}`],
+                    "list_agents"
+                ),
+                new Set(["list_agents", "list_tasks"])
+            );
+
+            expect(calls.map((c) => c.name)).toEqual(["list_agents", "list_tasks"]);
+            expect(calls.map((c) => c.args)).toEqual(["{}", "{}"]);
+        });
+
+        it("routes a merged Glob/Grep-shaped orphan by its tag, not by its overlapping keys", async () => {
+            // {"pattern":…} fits both glob_search and grep_search, so before
+            // confusability tagging this orphan inherited the block's name.
+            const overlapTools = [
+                {
+                    name: "glob_search",
+                    required: ["pattern", TOOL_ROUTING_TAG],
+                    properties: ["pattern", "path", TOOL_ROUTING_TAG],
+                },
+                {
+                    name: "grep_search",
+                    required: ["pattern", TOOL_ROUTING_TAG],
+                    properties: ["pattern", "path", "output_mode", TOOL_ROUTING_TAG],
+                },
+            ];
+            const stream = mergedStream(
+                [
+                    `{"pattern":"*.ts","${TOOL_ROUTING_TAG}":"glob_search"}`,
+                    `{"pattern":"TODO","${TOOL_ROUTING_TAG}":"grep_search"}`,
+                ],
+                "glob_search"
+            );
+            const out = await collect(
+                repairAnthropicSseIndices(stream, {
+                    tools: overlapTools,
+                    taggedTools: new Set(["glob_search", "grep_search"]),
+                })
+            );
+            const calls = new Map<number, { name: string; args: string }>();
+
+            for (const line of out.split("\n")) {
+                if (!line.startsWith("data: ")) {
+                    continue;
+                }
+
+                const frame = SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>;
+                const block = frame.content_block as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_start" && block?.type === "tool_use") {
+                    calls.set(frame.index as number, { name: String(block.name), args: "" });
+                }
+
+                const delta = frame.delta as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_delta" && delta?.type === "input_json_delta") {
+                    const call = calls.get(frame.index as number);
+
+                    if (call) {
+                        call.args += String(delta.partial_json);
+                    }
+                }
+            }
+
+            const list = [...calls.values()];
+            expect(list.map((c) => c.name)).toEqual(["glob_search", "grep_search"]);
+            expect(list.map((c) => c.args)).toEqual(['{"pattern":"*.ts"}', '{"pattern":"TODO"}']);
         });
 
         it("never deletes a same-named property from a request it did not tag", async () => {

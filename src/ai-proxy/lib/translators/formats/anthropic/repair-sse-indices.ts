@@ -79,18 +79,42 @@ function parseRecord(text: string): JsonRecord | undefined {
 function assignFirstCallArgs(
     block: ToolBlockState,
     held: string[],
-    tools: ToolMatcher[]
+    tools: ToolMatcher[],
+    taggedTools: Set<string>
 ): { firstArgs: string; leftovers: string[] } {
     const declared = tools.find((tool) => tool.name === block.toolName);
     const first = parseRecord(block.firstText);
 
-    if (declared === undefined || first === undefined || toolFits(declared, Object.keys(first))) {
+    if (first === undefined) {
+        return { firstArgs: block.firstText, leftovers: held };
+    }
+
+    // A routing tag is authoritative: two tagged tools share the same KEY, so
+    // key fitting cannot tell their objects apart — only the tag's value can.
+    const firstRouted = routedToolName(first, taggedTools);
+    const firstBelongs =
+        firstRouted !== undefined
+            ? firstRouted === block.toolName
+            : declared === undefined || toolFits(declared, Object.keys(first));
+
+    if (firstBelongs) {
         return { firstArgs: block.firstText, leftovers: held };
     }
 
     const swapIndex = held.findIndex((candidate) => {
         const parsed = parseRecord(candidate);
-        return parsed !== undefined && toolFits(declared, Object.keys(parsed));
+
+        if (parsed === undefined) {
+            return false;
+        }
+
+        const routed = routedToolName(parsed, taggedTools);
+
+        if (routed !== undefined) {
+            return routed === block.toolName;
+        }
+
+        return declared !== undefined && toolFits(declared, Object.keys(parsed));
     });
 
     if (swapIndex === -1) {
@@ -306,7 +330,7 @@ export function repairAnthropicSseIndices(
     /** The real stop closes the original block, then the orphans become blocks. */
     function emitStopAndOrphans(block: ToolBlockState): string {
         const held = block.orphanText !== null ? [...block.orphans, block.orphanText] : block.orphans;
-        const { firstArgs, leftovers } = assignFirstCallArgs(block, held, tools);
+        const { firstArgs, leftovers } = assignFirstCallArgs(block, held, tools, taggedTools);
         const frames: string[] = [];
 
         // The held first object goes out now, under the name the wire already
