@@ -391,6 +391,15 @@ describe("repairAnthropicSseIndices", () => {
             expect(calls.map((c) => c.name)).toEqual(["run_command", "run_command", "run_command", "read_file"]);
         });
 
+        it("never deletes a same-named property from a request it did not tag", async () => {
+            // A client is free to declare its own `__tool_route` parameter.
+            // With nothing tagged, the proxy injected nothing, so it must not
+            // remove anything either.
+            const calls = await toolCalls(mergedStream([`{"${TOOL_ROUTING_TAG}":"list_agents"}`]));
+
+            expect(calls[0].args).toBe(`{"${TOOL_ROUTING_TAG}":"list_agents"}`);
+        });
+
         it("ignores a tag naming a tool this request never tagged", async () => {
             // An empty tagged set means the proxy injected nothing, so a
             // property that merely looks like the tag must not route a call.

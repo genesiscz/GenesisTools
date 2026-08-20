@@ -207,6 +207,15 @@ export function repairAnthropicSseIndices(
     const encoder = new TextEncoder();
     const tools = options?.tools ?? [];
     const taggedTools = options?.taggedTools ?? new Set<string>();
+
+    /**
+     * Strip the routing tag, but ONLY when this request actually injected it.
+     * A client is free to declare a real parameter of the same name, and
+     * deleting it would corrupt a call this proxy never touched.
+     */
+    function untag(argsText: string): string {
+        return taggedTools.size > 0 ? stripRoutingTag(argsText) : argsText;
+    }
     let buffer = "";
     let nextIndex = 0;
     let currentIndex = 0;
@@ -261,11 +270,14 @@ export function repairAnthropicSseIndices(
 
                 if (char !== "{") {
                     // Not a second call: give up on splitting and hand ALL held
-                    // bytes back verbatim — the held first object and any
-                    // buffered orphans — so the ONE call fails loudly instead
-                    // of pairing a guessed split with a corrupted first call.
+                    // bytes back — the held first object and any buffered
+                    // orphans — so the ONE call fails loudly instead of pairing
+                    // a guessed split with a corrupted first call. Each held
+                    // object is still complete JSON, so the routing tag comes
+                    // off here too: giving up on the split is no reason to show
+                    // the client a property this proxy invented.
                     block.disabled = true;
-                    pending += [block.firstText, ...block.orphans, char].join("");
+                    pending += [...[block.firstText, ...block.orphans].map(untag), char].join("");
                     block.firstText = "";
                     block.orphans = [];
                     continue;
@@ -305,7 +317,7 @@ export function repairAnthropicSseIndices(
             frames.push(
                 frameText("content_block_delta", {
                     index: block.index,
-                    delta: { type: "input_json_delta", partial_json: stripRoutingTag(firstArgs) },
+                    delta: { type: "input_json_delta", partial_json: untag(firstArgs) },
                 })
             );
         }
@@ -374,7 +386,7 @@ export function repairAnthropicSseIndices(
                 }),
                 frameText("content_block_delta", {
                     index: currentIndex,
-                    delta: { type: "input_json_delta", partial_json: stripRoutingTag(orphan) },
+                    delta: { type: "input_json_delta", partial_json: untag(orphan) },
                 }),
                 frameText("content_block_stop", { index: currentIndex })
             );
