@@ -2,9 +2,11 @@ import { describe, expect, it } from "bun:test";
 import { parseResponseBody } from "@app/ai-proxy/lib/usage/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    buildResponsesWebSearchBody,
     domainAllowed,
     emulateWebSearch,
     messageToAnthropicSse,
+    nativeWebSearch,
     parseWebSearchServerTool,
     type WebSearchResult,
 } from "./web-search";
@@ -28,7 +30,9 @@ describe("parseWebSearchServerTool", () => {
     });
 
     it("returns undefined when no web_search server tool is offered", () => {
-        expect(parseWebSearchServerTool({ tools: [{ type: "code_execution_20250522", name: "code_execution" }] })).toBeUndefined();
+        expect(
+            parseWebSearchServerTool({ tools: [{ type: "code_execution_20250522", name: "code_execution" }] })
+        ).toBeUndefined();
         expect(parseWebSearchServerTool({})).toBeUndefined();
     });
 });
@@ -125,7 +129,9 @@ describe("emulateWebSearch", () => {
 
                 if (calls <= 2) {
                     return jsonResponse({
-                        content: [{ type: "tool_use", id: `toolu_${calls}`, name: "web_search", input: { query: "q" } }],
+                        content: [
+                            { type: "tool_use", id: `toolu_${calls}`, name: "web_search", input: { query: "q" } },
+                        ],
                         stop_reason: "tool_use",
                         usage: { output_tokens: 1 },
                     });
@@ -185,6 +191,87 @@ describe("emulateWebSearch", () => {
             expect(outcome.status).toBe(502);
             const parsed = SafeJSON.parse(await outcome.text(), { strict: true }) as { error: { message: string } };
             expect(parsed.error.message).toContain("did not converge");
+        }
+    });
+});
+
+describe("nativeWebSearch (/responses server-side search)", () => {
+    const RESPONSES_REPLY = {
+        id: "resp_1",
+        model: "grok-4.6-build",
+        status: "completed",
+        output: [
+            { type: "reasoning", summary: [{ type: "summary_text", text: "checking x.ai" }] },
+            { type: "web_search_call", status: "completed", action: { type: "search", query: "latest grok" } },
+            { type: "web_search_call", status: "completed", action: { type: "open_page", url: "https://x.ai/news" } },
+            {
+                type: "message",
+                content: [
+                    {
+                        type: "output_text",
+                        text: "Grok 4.6 shipped.",
+                        annotations: [
+                            { type: "url_citation", url: "https://x.ai/news/grok-4-6", start_index: 0, end_index: 1 },
+                        ],
+                    },
+                ],
+            },
+        ],
+        usage: { input_tokens: 43044, output_tokens: 2205, num_server_side_tools_used: 2 },
+    };
+
+    it("builds a /responses body with the native tool, domain filters, and flattened input", () => {
+        const built = buildResponsesWebSearchBody(
+            {
+                model: "martin/grok/grok-4.6",
+                stream: true,
+                system: [{ type: "text", text: "You are Claude Code" }, { type: "text", text: "search assistant" }],
+                messages: [{ role: "user", content: [{ type: "text", text: "Perform a web search for: grok" }] }],
+                tools: [{ type: "web_search_20250305", name: "web_search" }],
+            },
+            { name: "web_search", maxUses: 8, allowedDomains: ["x.ai"], blockedDomains: ["spam.example"] }
+        );
+
+        expect(built.stream).toBe(false);
+        expect(built.instructions).toContain("search assistant");
+        expect(built.input).toEqual([{ role: "user", content: "Perform a web search for: grok" }]);
+        const tools = built.tools as Record<string, unknown>[];
+        expect(tools).toEqual([
+            { type: "web_search", allowed_domains: ["x.ai"], excluded_domains: ["spam.example"] },
+        ]);
+    });
+
+    it("translates the completed response into an Anthropic message with citations and search count", async () => {
+        const outcome = await nativeWebSearch({
+            body: { model: "grok-4.6", messages: [{ role: "user", content: "q" }] },
+            tool: TOOL,
+            callResponses: async () => jsonResponse(RESPONSES_REPLY),
+        });
+
+        if (outcome instanceof Response) {
+            throw new Error("unreachable");
+        }
+
+        expect(outcome.searches).toBe(2);
+        const blocks = outcome.message.content as Record<string, unknown>[];
+        expect(blocks[0]).toMatchObject({ type: "thinking", thinking: "checking x.ai" });
+        expect(blocks[1].type).toBe("text");
+        expect(blocks[1].text).toContain("Grok 4.6 shipped.");
+        expect(blocks[1].text).toContain("Sources:\n- https://x.ai/news/grok-4-6");
+        expect(outcome.message.usage).toEqual({ input_tokens: 43044, output_tokens: 2205 });
+        expect(outcome.message.stop_reason).toBe("end_turn");
+    });
+
+    it("hands a non-OK response back for the caller's fallback", async () => {
+        const outcome = await nativeWebSearch({
+            body: { messages: [] },
+            tool: TOOL,
+            callResponses: async () => new Response("nope", { status: 503 }),
+        });
+
+        expect(outcome).toBeInstanceOf(Response);
+        if (outcome instanceof Response) {
+            expect(outcome.status).toBe(503);
         }
     });
 });

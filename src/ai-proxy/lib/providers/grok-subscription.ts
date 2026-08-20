@@ -5,6 +5,15 @@ import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
+import {
+    braveSearchFn,
+    type EmulationOutcome,
+    emulateWebSearch,
+    emulationStream,
+    nativeWebSearch,
+    parseWebSearchServerTool,
+    type WebSearchServerTool,
+} from "@app/ai-proxy/lib/server-tools/web-search";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
@@ -15,14 +24,6 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
 import { findServerTool } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
-import {
-    braveSearchFn,
-    type EmulationOutcome,
-    emulateWebSearch,
-    emulationStream,
-    parseWebSearchServerTool,
-    type WebSearchServerTool,
-} from "@app/ai-proxy/lib/server-tools/web-search";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
     formatBillingSummary,
@@ -128,19 +129,17 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
             if (serverTool !== undefined) {
                 const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
-                const braveKey = env.brave.getKey();
 
-                if (webSearch && braveKey !== undefined) {
-                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch, braveKey);
+                if (webSearch) {
+                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch);
                 }
 
-                const hint = webSearch ? " Set BRAVE_API_KEY to let the proxy emulate web_search." : "";
                 return new Response(
                     SafeJSON.stringify({
                         type: "error",
                         error: {
                             type: "invalid_request_error",
-                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${serverTool}". Server tools (web search, code execution) execute inside Anthropic's API, which this account does not reach.${hint}`,
+                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${serverTool}". Server tools other than web search execute inside Anthropic's API, which this account does not reach.`,
                         },
                     }),
                     { status: 400, headers: { "Content-Type": "application/json" } }
@@ -189,22 +188,54 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     }
 
     /**
-     * Plays Anthropic's role for the web_search server tool: rewrites it into
-     * a custom tool, answers the model's calls with Brave results, and returns
-     * only the final turn — streamed with pings so a multi-search loop does
-     * not read as a dead connection.
+     * Plays Anthropic's role for the web_search server tool. Preferred path:
+     * ONE /responses call with xAI's native `{type:"web_search"}` server tool
+     * (the upstream searches itself, with citations). Fallback: the Brave
+     * loop, when a key is available. Either way the final turn streams with
+     * pings so a slow search does not read as a dead connection.
      */
     private async emulatedWebSearchResponse(
         req: Request,
         model: string,
         body: Record<string, unknown>,
-        tool: WebSearchServerTool,
-        braveKey: string
+        tool: WebSearchServerTool
     ): Promise<Response> {
-        logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: emulating web_search server tool for grok");
+        logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: running web_search server tool for grok");
 
-        const run = (): Promise<EmulationOutcome | Response> =>
-            emulateWebSearch({
+        const run = async (): Promise<EmulationOutcome | Response> => {
+            const native = await nativeWebSearch({
+                body,
+                tool,
+                callResponses: async (responsesBody) => {
+                    responsesBody.model = model;
+                    const response = await this.dispatch({
+                        path: "/responses",
+                        req,
+                        bodyText: SafeJSON.stringify(responsesBody),
+                        modelOverride: model,
+                        requestedModel: model,
+                        imageRouted: false,
+                    });
+
+                    return response.ok ? response : toAnthropicErrorResponse(response);
+                },
+            });
+
+            if (!(native instanceof Response)) {
+                return native;
+            }
+
+            const braveKey = env.brave.getKey();
+
+            if (braveKey === undefined) {
+                return native;
+            }
+
+            logger.warn(
+                { status: native.status, model },
+                "ai-proxy: native /responses web_search failed — falling back to the Brave loop"
+            );
+            return emulateWebSearch({
                 body,
                 tool,
                 search: braveSearchFn(braveKey),
@@ -226,6 +257,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                     return response.ok ? response : toAnthropicErrorResponse(response);
                 },
             });
+        };
 
         if (body.stream === true) {
             return new Response(emulationStream(run), {

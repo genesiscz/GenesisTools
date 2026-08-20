@@ -113,9 +113,7 @@ function formatResults(results: WebSearchResult[]): string {
         return "No search results found.";
     }
 
-    return results
-        .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
-        .join("\n\n");
+    return results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n\n");
 }
 
 /** The custom tool the upstream actually sees in place of the server tool. */
@@ -275,7 +273,10 @@ export function messageToAnthropicSse(message: AnthropicMessage): string {
             emit("content_block_delta", { index, delta: { type: "thinking_delta", thinking: block.thinking } });
             emit("content_block_delta", {
                 index,
-                delta: { type: "signature_delta", signature: typeof block.signature === "string" ? block.signature : "" },
+                delta: {
+                    type: "signature_delta",
+                    signature: typeof block.signature === "string" ? block.signature : "",
+                },
             });
         } else if (block.type === "tool_use") {
             emit("content_block_start", {
@@ -300,6 +301,171 @@ export function messageToAnthropicSse(message: AnthropicMessage): string {
     emit("message_stop", {});
 
     return `${frames.join("\n\n")}\n\n`;
+}
+
+/**
+ * xAI's /responses endpoint runs web search SERVER-SIDE: `tools:
+ * [{type:"web_search"}]` made the upstream itself execute searches and
+ * open_page fetches (usage reported `num_server_side_tools_used: 7`), with
+ * url_citation annotations. Verified live 2026-08-20 against
+ * cli-chat-proxy.grok.com. This is the native path for Anthropic's
+ * web_search server tool; the Brave loop above is the fallback.
+ */
+export function buildResponsesWebSearchBody(
+    body: Record<string, unknown>,
+    tool: WebSearchServerTool
+): Record<string, unknown> {
+    const instructions = systemText(body.system);
+    const wsTool: Record<string, unknown> = { type: "web_search" };
+
+    // Both `allowed_domains` (xAI docs spelling) and `filters.allowed_domains`
+    // returned 200 and kept every source on-domain in live probes; the
+    // unfiltered control hit off-domain sources. Unknown keys are silently
+    // ignored by the deserializer, so a wrong spelling would mean NO filter.
+    if (tool.allowedDomains !== undefined) {
+        wsTool.allowed_domains = tool.allowedDomains;
+    }
+
+    if (tool.blockedDomains !== undefined) {
+        wsTool.excluded_domains = tool.blockedDomains;
+    }
+
+    const out: Record<string, unknown> = {
+        model: body.model,
+        input: messagesToResponsesInput(body.messages),
+        tools: [wsTool],
+        stream: false,
+    };
+
+    if (instructions.length > 0) {
+        out.instructions = instructions;
+    }
+
+    return out;
+}
+
+function systemText(system: unknown): string {
+    if (typeof system === "string") {
+        return system;
+    }
+
+    if (!Array.isArray(system)) {
+        return "";
+    }
+
+    return system
+        .flatMap((block) => (isObject(block) && typeof block.text === "string" ? [block.text] : []))
+        .join("\n");
+}
+
+function messagesToResponsesInput(messages: unknown): { role: string; content: string }[] {
+    if (!Array.isArray(messages)) {
+        return [];
+    }
+
+    return messages.flatMap((message) => {
+        if (!isObject(message) || typeof message.role !== "string") {
+            return [];
+        }
+
+        const content = message.content;
+
+        if (typeof content === "string") {
+            return [{ role: message.role, content }];
+        }
+
+        if (!Array.isArray(content)) {
+            return [];
+        }
+
+        const text = content
+            .flatMap((block) => (isObject(block) && typeof block.text === "string" ? [block.text] : []))
+            .join("\n");
+        return text.length > 0 ? [{ role: message.role, content: text }] : [];
+    });
+}
+
+/** The completed /responses JSON as an Anthropic message, citations appended. */
+export function responsesToAnthropicMessage(response: Record<string, unknown>): EmulationOutcome {
+    let text = "";
+    let thinking = "";
+    let searches = 0;
+    const citations = new Set<string>();
+
+    for (const item of Array.isArray(response.output) ? response.output : []) {
+        if (!isObject(item)) {
+            continue;
+        }
+
+        if (item.type === "web_search_call") {
+            searches += 1;
+        } else if (item.type === "reasoning" && Array.isArray(item.summary)) {
+            for (const part of item.summary) {
+                if (isObject(part) && typeof part.text === "string") {
+                    thinking += part.text;
+                }
+            }
+        } else if (item.type === "message" && Array.isArray(item.content)) {
+            for (const part of item.content) {
+                if (!isObject(part) || typeof part.text !== "string") {
+                    continue;
+                }
+
+                text += part.text;
+
+                for (const ann of Array.isArray(part.annotations) ? part.annotations : []) {
+                    if (isObject(ann) && ann.type === "url_citation" && typeof ann.url === "string") {
+                        citations.add(ann.url);
+                    }
+                }
+            }
+        }
+    }
+
+    if (citations.size > 0) {
+        text += `\n\nSources:\n${[...citations].map((url) => `- ${url}`).join("\n")}`;
+    }
+
+    const usage = isObject(response.usage) ? response.usage : {};
+    const content: Record<string, unknown>[] = [];
+
+    if (thinking.length > 0) {
+        content.push({ type: "thinking", thinking, signature: "" });
+    }
+
+    content.push({ type: "text", text });
+
+    return {
+        message: {
+            id: typeof response.id === "string" ? response.id : undefined,
+            type: "message",
+            role: "assistant",
+            model: typeof response.model === "string" ? response.model : undefined,
+            content,
+            stop_reason: "end_turn",
+            usage: {
+                input_tokens: usageNumber(usage, "input_tokens"),
+                output_tokens: usageNumber(usage, "output_tokens"),
+            },
+        },
+        searches,
+    };
+}
+
+/** Native path: one /responses call, the upstream does all the searching. */
+export async function nativeWebSearch(options: {
+    body: Record<string, unknown>;
+    tool: WebSearchServerTool;
+    callResponses: (body: Record<string, unknown>) => Promise<Response>;
+}): Promise<EmulationOutcome | Response> {
+    const response = await options.callResponses(buildResponsesWebSearchBody(options.body, options.tool));
+
+    if (!response.ok) {
+        return response;
+    }
+
+    const parsed = (await response.json()) as Record<string, unknown>;
+    return responsesToAnthropicMessage(parsed);
 }
 
 const PING_INTERVAL_MS = 10_000;
@@ -329,7 +495,9 @@ export function emulationStream(run: () => Promise<EmulationOutcome | Response>)
                 if (outcome instanceof Response) {
                     const text = await outcome.text();
                     controller.enqueue(
-                        encoder.encode(`event: error\ndata: ${SafeJSON.stringify(anthropicErrorPayload(text, outcome.status))}\n\n`)
+                        encoder.encode(
+                            `event: error\ndata: ${SafeJSON.stringify(anthropicErrorPayload(text, outcome.status))}\n\n`
+                        )
                     );
                 } else {
                     controller.enqueue(encoder.encode(messageToAnthropicSse(outcome.message)));
