@@ -1,5 +1,5 @@
-import { closeSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { closeSync, type Dirent, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { basename, join, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -123,15 +123,61 @@ export function readHeadTail(
     }
 }
 
+function isSidechainPath(path: string): boolean {
+    return path.includes(`${sep}subagents${sep}`);
+}
+
+function parentSessionIdFromSidechainPath(path: string): string | undefined {
+    const parts = path.split(sep);
+    const idx = parts.lastIndexOf("subagents");
+    if (idx <= 0) {
+        return undefined;
+    }
+
+    return parts[idx - 1];
+}
+
+interface AgentMetaFile {
+    name?: string;
+    teamName?: string;
+    taskKind?: string;
+}
+
+function readSidechainMeta(jsonlPath: string): AgentMetaFile | undefined {
+    const metaPath = jsonlPath.replace(/\.jsonl$/, ".meta.json");
+    try {
+        const parsed = SafeJSON.parse(readFileSync(metaPath, "utf8"), { strict: true });
+        if (!parsed || typeof parsed !== "object") {
+            return undefined;
+        }
+
+        const rec = parsed as Record<string, unknown>;
+        return {
+            name: typeof rec.name === "string" ? rec.name : undefined,
+            teamName: typeof rec.teamName === "string" ? rec.teamName : undefined,
+            taskKind: typeof rec.taskKind === "string" ? rec.taskKind : undefined,
+        };
+    } catch (error) {
+        logger.debug({ error, metaPath }, "[teams] sidechain meta missing or unreadable");
+        return undefined;
+    }
+}
+
 function summarizeSlice(
     path: string,
     mtimeMs: number,
     agentName: string | null,
     teamName: string,
     head: string,
-    tail: string
+    tail: string,
+    extra?: { sidechain?: boolean; sessionIdOverride?: string }
 ): TeammateTranscriptRef | undefined {
-    const sessionId = basename(path, ".jsonl");
+    let sessionId =
+        extra?.sessionIdOverride || (isSidechainPath(path) ? parentSessionIdFromSidechainPath(path) : undefined);
+    if (!sessionId) {
+        sessionId = basename(path, ".jsonl");
+    }
+
     let hasLeadAssignment = false;
     let messageCount = 0;
     let lastMessage: TeammateLastMessage | undefined;
@@ -152,6 +198,10 @@ function summarizeSlice(
             // per unparsable line across every transcript in the project.
             logger.trace({ error, path }, "[teams] skipping unparsable transcript line");
             continue;
+        }
+
+        if (typeof obj.sessionId === "string" && obj.sessionId && !extra?.sessionIdOverride) {
+            sessionId = obj.sessionId;
         }
 
         const ag = (obj.agentName ?? obj.agent_name) as string | undefined;
@@ -210,6 +260,7 @@ function summarizeSlice(
         hasLeadAssignment,
         lastMessage,
         messageCount,
+        sidechain: extra?.sidechain || isSidechainPath(path) || undefined,
     };
 }
 
@@ -228,17 +279,76 @@ const indexCache = new Map<string, ProjectIndexCacheEntry>();
 function projectFingerprint(projectDir: string, files: string[], teamNames: string[]): string {
     const parts: string[] = [teamNames.join(",")];
 
-    for (const name of files) {
+    for (const file of files) {
         try {
-            const st = statSync(join(projectDir, name));
-            parts.push(`${name}:${st.mtimeMs}:${st.size}`);
+            const st = statSync(file);
+            parts.push(`${file}:${st.mtimeMs}:${st.size}`);
         } catch (error) {
-            logger.debug({ error, projectDir, name }, "[teams] transcript stat failed; treating index as stale");
+            logger.debug({ error, projectDir, file }, "[teams] transcript stat failed; treating index as stale");
             return `stale-${Date.now()}`;
         }
     }
 
     return parts.join("|");
+}
+
+/** Top-level `*.jsonl` plus `<session>/subagents/*.jsonl` (in-process teammates). */
+function listTranscriptFiles(projectDir: string): string[] | null {
+    let entries: Dirent[];
+    try {
+        entries = readdirSync(projectDir, { withFileTypes: true });
+    } catch (error) {
+        logger.debug({ error, projectDir }, "[teams] could not list the project dir; no transcripts indexed");
+        return null;
+    }
+
+    const files: string[] = [];
+    for (const ent of entries) {
+        if (ent.isFile() && ent.name.endsWith(".jsonl")) {
+            files.push(join(projectDir, ent.name));
+            continue;
+        }
+
+        if (!ent.isDirectory()) {
+            continue;
+        }
+
+        const subDir = join(projectDir, ent.name, "subagents");
+        let subEntries: string[];
+        try {
+            subEntries = readdirSync(subDir);
+        } catch (error) {
+            // Most sessions have no subagents dir at all, so a missing one is
+            // not worth a line; anything else (permissions, a broken link) is.
+            if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+                logger.debug({ error, subDir }, "[teams] could not list a subagents dir; its teammates stay unindexed");
+            }
+
+            continue;
+        }
+
+        for (const name of subEntries) {
+            if (name.endsWith(".jsonl")) {
+                files.push(join(subDir, name));
+            }
+        }
+    }
+
+    return files;
+}
+
+function rememberHit(
+    byAgent: Map<string, TeammateTranscriptRef>,
+    agentName: string,
+    parsed: TeammateTranscriptRef
+): boolean {
+    const prev = byAgent.get(agentName);
+    if (!prev || parsed.mtimeMs > prev.mtimeMs) {
+        byAgent.set(agentName, parsed);
+        return true;
+    }
+
+    return false;
 }
 
 /**
@@ -263,11 +373,8 @@ export function indexProjectTranscripts(
         }
 
         const teamSet = new Set(teamNames);
-        let files: string[];
-        try {
-            files = readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
-        } catch (error) {
-            logger.debug({ error, projectDir }, "[teams] could not list the project dir; no transcripts indexed");
+        const files = listTranscriptFiles(projectDir);
+        if (files === null) {
             return byTeam;
         }
 
@@ -285,8 +392,7 @@ export function indexProjectTranscripts(
         let skippedLarge = 0;
         let hits = 0;
 
-        for (const name of files) {
-            const path = join(projectDir, name);
+        for (const path of files) {
             const slice = readHeadTail(path);
             if (!slice) {
                 continue;
@@ -295,6 +401,37 @@ export function indexProjectTranscripts(
             scanned++;
             const { head, tail, size, mtimeMs } = slice;
             const hay = `${head}\n${tail}`;
+
+            if (isSidechainPath(path)) {
+                const meta = readSidechainMeta(path);
+                const agentName = meta?.name;
+                const metaTeam = meta?.teamName;
+                if (!agentName || agentName === "team-lead") {
+                    continue;
+                }
+
+                const hitTeams = [...teamSet].filter((t) => t === metaTeam || hay.includes(t));
+                if (hitTeams.length === 0) {
+                    continue;
+                }
+
+                const parentId = parentSessionIdFromSidechainPath(path);
+                for (const teamName of hitTeams) {
+                    const parsed = summarizeSlice(path, mtimeMs, agentName, teamName, head, tail, {
+                        sidechain: true,
+                        sessionIdOverride: parentId,
+                    });
+                    if (!parsed) {
+                        continue;
+                    }
+
+                    if (rememberHit(byTeam.get(teamName)!, agentName, parsed)) {
+                        hits++;
+                    }
+                }
+
+                continue;
+            }
 
             // Which of our teams appear in this slice?
             const hitTeams: string[] = [];
@@ -336,10 +473,8 @@ export function indexProjectTranscripts(
                         continue;
                     }
 
-                    hits++;
-                    const prev = byAgent.get(agentName);
-                    if (!prev || parsed.mtimeMs > prev.mtimeMs) {
-                        byAgent.set(agentName, parsed);
+                    if (rememberHit(byAgent, agentName, parsed)) {
+                        hits++;
                     }
                 }
             }

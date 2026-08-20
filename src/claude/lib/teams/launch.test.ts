@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildTeammateClaudeArgs, buildToolsCcTeammateCommand } from "./launch";
+import { buildTeammateClaudeArgs, buildToolsCcTeammateCommand, isLiveSidechain } from "./launch";
 import type { TeamMemberView, TeamView } from "./types";
 
 function fakeTeam(over: Partial<TeamView> = {}): TeamView {
@@ -68,6 +68,53 @@ describe("buildTeammateClaudeArgs", () => {
         );
         expect(args).toContain("--resume");
         expect(args).toContain("bad27373-df6b-4e1f-a716-1fcda43f5f01");
+        expect(args).toContain("--agent-id");
+    });
+
+    test("a sidechain resumes the lead session and does not pass --agent-id", () => {
+        const leadId = "3ef3c468-e0f1-4959-8f16-e2d3ce7c4feb";
+        const args = buildTeammateClaudeArgs(
+            fakeTeam(),
+            fakeMate({
+                transcript: {
+                    sessionId: leadId,
+                    path: `/tmp/${leadId}/subagents/agent-apageobjects-fable-629d28c8906398e7.jsonl`,
+                    mtimeMs: Date.now(),
+                    hasLeadAssignment: true,
+                    messageCount: 40,
+                    sidechain: true,
+                },
+            })
+        );
+        expect(args).toEqual(["--resume", leadId]);
+        expect(args).not.toContain("--agent-id");
+    });
+});
+
+describe("isLiveSidechain", () => {
+    test("true when the sidechain jsonl was written in the last 90s", () => {
+        expect(
+            isLiveSidechain({
+                sessionId: "abc",
+                path: "/tmp/x.jsonl",
+                mtimeMs: Date.now() - 5_000,
+                hasLeadAssignment: true,
+                messageCount: 1,
+                sidechain: true,
+            })
+        ).toBe(true);
+    });
+
+    test("false for a standalone transcript even if it is fresh", () => {
+        expect(
+            isLiveSidechain({
+                sessionId: "abc",
+                path: "/tmp/x.jsonl",
+                mtimeMs: Date.now(),
+                hasLeadAssignment: true,
+                messageCount: 1,
+            })
+        ).toBe(false);
     });
 });
 
