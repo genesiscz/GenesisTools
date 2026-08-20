@@ -11,15 +11,22 @@ import { isObject } from "@genesiscz/utils/object";
  * Custom tools have no `type` field (or `type: "custom"`).
  */
 export function findServerTool(body: Record<string, unknown>): string | undefined {
+    return findServerTools(body)[0];
+}
+
+/** Every server tool offered by the request — a mixed request must be judged whole. */
+export function findServerTools(body: Record<string, unknown>): string[] {
     if (!Array.isArray(body.tools)) {
-        return undefined;
+        return [];
     }
+
+    const types: string[] = [];
 
     for (const tool of body.tools) {
         if (isObject(tool) && typeof tool.type === "string" && tool.type !== "custom") {
-            return tool.type;
+            types.push(tool.type);
         }
     }
 
-    return undefined;
+    return types;
 }

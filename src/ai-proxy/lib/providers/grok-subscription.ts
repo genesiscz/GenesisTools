@@ -22,7 +22,7 @@ import {
     type ToolMatcher,
     toolMatchersFromBody,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
-import { findServerTool } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
+import { findServerTools } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
@@ -122,28 +122,32 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // Anthropic server tools execute inside Anthropic's API; grok's
             // deserializer rejects them with an opaque `missing field
             // description` that reads like a proxy bug (probe session
-            // d20dfdfe, Claude Code's WebSearch). web_search is emulated by
-            // the proxy when a Brave key is available; anything else (or a
-            // keyless environment) gets an error naming the real cause.
-            const serverTool = findServerTool(parsed as Record<string, unknown>);
+            // d20dfdfe, Claude Code's WebSearch). web_search runs on xAI's
+            // native /responses server tool; every OTHER server tool gets an
+            // error naming the real cause — judged over the whole tools list,
+            // so a mixed request cannot smuggle one past the web_search path.
+            const serverTools = findServerTools(parsed as Record<string, unknown>);
+            const unsupported = serverTools.find((type) => !type.startsWith("web_search_"));
 
-            if (serverTool !== undefined) {
-                const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
-
-                if (webSearch) {
-                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch);
-                }
-
+            if (unsupported !== undefined) {
                 return new Response(
                     SafeJSON.stringify({
                         type: "error",
                         error: {
                             type: "invalid_request_error",
-                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${serverTool}". Server tools other than web search execute inside Anthropic's API, which this account does not reach.`,
+                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${unsupported}". Server tools other than web search execute inside Anthropic's API, which this account does not reach.`,
                         },
                     }),
                     { status: 400, headers: { "Content-Type": "application/json" } }
                 );
+            }
+
+            if (serverTools.length > 0) {
+                const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
+
+                if (webSearch) {
+                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch);
+                }
             }
 
             const body = stringifyUnknownToolResultBlocks(
@@ -202,7 +206,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     ): Promise<Response> {
         logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: running web_search server tool for grok");
 
-        const run = async (): Promise<EmulationOutcome | Response> => {
+        const run = async (signal?: AbortSignal): Promise<EmulationOutcome | Response> => {
             const native = await nativeWebSearch({
                 body,
                 tool,
@@ -238,7 +242,8 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             return emulateWebSearch({
                 body,
                 tool,
-                search: braveSearchFn(braveKey),
+                signal,
+                search: braveSearchFn(braveKey, signal),
                 callUpstream: async (turnBody) => {
                     const repaired = stringifyUnknownToolResultBlocks(
                         hoistSystemMessages(ensureToolRequiredArrays(turnBody))

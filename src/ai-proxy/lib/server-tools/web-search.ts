@@ -25,6 +25,9 @@ export interface WebSearchResult {
 
 export type SearchFn = (query: string) => Promise<WebSearchResult[]>;
 
+/** Server-side cap: max_uses is client-controlled and each search is a paid call. */
+const MAX_USES_CEILING = 20;
+
 /** The server tool entry, when the body offers Anthropic's web_search. */
 export function parseWebSearchServerTool(body: Record<string, unknown>): WebSearchServerTool | undefined {
     if (!Array.isArray(body.tools)) {
@@ -33,9 +36,15 @@ export function parseWebSearchServerTool(body: Record<string, unknown>): WebSear
 
     for (const tool of body.tools) {
         if (isObject(tool) && typeof tool.type === "string" && tool.type.startsWith("web_search_")) {
+            const requested = tool.max_uses;
+            const maxUses =
+                typeof requested === "number" && Number.isInteger(requested) && requested > 0
+                    ? Math.min(requested, MAX_USES_CEILING)
+                    : 8;
+
             return {
                 name: typeof tool.name === "string" ? tool.name : "web_search",
-                maxUses: typeof tool.max_uses === "number" && tool.max_uses > 0 ? tool.max_uses : 8,
+                maxUses,
                 allowedDomains: stringArray(tool.allowed_domains),
                 blockedDomains: stringArray(tool.blocked_domains),
             };
@@ -55,7 +64,7 @@ function stringArray(value: unknown): string[] | undefined {
 }
 
 /** Suffix match per Anthropic's domain filters: `github.com` covers `gist.github.com`. */
-export function domainAllowed(url: string, allowed?: string[], blocked?: string[]): boolean {
+export function domainAllowed(url: string, filters: { allowed?: string[]; blocked?: string[] }): boolean {
     let host: string;
     try {
         host = new URL(url).hostname.toLowerCase();
@@ -68,14 +77,14 @@ export function domainAllowed(url: string, allowed?: string[], blocked?: string[
         return host === d || host.endsWith(`.${d}`);
     };
 
-    if (blocked?.some(matches)) {
+    if (filters.blocked?.some(matches)) {
         return false;
     }
 
-    return allowed === undefined || allowed.some(matches);
+    return filters.allowed === undefined || filters.allowed.some(matches);
 }
 
-export function braveSearchFn(apiKey: string): SearchFn {
+export function braveSearchFn(apiKey: string, signal?: AbortSignal): SearchFn {
     return async (query: string): Promise<WebSearchResult[]> => {
         const params = new URLSearchParams({
             q: query,
@@ -85,6 +94,7 @@ export function braveSearchFn(apiKey: string): SearchFn {
         });
         const response = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
             headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
+            signal,
         });
 
         if (!response.ok) {
@@ -154,8 +164,10 @@ export async function emulateWebSearch(options: {
     tool: WebSearchServerTool;
     search: SearchFn;
     callUpstream: (body: Record<string, unknown>) => Promise<Response>;
+    /** Aborted when the client goes away — stops the loop between calls. */
+    signal?: AbortSignal;
 }): Promise<EmulationOutcome | Response> {
-    const { body, tool, search, callUpstream } = options;
+    const { body, tool, search, callUpstream, signal } = options;
     const messages = Array.isArray(body.messages) ? [...body.messages] : [];
     const tools = (Array.isArray(body.tools) ? body.tools : []).map((t) =>
         isObject(t) && typeof t.type === "string" && t.type.startsWith("web_search_") ? customSearchTool(tool) : t
@@ -167,6 +179,10 @@ export async function emulateWebSearch(options: {
     const maxTurns = tool.maxUses + 2;
 
     for (let turn = 0; turn < maxTurns; turn++) {
+        if (signal?.aborted) {
+            throw new DOMException("web_search emulation aborted — client went away", "AbortError");
+        }
+
         const upstreamBody = { ...body, stream: false, messages, tools };
         const response = await callUpstream(upstreamBody);
 
@@ -203,11 +219,13 @@ export async function emulateWebSearch(options: {
                 searches += 1;
                 try {
                     const results = (await search(query)).filter((r) =>
-                        domainAllowed(r.url, tool.allowedDomains, tool.blockedDomains)
+                        domainAllowed(r.url, { allowed: tool.allowedDomains, blocked: tool.blockedDomains })
                     );
                     resultText = formatResults(results);
                 } catch (err) {
-                    logger.warn({ err, query }, "ai-proxy: emulated web_search failed");
+                    // The query is model-generated request material — log its
+                    // size, never its content (it can carry prompts/secrets).
+                    logger.warn({ err, queryLength: query.length }, "ai-proxy: emulated web_search failed");
                     resultText = `Search failed: ${err instanceof Error ? err.message : String(err)}`;
                 }
             }
@@ -311,6 +329,8 @@ export function messageToAnthropicSse(message: AnthropicMessage): string {
  * cli-chat-proxy.grok.com. This is the native path for Anthropic's
  * web_search server tool; the Brave loop above is the fallback.
  */
+const MAX_FILTER_DOMAINS = 5;
+
 export function buildResponsesWebSearchBody(
     body: Record<string, unknown>,
     tool: WebSearchServerTool
@@ -318,16 +338,29 @@ export function buildResponsesWebSearchBody(
     const instructions = systemText(body.system);
     const wsTool: Record<string, unknown> = { type: "web_search" };
 
-    // Both `allowed_domains` (xAI docs spelling) and `filters.allowed_domains`
-    // returned 200 and kept every source on-domain in live probes; the
-    // unfiltered control hit off-domain sources. Unknown keys are silently
-    // ignored by the deserializer, so a wrong spelling would mean NO filter.
+    // Official spellings per docs.x.ai/developers/tools/web-search (verified
+    // live: filtered probes stayed on-domain, the control did not). The docs
+    // add two constraints: max 5 domains per list, and the lists cannot be
+    // combined. Allowed wins when both are present — clamping an allow-list
+    // only tightens it, while dropping exclusions would loosen a filter.
     if (tool.allowedDomains !== undefined) {
-        wsTool.allowed_domains = tool.allowedDomains;
-    }
+        if (tool.allowedDomains.length > MAX_FILTER_DOMAINS) {
+            logger.debug(
+                { count: tool.allowedDomains.length },
+                "ai-proxy: web_search allowed_domains clamped to the upstream max of 5"
+            );
+        }
 
-    if (tool.blockedDomains !== undefined) {
-        wsTool.excluded_domains = tool.blockedDomains;
+        wsTool.allowed_domains = tool.allowedDomains.slice(0, MAX_FILTER_DOMAINS);
+    } else if (tool.blockedDomains !== undefined) {
+        if (tool.blockedDomains.length > MAX_FILTER_DOMAINS) {
+            logger.warn(
+                { count: tool.blockedDomains.length },
+                "ai-proxy: web_search excluded_domains clamped to 5 — exclusions beyond that are NOT enforced upstream"
+            );
+        }
+
+        wsTool.excluded_domains = tool.blockedDomains.slice(0, MAX_FILTER_DOMAINS);
     }
 
     const out: Record<string, unknown> = {
@@ -474,9 +507,14 @@ const PING_INTERVAL_MS = 10_000;
  * Stream that answers the client immediately (Anthropic keeps quiet
  * connections alive with pings) while the loop runs, then plays the final
  * message. A slow multi-search loop otherwise looks like a dead connection.
+ * The signal handed to `run` aborts when the client cancels the stream, so
+ * the loop stops burning upstream and Brave calls nobody will receive.
  */
-export function emulationStream(run: () => Promise<EmulationOutcome | Response>): ReadableStream<Uint8Array> {
+export function emulationStream(
+    run: (signal: AbortSignal) => Promise<EmulationOutcome | Response>
+): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
+    const abort = new AbortController();
 
     return new ReadableStream<Uint8Array>({
         async start(controller) {
@@ -490,7 +528,11 @@ export function emulationStream(run: () => Promise<EmulationOutcome | Response>)
             }, PING_INTERVAL_MS);
 
             try {
-                const outcome = await run();
+                const outcome = await run(abort.signal);
+
+                if (abort.signal.aborted) {
+                    return;
+                }
 
                 if (outcome instanceof Response) {
                     const text = await outcome.text();
@@ -503,6 +545,11 @@ export function emulationStream(run: () => Promise<EmulationOutcome | Response>)
                     controller.enqueue(encoder.encode(messageToAnthropicSse(outcome.message)));
                 }
             } catch (err) {
+                if (abort.signal.aborted) {
+                    logger.debug({ err }, "ai-proxy: web_search emulation aborted by client cancel");
+                    return;
+                }
+
                 logger.warn({ err }, "ai-proxy: web_search emulation failed mid-stream");
                 controller.enqueue(
                     encoder.encode(
@@ -514,8 +561,14 @@ export function emulationStream(run: () => Promise<EmulationOutcome | Response>)
                 );
             } finally {
                 clearInterval(ping);
-                controller.close();
+
+                if (!abort.signal.aborted) {
+                    controller.close();
+                }
             }
+        },
+        cancel(reason) {
+            abort.abort(reason);
         },
     });
 }
