@@ -17,3 +17,8 @@ export async function publicBaseUrl(): Promise<string> {
 export async function boardPageUrl(slug: string): Promise<string> {
     return `${await publicBaseUrl()}/boards/${slug}`;
 }
+
+/** Public URL of a published Obsidian note (`/share/<slug>`). Same origin the UI copy button uses. */
+export async function sharePageUrl(slug: string): Promise<string> {
+    return `${await publicBaseUrl()}/share/${slug}`;
+}

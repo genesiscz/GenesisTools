@@ -56,4 +56,12 @@ When tunneled (host, allowed identities, and tunnel name are read from local con
 - `https://<your-host>/telegram-webhook` -> bypass (secret-token auth).
 - `https://<your-host>/share/<slug>` -> bypass (the slug is a cryptographically-random 96-bit token and is the only credential; `unpublish` revokes it).
 
+Publish the same way the Obsidian reader **publish** / **copy** buttons do:
+
+```bash
+tools dev-dashboard share "ČEZ/Design/2026-08-20-UnconnectedFigmaComponents.md"
+# prints https://<your-host>/share/<slug> and copies it
+tools dev-dashboard share /absolute/path/in/vault/Note.md --no-clipboard
+```
+
 Host-specific values (domain, allowed email, tunnel name) live in `~/.genesis-tools/dev-dashboard/config.json`, not in this repo.

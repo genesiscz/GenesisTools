@@ -390,7 +390,7 @@ onto the merged base first, then optionally deletes the head branch.
 |------|--------------|-----------------|
 | [`dashboards`](src/dashboards/README.md) | Orchestrate every GenesisTools web dashboard at once. | `up` `down` `restart` `status` `list` |
 | [`dashboard`](src/dashboard/README.md) | Start the personal productivity dashboard, installing its dependencies if needed, then open it. | `up` `down` `restart` `status` `attach` `logs` `open` `install` |
-| [`dev-dashboard`](src/dev-dashboard/README.md) | Personal dev dashboard wiring ttyd, cmux, and Obsidian together, with auth, tunnel, and pairing. | `ui` `configure` `auth` `agent` `tunnel` `pair` |
+| [`dev-dashboard`](src/dev-dashboard/README.md) | Personal dev dashboard wiring ttyd, cmux, and Obsidian together, with auth, tunnel, and pairing. | `ui` `configure` `auth` `agent` `tunnel` `pair` `share` |
 | [`youtube`](src/youtube/README.md) | The largest tool here: channels, videos, transcripts, downloads, summarisation, Q&A, a browser extension, a queue, and an MCP server. | `channels` `videos` `transcribe` `download` `pipeline` `queue` `ask` `analyze` `extension` `server` `ui` `mcp` `config` |
 | [`shops`](src/shops/README.md) | Grocery, drogerie, and pharmacy price intelligence across Czech e-shops, with crawlers, matching, and a dashboard. | `get` `crawl` `sitemap-sync` `match` `list` `watch` `notify` `daemon` `db` `ui` `mcp` |
 | [`instagram`](src/instagram/README.md) | Inspect public Instagram profiles, and fetch stories and highlights with your own session. | `profile` `highlights` `stories` `highlight` `session` |

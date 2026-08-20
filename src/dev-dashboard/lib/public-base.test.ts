@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { resetDevDashboardStorage } from "@app/dev-dashboard/lib/storage";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { boardPageUrl, publicBaseUrl } from "./public-base";
+import { boardPageUrl, publicBaseUrl, sharePageUrl } from "./public-base";
 
 describe("publicBaseUrl", () => {
     let dir = "";
@@ -32,6 +32,7 @@ describe("publicBaseUrl", () => {
         writeConfig({ port: 4555, allowedHosts: ["mac.example.dev"] });
         expect(await publicBaseUrl()).toBe("https://mac.example.dev");
         expect(await boardPageUrl("my-board")).toBe("https://mac.example.dev/boards/my-board");
+        expect(await sharePageUrl("tok")).toBe("https://mac.example.dev/share/tok");
     });
 
     it("falls back to the local listener without a public host", async () => {

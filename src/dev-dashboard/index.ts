@@ -2,6 +2,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { runShare } from "@app/dev-dashboard/commands/share";
 import { runTunnelSetup } from "@app/dev-dashboard/commands/tunnel";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
@@ -235,6 +236,15 @@ program
             advertiseMdns: opts.advertiseMdns,
             e2e: opts.e2e === true,
         });
+    });
+
+program
+    .command("share")
+    .description("Publish an Obsidian note to /share/<slug> (same as the UI publish button) and copy the public URL")
+    .argument("<path>", "Vault-relative or absolute path to a .md note")
+    .option("--no-clipboard", "Print the URL without copying it")
+    .action(async (path: string, opts: { clipboard?: boolean }) => {
+        await runShare(path, { clipboard: opts.clipboard !== false });
     });
 
 const tunnel = program.command("tunnel").description("Manage remote access tunnels");
