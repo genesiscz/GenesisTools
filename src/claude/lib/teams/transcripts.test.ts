@@ -123,6 +123,53 @@ describe("indexTeamTranscripts in-process sidechains", () => {
         return path;
     }
 
+    test("meta.teamName owns the sidechain — transcript text cannot claim it for another team", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = "agent-aborrowed-629d28c8906398e7";
+        writeFileSync(
+            join(sub, `${stem}.meta.json`),
+            SafeJSON.stringify({ name: "borrowed", teamName: "team-alpha", taskKind: "in_process_teammate" })
+        );
+        // The body mentions the other team, which used to be enough to index
+        // this agent under it and later resume the wrong lead session.
+        writeFileSync(
+            join(sub, `${stem}.jsonl`),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: `working alongside ${TEAM} on the same repo` }] },
+            })}\n`
+        );
+
+        expect(indexTeamTranscripts(dir, TEAM).get("borrowed")).toBeUndefined();
+        expect(indexTeamTranscripts(dir, "team-alpha").get("borrowed")).toBeDefined();
+    });
+
+    test("an ordinary subagent sidecar is not indexed as a teammate", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = "agent-aexplore-629d28c8906398e7";
+        writeFileSync(
+            join(sub, `${stem}.meta.json`),
+            SafeJSON.stringify({ name: "explore", teamName: TEAM, taskKind: "task" })
+        );
+        writeFileSync(
+            join(sub, `${stem}.jsonl`),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: "searched the repo" }] },
+            })}\n`
+        );
+
+        expect(indexTeamTranscripts(dir, TEAM).get("explore")).toBeUndefined();
+    });
+
     test("indexes <lead>/subagents/agent-*.jsonl via meta.json even without agentName fields", () => {
         const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
         writeSidechain(dir, "pageobjects-fable", "While the retry downloads, verifying the MePAS locators.");

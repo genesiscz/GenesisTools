@@ -25,14 +25,48 @@ export function teamsHtmlToMarkdown(html: unknown, attachments: Attachment[] = [
     return tidyMarkdown(htmlToMarkdown(prepared));
 }
 
+const REPLY_ITEMTYPE = /itemtype=["']http:\/\/schema\.skype\.com\/Reply["']/i;
+
+/** Index just past the `</blockquote>` closing the tag that opened before `from`. */
+function endOfBlockquote(html: string, from: number): number {
+    const tag = /<blockquote\b[^>]*>|<\/blockquote\s*>/gi;
+    tag.lastIndex = from;
+    let depth = 1;
+
+    for (let m = tag.exec(html); m !== null; m = tag.exec(html)) {
+        depth += m[0].startsWith("</") ? -1 : 1;
+
+        if (depth === 0) {
+            return tag.lastIndex;
+        }
+    }
+
+    // Unbalanced markup: drop the rest rather than leave half a quote behind.
+    return html.length;
+}
+
+/**
+ * A Reply quote may contain another blockquote (a reply to a reply), so the
+ * first `</blockquote>` is not necessarily the one that closes it. Matching
+ * lazily left the outer quoted text in the export.
+ */
 function stripReplyQuotes(html: string): string {
-    return html.replace(/<blockquote\b[^>]*>[\s\S]*?<\/blockquote>/gi, (block) => {
-        if (/itemtype=["']http:\/\/schema\.skype\.com\/Reply["']/i.test(block)) {
-            return "";
+    const open = /<blockquote\b[^>]*>/gi;
+    let out = "";
+    let cursor = 0;
+
+    for (let m = open.exec(html); m !== null; m = open.exec(html)) {
+        if (!REPLY_ITEMTYPE.test(m[0])) {
+            continue;
         }
 
-        return block;
-    });
+        const end = endOfBlockquote(html, open.lastIndex);
+        out += html.slice(cursor, m.index);
+        cursor = end;
+        open.lastIndex = end;
+    }
+
+    return out + html.slice(cursor);
 }
 
 /**

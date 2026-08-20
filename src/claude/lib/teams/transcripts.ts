@@ -410,7 +410,23 @@ export function indexProjectTranscripts(
                     continue;
                 }
 
-                const hitTeams = [...teamSet].filter((t) => t === metaTeam || hay.includes(t));
+                // An ordinary subagent sidecar is not a teammate. Only a
+                // declared kind rules it out; older metas carry none.
+                if (meta?.taskKind !== undefined && meta.taskKind !== "in_process_teammate") {
+                    continue;
+                }
+
+                // Metadata wins when it names a team. Letting the transcript
+                // TEXT also match would index this agent under any other team
+                // whose name merely appears in the head or tail, and a later
+                // reattach would then resume the wrong lead session.
+                const hitTeams =
+                    metaTeam !== undefined && metaTeam.length > 0
+                        ? teamSet.has(metaTeam)
+                            ? [metaTeam]
+                            : []
+                        : [...teamSet].filter((t) => hay.includes(t));
+
                 if (hitTeams.length === 0) {
                     continue;
                 }

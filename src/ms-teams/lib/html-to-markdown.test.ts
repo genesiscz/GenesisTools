@@ -61,6 +61,21 @@ describe("teamsHtmlToMarkdown", () => {
         expect(teamsHtmlToMarkdown(html)).toBe("child reply");
     });
 
+    test("drops a Reply quote whole, including a nested quote inside it", () => {
+        // A reply to a reply. The first </blockquote> closes the INNER quote,
+        // so a lazy match stopped there and left everything after it — the
+        // outer quote's own text — in the export.
+        const html =
+            '<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid="m-parent">' +
+            '<blockquote itemtype="http://schema.skype.com/Reply"><p>inner parent</p></blockquote>' +
+            "<p>outer parent</p></blockquote><p>child reply</p>";
+        const md = teamsHtmlToMarkdown(html);
+
+        expect(md).not.toContain("outer parent");
+        expect(md).not.toContain("inner parent");
+        expect(md).toBe("child reply");
+    });
+
     test("keeps forwarded quotes as markdown blockquotes", () => {
         const html =
             '<blockquote itemtype="http://schema.skype.com/Forward"><p>Hoj, na develop je aktualne nasazena migrace.</p></blockquote>';
