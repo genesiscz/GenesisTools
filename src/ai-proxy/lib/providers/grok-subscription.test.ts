@@ -102,7 +102,9 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
 
     it("cancelling the SSE stream aborts the in-flight native /responses call", async () => {
         const provider = makeProvider();
-        const client = provider as unknown as { client: { fetch: (path: string, init: RequestInit) => Promise<Response> } };
+        const client = provider as unknown as {
+            client: { fetch: (path: string, init: RequestInit) => Promise<Response> };
+        };
         let seen: AbortSignal | undefined;
         // A native search that never answers on its own: only the client's
         // cancellation can end it, which is exactly the leak under test.
