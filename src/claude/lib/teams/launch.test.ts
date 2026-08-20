@@ -193,17 +193,20 @@ describe("launchTeammate with a live in-process teammate", () => {
     test("focus without a resolvable lead pane hands over the lead session instead of spawning", async () => {
         // Discovery cannot name the lead pane for a team whose teammates are
         // all in-process, so this is the common path, not a corner case.
+        const transcript = liveSidechain();
         const { result, calls } = await withSpawnSpy(() =>
             launchTeammate({
                 team: fakeTeam({ lead: undefined }),
-                teammate: fakeMate({ transcript: liveSidechain() }),
+                teammate: fakeMate({ transcript }),
                 account: "martin",
                 mode: "focus",
             })
         );
 
         expect((result as { action: string }).action).toBe("noop");
-        expect((result as { detail: string }).detail).toContain("tools claude cmux focus 55a1a95d");
+        // The WHOLE session id: a truncated one still matches a prefix but
+        // produces a focus command that cannot resolve anything.
+        expect((result as { detail: string }).detail).toContain(`tools claude cmux focus ${transcript?.sessionId}`);
         expect(calls).toHaveLength(0);
     });
 });
