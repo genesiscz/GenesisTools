@@ -247,10 +247,29 @@ export function repairAnthropicSseIndices(
                 logger.debug({ err }, "ai-proxy: merged-call orphan did not parse; keeping the original tool name");
             }
 
-            logger.warn(
-                { from: block.toolName, to: name, index: currentIndex },
-                "ai-proxy: grok merged an extra tool call into one block — emitted as its own tool_use"
-            );
+            // An orphan with NO arguments is a no-arg call whose name the wire
+            // destroyed. If the fallback tool requires arguments, the name we
+            // are about to emit is certainly wrong and the client will reject
+            // it — say so here, or the InputValidationError reads as a bug in
+            // the tool being blamed.
+            const noArgs = orphan.trim() === "{}";
+            const fallbackNeedsArgs = tools.some((t) => t.name === name && t.required.length > 0);
+
+            if (noArgs && fallbackNeedsArgs) {
+                logger.warn(
+                    {
+                        blamed: name,
+                        candidates: tools.filter((t) => t.required.length === 0).map((t) => t.name),
+                        index: currentIndex,
+                    },
+                    "ai-proxy: grok destroyed the name of a no-arg tool call; no unique match, so it goes out under a tool that requires arguments and the client will reject it"
+                );
+            } else {
+                logger.warn(
+                    { from: block.toolName, to: name, index: currentIndex },
+                    "ai-proxy: grok merged an extra tool call into one block — emitted as its own tool_use"
+                );
+            }
 
             frames.push(
                 frameText("content_block_start", {
