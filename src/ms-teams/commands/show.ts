@@ -120,7 +120,11 @@ function renderThread(thread: ThreadExport, format: string): string {
         return renderJson(thread);
     }
 
-    return renderMarkdown(thread);
+    if (format === "md") {
+        return renderMarkdown(thread);
+    }
+
+    throw new Error(`Unsupported format: ${format}. Use md, json, or html.`);
 }
 
 async function writeOut(outPath: string, body: string, ext: string): Promise<string> {

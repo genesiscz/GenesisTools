@@ -21,6 +21,11 @@ describe("decodeTeamsString", () => {
         expect(decodeTeamsString("<Undefined>")).toBe("");
         expect(decodeTeamsString("")).toBe("");
     });
+
+    test("does not unescape ordinary message text", () => {
+        expect(decodeTeamsString("C:\\Users\\Ada")).toBe("C:\\Users\\Ada");
+        expect(decodeTeamsString("line\\nbreak")).toBe("line\\nbreak");
+    });
 });
 
 describe("foldTeamsText", () => {

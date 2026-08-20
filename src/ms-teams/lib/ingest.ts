@@ -3,13 +3,14 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { cacheDbPath, dumpIdbScript, venvDir, venvPython } from "./paths";
-import { snapshotTeamsIdb } from "./snapshot";
+import { liveIdbMtimeMs, snapshotTeamsIdb } from "./snapshot";
 import { TeamsCache } from "./store";
 import type { TeamsDump } from "./types";
 
 const log = logger.scoped("ms-teams").log;
 
-const PIP_SPEC = "git+https://github.com/cclgroupltd/ccl_chromium_reader.git";
+/** Pin a reviewed ccl_chromium_reader revision. Bump the SHA deliberately when upgrading. */
+const PIP_SPEC = "git+https://github.com/cclgroupltd/ccl_chromium_reader.git@ef840de30221c4d65bc96d2f4d9057e9ef2f526d";
 
 export interface IngestResult {
     conversations: number;
@@ -19,16 +20,35 @@ export interface IngestResult {
 }
 
 export async function ingestIndexedDb(opts: { force?: boolean } = {}): Promise<IngestResult> {
+    const path = cacheDbPath();
+
+    if (!opts.force && existsSync(path)) {
+        const existing = new TeamsCache(path, { readonly: true });
+
+        try {
+            const stored = Number(existing.getMeta("idb_mtime") ?? "0");
+            const live = liveIdbMtimeMs();
+
+            if (stored > 0 && live > 0 && live <= stored) {
+                const counts = existing.counts();
+                log.debug({ stored, live }, "[ms-teams] cache is current; skip snapshot");
+                return { ...counts, dumpCounts: {} };
+            }
+        } finally {
+            existing.close();
+        }
+    }
+
     await ensureVenv();
     const snap = snapshotTeamsIdb();
     const dumpCounts = await runDump(snap.leveldbDir, snap.blobDir, snap.dumpDir);
     const dump = readDumpDir(snap.dumpDir);
-    const cache = new TeamsCache(cacheDbPath());
+    const cache = new TeamsCache(path);
 
     try {
-        const counts = cache.ingestDump(dump);
+        const counts = cache.ingestDump(dump, { force: opts.force });
         cache.setMeta("idb_snapshot", snap.leveldbDir);
-        cache.setMeta("force", opts.force ? "1" : "0");
+        cache.setMeta("idb_mtime", String(liveIdbMtimeMs()));
         return { ...counts, dumpCounts };
     } finally {
         cache.close();
@@ -59,7 +79,7 @@ function readJsonl(path: string): unknown[] {
         }
 
         try {
-            rows.push(SafeJSON.parse(line));
+            rows.push(SafeJSON.parse(line, { strict: true }));
         } catch (err) {
             log.debug({ err, path }, "[ms-teams] skipped a bad JSONL line");
         }
@@ -107,7 +127,7 @@ async function runDump(idb: string, blob: string, out: string): Promise<Record<s
     }
 
     try {
-        const parsed = SafeJSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}") as {
+        const parsed = SafeJSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}", { strict: true }) as {
             counts?: Record<string, number>;
         };
         return parsed.counts ?? {};

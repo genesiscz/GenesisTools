@@ -23,13 +23,15 @@ export function exportThread(cache: TeamsCache, conversationId: string, opts: Li
     const messages = cache.listMessages(conversationId, opts);
     const byId = new Map(messages.map((m) => [m.id, m]));
     const exported = messages.map((row) => toExported(row, byId));
-    const times = messages.map((m) => m.originalArrivalTime);
-    const cachedFrom = times.length ? new Date(Math.min(...times)).toISOString() : null;
-    const cachedTo = times.length ? new Date(Math.max(...times)).toISOString() : null;
+    const first = messages[0];
+    const last = messages[messages.length - 1];
+    const cachedFrom = first ? new Date(first.originalArrivalTime).toISOString() : null;
+    const cachedTo = last ? new Date(last.originalArrivalTime).toISOString() : null;
     let members: Person[] = [];
 
     try {
-        members = SafeJSON.parse(conversation.membersJson);
+        const parsed = SafeJSON.parse(conversation.membersJson);
+        members = Array.isArray(parsed) ? parsed : [];
     } catch {
         members = [];
     }

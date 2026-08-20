@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -60,11 +61,15 @@ def dump_store(wrapped, needle: str, store_name: str, out_path: Path) -> int:
         return 0
     store = db.get_object_store_by_name(store_name)
     n = 0
-    with out_path.open("w", encoding="utf-8") as fh:
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        os.chmod(tmp, 0o600)
         for rec in store.iterate_records(live_only=True):
             payload = jsonable(rec.value)
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
             n += 1
+    tmp.replace(out_path)
+    os.chmod(out_path, 0o600)
     return n
 
 
@@ -83,6 +88,7 @@ def main() -> int:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    os.chmod(out, 0o700)
     blob = args.blob if Path(args.blob).exists() else None
     wrapped = WrappedIndexDB(args.idb, blob)
     counts = {}

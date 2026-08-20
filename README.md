@@ -286,7 +286,7 @@ generates the matching `fail2ban` commands.
 
 Every row is a real tool in this checkout, described from its own `--help`. Each name links to
 that tool's own `README.md`, which you can also print in the terminal with
-`tools <name> --readme`. All 97 usable tools ship one.
+`tools <name> --readme`. All 98 usable tools ship one.
 
 ### AI and LLM
 

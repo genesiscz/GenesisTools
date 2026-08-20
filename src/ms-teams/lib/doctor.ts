@@ -37,10 +37,18 @@ export function inspectDoctor(): DoctorReport {
     const cacheExists = existsSync(cachePath);
 
     if (cacheExists) {
-        const cache = new TeamsCache(cachePath);
-        counts = cache.counts();
-        cacheIngestedAt = cache.getMeta("ingested_at");
-        cache.close();
+        let cache: TeamsCache | null = null;
+
+        try {
+            cache = new TeamsCache(cachePath, { readonly: true });
+            counts = cache.counts();
+            cacheIngestedAt = cache.getMeta("ingested_at");
+        } catch {
+            counts = null;
+            cacheIngestedAt = null;
+        } finally {
+            cache?.close();
+        }
     }
 
     return {
@@ -58,6 +66,10 @@ export function inspectDoctor(): DoctorReport {
 }
 
 function isTeamsRunning(): boolean {
-    const proc = Bun.spawnSync(["pgrep", "-fl", "Microsoft Teams"], { stdout: "pipe", stderr: "pipe" });
-    return proc.exitCode === 0 && new TextDecoder().decode(proc.stdout).trim().length > 0;
+    try {
+        const proc = Bun.spawnSync(["pgrep", "-fl", "Microsoft Teams"], { stdout: "pipe", stderr: "pipe" });
+        return proc.exitCode === 0 && new TextDecoder().decode(proc.stdout).trim().length > 0;
+    } catch {
+        return false;
+    }
 }

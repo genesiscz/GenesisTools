@@ -25,7 +25,7 @@ export function registerMentionsCommand(program: Command): void {
 
                 for (const row of rows) {
                     table.push([
-                        row.timestamp ? formatDateTime(row.timestamp, { absolute: "datetime" }) : "—",
+                        row.timestamp !== null ? formatDateTime(row.timestamp, { absolute: "datetime" }) : "—",
                         row.activityType,
                         row.activitySubtype ?? "—",
                         truncateDisplay(row.sourceThreadId ?? "—", 40),

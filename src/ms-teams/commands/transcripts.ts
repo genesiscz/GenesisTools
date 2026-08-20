@@ -1,5 +1,5 @@
 import { openCache } from "@app/ms-teams/lib/cache";
-import { parseShowQuery } from "@app/ms-teams/lib/query";
+import { mergeShowQuery, parseShowQuery } from "@app/ms-teams/lib/query";
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -14,10 +14,10 @@ export function registerTranscriptsCommand(program: Command): void {
             const cache = openCache();
 
             try {
-                const resolved = resolveConversation(cache, {
-                    ...parseShowQuery((queryParts ?? []).join(" ")),
-                    id: opts.id,
-                });
+                const resolved = resolveConversation(
+                    cache,
+                    mergeShowQuery(parseShowQuery((queryParts ?? []).join(" ")), { id: opts.id })
+                );
 
                 if (resolved.status !== "exact") {
                     out.println("Could not resolve a single conversation. Pass --id.");

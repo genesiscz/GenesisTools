@@ -36,7 +36,7 @@ export function registerConversationsCommand(program: Command): void {
                             topic: opts.topic,
                             from: opts.from ? parseQueryDate(opts.from, "start") : undefined,
                             to: opts.to ? parseQueryDate(opts.to, "end") : undefined,
-                            limit: Number.parseInt(opts.limit ?? "40", 10),
+                            limit: parsePositiveLimit(opts.limit, 40),
                         });
 
                         if (opts.json) {
@@ -56,4 +56,18 @@ export function registerConversationsCommand(program: Command): void {
                 }
             );
     }
+}
+
+function parsePositiveLimit(value: string | undefined, fallback: number): number {
+    if (value === undefined) {
+        return fallback;
+    }
+
+    const n = Number.parseInt(value, 10);
+
+    if (!Number.isFinite(n) || n <= 0) {
+        throw new Error(`Invalid --limit ${value}. Use a positive integer.`);
+    }
+
+    return n;
 }

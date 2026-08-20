@@ -48,11 +48,19 @@ export function extractReplyToId(html: string): string | null {
 function decodeHtmlEntities(value: string): string {
     return value
         .replace(/&nbsp;/gi, " ")
-        .replace(/&amp;/gi, "&")
         .replace(/&lt;/gi, "<")
         .replace(/&gt;/gi, ">")
         .replace(/&quot;/gi, '"')
         .replace(/&#39;/gi, "'")
-        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-        .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(Number.parseInt(n, 16)));
+        .replace(/&#(\d+);/g, (_, n) => fromCodePointSafe(Number(n)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) => fromCodePointSafe(Number.parseInt(n, 16)))
+        .replace(/&amp;/gi, "&");
+}
+
+function fromCodePointSafe(code: number): string {
+    if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) {
+        return "";
+    }
+
+    return String.fromCodePoint(code);
 }

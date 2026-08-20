@@ -51,7 +51,7 @@ export function registerDoctorCommand(program: Command): void {
                 );
             }
 
-            if (!report.readable) {
+            if (report.idbExists && !report.readable) {
                 out.println(
                     "Full Disk Access: System Settings → Privacy & Security → Full Disk Access → enable your terminal, then restart it."
                 );

@@ -171,4 +171,14 @@ describe("TeamsCache ingest and query", () => {
 
         cache.close();
     });
+
+    test("refuses to wipe a populated cache with an empty dump", () => {
+        const cache = new TeamsCache(":memory:");
+        cache.ingestDump(sampleDump());
+        expect(() =>
+            cache.ingestDump({ conversations: [], replychains: [], profiles: [], calls: [], activity: [] })
+        ).toThrow(/empty/);
+        expect(cache.counts().conversations).toBeGreaterThan(0);
+        cache.close();
+    });
 });

@@ -28,7 +28,7 @@ export function decodeTeamsString(input: unknown): string {
         return unescapePythonString(repr);
     }
 
-    return unescapePythonString(input);
+    return input;
 }
 
 function matchPythonBytesRepr(value: string): string | null {
