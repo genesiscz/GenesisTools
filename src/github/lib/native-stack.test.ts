@@ -4,6 +4,7 @@ import {
     isNativeStackBaseError,
     NATIVE_STACK_BASE_ERROR,
     parsePullStackNumber,
+    posixShellSingleQuote,
 } from "./native-stack";
 
 describe("isNativeStackBaseError", () => {
@@ -83,5 +84,24 @@ describe("formatNativeStackRecovery", () => {
         expect(lines).toContain("gh api -X POST repos/genesiscz/GenesisBrain/stacks/8/unstack");
         expect(lines).toContain("gh api -X PATCH repos/genesiscz/GenesisBrain/pulls/7 -f base='master'");
         expect(lines.join("\n")).toContain(NATIVE_STACK_BASE_ERROR);
+    });
+
+    test("quotes a branch name that contains a single quote", () => {
+        const lines = formatNativeStackRecovery({
+            owner: "o",
+            repo: "r",
+            parentNumber: 1,
+            childNumber: 2,
+            newBase: "feat/it's-fine",
+            stackNumber: 3,
+        });
+        expect(lines).toContain("gh api -X PATCH repos/o/r/pulls/2 -f base='feat/it'\\''s-fine'");
+    });
+});
+
+describe("posixShellSingleQuote", () => {
+    test("wraps plain names and escapes embedded quotes", () => {
+        expect(posixShellSingleQuote("master")).toBe("'master'");
+        expect(posixShellSingleQuote("feat/it's-fine")).toBe("'feat/it'\\''s-fine'");
     });
 });

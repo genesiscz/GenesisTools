@@ -29,6 +29,7 @@ import {
     isNativeStackBaseError,
     NATIVE_STACK_BASE_ERROR,
     parsePullStackNumber,
+    posixShellSingleQuote,
 } from "./native-stack";
 
 /** GitHub API merge methods plus local-ref fast-forward. */
@@ -801,7 +802,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         remainingWork.push(
             `MERGED #${number}: parent is already on ${pr.baseRef}` +
                 (mergeSha ? ` at ${mergeSha.slice(0, 7)}` : "") +
-                ". Child PRs below are still OPEN. Do not close them."
+                ". Do not close remaining children to change their base."
         );
 
         for (const r of failedRetargets) {
@@ -821,7 +822,9 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
                     })
                 );
             } else {
-                remainingWork.push(`gh api -X PATCH repos/${owner}/${repo}/pulls/${r.number} -f base='${pr.baseRef}'`);
+                remainingWork.push(
+                    `gh api -X PATCH repos/${owner}/${repo}/pulls/${r.number} -f base=${posixShellSingleQuote(pr.baseRef)}`
+                );
             }
         }
 

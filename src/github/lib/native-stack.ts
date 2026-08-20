@@ -71,8 +71,14 @@ export function parsePullStackNumber(data: unknown): number | null {
  * Exact recovery commands after a native-stack retarget failure.
  * The parent SHA is already on the base; the child PR number stays the same.
  */
+/** Wrap `value` in POSIX single quotes so a branch name cannot break a shell command. */
+export function posixShellSingleQuote(value: string): string {
+    return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 export function formatNativeStackRecovery(input: NativeStackRecovery): string[] {
     const repo = `${input.owner}/${input.repo}`;
+    const base = posixShellSingleQuote(input.newBase);
     const lines = [
         `Child #${input.childNumber} is still OPEN (same number). Do not close and reopen it.`,
         `GitHub native stacks reject PATCH base: ${NATIVE_STACK_BASE_ERROR}`,
@@ -80,11 +86,11 @@ export function formatNativeStackRecovery(input: NativeStackRecovery): string[] 
 
     if (input.stackNumber != null) {
         lines.push(`gh api -X POST repos/${repo}/stacks/${input.stackNumber}/unstack`);
-        lines.push(`gh api -X PATCH repos/${repo}/pulls/${input.childNumber} -f base='${input.newBase}'`);
+        lines.push(`gh api -X PATCH repos/${repo}/pulls/${input.childNumber} -f base=${base}`);
     } else {
         lines.push(`gh api repos/${repo}/pulls/${input.childNumber} --jq .stack.number`);
         lines.push(`gh api -X POST repos/${repo}/stacks/<stack-number>/unstack`);
-        lines.push(`gh api -X PATCH repos/${repo}/pulls/${input.childNumber} -f base='${input.newBase}'`);
+        lines.push(`gh api -X PATCH repos/${repo}/pulls/${input.childNumber} -f base=${base}`);
     }
 
     return lines;

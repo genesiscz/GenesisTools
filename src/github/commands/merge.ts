@@ -78,7 +78,7 @@ function formatTextSummary(result: SafeMergeResult): string {
     }
 
     if (result.remainingWork.length > 0) {
-        lines.push(chalk.yellow("  remaining work (parent already merged; children still OPEN):"));
+        lines.push(chalk.yellow("  remaining work (parent already merged):"));
         for (const line of result.remainingWork) {
             lines.push(`    ${line}`);
         }

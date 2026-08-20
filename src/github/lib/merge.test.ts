@@ -41,7 +41,17 @@ function makeMock(opts: {
     const dependents = opts.dependents ?? [];
     const postMerge = opts.postMergeDependents ?? dependents;
     let merged = opts.pr.merged;
-    let unstacked = false;
+    const unstackedStacks = new Set<number>();
+
+    const stackNumberFor = (number: number): number | null => {
+        if (opts.stackByPr && Object.hasOwn(opts.stackByPr, number)) {
+            return opts.stackByPr[number];
+        }
+
+        return (
+            [...dependents, ...postMerge].find((d) => d.number === number)?.stackNumber ?? opts.pr.stackNumber ?? null
+        );
+    };
 
     const client: MergeGitHubClient = {
         async getPull(_owner, _repo, number) {
@@ -101,7 +111,11 @@ function makeMock(opts: {
         async updatePullBase(_owner, _repo, number, base) {
             calls.push({ op: "updatePullBase", args: [number, base] });
 
-            if (opts.stackBaseErrorUntilUnstack?.includes(number) && !unstacked) {
+            const stackNumber = stackNumberFor(number);
+            if (
+                opts.stackBaseErrorUntilUnstack?.includes(number) &&
+                (stackNumber === null || !unstackedStacks.has(stackNumber))
+            ) {
                 throw new Error(
                     `Validation Failed: {"message":"${NATIVE_STACK_BASE_ERROR}","resource":"PullRequest","field":"base","code":"invalid"}`
                 );
@@ -143,7 +157,7 @@ function makeMock(opts: {
                 throw new Error(`unstack failed for stack #${stackNumber}`);
             }
 
-            unstacked = true;
+            unstackedStacks.add(stackNumber);
         },
         async deleteBranch(_owner, _repo, branch) {
             calls.push({ op: "deleteBranch", args: [branch] });
@@ -773,5 +787,31 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
         expect(logs.some((l) => l.includes("MERGED #1"))).toBe(true);
         expect(logs.some((l) => l.includes("still OPEN"))).toBe(true);
+    });
+
+    test("two dependents in different native stacks: unstack each stack before PATCH succeeds", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [
+                dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a", stackNumber: 8 }),
+                dep({ number: 3, title: "PR C", headRef: "branch-c", baseRef: "branch-a", stackNumber: 9 }),
+            ],
+            stackBaseErrorUntilUnstack: [2, 3],
+            stackByPr: { 2: 8, 3: 9 },
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            deleteBranch: false,
+            client,
+        });
+
+        expect(result.retargeted.every((r) => r.ok && r.state === "open")).toBe(true);
+        expect(result.remainingWork).toEqual([]);
+        expect(calls.filter((c) => c.op === "unstack").map((c) => c.args[0])).toEqual([8, 9]);
+        expect(calls.filter((c) => c.op === "updatePullBase")).toHaveLength(4);
     });
 });
