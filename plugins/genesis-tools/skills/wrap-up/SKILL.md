@@ -35,8 +35,10 @@ If this session already read from or wrote to a specific Obsidian vault director
 Otherwise consult `~/.claude/handoff-registry.json`, which maps projects/branches/worktrees to their Obsidian home. Run:
 
 ```bash
-bun "$CLAUDE_PLUGIN_ROOT/skills/wrap-up/scripts/resolve.ts" resolve
+bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" resolve
 ```
+
+Claude Code substitutes the plugin-root placeholder into this document at load time; it is NOT a shell variable. If any command in this document still shows a literal unsubstituted `CLAUDE_PLUGIN_ROOT` placeholder, do not run it through the shell — build the path yourself from the "Base directory for this skill" line printed when this skill loaded (the plugin root is that directory minus the trailing `skills/wrap-up`).
 
 It reads your current git toplevel + branch + cwd, matches the most specific entry, and prints `{ found, obsidianDir, docPath, ... }`. If `found:true`, use that `docPath`. The registry shape:
 
@@ -77,7 +79,7 @@ If neither registry nor config yields a target (`found:false`), don't guess sile
 2. **Propose a target** to the user via `AskUserQuestion` — offer the inferred path as the recommended option plus one or two alternatives, so they confirm or redirect in one click.
 3. **Persist the choice** so it's never asked again for this project/branch:
    ```bash
-   bun "$CLAUDE_PLUGIN_ROOT/skills/wrap-up/scripts/resolve.ts" register --obsidian "<confirmed dir>" --branch "<branch>" --worktree "<worktree or omit>"
+   bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" register --obsidian "<confirmed dir>" --branch "<branch>" --worktree "<worktree or omit>"
    ```
 4. Then write the doc there.
 
@@ -143,7 +145,7 @@ The whole update — rewrite the `YOU-ARE-HERE` block in place, append the new l
 Pipe ONE heredoc split by two sentinel lines: `@@HERE@@` introduces the new state bullets (the script wraps them in `## You are here (<now>)` between the markers), then `@@LOG@@` introduces the log-section body you author. Quote the delimiter (`<<'WRAPUP'`) so backticks and `$` in your prose aren't shell-expanded:
 
 ```bash
-bun "$CLAUDE_PLUGIN_ROOT/skills/wrap-up/scripts/resolve.ts" log "<docPath>" <<'WRAPUP'
+bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" log "<docPath>" <<'WRAPUP'
 @@HERE@@
 - **Branch / worktree:** <branch> @ <absolute path>
 - **State:** <one line — what's done, what's mid-flight>
@@ -191,7 +193,7 @@ Append-only still holds: `log` only rewrites the header region and adds at the b
 To orient without reading the whole file, pull just the current-state header:
 
 ```bash
-bun "$CLAUDE_PLUGIN_ROOT/skills/wrap-up/scripts/resolve.ts" here <docPath>
+bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" here <docPath>
 # or with sed:
 sed -n '/YOU-ARE-HERE:START/,/YOU-ARE-HERE:END/p' <docPath>
 ```
