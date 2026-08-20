@@ -366,7 +366,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             }
 
             // If we are inside tmux, also select the window; attach is for outside
-            if (!process.env.TMUX) {
+            if (!env.get("TMUX")) {
                 Bun.spawnSync([tmux, "attach-session", "-t", live.tmuxSession], {
                     stdout: "inherit",
                     stderr: "inherit",
@@ -417,7 +417,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
     }
 
     // attach / launch in current context
-    if (process.env.TMUX) {
+    if (env.get("TMUX")) {
         // Launch in a new window of the current session so we don't clobber the caller
         const tmux = resolveTmuxBin();
         const name = opts.teammate.member.name.slice(0, 20);
