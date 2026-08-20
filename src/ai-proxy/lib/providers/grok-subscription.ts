@@ -13,6 +13,7 @@ import {
     type ToolMatcher,
     toolMatchersFromBody,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
+import { findServerTool } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
@@ -108,6 +109,25 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         let toolMatchers: ToolMatcher[] = [];
 
         if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            // Anthropic server tools execute inside Anthropic's API; grok's
+            // deserializer rejects them with an opaque `missing field
+            // description` that reads like a proxy bug (probe session
+            // d20dfdfe, Claude Code's WebSearch). Name the real cause instead.
+            const serverTool = findServerTool(parsed as Record<string, unknown>);
+
+            if (serverTool !== undefined) {
+                return new Response(
+                    SafeJSON.stringify({
+                        type: "error",
+                        error: {
+                            type: "invalid_request_error",
+                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${serverTool}". Server tools (web search, code execution) execute inside Anthropic's API, which this account does not reach.`,
+                        },
+                    }),
+                    { status: 400, headers: { "Content-Type": "application/json" } }
+                );
+            }
+
             const body = stringifyUnknownToolResultBlocks(
                 hoistSystemMessages(ensureToolRequiredArrays(parsed as Record<string, unknown>))
             );
