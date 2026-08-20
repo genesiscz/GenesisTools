@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -30,15 +30,24 @@ const log = logger.scoped("ms-teams").log;
 export class TeamsCache {
     private db: Database;
 
-    constructor(dbPath: string) {
+    constructor(dbPath: string, opts?: { readonly?: boolean }) {
         if (dbPath !== ":memory:") {
-            mkdirSync(dirname(dbPath), { recursive: true });
+            mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
+        }
+
+        if (opts?.readonly) {
+            this.db = new Database(dbPath, { readonly: true });
+            return;
         }
 
         this.db = new Database(dbPath);
         this.db.run("PRAGMA journal_mode = WAL");
         this.db.run("PRAGMA foreign_keys = ON");
         this.migrate();
+
+        if (dbPath !== ":memory:") {
+            chmodSync(dbPath, 0o600);
+        }
     }
 
     close(): void {
@@ -124,7 +133,14 @@ export class TeamsCache {
         )`);
     }
 
-    ingestDump(dump: TeamsDump): { conversations: number; messages: number; people: number } {
+    ingestDump(
+        dump: TeamsDump,
+        opts?: { force?: boolean }
+    ): { conversations: number; messages: number; people: number } {
+        if (!opts?.force && dump.conversations.length === 0 && dump.replychains.length === 0) {
+            throw new Error("Teams dump is empty; refusing to wipe the cache. Pass --force to override.");
+        }
+
         const people = new Map<string, Person>();
         let meMri: string | null = this.getMeta("me_mri");
 
@@ -436,7 +452,8 @@ export class TeamsCache {
         text: string,
         opts: { withName?: string; conversationId?: string; from?: Date; to?: Date; limit?: number }
     ): MessageRow[] {
-        const limit = opts.limit ?? 50;
+        const requested = opts.limit ?? 50;
+        const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.floor(requested), 500) : 50;
         const rows = this.db
             .query(
                 `SELECT m.* FROM messages_fts f

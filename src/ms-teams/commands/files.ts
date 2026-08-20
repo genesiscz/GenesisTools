@@ -20,7 +20,14 @@ export function registerFilesCommand(program: Command): void {
             const cache = openCache();
 
             try {
-                const conversationId = resolveOptionalId(cache, queryParts, opts.id);
+                const resolved = resolveOptionalId(cache, queryParts, opts.id);
+
+                if (resolved.status === "missing") {
+                    out.println("Could not resolve that conversation. Pass --id.");
+                    return;
+                }
+
+                const conversationId = resolved.status === "exact" ? resolved.id : undefined;
                 const rows = cache.listFiles(conversationId);
 
                 if (opts.json) {
@@ -54,14 +61,19 @@ export function registerFilesCommand(program: Command): void {
             const cache = openCache();
 
             try {
-                const conversationId = resolveOptionalId(cache, queryParts, opts.id);
+                const resolved = resolveOptionalId(cache, queryParts, opts.id);
 
-                if (!conversationId) {
+                if (resolved.status === "none") {
                     out.println("Pass a conversation query or --id.");
                     return;
                 }
 
-                const rows = cache.listFiles(conversationId);
+                if (resolved.status !== "exact") {
+                    out.println("Could not resolve that conversation. Pass --id.");
+                    return;
+                }
+
+                const rows = cache.listFiles(resolved.id);
                 await mkdir(opts.out, { recursive: true });
                 const downloaded = await downloadAttachments({
                     attachments: rows.map((r) => ({
@@ -86,17 +98,17 @@ function resolveOptionalId(
     cache: ReturnType<typeof openCache>,
     queryParts: string[] | undefined,
     id?: string
-): string | undefined {
+): { status: "none" | "exact" | "missing"; id?: string } {
     if (id) {
-        return id;
+        return { status: "exact", id };
     }
 
     const text = (queryParts ?? []).join(" ").trim();
 
     if (!text) {
-        return undefined;
+        return { status: "none" };
     }
 
     const resolved = resolveConversation(cache, parseShowQuery(text));
-    return resolved.status === "exact" ? resolved.conversation.id : undefined;
+    return resolved.status === "exact" ? { status: "exact", id: resolved.conversation.id } : { status: "missing" };
 }

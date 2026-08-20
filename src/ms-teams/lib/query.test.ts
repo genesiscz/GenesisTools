@@ -12,6 +12,7 @@ describe("parseShowQuery", () => {
         expect(q.to?.getMonth()).toBe(7);
         expect(q.to?.getDate()).toBe(6);
         expect(q.to && q.from ? q.to.getTime() > q.from.getTime() : false).toBe(true);
+        expect(q.topic).toBeUndefined();
     });
 
     test("parses a topic title leftover", () => {

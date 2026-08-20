@@ -45,11 +45,7 @@ export function parseShowQuery(input: string): ShowQuery {
     }
 
     if (rest.length > 0) {
-        if (result.withName) {
-            result.topic = rest;
-        } else {
-            result.topic = rest;
-        }
+        result.topic = rest;
     }
 
     return result;
@@ -70,13 +66,6 @@ function takeWith(rest: string, result: ShowQuery): string {
     const match = rest.match(/\b(?:conversation|chat|meeting)?\s*with\s+(.+)$/i);
 
     if (!match) {
-        const prefix = rest.match(/^(?:conversation|chat|meeting)?\s*with\s+(.+)$/i);
-
-        if (prefix) {
-            result.withName = cleanName(prefix[1]);
-            return "";
-        }
-
         return rest;
     }
 
@@ -87,7 +76,6 @@ function takeWith(rest: string, result: ShowQuery): string {
 
 function takeRange(rest: string, result: ShowQuery): string {
     const fromMatch = rest.match(/\b(?:from|since)\s+(.+?)(?=\s+(?:to|until|till|with)\b|$)/i);
-    const toMatch = rest.match(/\b(?:to|until|till)\s+(.+?)(?=\s+(?:from|since|with)\b|$)/i);
 
     if (fromMatch) {
         const parsed = parseQueryDate(fromMatch[1].trim(), "start");
@@ -97,6 +85,8 @@ function takeRange(rest: string, result: ShowQuery): string {
             rest = rest.replace(fromMatch[0], " ").replace(/\s+/g, " ").trim();
         }
     }
+
+    const toMatch = rest.match(/\b(?:to|until|till)\s+(.+?)(?=\s+(?:from|since|with)\b|$)/i);
 
     if (toMatch) {
         const parsed = parseQueryDate(toMatch[1].trim(), "end");

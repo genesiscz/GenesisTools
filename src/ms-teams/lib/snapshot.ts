@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { liveBlobDir, liveIdbDir, snapshotDir } from "./paths";
@@ -22,24 +22,47 @@ export function snapshotTeamsIdb(): SnapshotPaths {
     }
 
     const root = snapshotDir();
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    chmodSync(root, 0o700);
+
     const leveldbDir = join(root, "idb");
     const blobDir = join(root, "blob");
     const dumpDir = join(root, "dump");
+    const tmpIdb = join(root, `idb.tmp.${process.pid}`);
+    const tmpBlob = join(root, `blob.tmp.${process.pid}`);
 
+    rmSync(tmpIdb, { recursive: true, force: true });
+    rmSync(tmpBlob, { recursive: true, force: true });
+    mkdirSync(tmpIdb, { recursive: true, mode: 0o700 });
+    cpSync(idb, tmpIdb, { recursive: true });
     rmSync(leveldbDir, { recursive: true, force: true });
-    rmSync(blobDir, { recursive: true, force: true });
-    mkdirSync(leveldbDir, { recursive: true });
-    mkdirSync(dumpDir, { recursive: true });
-    cpSync(idb, leveldbDir, { recursive: true });
+    renameSync(tmpIdb, leveldbDir);
+    chmodSync(leveldbDir, 0o700);
 
     if (existsSync(blob)) {
-        cpSync(blob, blobDir, { recursive: true });
+        mkdirSync(tmpBlob, { recursive: true, mode: 0o700 });
+        cpSync(blob, tmpBlob, { recursive: true });
+        rmSync(blobDir, { recursive: true, force: true });
+        renameSync(tmpBlob, blobDir);
+        chmodSync(blobDir, 0o700);
     } else {
-        mkdirSync(blobDir, { recursive: true });
+        mkdirSync(blobDir, { recursive: true, mode: 0o700 });
     }
 
-    const size = statSync(idb).isDirectory() ? 0 : statSync(idb).size;
-    log.debug({ idb, leveldbDir, size }, "[ms-teams] snapshotted IndexedDB");
+    mkdirSync(dumpDir, { recursive: true, mode: 0o700 });
+    chmodSync(dumpDir, 0o700);
+
+    log.debug({ idb, leveldbDir }, "[ms-teams] snapshotted IndexedDB");
 
     return { leveldbDir, blobDir, dumpDir };
+}
+
+export function liveIdbMtimeMs(): number {
+    const current = join(liveIdbDir(), "CURRENT");
+
+    if (existsSync(current)) {
+        return statSync(current).mtimeMs;
+    }
+
+    return existsSync(liveIdbDir()) ? statSync(liveIdbDir()).mtimeMs : 0;
 }

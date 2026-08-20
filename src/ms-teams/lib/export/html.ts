@@ -11,12 +11,21 @@ export function renderHtml(thread: ThreadExport): string {
                 ? `<blockquote class="reply">reply to ${escapeHtml(message.replyTo.from)}: ${escapeHtml(message.replyTo.excerpt)}</blockquote>`
                 : "";
             const body = message.html
-                ? `<div class="html">${message.html}</div>`
+                ? `<div class="html">${sanitizeHtml(message.html)}</div>`
                 : `<p>${escapeHtml(message.text || "")}</p>`;
             const attachments = message.attachments
                 .map((a) => {
                     const href = a.localPath ?? a.url;
-                    return href ? `<p class="file"><a href="${escapeHtml(href)}">${escapeHtml(a.name)}</a></p>` : "";
+
+                    if (!href) {
+                        return "";
+                    }
+
+                    if (!isSafeHref(href)) {
+                        return `<p class="file">${escapeHtml(a.name)}</p>`;
+                    }
+
+                    return `<p class="file"><a href="${escapeHtml(href)}">${escapeHtml(a.name)}</a></p>`;
                 })
                 .join("");
             const reactions =
@@ -57,4 +66,17 @@ ${items}
 
 function escapeHtml(value: string): string {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function sanitizeHtml(html: string): string {
+    return html
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+        .replace(/javascript:/gi, "");
+}
+
+function isSafeHref(href: string): boolean {
+    const trimmed = href.trim();
+    return /^(https?:\/\/|\/|\.\/)/i.test(trimmed) && !/^\s*javascript:/i.test(trimmed);
 }

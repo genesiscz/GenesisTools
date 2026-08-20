@@ -51,10 +51,16 @@ export function createHandlers(): Record<string, Handler> {
             }
         },
         ms_teams_search: (args) => {
+            const text = str(args.text);
+
+            if (!text) {
+                throw new Error("ms_teams_search requires a non-empty 'text' argument");
+            }
+
             const cache = openCache();
 
             try {
-                return cache.searchMessages(str(args.text) ?? "", {
+                return cache.searchMessages(text, {
                     withName: str(args.with),
                     from: str(args.from) ? parseQueryDate(String(args.from), "start") : undefined,
                     to: str(args.to) ? parseQueryDate(String(args.to), "end") : undefined,

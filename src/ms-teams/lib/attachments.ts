@@ -150,9 +150,11 @@ export async function downloadAttachments(args: {
 }): Promise<{ attachments: Attachment[]; failed: number }> {
     const { attachments, outDir } = args;
     const fetchImpl = args.fetchImpl ?? fetch;
-    await mkdir(outDir, { recursive: true });
+    await mkdir(outDir, { recursive: true, mode: 0o700 });
     let failed = 0;
     const result: Attachment[] = [];
+    const usedNames = new Set<string>();
+    const maxBytes = 50 * 1024 * 1024;
 
     for (const attachment of attachments) {
         if (!attachment.url || attachment.url.startsWith("file:")) {
@@ -160,8 +162,11 @@ export async function downloadAttachments(args: {
             continue;
         }
 
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30_000);
+
         try {
-            const res = await fetchImpl(attachment.url);
+            const res = await fetchImpl(attachment.url, { signal: controller.signal });
 
             if (!res.ok) {
                 logger.debug({ status: res.status, url: attachment.url }, "[ms-teams] attachment download failed");
@@ -170,14 +175,24 @@ export async function downloadAttachments(args: {
                 continue;
             }
 
-            const safe = sanitizeFilename(attachment.name || "attachment");
-            const dest = join(outDir, safe);
-            await Bun.write(dest, await res.arrayBuffer());
+            const dest = uniqueDest(outDir, attachment.name || "attachment", attachment.itemId, usedNames);
+            await Bun.write(dest, res);
+            const written = Bun.file(dest).size;
+
+            if (written > maxBytes) {
+                await Bun.file(dest).unlink();
+                failed += 1;
+                result.push(attachment);
+                continue;
+            }
+
             result.push({ ...attachment, localPath: dest });
         } catch (err) {
             logger.debug({ err, url: attachment.url }, "[ms-teams] attachment download threw");
             failed += 1;
             result.push(attachment);
+        } finally {
+            clearTimeout(timer);
         }
     }
 
@@ -204,7 +219,7 @@ export function parseJsonField(value: unknown): unknown {
     }
 
     try {
-        return SafeJSON.parse(decoded);
+        return SafeJSON.parse(decoded, { strict: true });
     } catch (err) {
         logger.debug({ err }, "[ms-teams] properties JSON field was not parseable");
         return decoded;
@@ -226,4 +241,22 @@ function sanitizeFilename(name: string): string {
             .replace(/\s+/g, " ")
             .trim() || "attachment";
     return base.slice(0, 120);
+}
+
+function uniqueDest(dir: string, name: string, itemId: string | null, used: Set<string>): string {
+    const safe = sanitizeFilename(name);
+    const dot = safe.lastIndexOf(".");
+    const stem = dot > 0 ? safe.slice(0, dot) : safe;
+    const ext = dot > 0 ? safe.slice(dot) : "";
+    const suffix = itemId ? itemId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) : "";
+    let candidate = suffix ? `${stem}-${suffix}${ext}` : safe;
+    let n = 2;
+
+    while (used.has(candidate)) {
+        candidate = `${stem}-${n}${ext}`;
+        n += 1;
+    }
+
+    used.add(candidate);
+    return join(dir, candidate);
 }

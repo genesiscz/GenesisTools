@@ -196,9 +196,9 @@ export function parseMessage(raw: unknown, conversationId: string, meMri: string
     const parent = decodeTeamsString(rec.parentMessageId);
     const replyToId = parent && parent !== id ? parent : extracted.replyToId;
     const fromMri = decodeTeamsString(rec.creator) || null;
-    const fromName = decodeTeamsString(rec.imDisplayName ?? rec.fromDisplayNameInToken) || fromMri;
+    const fromName = decodeTeamsString(rec.imDisplayName) || decodeTeamsString(rec.fromDisplayNameInToken) || fromMri;
     const isSent = rec.isSentByCurrentUser === true || rec.isSentByCurrentUser === "true";
-    const originalArrivalTime = numberish(rec.originalArrivalTime ?? rec.clientArrivalTime) ?? 0;
+    const originalArrivalTime = numberish(rec.originalArrivalTime) ?? numberish(rec.clientArrivalTime) ?? 0;
     const messageType = decodeTeamsString(rec.messageType ?? rec.type) || "Message";
 
     if (!originalArrivalTime) {
