@@ -35,7 +35,7 @@ export async function identityPipeline({
         return pipelineResult(await provider.responses(req, upstreamModel, bodyText), undefined, startedAt);
     }
 
-    const upstream = await provider.chatCompletions(req, upstreamModel, bodyText);
+    const upstream = await provider.chatCompletions(req, upstreamModel, bodyText, { thinkingMode });
 
     if (!proxyModel || !CHAT_ENRICHED_PROVIDERS.has(provider.id)) {
         return pipelineResult(upstream, undefined, startedAt);

@@ -16,7 +16,7 @@ export function prepareCopilotRequest(bodyText: string, upstreamModel: string): 
     const route = resolveCopilotUpstreamRoute(upstreamModel, parsed);
 
     if (isAnthropicShapedBody(parsed) && route.api !== "messages") {
-        normalizeAnthropicToOpenAI(parsed, /claude/i.test(upstreamModel));
+        normalizeAnthropicToOpenAI(parsed);
     }
 
     if (route.api === "responses" && parsed.max_tokens && !parsed.max_completion_tokens) {

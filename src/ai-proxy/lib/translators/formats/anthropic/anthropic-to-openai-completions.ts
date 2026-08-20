@@ -22,7 +22,13 @@ export interface OpenAiChatCompletion {
     model: string;
     choices: Array<{
         index: number;
-        message: { role: "assistant"; content: string | null; tool_calls?: OpenAiToolCall[] };
+        message: {
+            role: "assistant";
+            content: string | null;
+            /** Extended-thinking text, in the field name OpenAI-shaped clients read. */
+            reasoning_content?: string;
+            tool_calls?: OpenAiToolCall[];
+        };
         finish_reason: string;
     }>;
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
@@ -53,6 +59,7 @@ export function anthropicMessageToOpenAiCompletion(
 ): OpenAiChatCompletion {
     const contentBlocks = Array.isArray(message.content) ? message.content : [];
     const textParts: string[] = [];
+    const reasoningParts: string[] = [];
     const toolCalls: OpenAiToolCall[] = [];
 
     for (const block of contentBlocks) {
@@ -62,6 +69,13 @@ export function anthropicMessageToOpenAiCompletion(
 
         if (block.type === "text" && typeof block.text === "string") {
             textParts.push(block.text);
+            continue;
+        }
+
+        // The streaming path forwards thinking as reasoning_content; this JSON
+        // path silently dropped it until 2026-08-19 — same bug, other twin.
+        if (block.type === "thinking" && typeof block.thinking === "string") {
+            reasoningParts.push(block.thinking);
             continue;
         }
 
@@ -93,6 +107,7 @@ export function anthropicMessageToOpenAiCompletion(
                 message: {
                     role: "assistant",
                     content: textParts.length > 0 ? textParts.join("") : null,
+                    ...(reasoningParts.length > 0 ? { reasoning_content: reasoningParts.join("\n\n") } : {}),
                     ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
                 },
                 finish_reason: mapFinishReason(message.stop_reason as AnthropicStopReason),

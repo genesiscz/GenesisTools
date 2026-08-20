@@ -1,8 +1,14 @@
 /* Ported from _Playgrounds/copilot-for-cursor/anthropic-transforms.ts (inspiration only) */
 
+import { REASONING_EFFORT_SUFFIXES } from "@app/ai-proxy/lib/resolve-model";
+import type { ReasoningEffort } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 type JsonRecord = Record<string, unknown>;
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function cleanSchema(schema: unknown): unknown {
     if (!schema || typeof schema !== "object") {
@@ -33,7 +39,7 @@ function cleanSchema(schema: unknown): unknown {
     return record;
 }
 
-function sanitizeContentPart(part: unknown, isClaude: boolean): unknown | null {
+function sanitizeContentPart(part: unknown): unknown | null {
     if (!part || typeof part !== "object") {
         return null;
     }
@@ -43,10 +49,11 @@ function sanitizeContentPart(part: unknown, isClaude: boolean): unknown | null {
         delete record.cache_control;
     }
 
-    if (isClaude && (record.type === "image" || (record.source as JsonRecord | undefined)?.type === "base64")) {
-        return { type: "text", text: "[Image Omitted]" };
-    }
-
+    // The playground port this file came from replaced every image with the literal
+    // text "[Image Omitted]" when the model id contained "claude". That silently
+    // blinded claude-named models reached through translation (OpenRouter's claude
+    // models accept image_url). Images now translate uniformly; an upstream that
+    // truly cannot take them will say so with a 400 instead of losing data quietly.
     if (record.type === "image" && (record.source as JsonRecord | undefined)?.type === "base64") {
         const source = record.source as JsonRecord;
         return {
@@ -108,7 +115,51 @@ function transformAnthropicFields(json: JsonRecord): void {
         delete json.max_tokens_to_sample;
     }
 
-    for (const field of ["metadata", "anthropic_version", "top_k", "thinking"]) {
+    // Claude Code's `/effort` command travels as `output_config.effort`, using
+    // exactly the vocabulary (low/medium/high/xhigh/max) that OpenAI-shaped
+    // upstreams take as `reasoning_effort`. Deleting the field unread threw the
+    // user's setting away: 23 recorded requests asked for xhigh and every one
+    // reached the upstream at the model's default. Translate it, do not drop it.
+    //
+    // The client's own `reasoning_effort` wins, which keeps a deliberate
+    // `model:xhigh` pin (stamped upstream of this by applyReasoningEffortToBody)
+    // ahead of the live session setting.
+    const outputConfig = json.output_config;
+
+    if (isJsonRecord(outputConfig)) {
+        if (typeof outputConfig.effort === "string") {
+            const effort = outputConfig.effort.trim();
+            // Only known efforts are forwarded: an unrecognised string reaching an
+            // upstream is a 400 for the whole request, and silently dropping the
+            // field degrades to the model default instead.
+            const existing = typeof json.reasoning_effort === "string" ? json.reasoning_effort.trim() : "";
+
+            if (REASONING_EFFORT_SUFFIXES.includes(effort as ReasoningEffort) && existing.length === 0) {
+                json.reasoning_effort = effort;
+            }
+        }
+
+        // `output_config.format` is Anthropic's structured-output request. Deleting it
+        // unread let a schema-constrained call run free-form: one recorded request
+        // looped for 11m44s / 152,551 characters until stop_reason=length. OpenAI-shaped
+        // upstreams take exactly this as `response_format.json_schema`.
+        if (json.response_format === undefined) {
+            const format = outputConfig.format;
+
+            if (isJsonRecord(format) && format.type === "json_schema" && isJsonRecord(format.schema)) {
+                json.response_format = {
+                    type: "json_schema",
+                    json_schema: { name: "structured_output", schema: format.schema },
+                };
+            }
+        }
+    }
+
+    // Anthropic-only request fields with no OpenAI equivalent. `context_management`
+    // and `output_config` are sent by Claude Code on every turn and were being
+    // forwarded verbatim: Grok tolerates unknown parameters, but stricter upstreams
+    // (xAI, OpenAI) answer 400, so the leak was a latent failure on those providers.
+    for (const field of ["metadata", "anthropic_version", "top_k", "thinking", "context_management", "output_config"]) {
         if (field in json) {
             delete json[field];
         }
@@ -160,7 +211,7 @@ function transformToolChoice(json: JsonRecord): void {
     }
 }
 
-function transformMessages(json: JsonRecord, isClaude: boolean): void {
+function transformMessages(json: JsonRecord): void {
     if (!Array.isArray(json.messages)) {
         return;
     }
@@ -170,6 +221,11 @@ function transformMessages(json: JsonRecord, isClaude: boolean): void {
     for (const message of json.messages) {
         const msg = message as JsonRecord;
 
+        // Assistant `thinking` blocks are dropped here on purpose: the OpenAI chat
+        // shape has no request slot for replayed reasoning, and the upstreams this
+        // translator serves either ignore or reject one. Providers whose upstream
+        // speaks Anthropic natively must implement `ProxyProvider.messages()` and
+        // skip this translation entirely — that is where reasoning continuity lives.
         if (msg.role === "assistant" && Array.isArray(msg.content)) {
             const textParts: string[] = [];
             const toolCalls: JsonRecord[] = [];
@@ -239,16 +295,22 @@ function transformMessages(json: JsonRecord, isClaude: boolean): void {
                     }
                 }
 
+                // The OpenAI tool message has no error flag, so a failed call that
+                // arrives as `is_error: true` must be marked in the text or the model
+                // cannot tell it from a success. 32 real failures crossed this path
+                // unmarked before this prefix existed.
+                const failedPrefix = tr.is_error === true ? "[Tool call failed] " : "";
+
                 newMessages.push({
                     role: "tool",
                     tool_call_id: tr.tool_use_id,
-                    content: resultContent || "",
+                    content: `${failedPrefix}${resultContent || ""}`,
                 });
             }
 
             if (otherParts.length > 0) {
                 const cleaned = otherParts
-                    .map((part) => sanitizeContentPart(part, isClaude))
+                    .map((part) => sanitizeContentPart(part))
                     .filter((part): part is NonNullable<typeof part> => part !== null);
 
                 if (cleaned.length > 0) {
@@ -261,7 +323,7 @@ function transformMessages(json: JsonRecord, isClaude: boolean): void {
 
         if (Array.isArray(msg.content)) {
             const cleaned = msg.content
-                .map((part) => sanitizeContentPart(part, isClaude))
+                .map((part) => sanitizeContentPart(part))
                 .filter((part): part is NonNullable<typeof part> => part !== null);
             msg.content = cleaned.length > 0 ? cleaned : " ";
         }
@@ -286,9 +348,9 @@ function transformMessages(json: JsonRecord, isClaude: boolean): void {
     }
 }
 
-export function normalizeAnthropicToOpenAI(body: JsonRecord, isClaude = true): void {
+export function normalizeAnthropicToOpenAI(body: JsonRecord): void {
     transformAnthropicFields(body);
     transformTools(body);
     transformToolChoice(body);
-    transformMessages(body, isClaude);
+    transformMessages(body);
 }

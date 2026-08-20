@@ -127,7 +127,18 @@ export function transformResponsesToChatCompletion({
         message.tool_calls = toolCalls;
     }
 
-    const finishReason = toolCalls.length > 0 ? "tool_calls" : "stop";
+    // A reply truncated at max_output_tokens used to reach the client as a clean
+    // "stop" — the Responses status and incomplete_details were never read.
+    const incompleteDetails = isObject(response.incomplete_details) ? response.incomplete_details : undefined;
+    let finishReason: string;
+
+    if (response.status === "incomplete" && incompleteDetails?.reason === "max_output_tokens") {
+        finishReason = "length";
+    } else if (response.status === "incomplete" && incompleteDetails?.reason === "content_filter") {
+        finishReason = "content_filter";
+    } else {
+        finishReason = toolCalls.length > 0 ? "tool_calls" : "stop";
+    }
     const created =
         typeof response.created_at === "number" && response.created_at > 0
             ? response.created_at

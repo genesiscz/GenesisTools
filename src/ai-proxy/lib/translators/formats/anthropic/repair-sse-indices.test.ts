@@ -1,0 +1,257 @@
+import { describe, expect, it } from "bun:test";
+import { repairAnthropicSseIndices } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
+import { SafeJSON } from "@genesiscz/utils/json";
+
+function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+
+    return new ReadableStream({
+        start(controller) {
+            for (const chunk of chunks) {
+                controller.enqueue(encoder.encode(chunk));
+            }
+
+            controller.close();
+        },
+    });
+}
+
+async function collect(stream: ReadableStream<Uint8Array>): Promise<string> {
+    return await new Response(stream).text();
+}
+
+describe("repairAnthropicSseIndices", () => {
+    it("renumbers grok's duplicate block indices and stamps deltas", async () => {
+        // Verbatim shape observed live from grok's /v1/messages: both blocks at
+        // index 0, deltas with no index at all.
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"4"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        expect(frames.map((frame) => [frame.type, frame.index])).toEqual([
+            ["content_block_start", 0],
+            ["content_block_delta", 0],
+            ["content_block_stop", 0],
+            ["content_block_start", 1],
+            ["content_block_delta", 1],
+            ["content_block_stop", 1],
+        ]);
+    });
+
+    it("passes non-block frames and event lines through verbatim", async () => {
+        const input = [
+            "event: message_start\n",
+            'data: {"type":"message_start","message":{"id":"m1"}}\n\n',
+            ": keepalive\n",
+            "data: [DONE]\n\n",
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+
+        expect(out).toContain('data: {"type":"message_start","message":{"id":"m1"}}');
+        expect(out).toContain(": keepalive");
+        expect(out).toContain("data: [DONE]");
+    });
+
+    it("does not lose a final frame that ends without a trailing newline", async () => {
+        const input = ['data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"tail"}}'];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+
+        expect(out).toContain('"text":"tail"');
+        expect(out).toContain('"index":0');
+        // Terminated: an unterminated final frame is never dispatched by a
+        // conformant SSE parser.
+        expect(out.endsWith("\n\n")).toBe(true);
+    });
+
+    it("preserves the indices of a spec-compliant interleaved stream", async () => {
+        // Two blocks open at once, deltas alternating — the shape the Anthropic
+        // spec allows. The repairer must be an identity rewrite here, not stamp
+        // every delta with the last-started block's index.
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t0","name":"Bash","input":{}}}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"ls\\"}"}}\n\n',
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        expect(frames.map((frame) => [frame.type, frame.index])).toEqual([
+            ["content_block_start", 0],
+            ["content_block_start", 1],
+            ["content_block_delta", 0],
+            ["content_block_delta", 1],
+            ["content_block_stop", 0],
+            ["content_block_stop", 1],
+        ]);
+    });
+
+    it("emits buffered merged calls when the stream ends without content_block_stop", async () => {
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"a\\"}{\\"command\\":\\"b\\"}"}}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+
+        // The second call's bytes must reach the client, not die in the buffer.
+        expect(out).toContain('{\\"command\\":\\"b\\"}');
+        expect(out).toContain('"type":"content_block_start","index":1');
+        expect(out.endsWith("\n\n")).toBe(true);
+    });
+
+    it("hands ALL held bytes back when the overflow is not a second call", async () => {
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"a\\":1} {\\"b\\":2} zz"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        // One block only — no guessed split next to a corrupted first call.
+        expect(frames.filter((frame) => frame.type === "content_block_start")).toHaveLength(1);
+
+        const streamed = frames
+            .filter((frame) => frame.type === "content_block_delta")
+            .map((frame) => (frame.delta as Record<string, unknown>).partial_json)
+            .join("");
+
+        // Everything the upstream sent (minus insignificant gap whitespace)
+        // reaches the client on the ONE block, so it fails loudly client-side.
+        expect(streamed).toBe('{"a":1}{"b":2}zz');
+    });
+
+    it("splits two tool calls grok merged into one block (separate deltas — the observed shape)", async () => {
+        // Verbatim wire shape from callId 7a802f21: ONE tool_use start, two
+        // complete JSON objects as consecutive input_json_delta frames, one
+        // stop. Claude Code failed the call with InputValidationError.
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}}\n\n',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"ls -la\\"}"}}\n\n',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"echo hi\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        const inputs = new Map<number, string>();
+
+        for (const frame of frames) {
+            if (frame.type === "content_block_delta") {
+                const delta = frame.delta as Record<string, unknown>;
+                const index = frame.index as number;
+                inputs.set(index, (inputs.get(index) ?? "") + String(delta.partial_json ?? ""));
+            }
+        }
+
+        expect(inputs.get(0)).toBe('{"command":"ls -la"}');
+        expect(inputs.get(1)).toBe('{"command":"echo hi"}');
+
+        const starts = frames.filter((frame) => frame.type === "content_block_start");
+        expect(starts).toHaveLength(2);
+        expect((starts[1].content_block as Record<string, unknown>).name).toBe("Bash");
+
+        const stops = frames.filter((frame) => frame.type === "content_block_stop");
+        expect(stops.map((frame) => frame.index)).toEqual([0, 1]);
+    });
+
+    it("names an orphaned call by matching its keys against the request's tool schemas", async () => {
+        // Grok merged a Bash call and a Read call into ONE block. The wire has
+        // no second name; guessing "same tool" cross-wired sessions into retry
+        // loops (194 splits, 19 InputValidationErrors in session 8dfb08ea).
+        const tools = [
+            { name: "Bash", required: ["command"], properties: ["command", "description"] },
+            { name: "Read", required: ["file_path"], properties: ["file_path", "limit"] },
+        ];
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"ls\\"}"}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"/tmp/x\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input), { tools }));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        const starts = frames.filter((frame) => frame.type === "content_block_start");
+        expect(starts.map((frame) => (frame.content_block as Record<string, unknown>).name)).toEqual(["Bash", "Read"]);
+
+        // Order: the orphan block appears only AFTER the original block's stop.
+        const order = frames
+            .filter((frame) => frame.type !== "content_block_delta")
+            .map((frame) => `${frame.type}[${frame.index}]`);
+        expect(order).toEqual([
+            "content_block_start[0]",
+            "content_block_stop[0]",
+            "content_block_start[1]",
+            "content_block_stop[1]",
+        ]);
+    });
+
+    it("splits two tool calls merged into a single delta", async () => {
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Read","input":{}}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"p\\":\\"a\\"} {\\"p\\":\\"b\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+
+        expect(out).toContain('"partial_json":"{\\"p\\":\\"a\\"}"');
+        expect(out).toContain('"partial_json":"{\\"p\\":\\"b\\"}"');
+        expect(out.match(/"type":"content_block_start"/g)).toHaveLength(2);
+    });
+
+    it("does not split on braces inside strings", async () => {
+        const payload = '{"command":"echo \'}{\' and \\\\\\" done"}';
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}}\n\n',
+            `data: ${SafeJSON.stringify({ type: "content_block_delta", delta: { type: "input_json_delta", partial_json: payload } })}\n\n`,
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input)));
+
+        expect(out.match(/"type":"content_block_start"/g)).toHaveLength(1);
+        expect(out).toContain("}{");
+    });
+
+    it("survives a frame split across chunk boundaries", async () => {
+        const frame = 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n';
+        const out = await collect(repairAnthropicSseIndices(sseStream([frame.slice(0, 30), frame.slice(30)])));
+
+        expect(out).toContain('"type":"content_block_start"');
+        expect(out).toContain('"index":0');
+    });
+});

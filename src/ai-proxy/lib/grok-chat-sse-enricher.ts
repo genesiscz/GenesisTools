@@ -1,3 +1,4 @@
+import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import {
     closeFoldedDetailsContent,
     createFoldedStreamState,
@@ -392,19 +393,22 @@ export async function enrichGrokChatResponse(
 
     const contentType = response.headers.get("content-type") ?? "";
 
+    // relayHeaders, not a verbatim copy: Bun's fetch has already decoded the
+    // body, so relaying content-encoding makes the client try to decompress
+    // plaintext (BrotliDecompressionError — the same bug the /stt relay and the
+    // Anthropic passthrough each hit once already).
     if (contentType.includes("text/event-stream")) {
         return new Response(enrichGrokChatSseStream(response.body, responseModel, thinkingMode), {
             status: response.status,
             statusText: response.statusText,
-            headers: response.headers,
+            headers: relayHeaders(response),
         });
     }
 
     if (contentType.includes("application/json")) {
         const bodyText = await response.text();
         const rewritten = enrichGrokChatCompletionJson(bodyText, responseModel, thinkingMode);
-        const headers = new Headers(response.headers);
-        headers.delete("content-length");
+        const headers = relayHeaders(response);
         headers.delete("etag");
 
         return new Response(rewritten, {
