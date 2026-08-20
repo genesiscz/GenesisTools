@@ -31,17 +31,30 @@ describe("parseWebSearchServerTool", () => {
         expect(tool).toEqual({ name: "web_search", maxUses: 3, allowedDomains: ["x.ai"], blockedDomains: undefined });
     });
 
-    it("names what the native /responses translation would drop", () => {
+    it("returns undefined when no web_search server tool is offered", () => {
+        expect(
+            parseWebSearchServerTool({ tools: [{ type: "code_execution_20250522", name: "code_execution" }] })
+        ).toBeUndefined();
+        expect(parseWebSearchServerTool({})).toBeUndefined();
+    });
+});
+
+describe("nativeTranslationLoss", () => {
+    it("clears a request the /responses translation carries faithfully", () => {
         // Text-only, web_search-only: the shape Claude Code actually sends.
         expect(
-            nativeTranslationLoss({
-                tools: [{ type: "web_search_20250305", name: "web_search" }],
-                messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
-            })
+            nativeTranslationLoss(
+                {
+                    tools: [{ type: "web_search_20250305", name: "web_search" }],
+                    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+                },
+                TOOL
+            )
         ).toBeUndefined();
         expect(nativeTranslationLoss({ messages: [{ role: "user", content: "hi" }] })).toBeUndefined();
+    });
 
-        // Custom tools cannot survive the translation — it sends web_search only.
+    it("names client tools and blocks the flattener would drop", () => {
         expect(
             nativeTranslationLoss({
                 tools: [{ type: "web_search_20250305" }, { name: "Read", description: "x", input_schema: {} }],
@@ -49,7 +62,6 @@ describe("parseWebSearchServerTool", () => {
             })
         ).toBe("1 client tool");
 
-        // Nor can blocks the flattener has no text to take.
         expect(
             nativeTranslationLoss({
                 messages: [
@@ -66,11 +78,22 @@ describe("parseWebSearchServerTool", () => {
         ).toBe("image, tool_result content blocks");
     });
 
-    it("returns undefined when no web_search server tool is offered", () => {
+    it("names domain filters the upstream cannot express", () => {
+        // One list of at most five: pairing the two would silently drop every
+        // exclusion, so a request excluding gist.github.com while allowing
+        // github.com must not take this path.
         expect(
-            parseWebSearchServerTool({ tools: [{ type: "code_execution_20250522", name: "code_execution" }] })
+            nativeTranslationLoss({ messages: [] }, { ...TOOL, allowedDomains: ["github.com"], blockedDomains: ["gist.github.com"] })
+        ).toBe("both allowed_domains and blocked_domains");
+
+        expect(
+            nativeTranslationLoss({ messages: [] }, { ...TOOL, blockedDomains: ["a", "b", "c", "d", "e", "f"] })
+        ).toBe("6 blocked_domains (the upstream takes 5)");
+
+        // An over-long ALLOW list only tightens the request, so it stays native.
+        expect(
+            nativeTranslationLoss({ messages: [] }, { ...TOOL, allowedDomains: ["a", "b", "c", "d", "e", "f"] })
         ).toBeUndefined();
-        expect(parseWebSearchServerTool({})).toBeUndefined();
     });
 });
 
@@ -369,8 +392,31 @@ describe("nativeWebSearch (/responses server-side search)", () => {
         expect(blocks[1].type).toBe("text");
         expect(blocks[1].text).toContain("Grok 4.6 shipped.");
         expect(blocks[1].text).toContain("Sources:\n- https://x.ai/news/grok-4-6");
-        expect(outcome.message.usage).toEqual({ input_tokens: 43044, output_tokens: 2205 });
+        // The count the upstream actually spent, in the field Anthropic
+        // reports it in — max_uses cannot bound it, so it must be visible.
+        expect(outcome.message.usage).toEqual({
+            input_tokens: 43044,
+            output_tokens: 2205,
+            server_tool_use: { web_search_requests: 2 },
+        });
         expect(outcome.message.stop_reason).toBe("end_turn");
+    });
+
+    it("always carries an id and a model, which Anthropic SDKs read as required", async () => {
+        const outcome = await nativeWebSearch({
+            body: { messages: [] },
+            tool: TOOL,
+            // A reply with neither field: undefined would be dropped by
+            // SafeJSON and reach the client as a message missing both keys.
+            callResponses: async () => jsonResponse({ output: [], usage: {} }),
+        });
+
+        if (outcome instanceof Response) {
+            throw new Error("unreachable");
+        }
+
+        expect(outcome.message.id).toMatch(/^msg_/);
+        expect(outcome.message.model).toBe("");
     });
 
     it("hands a non-OK response back for the caller's fallback", async () => {

@@ -75,6 +75,21 @@ describe("renderMarkdown", () => {
         expect(md.includes("_(no text)_")).toBe(false);
     });
 
+    test("does not relist a remote inline image that has no localPath or itemId", () => {
+        // A non-AMS image: the body carries it by URL alone, so the
+        // attachment list would otherwise emit it a second time.
+        const remote = "https://cdn.example.com/diagram.png";
+        const md = renderMarkdown(
+            threadWith({
+                text: "",
+                html: `<p><img src="${remote}" alt="diagram" /></p>`,
+                attachments: [{ name: "diagram.png", mimeHint: "png", url: remote, itemId: null, localPath: null }],
+            })
+        );
+
+        expect(md.split(remote).length - 1).toBe(1);
+    });
+
     test("falls back to plain text when there is no html", () => {
         const md = renderMarkdown(threadWith({ text: "plain only", html: null }));
         expect(md).toContain("plain only");

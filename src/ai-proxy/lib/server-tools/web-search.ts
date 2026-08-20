@@ -84,6 +84,9 @@ export function domainAllowed(url: string, filters: { allowed?: string[]; blocke
     return filters.allowed === undefined || filters.allowed.some(matches);
 }
 
+/** A Brave call that never answers would stall the loop behind SSE pings forever. */
+const BRAVE_TIMEOUT_MS = 15_000;
+
 export function braveSearchFn(apiKey: string, signal?: AbortSignal): SearchFn {
     return async (query: string): Promise<WebSearchResult[]> => {
         const params = new URLSearchParams({
@@ -92,9 +95,10 @@ export function braveSearchFn(apiKey: string, signal?: AbortSignal): SearchFn {
             text_decorations: "false",
             result_filter: "web",
         });
+        const timeout = AbortSignal.timeout(BRAVE_TIMEOUT_MS);
         const response = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
             headers: { "X-Subscription-Token": apiKey, Accept: "application/json" },
-            signal,
+            signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
         });
 
         if (!response.ok) {
@@ -339,7 +343,23 @@ const MAX_FILTER_DOMAINS = 5;
  * which keeps the original Anthropic body intact. Dropping them silently
  * would answer a search using context the model never saw.
  */
-export function nativeTranslationLoss(body: Record<string, unknown>): string | undefined {
+export function nativeTranslationLoss(
+    body: Record<string, unknown>,
+    tool?: WebSearchServerTool
+): string | undefined {
+    // Domain filters the upstream cannot express. It takes ONE list of at most
+    // five domains, so a request pairing an allow-list with exclusions, or
+    // excluding more than five domains, would come back with sources it asked
+    // to avoid. Slicing an over-long ALLOW list only tightens the request, so
+    // that case stays on the native path.
+    if (tool?.allowedDomains !== undefined && tool.blockedDomains !== undefined) {
+        return "both allowed_domains and blocked_domains";
+    }
+
+    if ((tool?.blockedDomains?.length ?? 0) > MAX_FILTER_DOMAINS) {
+        return `${tool?.blockedDomains?.length} blocked_domains (the upstream takes ${MAX_FILTER_DOMAINS})`;
+    }
+
     const custom = Array.isArray(body.tools)
         ? body.tools.filter((tool) => isObject(tool) && (tool.type === undefined || tool.type === "custom")).length
         : 0;
@@ -511,15 +531,21 @@ export function responsesToAnthropicMessage(response: Record<string, unknown>): 
 
     return {
         message: {
-            id: typeof response.id === "string" ? response.id : undefined,
+            // Anthropic SDKs read id and model as required; SafeJSON drops
+            // undefined keys, so the non-streaming path must not leave holes.
+            id: typeof response.id === "string" ? response.id : `msg_${crypto.randomUUID()}`,
             type: "message",
             role: "assistant",
-            model: typeof response.model === "string" ? response.model : undefined,
+            model: typeof response.model === "string" ? response.model : "",
             content,
             stop_reason: "end_turn",
             usage: {
                 input_tokens: usageNumber(usage, "input_tokens"),
                 output_tokens: usageNumber(usage, "output_tokens"),
+                // What the upstream actually spent. max_uses cannot bound it
+                // (see buildResponsesWebSearchBody), so the caller at least
+                // sees the count in the field Anthropic reports it in.
+                server_tool_use: { web_search_requests: searches },
             },
         },
         searches,

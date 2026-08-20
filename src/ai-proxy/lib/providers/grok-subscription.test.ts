@@ -106,10 +106,15 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
             client: { fetch: (path: string, init: RequestInit) => Promise<Response> };
         };
         let seen: AbortSignal | undefined;
+        let markDispatched: () => void = () => {};
+        const dispatched = new Promise<void>((resolve) => {
+            markDispatched = resolve;
+        });
         // A native search that never answers on its own: only the client's
         // cancellation can end it, which is exactly the leak under test.
         client.client.fetch = async (_path, init) => {
             seen = init.signal ?? undefined;
+            markDispatched();
             return await new Promise<Response>((_resolve, reject) => {
                 init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
             });
@@ -122,11 +127,16 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
             body
         );
         const reader = res.body?.getReader();
+        await dispatched;
         // The stream stays quiet until the first ping, so cancel without
         // reading — that is what a client walking away looks like.
-        await new Promise((resolve) => setTimeout(resolve, 10));
         await reader?.cancel("client gone");
-        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // Wait on the abort itself rather than a fixed delay, so a loaded
+        // machine cannot make this pass or fail by timing.
+        if (seen?.aborted === false) {
+            await new Promise<void>((resolve) => seen?.addEventListener("abort", () => resolve()));
+        }
 
         expect(seen?.aborted).toBe(true);
     });

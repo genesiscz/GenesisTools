@@ -440,8 +440,18 @@ export interface ListHandoffsInput {
     include?: string[];
 }
 
+/**
+ * A task as it appears on a LIST row: the proof is a preview, never the whole
+ * thing. `answer` may be clipped, `context` is always dropped, and the id
+ * arrays hold at most the first few entries. Call handoff_get for the stored
+ * proof — treating this shape as complete loses evidence.
+ */
+export type HandoffTaskPreview = Omit<Handoff["tasks"][number], "proof"> & {
+    proof?: Omit<NonNullable<Handoff["tasks"][number]["proof"]>, "context"> & { context?: undefined };
+};
+
 export interface ListHandoffsResponse {
-    handoffs: (HandoffListRow & { taskList?: Handoff["tasks"] })[];
+    handoffs: (HandoffListRow & { taskList?: HandoffTaskPreview[] })[];
     info: string[];
 }
 
@@ -479,9 +489,9 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
         const page = rows.slice(offset, offset + limit);
         const now = Date.now();
         let proofsClipped = false;
-        const handoffs = page.map((h): HandoffListRow & { taskList?: Handoff["tasks"] } => {
+        const handoffs = page.map((h): HandoffListRow & { taskList?: HandoffTaskPreview[] } => {
             const p = progress(h);
-            const row: HandoffListRow & { taskList?: Handoff["tasks"] } = {
+            const row: HandoffListRow & { taskList?: HandoffTaskPreview[] } = {
                 id: h.id,
                 title: h.title,
                 status: h.status,
@@ -504,9 +514,9 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
                 // List is a browse surface; full proof blobs belong to
                 // handoff_get. Returning them verbatim made a limit:2 list a
                 // token bomb (grok probe 81442272).
-                row.taskList = h.tasks.map((task) => {
+                row.taskList = h.tasks.map((task): HandoffTaskPreview => {
                     if (task.proof === undefined) {
-                        return task;
+                        return { ...task, proof: undefined };
                     }
 
                     const clipped = task.proof.answer.length > PROOF_PREVIEW_CHARS;

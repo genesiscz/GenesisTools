@@ -100,5 +100,11 @@ function attachmentShownInMarkdown(markdown: string, attachment: Attachment): bo
         return true;
     }
 
+    // A remote inline image (no localPath, no AMS itemId) is already in the
+    // body by its URL; listing it again below would duplicate it.
+    if (attachment.url && markdown.includes(attachment.url)) {
+        return true;
+    }
+
     return false;
 }

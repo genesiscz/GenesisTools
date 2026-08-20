@@ -136,7 +136,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                         type: "error",
                         error: {
                             type: "invalid_request_error",
-                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${unsupported}". Server tools other than web search execute inside Anthropic's API, which this account does not reach.`,
+                            message: `The grok upstream models custom tools only; this request offers "${unsupported}", a typed Anthropic tool it cannot deserialize. Server tools such as code_execution run inside Anthropic's API, which this account does not reach; client-executed typed tools (bash, text_editor) carry no description or input_schema, which is the field the upstream rejects. Web search is the one typed tool this proxy serves, on xAI's native server-side search.`,
                         },
                     }),
                     { status: 400, headers: { "Content-Type": "application/json" } }
@@ -207,7 +207,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     ): Promise<Response> {
         logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: running web_search server tool for grok");
 
-        const loss = nativeTranslationLoss(body);
+        const loss = nativeTranslationLoss(body, tool);
         const run = async (signal?: AbortSignal): Promise<EmulationOutcome | Response> => {
             const native =
                 loss === undefined
