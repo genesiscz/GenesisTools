@@ -331,12 +331,53 @@ export function messageToAnthropicSse(message: AnthropicMessage): string {
  */
 const MAX_FILTER_DOMAINS = 5;
 
+/**
+ * Why the native path would lose part of the request, or undefined when it
+ * carries it faithfully. The /responses translation below sends text only and
+ * the web_search tool only, so a body offering client-executed tools or
+ * carrying tool_use / tool_result / image blocks must take the Brave loop,
+ * which keeps the original Anthropic body intact. Dropping them silently
+ * would answer a search using context the model never saw.
+ */
+export function nativeTranslationLoss(body: Record<string, unknown>): string | undefined {
+    const custom = Array.isArray(body.tools)
+        ? body.tools.filter((tool) => isObject(tool) && (tool.type === undefined || tool.type === "custom")).length
+        : 0;
+
+    if (custom > 0) {
+        return `${custom} client tool${custom === 1 ? "" : "s"}`;
+    }
+
+    const kinds = new Set<string>();
+
+    for (const message of Array.isArray(body.messages) ? body.messages : []) {
+        if (!isObject(message) || !Array.isArray(message.content)) {
+            continue;
+        }
+
+        for (const block of message.content) {
+            if (isObject(block) && typeof block.type === "string" && typeof block.text !== "string") {
+                kinds.add(block.type);
+            }
+        }
+    }
+
+    return kinds.size > 0 ? `${[...kinds].sort().join(", ")} content blocks` : undefined;
+}
+
 export function buildResponsesWebSearchBody(
     body: Record<string, unknown>,
     tool: WebSearchServerTool
 ): Record<string, unknown> {
     const instructions = systemText(body.system);
     const wsTool: Record<string, unknown> = { type: "web_search" };
+
+    // max_uses is deliberately NOT sent: the upstream decides how many
+    // searches to run and offers no cap. Probed live 2026-08-20 —
+    // `max_tool_calls: 1` was accepted (HTTP 200) and ignored, the reply still
+    // carried 9 web_search_call items against the uncapped control's 10. Only
+    // the Brave loop can honour max_uses; here it bounds nothing, so
+    // nativeWebSearch logs when the upstream exceeds what the client asked.
 
     // Official spellings per docs.x.ai/developers/tools/web-search (verified
     // live: filtered probes stayed on-domain, the control did not). The docs
@@ -498,7 +539,16 @@ export async function nativeWebSearch(options: {
     }
 
     const parsed = (await response.json()) as Record<string, unknown>;
-    return responsesToAnthropicMessage(parsed);
+    const outcome = responsesToAnthropicMessage(parsed);
+
+    if (outcome.searches > options.tool.maxUses) {
+        logger.warn(
+            { searches: outcome.searches, maxUses: options.tool.maxUses },
+            "ai-proxy: native web_search ran more searches than max_uses — the upstream enforces no cap, each search is billed"
+        );
+    }
+
+    return outcome;
 }
 
 const PING_INTERVAL_MS = 10_000;

@@ -99,4 +99,64 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
             expect(text).toContain("event: error");
         });
     });
+
+    it("cancelling the SSE stream aborts the in-flight native /responses call", async () => {
+        const provider = makeProvider();
+        const client = provider as unknown as { client: { fetch: (path: string, init: RequestInit) => Promise<Response> } };
+        let seen: AbortSignal | undefined;
+        // A native search that never answers on its own: only the client's
+        // cancellation can end it, which is exactly the leak under test.
+        client.client.fetch = async (_path, init) => {
+            seen = init.signal ?? undefined;
+            return await new Promise<Response>((_resolve, reject) => {
+                init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            });
+        };
+
+        const body = webSearchBody();
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+        const reader = res.body?.getReader();
+        // The stream stays quiet until the first ping, so cancel without
+        // reading — that is what a client walking away looks like.
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await reader?.cancel("client gone");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(seen?.aborted).toBe(true);
+    });
+
+    it("never sends a request the native translation would truncate: no Brave key → self-explaining error", async () => {
+        await env.testing.withOverrides({ BRAVE_API_KEY: undefined }, async () => {
+            const provider = makeProvider();
+            // web_search plus a client tool: the /responses body carries
+            // web_search only, so answering natively would drop Read.
+            const body = SafeJSON.stringify({
+                model: "grok-4.6",
+                max_tokens: 100,
+                stream: false,
+                messages: [{ role: "user", content: "hi" }],
+                tools: [
+                    { type: "web_search_20250305", name: "web_search" },
+                    { name: "Read", description: "read a file", input_schema: { type: "object" } },
+                ],
+            });
+            const res = await provider.messages(
+                new Request("http://proxy/v1/messages", { method: "POST", body }),
+                "grok-4.6",
+                body
+            );
+
+            // 400, not the ConnectionRefused a dispatched native call would
+            // give against the unreachable base URL — proof it never dispatched.
+            expect(res.status).toBe(400);
+
+            const text = await res.text();
+            expect(text).toContain("1 client tool");
+            expect(text).toContain("BRAVE_API_KEY");
+        });
+    });
 });

@@ -7,6 +7,7 @@ import {
     emulateWebSearch,
     emulationStream,
     messageToAnthropicSse,
+    nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
     type WebSearchResult,
@@ -28,6 +29,41 @@ describe("parseWebSearchServerTool", () => {
         });
 
         expect(tool).toEqual({ name: "web_search", maxUses: 3, allowedDomains: ["x.ai"], blockedDomains: undefined });
+    });
+
+    it("names what the native /responses translation would drop", () => {
+        // Text-only, web_search-only: the shape Claude Code actually sends.
+        expect(
+            nativeTranslationLoss({
+                tools: [{ type: "web_search_20250305", name: "web_search" }],
+                messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+            })
+        ).toBeUndefined();
+        expect(nativeTranslationLoss({ messages: [{ role: "user", content: "hi" }] })).toBeUndefined();
+
+        // Custom tools cannot survive the translation — it sends web_search only.
+        expect(
+            nativeTranslationLoss({
+                tools: [{ type: "web_search_20250305" }, { name: "Read", description: "x", input_schema: {} }],
+                messages: [],
+            })
+        ).toBe("1 client tool");
+
+        // Nor can blocks the flattener has no text to take.
+        expect(
+            nativeTranslationLoss({
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: "and now" },
+                            { type: "tool_result", tool_use_id: "toolu_1", content: "42" },
+                            { type: "image", source: {} },
+                        ],
+                    },
+                ],
+            })
+        ).toBe("image, tool_result content blocks");
     });
 
     it("returns undefined when no web_search server tool is offered", () => {

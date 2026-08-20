@@ -10,6 +10,7 @@ import {
     type EmulationOutcome,
     emulateWebSearch,
     emulationStream,
+    nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
     type WebSearchServerTool,
@@ -206,24 +207,29 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     ): Promise<Response> {
         logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: running web_search server tool for grok");
 
+        const loss = nativeTranslationLoss(body);
         const run = async (signal?: AbortSignal): Promise<EmulationOutcome | Response> => {
-            const native = await nativeWebSearch({
-                body,
-                tool,
-                callResponses: async (responsesBody) => {
-                    responsesBody.model = model;
-                    const response = await this.dispatch({
-                        path: "/responses",
-                        req,
-                        bodyText: SafeJSON.stringify(responsesBody),
-                        modelOverride: model,
-                        requestedModel: model,
-                        imageRouted: false,
-                    });
+            const native =
+                loss === undefined
+                    ? await nativeWebSearch({
+                          body,
+                          tool,
+                          callResponses: async (responsesBody) => {
+                              responsesBody.model = model;
+                              const response = await this.dispatch({
+                                  path: "/responses",
+                                  req,
+                                  bodyText: SafeJSON.stringify(responsesBody),
+                                  modelOverride: model,
+                                  requestedModel: model,
+                                  imageRouted: false,
+                                  signal,
+                              });
 
-                    return response.ok ? response : toAnthropicErrorResponse(response);
-                },
-            });
+                              return response.ok ? response : toAnthropicErrorResponse(response);
+                          },
+                      })
+                    : unsupportedNativeResponse(loss);
 
             if (!(native instanceof Response)) {
                 return native;
@@ -236,8 +242,8 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             }
 
             logger.warn(
-                { status: native.status, model },
-                "ai-proxy: native /responses web_search failed — falling back to the Brave loop"
+                { status: native.status, model, loss },
+                "ai-proxy: native /responses web_search unavailable — falling back to the Brave loop"
             );
             return emulateWebSearch({
                 body,
@@ -257,6 +263,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                         requestedModel: model,
                         imageRouted: false,
                         headers: { "anthropic-version": "2023-06-01" },
+                        signal,
                     });
 
                     return response.ok ? response : toAnthropicErrorResponse(response);
@@ -322,6 +329,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         requestedModel,
         imageRouted,
         headers,
+        signal,
     }: {
         path: string;
         req: Request;
@@ -330,6 +338,8 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         requestedModel: string;
         imageRouted: boolean;
         headers?: Record<string, string>;
+        /** Extra abort source (the emulation stream's), composed with the client's. */
+        signal?: AbortSignal;
     }): Promise<Response> {
         const started = performance.now();
 
@@ -338,7 +348,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 method: "POST",
                 body: bodyText,
                 modelOverride,
-                signal: req.signal,
+                signal: signal === undefined ? req.signal : AbortSignal.any([req.signal, signal]),
                 headers: {
                     Accept: req.headers.get("Accept") ?? "application/json",
                     ...headers,
@@ -434,4 +444,24 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             throw err;
         }
     }
+}
+
+/**
+ * Stands in for a failed native call when the /responses translation would
+ * drop part of the request, so the Brave fallback (which keeps the original
+ * Anthropic body) is chosen instead. Without a Brave key this is what the
+ * client sees, and it names what is unsupported rather than answering from a
+ * silently truncated conversation.
+ */
+function unsupportedNativeResponse(loss: string): Response {
+    return new Response(
+        SafeJSON.stringify({
+            type: "error",
+            error: {
+                type: "invalid_request_error",
+                message: `web_search on grok cannot be combined with ${loss}: xAI's native server-side search takes plain text only. Set BRAVE_API_KEY to run the emulated search loop, which keeps the full request.`,
+            },
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+    );
 }
