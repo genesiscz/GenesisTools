@@ -1,10 +1,13 @@
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
+import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import {
     anthropicMessageToOpenAiCompletion,
     anthropicSseToOpenAiChatStream,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-openai-completions";
+import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
+import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
 import {
     type OpenAiChatBody,
     openAiChatToAnthropicMessages,
@@ -34,6 +37,67 @@ const ANTHROPIC_VERSION = "2023-06-01";
  * clients, forwards the Claude Code spoof (Bearer OAuth token + billing header
  * + beta flags) to api.anthropic.com/v1/messages, and maps responses back.
  */
+/**
+ * Union of the subscription's required betas and whatever the client asked for.
+ *
+ * Order-preserving and deduped: the subscription flags must stay present (OAuth
+ * depends on them), and the client's flags decide whether its own request fields
+ * are even legal upstream.
+ */
+export function mergeBetas(required: string, client?: string | null): string {
+    const seen = new Set<string>();
+    const out: string[] = [];
+
+    for (const value of [required, client ?? ""]) {
+        for (const beta of value.split(",")) {
+            const trimmed = beta.trim();
+
+            if (trimmed.length > 0 && !seen.has(trimmed)) {
+                seen.add(trimmed);
+                out.push(trimmed);
+            }
+        }
+    }
+
+    return out.join(",");
+}
+
+/**
+ * Add the subscription system prefix WITHOUT flattening the caller's system.
+ *
+ * Claude Code sends `system` as an array of blocks carrying `cache_control`,
+ * and collapsing it to a string is what destroyed prompt caching on this path:
+ * Anthropic caches only at explicit breakpoints, so a stringified system has
+ * none and every turn re-reads the whole prompt at full price.
+ *
+ * Claude Code's own system[0] already IS this exact prefix, so the common case
+ * is a no-op and the array is forwarded byte-identical.
+ */
+export function ensureSubscriptionSystemPrefix(system: unknown): unknown {
+    if (system === undefined || system === null) {
+        return SUBSCRIPTION_SYSTEM_PREFIX;
+    }
+
+    if (typeof system === "string") {
+        return system.startsWith(SUBSCRIPTION_SYSTEM_PREFIX)
+            ? system
+            : applySystemPromptPrefix(SUBSCRIPTION_SYSTEM_PREFIX, system);
+    }
+
+    if (!Array.isArray(system)) {
+        return system;
+    }
+
+    const first = system[0];
+    const firstText = isObject(first) && typeof first.text === "string" ? first.text : "";
+
+    if (firstText.startsWith(SUBSCRIPTION_SYSTEM_PREFIX)) {
+        return system;
+    }
+
+    return [{ type: "text", text: SUBSCRIPTION_SYSTEM_PREFIX }, ...system];
+}
+
 export class AnthropicSubscriptionProvider implements ProxyProvider {
     readonly id = "anthropic-subscription";
     readonly accountFingerprint: string;
@@ -98,6 +162,65 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
         const anthropicBody = openAiChatToAnthropicMessages(openAiBody, { model: concreteModel });
         anthropicBody.system = applySystemPromptPrefix(SUBSCRIPTION_SYSTEM_PREFIX, anthropicBody.system ?? "");
 
+        const upstream = await this.forwardAnthropic({ anthropicBody, req, concreteModel, proxyModelId, streaming });
+
+        if (!upstream.ok) {
+            return upstream;
+        }
+
+        if (streaming) {
+            if (!upstream.body) {
+                return jsonError(502, "Anthropic upstream returned no stream body");
+            }
+
+            return new Response(anthropicSseToOpenAiChatStream(upstream.body, { model: proxyModelId }), {
+                status: 200,
+                headers: {
+                    "Content-Type": "text/event-stream; charset=utf-8",
+                    "Cache-Control": "no-cache",
+                    // Advertising keep-alive on a chunked SSE body breaks Node/undici
+                    // clients on connection reuse (second request dies with
+                    // "TypeError: terminated" / UND_ERR_SOCKET) — verified live via the
+                    // eve tool-loop. curl tolerates it; undici does not. Close per stream.
+                    Connection: "close",
+                    "X-Accel-Buffering": "no",
+                },
+            });
+        }
+
+        const message = (await upstream.json()) as Record<string, unknown>;
+        const completion = anthropicMessageToOpenAiCompletion(message, { model: proxyModelId });
+
+        return new Response(SafeJSON.stringify(completion), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
+
+    /**
+     * POST an already-Anthropic body upstream: resolve the subscription token,
+     * retry once on 401, and hand back the raw upstream Response.
+     *
+     * Shared so the OpenAI-facing door and the native /v1/messages passthrough
+     * cannot drift on auth, retry or error handling.
+     */
+    private async forwardAnthropic({
+        anthropicBody,
+        req,
+        concreteModel,
+        proxyModelId,
+        streaming,
+        clientBetas,
+    }: {
+        anthropicBody: unknown;
+        req: Request;
+        concreteModel: string;
+        proxyModelId: string;
+        streaming: boolean;
+        /** Betas the CLIENT asked for, merged with the subscription's own. */
+        clientBetas?: string | null;
+    }): Promise<Response> {
+        const started = performance.now();
         let token: string;
         try {
             ({ token } = await resolveAccountToken(this.billingAccountName));
@@ -112,14 +235,13 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
             );
         }
 
-        const started = performance.now();
         const callUpstream = (bearer: string): Promise<Response> =>
             this.upstreamFetch(ANTHROPIC_MESSAGES_URL, {
                 method: "POST",
                 headers: {
                     "content-type": "application/json",
                     "anthropic-version": ANTHROPIC_VERSION,
-                    "anthropic-beta": SUBSCRIPTION_BETAS,
+                    "anthropic-beta": mergeBetas(SUBSCRIPTION_BETAS, clientBetas),
                     Authorization: `Bearer ${bearer}`,
                     Accept: streaming ? "text/event-stream" : "application/json",
                 },
@@ -193,32 +315,79 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
             "ai-proxy: anthropic upstream request ok"
         );
 
-        if (streaming) {
-            if (!upstream.body) {
-                return jsonError(502, "Anthropic upstream returned no stream body");
+        return upstream;
+    }
+
+    /**
+     * Native `/v1/messages` passthrough: the client already speaks Anthropic and
+     * so does this upstream, so the body is forwarded essentially verbatim.
+     *
+     * Reshaping through the OpenAI schema in between dropped every field OpenAI
+     * has no slot for. `cache_control` was the expensive one: two identical
+     * 36,958-token Claude Code requests both reported `cache_read: none`,
+     * because Anthropic caches ONLY at explicit breakpoints. This path keeps
+     * them, along with thinking signatures and exact tool schemas.
+     */
+    async messages(req: Request, model: string, bodyText: string): Promise<Response> {
+        const proxyModelId = `${this.account.name}/${this.account.providerSlug}/${model}`;
+        const concreteModel = resolveAnthropicSubModel(model);
+
+        let parsed: Record<string, unknown>;
+        try {
+            const raw = SafeJSON.parse(bodyText, { strict: true });
+
+            if (!isObject(raw)) {
+                return jsonError(400, "Invalid JSON body");
             }
 
-            return new Response(anthropicSseToOpenAiChatStream(upstream.body, { model: proxyModelId }), {
-                status: 200,
-                headers: {
-                    "Content-Type": "text/event-stream; charset=utf-8",
-                    "Cache-Control": "no-cache",
-                    // Advertising keep-alive on a chunked SSE body breaks Node/undici
-                    // clients on connection reuse (second request dies with
-                    // "TypeError: terminated" / UND_ERR_SOCKET) — verified live via the
-                    // eve tool-loop. curl tolerates it; undici does not. Close per stream.
-                    Connection: "close",
-                    "X-Accel-Buffering": "no",
-                },
-            });
+            parsed = raw;
+        } catch (err) {
+            logger.debug({ err }, "ai-proxy: anthropic-subscription got invalid JSON body");
+            return jsonError(400, "Invalid JSON body");
         }
 
-        const message = (await upstream.json()) as Record<string, unknown>;
-        const completion = anthropicMessageToOpenAiCompletion(message, { model: proxyModelId });
+        // Claude Code sometimes puts a role:"system" entry inside messages[];
+        // Anthropic rejects it with `role 'system' is not supported on this
+        // model` (verified live 2026-08-19), same class as grok's 400. Hoist
+        // BEFORE the prefix fix-up so the subscription prefix stays system[0].
+        // Hoisted blocks are appended after the existing system array, so
+        // cache_control breakpoints on the existing prefix are untouched.
+        const hoisted = hoistSystemMessages(parsed);
 
-        return new Response(SafeJSON.stringify(completion), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
+        const anthropicBody: Record<string, unknown> = {
+            ...hoisted,
+            model: concreteModel,
+            system: ensureSubscriptionSystemPrefix(hoisted.system),
+        };
+
+        const upstream = await this.forwardAnthropic({
+            anthropicBody,
+            req,
+            concreteModel,
+            proxyModelId,
+            streaming: parsed.stream === true,
+            // Without this the passthrough 400s on the client's own fields:
+            // Claude Code sends `context_management`, and Anthropic rejects it
+            // unless context-management-2025-06-27 is advertised.
+            clientBetas: req.headers.get("anthropic-beta"),
+        });
+
+        // forwardAnthropic's OWN failures (token unavailable, client abort)
+        // carry OpenAI-shaped or plain-text bodies; an Anthropic client checks
+        // `type === "error"` first and rendered a blank failure. Real upstream
+        // errors are already Anthropic-shaped and pass through unchanged.
+        if (!upstream.ok) {
+            return toAnthropicErrorResponse(upstream);
+        }
+
+        // Bun's fetch already decoded the body but left content-encoding on the
+        // headers. Relaying them verbatim makes the client try to brotli-decode
+        // plain bytes — the live flow-matrix test failed with
+        // BrotliDecompressionError the first time this path ran end to end.
+        return new Response(upstream.body, {
+            status: upstream.status,
+            statusText: upstream.statusText,
+            headers: relayHeaders(upstream),
         });
     }
 

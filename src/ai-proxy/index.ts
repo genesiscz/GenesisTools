@@ -447,7 +447,7 @@ const internalCmd = program.command("internal").description("Internal maintenanc
 
 internalCmd
     .command("update-models")
-    .description("Probe upstream models and write data/models-catalog.json")
+    .description("Probe upstream models and write ~/.genesis-tools/ai-proxy/models-catalog.json")
     .option("--account <name>", "Limit to one account")
     .option("--provider <slug>", "Filter by provider slug (grok, github-copilot)")
     .option("--dry-run", "Print would-be catalog without writing")
