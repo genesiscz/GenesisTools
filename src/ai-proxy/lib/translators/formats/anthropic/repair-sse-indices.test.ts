@@ -260,7 +260,11 @@ describe("repairAnthropicSseIndices", () => {
         // {query, count} first, so Edit was rejected for a missing file_path it
         // was never given and the search call never ran at all.
         const tools = [
-            { name: "Edit", required: ["file_path", "old_string"], properties: ["file_path", "old_string", "new_string"] },
+            {
+                name: "Edit",
+                required: ["file_path", "old_string"],
+                properties: ["file_path", "old_string", "new_string"],
+            },
             { name: "brave_web_search", required: ["query"], properties: ["query", "count"] },
         ];
         const input = [
