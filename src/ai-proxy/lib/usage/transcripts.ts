@@ -270,6 +270,17 @@ function collectNonChatSseEvent(payload: Record<string, unknown>, parsed: Parsed
             parsed.text += payload.delta.text;
         } else if (payload.delta.type === "thinking_delta" && typeof payload.delta.thinking === "string") {
             parsed.thinking += payload.delta.thinking;
+        } else if (payload.delta.type === "input_json_delta" && typeof payload.delta.partial_json === "string") {
+            // The wire opens every tool_use with `input: {}` and streams the real
+            // arguments here; without folding them in, every streamed tool call
+            // was transcribed with an empty input.
+            const last = parsed.toolCalls?.at(-1);
+
+            if (last?.function) {
+                const prev = last.function.arguments;
+                last.function.arguments =
+                    (prev === undefined || prev === "{}" ? "" : prev) + payload.delta.partial_json;
+            }
         }
 
         return true;
