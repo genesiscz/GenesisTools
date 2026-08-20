@@ -1,0 +1,63 @@
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { cacheDbPath, liveBlobDir, liveIdbDir, venvPython } from "./paths";
+import { TeamsCache } from "./store";
+
+export interface DoctorReport {
+    idbExists: boolean;
+    idbPath: string;
+    blobExists: boolean;
+    cacheExists: boolean;
+    cachePath: string;
+    cacheIngestedAt: string | null;
+    counts: { conversations: number; messages: number; people: number; calls: number; activity: number } | null;
+    venvPythonExists: boolean;
+    teamsProcess: boolean;
+    readable: boolean;
+}
+
+export function inspectDoctor(): DoctorReport {
+    const idbPath = liveIdbDir();
+    const blobPath = liveBlobDir();
+    const cachePath = cacheDbPath();
+    const idbExists = existsSync(idbPath);
+    let readable = false;
+
+    if (idbExists) {
+        try {
+            statSync(join(idbPath, "CURRENT"));
+            readable = true;
+        } catch {
+            readable = false;
+        }
+    }
+
+    let counts: DoctorReport["counts"] = null;
+    let cacheIngestedAt: string | null = null;
+    const cacheExists = existsSync(cachePath);
+
+    if (cacheExists) {
+        const cache = new TeamsCache(cachePath);
+        counts = cache.counts();
+        cacheIngestedAt = cache.getMeta("ingested_at");
+        cache.close();
+    }
+
+    return {
+        idbExists,
+        idbPath,
+        blobExists: existsSync(blobPath),
+        cacheExists,
+        cachePath,
+        cacheIngestedAt,
+        counts,
+        venvPythonExists: existsSync(venvPython()),
+        teamsProcess: isTeamsRunning(),
+        readable,
+    };
+}
+
+function isTeamsRunning(): boolean {
+    const proc = Bun.spawnSync(["pgrep", "-fl", "Microsoft Teams"], { stdout: "pipe", stderr: "pipe" });
+    return proc.exitCode === 0 && new TextDecoder().decode(proc.stdout).trim().length > 0;
+}
