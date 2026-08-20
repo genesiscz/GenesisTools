@@ -467,6 +467,15 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
             const initialEmitted = await drainPending(active);
 
             if (initialEmitted === 0) {
+                // Nothing queued: this blocks until a message arrives, for up
+                // to the cap. Say so on stderr, or a caller that times out
+                // sees an empty stdout and a live process and cannot tell
+                // "waiting" from "crashed before it printed anything".
+                out.log.info(
+                    `${record.agent_name}: mailbox empty — waiting for the first message (up to ${Math.round(
+                        LISTEN_CAP_MS / 3_600_000
+                    )}h). Nothing will print until one arrives.`
+                );
                 const deadline = Date.now() + LISTEN_CAP_MS;
                 await watchUntilDeadline(active, deadline, true);
             }
