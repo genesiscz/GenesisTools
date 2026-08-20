@@ -514,9 +514,7 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
                         ...task,
                         proof: {
                             ...task.proof,
-                            answer: clipped
-                                ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…`
-                                : task.proof.answer,
+                            answer: clipped ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…` : task.proof.answer,
                             context: undefined,
                         },
                     };
