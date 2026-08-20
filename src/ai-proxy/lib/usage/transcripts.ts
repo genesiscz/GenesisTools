@@ -161,6 +161,8 @@ interface ParsedResponse {
     usage?: Record<string, unknown>;
     finishReason?: string;
     toolCalls?: OpenAiToolCall[];
+    /** Open tool_use blocks by SSE index, so an interleaved delta lands on ITS call. */
+    toolCallsByIndex?: Map<number, OpenAiToolCall>;
 }
 
 interface SseDelta {
@@ -273,12 +275,14 @@ function collectNonChatSseEvent(payload: Record<string, unknown>, parsed: Parsed
         } else if (payload.delta.type === "input_json_delta" && typeof payload.delta.partial_json === "string") {
             // The wire opens every tool_use with `input: {}` and streams the real
             // arguments here; without folding them in, every streamed tool call
-            // was transcribed with an empty input.
-            const last = parsed.toolCalls?.at(-1);
+            // was transcribed with an empty input. Deltas route by block index
+            // first — an interleaved delta otherwise feeds the wrong call.
+            const byIndex = typeof payload.index === "number" ? parsed.toolCallsByIndex?.get(payload.index) : undefined;
+            const call = byIndex ?? parsed.toolCalls?.at(-1);
 
-            if (last?.function) {
-                const prev = last.function.arguments;
-                last.function.arguments =
+            if (call?.function) {
+                const prev = call.function.arguments;
+                call.function.arguments =
                     (prev === undefined || prev === "{}" ? "" : prev) + payload.delta.partial_json;
             }
         }
@@ -288,7 +292,13 @@ function collectNonChatSseEvent(payload: Record<string, unknown>, parsed: Parsed
 
     if (type === "content_block_start" && isObject(payload.content_block)) {
         if (payload.content_block.type === "tool_use") {
-            parsed.toolCalls = [...(parsed.toolCalls ?? []), toolCallFromBlock(payload.content_block)];
+            const call = toolCallFromBlock(payload.content_block);
+            parsed.toolCalls = [...(parsed.toolCalls ?? []), call];
+
+            if (typeof payload.index === "number") {
+                parsed.toolCallsByIndex ??= new Map();
+                parsed.toolCallsByIndex.set(payload.index, call);
+            }
         }
 
         return true;
