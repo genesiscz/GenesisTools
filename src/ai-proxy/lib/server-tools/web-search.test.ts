@@ -4,6 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import {
     buildResponsesWebSearchBody,
     domainAllowed,
+    type EmulationOutcome,
     emulateWebSearch,
     emulationStream,
     messageToAnthropicSse,
@@ -437,6 +438,44 @@ describe("nativeWebSearch (/responses server-side search)", () => {
             server_tool_use: { web_search_requests: 2 },
         });
         expect(outcome.message.stop_reason).toBe("end_turn");
+    });
+
+    it("reports a reply cut short by the output cap as max_tokens, not end_turn", async () => {
+        // Live shape: the upstream honours max_output_tokens by answering
+        // status "incomplete". Calling that end_turn tells the client a
+        // truncated answer finished normally.
+        const cut = await nativeWebSearch({
+            body: { messages: [], max_tokens: 64 },
+            tool: TOOL,
+            callResponses: async () =>
+                jsonResponse({
+                    status: "incomplete",
+                    incomplete_details: { reason: "max_output_tokens" },
+                    output: [{ type: "message", content: [{ type: "output_text", text: "half an ans" }] }],
+                    usage: {},
+                }),
+        });
+
+        if (cut instanceof Response) {
+            throw new Error("unreachable");
+        }
+
+        expect(cut.message.stop_reason).toBe("max_tokens");
+
+        // An incomplete reply for any OTHER reason is not a cap hit.
+        const other = await nativeWebSearch({
+            body: { messages: [] },
+            tool: TOOL,
+            callResponses: async () =>
+                jsonResponse({
+                    status: "incomplete",
+                    incomplete_details: { reason: "content_filter" },
+                    output: [],
+                    usage: {},
+                }),
+        });
+
+        expect((other as EmulationOutcome).message.stop_reason).toBe("end_turn");
     });
 
     it("always carries an id and a model, which Anthropic SDKs read as required", async () => {

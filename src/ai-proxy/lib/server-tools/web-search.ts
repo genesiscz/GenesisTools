@@ -500,6 +500,15 @@ function messagesToResponsesInput(messages: unknown): { role: string; content: s
     });
 }
 
+function truncatedByCap(response: Record<string, unknown>): boolean {
+    if (response.status !== "incomplete") {
+        return false;
+    }
+
+    const details = response.incomplete_details;
+    return isObject(details) && details.reason === "max_output_tokens";
+}
+
 /** The completed /responses JSON as an Anthropic message, citations appended. */
 export function responsesToAnthropicMessage(response: Record<string, unknown>): EmulationOutcome {
     let text = "";
@@ -559,7 +568,11 @@ export function responsesToAnthropicMessage(response: Record<string, unknown>): 
             role: "assistant",
             model: typeof response.model === "string" ? response.model : "",
             content,
-            stop_reason: "end_turn",
+            // A reply cut short by the output cap must not read as a finished
+            // one. Verified live 2026-08-20: the upstream honours
+            // max_output_tokens by answering status "incomplete" with
+            // incomplete_details.reason "max_output_tokens".
+            stop_reason: truncatedByCap(response) ? "max_tokens" : "end_turn",
             usage: {
                 input_tokens: usageNumber(usage, "input_tokens"),
                 output_tokens: usageNumber(usage, "output_tokens"),
