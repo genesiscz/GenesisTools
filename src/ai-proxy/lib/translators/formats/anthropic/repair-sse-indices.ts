@@ -45,13 +45,64 @@ export function toolMatchersFromBody(body: JsonRecord): ToolMatcher[] {
  * match is trusted; anything else falls back to the original block's name and
  * fails loudly client-side rather than running the wrong tool.
  */
+function toolFits(tool: ToolMatcher, argKeys: string[]): boolean {
+    return tool.required.every((key) => argKeys.includes(key)) && argKeys.every((key) => tool.properties.includes(key));
+}
+
 function matchToolName(argKeys: string[], tools: ToolMatcher[], fallback: string): string {
-    const matches = tools.filter(
-        (tool) =>
-            tool.required.every((key) => argKeys.includes(key)) && argKeys.every((key) => tool.properties.includes(key))
-    );
+    const matches = tools.filter((tool) => toolFits(tool, argKeys));
 
     return matches.length === 1 ? matches[0].name : fallback;
+}
+
+function parseRecord(text: string): JsonRecord | undefined {
+    try {
+        const parsed = SafeJSON.parse(text, { strict: true });
+        return isJsonRecord(parsed) ? parsed : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Which held object belongs to the name the wire already sent.
+ *
+ * Grok does not only lose the second call's NAME, it also puts the wrong
+ * arguments first: a merged block declaring `Edit` arrived carrying
+ * `{query, count}`, so Edit was rejected for a missing `file_path` while the
+ * search call it belonged to never ran. When the first object does not fit the
+ * declared tool but one orphan does, they are swapped and BOTH calls come out
+ * right. When nothing fits, the order is left alone so the call still fails
+ * loudly rather than being quietly reassigned to a guess.
+ */
+function assignFirstCallArgs(
+    block: ToolBlockState,
+    held: string[],
+    tools: ToolMatcher[]
+): { firstArgs: string; leftovers: string[] } {
+    const declared = tools.find((tool) => tool.name === block.toolName);
+    const first = parseRecord(block.firstText);
+
+    if (declared === undefined || first === undefined || toolFits(declared, Object.keys(first))) {
+        return { firstArgs: block.firstText, leftovers: held };
+    }
+
+    const swapIndex = held.findIndex((candidate) => {
+        const parsed = parseRecord(candidate);
+        return parsed !== undefined && toolFits(declared, Object.keys(parsed));
+    });
+
+    if (swapIndex === -1) {
+        return { firstArgs: block.firstText, leftovers: held };
+    }
+
+    logger.warn(
+        { tool: block.toolName, position: swapIndex + 1 },
+        "ai-proxy: grok put another call's arguments first in a merged block — swapped them back so both calls are valid"
+    );
+    const leftovers = [...held];
+    leftovers[swapIndex] = block.firstText;
+    return { firstArgs: held[swapIndex], leftovers };
 }
 
 /**
@@ -113,6 +164,14 @@ interface ToolBlockState {
     orphanScanner: JsonScanner;
     /** Set when trailing bytes were not a second object — stop interpreting. */
     disabled: boolean;
+    /**
+     * The FIRST object's bytes, held until the block stops. Grok also mismatches
+     * which arguments ride under which name: a merged block declaring `Edit`
+     * arrived carrying `{query, count}`, so Edit was rejected for a missing
+     * file_path it was never given. Holding lets the stop handler hand each
+     * parsed object to the tool whose schema it actually fits.
+     */
+    firstText: string;
 }
 
 /**
@@ -185,7 +244,9 @@ export function repairAnthropicSseIndices(
             }
 
             if (!block.scanner.complete) {
-                pending += char;
+                // Held, not streamed: which tool these arguments belong to is
+                // not known until the block stops and the orphans are in.
+                block.firstText += char;
                 scanChar(block.scanner, char);
                 continue;
             }
@@ -198,11 +259,12 @@ export function repairAnthropicSseIndices(
 
                 if (char !== "{") {
                     // Not a second call: give up on splitting and hand ALL held
-                    // bytes back verbatim — including orphans already buffered —
-                    // so the ONE call fails loudly instead of pairing a guessed
-                    // split with a corrupted first call.
+                    // bytes back verbatim — the held first object and any
+                    // buffered orphans — so the ONE call fails loudly instead
+                    // of pairing a guessed split with a corrupted first call.
                     block.disabled = true;
-                    pending += [...block.orphans, char].join("");
+                    pending += [block.firstText, ...block.orphans, char].join("");
+                    block.firstText = "";
                     block.orphans = [];
                     continue;
                 }
@@ -229,8 +291,22 @@ export function repairAnthropicSseIndices(
 
     /** The real stop closes the original block, then the orphans become blocks. */
     function emitStopAndOrphans(block: ToolBlockState): string {
-        const frames = [frameText("content_block_stop", { index: block.index })];
-        const leftovers = block.orphanText !== null ? [...block.orphans, block.orphanText] : block.orphans;
+        const held = block.orphanText !== null ? [...block.orphans, block.orphanText] : block.orphans;
+        const { firstArgs, leftovers } = assignFirstCallArgs(block, held, tools);
+        const frames: string[] = [];
+
+        // The held first object goes out now, under the name the wire already
+        // sent — possibly swapped with an orphan that actually fits that name.
+        if (firstArgs.length > 0) {
+            frames.push(
+                frameText("content_block_delta", {
+                    index: block.index,
+                    delta: { type: "input_json_delta", partial_json: firstArgs },
+                })
+            );
+        }
+
+        frames.push(frameText("content_block_stop", { index: block.index }));
 
         for (const orphan of leftovers) {
             currentIndex = nextIndex;
@@ -331,6 +407,7 @@ export function repairAnthropicSseIndices(
                               orphanText: null,
                               orphanScanner: createJsonScanner(),
                               disabled: false,
+                              firstText: "",
                           }
                         : null;
 
@@ -349,11 +426,11 @@ export function repairAnthropicSseIndices(
                     const block = toolBlock;
                     toolBlock = null;
 
-                    if (block.orphans.length > 0 || block.orphanText !== null) {
-                        // The original data line is replaced wholesale; the stop's
-                        // own event: line already passed through above it.
-                        return emitStopAndOrphans(block).replace(/^event: content_block_stop\n/, "");
-                    }
+                    // Always go through the stop handler: the first call's
+                    // arguments are held until here even when nothing merged.
+                    // The original data line is replaced wholesale; the stop's
+                    // own event: line already passed through above it.
+                    return emitStopAndOrphans(block).replace(/^event: content_block_stop\n/, "");
                 }
             }
 
@@ -399,7 +476,7 @@ export function repairAnthropicSseIndices(
                     // client any merged calls sitting in the buffer — dropping them
                     // here would destroy bytes the client received before this
                     // transformer existed.
-                    if (toolBlock && (toolBlock.orphans.length > 0 || toolBlock.orphanText !== null)) {
+                    if (toolBlock) {
                         const block = toolBlock;
                         toolBlock = null;
                         parts.push(emitStopAndOrphans(block));

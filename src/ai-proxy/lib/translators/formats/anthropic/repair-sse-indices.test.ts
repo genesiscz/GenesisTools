@@ -254,4 +254,52 @@ describe("repairAnthropicSseIndices", () => {
         expect(out).toContain('"type":"content_block_start"');
         expect(out).toContain('"index":0');
     });
+
+    it("swaps arguments back when grok puts another call's args under the declared name", async () => {
+        // Observed live 2026-08-20: a merged block declaring `Edit` carried
+        // {query, count} first, so Edit was rejected for a missing file_path it
+        // was never given and the search call never ran at all.
+        const tools = [
+            { name: "Edit", required: ["file_path", "old_string"], properties: ["file_path", "old_string", "new_string"] },
+            { name: "brave_web_search", required: ["query"], properties: ["query", "count"] },
+        ];
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Edit","input":{}}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"grok bugs\\",\\"count\\":3}"}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"/tmp/a\\",\\"old_string\\":\\"x\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input), { tools }));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        const calls = new Map<number, { name?: string; args: string }>();
+        for (const frame of frames) {
+            const index = frame.index as number;
+            if (frame.type === "content_block_start") {
+                calls.set(index, { name: (frame.content_block as Record<string, unknown>).name as string, args: "" });
+            } else if (frame.type === "content_block_delta") {
+                const delta = frame.delta as Record<string, unknown>;
+                if (delta.type === "input_json_delta") {
+                    const call = calls.get(index);
+                    if (call) {
+                        call.args += delta.partial_json as string;
+                    }
+                }
+            }
+        }
+
+        // Edit keeps its name and now receives the Edit arguments; the search
+        // arguments go out under the tool they uniquely match.
+        expect(calls.get(0)?.name).toBe("Edit");
+        expect(SafeJSON.parse(calls.get(0)?.args ?? "", { strict: true })).toEqual({
+            file_path: "/tmp/a",
+            old_string: "x",
+        });
+        expect(calls.get(1)?.name).toBe("brave_web_search");
+        expect(SafeJSON.parse(calls.get(1)?.args ?? "", { strict: true })).toEqual({ query: "grok bugs", count: 3 });
+    });
 });
