@@ -15,6 +15,14 @@ import {
 } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
 import { findServerTool } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
+import {
+    braveSearchFn,
+    type EmulationOutcome,
+    emulateWebSearch,
+    emulationStream,
+    parseWebSearchServerTool,
+    type WebSearchServerTool,
+} from "@app/ai-proxy/lib/server-tools/web-search";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
     formatBillingSummary,
@@ -23,6 +31,7 @@ import {
     resolveGrokSubToken,
 } from "@genesiscz/utils/ai/grok";
 import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok/paths";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -112,16 +121,26 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // Anthropic server tools execute inside Anthropic's API; grok's
             // deserializer rejects them with an opaque `missing field
             // description` that reads like a proxy bug (probe session
-            // d20dfdfe, Claude Code's WebSearch). Name the real cause instead.
+            // d20dfdfe, Claude Code's WebSearch). web_search is emulated by
+            // the proxy when a Brave key is available; anything else (or a
+            // keyless environment) gets an error naming the real cause.
             const serverTool = findServerTool(parsed as Record<string, unknown>);
 
             if (serverTool !== undefined) {
+                const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
+                const braveKey = env.brave.getKey();
+
+                if (webSearch && braveKey !== undefined) {
+                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch, braveKey);
+                }
+
+                const hint = webSearch ? " Set BRAVE_API_KEY to let the proxy emulate web_search." : "";
                 return new Response(
                     SafeJSON.stringify({
                         type: "error",
                         error: {
                             type: "invalid_request_error",
-                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${serverTool}". Server tools (web search, code execution) execute inside Anthropic's API, which this account does not reach.`,
+                            message: `The grok upstream cannot run Anthropic server tools; this request offers "${serverTool}". Server tools (web search, code execution) execute inside Anthropic's API, which this account does not reach.${hint}`,
                         },
                     }),
                     { status: 400, headers: { "Content-Type": "application/json" } }
@@ -167,6 +186,64 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         }
 
         return new Response(response.body, { status: response.status, headers: relayHeaders(response) });
+    }
+
+    /**
+     * Plays Anthropic's role for the web_search server tool: rewrites it into
+     * a custom tool, answers the model's calls with Brave results, and returns
+     * only the final turn — streamed with pings so a multi-search loop does
+     * not read as a dead connection.
+     */
+    private async emulatedWebSearchResponse(
+        req: Request,
+        model: string,
+        body: Record<string, unknown>,
+        tool: WebSearchServerTool,
+        braveKey: string
+    ): Promise<Response> {
+        logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: emulating web_search server tool for grok");
+
+        const run = (): Promise<EmulationOutcome | Response> =>
+            emulateWebSearch({
+                body,
+                tool,
+                search: braveSearchFn(braveKey),
+                callUpstream: async (turnBody) => {
+                    const repaired = stringifyUnknownToolResultBlocks(
+                        hoistSystemMessages(ensureToolRequiredArrays(turnBody))
+                    );
+                    repaired.model = model;
+                    const response = await this.dispatch({
+                        path: "/messages",
+                        req,
+                        bodyText: SafeJSON.stringify(repaired),
+                        modelOverride: model,
+                        requestedModel: model,
+                        imageRouted: false,
+                        headers: { "anthropic-version": "2023-06-01" },
+                    });
+
+                    return response.ok ? response : toAnthropicErrorResponse(response);
+                },
+            });
+
+        if (body.stream === true) {
+            return new Response(emulationStream(run), {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+            });
+        }
+
+        const outcome = await run();
+
+        if (outcome instanceof Response) {
+            return outcome;
+        }
+
+        return new Response(SafeJSON.stringify(outcome.message), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
     }
 
     async getUsage(): Promise<UsageSummary> {
