@@ -287,6 +287,27 @@ function projectFingerprint(projectDir: string, files: string[], teamNames: stri
             logger.debug({ error, projectDir, file }, "[teams] transcript stat failed; treating index as stale");
             return `stale-${Date.now()}`;
         }
+
+        if (!isSidechainPath(file)) {
+            continue;
+        }
+
+        // A sidechain's team and kind come from its sidecar meta, so editing
+        // the meta alone must invalidate the index. Statting only the jsonl
+        // kept serving the previous team mapping until the jsonl also changed.
+        const metaPath = file.replace(/\.jsonl$/, ".meta.json");
+        try {
+            const st = statSync(metaPath);
+            parts.push(`${metaPath}:${st.mtimeMs}:${st.size}`);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") {
+                logger.debug({ error, metaPath }, "[teams] sidechain meta stat failed");
+            }
+
+            // Absent is a real state: recording it means CREATING a meta later
+            // changes the key too.
+            parts.push(`${metaPath}:none`);
+        }
     }
 
     return parts.join("|");

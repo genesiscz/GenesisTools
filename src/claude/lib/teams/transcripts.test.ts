@@ -211,3 +211,40 @@ describe("indexTeamTranscripts in-process sidechains", () => {
         expect(found?.sessionId.startsWith("agent-")).toBe(false);
     });
 });
+
+describe("indexTeamTranscripts cache invalidation", () => {
+    const leadId = "8b1c1f2e-1111-4222-8333-444455556666";
+
+    test("editing only the sidecar meta re-indexes: the cache key covers it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-cache-"));
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = "agent-amover-629d28c8906398e7";
+        const metaPath = join(sub, `${stem}.meta.json`);
+        const write = (teamName: string): void => {
+            writeFileSync(metaPath, SafeJSON.stringify({ name: "mover", teamName, taskKind: "in_process_teammate" }));
+        };
+
+        write(TEAM);
+        writeFileSync(
+            join(sub, `${stem}.jsonl`),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: "on it" }] },
+            })}\n`
+        );
+
+        // Warm the cache for this project dir.
+        expect(indexTeamTranscripts(dir, TEAM).get("mover")).toBeDefined();
+
+        // Hand the sidechain to a different team, touching ONLY the meta. A
+        // fingerprint built from the jsonl alone would keep serving the old
+        // mapping and leave this teammate on the wrong team.
+        write("team-elsewhere");
+
+        expect(indexTeamTranscripts(dir, TEAM).get("mover")).toBeUndefined();
+        expect(indexTeamTranscripts(dir, "team-elsewhere").get("mover")).toBeDefined();
+    });
+});
