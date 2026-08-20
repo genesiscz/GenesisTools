@@ -4,6 +4,104 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.08.20.1
+
+1064 commits since 2026.05.18.2. User-visible changes only.
+
+### ms-teams (new)
+
+- Added `tools ms-teams` to read New Teams desktop IndexedDB, ingest a local SQLite cache, and export chats as markdown, JSON, or HTML
+- Added natural queries such as `show "conversation with Ada from DATE to DATE"`, plus `search`, `conversations`, `people`, `files`, `calls`, `meetings`, and an MCP server
+- Added inline image extract from the Teams Chromium disk cache so markdown and HTML point at local files instead of unauthenticated Skype URLs
+- Added read-only `doctor`, unique attachment names, HTTPS origin allowlists, a 50 MiB download cap, and stricter HTML sanitizing
+
+### ai-proxy
+
+- Added `tools ai-proxy` as a local multi-provider gateway with OpenRouter, Grok, and per-model provider routing
+- Added an Anthropic Messages API so Claude Code can run proxied models
+- Added upstream cost booking, thinking/pass-through fixes, and account detection that does not spend one-shot grants
+
+### ai
+
+- Added a v4 account/config/secret store, `tools ai config` (account, default, link, secret), doctor, and a TUI
+- Added OpenRouter as a first-class plugin with a shared model/price catalog
+- Added grok-sub and env-referenced keys, image-generation usage recording, and an AI SDK v5 → v7 / Zod v4 upgrade
+- Fixed exact per-token pricing, cache-token double-counting, and provider refs resolved by billing-mode-free name
+
+### claude
+
+- Added `tools claude cmux` to reopen recent sessions as cmux workspaces, plus `cmux focus` to jump to the pane that already has the session
+- Added `exec` (run a command with a pinned account OAuth token), `doctor` for pinned sessions that silently bill the keychain, and `extract-shell-quirks`
+- Added usage TUI headroom, renewal countdown, observed-burn pace, and refusal to launch a weekly-dead account
+- Fixed keychain resume, lapsed-plan false health, org-403 treated as expired subscription, and teammate wrapper identity sweeps
+
+### youtube
+
+- Added ask/queue/transcripts/config CLIs, a curated MCP server, and extension chapters, search, shares, presets, and activity
+- Added settings, operator gating, and billing atomicity on the hosted routes
+- Fixed channel-handle normalisation, index budgets, ask-session uniqueness, and transcript export parsing
+
+### spotify (new)
+
+- Added `tools spotify` for harvest, playback through the web player, reports, a dashboard on 3075, and a user-facing plugin
+- Added `plan rm` so a wrong ownership guess is not permanent, with a reason when there is nothing to do
+
+### instagram (new)
+
+- Added `tools instagram` to view public profiles anonymously and stories with your own session
+
+### macos / clones / du (new)
+
+- Added APFS clone-aware duplicate detection, optimize/rollback, a scan daemon, and `tools macos clones`
+- Added `tools du` (`clonesize`, `volume`, `clones`, `bench`) so clonefile trees report real unique bytes instead of `du` overcount
+- Added clonefile hashing, getattrlistbulk, and Windows-resilient recursive delete helpers used by the scanners
+
+### control (new)
+
+- Added `tools control` for Accessibility automation: list/tree/find/click/type/hotkey/scroll/screenshot/ocr/capture
+- Added draw/annotate, screenshot compare, and wait/assert/record-plan
+
+### agents / agent-watch (new)
+
+- Added `tools agents` for cross-agent messaging over a per-session feed (login, message, discover, listen)
+- Added `tools agent-watch` to notify when background agents finish, stall, or need input
+
+### stash (new)
+
+- Added `tools stash` for named code overlays you can apply across sibling clones, with surgical unapply
+
+### boards / dashboards / task
+
+- Added spatial board compose/arrange, journeys, questions, scrape, and live SSE canvas updates on the dev-dashboard
+- Added a shared `DashboardApp` shell (access banner, QR, localhost-aware open) and migrated dashboards onto it
+- Added `tools task` PTY-aware run/wait/tail, session GC, and mosaic session UI
+- Added `tools dashboards` as the port/launch registry
+
+### Other new tools
+
+- Added `tools apoptosis` to flag zero-signal dead code after a grace window (never deletes)
+- Added `tools repo-map` for a token-budgeted symbol map
+- Added `tools regret-grep` to warn when the working tree repeats a bug you already fixed
+- Added `tools learn-from-fable` to distill Fable working style from local session transcripts
+- Added `tools loc`, `tools hash`, `tools jwt`, `tools qr`, `tools tz`, `tools envdiff`, `tools secrets`, `tools redact`
+- Added `tools aliases` to mine shell history for alias candidates
+- Added `tools scripts` (MCP scripting), `tools mcp-doctor`, `tools ai-spend`, `tools time-machine`, `tools tradingview`, `tools wakeup`, `tools cmux`, `tools tmux`, `tools codex`
+
+### Core / Utils
+
+- Folded logger into `src/utils` and published `@genesiscz/utils` as the shared package
+- Added pidfile records that survive pid recycling, with identity checks before signal/kill
+- Added a two-layer logger/`out` facade, `runTool` bootstrap, and swappable prompt backends
+- Added SecretStore (AES-256-GCM vault), keychain guards, and `env.tools` path routing
+- Added shared table helpers, image annotation, OAuth helpers, and file-lock steal of orphaned locks
+- Fixed Windows-resilient `removeRecursive`, in-memory DB directory skips, and turndown-gfm row-less table crash
+
+### CI / Testing
+
+- Replaced six GritQL plugins with an ast-grep checker
+- Added hardcoded-path CI guard and logging-guard
+- Fixed standalone `apps/eve` install before the test sweep and serialised flaky task/tests
+
 ## 2026.05.18.2
 
 ### CI
