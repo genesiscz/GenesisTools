@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProxyModelMeta } from "@app/ai-proxy/lib/types";
-import { selectProxyModels, unlistedProxyModel } from "./run";
+import { effortError, selectProxyModels, unlistedProxyModel } from "./run";
 
 function model(proxyId: string): ProxyModelMeta {
     const [accountName = "", providerSlug = "", ...rest] = proxyId.split("/");
@@ -127,5 +127,20 @@ describe("unlistedProxyModel", () => {
 
     it("refuses a bare account/provider prefix — that is not a model id", () => {
         expect(unlistedProxyModel(CATALOG, "martin/grok")).toBeNull();
+    });
+});
+
+describe("effortError", () => {
+    it("accepts every documented effort and an absent flag", () => {
+        for (const effort of ["minimal", "low", "medium", "high", "xhigh", "max", undefined]) {
+            expect(effortError(effort)).toBeUndefined();
+        }
+    });
+
+    it("names the valid values when the flag is misspelled", () => {
+        // Validated before --list and before the interactive picker, so a typo
+        // never costs the user a model prompt first.
+        expect(effortError("xhgh")).toContain("Unknown effort");
+        expect(effortError("xhgh")).toContain("xhigh");
     });
 });

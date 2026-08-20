@@ -172,6 +172,45 @@ describe("buildWhamResponsesBody", () => {
         const fallback = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5");
         expect(fallback.body.reasoning).toEqual({ effort: "low" });
     });
+
+    it("honours a stamped top-level reasoning_effort from a model-id suffix", async () => {
+        const { buildWhamResponsesBody } = await import("./openai-subscription");
+
+        // `account/openai/gpt-5.5:xhigh` reaches this function as a top-level
+        // reasoning_effort; without reading it the suffix silently ran at the
+        // account default.
+        const stamped = buildWhamResponsesBody(
+            { messages: [{ role: "user", content: "x" }], reasoning_effort: "xhigh" },
+            "gpt-5.5",
+            { defaultReasoningEffort: "low" }
+        );
+        expect(stamped.body.reasoning).toEqual({ effort: "xhigh" });
+
+        // An explicit nested reasoning.effort still wins over the suffix.
+        const explicit = buildWhamResponsesBody(
+            { messages: [{ role: "user", content: "x" }], reasoning_effort: "xhigh", reasoning: { effort: "medium" } },
+            "gpt-5.5"
+        );
+        expect(explicit.body.reasoning).toEqual({ effort: "medium" });
+
+        // `:max` is documented as a supported suffix but WHAM has no such
+        // effort. Falling back to the default would make :max weaker than
+        // :xhigh, so it maps to the strongest WHAM accepts.
+        const max = buildWhamResponsesBody(
+            { messages: [{ role: "user", content: "x" }], reasoning_effort: "max" },
+            "gpt-5.5",
+            { defaultReasoningEffort: "low" }
+        );
+        expect(max.body.reasoning).toEqual({ effort: "xhigh" });
+
+        // An unknown stamped value falls back to the configured default.
+        const bogus = buildWhamResponsesBody(
+            { messages: [{ role: "user", content: "x" }], reasoning_effort: "ultra-max" },
+            "gpt-5.5",
+            { defaultReasoningEffort: "high" }
+        );
+        expect(bogus.body.reasoning).toEqual({ effort: "high" });
+    });
 });
 
 describe("OpenAiSubscriptionProvider", () => {

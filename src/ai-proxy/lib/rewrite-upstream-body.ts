@@ -1,5 +1,5 @@
 import { ensureResponsesInput } from "@app/ai-proxy/lib/chat-to-responses-body";
-import { stripCursorThinkingBlocks } from "@app/ai-proxy/lib/thinking-folded";
+import { extractFoldedThinking } from "@app/ai-proxy/lib/thinking-folded";
 import { inferModelThinking } from "@genesiscz/utils/ai/grok/models";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -617,7 +617,12 @@ function ensureGrokThinkingEnabled(body: JsonObject, upstreamModel: string): voi
     body.enable_thinking = true;
 }
 
-function stripMirroredThinkingFromMessages(body: JsonObject): void {
+// Folded mode writes reasoning into assistant `content`; replaying that verbatim
+// makes the model imitate the <details> wrapper in its answers. The old fix
+// deleted it — erasing the model's own reasoning from history every turn. Now the
+// reasoning is moved to `reasoning_content`, the request slot Grok already
+// accepts (see patchGrokAssistantReasoningForToolCalls), so continuity survives.
+function reclaimMirroredThinkingFromMessages(body: JsonObject): void {
     if (!Array.isArray(body.messages)) {
         return;
     }
@@ -627,14 +632,32 @@ function stripMirroredThinkingFromMessages(body: JsonObject): void {
             continue;
         }
 
+        const reclaimed: string[] = [];
+
         if (typeof message.content === "string") {
-            message.content = stripCursorThinkingBlocks(message.content);
+            const { content, reasoning } = extractFoldedThinking(message.content);
+
+            if (reasoning) {
+                message.content = content;
+                reclaimed.push(reasoning);
+            }
         } else if (Array.isArray(message.content)) {
             for (const part of message.content) {
                 if (isObject(part) && part.type === "text" && typeof part.text === "string") {
-                    part.text = stripCursorThinkingBlocks(part.text);
+                    const { content, reasoning } = extractFoldedThinking(part.text);
+
+                    if (reasoning) {
+                        part.text = content;
+                        reclaimed.push(reasoning);
+                    }
                 }
             }
+        }
+
+        const hasReasoning = typeof message.reasoning_content === "string" && message.reasoning_content.trim();
+
+        if (reclaimed.length > 0 && !hasReasoning) {
+            message.reasoning_content = reclaimed.join("\n\n");
         }
     }
 }
@@ -690,8 +713,10 @@ export function prepareGrokUpstreamBody(
         }
 
         ensureGrokThinkingEnabled(next, resolvedModel);
+        // Reclaim BEFORE the patch: real reasoning must fill reasoning_content
+        // first, so the patch's " " placeholder only covers turns with none.
+        reclaimMirroredThinkingFromMessages(next);
         patchGrokAssistantReasoningForToolCalls(next);
-        stripMirroredThinkingFromMessages(next);
 
         if (target === "responses") {
             if ("max_tokens" in next && !("max_output_tokens" in next)) {
@@ -708,8 +733,24 @@ export function prepareGrokUpstreamBody(
             delete next.tools;
         }
 
-        if ("stream_options" in next) {
-            delete next.stream_options;
+        // Grok honours `stream_options.include_usage` (verified raw 2026-08-19:
+        // the final chunk carries real usage including reasoning_tokens,
+        // cached_tokens and cost_in_usd_ticks). This line used to DELETE the
+        // field, which silenced usage on every streamed call and forced 72% of
+        // ledger rows onto char-count estimates. The Responses API has no
+        // stream_options, so it is still stripped on that target.
+        if (target === "responses") {
+            if ("stream_options" in next) {
+                delete next.stream_options;
+            }
+        } else if (next.stream === true) {
+            const streamOptions = isObject(next.stream_options) ? { ...next.stream_options } : {};
+            // ??=, not =: a client that explicitly asked for false meant it —
+            // the trailing usage-only frame (empty choices[]) breaks consumers
+            // that index choices[0] without a length check. The ledger falls
+            // back to its estimate for such calls.
+            streamOptions.include_usage ??= true;
+            next.stream_options = streamOptions;
         }
 
         if ("n" in next) {
@@ -728,6 +769,57 @@ export function prepareGrokUpstreamBody(
     } catch (err) {
         logger.debug({ err, upstreamModel, target }, "ai-proxy: prepareGrokUpstreamBody fallback");
         return { bodyText: rewriteBodyModel(bodyText, upstreamModel), upstreamModel, imageRouted: false };
+    }
+}
+
+/** An effort slot the suffix may fill: absent, or a blank string. Anything else is the client's explicit answer. */
+function isEffortGap(value: unknown): boolean {
+    return value === undefined || (typeof value === "string" && !value.trim());
+}
+
+/**
+ * Stamp `reasoning_effort` (and `reasoning.effort` when that object exists)
+ * from a `:<effort>` model-id suffix. An explicit body field wins.
+ */
+export function applyReasoningEffortToBody(bodyText: string, effort?: string): string {
+    if (!effort) {
+        return bodyText;
+    }
+
+    try {
+        const parsed = SafeJSON.parse(bodyText, { strict: true });
+
+        if (!isObject(parsed)) {
+            return bodyText;
+        }
+
+        const next: JsonObject = { ...parsed };
+        let changed = false;
+
+        // An explicit nested `reasoning.effort` is the client's answer for the
+        // whole request — README says it beats the suffix. Stamping the
+        // top-level field anyway would ship two conflicting efforts upstream.
+        const nestedEffortSet = isObject(next.reasoning) && next.reasoning.effort !== undefined;
+
+        // An explicit body field wins, whatever its type — a client that sent
+        // `reasoning_effort: null` meant it (`reasoning: { effort: null }` is a
+        // client explicitly disabling effort on the Responses door). Only a gap
+        // per isEffortGap may be filled, same rule for both documented fields
+        // or they would disagree.
+        if (!nestedEffortSet && isEffortGap(next.reasoning_effort)) {
+            next.reasoning_effort = effort;
+            changed = true;
+        }
+
+        if (isObject(next.reasoning) && isEffortGap(next.reasoning.effort)) {
+            next.reasoning = { ...next.reasoning, effort };
+            changed = true;
+        }
+
+        return changed ? SafeJSON.stringify(next) : bodyText;
+    } catch (err) {
+        logger.debug({ err, effort }, "ai-proxy: reasoning-effort stamp skipped — body was not parseable JSON");
+        return bodyText;
     }
 }
 

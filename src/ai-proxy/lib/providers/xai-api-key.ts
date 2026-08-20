@@ -5,6 +5,7 @@ import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state"
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
+import { clampXaiReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-vocab";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { GrokManagementClient } from "@genesiscz/utils/ai/grok";
@@ -220,7 +221,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
     private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
         const started = performance.now();
-        const upstreamBody = rewriteBodyModel(bodyText, upstreamModel);
+        const upstreamBody = rewriteBodyModel(clampXaiReasoningEffort(bodyText, upstreamModel), upstreamModel);
         const url = `${this.baseUrl}${path}`;
 
         try {

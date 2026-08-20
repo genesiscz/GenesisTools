@@ -81,6 +81,26 @@ Examples:
 - `genesiscz/codex/gpt-5.5`
 - `router/openrouter/anthropic/claude-sonnet-5` (OpenRouter ids contain a slash, so the id has four segments)
 
+### Pinning reasoning effort with a `:<effort>` suffix
+
+Append `:<effort>` to any model id to pin the reasoning effort for that call:
+
+```text
+<account>/<provider>/<upstreamModelId>:<effort>
+```
+
+Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Example:
+`martin/grok/grok-4.6:xhigh`.
+
+- **The client's own field wins.** An explicit `reasoning_effort` (or a nested `reasoning.effort`
+  on the Responses door) takes precedence over the suffix, which is the fallback.
+- **Only on translated routes.** Providers that pass an Anthropic body through untouched
+  (`anthropic-subscription`, `grok-subscription` on `/v1/messages`) do not carry an OpenAI
+  `reasoning_effort` field, so the suffix is dropped there and a debug line records it. Anthropic
+  rejects the field outright (`reasoning_effort: Extra inputs are not permitted`).
+- **OpenRouter ids already contain a slash but no colon**, so the suffix stays unambiguous —
+  it is split off the END of the id.
+
 ## Auth
 
 ### Grok subscription
@@ -314,4 +334,31 @@ tools ai-proxy internal update-models --account genesiscz
 tools ai-proxy internal update-models --provider github-copilot
 ```
 
-Writes `src/ai-proxy/data/models-catalog.json` (manual git commit).
+Writes `~/.genesis-tools/ai-proxy/models-catalog.json`. **Per-user, never committed** — it records
+which ids *your* account's probe reached, keyed by your account name, so it was never shareable.
+
+## Where model knowledge lives
+
+Three tiers, and only the middle one belongs in git:
+
+| Tier | Where | Committed? |
+|---|---|---|
+| Live picker | `~/.grok/models_cache.json` (the grok CLI refreshes it from `/v1/models`) | no |
+| Curated hints + probe candidates | `GROK_STATIC_CATALOG` in `src/utils/ai/grok/models.ts` | **yes** |
+| This account's probe results | `~/.genesis-tools/ai-proxy/models-catalog.json` | no |
+
+`listGrokProxyModels` merges all three, live first, so **a model xAI ships tomorrow is offered
+without a repo edit** — the grok CLI refreshes its own cache and the id appears. The static list
+still matters: `GROK_PROBE_CANDIDATES` is seeded from it, so an id missing there is never *probed*.
+
+Only grok and github-copilot use this file at all. Every other provider enumerates live and needs
+no stored catalog: `xai` and `openai` via `GET /v1/models`, `codex` via the WHAM model list,
+`openrouter` via its live catalog. `claude-sub` has no model endpoint and uses fixed aliases.
+
+⚠️ **Pricing does not auto-discover.** A newly appeared model has no entry in
+`lib/billing/pricing.ts`, and that table matches ids exactly (never by prefix — a prefix match once
+billed grok-4.5 at grok-4's 7.5x rate). An unpriced model therefore records its tokens, books
+**$0**, and is marked in the CLI. That fails safe rather than mis-billing. **Listing an unpriced
+model is silent**; the warning naming the id and the file is logged from `recordClientUsage`, once
+per unpriced call that is actually recorded — so an unpriced id is noticed when it costs money, not
+when it merely appears in a model list.

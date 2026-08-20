@@ -3,6 +3,7 @@ import { assertApiKeySourceAllowed, resolveAccountApiKey } from "@app/ai-proxy/l
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import { mapOpenRouterReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-vocab";
 import type { AiProxyAccountConfig, AiProxyOpenRouterRoute, UsageSummary } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -245,7 +246,7 @@ export class OpenRouterApiKeyProvider implements ProxyProvider {
     private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
         const started = performance.now();
         const streaming = /"stream"\s*:\s*true/.test(bodyText);
-        const upstreamBody = this.buildUpstreamBody(bodyText, upstreamModel, streaming);
+        const upstreamBody = this.buildUpstreamBody(mapOpenRouterReasoningEffort(bodyText), upstreamModel, streaming);
         const defaults = this.account.openrouter;
 
         try {

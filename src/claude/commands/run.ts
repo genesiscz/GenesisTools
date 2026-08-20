@@ -1,6 +1,7 @@
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { runAiProxyUp } from "@app/ai-proxy/lib/lifecycle";
+import { REASONING_EFFORT_SUFFIXES } from "@app/ai-proxy/lib/resolve-model";
 import type { AiProxyConfig, ProxyModelMeta } from "@app/ai-proxy/lib/types";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import * as p from "@clack/prompts";
@@ -14,8 +15,25 @@ import { shellSingleQuote } from "../lib/shell-quote";
 
 interface RunOptions {
     model?: string;
+    effort?: string;
     list?: boolean;
     start?: boolean;
+}
+
+/** What the proxy's `:<effort>` suffix accepts — the proxy's own list, so the two cannot drift. */
+const EFFORTS: readonly string[] = REASONING_EFFORT_SUFFIXES;
+
+/**
+ * Validated before anything else runs. Checking it after `pickModel()` made the
+ * user answer an interactive picker before learning the flag was misspelled, and
+ * `--list` skipped the check entirely.
+ */
+export function effortError(effort: string | undefined): string | undefined {
+    if (!effort || EFFORTS.includes(effort)) {
+        return undefined;
+    }
+
+    return `Unknown effort "${effort}". Use one of: ${EFFORTS.join(", ")}`;
 }
 
 /**
@@ -196,6 +214,14 @@ export async function runProxySession(
     opts: RunOptions,
     passthrough: string[]
 ): Promise<void> {
+    const badEffort = effortError(opts.effort);
+
+    if (badEffort) {
+        out.error(pc.red(badEffort));
+        await out.flush();
+        process.exit(1);
+    }
+
     const config = await loadConfigFresh();
 
     if (!config.proxyApiKey) {
@@ -249,7 +275,10 @@ export async function runProxySession(
         process.exit(1);
     }
 
-    const model = await pickModel(candidates, hint);
+    const picked = await pickModel(candidates, hint);
+
+    // The proxy reads effort off the model id, so pinning one is a suffix.
+    const model = opts.effort ? { ...picked, proxyId: `${picked.proxyId}:${opts.effort}` } : picked;
 
     if (unlisted) {
         out.log.warn(
@@ -283,6 +312,12 @@ export async function runProxySession(
         ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: model.upstreamId,
         ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: `${model.providerSlug} via ai-proxy (${model.accountName})`,
         TOOLS_CLAUDE_ACCOUNT: `proxy:${model.accountName}/${model.providerSlug}`,
+        // Claude Code cannot learn a proxied model's window, so it falls back to a
+        // default and shows e.g. 155k for a 500k model — which then drives
+        // auto-compact to fire far too early. Its own guidance is "set
+        // CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real window", and the catalog
+        // already knows it.
+        ...(model.contextWindow ? { CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(model.contextWindow) } : {}),
     };
 
     // A first-party OAuth token in the environment outranks ANTHROPIC_AUTH_TOKEN and
@@ -296,7 +331,13 @@ export async function runProxySession(
     const cmd = await findClaudeCommand();
     const suffix = passthrough.length > 0 ? ` ${passthrough.map(shellSingleQuote).join(" ")}` : "";
 
-    out.printlnErr(pc.dim(`Starting Claude Code on ${pc.magenta(model.proxyId)} via ${baseUrl}...`));
+    // A session silently running at the model's default effort looks identical to
+    // one running at the effort you asked for, so say which it is.
+    const effortNote = opts.effort ? `effort ${opts.effort}` : "effort: model default";
+    const ctxNote = model.contextWindow ? `, ${Math.round(model.contextWindow / 1000)}k ctx` : "";
+    out.printlnErr(
+        pc.dim(`Starting Claude Code on ${pc.magenta(model.proxyId)} (${effortNote}${ctxNote}) via ${baseUrl}...`)
+    );
     logger.info({ cmd, model: model.proxyId, baseUrl, passthrough }, "[run] spawning claude against ai-proxy");
 
     const proc = Bun.spawn({
@@ -319,6 +360,11 @@ export function registerRunCommand(program: Command): void {
         )
         .allowExcessArguments(true)
         .option("-m, --model <spec>", "Model filter inside the target (e.g. 4.6, sonnet, composer)")
+        .option(
+            "-e, --effort <level>",
+            `Reasoning effort to pin: ${EFFORTS.join(" | ")} (appends the :<effort> suffix). ` +
+                "Claude Code's own /effort command also works and now reaches the upstream."
+        )
         .option("--list", "List the matching proxy models and exit")
         .option("--no-start", "Fail if ai-proxy is not already running instead of starting it")
         .action(async (target: string | undefined, opts: RunOptions, command: Command) => {

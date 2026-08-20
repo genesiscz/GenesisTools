@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+    applyReasoningEffortToBody,
     findInvalidImageDataPayload,
     GROK_IMAGE_FALLBACK_MODEL,
     grokModelSupportsImages,
@@ -53,6 +54,42 @@ describe("rewrite-upstream-body", () => {
 
         const parsed = SafeJSON.parse(rewritten.bodyText) as { enable_thinking?: boolean };
         expect(parsed.enable_thinking).toBeUndefined();
+    });
+
+    it("reclaims folded thinking into reasoning_content instead of erasing it", () => {
+        // The proxy wrote reasoning into content as a <details> wrapper and the
+        // next turn deleted it, so the model lost its own reasoning every turn.
+        const folded =
+            "<details>\n<summary><strong>Thinking</strong></summary>\n\nI should read the file first.\n\n</details>\n\n\nReading it now.";
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "grok-4.6",
+                messages: [
+                    { role: "user", content: "go" },
+                    { role: "assistant", content: folded },
+                ],
+            }),
+            "grok-4.6"
+        );
+
+        const parsed = SafeJSON.parse(rewritten.bodyText) as {
+            messages: { role: string; content: string; reasoning_content?: string }[];
+        };
+        expect(parsed.messages[1].content).toBe("Reading it now.");
+        expect(parsed.messages[1].reasoning_content).toBe("I should read the file first.");
+    });
+
+    it("leaves model-authored <think> tags in content untouched", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "grok-4.6",
+                messages: [{ role: "assistant", content: "<thinking>mine</thinking> answer" }],
+            }),
+            "grok-4.6"
+        );
+
+        const parsed = SafeJSON.parse(rewritten.bodyText) as { messages: { content: string }[] };
+        expect(parsed.messages[0].content).toBe("<thinking>mine</thinking> answer");
     });
 
     it("flattens OpenAI nested function tools for Grok responses API", () => {
@@ -301,6 +338,69 @@ describe("rewrite-upstream-body", () => {
         expect(parsed.model).toBe("grok-build");
         expect(rewritten.imageRouted).toBe(false);
         expect(parsed.messages[0]?.content?.[0]?.type).toBe("image_url");
+    });
+});
+
+describe("applyReasoningEffortToBody", () => {
+    it("stamps reasoning_effort when absent", () => {
+        const next = applyReasoningEffortToBody(SafeJSON.stringify({ model: "grok-4.6", messages: [] }), "xhigh");
+        const parsed = SafeJSON.parse(next) as { reasoning_effort?: string };
+
+        expect(parsed.reasoning_effort).toBe("xhigh");
+    });
+
+    it("does not overwrite an explicit reasoning_effort", () => {
+        const next = applyReasoningEffortToBody(
+            SafeJSON.stringify({ model: "grok-4.6", reasoning_effort: "low" }),
+            "xhigh"
+        );
+        const parsed = SafeJSON.parse(next) as { reasoning_effort?: string };
+
+        expect(parsed.reasoning_effort).toBe("low");
+    });
+
+    it("keeps an explicit non-string reasoning_effort, but fills a blank one", () => {
+        // `null` is a client saying "no effort"; overwriting it broke the stated
+        // rule that an explicit body field wins. A blank string is still a gap.
+        const explicitNull = SafeJSON.parse(
+            applyReasoningEffortToBody(SafeJSON.stringify({ model: "grok-4.6", reasoning_effort: null }), "xhigh")
+        ) as { reasoning_effort?: unknown };
+        expect(explicitNull.reasoning_effort).toBeNull();
+
+        const blank = SafeJSON.parse(
+            applyReasoningEffortToBody(SafeJSON.stringify({ model: "grok-4.6", reasoning_effort: "  " }), "xhigh")
+        ) as { reasoning_effort?: unknown };
+        expect(blank.reasoning_effort).toBe("xhigh");
+
+        // An explicit NESTED effort answers for the whole request, so the
+        // top-level field must not be stamped with a conflicting value.
+        const nestedWins = SafeJSON.parse(
+            applyReasoningEffortToBody(SafeJSON.stringify({ model: "grok-4.6", reasoning: { effort: "low" } }), "xhigh")
+        ) as { reasoning_effort?: unknown; reasoning?: { effort?: unknown } };
+        expect(nestedWins.reasoning?.effort).toBe("low");
+        expect(nestedWins.reasoning_effort).toBeUndefined();
+
+        // The nested Responses-door field follows the SAME rule, or a client
+        // cannot disable effort there the way it can at the top level.
+        const nestedNull = SafeJSON.parse(
+            applyReasoningEffortToBody(SafeJSON.stringify({ model: "grok-4.6", reasoning: { effort: null } }), "xhigh")
+        ) as { reasoning?: { effort?: unknown } };
+        expect(nestedNull.reasoning?.effort).toBeNull();
+    });
+
+    it("fills reasoning.effort when that object already exists", () => {
+        const next = applyReasoningEffortToBody(
+            SafeJSON.stringify({ model: "grok-4.6", reasoning: { generate_summary: true } }),
+            "xhigh"
+        );
+        const parsed = SafeJSON.parse(next) as {
+            reasoning_effort?: string;
+            reasoning?: { effort?: string; generate_summary?: boolean };
+        };
+
+        expect(parsed.reasoning_effort).toBe("xhigh");
+        expect(parsed.reasoning?.effort).toBe("xhigh");
+        expect(parsed.reasoning?.generate_summary).toBe(true);
     });
 });
 

@@ -76,6 +76,27 @@ describe("resolve-model", () => {
         expect(() => resolveModel("grok-build-0.1", accounts)).toThrow("Ambiguous model");
     });
 
+    it("strips a trailing :<effort> suffix and returns reasoningEffort", () => {
+        const accounts = [grokAccount("martin")];
+
+        const route = resolveModel("martin/grok/grok-4.6:xhigh", accounts);
+
+        expect(route.upstreamId).toBe("grok-4.6");
+        expect(route.reasoningEffort).toBe("xhigh");
+        expect(route.accountName).toBe("martin");
+    });
+
+    it("leaves OpenRouter :batch suffixes on the upstream id", () => {
+        const accounts: AiProxyAccountConfig[] = [
+            { name: "openrouter", provider: "openrouter", providerSlug: "openrouter", enabled: true },
+        ];
+
+        const route = resolveModel("openrouter/openrouter/anthropic/claude-opus-4.6:batch", accounts);
+
+        expect(route.upstreamId).toBe("anthropic/claude-opus-4.6:batch");
+        expect(route.reasoningEffort).toBeUndefined();
+    });
+
     it("rejects ambiguous provider/upstream ids across multiple accounts", () => {
         const accounts = [grokAccount("martin"), grokAccount("work")];
 

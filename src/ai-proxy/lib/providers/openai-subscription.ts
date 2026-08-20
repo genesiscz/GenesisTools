@@ -13,7 +13,7 @@ import {
     resolveWhamItemReferences,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
-import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
 import { getTodayUsageSummary, getUsageSummarySince } from "@app/ai-proxy/lib/usage/store";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
 import {
@@ -70,9 +70,23 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             }));
     }
 
-    async chatCompletions(req: Request, model: string, bodyText: string): Promise<Response> {
+    async chatCompletions(
+        req: Request,
+        model: string,
+        bodyText: string,
+        options?: { thinkingMode?: ThinkingPresentationMode }
+    ): Promise<Response> {
         const proxyModel = `${this.account.name}/${this.account.providerSlug}/${model}`;
-        const { response } = await responsesToChat({ provider: this, upstreamModel: model, proxyModel, req, bodyText });
+        // Without the resolved mode this silently defaulted to "raw", which
+        // prepends reasoning into content — the configured mode never applied.
+        const { response } = await responsesToChat({
+            provider: this,
+            upstreamModel: model,
+            proxyModel,
+            req,
+            bodyText,
+            thinkingMode: options?.thinkingMode,
+        });
         return response;
     }
 
@@ -559,7 +573,11 @@ export function buildWhamResponsesBody(
         model,
         stream: true,
         store: false,
-        include: [],
+        // With store:false, encrypted reasoning is the ONLY way a client can
+        // replay its reasoning next turn — `include: []` made cross-turn
+        // continuity structurally impossible. Codex CLI itself requests exactly
+        // this include alongside store:false.
+        include: ["reasoning.encrypted_content"],
     };
     const dropped: string[] = [];
 
@@ -636,8 +654,17 @@ export function buildWhamResponsesBody(
     }
 
     if (isObject(parsed.reasoning)) {
-        // Pass the client's reasoning through, clamping unknown efforts.
+        // Pass the client's reasoning through, clamping unknown efforts. The
+        // `:max` suffix lands HERE when the client already sent a reasoning
+        // object (applyReasoningEffortToBody fills the nested slot), so it
+        // needs the same strongest-accepted mapping as the else-branch —
+        // clamping it to "low" ran the user's `:max` ask at the WEAKEST effort.
         const reasoning = { ...parsed.reasoning };
+
+        if (reasoning.effort === "max") {
+            logger.debug({ model }, "ai-proxy: WHAM has no 'max' effort — using xhigh, the strongest it accepts");
+            reasoning.effort = "xhigh";
+        }
 
         if (typeof reasoning.effort === "string" && !WHAM_REASONING_EFFORTS.has(reasoning.effort)) {
             logger.debug({ effort: reasoning.effort }, "ai-proxy: clamped unknown reasoning effort to low");
@@ -646,7 +673,25 @@ export function buildWhamResponsesBody(
 
         body.reasoning = reasoning;
     } else {
-        const effort = options?.defaultReasoningEffort ?? "low";
+        // A `:<effort>` model-id suffix arrives here as a top-level
+        // `reasoning_effort` (applyReasoningEffortToBody only fills
+        // `reasoning.effort` when the client already sent that object). Reading
+        // it is what makes `account/openai/gpt-5.5:xhigh` actually run at xhigh
+        // instead of silently falling back to the account default.
+        //
+        // `max` is a documented proxy suffix that WHAM does not accept. Dropping
+        // it to the account default would make `:max` quieter than `:xhigh`,
+        // which is the opposite of what the user asked for, so it maps to the
+        // strongest effort WHAM does accept.
+        const stamped = typeof parsed.reasoning_effort === "string" ? parsed.reasoning_effort : undefined;
+        const requested = stamped === "max" ? "xhigh" : stamped;
+
+        if (stamped === "max") {
+            logger.debug({ model }, "ai-proxy: WHAM has no 'max' effort — using xhigh, the strongest it accepts");
+        }
+
+        const effort =
+            requested && WHAM_REASONING_EFFORTS.has(requested) ? requested : (options?.defaultReasoningEffort ?? "low");
 
         if (effort !== "none") {
             body.reasoning = { effort };
@@ -662,6 +707,7 @@ async function accumulateResponsesJson(
     const raw = await new Response(stream).text();
     let text = "";
     const functionCalls: unknown[] = [];
+    const reasoningItems: unknown[] = [];
     let completed: Record<string, unknown> = {};
     let failure: string | undefined;
     let failureCode: string | undefined;
@@ -701,6 +747,14 @@ async function accumulateResponsesJson(
             continue;
         }
 
+        // Reasoning items (summary + encrypted_content) are what a Responses
+        // client replays next turn. The rebuild dropped them, so a non-streaming
+        // caller could never continue its own reasoning.
+        if (event.type === "response.output_item.done" && isObject(event.item) && event.item.type === "reasoning") {
+            reasoningItems.push(event.item);
+            continue;
+        }
+
         if (event.type === "response.completed" && isObject(event.response)) {
             completed = event.response;
             continue;
@@ -719,6 +773,15 @@ async function accumulateResponsesJson(
     }
 
     const output: unknown[] = [];
+
+    for (const item of reasoningItems) {
+        if (isObject(item) && typeof item.id !== "string") {
+            output.push({ ...item, id: `rs_${randomUUID().replace(/-/g, "")}` });
+            continue;
+        }
+
+        output.push(item);
+    }
 
     if (text.length > 0) {
         // Responses API clients (Vercel AI SDK) require an id on every output item; WHAM omits it.

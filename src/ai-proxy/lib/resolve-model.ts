@@ -1,6 +1,51 @@
 import { isProviderImplemented } from "@app/ai-proxy/lib/providers/registry";
-import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import type { AiProxyAccountConfig, ReasoningEffort, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { openRouterModelSync } from "@genesiscz/utils/ai/catalog/openrouter";
+
+export const REASONING_EFFORT_SUFFIXES = [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "minimal",
+    "max",
+] as const satisfies readonly ReasoningEffort[];
+
+const REASONING_EFFORT_SET = new Set<string>(REASONING_EFFORT_SUFFIXES);
+
+/**
+ * Split a trailing `:<effort>` off a proxy model id.
+ *
+ * OpenRouter ids also use colons (`claude-opus-4.6:batch`), so only known
+ * effort tokens are stripped. Unknown suffixes stay on the upstream id.
+ */
+export function splitReasoningEffortSuffix(modelId: string): {
+    modelId: string;
+    reasoningEffort?: ReasoningEffort;
+} {
+    const colon = modelId.lastIndexOf(":");
+
+    if (colon <= 0) {
+        return { modelId };
+    }
+
+    const suffix = modelId
+        .slice(colon + 1)
+        .trim()
+        .toLowerCase();
+
+    if (!REASONING_EFFORT_SET.has(suffix)) {
+        return { modelId };
+    }
+
+    const base = modelId.slice(0, colon).trim();
+
+    if (!base) {
+        return { modelId };
+    }
+
+    return { modelId: base, reasoningEffort: suffix as ReasoningEffort };
+}
 
 export interface ParsedModelId {
     accountName: string;
@@ -101,7 +146,18 @@ function resolveCatalogGatedUpstreamModel(upstreamId: string, accounts: AiProxyA
     return resolveFromAccountMatches(candidates, upstreamId, upstreamId);
 }
 
-export function resolveModel(proxyModelId: string, accounts: AiProxyAccountConfig[]) {
+export function resolveModel(proxyModelId: string, accounts: AiProxyAccountConfig[]): ResolvedRoute {
+    const { modelId, reasoningEffort } = splitReasoningEffortSuffix(proxyModelId.trim());
+    const route = resolveModelWithoutEffort(modelId, accounts);
+
+    if (!reasoningEffort) {
+        return route;
+    }
+
+    return { ...route, reasoningEffort };
+}
+
+function resolveModelWithoutEffort(proxyModelId: string, accounts: AiProxyAccountConfig[]): ResolvedRoute {
     const trimmed = proxyModelId.trim();
 
     if (!trimmed) {
