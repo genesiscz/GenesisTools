@@ -431,6 +431,7 @@ onto the merged base first, then optionally deletes the head branch.
 | [`automate`](src/automate/README.md) | Chain any `tools` commands into named, reusable presets, with variables, conditions, branching, and SQLite run history. | `preset` `step` `task` `daemon` `configure` |
 | [`daemon`](src/daemon/README.md) | General-purpose background task scheduler that owns the scheduled work, with an installable service unit. | `start` `stop` `restart` `status` `install` `uninstall` `config` `logs` |
 | [`notify`](src/notify/README.md) | Send macOS notifications through `terminal-notifier`, with action hooks and an interactive config. | `config` |
+| [`ms-teams`](src/ms-teams/README.md) | Read Microsoft Teams chats from the local desktop cache and export markdown, JSON, or HTML. | `sync` `doctor` `conversations` `show` `search` `people` `files` `calls` `meetings` `mcp` |
 | [`telegram`](src/telegram/README.md) | Telegram MTProto user-account client: listen for messages, auto-respond, browse contacts and history, TUI watcher. | `configure` `listen` `contacts` `history` `watch` |
 | [`telegram-bot`](src/telegram-bot/README.md) | Telegram Bot API client for notifications and remote control. Simpler auth than the user client. | `configure` `send` `start` |
 

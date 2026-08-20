@@ -1,0 +1,58 @@
+import { decodeTeamsString } from "./decode";
+
+const REPLY_ITEM_RE = /itemtype=["']http:\/\/schema\.skype\.com\/Reply["'][^>]*itemid=["']([^"']+)["']/i;
+const REPLY_ITEM_RE_ALT = /itemid=["']([^"']+)["'][^>]*itemtype=["']http:\/\/schema\.skype\.com\/Reply["']/i;
+
+export interface HtmlText {
+    text: string;
+    replyToId: string | null;
+}
+
+export function htmlToText(html: unknown): HtmlText {
+    const raw = decodeTeamsString(html);
+
+    if (!raw) {
+        return { text: "", replyToId: null };
+    }
+
+    const replyToId = extractReplyToId(raw);
+    let withoutQuote = raw.replace(/<blockquote\b[^>]*>[\s\S]*?<\/blockquote>/gi, " ");
+    withoutQuote = withoutQuote.replace(/<img\b[^>]*\balt=["']([^"']*)["'][^>]*>/gi, " $1 ");
+    withoutQuote = withoutQuote.replace(/<br\s*\/?>/gi, "\n");
+    withoutQuote = withoutQuote.replace(/<\/p>/gi, "\n");
+    withoutQuote = withoutQuote.replace(/<\/div>/gi, "\n");
+    withoutQuote = withoutQuote.replace(/<\/li>/gi, "\n");
+    withoutQuote = withoutQuote.replace(/<[^>]+>/g, " ");
+    const text = decodeHtmlEntities(withoutQuote)
+        .replace(/\u00a0/g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/[ \t]{2,}/g, " ")
+        .trim();
+
+    return { text, replyToId };
+}
+
+export function extractReplyToId(html: string): string | null {
+    const a = html.match(REPLY_ITEM_RE);
+    const b = html.match(REPLY_ITEM_RE_ALT);
+    const id = a?.[1] ?? b?.[1] ?? null;
+
+    if (!id || id === "<Undefined>") {
+        return null;
+    }
+
+    return id;
+}
+
+function decodeHtmlEntities(value: string): string {
+    return value
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(Number.parseInt(n, 16)));
+}
