@@ -83,7 +83,10 @@ describe("nativeTranslationLoss", () => {
         // exclusion, so a request excluding gist.github.com while allowing
         // github.com must not take this path.
         expect(
-            nativeTranslationLoss({ messages: [] }, { ...TOOL, allowedDomains: ["github.com"], blockedDomains: ["gist.github.com"] })
+            nativeTranslationLoss(
+                { messages: [] },
+                { ...TOOL, allowedDomains: ["github.com"], blockedDomains: ["gist.github.com"] }
+            )
         ).toBe("both allowed_domains and blocked_domains");
 
         expect(

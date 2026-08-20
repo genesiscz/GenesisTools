@@ -343,10 +343,7 @@ const MAX_FILTER_DOMAINS = 5;
  * which keeps the original Anthropic body intact. Dropping them silently
  * would answer a search using context the model never saw.
  */
-export function nativeTranslationLoss(
-    body: Record<string, unknown>,
-    tool?: WebSearchServerTool
-): string | undefined {
+export function nativeTranslationLoss(body: Record<string, unknown>, tool?: WebSearchServerTool): string | undefined {
     // Domain filters the upstream cannot express. It takes ONE list of at most
     // five domains, so a request pairing an allow-list with exclusions, or
     // excluding more than five domains, would come back with sources it asked
