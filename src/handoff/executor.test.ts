@@ -137,6 +137,30 @@ describe("work loop (§8.4, §8.5)", () => {
         const list = listHandoffs({}, env.depsFor(A));
         expect(list.handoffs[0].tasks).toBe("1/2");
 
+        // List previews proofs instead of dumping them (grok probe 81442272:
+        // a limit:2 list with include tasks returned every proof verbatim).
+        const bigProof = executeHandoffActions(
+            {
+                id: handoff.id,
+                actions: [
+                    {
+                        action: "check_task",
+                        taskId: "t1",
+                        proof: { answer: "x".repeat(500), context: "long context blob" },
+                    },
+                ],
+            },
+            env.depsFor(B)
+        );
+        expect(bigProof.results[0].ok).toBe(true);
+
+        const withTasks = listHandoffs({ include: ["tasks"] }, env.depsFor(A));
+        const listedProof = withTasks.handoffs[0].taskList?.[0].proof;
+        expect(listedProof?.answer.length).toBeLessThanOrEqual(201);
+        expect(listedProof?.answer.endsWith("…")).toBe(true);
+        expect(listedProof?.context).toBeUndefined();
+        expect(withTasks.info.join(" ")).toContain("handoff_get for the full proof");
+
         const badDeny = executeHandoffActions(
             { id: handoff.id, actions: [{ action: "deny_task", taskId: "t2" }] },
             env.depsFor(B)

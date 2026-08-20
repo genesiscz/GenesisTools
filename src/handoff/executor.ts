@@ -445,6 +445,8 @@ export interface ListHandoffsResponse {
     info: string[];
 }
 
+const PROOF_PREVIEW_CHARS = 200;
+
 export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = {}): ListHandoffsResponse {
     const by = buildBy(deps);
     const limit = input.limit !== undefined && input.limit > 0 ? input.limit : 20;
@@ -475,6 +477,7 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
         const total = rows.length;
         const page = rows.slice(offset, offset + limit);
         const now = Date.now();
+        let proofsClipped = false;
         const handoffs = page.map((h): HandoffListRow & { taskList?: Handoff["tasks"] } => {
             const p = progress(h);
             const row: HandoffListRow & { taskList?: Handoff["tasks"] } = {
@@ -497,13 +500,37 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
             }
 
             if (wantTasks) {
-                row.taskList = h.tasks;
+                // List is a browse surface; full proof blobs belong to
+                // handoff_get. Returning them verbatim made a limit:2 list a
+                // token bomb (grok probe 81442272).
+                row.taskList = h.tasks.map((task) => {
+                    if (task.proof === undefined) {
+                        return task;
+                    }
+
+                    const clipped = task.proof.answer.length > PROOF_PREVIEW_CHARS;
+                    proofsClipped ||= clipped || task.proof.context !== undefined;
+                    return {
+                        ...task,
+                        proof: {
+                            ...task.proof,
+                            answer: clipped
+                                ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…`
+                                : task.proof.answer,
+                            context: undefined,
+                        },
+                    };
+                });
             }
 
             return row;
         });
 
         const info: string[] = [`${total} handoff${total === 1 ? "" : "s"} matched; showing ${page.length}.`];
+
+        if (proofsClipped) {
+            info.push("Task proofs are previews on list — call handoff_get for the full proof.");
+        }
 
         if (total > offset + page.length) {
             info.push(`More available — pass offset: ${offset + page.length}.`);
