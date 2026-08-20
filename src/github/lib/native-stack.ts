@@ -67,15 +67,15 @@ export function parsePullStackNumber(data: unknown): number | null {
     return n;
 }
 
-/**
- * Exact recovery commands after a native-stack retarget failure.
- * The parent SHA is already on the base; the child PR number stays the same.
- */
 /** Wrap `value` in POSIX single quotes so a branch name cannot break a shell command. */
 export function posixShellSingleQuote(value: string): string {
     return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * Exact recovery commands after a native-stack retarget failure.
+ * The parent SHA is already on the base; the child PR number stays the same.
+ */
 export function formatNativeStackRecovery(input: NativeStackRecovery): string[] {
     const repo = `${input.owner}/${input.repo}`;
     const base = posixShellSingleQuote(input.newBase);

@@ -593,6 +593,8 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
                 throw err;
             }
 
+            dep.stackNumber = stackNumber;
+
             if (!unstacked.has(stackNumber)) {
                 logLine(
                     log,
@@ -670,7 +672,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
                     ok: false,
                     state: dep.state,
                     error: message,
-                    stackNumber,
+                    stackNumber: dep.stackNumber ?? stackNumber,
                 })
             );
             logLine(log, `    ✘ ${message}`);

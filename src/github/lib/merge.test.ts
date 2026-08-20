@@ -789,6 +789,30 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(logs.some((l) => l.includes("still OPEN"))).toBe(true);
     });
 
+    test("failed unstack after getPullStackNumber still emits the resolved stack id", async () => {
+        const { client } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
+            stackBaseErrorUntilUnstack: [2],
+            stackByPr: { 2: 8 },
+            failUnstack: true,
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            deleteBranch: false,
+            client,
+        });
+
+        expect(result.retargeted[0].ok).toBe(false);
+        expect(result.retargeted[0].stackNumber).toBe(8);
+        expect(result.remainingWork).toContain("gh api -X POST repos/o/r/stacks/8/unstack");
+        expect(result.remainingWork.join("\n")).not.toContain("stacks/<stack-number>/unstack");
+    });
+
     test("two dependents in different native stacks: unstack each stack before PATCH succeeds", async () => {
         const { client, calls } = makeMock({
             pr: basePr(),
