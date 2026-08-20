@@ -446,6 +446,7 @@ export interface ListHandoffsResponse {
 }
 
 const PROOF_PREVIEW_CHARS = 200;
+const PROOF_PREVIEW_IDS = 5;
 
 export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = {}): ListHandoffsResponse {
     const by = buildBy(deps);
@@ -509,13 +510,18 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
                     }
 
                     const clipped = task.proof.answer.length > PROOF_PREVIEW_CHARS;
-                    proofsClipped ||= clipped || task.proof.context !== undefined;
+                    const idsClipped =
+                        (task.proof.commitIds?.length ?? 0) > PROOF_PREVIEW_IDS ||
+                        (task.proof.attachmentIds?.length ?? 0) > PROOF_PREVIEW_IDS;
+                    proofsClipped ||= clipped || idsClipped || task.proof.context !== undefined;
                     return {
                         ...task,
                         proof: {
                             ...task.proof,
                             answer: clipped ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…` : task.proof.answer,
                             context: undefined,
+                            commitIds: task.proof.commitIds?.slice(0, PROOF_PREVIEW_IDS),
+                            attachmentIds: task.proof.attachmentIds?.slice(0, PROOF_PREVIEW_IDS),
                         },
                     };
                 });

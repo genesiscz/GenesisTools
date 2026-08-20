@@ -146,7 +146,11 @@ describe("work loop (§8.4, §8.5)", () => {
                     {
                         action: "check_task",
                         taskId: "t1",
-                        proof: { answer: "x".repeat(500), context: "long context blob" },
+                        proof: {
+                            answer: "x".repeat(500),
+                            context: "long context blob",
+                            commitIds: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
+                        },
                     },
                 ],
             },
@@ -159,6 +163,9 @@ describe("work loop (§8.4, §8.5)", () => {
         expect(listedProof?.answer.length).toBeLessThanOrEqual(201);
         expect(listedProof?.answer.endsWith("…")).toBe(true);
         expect(listedProof?.context).toBeUndefined();
+        // Long id lists are capped on list too — the stored proof keeps all 7.
+        expect(listedProof?.commitIds).toEqual(["c1", "c2", "c3", "c4", "c5"]);
+        expect(bigProof.handoff.tasks[0].proof?.commitIds).toHaveLength(7);
         expect(withTasks.info.join(" ")).toContain("handoff_get for the full proof");
 
         const badDeny = executeHandoffActions(
