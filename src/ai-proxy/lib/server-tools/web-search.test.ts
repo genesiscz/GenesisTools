@@ -363,6 +363,19 @@ describe("nativeWebSearch (/responses server-side search)", () => {
         expect(tools).toEqual([{ type: "web_search", allowed_domains: ["x.ai"] }]);
     });
 
+    it("carries the caller's output cap and honours tool_choice none", () => {
+        const capped = buildResponsesWebSearchBody({ model: "m", messages: [], max_tokens: 512 }, TOOL);
+        expect(capped.max_output_tokens).toBe(512);
+        expect(capped.tools).toEqual([{ type: "web_search" }]);
+
+        // `none` forbids tool calls, so no billed search may run.
+        const forbidden = buildResponsesWebSearchBody(
+            { model: "m", messages: [], max_tokens: 512, tool_choice: { type: "none" } },
+            TOOL
+        );
+        expect(forbidden.tools).toEqual([]);
+    });
+
     it("clamps domain filters to the upstream max of 5", () => {
         const many = ["a.com", "b.com", "c.com", "d.com", "e.com", "f.com", "g.com"];
         const allowed = buildResponsesWebSearchBody(

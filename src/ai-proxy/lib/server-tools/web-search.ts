@@ -421,12 +421,26 @@ export function buildResponsesWebSearchBody(
         wsTool.excluded_domains = tool.blockedDomains.slice(0, MAX_FILTER_DOMAINS);
     }
 
+    // tool_choice `none` forbids tool calls. Offering the server tool anyway
+    // would run a billed search the caller explicitly ruled out, so the turn
+    // goes up with no tools at all.
+    const forbidden = isObject(body.tool_choice) && body.tool_choice.type === "none";
     const out: Record<string, unknown> = {
         model: body.model,
         input: messagesToResponsesInput(body.messages),
-        tools: [wsTool],
+        tools: forbidden ? [] : [wsTool],
         stream: false,
     };
+
+    if (forbidden) {
+        logger.debug({}, "ai-proxy: web_search offered with tool_choice none — answering without searching");
+    }
+
+    // The caller's output cap, in the name /responses uses. Dropping it let a
+    // native search generate (and spend) past what the request authorized.
+    if (typeof body.max_tokens === "number") {
+        out.max_output_tokens = body.max_tokens;
+    }
 
     if (instructions.length > 0) {
         out.instructions = instructions;
