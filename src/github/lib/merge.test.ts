@@ -8,6 +8,7 @@ import {
     resolveMergeMethod,
     safeMergePull,
 } from "./merge";
+import { NATIVE_STACK_BASE_ERROR } from "./native-stack";
 import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
 
 type CallLog = Array<{ op: string; args: unknown[] }>;
@@ -20,6 +21,15 @@ function makeMock(opts: {
     mergeResult?: MergePullResult;
     /** Fail updatePullBase for these PR numbers. */
     failRetarget?: number[];
+    /**
+     * Throw the native-stack 422 from updatePullBase until unstack() has run.
+     * After unstack, PATCH succeeds the second time (the real GitHub sequence).
+     */
+    stackBaseErrorUntilUnstack?: number[];
+    /** Native stack number returned by getPullStackNumber. */
+    stackByPr?: Record<number, number | null>;
+    /** Fail unstack(). */
+    failUnstack?: boolean;
     /** Fail deleteBranch. */
     failDelete?: boolean;
     /** Fail fastForwardBase. */
@@ -31,6 +41,7 @@ function makeMock(opts: {
     const dependents = opts.dependents ?? [];
     const postMerge = opts.postMergeDependents ?? dependents;
     let merged = opts.pr.merged;
+    let unstacked = false;
 
     const client: MergeGitHubClient = {
         async getPull(_owner, _repo, number) {
@@ -90,6 +101,12 @@ function makeMock(opts: {
         async updatePullBase(_owner, _repo, number, base) {
             calls.push({ op: "updatePullBase", args: [number, base] });
 
+            if (opts.stackBaseErrorUntilUnstack?.includes(number) && !unstacked) {
+                throw new Error(
+                    `Validation Failed: {"message":"${NATIVE_STACK_BASE_ERROR}","resource":"PullRequest","field":"base","code":"invalid"}`
+                );
+            }
+
             if (opts.failRetarget?.includes(number)) {
                 throw new Error(`API error retargeting #${number}`);
             }
@@ -110,6 +127,23 @@ function makeMock(opts: {
             }
 
             return updated;
+        },
+        async getPullStackNumber(_owner, _repo, number) {
+            calls.push({ op: "getPullStackNumber", args: [number] });
+            if (opts.stackByPr && Object.hasOwn(opts.stackByPr, number)) {
+                return opts.stackByPr[number];
+            }
+
+            const found = [...dependents, ...postMerge].find((d) => d.number === number);
+            return found?.stackNumber ?? opts.pr.stackNumber ?? null;
+        },
+        async unstack(_owner, _repo, stackNumber) {
+            calls.push({ op: "unstack", args: [stackNumber] });
+            if (opts.failUnstack) {
+                throw new Error(`unstack failed for stack #${stackNumber}`);
+            }
+
+            unstacked = true;
         },
         async deleteBranch(_owner, _repo, branch) {
             calls.push({ op: "deleteBranch", args: [branch] });
@@ -316,6 +350,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
     });
 
     test("does NOT delete branch when any retarget fails (avoids closing children)", async () => {
+        const logs: string[] = [];
         const { client, calls } = makeMock({
             pr: basePr(),
             dependents: [
@@ -325,20 +360,23 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             failRetarget: [3],
         });
 
-        await expect(
-            safeMergePull({
-                owner: "o",
-                repo: "r",
-                number: 1,
-                method: "squash",
-                deleteBranch: true,
-                client,
-            })
-        ).rejects.toThrow(/retarget\(s\) failed/);
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "squash",
+            deleteBranch: true,
+            client,
+            log: (m) => logs.push(m),
+        });
 
+        expect(result.branchDeleted).toBe(false);
+        expect(result.retargeted.find((r) => r.number === 3)?.ok).toBe(false);
+        expect(result.remainingWork.some((l) => l.startsWith("MERGED #1"))).toBe(true);
         expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
-        // Merge still happened — failure is post-merge safety.
+        // Merge still happened — failure is post-merge remaining work, not a botched merge.
         expect(calls.map((c) => c.op)).toContain("mergePull");
+        expect(logs.some((l) => l.includes("MERGED #1"))).toBe(true);
     });
 
     test("independent PR (no dependents) stack-safe rebases via FF and can delete branch", async () => {
@@ -396,25 +434,28 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(restackCalls[0].expectedHeadSha).toBe(oldSha);
     });
 
-    test("stack-safe rebase: failed dependent restack blocks branch delete and throws", async () => {
+    test("stack-safe rebase: failed dependent restack blocks branch delete and reports remaining work", async () => {
         const { client, calls } = makeMock({
             pr: basePr(),
             dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a" })],
         });
         const { restack } = makeRestackMock({ failBranches: ["branch-b"] });
 
-        await expect(
-            safeMergePull({
-                owner: "o",
-                repo: "r",
-                number: 1,
-                method: "rebase",
-                deleteBranch: true,
-                client,
-                restack,
-            })
-        ).rejects.toThrow(/restack\(s\) failed/);
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: true,
+            client,
+            restack,
+        });
 
+        expect(result.branchDeleted).toBe(false);
+        expect(result.retargeted[0].ok).toBe(true);
+        expect(result.dependentsRestacked[0].ok).toBe(false);
+        expect(result.remainingWork.some((l) => l.startsWith("MERGED #1"))).toBe(true);
+        expect(result.remainingWork.some((l) => /Restack #2/.test(l))).toBe(true);
         expect(calls.map((c) => c.op)).toContain("fastForwardBase");
         expect(calls.map((c) => c.op)).toContain("updatePullBase");
         expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
@@ -487,16 +528,20 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             afterRetarget: (d) => ({ ...d, state: "closed" }),
         });
 
-        await expect(
-            safeMergePull({
-                owner: "o",
-                repo: "r",
-                number: 1,
-                method: "merge",
-                deleteBranch: true,
-                client,
-            })
-        ).rejects.toThrow(/no longer open/);
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "merge",
+            deleteBranch: true,
+            client,
+        });
+
+        expect(result.branchDeleted).toBe(false);
+        expect(result.retargeted[0].ok).toBe(false);
+        expect(result.retargeted[0].error).toMatch(/no longer open/);
+        expect(result.remainingWork.some((l) => l.startsWith("MERGED #1"))).toBe(true);
+        expect(result.remainingWork.some((l) => /Child #2 is still closed/.test(l))).toBe(true);
     });
 
     test("--ff-only: uses fastForwardBase (not mergePull), then retargets dependents", async () => {
@@ -590,5 +635,143 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(ops).toContain("fastForwardBase");
         expect(ops).not.toContain("updatePullBase");
         expect(ops).not.toContain("deleteBranch");
+    });
+
+    test("native-stack 422: unstack then PATCH keeps the child OPEN with the same number", async () => {
+        const logs: string[] = [];
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [
+                dep({
+                    number: 2,
+                    title: "PR B",
+                    headRef: "branch-b",
+                    baseRef: "branch-a",
+                    stackNumber: 8,
+                }),
+            ],
+            stackBaseErrorUntilUnstack: [2],
+            stackByPr: { 2: 8 },
+        });
+        const { restack } = makeRestackMock();
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: false,
+            client,
+            restack,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.retargeted).toEqual([
+            {
+                number: 2,
+                title: "PR B",
+                fromBase: "branch-a",
+                toBase: "main",
+                ok: true,
+                state: "open",
+                stackNumber: 8,
+            },
+        ]);
+        expect(result.remainingWork).toEqual([]);
+        expect(result.dependentsRestacked[0]?.ok).toBe(true);
+
+        const ops = calls.map((c) => c.op);
+        expect(ops.filter((op) => op === "updatePullBase")).toHaveLength(2);
+        expect(ops).toContain("unstack");
+        expect(calls.find((c) => c.op === "unstack")?.args).toEqual([8]);
+        expect(ops).not.toContain("deleteBranch");
+        expect(logs.some((l) => l.includes(NATIVE_STACK_BASE_ERROR))).toBe(true);
+        expect(logs.some((l) => l.includes("unstacking native stack #8"))).toBe(true);
+        expect(logs.some((l) => l.includes("does not close PRs"))).toBe(true);
+    });
+
+    test("--ff-only native-stack 422: same unstack-then-PATCH path, child stays OPEN", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a", stackNumber: 8 })],
+            stackBaseErrorUntilUnstack: [2],
+            stackByPr: { 2: 8 },
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            deleteBranch: false,
+            client,
+        });
+
+        expect(result.method).toBe("ff-only");
+        expect(result.retargeted[0]).toMatchObject({ number: 2, ok: true, state: "open", toBase: "main" });
+        expect(result.remainingWork).toEqual([]);
+        expect(calls.map((c) => c.op)).toContain("unstack");
+        expect(calls.map((c) => c.op)).toContain("fastForwardBase");
+        expect(calls.map((c) => c.op)).not.toContain("mergePull");
+        expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
+    });
+
+    test("linear native stack A←B←C: merging A unstacks once and retargets only B", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr({ number: 1, headRef: "branch-a", baseRef: "main" }),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a", stackNumber: 8 })],
+            stackBaseErrorUntilUnstack: [2],
+            stackByPr: { 2: 8 },
+        });
+        const { restack } = makeRestackMock();
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            deleteBranch: true,
+            client,
+            restack,
+        });
+
+        expect(result.retargeted.map((r) => r.number)).toEqual([2]);
+        expect(result.retargeted[0].ok).toBe(true);
+        expect(result.branchDeleted).toBe(true);
+        expect(calls.filter((c) => c.op === "unstack")).toHaveLength(1);
+        expect(calls.filter((c) => c.op === "updatePullBase").map((c) => c.args[0])).toEqual([2, 2]);
+    });
+
+    test("native-stack 422 with failed unstack: MERGED remaining work, child still OPEN, no throw", async () => {
+        const logs: string[] = [];
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, title: "PR B", headRef: "branch-b", baseRef: "branch-a", stackNumber: 8 })],
+            stackBaseErrorUntilUnstack: [2],
+            stackByPr: { 2: 8 },
+            failUnstack: true,
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            deleteBranch: false,
+            client,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.retargeted[0].ok).toBe(false);
+        expect(result.retargeted[0].error).toContain(NATIVE_STACK_BASE_ERROR);
+        expect(result.remainingWork.some((l) => l.startsWith("MERGED #1"))).toBe(true);
+        expect(result.remainingWork.some((l) => l.includes("still OPEN"))).toBe(true);
+        expect(result.remainingWork).toContain("gh api -X POST repos/o/r/stacks/8/unstack");
+        expect(result.remainingWork).toContain("gh api -X PATCH repos/o/r/pulls/2 -f base='main'");
+        expect(result.remainingWork.join("\n")).toMatch(/Do not close and reopen/);
+        expect(calls.map((c) => c.op)).toContain("fastForwardBase");
+        expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
+        expect(logs.some((l) => l.includes("MERGED #1"))).toBe(true);
+        expect(logs.some((l) => l.includes("still OPEN"))).toBe(true);
     });
 });

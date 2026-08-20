@@ -32,7 +32,7 @@ export interface MergeCommandOptions {
 function formatTextSummary(result: SafeMergeResult): string {
     const lines: string[] = [];
     lines.push("");
-    lines.push(chalk.green(`✔ Merged ${result.owner}/${result.repo}#${result.number} (${result.method})`));
+    lines.push(chalk.green(`✔ MERGED ${result.owner}/${result.repo}#${result.number} (${result.method})`));
     lines.push(`  title:  ${result.title}`);
     lines.push(`  head:   ${result.headRef}`);
     lines.push(`  base:   ${result.baseRef}`);
@@ -75,6 +75,13 @@ function formatTextSummary(result: SafeMergeResult): string {
         lines.push(chalk.yellow(`  branch: not deleted — ${result.branchDeleteError}`));
     } else {
         lines.push(`  branch: kept origin/${result.headRef}`);
+    }
+
+    if (result.remainingWork.length > 0) {
+        lines.push(chalk.yellow("  remaining work (parent already merged; children still OPEN):"));
+        for (const line of result.remainingWork) {
+            lines.push(`    ${line}`);
+        }
     }
 
     return lines.join("\n");
@@ -136,9 +143,14 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
             dependentsRetargeted: result.retargeted.length,
             dependentsRestacked: result.dependentsRestacked.length,
             branchDeleted: result.branchDeleted,
+            remainingWork: result.remainingWork.length,
         },
         "merge completed"
     );
+
+    if (result.remainingWork.length > 0) {
+        process.exitCode = 1;
+    }
 
     if (options.format === "json") {
         out.println(
@@ -158,6 +170,7 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
                     dependentsRestacked: result.dependentsRestacked,
                     branchDeleted: result.branchDeleted,
                     branchDeleteError: result.branchDeleteError ?? null,
+                    remainingWork: result.remainingWork,
                 },
                 null,
                 2

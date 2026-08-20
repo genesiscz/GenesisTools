@@ -96,7 +96,14 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
      (`git.updateRef` with `force=false` after a compare preflight). Preserves
      commit SHAs; fails if base is not an ancestor of head.
 2. Finds open PRs whose `base` is the merged head branch
-3. Retargets each onto the merged PR's base
+3. Retargets each onto the merged PR's base. GitHub native stacks reject REST
+   `PATCH /pulls/{n}` `{base}` with "Cannot change the base branch because the
+   pull request is part of a stack." The client then
+   `POST /repos/{owner}/{repo}/stacks/{n}/unstack` and retries the PATCH. That
+   keeps the child PR number and conversation. Close-and-reopen is never the
+   happy path. If retarget still fails after the parent SHA is already on the
+   base, stdout prints `MERGED` plus recovery commands (non-zero exit). It does
+   not throw as if the merge never happened.
 4. (stack-safe `--rebase`) Restacks dependents so the next PR is FF-able
 5. Only then, if `--delete-branch` / `--delete-remote`, deletes the remote head ref
 

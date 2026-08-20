@@ -2,7 +2,10 @@
 //
 // GitHub only auto-retargets dependents when the parent branch is deleted via
 // the web UI "Delete branch" button. CLI/API deletes close child PRs instead
-// (cli/cli#1168). This module never relies on that broken path:
+// (cli/cli#1168). Native stacks also reject REST PATCH {base} ("Cannot change
+// the base branch because the pull request is part of a stack."); we unstack
+// via POST /stacks/{n}/unstack and retry PATCH, never close-and-reopen.
+// This module never relies on the broken delete-branch path:
 //   1. merge without deleting the head branch
 //      - merge / squash → GitHub pulls.merge API
 //      - rebase → stack-safe path (local restack + FF) unless --no-restack
@@ -21,6 +24,12 @@ import {
 } from "@app/github/lib/stack-restack";
 import { getOctokitForWrite } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
+import {
+    formatNativeStackRecovery,
+    isNativeStackBaseError,
+    NATIVE_STACK_BASE_ERROR,
+    parsePullStackNumber,
+} from "./native-stack";
 
 /** GitHub API merge methods plus local-ref fast-forward. */
 export type MergeMethod = "merge" | "rebase" | "squash" | "ff-only";
@@ -39,6 +48,8 @@ export interface PullRef {
     /** Tip SHA of the base branch at PR resolution time. */
     baseSha: string;
     htmlUrl: string;
+    /** GitHub native stack number, or null when the PR is not stacked. */
+    stackNumber?: number | null;
 }
 
 export interface DependentPull {
@@ -50,6 +61,8 @@ export interface DependentPull {
     state: string;
     /** Tip SHA of the dependent head (when available from list/get). */
     headSha?: string;
+    /** GitHub native stack number, or null when the PR is not stacked. */
+    stackNumber?: number | null;
 }
 
 /** Methods accepted by GitHub's pulls.merge API (not ff-only). */
@@ -78,6 +91,17 @@ export interface MergeGitHubClient {
      */
     fastForwardBase(owner: string, repo: string, baseRef: string, headSha: string): Promise<MergePullResult>;
     updatePullBase(owner: string, repo: string, number: number, base: string): Promise<DependentPull>;
+    /**
+     * Native stack number for a PR, or null if it is not in a stack.
+     * Used when REST PATCH base returns the stacked-PR 422.
+     */
+    getPullStackNumber(owner: string, repo: string, number: number): Promise<number | null>;
+    /**
+     * POST /repos/{owner}/{repo}/stacks/{stack_number}/unstack
+     * Removes unmerged PRs from the stack so REST can change their base.
+     * Does not close PRs and does not delete branches.
+     */
+    unstack(owner: string, repo: string, stackNumber: number): Promise<void>;
     deleteBranch(owner: string, repo: string, branch: string): Promise<void>;
 }
 
@@ -110,6 +134,8 @@ export interface RetargetResult {
     ok: boolean;
     state: string;
     error?: string;
+    /** Native stack number observed while retargeting (for recovery commands). */
+    stackNumber?: number | null;
 }
 
 export interface DependentRestackResult {
@@ -139,12 +165,46 @@ export interface SafeMergeResult {
     dependentsRestacked: DependentRestackResult[];
     branchDeleted: boolean;
     branchDeleteError?: string;
+    /**
+     * Non-empty when the parent merge already landed but retarget/restack left
+     * work. Callers must print this and may set a non-zero exit code; they must
+     * not present the merge as if it never happened.
+     */
+    remainingWork: string[];
 }
 
 function logLine(log: ((message: string) => void) | undefined, message: string): void {
     if (log) {
         log(message);
     }
+}
+
+function retargetRow(input: {
+    dep: DependentPull;
+    toBase: string;
+    ok: boolean;
+    state: string;
+    error?: string;
+    stackNumber?: number | null;
+}): RetargetResult {
+    const row: RetargetResult = {
+        number: input.dep.number,
+        title: input.dep.title,
+        fromBase: input.dep.baseRef,
+        toBase: input.toBase,
+        ok: input.ok,
+        state: input.state,
+    };
+
+    if (input.error) {
+        row.error = input.error;
+    }
+
+    if (input.stackNumber != null) {
+        row.stackNumber = input.stackNumber;
+    }
+
+    return row;
 }
 
 /**
@@ -154,7 +214,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
     // Write path: prefer gh OAuth over limited env PATs (merge needs contents:write).
     const octokit = getOctokitForWrite();
 
-    return {
+    const client: MergeGitHubClient = {
         async getPull(owner, repo, number) {
             const { data } = await withRetry(
                 () =>
@@ -178,6 +238,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 headSha: data.head.sha,
                 baseSha: data.base.sha,
                 htmlUrl: data.html_url,
+                stackNumber: parsePullStackNumber(data),
             };
         },
 
@@ -209,6 +270,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                         htmlUrl: pr.html_url,
                         state: pr.state,
                         headSha: pr.head.sha,
+                        stackNumber: parsePullStackNumber(pr),
                     });
                 }
 
@@ -314,7 +376,25 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 htmlUrl: data.html_url,
                 state: data.state,
                 headSha: data.head.sha,
+                stackNumber: parsePullStackNumber(data),
             };
+        },
+
+        async getPullStackNumber(owner, repo, number) {
+            const pull = await client.getPull(owner, repo, number);
+            return pull.stackNumber ?? null;
+        },
+
+        async unstack(owner, repo, stackNumber) {
+            // Preview REST route — octokit OpenAPI types do not list stacks yet.
+            await withRetry(
+                () =>
+                    octokit.request({
+                        method: "POST",
+                        url: `/repos/${owner}/${repo}/stacks/${stackNumber}/unstack`,
+                    }),
+                { label: `POST /repos/${owner}/${repo}/stacks/${stackNumber}/unstack` }
+            );
         },
 
         async deleteBranch(owner, repo, branch) {
@@ -329,6 +409,8 @@ export function createOctokitMergeClient(): MergeGitHubClient {
             );
         },
     };
+
+    return client;
 }
 
 /**
@@ -480,6 +562,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
 
     const toRetarget = [...byNumber.values()].sort((a, b) => a.number - b.number);
     const retargeted: RetargetResult[] = [];
+    const unstacked = new Set<number>();
 
     if (toRetarget.length === 0) {
         logLine(log, "No dependents to retarget");
@@ -487,59 +570,108 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         logLine(log, `Retargeting ${toRetarget.length} dependent PR(s) onto base="${pr.baseRef}"...`);
     }
 
+    async function patchDependentBase(
+        dep: DependentPull
+    ): Promise<{ updated: DependentPull; stackNumber: number | null }> {
+        try {
+            const updated = await client.updatePullBase(owner, repo, dep.number, pr.baseRef);
+            return { updated, stackNumber: dep.stackNumber ?? null };
+        } catch (err) {
+            if (!isNativeStackBaseError(err)) {
+                throw err;
+            }
+
+            logLine(log, `    native-stack 422: ${NATIVE_STACK_BASE_ERROR}`);
+            let stackNumber = dep.stackNumber ?? null;
+
+            if (stackNumber == null) {
+                stackNumber = await client.getPullStackNumber(owner, repo, dep.number);
+            }
+
+            if (stackNumber == null) {
+                throw err;
+            }
+
+            if (!unstacked.has(stackNumber)) {
+                logLine(
+                    log,
+                    `    unstacking native stack #${stackNumber} (does not close PRs) so REST can change base`
+                );
+                try {
+                    await client.unstack(owner, repo, stackNumber);
+                } catch (unstackErr) {
+                    const detail = unstackErr instanceof Error ? unstackErr.message : String(unstackErr);
+                    throw new Error(`${NATIVE_STACK_BASE_ERROR} (unstack #${stackNumber} failed: ${detail})`);
+                }
+
+                unstacked.add(stackNumber);
+            }
+
+            const updated = await client.updatePullBase(owner, repo, dep.number, pr.baseRef);
+            return { updated, stackNumber };
+        }
+    }
+
     for (const dep of toRetarget) {
+        let stackNumber = dep.stackNumber ?? null;
         try {
             logLine(log, `  #${dep.number}: base ${dep.baseRef} → ${pr.baseRef}`);
-            const updated = await client.updatePullBase(owner, repo, dep.number, pr.baseRef);
+            const patched = await patchDependentBase(dep);
+            const updated = patched.updated;
+            stackNumber = patched.stackNumber ?? stackNumber;
 
             if (updated.state !== "open") {
-                retargeted.push({
-                    number: dep.number,
-                    title: dep.title,
-                    fromBase: dep.baseRef,
-                    toBase: pr.baseRef,
-                    ok: false,
-                    state: updated.state,
-                    error: `PR is no longer open after retarget (state=${updated.state})`,
-                });
+                retargeted.push(
+                    retargetRow({
+                        dep,
+                        toBase: pr.baseRef,
+                        ok: false,
+                        state: updated.state,
+                        error: `PR is no longer open after retarget (state=${updated.state})`,
+                        stackNumber,
+                    })
+                );
                 logLine(log, `    ✘ still not open (state=${updated.state})`);
                 continue;
             }
 
             if (updated.baseRef !== pr.baseRef) {
-                retargeted.push({
-                    number: dep.number,
-                    title: dep.title,
-                    fromBase: dep.baseRef,
-                    toBase: pr.baseRef,
-                    ok: false,
-                    state: updated.state,
-                    error: `base is ${updated.baseRef}, expected ${pr.baseRef}`,
-                });
+                retargeted.push(
+                    retargetRow({
+                        dep,
+                        toBase: pr.baseRef,
+                        ok: false,
+                        state: updated.state,
+                        error: `base is ${updated.baseRef}, expected ${pr.baseRef}`,
+                        stackNumber,
+                    })
+                );
                 logLine(log, `    ✘ base is ${updated.baseRef}, expected ${pr.baseRef}`);
                 continue;
             }
 
-            retargeted.push({
-                number: dep.number,
-                title: dep.title,
-                fromBase: dep.baseRef,
-                toBase: updated.baseRef,
-                ok: true,
-                state: updated.state,
-            });
+            retargeted.push(
+                retargetRow({
+                    dep,
+                    toBase: updated.baseRef,
+                    ok: true,
+                    state: updated.state,
+                    stackNumber,
+                })
+            );
             logLine(log, `    ✔ open, base=${updated.baseRef}`);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            retargeted.push({
-                number: dep.number,
-                title: dep.title,
-                fromBase: dep.baseRef,
-                toBase: pr.baseRef,
-                ok: false,
-                state: dep.state,
-                error: message,
-            });
+            retargeted.push(
+                retargetRow({
+                    dep,
+                    toBase: pr.baseRef,
+                    ok: false,
+                    state: dep.state,
+                    error: message,
+                    stackNumber,
+                })
+            );
             logLine(log, `    ✘ ${message}`);
         }
     }
@@ -662,21 +794,44 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         logLine(log, `Keeping remote branch "${pr.headRef}" (pass --delete-branch to remove after retarget)`);
     }
 
+    const remainingWork: string[] = [];
+
     if (failedRetargets.length > 0 || failedRestacks.length > 0) {
-        const bits: string[] = [];
-        if (failedRetargets.length > 0) {
-            bits.push(
-                `${failedRetargets.length} dependent retarget(s) failed: ` +
-                    failedRetargets.map((r) => `#${r.number}${r.error ? ` (${r.error})` : ""}`).join(", ")
+        const mergeSha = mergeResult.sha || effectiveHeadSha;
+        remainingWork.push(
+            `MERGED #${number}: parent is already on ${pr.baseRef}` +
+                (mergeSha ? ` at ${mergeSha.slice(0, 7)}` : "") +
+                ". Child PRs below are still OPEN. Do not close them."
+        );
+
+        for (const r of failedRetargets) {
+            remainingWork.push(
+                `Child #${r.number} is still ${r.state} (same number). Retarget ${r.fromBase} → ${r.toBase} failed: ${r.error ?? "unknown"}`
             );
+
+            if (isNativeStackBaseError(r.error)) {
+                remainingWork.push(
+                    ...formatNativeStackRecovery({
+                        owner,
+                        repo,
+                        parentNumber: number,
+                        childNumber: r.number,
+                        newBase: pr.baseRef,
+                        stackNumber: r.stackNumber,
+                    })
+                );
+            } else {
+                remainingWork.push(`gh api -X PATCH repos/${owner}/${repo}/pulls/${r.number} -f base='${pr.baseRef}'`);
+            }
         }
-        if (failedRestacks.length > 0) {
-            bits.push(
-                `${failedRestacks.length} dependent restack(s) failed: ` +
-                    failedRestacks.map((r) => `#${r.number}${r.error ? ` (${r.error.split("\n")[0]})` : ""}`).join(", ")
-            );
+
+        for (const r of failedRestacks) {
+            remainingWork.push(`Restack #${r.number} (${r.headRef}) failed: ${r.error?.split("\n")[0] ?? "unknown"}`);
         }
-        throw new Error(`Merged #${number} but ${bits.join("; ")}`);
+
+        for (const line of remainingWork) {
+            logLine(log, line);
+        }
     }
 
     return {
@@ -695,6 +850,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         dependentsRestacked,
         branchDeleted,
         branchDeleteError,
+        remainingWork,
     };
 }
 
