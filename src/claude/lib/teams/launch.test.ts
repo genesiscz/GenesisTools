@@ -3,8 +3,8 @@ import {
     buildTeammateClaudeArgs,
     buildToolsCcTeammateCommand,
     isLiveSidechain,
-    launchTeammate,
     LIVE_SIDECHAIN_MS,
+    launchTeammate,
 } from "./launch";
 import type { TeamMemberView, TeamView } from "./types";
 

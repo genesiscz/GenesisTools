@@ -440,8 +440,7 @@ export function buildResponsesWebSearchBody(
     // upstream defaults to auto, which may skip the only offered tool.
     const mandatory =
         isObject(body.tool_choice) &&
-        (body.tool_choice.type === "any" ||
-            (body.tool_choice.type === "tool" && body.tool_choice.name === tool.name));
+        (body.tool_choice.type === "any" || (body.tool_choice.type === "tool" && body.tool_choice.name === tool.name));
 
     if (mandatory) {
         out.tool_choice = "required";
