@@ -70,7 +70,7 @@ Anthropic-shaped bodies — see the known gap below.
 
 Used when the provider implements `ProxyProvider.messages()`. Today: `anthropic-subscription`
 and `grok-subscription` (added 2026-08-19; preserves reasoning continuity — Grok accepts its own
-`thinking` blocks replayed). The grok passthrough performs four spec repairs, not translations:
+`thinking` blocks replayed). The grok passthrough performs five spec repairs, not translations:
 
 - `ensureToolRequiredArrays` — Grok rejects a tool whose `input_schema` omits `required`.
 - `hoistSystemMessages` — Claude Code sometimes puts a `role:"system"` entry inside `messages[]`;
@@ -85,6 +85,13 @@ and `grok-subscription` (added 2026-08-19; preserves reasoning continuity — Gr
   deltas (Anthropic SDKs would overwrite the thinking block with the text block), and it merges
   several parallel tool calls into ONE `tool_use` block. The extra calls are re-emitted as their
   own blocks, each named by matching its argument keys against the request's tool schemas.
+- `tagAmbiguousNoArgTools` — key matching cannot separate two tools that both accept `{}`, and the
+  merged stream carries no name for them. When a STREAMING request offers two or more such tools,
+  each gets one required property whose only legal value is its own name; the splitter reads the
+  name off the object and strips the property before the client sees the call. Raw wire capture
+  2026-08-21 confirmed the names are absent from the stream and that no request variant restores
+  them (`tool_choice`, `disable_parallel_tool_use`, `stream_options`, the fine-grained-streaming
+  beta header — all five arms: one `content_block_start`, four argument objects).
 
 ```text
 Claude Code --Anthropic--> /v1/messages --Anthropic (verbatim)--> api.anthropic.com

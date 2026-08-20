@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { ambiguousNoArgTools, GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
+import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
+import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { GrokSubscriptionClient } from "@genesiscz/utils/ai/grok";
 import { env } from "@genesiscz/utils/env";
@@ -173,33 +174,85 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
     });
 });
 
-describe("ambiguousNoArgTools", () => {
-    const noArg = (name: string) => ({ name, description: "x", input_schema: { type: "object", properties: {} } });
+describe("GrokSubscriptionProvider.messages tool tagging", () => {
+    const noArg = (name: string) => ({
+        name,
+        description: "x",
+        input_schema: { type: "object", properties: {}, required: [] },
+    });
     const withArg = (name: string) => ({
         name,
         description: "x",
         input_schema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
     });
 
-    it("is true only when the splitter could not pick between no-arg tools", () => {
-        // Two or more no-arg tools: an orphaned {} matches both, so the
-        // streaming path cannot restore the name.
-        expect(ambiguousNoArgTools({ tools: [noArg("ListAgents"), noArg("TaskList"), withArg("Bash")] })).toBe(true);
+    /** The body this provider actually put on the wire. */
+    async function dispatchedBody(requestBody: Record<string, unknown>): Promise<Record<string, unknown>> {
+        const provider = makeProvider();
+        const client = provider as unknown as {
+            client: { fetch: (path: string, init: RequestInit) => Promise<Response> };
+        };
+        let sent = "";
+        client.client.fetch = async (_path, init) => {
+            sent = String(init.body);
+            return new Response("", { status: 200, headers: { "content-type": "text/event-stream" } });
+        };
 
-        // One no-arg tool is unambiguous — the splitter resolves it.
-        expect(ambiguousNoArgTools({ tools: [noArg("ListAgents"), withArg("Bash")] })).toBe(false);
-        expect(ambiguousNoArgTools({ tools: [withArg("Bash"), withArg("Read")] })).toBe(false);
-        expect(ambiguousNoArgTools({})).toBe(false);
+        const body = SafeJSON.stringify(requestBody);
+        await provider.messages(new Request("http://proxy/v1/messages", { method: "POST", body }), "grok-4.6", body);
+        return SafeJSON.parse(sent, { strict: true }) as Record<string, unknown>;
+    }
+
+    function schemaOf(body: Record<string, unknown>, name: string): Record<string, unknown> {
+        const tools = body.tools as Record<string, unknown>[];
+        const tool = tools.find((t) => t.name === name);
+        return tool?.input_schema as Record<string, unknown>;
+    }
+
+    it("tags every no-arg tool when two or more are offered, so a merged `{}` names itself", async () => {
+        const sent = await dispatchedBody({
+            model: "grok-4.6",
+            max_tokens: 100,
+            stream: true,
+            messages: [{ role: "user", content: "hi" }],
+            tools: [noArg("ListAgents"), noArg("TaskList"), withArg("Bash")],
+        });
+
+        for (const name of ["ListAgents", "TaskList"]) {
+            const schema = schemaOf(sent, name);
+            expect(schema.required).toEqual([TOOL_ROUTING_TAG]);
+            expect((schema.properties as Record<string, unknown>)[TOOL_ROUTING_TAG]).toMatchObject({ enum: [name] });
+        }
+
+        // The tool that already carries arguments is left exactly as the client wrote it.
+        expect(schemaOf(sent, "Bash")).toEqual({
+            type: "object",
+            properties: { q: { type: "string" } },
+            required: ["q"],
+        });
     });
 
-    it("ignores server tools, which never take this path", () => {
-        expect(
-            ambiguousNoArgTools({
-                tools: [{ type: "web_search_20250305", name: "web_search" }, noArg("ListAgents"), noArg("TaskList")],
-            })
-        ).toBe(true);
-        expect(
-            ambiguousNoArgTools({ tools: [{ type: "web_search_20250305", name: "web_search" }, noArg("ListAgents")] })
-        ).toBe(false);
+    it("leaves schemas untouched when nothing is ambiguous, and when not streaming", async () => {
+        // One no-arg tool resolves by key matching; tagging it would change the
+        // model's view of the schema for no gain.
+        const single = await dispatchedBody({
+            model: "grok-4.6",
+            max_tokens: 100,
+            stream: true,
+            messages: [{ role: "user", content: "hi" }],
+            tools: [noArg("ListAgents"), withArg("Bash")],
+        });
+        expect(schemaOf(single, "ListAgents").required).toEqual([]);
+
+        // Non-streaming replies name every call already — nothing to repair.
+        const nonStreaming = await dispatchedBody({
+            model: "grok-4.6",
+            max_tokens: 100,
+            stream: false,
+            messages: [{ role: "user", content: "hi" }],
+            tools: [noArg("ListAgents"), noArg("TaskList")],
+        });
+        expect(schemaOf(nonStreaming, "ListAgents").required).toEqual([]);
+        expect(schemaOf(nonStreaming, "TaskList").required).toEqual([]);
     });
 });

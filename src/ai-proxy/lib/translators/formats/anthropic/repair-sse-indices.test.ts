@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { repairAnthropicSseIndices } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
+import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
@@ -305,5 +306,97 @@ describe("repairAnthropicSseIndices", () => {
         });
         expect(calls.get(1)?.name).toBe("brave_web_search");
         expect(SafeJSON.parse(calls.get(1)?.args ?? "", { strict: true })).toEqual({ query: "grok bugs", count: 3 });
+    });
+
+    describe("no-argument calls in a merged block", () => {
+        const tools = [
+            { name: "run_command", required: ["command"], properties: ["command"] },
+            { name: "list_agents", required: [TOOL_ROUTING_TAG], properties: [TOOL_ROUTING_TAG] },
+            { name: "list_tasks", required: [TOOL_ROUTING_TAG], properties: [TOOL_ROUTING_TAG] },
+            { name: "read_file", required: ["path"], properties: ["path"] },
+        ];
+
+        /** Verbatim shape captured from grok's wire on 2026-08-21: ONE start frame, N complete objects. */
+        function mergedStream(argObjects: string[]): ReadableStream<Uint8Array> {
+            return sseStream([
+                'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call-abc-0","name":"run_command","input":{}}}\n\n',
+                ...argObjects.map(
+                    (args) =>
+                        `data: ${SafeJSON.stringify({
+                            type: "content_block_delta",
+                            delta: { type: "input_json_delta", partial_json: args },
+                        })}\n\n`
+                ),
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            ]);
+        }
+
+        async function toolCalls(
+            stream: ReadableStream<Uint8Array>,
+            taggedTools?: Set<string>
+        ): Promise<{ name: string; args: string }[]> {
+            const out = await collect(repairAnthropicSseIndices(stream, { tools, taggedTools }));
+            const calls = new Map<number, { name: string; args: string }>();
+
+            for (const line of out.split("\n")) {
+                if (!line.startsWith("data: ")) {
+                    continue;
+                }
+
+                const frame = SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>;
+                const index = frame.index as number;
+                const block = frame.content_block as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_start" && block?.type === "tool_use") {
+                    calls.set(index, { name: String(block.name), args: "" });
+                }
+
+                const delta = frame.delta as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_delta" && delta?.type === "input_json_delta") {
+                    const call = calls.get(index);
+
+                    if (call) {
+                        call.args += String(delta.partial_json);
+                    }
+                }
+            }
+
+            return [...calls.values()];
+        }
+
+        const tagged = [
+            '{"command":"date"}',
+            `{"${TOOL_ROUTING_TAG}":"list_agents"}`,
+            `{"${TOOL_ROUTING_TAG}":"list_tasks"}`,
+            '{"path":"/etc/hosts"}',
+        ];
+
+        it("names every merged no-arg call from its routing tag and strips the tag", async () => {
+            const calls = await toolCalls(mergedStream(tagged), new Set(["list_agents", "list_tasks"]));
+
+            expect(calls.map((c) => c.name)).toEqual(["run_command", "list_agents", "list_tasks", "read_file"]);
+            // The tag is the proxy's own addition; the client asked for an
+            // empty-object schema and must get exactly that.
+            expect(calls.map((c) => c.args)).toEqual(['{"command":"date"}', "{}", "{}", '{"path":"/etc/hosts"}']);
+        });
+
+        it("negative control: the same stream is unresolvable without the tag", async () => {
+            // Two no-arg tools produce byte-identical `{}` objects, so key
+            // matching has nothing to separate them and both inherit the
+            // block's name. This is the defect the tag exists to remove.
+            const untagged = ['{"command":"date"}', "{}", "{}", '{"path":"/etc/hosts"}'];
+            const calls = await toolCalls(mergedStream(untagged));
+
+            expect(calls.map((c) => c.name)).toEqual(["run_command", "run_command", "run_command", "read_file"]);
+        });
+
+        it("ignores a tag naming a tool this request never tagged", async () => {
+            // An empty tagged set means the proxy injected nothing, so a
+            // property that merely looks like the tag must not route a call.
+            const calls = await toolCalls(mergedStream(tagged), new Set());
+
+            expect(calls.map((c) => c.name)).toEqual(["run_command", "run_command", "run_command", "read_file"]);
+        });
     });
 });

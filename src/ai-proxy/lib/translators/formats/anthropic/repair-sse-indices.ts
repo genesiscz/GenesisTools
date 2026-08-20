@@ -1,3 +1,4 @@
+import { routedToolName, stripRoutingTag } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -199,12 +200,13 @@ interface ToolBlockState {
  */
 export function repairAnthropicSseIndices(
     upstream: ReadableStream<Uint8Array>,
-    options?: { tools?: ToolMatcher[] }
+    options?: { tools?: ToolMatcher[]; taggedTools?: Set<string> }
 ): ReadableStream<Uint8Array> {
     const reader = upstream.getReader();
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
     const tools = options?.tools ?? [];
+    const taggedTools = options?.taggedTools ?? new Set<string>();
     let buffer = "";
     let nextIndex = 0;
     let currentIndex = 0;
@@ -297,11 +299,13 @@ export function repairAnthropicSseIndices(
 
         // The held first object goes out now, under the name the wire already
         // sent — possibly swapped with an orphan that actually fits that name.
+        // The routing tag is this proxy's own addition and is stripped here, so
+        // the client only ever sees the schema it asked for.
         if (firstArgs.length > 0) {
             frames.push(
                 frameText("content_block_delta", {
                     index: block.index,
-                    delta: { type: "input_json_delta", partial_json: firstArgs },
+                    delta: { type: "input_json_delta", partial_json: stripRoutingTag(firstArgs) },
                 })
             );
         }
@@ -313,11 +317,17 @@ export function repairAnthropicSseIndices(
             nextIndex += 1;
 
             let name = block.toolName;
+            let routed = false;
             try {
                 const parsed = SafeJSON.parse(orphan, { strict: true });
 
                 if (isJsonRecord(parsed)) {
-                    name = matchToolName(Object.keys(parsed), tools, block.toolName);
+                    // The routing tag names its own tool, so it settles the
+                    // no-argument case that key matching cannot. Key matching
+                    // still runs for every untagged call.
+                    const tagged = routedToolName(parsed, taggedTools);
+                    routed = tagged !== undefined;
+                    name = tagged ?? matchToolName(Object.keys(parsed), tools, block.toolName);
                 }
             } catch (err) {
                 logger.debug({ err }, "ai-proxy: merged-call orphan did not parse; keeping the original tool name");
@@ -331,7 +341,12 @@ export function repairAnthropicSseIndices(
             const noArgs = orphan.trim() === "{}";
             const fallbackNeedsArgs = tools.some((t) => t.name === name && t.required.length > 0);
 
-            if (noArgs && fallbackNeedsArgs) {
+            if (routed) {
+                logger.debug(
+                    { from: block.toolName, to: name, index: currentIndex },
+                    "ai-proxy: merged tool call named by its routing tag"
+                );
+            } else if (noArgs && fallbackNeedsArgs) {
                 logger.warn(
                     {
                         blamed: name,
@@ -359,7 +374,7 @@ export function repairAnthropicSseIndices(
                 }),
                 frameText("content_block_delta", {
                     index: currentIndex,
-                    delta: { type: "input_json_delta", partial_json: orphan },
+                    delta: { type: "input_json_delta", partial_json: stripRoutingTag(orphan) },
                 }),
                 frameText("content_block_stop", { index: currentIndex })
             );
