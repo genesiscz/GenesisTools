@@ -41,3 +41,14 @@ export function liveBlobDir(): string {
 export function dumpIdbScript(): string {
     return join(import.meta.dir, "../native/dump_idb.py");
 }
+
+export function mediaDir(): string {
+    return join(storage.getBaseDir(), "media");
+}
+
+export function liveDiskCacheDir(): string {
+    return join(
+        homedir(),
+        "Library/Containers/com.microsoft.teams2/Data/Library/Caches/Microsoft/MSTeams/EBWebView/WV2Profile_tfw/Cache/Cache_Data"
+    );
+}

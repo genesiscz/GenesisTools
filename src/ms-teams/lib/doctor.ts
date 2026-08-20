@@ -1,13 +1,17 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
 import { cacheDbPath, liveBlobDir, liveIdbDir, venvPython } from "./paths";
 import { TeamsCache } from "./store";
+
+const log = logger.scoped("ms-teams").log;
 
 export interface DoctorReport {
     idbExists: boolean;
     idbPath: string;
     blobExists: boolean;
     cacheExists: boolean;
+    cacheReadable: boolean;
     cachePath: string;
     cacheIngestedAt: string | null;
     counts: { conversations: number; messages: number; people: number; calls: number; activity: number } | null;
@@ -34,6 +38,7 @@ export function inspectDoctor(): DoctorReport {
 
     let counts: DoctorReport["counts"] = null;
     let cacheIngestedAt: string | null = null;
+    let cacheReadable = false;
     const cacheExists = existsSync(cachePath);
 
     if (cacheExists) {
@@ -43,7 +48,9 @@ export function inspectDoctor(): DoctorReport {
             cache = new TeamsCache(cachePath, { readonly: true });
             counts = cache.counts();
             cacheIngestedAt = cache.getMeta("ingested_at");
-        } catch {
+            cacheReadable = true;
+        } catch (err) {
+            log.warn({ err, cachePath }, "[ms-teams] doctor could not open the SQLite cache");
             counts = null;
             cacheIngestedAt = null;
         } finally {
@@ -56,6 +63,7 @@ export function inspectDoctor(): DoctorReport {
         idbPath,
         blobExists: existsSync(blobPath),
         cacheExists,
+        cacheReadable,
         cachePath,
         cacheIngestedAt,
         counts,

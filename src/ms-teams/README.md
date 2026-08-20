@@ -41,4 +41,4 @@ Natural query examples for `show`:
 - `Weekly planning`
 - a raw thread id (`19:…@thread.v2` or `@unq.gbl.spaces`)
 
-`--with`, `--from`, `--to`, `--id` flags override the parsed query. `--attachments` tries to download files next to `--out`.
+`--with`, `--from`, `--to`, `--id` flags override the parsed query. Inline AMS images are extracted from the Teams Chromium disk cache into `~/.genesis-tools/ms-teams/media/` and embedded in md/html (the public `eu-api.asm.skype.com` URL is unauthenticated and returns 401). `--attachments` also tries HTTP downloads next to `--out`.

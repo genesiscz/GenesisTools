@@ -7,6 +7,7 @@ import { renderHtml } from "@app/ms-teams/lib/export/html";
 import { renderJson } from "@app/ms-teams/lib/export/json";
 import { renderMarkdown } from "@app/ms-teams/lib/export/markdown";
 import { exportThread } from "@app/ms-teams/lib/export/thread";
+import { materializeThreadMedia } from "@app/ms-teams/lib/media";
 import { mergeShowQuery, parseQueryDate, parseShowQuery } from "@app/ms-teams/lib/query";
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import type { ThreadExport } from "@app/ms-teams/lib/types";
@@ -63,6 +64,7 @@ export function registerShowCommand(program: Command): void {
                     to: query.to,
                     includeSystem,
                 });
+                thread = await materializeThreadMedia(thread);
 
                 if (opts.attachments && opts.out) {
                     thread = await withDownloads(thread, opts.out);
@@ -140,6 +142,7 @@ async function withDownloads(thread: ThreadExport, outPath: string): Promise<Thr
         extname(outPath) === "" || outPath.endsWith("/")
             ? join(outPath, "attachments")
             : join(dirname(outPath), "attachments");
+    const usedNames = new Set<string>();
     const messages = [];
 
     for (const message of thread.messages) {
@@ -148,7 +151,11 @@ async function withDownloads(thread: ThreadExport, outPath: string): Promise<Thr
             continue;
         }
 
-        const downloaded = await downloadAttachments({ attachments: message.attachments, outDir: dir });
+        const downloaded = await downloadAttachments({
+            attachments: message.attachments,
+            outDir: dir,
+            usedNames,
+        });
         messages.push({ ...message, attachments: downloaded.attachments });
     }
 

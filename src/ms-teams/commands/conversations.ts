@@ -58,14 +58,20 @@ export function registerConversationsCommand(program: Command): void {
     }
 }
 
-function parsePositiveLimit(value: string | undefined, fallback: number): number {
+export function parsePositiveLimit(value: string | undefined, fallback: number): number {
     if (value === undefined) {
         return fallback;
     }
 
-    const n = Number.parseInt(value, 10);
+    const trimmed = value.trim();
 
-    if (!Number.isFinite(n) || n <= 0) {
+    if (!/^[0-9]+$/.test(trimmed)) {
+        throw new Error(`Invalid --limit ${value}. Use a positive integer.`);
+    }
+
+    const n = Number(trimmed);
+
+    if (!Number.isSafeInteger(n) || n <= 0) {
         throw new Error(`Invalid --limit ${value}. Use a positive integer.`);
     }
 

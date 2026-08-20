@@ -9,6 +9,12 @@ describe("htmlToText", () => {
         expect(htmlToText(html).text).toContain("😄");
     });
 
+    test("drops generic AMS image alt text", () => {
+        const html =
+            '<p><img src="https://eu-api.asm.skype.com/v1/objects/0-weu-d1-aa/views/imgo" itemtype="http://schema.skype.com/AMSImage" alt="image" /></p>';
+        expect(htmlToText(html).text).toBe("");
+    });
+
     test("extracts a skype reply itemid and drops the quote body", () => {
         const html =
             '<blockquote itemscope itemtype="http://schema.skype.com/Reply" itemid="m-parent"><p>parent</p></blockquote><p>child reply</p>';

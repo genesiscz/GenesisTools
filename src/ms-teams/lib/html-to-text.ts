@@ -17,7 +17,14 @@ export function htmlToText(html: unknown): HtmlText {
 
     const replyToId = extractReplyToId(raw);
     let withoutQuote = raw.replace(/<blockquote\b[^>]*>[\s\S]*?<\/blockquote>/gi, " ");
-    withoutQuote = withoutQuote.replace(/<img\b[^>]*\balt=["']([^"']*)["'][^>]*>/gi, " $1 ");
+    withoutQuote = withoutQuote.replace(/<img\b[^>]*>/gi, (tag) => {
+        if (/schema\.skype\.com\/AMSImage/i.test(tag)) {
+            return " ";
+        }
+
+        const alt = tag.match(/\balt=["']([^"']*)["']/i)?.[1];
+        return alt ? ` ${alt} ` : " ";
+    });
     withoutQuote = withoutQuote.replace(/<br\s*\/?>/gi, "\n");
     withoutQuote = withoutQuote.replace(/<\/p>/gi, "\n");
     withoutQuote = withoutQuote.replace(/<\/div>/gi, "\n");

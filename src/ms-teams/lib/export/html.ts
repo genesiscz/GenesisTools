@@ -1,5 +1,7 @@
 import { formatDateTime } from "@genesiscz/utils/date";
-import type { ThreadExport } from "../types";
+import { parseAmsObjectId } from "../disk-cache";
+import { isImageAttachment, toFileUrl } from "../media";
+import type { Attachment, ThreadExport } from "../types";
 
 export function renderHtml(thread: ThreadExport): string {
     const { conversation, messages } = thread;
@@ -10,12 +12,17 @@ export function renderHtml(thread: ThreadExport): string {
             const reply = message.replyTo
                 ? `<blockquote class="reply">reply to ${escapeHtml(message.replyTo.from)}: ${escapeHtml(message.replyTo.excerpt)}</blockquote>`
                 : "";
-            const body = message.html
-                ? `<div class="html">${sanitizeHtml(message.html)}</div>`
+            const rewritten = message.html ? rewriteLocalMediaHtml(message.html, message.attachments) : null;
+            const body = rewritten
+                ? `<div class="html">${sanitizeHtml(rewritten)}</div>`
                 : `<p>${escapeHtml(message.text || "")}</p>`;
             const attachments = message.attachments
                 .map((a) => {
-                    const href = a.localPath ?? a.url;
+                    if (rewritten && attachmentShownInHtml(rewritten, a)) {
+                        return "";
+                    }
+
+                    const href = a.localPath ? toFileUrl(a.localPath) : a.url;
 
                     if (!href) {
                         return "";
@@ -23,6 +30,10 @@ export function renderHtml(thread: ThreadExport): string {
 
                     if (!isSafeHref(href)) {
                         return `<p class="file">${escapeHtml(a.name)}</p>`;
+                    }
+
+                    if (a.localPath && isImageAttachment(a)) {
+                        return `<p class="file"><img src="${escapeHtml(href)}" alt="${escapeHtml(a.name)}" /></p>`;
                     }
 
                     return `<p class="file"><a href="${escapeHtml(href)}">${escapeHtml(a.name)}</a></p>`;
@@ -68,15 +79,102 @@ function escapeHtml(value: string): string {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function sanitizeHtml(html: string): string {
-    return html
-        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-        .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-        .replace(/javascript:/gi, "");
+export function sanitizeHtml(html: string): string {
+    let out = html.replace(/<!--[\s\S]*?-->/g, "");
+    out = out.replace(
+        /<(script|style|iframe|object|embed|form|link|meta|base|svg|math|frame|frameset|applet)\b[^>]*>[\s\S]*?<\/\1>/gi,
+        ""
+    );
+    out = out.replace(
+        /<(script|style|iframe|object|embed|form|link|meta|base|svg|math|frame|frameset|applet)\b[^>]*\/?>/gi,
+        ""
+    );
+    out = out.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+    out = out.replace(/\ssrcdoc\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+    out = out.replace(
+        /\s(href|src|action|formaction|xlink:href|poster)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,
+        (_full, name: string, raw: string) => {
+            const quoted = raw.startsWith('"') || raw.startsWith("'");
+            const value = quoted ? raw.slice(1, -1) : raw;
+            const decoded = decodeHtmlEntities(value);
+
+            if (!isSafeHref(decoded)) {
+                return "";
+            }
+
+            return ` ${name}="${escapeHtml(decoded)}"`;
+        }
+    );
+    return out;
+}
+
+function decodeHtmlEntities(value: string): string {
+    return value
+        .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => fromCodePointSafe(Number.parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (_m, dec: string) => fromCodePointSafe(Number(dec)))
+        .replace(/&colon;/gi, ":")
+        .replace(/&quot;/gi, '"')
+        .replace(/&apos;/gi, "'")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/&amp;/gi, "&");
+}
+
+function fromCodePointSafe(code: number): string {
+    if (!Number.isInteger(code) || code < 0 || code > 0x10ffff) {
+        return "";
+    }
+
+    return String.fromCodePoint(code);
 }
 
 function isSafeHref(href: string): boolean {
     const trimmed = href.trim();
-    return /^(https?:\/\/|\/|\.\/)/i.test(trimmed) && !/^\s*javascript:/i.test(trimmed);
+
+    if (/^\s*(javascript|data):/i.test(trimmed)) {
+        return false;
+    }
+
+    return /^(https?:\/\/|file:\/\/|\/|\.\/)/i.test(trimmed);
+}
+
+export function rewriteLocalMediaHtml(html: string, attachments: Attachment[]): string {
+    let out = html;
+
+    for (const attachment of attachments) {
+        if (!attachment.localPath) {
+            continue;
+        }
+
+        const fileUrl = toFileUrl(attachment.localPath);
+
+        if (attachment.url) {
+            out = out.replaceAll(attachment.url, fileUrl);
+        }
+
+        const objectId = attachment.itemId ?? parseAmsObjectId(attachment.url);
+
+        if (objectId) {
+            const re = new RegExp(`https://[^"'\\s>]+/objects/${escapeRegex(objectId)}/views/[^"'\\s>]+`, "gi");
+            out = out.replace(re, fileUrl);
+        }
+    }
+
+    return out;
+}
+
+function attachmentShownInHtml(html: string, attachment: Attachment): boolean {
+    if (attachment.localPath && html.includes(attachment.localPath)) {
+        return true;
+    }
+
+    if (attachment.itemId && html.includes(attachment.itemId)) {
+        return true;
+    }
+
+    return false;
+}
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

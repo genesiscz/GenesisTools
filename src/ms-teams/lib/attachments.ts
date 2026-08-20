@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { decodeTeamsString } from "./decode";
+import { parseAmsObjectId } from "./disk-cache";
 import type { Attachment } from "./types";
 
 export function parseAttachments(properties: unknown, extraHtml?: string | null): Attachment[] {
@@ -39,27 +41,57 @@ export function parseAttachments(properties: unknown, extraHtml?: string | null)
     }
 
     if (extraHtml) {
-        const imgRe = /src=["'](https:\/\/[^"']+)["'][^>]*itemtype=["']http:\/\/schema\.skype\.com\/AMSImage["']/gi;
-        let match: RegExpExecArray | null = imgRe.exec(extraHtml);
+        for (const image of parseAmsImageTags(extraHtml)) {
+            const existing = out.find(
+                (a) => a.url === image.url || (image.itemId !== null && a.itemId === image.itemId)
+            );
 
-        while (match) {
-            const url = match[1];
+            if (existing) {
+                if (!existing.itemId && image.itemId) {
+                    existing.itemId = image.itemId;
+                }
 
-            if (!out.some((a) => a.url === url)) {
-                out.push({
-                    name: "image",
-                    mimeHint: "png",
-                    url,
-                    itemId: null,
-                    localPath: null,
-                });
+                continue;
             }
 
-            match = imgRe.exec(extraHtml);
+            out.push(image);
         }
     }
 
     return out;
+}
+
+function parseAmsImageTags(html: string): Attachment[] {
+    const out: Attachment[] = [];
+    const imgTagRe = /<img\b[^>]*>/gi;
+    let match: RegExpExecArray | null = imgTagRe.exec(html);
+
+    while (match) {
+        const tag = match[0];
+        const src = htmlAttr(tag, "src");
+        const itemType = htmlAttr(tag, "itemtype") ?? "";
+        const itemId = htmlAttr(tag, "itemid") || parseAmsObjectId(src);
+        const isAms = /AMSImage/i.test(itemType) || Boolean(parseAmsObjectId(src));
+
+        if (isAms && (src || itemId)) {
+            out.push({
+                name: htmlAttr(tag, "alt") || "image",
+                mimeHint: htmlAttr(tag, "itemscope") || "png",
+                url: src,
+                itemId,
+                localPath: null,
+            });
+        }
+
+        match = imgTagRe.exec(html);
+    }
+
+    return out;
+}
+
+function htmlAttr(tag: string, name: string): string | null {
+    const re = new RegExp(`\\b${name}=["']([^"']*)["']`, "i");
+    return tag.match(re)?.[1] ?? null;
 }
 
 export function parseMentions(properties: unknown): { id: string; name: string }[] {
@@ -143,21 +175,69 @@ export function parseReactions(annotations: unknown): { emotion: string; count: 
     return out;
 }
 
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+const ATTACHMENT_HOST_SUFFIXES = [
+    "skype.com",
+    "teams.microsoft.com",
+    "sharepoint.com",
+    "sharepointonline.com",
+    "office.com",
+    "office.net",
+    "1drv.ms",
+    "onedrive.com",
+    "microsoftonline.com",
+];
+
+export function isAllowedAttachmentUrl(url: string): boolean {
+    let parsed: URL;
+
+    try {
+        parsed = new URL(url);
+    } catch {
+        return false;
+    }
+
+    if (parsed.protocol !== "https:") {
+        return false;
+    }
+
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+
+    if (isBlockedHost(host)) {
+        return false;
+    }
+
+    return ATTACHMENT_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
 export async function downloadAttachments(args: {
     attachments: Attachment[];
     outDir: string;
     fetchImpl?: typeof fetch;
+    usedNames?: Set<string>;
 }): Promise<{ attachments: Attachment[]; failed: number }> {
     const { attachments, outDir } = args;
     const fetchImpl = args.fetchImpl ?? fetch;
     await mkdir(outDir, { recursive: true, mode: 0o700 });
     let failed = 0;
     const result: Attachment[] = [];
-    const usedNames = new Set<string>();
-    const maxBytes = 50 * 1024 * 1024;
+    const usedNames = args.usedNames ?? new Set<string>();
 
     for (const attachment of attachments) {
+        if (attachment.localPath && existsSync(attachment.localPath)) {
+            result.push(attachment);
+            continue;
+        }
+
         if (!attachment.url || attachment.url.startsWith("file:")) {
+            result.push(attachment);
+            continue;
+        }
+
+        if (!isAllowedAttachmentUrl(attachment.url)) {
+            logger.debug({ url: attachment.url }, "[ms-teams] skipped attachment URL outside Teams/SharePoint");
+            failed += 1;
             result.push(attachment);
             continue;
         }
@@ -166,7 +246,15 @@ export async function downloadAttachments(args: {
         const timer = setTimeout(() => controller.abort(), 30_000);
 
         try {
-            const res = await fetchImpl(attachment.url, { signal: controller.signal });
+            const res = await fetchImpl(attachment.url, { redirect: "follow", signal: controller.signal });
+            const finalUrl = res.url || attachment.url;
+
+            if (!isAllowedAttachmentUrl(finalUrl)) {
+                logger.debug({ url: finalUrl }, "[ms-teams] skipped redirected attachment URL");
+                failed += 1;
+                result.push(attachment);
+                continue;
+            }
 
             if (!res.ok) {
                 logger.debug({ status: res.status, url: attachment.url }, "[ms-teams] attachment download failed");
@@ -175,17 +263,17 @@ export async function downloadAttachments(args: {
                 continue;
             }
 
-            const dest = uniqueDest(outDir, attachment.name || "attachment", attachment.itemId, usedNames);
-            await Bun.write(dest, res);
-            const written = Bun.file(dest).size;
+            const body = await readCappedBody(res, MAX_ATTACHMENT_BYTES);
 
-            if (written > maxBytes) {
-                await Bun.file(dest).unlink();
+            if (!body) {
+                logger.debug({ url: attachment.url }, "[ms-teams] attachment exceeded size cap");
                 failed += 1;
                 result.push(attachment);
                 continue;
             }
 
+            const dest = uniqueDest(outDir, attachment.name || "attachment", attachment.itemId, usedNames);
+            await Bun.write(dest, body);
             result.push({ ...attachment, localPath: dest });
         } catch (err) {
             logger.debug({ err, url: attachment.url }, "[ms-teams] attachment download threw");
@@ -197,6 +285,84 @@ export async function downloadAttachments(args: {
     }
 
     return { attachments: result, failed };
+}
+
+function isBlockedHost(host: string): boolean {
+    if (host === "localhost" || host.endsWith(".localhost") || host === "::1") {
+        return true;
+    }
+
+    const parts = host.split(".").map((p) => Number(p));
+
+    if (parts.length === 4 && parts.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+        const [a, b] = parts;
+
+        if (a === 10 || a === 127 || a === 0) {
+            return true;
+        }
+
+        if (a === 169 && b === 254) {
+            return true;
+        }
+
+        if (a === 192 && b === 168) {
+            return true;
+        }
+
+        if (a === 172 && b >= 16 && b <= 31) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+async function readCappedBody(res: Response, maxBytes: number): Promise<Uint8Array | null> {
+    const headerLen = Number(res.headers.get("content-length"));
+
+    if (Number.isFinite(headerLen) && headerLen > maxBytes) {
+        return null;
+    }
+
+    if (!res.body) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        return buf.byteLength > maxBytes ? null : buf;
+    }
+
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+
+    while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+            break;
+        }
+
+        if (!value) {
+            continue;
+        }
+
+        total += value.byteLength;
+
+        if (total > maxBytes) {
+            await reader.cancel();
+            return null;
+        }
+
+        chunks.push(value);
+    }
+
+    const out = new Uint8Array(total);
+    let offset = 0;
+
+    for (const chunk of chunks) {
+        out.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+
+    return out;
 }
 
 export function parseJsonField(value: unknown): unknown {

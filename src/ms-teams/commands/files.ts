@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { downloadAttachments } from "@app/ms-teams/lib/attachments";
 import { openCache } from "@app/ms-teams/lib/cache";
+import { materializeAttachments } from "@app/ms-teams/lib/media";
 import { parseShowQuery } from "@app/ms-teams/lib/query";
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import { out } from "@genesiscz/utils/logger";
@@ -75,14 +76,18 @@ export function registerFilesCommand(program: Command): void {
 
                 const rows = cache.listFiles(resolved.id);
                 await mkdir(opts.out, { recursive: true });
-                const downloaded = await downloadAttachments({
-                    attachments: rows.map((r) => ({
+                const prepared = await materializeAttachments(
+                    rows.map((r) => ({
                         name: r.name,
                         mimeHint: null,
                         url: r.url,
                         itemId: null,
                         localPath: null,
                     })),
+                    { destDir: opts.out }
+                );
+                const downloaded = await downloadAttachments({
+                    attachments: prepared,
                     outDir: opts.out,
                 });
                 out.println(

@@ -37,8 +37,12 @@ export function registerDoctorCommand(program: Command): void {
             table.push([
                 "SQLite cache",
                 formatDotStatus(
-                    report.cacheExists ? "ok" : "warn",
-                    report.cacheExists ? (report.cacheIngestedAt ?? "present") : "missing"
+                    report.cacheExists ? (report.cacheReadable ? "ok" : "err") : "warn",
+                    report.cacheExists
+                        ? report.cacheReadable
+                            ? (report.cacheIngestedAt ?? "present")
+                            : "unreadable"
+                        : "missing"
                 ),
             ]);
             out.println(table.toString());

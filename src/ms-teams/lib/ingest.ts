@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage";
 import { cacheDbPath, dumpIdbScript, venvDir, venvPython } from "./paths";
 import { liveIdbMtimeMs, snapshotTeamsIdb } from "./snapshot";
 import { TeamsCache } from "./store";
@@ -19,7 +20,13 @@ export interface IngestResult {
     dumpCounts: Record<string, number>;
 }
 
+const SYNC_LOCK_MS = 15 * 60 * 1000;
+
 export async function ingestIndexedDb(opts: { force?: boolean } = {}): Promise<IngestResult> {
+    return withFileLock(`${cacheDbPath()}.lock`, () => ingestIndexedDbLocked(opts), SYNC_LOCK_MS);
+}
+
+async function ingestIndexedDbLocked(opts: { force?: boolean }): Promise<IngestResult> {
     const path = cacheDbPath();
 
     if (!opts.force && existsSync(path)) {
@@ -40,7 +47,9 @@ export async function ingestIndexedDb(opts: { force?: boolean } = {}): Promise<I
     }
 
     await ensureVenv();
+    const mtimeBefore = liveIdbMtimeMs();
     const snap = snapshotTeamsIdb();
+    const mtimeAfter = liveIdbMtimeMs();
     const dumpCounts = await runDump(snap.leveldbDir, snap.blobDir, snap.dumpDir);
     const dump = readDumpDir(snap.dumpDir);
     const cache = new TeamsCache(path);
@@ -48,7 +57,12 @@ export async function ingestIndexedDb(opts: { force?: boolean } = {}): Promise<I
     try {
         const counts = cache.ingestDump(dump, { force: opts.force });
         cache.setMeta("idb_snapshot", snap.leveldbDir);
-        cache.setMeta("idb_mtime", String(liveIdbMtimeMs()));
+        cache.setMeta("idb_mtime", String(mtimeBefore));
+
+        if (mtimeAfter > mtimeBefore) {
+            log.debug({ mtimeBefore, mtimeAfter }, "[ms-teams] IDB changed during snapshot; next sync will re-ingest");
+        }
+
         return { ...counts, dumpCounts };
     } finally {
         cache.close();

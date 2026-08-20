@@ -2,6 +2,7 @@ import { openCache } from "@app/ms-teams/lib/cache";
 import { inspectDoctor } from "@app/ms-teams/lib/doctor";
 import { exportThread } from "@app/ms-teams/lib/export/thread";
 import { ingestIndexedDb } from "@app/ms-teams/lib/ingest";
+import { materializeThreadMedia } from "@app/ms-teams/lib/media";
 import { parseQueryDate, parseShowQuery } from "@app/ms-teams/lib/query";
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -30,7 +31,7 @@ export function createHandlers(): Record<string, Handler> {
                 cache.close();
             }
         },
-        ms_teams_show: (args) => {
+        ms_teams_show: async (args) => {
             const cache = openCache();
 
             try {
@@ -45,7 +46,8 @@ export function createHandlers(): Record<string, Handler> {
                     return resolved;
                 }
 
-                return exportThread(cache, resolved.conversation.id, { from: query.from, to: query.to });
+                const thread = exportThread(cache, resolved.conversation.id, { from: query.from, to: query.to });
+                return materializeThreadMedia(thread);
             } finally {
                 cache.close();
             }

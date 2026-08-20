@@ -1,4 +1,5 @@
 import { formatDateTime } from "@genesiscz/utils/date";
+import { isImageAttachment } from "../media";
 import type { ThreadExport } from "../types";
 
 export function renderMarkdown(thread: ThreadExport): string {
@@ -31,8 +32,10 @@ export function renderMarkdown(thread: ThreadExport): string {
 
         if (message.system) {
             lines.push(`*${message.system}*`);
-        } else {
-            lines.push(message.text || "_(no text)_");
+        } else if (message.text.trim()) {
+            lines.push(message.text);
+        } else if (message.attachments.length === 0) {
+            lines.push("_(no text)_");
         }
 
         if (message.reactions.length > 0) {
@@ -43,8 +46,15 @@ export function renderMarkdown(thread: ThreadExport): string {
         for (const attachment of message.attachments) {
             const href = attachment.localPath ?? attachment.url;
 
-            if (href) {
-                lines.push("");
+            if (!href) {
+                continue;
+            }
+
+            lines.push("");
+
+            if (attachment.localPath && isImageAttachment(attachment)) {
+                lines.push(`![${attachment.name}](${href})`);
+            } else {
                 lines.push(`[${attachment.name}](${href})`);
             }
         }
