@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
+import { ambiguousNoArgTools, GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { GrokSubscriptionClient } from "@genesiscz/utils/ai/grok";
 import { env } from "@genesiscz/utils/env";
@@ -170,5 +170,36 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
             expect(text).toContain("1 client tool");
             expect(text).toContain("BRAVE_API_KEY");
         });
+    });
+});
+
+describe("ambiguousNoArgTools", () => {
+    const noArg = (name: string) => ({ name, description: "x", input_schema: { type: "object", properties: {} } });
+    const withArg = (name: string) => ({
+        name,
+        description: "x",
+        input_schema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
+    });
+
+    it("is true only when the splitter could not pick between no-arg tools", () => {
+        // Two or more no-arg tools: an orphaned {} matches both, so the
+        // streaming path cannot restore the name.
+        expect(ambiguousNoArgTools({ tools: [noArg("ListAgents"), noArg("TaskList"), withArg("Bash")] })).toBe(true);
+
+        // One no-arg tool is unambiguous — the splitter resolves it.
+        expect(ambiguousNoArgTools({ tools: [noArg("ListAgents"), withArg("Bash")] })).toBe(false);
+        expect(ambiguousNoArgTools({ tools: [withArg("Bash"), withArg("Read")] })).toBe(false);
+        expect(ambiguousNoArgTools({})).toBe(false);
+    });
+
+    it("ignores server tools, which never take this path", () => {
+        expect(
+            ambiguousNoArgTools({
+                tools: [{ type: "web_search_20250305", name: "web_search" }, noArg("ListAgents"), noArg("TaskList")],
+            })
+        ).toBe(true);
+        expect(
+            ambiguousNoArgTools({ tools: [{ type: "web_search_20250305", name: "web_search" }, noArg("ListAgents")] })
+        ).toBe(false);
     });
 });

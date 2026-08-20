@@ -10,6 +10,7 @@ import {
     type EmulationOutcome,
     emulateWebSearch,
     emulationStream,
+    messageToAnthropicSse,
     nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
@@ -36,6 +37,7 @@ import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok/paths";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 export class GrokSubscriptionProvider implements ProxyProvider {
     readonly id = "grok-subscription";
@@ -155,6 +157,20 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 hoistSystemMessages(ensureToolRequiredArrays(parsed as Record<string, unknown>))
             );
             body.model = model;
+
+            // Grok's STREAMING /messages merges parallel calls and destroys
+            // every name but the first. When two or more no-argument tools are
+            // offered, an emptied orphan matches all of them, so no unique
+            // repair exists and the call goes out under the wrong name.
+            // Isolated live 2026-08-20 on one prompt and one tool set:
+            // streaming /messages broke 8 of 16 calls across 4 runs, while
+            // non-streaming /messages returned 12/12 correct and /responses
+            // 8/8 correct. So ask for the whole message and play the stream
+            // ourselves — the client still gets an Anthropic SSE.
+            if (body.stream === true && ambiguousNoArgTools(body)) {
+                return await this.unmergedToolStream(req, model, body);
+            }
+
             outBody = SafeJSON.stringify(body);
             toolMatchers = toolMatchersFromBody(body);
         }
@@ -190,6 +206,40 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         }
 
         return new Response(response.body, { status: response.status, headers: relayHeaders(response) });
+    }
+
+    /**
+     * Ask the upstream for the COMPLETE message and play it back as SSE.
+     * Non-streaming replies carry every tool call with its own name, so this
+     * sidesteps the streaming merge entirely. The cost is that text is no
+     * longer incremental for these requests; correct tool calls are worth
+     * more to an agent than token-by-token rendering.
+     */
+    private async unmergedToolStream(req: Request, model: string, body: Record<string, unknown>): Promise<Response> {
+        const response = await this.dispatch({
+            path: "/messages",
+            req,
+            bodyText: SafeJSON.stringify({ ...body, stream: false }),
+            modelOverride: model,
+            requestedModel: model,
+            imageRouted: false,
+            headers: { "anthropic-version": "2023-06-01" },
+        });
+
+        if (!response.ok) {
+            return toAnthropicErrorResponse(response);
+        }
+
+        const message = (await response.json()) as Record<string, unknown>;
+        logger.debug(
+            { model, blocks: Array.isArray(message.content) ? message.content.length : 0 },
+            "ai-proxy: served a tool request unmerged (non-streaming upstream, synthesized SSE)"
+        );
+
+        return new Response(messageToAnthropicSse(message), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+        });
     }
 
     /**
@@ -453,6 +503,39 @@ export class GrokSubscriptionProvider implements ProxyProvider {
  * client sees, and it names what is unsupported rather than answering from a
  * silently truncated conversation.
  */
+/**
+ * True when the request offers two or more tools that take no required
+ * arguments. That is exactly the case the SSE splitter cannot repair: an
+ * orphaned `{}` call matches every one of them, so there is no unique name to
+ * restore and the call inherits a name that rejects it.
+ */
+export function ambiguousNoArgTools(body: Record<string, unknown>): boolean {
+    if (!Array.isArray(body.tools)) {
+        return false;
+    }
+
+    let noArg = 0;
+
+    for (const tool of body.tools) {
+        if (!isObject(tool) || (typeof tool.type === "string" && tool.type !== "custom")) {
+            continue;
+        }
+
+        const schema = isObject(tool.input_schema) ? tool.input_schema : {};
+        const required = Array.isArray(schema.required) ? schema.required : [];
+
+        if (required.length === 0) {
+            noArg += 1;
+        }
+
+        if (noArg >= 2) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function unsupportedNativeResponse(loss: string): Response {
     return new Response(
         SafeJSON.stringify({
