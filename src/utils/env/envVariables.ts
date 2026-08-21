@@ -92,6 +92,14 @@ export const env = {
             const raw = getTrimmed("AI_PROXY_TRANSCRIPTS")?.toLowerCase();
             return raw !== "0" && raw !== "false" && raw !== "off";
         },
+        /**
+         * Which grok upstream serves Anthropic /v1/messages requests.
+         * "responses" (default) translates to the /responses wire, which names
+         * every parallel tool call; "shim" is the instant fallback to the
+         * native /v1/messages passthrough with the routing-tag repair.
+         */
+        getGrokMessagesRoute: (): "responses" | "shim" =>
+            getTrimmed("AI_PROXY_GROK_MESSAGES_ROUTE")?.toLowerCase() === "shim" ? "shim" : "responses",
     },
 
     github: {

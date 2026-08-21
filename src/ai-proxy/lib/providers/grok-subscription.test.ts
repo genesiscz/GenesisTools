@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
 import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
@@ -175,6 +175,16 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
 });
 
 describe("GrokSubscriptionProvider.messages tool tagging", () => {
+    // These tests pin the SHIM fallback (AI_PROXY_GROK_MESSAGES_ROUTE=shim).
+    // The default route translates to /responses and never tags a schema.
+    beforeAll(() => {
+        env.testing.set("AI_PROXY_GROK_MESSAGES_ROUTE", "shim");
+    });
+
+    afterAll(() => {
+        env.testing.unset("AI_PROXY_GROK_MESSAGES_ROUTE");
+    });
+
     const noArg = (name: string) => ({
         name,
         description: "x",
@@ -254,5 +264,140 @@ describe("GrokSubscriptionProvider.messages tool tagging", () => {
         });
         expect(schemaOf(nonStreaming, "ListAgents").required).toEqual([]);
         expect(schemaOf(nonStreaming, "TaskList").required).toEqual([]);
+    });
+});
+
+describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
+    interface Sent {
+        path: string;
+        body: Record<string, unknown>;
+    }
+
+    function stubbedProvider(respond: (sent: Sent[]) => Response): { provider: GrokSubscriptionProvider; sent: Sent[] } {
+        const provider = makeProvider();
+        const client = provider as unknown as {
+            client: { fetch: (path: string, init: { body?: unknown }) => Promise<Response> };
+        };
+        const sent: Sent[] = [];
+        client.client.fetch = async (path, init) => {
+            sent.push({ path, body: SafeJSON.parse(String(init.body), { strict: true }) as Record<string, unknown> });
+            return respond(sent);
+        };
+
+        return { provider, sent };
+    }
+
+    const envelope = SafeJSON.stringify({
+        id: "resp_1",
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: "4" }] }],
+        usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+    });
+
+    it("translates the Anthropic body onto the /responses wire and the reply back", async () => {
+        const { provider, sent } = stubbedProvider(
+            () => new Response(envelope, { status: 200, headers: { "content-type": "application/json" } })
+        );
+
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            system: "be terse",
+            messages: [{ role: "user", content: "2+2?" }],
+            tools: [{ name: "Read", description: "read", input_schema: { type: "object" } }],
+        });
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(1);
+        expect(sent[0].path).toBe("/responses");
+        expect(sent[0].body.store).toBe(false);
+        expect(sent[0].body.instructions).toBe("be terse");
+        expect(sent[0].body.max_output_tokens).toBe(100);
+        // ensureToolRequiredArrays ran before the translation.
+        expect((sent[0].body.tools as Record<string, unknown>[])[0].parameters).toEqual({
+            type: "object",
+            required: [],
+        });
+
+        const message = SafeJSON.parse(await res.text(), { strict: true }) as Record<string, unknown>;
+        expect(message.type).toBe("message");
+        expect(message.content).toEqual([{ type: "text", text: "4" }]);
+        expect(message.stop_reason).toBe("end_turn");
+    });
+
+    it("retries once without reasoning items when the upstream cannot decrypt them", async () => {
+        const { provider, sent } = stubbedProvider((calls) =>
+            calls.length === 1
+                ? new Response(
+                      SafeJSON.stringify({
+                          code: "invalid-argument",
+                          error: "Could not decrypt the provided encrypted_content. Ensure the value is the unmodified encrypted_content from a previous response.",
+                      }),
+                      { status: 400, headers: { "content-type": "application/json" } }
+                  )
+                : new Response(envelope, { status: 200, headers: { "content-type": "application/json" } })
+        );
+
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [
+                { role: "user", content: "hi" },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "thinking", thinking: "old reasoning", signature: "grokrs1:rs_x:STALEENC==" },
+                        { type: "text", text: "earlier answer" },
+                    ],
+                },
+                { role: "user", content: "again?" },
+            ],
+        });
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(2);
+        const firstItems = (sent[0].body.input as Record<string, unknown>[]).map((item) => item.type ?? item.role);
+        const retryItems = (sent[1].body.input as Record<string, unknown>[]).map((item) => item.type ?? item.role);
+        expect(firstItems).toContain("reasoning");
+        expect(retryItems).not.toContain("reasoning");
+
+        expect(res.status).toBe(200);
+    });
+
+    it("does not retry on unrelated errors", async () => {
+        const { provider, sent } = stubbedProvider(
+            () =>
+                new Response(SafeJSON.stringify({ code: "invalid-argument", error: "some other problem" }), {
+                    status: 400,
+                    headers: { "content-type": "application/json" },
+                })
+        );
+
+        const body = SafeJSON.stringify({
+            model: "grok-4.6",
+            max_tokens: 100,
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const res = await provider.messages(
+            new Request("http://proxy/v1/messages", { method: "POST", body }),
+            "grok-4.6",
+            body
+        );
+
+        expect(sent).toHaveLength(1);
+        expect(res.status).toBe(400);
+
+        // The client speaks Anthropic, so the error must be Anthropic-shaped.
+        const parsed = SafeJSON.parse(await res.text(), { strict: true }) as Record<string, unknown>;
+        expect(parsed.type).toBe("error");
+        expect((parsed.error as Record<string, unknown>).message).toContain("some other problem");
     });
 });

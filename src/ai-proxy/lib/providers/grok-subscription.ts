@@ -15,8 +15,16 @@ import {
     parseWebSearchServerTool,
     type WebSearchServerTool,
 } from "@app/ai-proxy/lib/server-tools/web-search";
+import {
+    anthropicToGrokResponses,
+    stripReasoningInput,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
+import {
+    grokResponsesSseToAnthropic,
+    grokResponsesToAnthropicMessage,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
 import {
     repairAnthropicSseIndices,
@@ -153,6 +161,17 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 }
             }
 
+            // Default route: the /responses wire. The shim merges parallel
+            // tool calls into ONE block (raw wire capture 2026-08-21, nine
+            // request variants tried); /responses streams every call as its
+            // own named item, and reasoning survives via encrypted reasoning
+            // items round-tripped through thinking signatures.
+            // AI_PROXY_GROK_MESSAGES_ROUTE=shim restores the passthrough
+            // below instantly.
+            if (env.aiProxy.getGrokMessagesRoute() === "responses") {
+                return this.messagesViaResponses(req, model, parsed as Record<string, unknown>);
+            }
+
             const body = stringifyUnknownToolResultBlocks(
                 hoistSystemMessages(ensureToolRequiredArrays(parsed as Record<string, unknown>))
             );
@@ -203,6 +222,80 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         }
 
         return new Response(response.body, { status: response.status, headers: relayHeaders(response) });
+    }
+
+    /**
+     * Anthropic body → /responses wire → Anthropic reply. One upstream output
+     * item maps to one content block, so the shim's merge defect cannot occur,
+     * and `encrypted_content` reasoning replay is stronger than the shim's
+     * plaintext thinking (grok decrypts and consumes it — a tampered blob is
+     * rejected).
+     */
+    private async messagesViaResponses(
+        req: Request,
+        model: string,
+        parsed: Record<string, unknown>
+    ): Promise<Response> {
+        const anthropicBody = hoistSystemMessages(ensureToolRequiredArrays(parsed));
+        const responsesBody = anthropicToGrokResponses(anthropicBody, model);
+
+        const send = (bodyText: string): Promise<Response> =>
+            this.dispatch({
+                path: "/responses",
+                req,
+                bodyText,
+                modelOverride: model,
+                requestedModel: model,
+                imageRouted: false,
+            });
+
+        let response = await send(SafeJSON.stringify(responsesBody));
+
+        if (!response.ok) {
+            const errorText = await response.text();
+
+            // A signature packed by a different conversation (or truncated by
+            // the client) fails decryption for the WHOLE request. Replaying
+            // once without reasoning items loses continuity for one turn
+            // instead of failing it.
+            if (response.status === 400 && errorText.includes("Could not decrypt")) {
+                logger.warn(
+                    { model },
+                    "ai-proxy: grok rejected replayed reasoning — retrying without reasoning items"
+                );
+                response = await send(SafeJSON.stringify(stripReasoningInput(responsesBody)));
+
+                if (!response.ok) {
+                    return toAnthropicErrorResponse(response);
+                }
+            } else {
+                return toAnthropicErrorResponse(
+                    new Response(errorText, { status: response.status, headers: response.headers })
+                );
+            }
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+
+        if (response.body && contentType.includes("text/event-stream")) {
+            return new Response(grokResponsesSseToAnthropic(response.body, { model }), {
+                status: response.status,
+                headers: relayHeaders(response),
+            });
+        }
+
+        const envelope = SafeJSON.parse(await response.text(), { strict: true });
+        const message = grokResponsesToAnthropicMessage(
+            typeof envelope === "object" && envelope !== null && !Array.isArray(envelope)
+                ? (envelope as Record<string, unknown>)
+                : {},
+            { model }
+        );
+
+        return new Response(SafeJSON.stringify(message), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
     }
 
     /**
