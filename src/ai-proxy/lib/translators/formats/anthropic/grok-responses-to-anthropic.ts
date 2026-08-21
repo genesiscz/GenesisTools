@@ -99,10 +99,7 @@ function stopReasonFor(response: JsonRecord, sawFunctionCall: boolean): Anthropi
 }
 
 /** Non-streaming: a Responses envelope → an Anthropic message object. */
-export function grokResponsesToAnthropicMessage(
-    response: JsonRecord,
-    options: { model: string }
-): JsonRecord {
+export function grokResponsesToAnthropicMessage(response: JsonRecord, options: { model: string }): JsonRecord {
     const output = Array.isArray(response.output) ? response.output : [];
     const content: JsonRecord[] = [];
 
@@ -241,7 +238,9 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
         state.sawFunctionCall = true;
     }
 
-    return frameStart(state) + anthropicSseFrame("content_block_start", { index: blockIndex, content_block: mapped.block });
+    return (
+        frameStart(state) + anthropicSseFrame("content_block_start", { index: blockIndex, content_block: mapped.block })
+    );
 }
 
 function deltaFrame(state: StreamState, outputIndex: number, delta: JsonRecord, chars: number): string {

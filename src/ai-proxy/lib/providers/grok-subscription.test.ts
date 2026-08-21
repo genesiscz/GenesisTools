@@ -273,7 +273,10 @@ describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
         body: Record<string, unknown>;
     }
 
-    function stubbedProvider(respond: (sent: Sent[]) => Response): { provider: GrokSubscriptionProvider; sent: Sent[] } {
+    function stubbedProvider(respond: (sent: Sent[]) => Response): {
+        provider: GrokSubscriptionProvider;
+        sent: Sent[];
+    } {
         const provider = makeProvider();
         const client = provider as unknown as {
             client: { fetch: (path: string, init: { body?: unknown }) => Promise<Response> };

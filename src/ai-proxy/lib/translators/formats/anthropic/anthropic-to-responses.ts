@@ -28,9 +28,7 @@ export function packReasoningSignature(id: string, encryptedContent: string): st
     return `${REASONING_SIGNATURE_PREFIX}${id}:${encryptedContent}`;
 }
 
-export function unpackReasoningSignature(
-    signature: unknown
-): { id: string; encryptedContent: string } | undefined {
+export function unpackReasoningSignature(signature: unknown): { id: string; encryptedContent: string } | undefined {
     if (typeof signature !== "string" || !signature.startsWith(REASONING_SIGNATURE_PREFIX)) {
         return undefined;
     }

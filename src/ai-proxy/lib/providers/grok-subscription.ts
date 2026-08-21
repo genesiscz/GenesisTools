@@ -259,10 +259,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // once without reasoning items loses continuity for one turn
             // instead of failing it.
             if (response.status === 400 && errorText.includes("Could not decrypt")) {
-                logger.warn(
-                    { model },
-                    "ai-proxy: grok rejected replayed reasoning — retrying without reasoning items"
-                );
+                logger.warn({ model }, "ai-proxy: grok rejected replayed reasoning — retrying without reasoning items");
                 response = await send(SafeJSON.stringify(stripReasoningInput(responsesBody)));
 
                 if (!response.ok) {

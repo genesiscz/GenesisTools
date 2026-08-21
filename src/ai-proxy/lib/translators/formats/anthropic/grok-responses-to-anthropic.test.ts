@@ -16,9 +16,7 @@ interface Frame {
 
 function sse(events: Array<Record<string, unknown>>): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
-    const text = events
-        .map((event) => `event: ${event.type}\ndata: ${SafeJSON.stringify(event)}\n\n`)
-        .join("");
+    const text = events.map((event) => `event: ${event.type}\ndata: ${SafeJSON.stringify(event)}\n\n`).join("");
 
     return new ReadableStream({
         start(controller) {
@@ -277,7 +275,11 @@ describe("grokResponsesSseToAnthropic", () => {
             grokResponsesSseToAnthropic(
                 sse([
                     { type: "response.created", response: { id: "resp_1" } },
-                    { type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant" } },
+                    {
+                        type: "response.output_item.added",
+                        output_index: 0,
+                        item: { type: "message", role: "assistant" },
+                    },
                     { type: "response.output_text.delta", output_index: 0, delta: "Hello " },
                     { type: "response.output_text.delta", output_index: 0, delta: "world" },
                     {

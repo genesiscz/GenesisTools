@@ -39,7 +39,12 @@ describe("anthropicToGrokResponses", () => {
 
     it("joins system blocks into instructions", () => {
         const out = anthropicToGrokResponses(
-            { system: [{ type: "text", text: "You are terse." }, { type: "text", text: "Answer in Czech." }] },
+            {
+                system: [
+                    { type: "text", text: "You are terse." },
+                    { type: "text", text: "Answer in Czech." },
+                ],
+            },
             "grok-4.6"
         );
 
