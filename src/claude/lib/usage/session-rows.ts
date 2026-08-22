@@ -5,12 +5,14 @@ import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 
-export const CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes (CC uses 1-hour TTL tier)
+export const CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes (CC 1-hour prompt-cache TTL)
 export const COOLING_THRESHOLD_MS = 50 * 60 * 1000; // 50 min idle = 10 min left
 export const CRITICAL_THRESHOLD_MS = 55 * 60 * 1000; // 55 min idle = 5 min left
 
 const TAIL_BATCH_SIZE = 20;
-const TAIL_BYTES = 16384;
+/** First slice. Grows up to TAIL_MAX_BYTES until a user/assistant timestamp is found. */
+const TAIL_BYTES = 64 * 1024;
+const TAIL_MAX_BYTES = 1024 * 1024;
 
 export type CacheStatus = "HOT" | "COOLING" | "CRITICAL" | "COLD";
 
@@ -21,6 +23,8 @@ export interface SessionRow {
     cwdShort: string;
     project: string | null;
     mtime: number;
+    /** Last main-thread user/assistant timestamp (statusline @HH:MM:SS). Falls back to mtime. */
+    lastCacheAt: number;
     model: string | null;
     modelSwitched: boolean;
     cacheStatus: CacheStatus;
@@ -37,6 +41,7 @@ interface TailUsage {
     cacheCreateTokens: number;
     model: string | null;
     prevModel: string | null;
+    lastCacheAt: number | null;
 }
 
 export interface ListSessionRowsOptions {
@@ -46,8 +51,8 @@ export interface ListSessionRowsOptions {
     now?: number;
 }
 
-export function computeCacheStatus(mtime: number, now: number): { status: CacheStatus; ttlSec: number } {
-    const elapsed = now - mtime;
+export function computeCacheStatus(cacheAt: number, now: number): { status: CacheStatus; ttlSec: number } {
+    const elapsed = now - cacheAt;
     const ttlRemaining = Math.max(0, CACHE_TTL_MS - elapsed);
     const ttlSec = Math.ceil(ttlRemaining / 1000);
 
@@ -86,51 +91,106 @@ function simplifyModel(model: string): string {
     return model.split("-").pop() ?? model;
 }
 
-async function extractTailUsage(filePath: string): Promise<TailUsage> {
-    const fallback: TailUsage = {
+function emptyTailUsage(): TailUsage {
+    return {
         totalTokens: 0,
         cacheReadTokens: 0,
         cacheCreateTokens: 0,
         model: null,
         prevModel: null,
+        lastCacheAt: null,
     };
+}
+
+function cacheAtFromLine(obj: { type?: unknown; timestamp?: unknown; isSidechain?: unknown }): number | null {
+    if (obj.type !== "user" && obj.type !== "assistant") {
+        return null;
+    }
+
+    if (obj.isSidechain === true) {
+        return null;
+    }
+
+    if (typeof obj.timestamp !== "string") {
+        return null;
+    }
+
+    const parsed = Date.parse(obj.timestamp);
+
+    if (!Number.isFinite(parsed)) {
+        return null;
+    }
+
+    return parsed;
+}
+
+function parseTailLines(lines: string[], filePath: string): TailUsage {
+    const usage = emptyTailUsage();
+    let lastModel: string | null = null;
+    let prevModel: string | null = null;
+    let foundUsage = false;
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+            const obj = SafeJSON.parse(lines[i], { strict: true });
+
+            if (usage.lastCacheAt === null) {
+                usage.lastCacheAt = cacheAtFromLine(obj);
+            }
+
+            if (obj.type !== "assistant" || !obj.message?.usage) {
+                continue;
+            }
+
+            if (!foundUsage) {
+                const u = obj.message.usage;
+                usage.totalTokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
+                usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
+                usage.cacheCreateTokens = u.cache_creation_input_tokens ?? 0;
+                lastModel = obj.message.model ? simplifyModel(obj.message.model) : null;
+                foundUsage = true;
+                continue;
+            }
+
+            prevModel = obj.message.model ? simplifyModel(obj.message.model) : null;
+            break;
+        } catch (err) {
+            logger.debug({ err, filePath, line: lines[i]?.slice(0, 80) }, "skip malformed session tail line");
+        }
+    }
+
+    usage.model = lastModel;
+    usage.prevModel = prevModel;
+    return usage;
+}
+
+async function extractTailUsage(filePath: string): Promise<TailUsage> {
+    const fallback = emptyTailUsage();
 
     try {
-        const lines = await readTailBytes(filePath, TAIL_BYTES);
-        let lastModel: string | null = null;
-        let prevModel: string | null = null;
-        let found = false;
+        const size = Number(Bun.file(filePath).size) || 0;
+        let bytes = TAIL_BYTES;
+        let parsed = fallback;
 
-        for (let i = lines.length - 1; i >= 0; i--) {
-            try {
-                const obj = SafeJSON.parse(lines[i], { strict: true });
+        for (;;) {
+            const lines = await readTailBytes(filePath, bytes);
+            parsed = parseTailLines(lines, filePath);
 
-                if (obj.type !== "assistant" || !obj.message?.usage) {
-                    continue;
-                }
+            const haveClock = parsed.lastCacheAt != null;
+            const haveUsage = parsed.model != null;
 
-                if (!found) {
-                    const u = obj.message.usage;
-                    fallback.totalTokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
-                    fallback.cacheReadTokens = u.cache_read_input_tokens ?? 0;
-                    fallback.cacheCreateTokens = u.cache_creation_input_tokens ?? 0;
-                    lastModel = obj.message.model ? simplifyModel(obj.message.model) : null;
-                    found = true;
-                    continue;
-                }
-
-                prevModel = obj.message.model ? simplifyModel(obj.message.model) : null;
-                break;
-            } catch (err) {
-                logger.debug({ err, filePath, line: lines[i]?.slice(0, 80) }, "skip malformed session tail line");
+            if ((haveClock && haveUsage) || size <= 0 || bytes >= size || bytes >= TAIL_MAX_BYTES) {
+                return parsed;
             }
-        }
 
-        return {
-            ...fallback,
-            model: lastModel,
-            prevModel,
-        };
+            const next = Math.min(TAIL_MAX_BYTES, bytes * 2, size);
+
+            if (next <= bytes) {
+                return parsed;
+            }
+
+            bytes = next;
+        }
     } catch (err) {
         logger.debug({ err, filePath }, "session tail read failed");
         return fallback;
@@ -139,7 +199,8 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
 
 function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number): SessionRow {
     const cwd = record.cwd ?? "(unknown)";
-    const { status, ttlSec } = computeCacheStatus(record.mtime, now);
+    const lastCacheAt = usage.lastCacheAt ?? record.mtime;
+    const { status, ttlSec } = computeCacheStatus(lastCacheAt, now);
 
     return {
         sessionId: record.sessionId ?? record.filePath.split("/").pop()?.replace(".jsonl", "") ?? "",
@@ -148,6 +209,7 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number):
         cwdShort: collapsePath(cwd),
         project: record.project,
         mtime: record.mtime,
+        lastCacheAt,
         model: usage.model,
         modelSwitched: usage.model !== null && usage.prevModel !== null && usage.model !== usage.prevModel,
         cacheStatus: status,
@@ -197,7 +259,7 @@ export async function listSessionRowsWithTimings(
     const rank: Record<CacheStatus, number> = { HOT: 0, COOLING: 1, CRITICAL: 2, COLD: 3 };
     const rows = records
         .map((r, i) => buildRow(r, usages[i], now))
-        .sort((a, b) => rank[a.cacheStatus] - rank[b.cacheStatus] || b.mtime - a.mtime);
+        .sort((a, b) => rank[a.cacheStatus] - rank[b.cacheStatus] || b.lastCacheAt - a.lastCacheAt);
 
     return {
         rows,

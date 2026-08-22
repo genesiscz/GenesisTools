@@ -41,11 +41,11 @@ function groupByCwd(rows: SessionRow[]): SessionGroup[] {
     const groups: SessionGroup[] = [];
 
     for (const [cwd, sessions] of map) {
-        sessions.sort((a, b) => b.mtime - a.mtime);
+        sessions.sort((a, b) => b.lastCacheAt - a.lastCacheAt);
         groups.push({ cwd, cwdShort: sessions[0].cwdShort, sessions });
     }
 
-    groups.sort((a, b) => b.sessions[0].mtime - a.sessions[0].mtime);
+    groups.sort((a, b) => b.sessions[0].lastCacheAt - a.sessions[0].lastCacheAt);
     return groups;
 }
 
@@ -149,7 +149,7 @@ export function useSessions({ active, notifications }: SessionsOptions) {
     const filteredRows = allRows
         .filter((r) => now - r.mtime < TIME_FILTER_MS[timeFilter])
         .map((r) => {
-            const { status, ttlSec } = computeCacheStatus(r.mtime, now);
+            const { status, ttlSec } = computeCacheStatus(r.lastCacheAt, now);
             return { ...r, cacheStatus: status, cacheTtlSec: ttlSec };
         });
 

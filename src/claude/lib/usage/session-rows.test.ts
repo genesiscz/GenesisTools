@@ -156,6 +156,7 @@ describe("listSessionRows", () => {
                 "cwd",
                 "cwdShort",
                 "filePath",
+                "lastCacheAt",
                 "model",
                 "modelSwitched",
                 "mtime",
@@ -195,6 +196,69 @@ describe("listSessionRows", () => {
         expect(timings.records).toBe(1);
         expect(timings.totalMs).toBeGreaterThanOrEqual(timings.listingMs);
         expect(timings.tailMs).toBeGreaterThanOrEqual(0);
+    });
+
+    // Regression test: tools claude usage Sessions treated inode mtime as prompt-cache TTL.
+    // ~/.claude/statusline.sh uses last user|assistant timestamp (not mtime). Session 46768bb6
+    // showed HOT from a metadata rewrite while last message was 2026-08-19T12:08:20Z (@14:08:20).
+    test("recent mtime with a 3-day-old user/assistant timestamp is COLD", async () => {
+        const path = "/tmp/stale-hot.jsonl";
+        const threeDays = 3 * 24 * 60 * MIN;
+        const ts = new Date(NOW - threeDays).toISOString();
+
+        listing.sessions = [
+            record({
+                filePath: path,
+                sessionId: "stale-hot",
+                customTitle: "burn-auth",
+                mtime: NOW - 5 * MIN,
+            }),
+        ];
+        tails.set(path, [
+            `{"type":"assistant","timestamp":"${ts}","isSidechain":false,"message":{"model":"claude-sonnet-5","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`,
+            `{"type":"user","timestamp":"${ts}","isSidechain":false}`,
+            '{"type":"custom-title","customTitle":"burn-auth"}',
+        ]);
+
+        const rows = await listSessionRows({ hours: 6, excludeSubagents: true, now: NOW });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.cacheStatus).toBe("COLD");
+        expect(rows[0]?.cacheTtlSec).toBe(0);
+        expect(rows[0]?.lastCacheAt).toBe(NOW - threeDays);
+    });
+
+    test("last user timestamp beats an older assistant, matching statusline", async () => {
+        const path = "/tmp/user-wins.jsonl";
+        const threeDays = 3 * 24 * 60 * MIN;
+        const userTs = new Date(NOW - 5 * MIN).toISOString();
+        const asstTs = new Date(NOW - threeDays).toISOString();
+
+        listing.sessions = [record({ filePath: path, sessionId: "user-wins", mtime: NOW })];
+        tails.set(path, [
+            `{"type":"assistant","timestamp":"${asstTs}","isSidechain":false,"message":{"model":"claude-sonnet-5","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`,
+            `{"type":"user","timestamp":"${userTs}","isSidechain":false}`,
+        ]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.cacheStatus).toBe("HOT");
+        expect(rows[0]?.lastCacheAt).toBe(NOW - 5 * MIN);
+    });
+
+    test("sidechain user timestamps do not keep a stale session HOT", async () => {
+        const path = "/tmp/sidechain.jsonl";
+        const threeDays = 3 * 24 * 60 * MIN;
+        const asstTs = new Date(NOW - threeDays).toISOString();
+        const sideTs = new Date(NOW).toISOString();
+
+        listing.sessions = [record({ filePath: path, sessionId: "side", mtime: NOW })];
+        tails.set(path, [
+            `{"type":"assistant","timestamp":"${asstTs}","isSidechain":false,"message":{"model":"claude-sonnet-5","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`,
+            `{"type":"user","timestamp":"${sideTs}","isSidechain":true}`,
+        ]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.cacheStatus).toBe("COLD");
+        expect(rows[0]?.lastCacheAt).toBe(NOW - threeDays);
     });
 
     test("fable-5 is labeled fable, not 5, and HOT sorts above COOLING", async () => {
