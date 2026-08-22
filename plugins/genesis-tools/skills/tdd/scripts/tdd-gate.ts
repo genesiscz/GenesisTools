@@ -96,7 +96,9 @@ interface SessionState {
     green?: GreenRecord;
 }
 
-// Test-only override; a standalone plugin script cannot import the repo's env facade.
+// TDD_GATE_SESSIONS_ROOT is the test-only override. env.tools.getHome() is GENESIS_TOOLS_HOME ?? homedir()
+// (the sandbox-aware home root; callers append ".genesis-tools" themselves). The @genesiscz import resolves
+// because this plugin runs live from the repo checkout, not from a plugin-cache copy.
 const SESSIONS_ROOT =
     process.env.TDD_GATE_SESSIONS_ROOT ?? join(env.tools.getHome(), ".genesis-tools", "tdd", "sessions");
 const STATE_FILE = "state.json";
