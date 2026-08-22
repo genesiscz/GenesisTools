@@ -12,11 +12,17 @@ export function registerUsageCommand(program: Command): void {
         .option("--token <token>", "Use a specific OAuth access token")
         .option("--no-tui", "Use legacy plain text output")
         .option("--json", "Output as JSON")
+        .option("--scored", "With --json, emit sortGrouped(scoreAccounts(...))")
         .option("--watch", "Watch mode (legacy)")
         .option("--interval <seconds>", "Poll interval override")
         .option("--fresh", "Force a live Anthropic fetch, bypassing the shared cache")
         .action(async (opts: Record<string, string | boolean | undefined>) => {
             const accountFilter = typeof opts.filter === "string" ? opts.filter : undefined;
+
+            if (opts.scored && !opts.json) {
+                logger.error("use --json --scored");
+                process.exit(1);
+            }
 
             if (opts.tui === false || opts.json || opts.token || opts.watch) {
                 const { fetchUsage } = await import("@app/claude/lib/usage/api");
@@ -59,7 +65,18 @@ export function registerUsageCommand(program: Command): void {
                 const results = await getSharedAccountsUsage({ accountFilter, force: opts.fresh === true });
 
                 if (opts.json) {
-                    out.print(SafeJSON.stringify(results, null, 2));
+                    if (opts.scored) {
+                        const { scoreAccounts, sortGrouped } = await import("@app/claude/lib/usage/account-picker");
+                        out.print(
+                            SafeJSON.stringify(
+                                { fetchedAt: Date.now(), accounts: sortGrouped(scoreAccounts(results)) },
+                                null,
+                                2
+                            )
+                        );
+                    } else {
+                        out.print(SafeJSON.stringify(results, null, 2));
+                    }
                 } else {
                     out.print(renderAllAccounts(results));
                 }
