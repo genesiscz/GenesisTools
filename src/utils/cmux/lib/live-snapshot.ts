@@ -1,5 +1,6 @@
 import { type CmuxRunResult, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 
 export interface CmuxLiveWorkspace {
     id: string;
@@ -289,18 +290,22 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
     const previews = deps.previews ?? "all";
     const fetchedAt = new Date().toISOString();
 
+    const prof = profiler.scope("cmux");
     try {
-        const workspaceResponse = await runJson<WorkspaceListRpc>(["list-workspaces"]);
+        const workspaceResponse = await prof.measureAsync("list-workspaces", () =>
+            runJson<WorkspaceListRpc>(["list-workspaces"])
+        );
         const rawWorkspaces = workspaceResponse.workspaces ?? [];
         const workspaces: CmuxLiveWorkspace[] = rawWorkspaces.map((workspace) => ({
             id: workspaceId(workspace),
             name: workspaceName(workspace),
         }));
 
-        const paneGroups = await Promise.all(
-            rawWorkspaces.map((rawWorkspace) => fetchWorkspacePanes(rawWorkspace, runJson, run, previews))
+        const paneGroups = await prof.measureAsync("list-panes+surfaces", () =>
+            Promise.all(rawWorkspaces.map((rawWorkspace) => fetchWorkspacePanes(rawWorkspace, runJson, run, previews)))
         );
         const panes = paneGroups.flat();
+        prof.summary(`snapshot previews=${previews}`);
 
         return { fetchedAt, available: true, workspaces, panes };
     } catch (err) {

@@ -6,6 +6,7 @@ import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/contr
 import { fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
@@ -133,13 +134,24 @@ async function pickTarget(targets: FocusTarget[]): Promise<FocusTarget | null> {
  * This never creates anything. A session with no pane is a `restore` job, and saying so
  * beats silently opening a second copy of a session that is already running somewhere.
  */
+const SESSION_ID_QUERY = /^[0-9a-f-]{8,}$/i;
+
 export async function focusCommand(query: string, opts: FocusOptions, deps: FocusCommandDeps = {}): Promise<void> {
+    const prof = profiler.scope("cmux-focus");
     // Commander passes the Command as the third argument. Only tests inject fetchSnapshot.
+    // Session-id queries match the ` · 8b6e69bf` tab title restore stamps. Skip
+    // capture-pane so focus does not dump every terminal.
     const fetchSnapshot =
         typeof deps.fetchSnapshot === "function"
             ? deps.fetchSnapshot
-            : () => fetchCmuxLiveSnapshot({ previews: "selected" });
-    const [snapshot, identity] = await Promise.all([fetchSnapshot(), identifyCmux()]);
+            : () =>
+                  fetchCmuxLiveSnapshot({
+                      previews: SESSION_ID_QUERY.test(query.trim()) ? "none" : "selected",
+                  });
+    const [snapshot, identity] = await Promise.all([
+        prof.measureAsync("snapshot", () => fetchSnapshot()),
+        prof.measureAsync("identify", () => identifyCmux()),
+    ]);
 
     if (!snapshot.available) {
         out.error(pc.red(`cmux is not reachable${snapshot.error ? `: ${snapshot.error}` : "."}`));

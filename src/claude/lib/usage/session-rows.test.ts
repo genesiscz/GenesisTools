@@ -57,6 +57,8 @@ const OPUS_LINE =
     '{"type":"assistant","message":{"model":"claude-opus-4-6","usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":100,"cache_creation_input_tokens":5}}}';
 const SONNET_LINE =
     '{"type":"assistant","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}';
+const FABLE_LINE =
+    '{"type":"assistant","message":{"model":"claude-fable-5","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}';
 
 describe("computeCacheStatus", () => {
     test("now - 0 is HOT", () => {
@@ -193,6 +195,29 @@ describe("listSessionRows", () => {
         expect(timings.records).toBe(1);
         expect(timings.totalMs).toBeGreaterThanOrEqual(timings.listingMs);
         expect(timings.tailMs).toBeGreaterThanOrEqual(0);
+    });
+
+    test("fable-5 is labeled fable, not 5, and HOT sorts above COOLING", async () => {
+        listing.sessions = [
+            record({
+                filePath: "/tmp/cool.jsonl",
+                sessionId: "cool-id",
+                mtime: NOW - 51 * MIN,
+            }),
+            record({
+                filePath: "/tmp/fable.jsonl",
+                sessionId: "fable-id",
+                mtime: NOW - 60_000,
+            }),
+        ];
+        tails.set("/tmp/cool.jsonl", [OPUS_LINE]);
+        tails.set("/tmp/fable.jsonl", [FABLE_LINE]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows.map((r) => r.sessionId)).toEqual(["fable-id", "cool-id"]);
+        expect(rows[0]?.model).toBe("fable");
+        expect(rows[0]?.cacheStatus).toBe("HOT");
+        expect(rows[1]?.cacheStatus).toBe("COOLING");
     });
 });
 

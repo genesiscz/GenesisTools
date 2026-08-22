@@ -3,6 +3,7 @@ import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
+import { profiler } from "@genesiscz/utils/profile";
 
 export const CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes (CC uses 1-hour TTL tier)
 export const COOLING_THRESHOLD_MS = 50 * 60 * 1000; // 50 min idle = 10 min left
@@ -66,6 +67,10 @@ export function computeCacheStatus(mtime: number, now: number): { status: CacheS
 }
 
 function simplifyModel(model: string): string {
+    if (model.includes("fable")) {
+        return "fable";
+    }
+
     if (model.includes("opus")) {
         return "opus";
     }
@@ -168,25 +173,34 @@ export interface SessionRowTimings {
 export async function listSessionRowsWithTimings(
     opts: ListSessionRowsOptions = {}
 ): Promise<{ rows: SessionRow[]; timings: SessionRowTimings }> {
+    const prof = profiler.scope("claude-sessions");
     const started = performance.now();
     const now = opts.now ?? Date.now();
-    const result = await getSessionListing({ excludeSubagents: opts.excludeSubagents ?? true });
+    const result = await prof.measureAsync("listing", () =>
+        getSessionListing({ excludeSubagents: opts.excludeSubagents ?? true })
+    );
     const listingMs = performance.now() - started;
     const cutoff = opts.hours === undefined ? Number.NEGATIVE_INFINITY : now - opts.hours * 60 * 60 * 1000;
     const records = result.sessions.filter((r) => r.mtime >= cutoff);
     const usages: TailUsage[] = [];
     const tailStarted = performance.now();
 
-    for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
-        const batch = records.slice(i, i + TAIL_BATCH_SIZE);
-        const batchUsages = await Promise.all(batch.map((r) => extractTailUsage(r.filePath)));
-        usages.push(...batchUsages);
-    }
+    await prof.measureAsync("tail", async () => {
+        for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
+            const batch = records.slice(i, i + TAIL_BATCH_SIZE);
+            const batchUsages = await Promise.all(batch.map((r) => extractTailUsage(r.filePath)));
+            usages.push(...batchUsages);
+        }
+    });
 
     const tailMs = performance.now() - tailStarted;
+    const rank: Record<CacheStatus, number> = { HOT: 0, COOLING: 1, CRITICAL: 2, COLD: 3 };
+    const rows = records
+        .map((r, i) => buildRow(r, usages[i], now))
+        .sort((a, b) => rank[a.cacheStatus] - rank[b.cacheStatus] || b.mtime - a.mtime);
 
     return {
-        rows: records.map((r, i) => buildRow(r, usages[i], now)),
+        rows,
         timings: {
             listingMs,
             tailMs,

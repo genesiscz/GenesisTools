@@ -1,6 +1,7 @@
 import { renderFullScreen } from "@genesiscz/utils/ink";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
 import { App } from "./app";
 
@@ -31,9 +32,13 @@ export function registerUsageCommand(program: Command): void {
                 process.exit(1);
             }
 
+            const prof = profiler.scope("claude-sessions");
             const { listSessionRowsWithTimings } = await import("@app/claude/lib/usage/session-rows");
-            const { rows, timings } = await listSessionRowsWithTimings({ hours, excludeSubagents: true });
+            const { rows, timings } = await prof.measureAsync("list", () =>
+                listSessionRowsWithTimings({ hours, excludeSubagents: true })
+            );
             logger.debug({ timings }, "usage sessions timings");
+            prof.summary("usage sessions");
             out.print(SafeJSON.stringify({ fetchedAt: Date.now(), rows, timings }, null, 2));
         });
 
@@ -81,8 +86,11 @@ export function registerUsageCommand(program: Command): void {
                 return;
             }
 
+            const prof = profiler.scope("claude-usage");
             const started = performance.now();
-            const results = await getSharedAccountsUsage({ accountFilter, force: opts.fresh === true });
+            const results = await prof.measureAsync("shared-cache", () =>
+                getSharedAccountsUsage({ accountFilter, force: opts.fresh === true })
+            );
             const fetchMs = performance.now() - started;
 
             if (opts.json) {
@@ -97,6 +105,7 @@ export function registerUsageCommand(program: Command): void {
                         accounts: accounts.length,
                     };
                     logger.debug({ timings }, "usage scored timings");
+                    prof.summary("usage scored");
                     out.print(SafeJSON.stringify({ fetchedAt: Date.now(), accounts, timings }, null, 2));
                 } else {
                     out.print(SafeJSON.stringify(results, null, 2));
