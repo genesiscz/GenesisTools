@@ -32,15 +32,36 @@ Work through these tiers in order. Stop at the first that yields a directory.
 If this session already read from or wrote to a specific Obsidian vault directory (a plan, a handoff, notes for this project), that is the target. You know this from your own session history — no lookup needed. Prefer it over the registry: it reflects where the work actually lived today.
 
 ### Tier 2 — the registry
-Otherwise consult `~/.claude/handoff-registry.json`, which maps projects/branches/worktrees to their Obsidian home. Run:
+Otherwise consult `~/.claude/handoff-registry.json`, which maps projects/branches/worktrees to their Obsidian home. **Always pass `--project`** — the absolute path of the repo this session actually worked in:
 
 ```bash
-bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" resolve
+bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" resolve --project "<repo you worked in>"
 ```
+
+Without `--project` the answer comes from the shell's current directory, and the shell's directory is not reliably your session's project: the Bash tool keeps its cwd between calls, worktrees move it, and a single earlier `cd` makes every later `resolve` answer for a different repo. That failure is silent — you get a confident path into another project's vault folder. Pin it.
 
 Claude Code substitutes the plugin-root placeholder into this document at load time; it is NOT a shell variable. If any command in this document still shows a literal unsubstituted `CLAUDE_PLUGIN_ROOT` placeholder, do not run it through the shell — build the path yourself from the "Base directory for this skill" line printed when this skill loaded (the plugin root is that directory minus the trailing `skills/wrap-up`).
 
-It reads your current git toplevel + branch + cwd, matches the most specific entry, and prints `{ found, obsidianDir, docPath, ... }`. If `found:true`, use that `docPath`. The registry shape:
+#### 🛑 Check the answer before you write anything
+
+`resolve` prints the context it used and every doubt it has. Read these four fields first:
+
+- **`project` / `branch` / `cwd`** — must be the repo and branch you worked in. If not, re-run with the correct `--project` (and `--branch` if you are wrapping up work on a branch you already left).
+- **`exact`** — `true` only when a registry entry pins your exact branch, or the doc path was derived per branch from config. `false` means a project-wide entry claimed you.
+- **`warnings`** — non-empty means something may be wrong. Read every line.
+- **`alternatives`** — other entries that also matched, most specific first.
+
+**If `exact` is `false` or `warnings` is non-empty, confirm the target with the user (`AskUserQuestion`) before writing.** Offer the resolved `docPath`, the `alternatives`, and a fresh per-branch doc. A wrap-up appended to the wrong project's doc corrupts an audit trail that is append-only by design, so a single question is much cheaper than the repair.
+
+To see every target registered for the project (including entries for other branches), so you can offer real choices:
+
+```bash
+bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" entries --project "<repo you worked in>"
+```
+
+After the user picks, persist it with `register` (see Tier 3) so the next session resolves `exact:true` with no question.
+
+It reads your git toplevel + branch + cwd, matches the most specific entry, and prints `{ found, exact, obsidianDir, docPath, docExists, warnings, alternatives, registerHint, ... }`. The registry shape:
 
 ```json
 {
@@ -55,7 +76,9 @@ It reads your current git toplevel + branch + cwd, matches the most specific ent
 }
 ```
 
-`branch` and `worktreeDir` are optional — omit `branch` for a project-wide entry that matches any branch. `docPath` is optional; when absent the resolver derives `<obsidianDir>/<project>-<branch-slug>.wrapup.md` so each branch accumulates its own file.
+`branch` and `worktreeDir` are optional. `docPath` is optional; when absent the resolver derives `<obsidianDir>/<project>-<branch-slug>.wrapup.md` so each branch accumulates its own file.
+
+⚠️ **A branch-less entry claims every branch of that project, forever.** It is the main way this skill resolves wrong: one old session registers a project-wide target, and months later every new branch of that repo still resolves to that session's doc. Worse when it also pins `docPath` — then all branches append into one file. So `register` pins the current branch unless you pass `--all-branches`, and `resolve` warns whenever a branch-less entry wins. Two entries of equal specificity are broken by registration order, newest first.
 
 ### Tier 2.5 — shared plugin config (automatic)
 `resolve` falls back to `~/.genesis-tools/plugins/config.json` by itself when the registry has no match — the result then carries `"source": "config"` and you just use its `docPath`, no user interaction needed. The file is a per-skill map shared by all genesis-tools plugin skills:
@@ -79,8 +102,13 @@ If neither registry nor config yields a target (`found:false`), don't guess sile
 2. **Propose a target** to the user via `AskUserQuestion` — offer the inferred path as the recommended option plus one or two alternatives, so they confirm or redirect in one click.
 3. **Persist the choice** so it's never asked again for this project/branch:
    ```bash
-   bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" register --obsidian "<confirmed dir>" --branch "<branch>" --worktree "<worktree or omit>"
+   bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" register \
+       --obsidian "<confirmed dir>" \
+       --project "<repo you worked in>" \
+       --branch "<branch>" \
+       --worktree "<worktree or omit>"
    ```
+   `--branch` defaults to the current branch, so omitting it still gives a branch-pinned entry. Pass `--all-branches` only when the user wants one doc for the whole project across every branch. `resolve` prints this exact command as `registerHint`, already filled in.
 4. Then write the doc there.
 
 ## Part 2 — Write the doc
@@ -205,7 +233,7 @@ The header's own **Read to resume** line tells you how much of the log below to 
 - **Header rewrites in place; log is append-only — and you ALWAYS do both.** Every invocation: rewrite the `YOU-ARE-HERE` block (the single mutable region) AND append one new dated `##` log section. Never header-only. Log sections are permanent audit trail — never delete or rewrite them.
 - **Every log section header carries the full datetime** (`## YYYY-MM-DD HH:MM — topic`), never date-only. Get it from `date '+%Y-%m-%d %H:%M'`.
 - **Every git-touching section attaches its commit SHA(s)** inline.
-- **Resolve before writing.** Don't dump wrap-ups in an arbitrary directory — walk the three tiers, and register the target once so it's automatic next time.
+- **Resolve before writing, then check the answer.** Don't dump wrap-ups in an arbitrary directory — walk the three tiers, pass `--project`, and read `project` / `branch` / `exact` / `warnings` back. Confirm with the user whenever `exact` is `false` or a warning fired, then register the target so it's automatic next time.
 - **Keep it honest.** Record what actually happened — failed steps, skipped checks, open bugs. A wrap-up that only lists wins misleads the next session.
 - **Err long, not terse.** The log section is the permanent audit trail — write it exhaustively (goal, full chronological narrative including dead-ends, files+why, decisions+rejected alternatives, bugs, verification output, open items). A substantive session's log runs long by design; a one-paragraph summary of a multi-commit session is a defect, not brevity.
 - **Always end your response with the full absolute path to the wrap-up file as the last line** — after writing or appending, the final line of your reply must be the complete `docPath` (e.g. `/path/to/Vault/ProjectRepo/Plans/....wrapup.md`), so the user can open it in one click. Nothing after it.

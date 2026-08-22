@@ -6,7 +6,13 @@
  * Owns the deterministic half of "where does the wrap-up doc live?":
  *   - resolve : match the current project/branch/worktree against the registry,
  *               print the obsidian dir + the derived doc path (or found:false).
+ *               Context comes from the shell cwd unless --project/--branch/--cwd
+ *               pin it, and is always echoed back with `warnings` naming every
+ *               reason the top match may be the wrong doc.
+ *   - entries : list every registered target for a project (the redirect menu).
  *   - register: append/update a registry entry after the user confirms a target.
+ *               The entry is pinned to the current branch unless --branch or
+ *               --all-branches says otherwise.
  *   - here    : print ONLY the YOU-ARE-HERE block of a wrap-up file (cheap read).
  *   - log     : atomically append a log section AND rewrite the YOU-ARE-HERE block,
  *               auto-stamping the datetime and auto-generating the before→after
@@ -187,16 +193,33 @@ export function derivedDocPath(entry: Entry, branch: string): string {
     return join(entry.obsidianDir, `${project}-${slug(branch)}.wrapup.md`);
 }
 
-async function gitContext() {
-    const toplevel = await sh(["git", "rev-parse", "--show-toplevel"]);
-    const branch = await sh(["git", "rev-parse", "--abbrev-ref", "HEAD"]);
-    // In a worktree, common-dir differs from git-dir; the "main" checkout's
-    // toplevel is what a project-level entry keys on.
-    const cwd = process.cwd();
-    return { toplevel: toplevel || cwd, branch: branch || "", cwd };
+export interface Ctx {
+    toplevel: string;
+    branch: string;
+    cwd: string;
 }
 
-export function matches(entry: Entry, ctx: { toplevel: string; branch: string; cwd: string }): number {
+/**
+ * Everything below keys off this context, so getting it from the ambient shell
+ * alone is how a wrap-up lands in another project's vault folder: the agent's
+ * shell cwd persists across calls and is not necessarily the repo the session
+ * worked in. `--project` / `--branch` / `--cwd` let the caller pin it, and the
+ * pinned values are echoed back in every `resolve` result so a wrong one is
+ * visible instead of silent.
+ */
+async function gitContext(args: Record<string, string> = {}): Promise<Ctx> {
+    const pinnedProject = args.project ? expandHome(args.project) : "";
+    // A pinned project implies its own cwd: keeping the ambient one would let a
+    // stale directory still path-match a foreign registry entry.
+    const cwd = args.cwd ? expandHome(args.cwd) : pinnedProject || process.cwd();
+    // In a worktree, common-dir differs from git-dir; the "main" checkout's
+    // toplevel is what a project-level entry keys on.
+    const toplevel = pinnedProject || (await sh(["git", "-C", cwd, "rev-parse", "--show-toplevel"])) || cwd;
+    const branch = args.branch || (await sh(["git", "-C", toplevel, "rev-parse", "--abbrev-ref", "HEAD"]));
+    return { toplevel, branch: branch || "", cwd };
+}
+
+export function matches(entry: Entry, ctx: Ctx): number {
     // Higher score = more specific match. 0 = no match.
     const paths = [entry.worktreeDir, entry.projectDir].filter(Boolean) as string[];
     const pathHit = paths.some((p) => ctx.toplevel === p || ctx.cwd === p || ctx.cwd.startsWith(`${p}/`));
@@ -220,13 +243,75 @@ export function matches(entry: Entry, ctx: { toplevel: string; branch: string; c
     return score;
 }
 
-async function cmdResolve() {
-    const ctx = await gitContext();
-    const reg = await loadRegistry();
-    const ranked = reg.entries
-        .map((e) => ({ e, score: matches(e, ctx) }))
+export interface Ranked {
+    entry: Entry;
+    score: number;
+}
+
+/**
+ * Rank the matching entries, most specific first. Equal specificity is broken by
+ * registration order, newest first: `register` appends, so the later entry is the
+ * one the user set up most recently, and a months-old catch-all must not outrank it.
+ */
+export function rankEntries(entries: Entry[], ctx: Ctx): Ranked[] {
+    return entries
+        .map((entry, index) => ({ entry, score: matches(entry, ctx), index }))
         .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.score - a.score || b.index - a.index)
+        .map(({ entry, score }) => ({ entry, score }));
+}
+
+/**
+ * The failure this skill actually hits is a confident wrong answer, not a missing
+ * one. These warnings name every reason the top match may not be the target the
+ * session wants, so the caller can stop and confirm instead of appending a session
+ * log to an unrelated project's doc.
+ */
+export function resolutionWarnings({
+    entry,
+    ctx,
+    alternatives,
+    docExists,
+}: {
+    entry: Entry;
+    ctx: Ctx;
+    alternatives: Ranked[];
+    docExists: boolean;
+}): string[] {
+    const warnings: string[] = [];
+    if (!entry.branch) {
+        warnings.push(
+            `matched a project-wide entry (no branch pinned): it claims EVERY branch of ${basename(entry.projectDir)}, not just "${ctx.branch}" — confirm this is the right doc before writing`
+        );
+    }
+
+    if (!entry.branch && entry.docPath) {
+        warnings.push(
+            `that entry also pins docPath, so every branch of this project appends into the same file (${entry.docPath})`
+        );
+    }
+
+    if (alternatives.length) {
+        warnings.push(
+            `${alternatives.length} other registry entr${alternatives.length === 1 ? "y" : "ies"} also match — see "alternatives"`
+        );
+    }
+
+    if (!docExists) {
+        warnings.push("docPath does not exist yet — create it from the SKILL.md template before calling `log`");
+    }
+
+    return warnings;
+}
+
+function registerHint(ctx: Ctx): string {
+    return `bun "${import.meta.path}" register --obsidian "<dir>" --project "${ctx.toplevel}" --branch "${ctx.branch}"`;
+}
+
+async function cmdResolve(args: Record<string, string> = {}) {
+    const ctx = await gitContext(args);
+    const reg = await loadRegistry();
+    const ranked = rankEntries(reg.entries, ctx);
 
     if (ranked.length === 0) {
         // Fallback tier: shared plugin config. docDir (absolute or project-relative)
@@ -243,17 +328,26 @@ async function cmdResolve() {
 
         if (docDir) {
             const entry: Entry = { projectDir: ctx.toplevel, obsidianDir: docDir };
+            const docPath = derivedDocPath(entry, ctx.branch);
             console.log(
                 // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
                 JSON.stringify(
                     {
                         found: true,
                         source: "config",
+                        // The config fallback derives a per-branch filename, so it is
+                        // branch-exact by construction.
+                        exact: true,
                         obsidianDir: docDir,
-                        docPath: derivedDocPath(entry, ctx.branch),
+                        docPath,
+                        docExists: await Bun.file(docPath).exists(),
                         project: ctx.toplevel,
                         branch: ctx.branch,
+                        cwd: ctx.cwd,
                         worktree: null,
+                        alternatives: [],
+                        warnings: [],
+                        registerHint: registerHint(ctx),
                     },
                     null,
                     2
@@ -262,23 +356,51 @@ async function cmdResolve() {
             return;
         }
 
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
-        console.log(JSON.stringify({ found: false, project: ctx.toplevel, branch: ctx.branch, cwd: ctx.cwd }, null, 2));
+        console.log(
+            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
+            JSON.stringify(
+                {
+                    found: false,
+                    project: ctx.toplevel,
+                    branch: ctx.branch,
+                    cwd: ctx.cwd,
+                    registerHint: registerHint(ctx),
+                },
+                null,
+                2
+            )
+        );
         return;
     }
 
-    const { e } = ranked[0];
+    const { entry } = ranked[0];
+    const docPath = derivedDocPath(entry, ctx.branch);
+    const docExists = await Bun.file(docPath).exists();
+    const alternatives = ranked.slice(1);
     console.log(
         // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 found: true,
                 source: "registry",
-                obsidianDir: e.obsidianDir,
-                docPath: derivedDocPath(e, ctx.branch),
+                exact: Boolean(entry.branch) && entry.branch === ctx.branch,
+                obsidianDir: entry.obsidianDir,
+                docPath,
+                docExists,
                 project: ctx.toplevel,
                 branch: ctx.branch,
-                worktree: e.worktreeDir ?? null,
+                cwd: ctx.cwd,
+                worktree: entry.worktreeDir ?? null,
+                matchedEntry: entry,
+                alternatives: alternatives.map(({ entry: alt, score }) => ({
+                    obsidianDir: alt.obsidianDir,
+                    docPath: derivedDocPath(alt, ctx.branch),
+                    branch: alt.branch ?? null,
+                    worktreeDir: alt.worktreeDir ?? null,
+                    score,
+                })),
+                warnings: resolutionWarnings({ entry, ctx, alternatives, docExists }),
+                registerHint: registerHint(ctx),
             },
             null,
             2
@@ -286,12 +408,58 @@ async function cmdResolve() {
     );
 }
 
+/** Every registry entry for this project, branch-matching or not — the menu to
+ * offer the user when the top match is wrong or missing. */
+async function cmdEntries(args: Record<string, string> = {}) {
+    const ctx = await gitContext(args);
+    const reg = await loadRegistry();
+    const forProject = reg.entries.filter(
+        (e) => e.projectDir === ctx.toplevel || e.worktreeDir === ctx.toplevel || ctx.cwd.startsWith(`${e.projectDir}/`)
+    );
+
+    console.log(
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
+        JSON.stringify(
+            {
+                project: ctx.toplevel,
+                branch: ctx.branch,
+                cwd: ctx.cwd,
+                registry: await registryPath(),
+                entries: forProject.map((e) => ({
+                    obsidianDir: e.obsidianDir,
+                    // Derive with the entry's OWN branch: showing a non-matching
+                    // entry under the current branch's filename invents a path
+                    // that entry would never produce.
+                    docPath: derivedDocPath(e, e.branch || ctx.branch),
+                    branch: e.branch ?? null,
+                    worktreeDir: e.worktreeDir ?? null,
+                    matchesCurrent: matches(e, ctx) > 0,
+                })),
+            },
+            null,
+            2
+        )
+    );
+}
+
+export function entryBranch(args: Record<string, string>, ctxBranch: string): string {
+    // A branch-less entry claims every branch of the project forever, which is
+    // how an old session's doc keeps winning months later. Pin the current branch
+    // by default; `--all-branches` is the explicit opt-in to the catch-all.
+    if (args.branch) {
+        return args.branch;
+    }
+
+    return "all-branches" in args ? "" : ctxBranch;
+}
+
 async function cmdRegister(args: Record<string, string>) {
-    const ctx = await gitContext();
+    const ctx = await gitContext(args);
+    const branch = entryBranch(args, ctx.branch);
     const entry: Entry = {
         projectDir: args.project ?? ctx.toplevel,
         obsidianDir: args.obsidian,
-        ...(args.branch ? { branch: args.branch } : {}),
+        ...(branch ? { branch } : {}),
         ...(args.worktree ? { worktreeDir: args.worktree } : {}),
         ...(args.doc ? { docPath: args.doc } : {}),
     };
@@ -497,8 +665,15 @@ export function parseFlags(argv: string[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (let i = 0; i < argv.length; i++) {
         if (argv[i].startsWith("--")) {
-            out[argv[i].slice(2)] = argv[i + 1] ?? "";
-            i++;
+            const next = argv[i + 1];
+            // A boolean flag (--all-branches) must not swallow the flag that
+            // follows it, or `--all-branches --obsidian /vault` would silently
+            // drop the target directory.
+            const isBoolean = next === undefined || next.startsWith("--");
+            out[argv[i].slice(2)] = isBoolean ? "" : next;
+            if (!isBoolean) {
+                i++;
+            }
         }
     }
     return out;
@@ -510,7 +685,10 @@ if (import.meta.main) {
     const [cmd, ...rest] = process.argv.slice(2);
     switch (cmd) {
         case "resolve":
-            await cmdResolve();
+            await cmdResolve(parseFlags(rest));
+            break;
+        case "entries":
+            await cmdEntries(parseFlags(rest));
             break;
         case "register":
             await cmdRegister(parseFlags(rest));
@@ -523,7 +701,18 @@ if (import.meta.main) {
             break;
         default:
             console.error(
-                "usage: resolve.ts <resolve | register --obsidian <dir> [--branch b] [--worktree w] [--project p] [--doc path] | here <file> | log <file>  (log reads stdin: @@HERE@@ … @@LOG@@ …)>"
+                [
+                    "usage: resolve.ts <command>",
+                    "",
+                    "  resolve  [--project <dir>] [--branch <b>] [--cwd <dir>]",
+                    "           where does the wrap-up doc live? Pin --project to the repo the session",
+                    "           actually worked in; without it the ambient shell cwd decides.",
+                    "  entries  [--project <dir>]   every registered target for that project",
+                    "  register --obsidian <dir> [--project p] [--branch b | --all-branches] [--worktree w] [--doc path]",
+                    "           branch defaults to the current one; --all-branches makes a catch-all",
+                    "  here     <file>              print only the YOU-ARE-HERE block",
+                    "  log      <file>              stdin: @@HERE@@ … @@LOG@@ …",
+                ].join("\n")
             );
             process.exit(1);
     }
