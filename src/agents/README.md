@@ -34,9 +34,13 @@ There is no separate `register` command — `login` auto-registers on first use 
 Resolves in order:
 
 1. `--session <id>` explicit
-2. `$CLAUDE_CODE_SESSION_ID` env var
+2. `$GENESIS_AGENTS_SESSION`, then `$CLAUDE_CODE_SESSION_ID`, then `$GROK_SESSION_ID`
 3. Single session active (feed touched) in the last 60s
-4. Otherwise: friendly error asking for `--session` or `$CLAUDE_CODE_SESSION_ID`
+4. Otherwise: friendly error asking for `--session` or one of those env vars
+
+The **main** agent's login stream is the swarm inbox: it receives every `message` except its own sends, so a parent `monitor` on `tools agents login --agent-main` sees peer-to-peer hops. Non-main agents still only see mail addressed to them (plus broadcasts).
+
+`login` prints one stdout-only `{type:"ready",...}` JSON line as soon as the slot is attached (not written to the feed). After that, stdout is feed events only. When stderr is not a TTY (piped into a harness monitor), login stays silent on stderr so diagnostics cannot be mistaken for events.
 
 ## Key files (per session)
 

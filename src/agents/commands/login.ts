@@ -1,4 +1,6 @@
 import { isInteractive } from "@genesiscz/utils/cli";
+import { asResult } from "@genesiscz/utils/cli/result";
+import { writeStdout } from "@genesiscz/utils/cli/stdout";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -13,6 +15,7 @@ import { formatEventPretty } from "../lib/format-pretty";
 import { deriveMainAgentId, isMainId } from "../lib/id-gen";
 import { onShutdown } from "../lib/lifecycle";
 import { createListenerFilter } from "../lib/listener-filter";
+import { formatReadyEvent, loginStderrAllowed, writeLoginJsonLine } from "../lib/login-io";
 import { ensureSessionDir, sessionPaths } from "../lib/paths";
 import { readSessionMeta, type SessionMeta } from "../lib/session-meta";
 import { resolveSession } from "../lib/session-resolve";
@@ -20,6 +23,8 @@ import { readSlotPayload, releaseSlot, runStaleSweep, slotLockPath, tryAcquireSl
 import type { AgentRecord, FeedEvent, SessionPaths, SlotLockPayload } from "../lib/types";
 
 const LISTEN_CAP_MS = 8 * 60 * 60 * 1000;
+const WATCH_DEBOUNCE_MS = 25;
+const WATCH_POLL_MS = 150;
 
 const log = logger.child({ component: "agents:login" });
 
@@ -276,7 +281,7 @@ function claimSlot({ paths, record, mode }: { paths: SessionPaths; record: Agent
     return { lockPath };
 }
 
-function emitVisibleEvent(event: FeedEvent, active: ActiveLogin): boolean {
+async function emitVisibleEvent(event: FeedEvent, active: ActiveLogin): Promise<boolean> {
     if (!active.observer && !isVisibleToAgent(event, active.record, active.meta)) {
         return false;
     }
@@ -286,9 +291,9 @@ function emitVisibleEvent(event: FeedEvent, active: ActiveLogin): boolean {
     }
 
     if (active.format === "pretty") {
-        out.println(formatEventPretty(event));
+        await writeStdout(asResult(formatEventPretty(event)));
     } else {
-        out.println(SafeJSON.stringify(event, { strict: true }));
+        await writeLoginJsonLine(event);
     }
 
     return true;
@@ -300,7 +305,7 @@ async function drainPending(active: ActiveLogin): Promise<number> {
     let emitted = 0;
 
     for (const event of events) {
-        if (emitVisibleEvent(event, active)) {
+        if (await emitVisibleEvent(event, active)) {
             emitted += 1;
         }
 
@@ -321,6 +326,8 @@ async function watchUntilDeadline(active: ActiveLogin, deadlineAt: number, exitO
     await watchFileFeed({
         path: active.paths.feedPath,
         deadlineAt,
+        debounceMs: WATCH_DEBOUNCE_MS,
+        pollFallbackMs: WATCH_POLL_MS,
         onChange: async () => {
             const before = active.cursorSeq;
             const emitted = await drainPending(active);
@@ -381,14 +388,24 @@ function emitResumeHint(record: AgentRecord, mode: "stream" | "once"): void {
         parts.push("--once");
     }
 
-    process.stderr.write(`\n# To resume listening:\n${parts.join(" ")}\n`);
+    const hint = `\n# To resume listening:\n${parts.join(" ")}\n`;
+
+    if (loginStderrAllowed()) {
+        process.stderr.write(hint);
+    } else {
+        log.debug({ resume: parts.join(" ") }, "resume hint (stderr silenced for monitor)");
+    }
 }
 
 async function runLoginImpl(opts: LoginOpts): Promise<void> {
     const resolved = resolveSession(opts.session);
 
     if (resolved.note) {
-        out.log.warn(resolved.note);
+        if (loginStderrAllowed()) {
+            out.log.warn(resolved.note);
+        } else {
+            log.debug(resolved.note);
+        }
     }
 
     const paths = sessionPaths(resolved.session);
@@ -427,6 +444,7 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
         };
 
         await emitLoggedIn({ paths, record, mode });
+        await writeLoginJsonLine(formatReadyEvent(record, paths.session, mode));
     } catch (err) {
         releaseSlot(lockPath);
         throw err;
@@ -471,11 +489,18 @@ async function runLoginImpl(opts: LoginOpts): Promise<void> {
                 // to the cap. Say so on stderr, or a caller that times out
                 // sees an empty stdout and a live process and cannot tell
                 // "waiting" from "crashed before it printed anything".
-                out.log.info(
-                    `${record.agent_name}: mailbox empty — waiting for the first message (up to ${Math.round(
-                        LISTEN_CAP_MS / 3_600_000
-                    )}h). Nothing will print until one arrives.`
-                );
+                if (loginStderrAllowed()) {
+                    out.log.info(
+                        `${record.agent_name}: mailbox empty — waiting for the first message (up to ${Math.round(
+                            LISTEN_CAP_MS / 3_600_000
+                        )}h). Nothing will print until one arrives.`
+                    );
+                } else {
+                    log.debug(
+                        { agentName: record.agent_name },
+                        "mailbox empty — waiting for the first message (stderr silenced for monitor)"
+                    );
+                }
                 const deadline = Date.now() + LISTEN_CAP_MS;
                 await watchUntilDeadline(active, deadline, true);
             }
