@@ -106,6 +106,22 @@ describe("findFocusTargets", () => {
         expect(targets[0].sessionIds).toEqual([SESSION_A]);
     });
 
+    test("copies windowRef from the live pane so focus can skip identify --workspace", () => {
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    windowRef: "window:4",
+                    preview: resumeScreen(SESSION_A),
+                }),
+            ]),
+            SESSION_A
+        );
+
+        expect(targets[0].windowRef).toBe("window:4");
+    });
+
     test("the 8-character short form matches as a prefix", () => {
         const targets = findFocusTargets(
             snapshot([pane({ id: "pane:33", workspaceId: "workspace:11", preview: resumeScreen(SESSION_A) })]),

@@ -50,6 +50,8 @@ export interface FocusTarget {
     paneId: string;
     paneTitle: string;
     cwd?: string;
+    /** Owning cmux window, when the live snapshot already knew it. */
+    windowRef?: string;
     /**
      * The surface (tab) the match came from, when it was not the pane's own visible text.
      *
@@ -297,6 +299,7 @@ export function findFocusTargets(
             paneId: pane.id,
             paneTitle: pane.title,
             cwd: pane.cwd,
+            windowRef: pane.windowRef,
             surfaceId: hit.surfaceId,
             sessionIds: paneSessionIds(hit.matchedText, paneText(pane)),
             matchedOn: hit.kind,

@@ -18,10 +18,6 @@ let events: string[] = [];
 let stdout: string[] = [];
 let originalWrite: typeof process.stdout.write;
 
-mock.module("@genesiscz/utils/cmux/lib/live-snapshot", () => ({
-    fetchCmuxLiveSnapshot: async () => snapshot,
-}));
-
 mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxJSON: async (args: string[]) => {
         events.push(args.join(" "));
@@ -35,6 +31,10 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
         return { bundle_identifier: "com.cmuxterm.app", caller: { pane_ref: CALLER_PANE } };
     },
     runCmuxOk: async (args: string[]) => {
+        events.push(args.join(" "));
+        return { code: 0, stdout: "", stderr: "" };
+    },
+    runCmux: async (args: string[]) => {
         events.push(args.join(" "));
         return { code: 0, stdout: "", stderr: "" };
     },
@@ -119,7 +119,7 @@ async function runFocus(
 ): Promise<{ exitCode: number; result: string }> {
     const { focusCommand } = await import("@app/claude/commands/cmux/focus");
     // Never let a test raise the real cmux app: `activateApp()` shells out to `open -b`.
-    await focusCommand(query, { activate: false, ...opts });
+    await focusCommand(query, { activate: false, ...opts }, { fetchSnapshot: async () => snapshot });
 
     return { exitCode: process.exitCode === undefined ? 0 : Number(process.exitCode), result: await capturedResult() };
 }
@@ -187,6 +187,20 @@ describe("focusCommand", () => {
             "focus-pane workspace:11 pane:33",
             "focus-surface surface:46",
         ]);
+    });
+
+    test("uses the snapshot windowRef and skips identify --workspace", async () => {
+        setSnapshot([
+            pane({
+                id: "pane:33",
+                windowRef: "window:7",
+                preview: resumeScreen(SESSION_A),
+            }),
+        ]);
+
+        await runFocus(SESSION_A);
+
+        expect(events).toEqual(["identify", "focus-window --window window:7", "focus-pane workspace:11 pane:33"]);
     });
 
     test("a match on the pane's own screen switches no tab", async () => {

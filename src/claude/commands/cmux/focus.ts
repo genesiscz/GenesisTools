@@ -19,21 +19,25 @@ export interface FocusOptions {
     includeSelf?: boolean;
 }
 
+export interface FocusCommandDeps {
+    fetchSnapshot?: typeof fetchCmuxLiveSnapshot;
+}
+
 interface IdentifyResponse {
     bundle_identifier?: string;
     caller?: { window_ref?: string; pane_ref?: string };
 }
 
 /**
- * The pane this process is running in, when it is running inside cmux at all.
+ * Who we are and which pane we are in, when this process is running inside cmux at all.
  *
  * Needed because typing the query puts it on the caller's own screen, so without this the
- * weak text rule matches the calling pane for every query.
+ * weak text rule matches the calling pane for every query. Also carries the bundle id
+ * `activateApp` needs, so focus does not spend a second `identify` after the snapshot.
  */
-async function callerPaneRef(): Promise<string | undefined> {
+async function identifyCmux(): Promise<IdentifyResponse | undefined> {
     try {
-        const identify = await runCmuxJSON<IdentifyResponse>(["identify"]);
-        return identify.caller?.pane_ref;
+        return await runCmuxJSON<IdentifyResponse>(["identify"]);
     } catch (err) {
         log.debug({ err }, "could not identify the calling pane; searching every pane");
         return undefined;
@@ -58,14 +62,14 @@ async function windowRefFor(workspaceRef: string): Promise<string | undefined> {
 }
 
 /** Raise the cmux app itself, so a focused pane is actually on screen. */
-async function activateApp(): Promise<boolean> {
+async function activateApp(identity?: IdentifyResponse): Promise<boolean> {
     if (process.platform !== "darwin") {
         log.debug({ platform: process.platform }, "app activation is macOS-only; skipped");
         return false;
     }
 
     try {
-        const identify = await runCmuxJSON<IdentifyResponse>(["identify"]);
+        const identify = identity ?? (await runCmuxJSON<IdentifyResponse>(["identify"]));
         const bundleId = identify.bundle_identifier;
 
         if (!bundleId) {
@@ -129,8 +133,13 @@ async function pickTarget(targets: FocusTarget[]): Promise<FocusTarget | null> {
  * This never creates anything. A session with no pane is a `restore` job, and saying so
  * beats silently opening a second copy of a session that is already running somewhere.
  */
-export async function focusCommand(query: string, opts: FocusOptions): Promise<void> {
-    const snapshot = await fetchCmuxLiveSnapshot();
+export async function focusCommand(query: string, opts: FocusOptions, deps: FocusCommandDeps = {}): Promise<void> {
+    // Commander passes the Command as the third argument. Only tests inject fetchSnapshot.
+    const fetchSnapshot =
+        typeof deps.fetchSnapshot === "function"
+            ? deps.fetchSnapshot
+            : () => fetchCmuxLiveSnapshot({ previews: "selected" });
+    const [snapshot, identity] = await Promise.all([fetchSnapshot(), identifyCmux()]);
 
     if (!snapshot.available) {
         out.error(pc.red(`cmux is not reachable${snapshot.error ? `: ${snapshot.error}` : "."}`));
@@ -138,7 +147,7 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
         process.exit(1);
     }
 
-    const excludePaneId = opts.includeSelf ? undefined : await callerPaneRef();
+    const excludePaneId = opts.includeSelf ? undefined : identity?.caller?.pane_ref;
     const targets = findFocusTargets(snapshot, query, { excludePaneId });
     log.debug({ query, panes: snapshot.panes.length, matches: targets.length, excludePaneId }, "focus match");
 
@@ -212,7 +221,7 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
         return;
     }
 
-    const windowRef = await windowRefFor(target.workspaceId);
+    const windowRef = target.windowRef ?? (await windowRefFor(target.workspaceId));
 
     if (windowRef) {
         await runCmuxOk(["focus-window", "--window", windowRef]);
@@ -231,7 +240,7 @@ export async function focusCommand(query: string, opts: FocusOptions): Promise<v
         }
     }
 
-    const activated = opts.activate === false ? false : await activateApp();
+    const activated = opts.activate === false ? false : await activateApp(identity);
 
     if (opts.json) {
         out.result(SafeJSON.stringify({ query, focused: target, windowRef, activated }, null, 2));
