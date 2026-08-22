@@ -30,6 +30,7 @@ import {
     CRITICAL_THRESHOLD_MS,
     computeCacheStatus,
     listSessionRows,
+    listSessionRowsWithTimings,
 } from "./session-rows";
 
 const NOW = 1_700_000_000_000;
@@ -177,6 +178,21 @@ describe("listSessionRows", () => {
         const rows = await listSessionRows({ excludeSubagents: true, now: NOW });
         expect(rows.map((r) => r.sessionId)).toEqual(["old-id"]);
         expect(rows[0]?.cacheStatus).toBe("COLD");
+    });
+
+    test("timings count the filtered records", async () => {
+        listing.sessions = [
+            record({ filePath: "/tmp/hot.jsonl", sessionId: "hot-id", mtime: NOW - 5 * MIN }),
+            record({ filePath: "/tmp/old.jsonl", sessionId: "old-id", mtime: NOW - 7 * 60 * MIN }),
+        ];
+        tails.set("/tmp/hot.jsonl", [OPUS_LINE]);
+        tails.set("/tmp/old.jsonl", [OPUS_LINE]);
+
+        const { rows, timings } = await listSessionRowsWithTimings({ hours: 6, now: NOW });
+        expect(rows).toHaveLength(1);
+        expect(timings.records).toBe(1);
+        expect(timings.totalMs).toBeGreaterThanOrEqual(timings.listingMs);
+        expect(timings.tailMs).toBeGreaterThanOrEqual(0);
     });
 });
 

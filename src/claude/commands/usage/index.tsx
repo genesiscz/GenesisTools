@@ -31,9 +31,10 @@ export function registerUsageCommand(program: Command): void {
                 process.exit(1);
             }
 
-            const { listSessionRows } = await import("@app/claude/lib/usage/session-rows");
-            const rows = await listSessionRows({ hours, excludeSubagents: true });
-            out.print(SafeJSON.stringify({ fetchedAt: Date.now(), rows }, null, 2));
+            const { listSessionRowsWithTimings } = await import("@app/claude/lib/usage/session-rows");
+            const { rows, timings } = await listSessionRowsWithTimings({ hours, excludeSubagents: true });
+            logger.debug({ timings }, "usage sessions timings");
+            out.print(SafeJSON.stringify({ fetchedAt: Date.now(), rows, timings }, null, 2));
         });
 
     usage.action(async (opts: Record<string, string | boolean | undefined>) => {
@@ -80,18 +81,23 @@ export function registerUsageCommand(program: Command): void {
                 return;
             }
 
+            const started = performance.now();
             const results = await getSharedAccountsUsage({ accountFilter, force: opts.fresh === true });
+            const fetchMs = performance.now() - started;
 
             if (opts.json) {
                 if (opts.scored) {
+                    const scoreStarted = performance.now();
                     const { scoreAccounts, sortGrouped } = await import("@app/claude/lib/usage/account-picker");
-                    out.print(
-                        SafeJSON.stringify(
-                            { fetchedAt: Date.now(), accounts: sortGrouped(scoreAccounts(results)) },
-                            null,
-                            2
-                        )
-                    );
+                    const accounts = sortGrouped(scoreAccounts(results));
+                    const timings = {
+                        fetchMs,
+                        scoreMs: performance.now() - scoreStarted,
+                        totalMs: performance.now() - started,
+                        accounts: accounts.length,
+                    };
+                    logger.debug({ timings }, "usage scored timings");
+                    out.print(SafeJSON.stringify({ fetchedAt: Date.now(), accounts, timings }, null, 2));
                 } else {
                     out.print(SafeJSON.stringify(results, null, 2));
                 }

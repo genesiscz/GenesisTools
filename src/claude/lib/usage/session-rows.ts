@@ -158,12 +158,24 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number):
  * Same row math as the usage TUI Sessions tab. `hours` is applied here because
  * `getSessionListing` has no time parameter. COLD rows inside the window stay.
  */
-export async function listSessionRows(opts: ListSessionRowsOptions = {}): Promise<SessionRow[]> {
+export interface SessionRowTimings {
+    listingMs: number;
+    tailMs: number;
+    totalMs: number;
+    records: number;
+}
+
+export async function listSessionRowsWithTimings(
+    opts: ListSessionRowsOptions = {}
+): Promise<{ rows: SessionRow[]; timings: SessionRowTimings }> {
+    const started = performance.now();
     const now = opts.now ?? Date.now();
     const result = await getSessionListing({ excludeSubagents: opts.excludeSubagents ?? true });
+    const listingMs = performance.now() - started;
     const cutoff = opts.hours === undefined ? Number.NEGATIVE_INFINITY : now - opts.hours * 60 * 60 * 1000;
     const records = result.sessions.filter((r) => r.mtime >= cutoff);
     const usages: TailUsage[] = [];
+    const tailStarted = performance.now();
 
     for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
         const batch = records.slice(i, i + TAIL_BATCH_SIZE);
@@ -171,5 +183,20 @@ export async function listSessionRows(opts: ListSessionRowsOptions = {}): Promis
         usages.push(...batchUsages);
     }
 
-    return records.map((r, i) => buildRow(r, usages[i], now));
+    const tailMs = performance.now() - tailStarted;
+
+    return {
+        rows: records.map((r, i) => buildRow(r, usages[i], now)),
+        timings: {
+            listingMs,
+            tailMs,
+            totalMs: performance.now() - started,
+            records: records.length,
+        },
+    };
+}
+
+/** Same row math as the usage TUI Sessions tab. */
+export async function listSessionRows(opts: ListSessionRowsOptions = {}): Promise<SessionRow[]> {
+    return (await listSessionRowsWithTimings(opts)).rows;
 }
