@@ -50,22 +50,6 @@ export interface WalkEntry {
     privateSize?: number;
 }
 
-// One-shot probe at module load — `getattrlistbulk` is unavailable off-darwin
-// and on non-APFS volumes (returns ENOTSUP). Per-dir fallback handles mixed
-// filesystem trees inside a single scan root.
-const BULK_AVAILABLE: boolean = (() => {
-    if (process.platform !== "darwin") {
-        return false;
-    }
-
-    try {
-        return isGetattrlistbulkSupported();
-    } catch (err) {
-        logger.debug({ err }, "BULK_AVAILABLE: isGetattrlistbulkSupported probe threw, disabling bulk path");
-        return false;
-    }
-})();
-
 export interface WalkError {
     path: string;
     errno: string;
@@ -234,8 +218,11 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     // (name, kind, size, allocSize, mtime, fileid, cloneId) for every entry,
     // replacing `readdirSync + N × statSync + N × getattrlist(CLONEID)`.
     // Fall back to readdirSync + statSync per-dir on `ENOTSUP` (non-APFS
-    // volume inside the scan root) or any other libc error.
-    if (BULK_AVAILABLE) {
+    // volume inside the scan root) or any other libc error. The support
+    // probe is lazy and memoized — it must never run at module load, where
+    // it would tax every importer of this module (import-time syscalls
+    // against an arbitrary directory cost up to seconds; see PROBE_DIR).
+    if (isGetattrlistbulkSupported()) {
         try {
             const bulkChildren: Array<{ name: string; kind: "file" | "dir" | "symlink" }> = [];
             const fileEntries: Array<{
