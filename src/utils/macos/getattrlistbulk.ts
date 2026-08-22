@@ -384,22 +384,41 @@ export function walkGetattrlistbulk(root: string): { dirs: number; files: number
     return { dirs, files };
 }
 
+/** Probe target for feature detection. NEVER probe process.cwd(): the attr
+ *  set includes ATTR_CMNEXT_PRIVATESIZE, whose kernel extent walk can take
+ *  seconds when the probed dir contains a huge cloned sparse file (a ~1TB
+ *  OrbStack recovery image in $HOME stalled every cwd=$HOME probe by ~5s),
+ *  and an unreadable cwd would falsely report "unsupported". /var/empty is
+ *  present on every macOS, always empty, and world-traversable. Per-FS
+ *  variance inside a scan is handled by walkFiles' per-dir fallback. */
+const PROBE_DIR = "/var/empty";
+
+let probeResult: boolean | null = null;
+
 /** Feature detection: returns true if the binding is loadable AND a probe
- *  call succeeds on the cwd. */
+ *  call succeeds. Memoized — the answer cannot change within a process. */
 export function isGetattrlistbulkSupported(): boolean {
+    if (probeResult !== null) {
+        return probeResult;
+    }
+
+    probeResult = probeSupport();
+    return probeResult;
+}
+
+function probeSupport(): boolean {
     const lib = getLibc();
     if (!lib) {
         return false;
     }
 
     try {
-        // Probe: just call iterDir on cwd and consume one entry.
-        for (const _e of iterDir(process.cwd())) {
+        for (const _e of iterDir(PROBE_DIR)) {
             void _e;
             return true;
         }
 
-        // Empty dir is still supported.
+        // Empty dir (the expected case for /var/empty) is still supported.
         return true;
     } catch (err) {
         if (err instanceof GetattrlistbulkUnsupportedError) {

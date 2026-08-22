@@ -22,6 +22,12 @@ function visibleMessage(event: MessageEvent, agent: AgentRecord): boolean {
         return false;
     }
 
+    // Orchestrator follow: main's login stream is the swarm inbox, so a parent
+    // monitor sees every hop, not only mail addressed to main.
+    if (agent.is_main) {
+        return true;
+    }
+
     if (event.to_agent_ids.length === 0) {
         return true;
     }

@@ -1343,23 +1343,38 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         ? discoverSessionFilesInDir(projectDir, { excludeSubagents })
         : await discoverSessionFiles({ excludeSubagents, allProjects: true });
 
-    // 2. Incrementally index: only parse new/changed files
+    // 2. Incrementally index: only parse new/changed files.
+    // Stat every file in parallel. Sequential `await stat` was the sessions
+    // JSON bottleneck (listingMs 5s+, tailMs ~1).
     const total = files.length;
     let processed = 0;
     let indexed = 0;
-    for (const filePath of files) {
-        processed++;
-        try {
-            const fileStat = await stat(filePath);
-            const mtime = Math.floor(fileStat.mtimeMs);
-
-            const cached = getSessionMetadata(filePath);
-            if (cached && cached.mtime === mtime) {
-                continue;
+    const stats = await Promise.all(
+        files.map(async (filePath) => {
+            try {
+                const fileStat = await stat(filePath);
+                return { filePath, mtime: Math.floor(fileStat.mtimeMs) };
+            } catch {
+                return null;
             }
+        })
+    );
 
-            options.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+    for (const entry of stats) {
+        if (!entry) {
+            continue;
+        }
 
+        processed++;
+        const { filePath, mtime } = entry;
+        const cached = getSessionMetadata(filePath);
+        if (cached && cached.mtime === mtime) {
+            continue;
+        }
+
+        options.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+
+        try {
             const metadata = await extractSessionMetadataFromFile(filePath, mtime);
             if (metadata) {
                 upsertSessionMetadata(metadata);

@@ -313,6 +313,16 @@ OUT=$(timeout 4 ./tools agents login --agent-name q --once --session "$S" 2>/dev
 assert_not_contains "non-main peer w/o debug: no registered events" "$OUT" '"type":"registered"'
 assert_contains "  peer q does see message addressed to it" "$OUT" '"body":"msg"'
 
+# 5.4 Main sees peer-to-peer hops (orchestrator follow / parent monitor)
+S=$(mksess vis4)
+quick_login --agent-name lead --agent-main --session "$S"
+quick_login --agent-name p --session "$S"
+quick_login --agent-name q --session "$S"
+./tools agents message --from p --to q --body 'peer-hop' --session "$S" > /dev/null
+OUT=$(timeout 4 ./tools agents login --agent-name lead --once --session "$S" 2>/dev/null || true)
+assert_contains "main sees peer-to-peer hop" "$OUT" '"body":"peer-hop"'
+assert_contains "  login prints ready on stdout" "$OUT" '"type":"ready"'
+
 # ============================================================
 section "6. Discover"
 # ============================================================

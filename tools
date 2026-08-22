@@ -205,7 +205,7 @@ async function runWithReinstallGuard(args: string[], workspaceRoot: string): Pro
     );
     process.stderr.write("\x1b[33m[tools]\x1b[0m Running 'bun install' to repair...\n\n");
 
-    const installResult = spawnSync("bun", ["install"], {
+    const installResult = spawnSync(process.execPath, ["install"], {
         stdio: "inherit",
         cwd: workspaceRoot,
         env: envWithoutProxy(),
@@ -227,11 +227,14 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Pro
     const TAIL_BYTES = 64 * 1024;
 
     return new Promise<number>((resolvePromise, reject) => {
-        const child = spawn("bun", args, {
+        const child = spawn(process.execPath, args, {
             stdio: ["inherit", "inherit", "pipe"],
             // cwd stays at the user's shell so tools resolving `.claude/...`
             // via process.cwd() keep working. Bunfig's preload is forwarded
             // via the explicit --preload flag in executeTool().
+            // execPath (not PATH "bun"): a signed parent (Genesis.app, cmux)
+            // + `/usr/bin/env bun` is SIGKILL'd by Taskgated (Code Signature
+            // Invalid, ~5ms). Reuse this already-running interpreter.
             cwd: process.cwd(),
             env: envWithoutProxy({ INIT_CWD: process.cwd() }),
             shell: process.platform === "win32",
@@ -324,7 +327,7 @@ async function main() {
 
     if (args.length === 0) {
         // Launch interactive tool browser
-        const result = spawnSync("bun", ["run", join(srcDir, "tools", "index.ts")], {
+        const result = spawnSync(process.execPath, ["run", join(srcDir, "tools", "index.ts")], {
             stdio: "inherit",
             cwd: process.cwd(),
             env: envWithoutProxy(),

@@ -4,8 +4,8 @@ import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { writeStderr } from "@genesiscz/utils/cli/stderr";
 import { writeStdout } from "@genesiscz/utils/cli/stdout";
-import type { SelectValue } from "@genesiscz/utils/prompts/p";
-import * as p from "@genesiscz/utils/prompts/p";
+import { getBackend } from "@genesiscz/utils/prompts/p/backend";
+import type { SelectValue } from "@genesiscz/utils/prompts/p/types";
 import { type Logger, logger } from "../logger";
 
 /**
@@ -136,7 +136,7 @@ export function makeOut(component: string | null, mirror: "component" | "config"
     const L =
         (k: "info" | "success" | "warn" | "warning" | "error" | "step") =>
         (m: string): void => {
-            p.log[k](m);
+            getBackend().log[k](m);
             mirrorLine(m);
         };
 
@@ -161,15 +161,15 @@ export function makeOut(component: string | null, mirror: "component" | "config"
         (msg?: unknown, ...rest: unknown[]): void => {
             const head = msg === undefined ? "" : stringify(msg);
             const m = rest.length > 0 ? `${head} ${rest.map(stringify).join(" ")}` : head;
-            p.log[k](m);
+            getBackend().log[k](m);
             mirrorLine(m);
         };
 
     return {
-        intro: (t) => p.intro(t),
-        outro: (m) => p.outro(m),
-        cancel: (m) => p.cancel(m ?? ""),
-        note: (c, t) => p.note(c, t),
+        intro: (t) => getBackend().intro(t),
+        outro: (m) => getBackend().outro(m),
+        cancel: (m) => getBackend().cancel(m ?? ""),
+        note: (c, t) => getBackend().note(c, t),
         log: {
             info: L("info"),
             success: L("success"),
@@ -177,18 +177,18 @@ export function makeOut(component: string | null, mirror: "component" | "config"
             warning: L("warning"),
             error: L("error"),
             step: L("step"),
-            message: (m) => p.log.message(m),
+            message: (m) => getBackend().log.message(m),
         },
-        spinner: () => (isQuietOutput() ? createQuietSpinner() : p.spinner()),
-        text: (o) => p.text(o),
-        confirm: (o) => p.confirm(o),
+        spinner: () => (isQuietOutput() ? createQuietSpinner() : getBackend().spinner()),
+        text: (o) => getBackend().text(o),
+        confirm: (o) => getBackend().confirm(o),
         // p/ is intentionally non-generic (SelectValue); the Out contract is
         // generic for ergonomic call sites. The variance gap is real and only
         // bridgeable with a cast at this boundary — `never` is assignable to
         // any `V | symbol` result.
-        select: (o) => p.select(o) as Promise<never>,
-        multiselect: (o) => p.multiselect(o) as Promise<never>,
-        password: (o) => p.password(o),
+        select: (o) => getBackend().select(o) as Promise<never>,
+        multiselect: (o) => getBackend().multiselect(o) as Promise<never>,
+        password: (o) => getBackend().password(o),
         isCancel,
         result: (data) => emitResult(asResult(data)),
         // print: RAW stdout path — bytes pass through unchanged. No newline
@@ -210,7 +210,7 @@ export function makeOut(component: string | null, mirror: "component" | "config"
             mirrorLine(text.trimEnd());
         },
         detail: (m) => {
-            p.log.message(m);
+            getBackend().log.message(m);
             mirrorLine(m);
         },
         info: Lrest("info"),

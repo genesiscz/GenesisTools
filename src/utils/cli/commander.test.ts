@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { Command } from "commander";
 import {
@@ -89,6 +91,14 @@ describe("runTool", () => {
         expect(res.tool).toBe("d2");
         expect(prog.helpInformation()).not.toContain("--trace");
         expect(prog.helpInformation()).toContain("tool's own");
+    });
+});
+
+describe("readme loading", () => {
+    it("does not statically import @genesiscz/utils/readme (markdown + highlight.js)", () => {
+        const src = readFileSync(join(import.meta.dir, "commander.ts"), "utf8");
+        expect(src).not.toMatch(/from\s+["']@genesiscz\/utils\/readme["']/);
+        expect(src).toMatch(/import\(["']@genesiscz\/utils\/readme["']\)/);
     });
 });
 
