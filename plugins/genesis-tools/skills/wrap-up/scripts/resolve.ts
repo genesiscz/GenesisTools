@@ -197,6 +197,19 @@ export interface Ctx {
     toplevel: string;
     branch: string;
     cwd: string;
+    /** The main checkout, when `toplevel` is a linked worktree. Empty otherwise. */
+    mainProject?: string;
+}
+
+/**
+ * `git worktree list` prints the main checkout first. A linked worktree can live
+ * anywhere — a sibling directory as often as a nested one — so without this a
+ * sibling worktree path-matches nothing and every project-level entry is missed.
+ */
+async function mainCheckout(toplevel: string): Promise<string> {
+    const first = (await sh(["git", "-C", toplevel, "worktree", "list", "--porcelain"])).split("\n")[0] ?? "";
+    const main = first.startsWith("worktree ") ? first.slice("worktree ".length).trim() : "";
+    return main && main !== toplevel ? main : "";
 }
 
 /**
@@ -212,18 +225,23 @@ async function gitContext(args: Record<string, string> = {}): Promise<Ctx> {
     // A pinned project implies its own cwd: keeping the ambient one would let a
     // stale directory still path-match a foreign registry entry.
     const cwd = args.cwd ? expandHome(args.cwd) : pinnedProject || process.cwd();
-    // In a worktree, common-dir differs from git-dir; the "main" checkout's
-    // toplevel is what a project-level entry keys on.
-    const toplevel = pinnedProject || (await sh(["git", "-C", cwd, "rev-parse", "--show-toplevel"])) || cwd;
+    // Normalize whatever was pinned to the checkout root. --project is routinely
+    // given a subdirectory or a worktree path, and echoing that raw path back as
+    // "project" is how a wrong target survives review.
+    const toplevel = (await sh(["git", "-C", cwd, "rev-parse", "--show-toplevel"])) || pinnedProject || cwd;
     const branch = args.branch || (await sh(["git", "-C", toplevel, "rev-parse", "--abbrev-ref", "HEAD"]));
-    return { toplevel, branch: branch || "", cwd };
+    return { toplevel, branch: branch || "", cwd, mainProject: await mainCheckout(toplevel) };
 }
 
 export function matches(entry: Entry, ctx: Ctx): number {
     // Higher score = more specific match. 0 = no match.
     const paths = [entry.worktreeDir, entry.projectDir].filter(Boolean) as string[];
-    const pathHit = paths.some((p) => ctx.toplevel === p || ctx.cwd === p || ctx.cwd.startsWith(`${p}/`));
-    if (!pathHit) {
+    const direct = paths.some((p) => ctx.toplevel === p || ctx.cwd === p || ctx.cwd.startsWith(`${p}/`));
+    // From a linked worktree, an entry registered against the main checkout is
+    // still this project's entry — a sibling worktree shares no path prefix with
+    // it, so without this the correct target resolves to found:false.
+    const viaMain = !direct && Boolean(ctx.mainProject) && paths.some((p) => p === ctx.mainProject);
+    if (!direct && !viaMain) {
         return 0;
     }
 
@@ -304,8 +322,127 @@ export function resolutionWarnings({
     return warnings;
 }
 
-function registerHint(ctx: Ctx): string {
-    return `bun "${import.meta.path}" register --obsidian "<dir>" --project "${ctx.toplevel}" --branch "${ctx.branch}"`;
+function registerHint(ctx: Ctx, obsidianDir = "<dir>"): string {
+    const worktree = ctx.mainProject ? ` --worktree "${ctx.toplevel}"` : "";
+    const project = ctx.mainProject || ctx.toplevel;
+    return `bun "${import.meta.path}" register --obsidian "${obsidianDir}" --project "${project}" --branch "${ctx.branch}"${worktree}`;
+}
+
+function entriesHint(ctx: Ctx): string {
+    return `bun "${import.meta.path}" entries --project "${ctx.toplevel}"`;
+}
+
+/**
+ * The guide half of this script. A caller that only gets a path has to invent the
+ * procedure; spelling out the next commands is what keeps a doubtful match from
+ * being written anyway, and it replaces the habit of registering a catch-all
+ * entry just to make the question go away.
+ */
+export function nextSteps({
+    found,
+    exact,
+    docExists,
+    docPath,
+    registerCmd,
+    entriesCmd,
+}: {
+    found: boolean;
+    exact: boolean;
+    docExists: boolean;
+    docPath: string;
+    registerCmd: string;
+    entriesCmd: string;
+}): string[] {
+    if (!found) {
+        return [
+            "1. Tier 1 wins if it applies: a vault folder this session already read or wrote for this project IS the target, no lookup needed.",
+            `2. Otherwise see what is already registered for this project: ${entriesCmd}`,
+            "3. Infer the vault layout with one or two `ls` calls, then ask the user to confirm the directory (AskUserQuestion).",
+            `4. Pin the confirmed directory so it is never asked again: ${registerCmd}`,
+            "5. Create the doc from the SKILL.md template, then append with `log`.",
+        ];
+    }
+
+    const steps: string[] = [];
+    if (!exact) {
+        steps.push(
+            `1. Do not write yet. No entry claims this branch specifically, so show the user this docPath plus "alternatives" and let them confirm (AskUserQuestion). Full list: ${entriesCmd}`,
+            `2. Once confirmed, pin it to this branch — do NOT register a catch-all: ${registerCmd}`
+        );
+    }
+
+    steps.push(
+        docExists
+            ? `${steps.length + 1}. Read the current state cheaply with \`here "${docPath}"\`, then append this session with \`log "${docPath}"\`.`
+            : `${steps.length + 1}. Create "${docPath}" from the SKILL.md template (header + first log section), then use \`log\` for every later session.`
+    );
+
+    return steps;
+}
+
+export interface RegistryIssue {
+    kind: "catch-all" | "shared-doc" | "missing-project" | "missing-worktree" | "missing-vault-dir";
+    entry: Entry;
+    detail: string;
+    fix: string;
+}
+
+/**
+ * Read-only audit of the registry. Every issue here has already cost a session:
+ * branch-less entries hijack unrelated branches, and entries pointing at deleted
+ * worktrees resolve to a checkout that no longer exists.
+ */
+export function auditRegistry(entries: Entry[], exists: (path: string) => boolean): RegistryIssue[] {
+    const issues: RegistryIssue[] = [];
+    for (const entry of entries) {
+        const pin = `register --obsidian "${entry.obsidianDir}" --project "${entry.projectDir}" --branch "<branch this doc belongs to>"`;
+        if (!entry.branch) {
+            issues.push({
+                kind: "catch-all",
+                entry,
+                detail: `no branch pinned: this entry claims every branch of ${basename(entry.projectDir)}`,
+                fix: `re-register it against the branch it was written for: ${pin}`,
+            });
+        }
+
+        if (!entry.branch && entry.docPath) {
+            issues.push({
+                kind: "shared-doc",
+                entry,
+                detail: `every branch of ${basename(entry.projectDir)} appends into ${entry.docPath}`,
+                fix: "drop docPath (so each branch derives its own file), or pin the entry to one branch",
+            });
+        }
+
+        if (!exists(entry.projectDir)) {
+            issues.push({
+                kind: "missing-project",
+                entry,
+                detail: `projectDir no longer exists: ${entry.projectDir}`,
+                fix: "delete this entry from the registry file by hand",
+            });
+        }
+
+        if (entry.worktreeDir && !exists(entry.worktreeDir)) {
+            issues.push({
+                kind: "missing-worktree",
+                entry,
+                detail: `worktreeDir no longer exists: ${entry.worktreeDir}`,
+                fix: "delete this entry, or re-register it without --worktree",
+            });
+        }
+
+        if (!exists(entry.obsidianDir)) {
+            issues.push({
+                kind: "missing-vault-dir",
+                entry,
+                detail: `obsidianDir does not exist: ${entry.obsidianDir}`,
+                fix: "create the directory, or re-register the entry against the real vault folder",
+            });
+        }
+    }
+
+    return issues;
 }
 
 async function cmdResolve(args: Record<string, string> = {}) {
@@ -344,10 +481,19 @@ async function cmdResolve(args: Record<string, string> = {}) {
                         project: ctx.toplevel,
                         branch: ctx.branch,
                         cwd: ctx.cwd,
+                        worktreeOf: ctx.mainProject || null,
                         worktree: null,
                         alternatives: [],
                         warnings: [],
-                        registerHint: registerHint(ctx),
+                        registerHint: registerHint(ctx, docDir),
+                        nextSteps: nextSteps({
+                            found: true,
+                            exact: true,
+                            docExists: await Bun.file(docPath).exists(),
+                            docPath,
+                            registerCmd: registerHint(ctx, docDir),
+                            entriesCmd: entriesHint(ctx),
+                        }),
                     },
                     null,
                     2
@@ -364,7 +510,16 @@ async function cmdResolve(args: Record<string, string> = {}) {
                     project: ctx.toplevel,
                     branch: ctx.branch,
                     cwd: ctx.cwd,
+                    worktreeOf: ctx.mainProject || null,
                     registerHint: registerHint(ctx),
+                    nextSteps: nextSteps({
+                        found: false,
+                        exact: false,
+                        docExists: false,
+                        docPath: "",
+                        registerCmd: registerHint(ctx),
+                        entriesCmd: entriesHint(ctx),
+                    }),
                 },
                 null,
                 2
@@ -377,19 +532,25 @@ async function cmdResolve(args: Record<string, string> = {}) {
     const docPath = derivedDocPath(entry, ctx.branch);
     const docExists = await Bun.file(docPath).exists();
     const alternatives = ranked.slice(1);
+    const exact = Boolean(entry.branch) && entry.branch === ctx.branch;
+    // Only pre-fill the resolved directory once it is trustworthy: pre-filling a
+    // doubtful match turns "confirm this" into a one-key rubber stamp of the
+    // wrong target.
+    const hint = registerHint(ctx, exact ? entry.obsidianDir : "<dir the user confirms>");
     console.log(
         // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 found: true,
                 source: "registry",
-                exact: Boolean(entry.branch) && entry.branch === ctx.branch,
+                exact,
                 obsidianDir: entry.obsidianDir,
                 docPath,
                 docExists,
                 project: ctx.toplevel,
                 branch: ctx.branch,
                 cwd: ctx.cwd,
+                worktreeOf: ctx.mainProject || null,
                 worktree: entry.worktreeDir ?? null,
                 matchedEntry: entry,
                 alternatives: alternatives.map(({ entry: alt, score }) => ({
@@ -400,7 +561,58 @@ async function cmdResolve(args: Record<string, string> = {}) {
                     score,
                 })),
                 warnings: resolutionWarnings({ entry, ctx, alternatives, docExists }),
-                registerHint: registerHint(ctx),
+                registerHint: hint,
+                nextSteps: nextSteps({
+                    found: true,
+                    exact,
+                    docExists,
+                    docPath,
+                    registerCmd: hint,
+                    entriesCmd: entriesHint(ctx),
+                }),
+            },
+            null,
+            2
+        )
+    );
+}
+
+/** Read-only registry audit: names every entry that can resolve wrong, and how
+ * to fix it. Never mutates — a diagnostic that repairs would hide the cause. */
+async function cmdDoctor() {
+    const reg = await loadRegistry();
+    const paths = new Set<string>();
+    for (const e of reg.entries) {
+        paths.add(e.projectDir);
+        paths.add(e.obsidianDir);
+        if (e.worktreeDir) {
+            paths.add(e.worktreeDir);
+        }
+    }
+
+    const present = new Set<string>();
+    await Promise.all(
+        [...paths].map(async (p) => {
+            // Bun.file().exists() is false for directories, so stat instead.
+            const ok = await stat(p).then(
+                () => true,
+                () => false
+            );
+            if (ok) {
+                present.add(p);
+            }
+        })
+    );
+
+    const issues = auditRegistry(reg.entries, (p) => present.has(p));
+    console.log(
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
+        JSON.stringify(
+            {
+                registry: await registryPath(),
+                entries: reg.entries.length,
+                healthy: issues.length === 0,
+                issues,
             },
             null,
             2
@@ -467,6 +679,23 @@ async function cmdRegister(args: Record<string, string>) {
     if (!entry.obsidianDir) {
         console.error("register: --obsidian <dir> is required");
         process.exit(1);
+    }
+
+    if (!entry.branch) {
+        // The catch-all is the single biggest source of wrong wrap-up targets, so
+        // creating one says out loud what it will do to every future branch.
+        console.error(
+            [
+                `wrap-up: registering a CATCH-ALL entry for ${entry.projectDir}.`,
+                `  It will claim EVERY branch of that project, forever, including branches that do not exist yet.`,
+                `  Prefer one entry per branch: drop --all-branches and the current branch is pinned for you.`,
+                entry.docPath
+                    ? `  With docPath set, every branch will also append into the same file: ${entry.docPath}`
+                    : "",
+            ]
+                .filter(Boolean)
+                .join("\n")
+        );
     }
 
     const reg = await loadRegistry();
@@ -690,6 +919,9 @@ if (import.meta.main) {
         case "entries":
             await cmdEntries(parseFlags(rest));
             break;
+        case "doctor":
+            await cmdDoctor();
+            break;
         case "register":
             await cmdRegister(parseFlags(rest));
             break;
@@ -706,8 +938,11 @@ if (import.meta.main) {
                     "",
                     "  resolve  [--project <dir>] [--branch <b>] [--cwd <dir>]",
                     "           where does the wrap-up doc live? Pin --project to the repo the session",
-                    "           actually worked in; without it the ambient shell cwd decides.",
+                    "           actually worked in; without it the ambient shell cwd decides. Any path",
+                    "           inside the checkout works (subdirectory or worktree). The result carries",
+                    "           `warnings` and `nextSteps` — read them before writing anything.",
                     "  entries  [--project <dir>]   every registered target for that project",
+                    "  doctor                       audit the registry for entries that resolve wrong",
                     "  register --obsidian <dir> [--project p] [--branch b | --all-branches] [--worktree w] [--doc path]",
                     "           branch defaults to the current one; --all-branches makes a catch-all",
                     "  here     <file>              print only the YOU-ARE-HERE block",

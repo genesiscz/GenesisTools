@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    auditRegistry,
     blockquote,
     buildLogBody,
     derivedDocPath,
@@ -11,6 +12,7 @@ import {
     expandHome,
     innerBlock,
     matches,
+    nextSteps,
     parseFlags,
     rankEntries,
     resolutionWarnings,
@@ -103,6 +105,108 @@ describe("matches", () => {
     it("does not match a sibling dir sharing a name prefix", () => {
         const sibling = { toplevel: "/repos/ProjOther", branch: "feat/x", cwd: "/repos/ProjOther" };
         expect(matches({ projectDir: "/repos/Proj", obsidianDir: "/v" }, sibling)).toBe(0);
+    });
+});
+
+describe("matches — linked worktrees", () => {
+    const sibling = {
+        toplevel: "/repos/Proj-wt-feature",
+        branch: "feat/x",
+        cwd: "/repos/Proj-wt-feature",
+        mainProject: "/repos/Proj",
+    };
+
+    it("matches an entry registered against the main checkout", () => {
+        expect(matches({ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" }, sibling)).toBeGreaterThan(0);
+    });
+
+    it("still respects the entry's branch pin from a worktree", () => {
+        expect(matches({ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/other" }, sibling)).toBe(0);
+    });
+
+    it("ranks the worktree-specific entry above the main-checkout one", () => {
+        const viaMain = matches({ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" }, sibling);
+        const viaWorktree = matches(
+            {
+                projectDir: "/repos/Proj",
+                obsidianDir: "/v",
+                branch: "feat/x",
+                worktreeDir: "/repos/Proj-wt-feature",
+            },
+            sibling
+        );
+        expect(viaWorktree).toBeGreaterThan(viaMain);
+    });
+
+    it("does not match another project just because we are in a worktree", () => {
+        expect(matches({ projectDir: "/repos/Other", obsidianDir: "/v" }, sibling)).toBe(0);
+    });
+});
+
+describe("nextSteps", () => {
+    const cmds = { registerCmd: "REGISTER", entriesCmd: "ENTRIES" };
+
+    it("walks Tier 1 → entries → confirm → register when nothing resolved", () => {
+        const steps = nextSteps({ found: false, exact: false, docExists: false, docPath: "", ...cmds });
+        expect(steps[0]).toContain("Tier 1");
+        expect(steps.some((s) => s.includes("ENTRIES"))).toBe(true);
+        expect(steps.some((s) => s.includes("REGISTER"))).toBe(true);
+    });
+
+    it("blocks writing and offers the pin command on a non-exact match", () => {
+        const steps = nextSteps({ found: true, exact: false, docExists: true, docPath: "/v/d.md", ...cmds });
+        expect(steps[0]).toContain("Do not write yet");
+        expect(steps[1]).toContain("REGISTER");
+    });
+
+    it("goes straight to here/log on an exact match with an existing doc", () => {
+        const steps = nextSteps({ found: true, exact: true, docExists: true, docPath: "/v/d.md", ...cmds });
+        expect(steps).toHaveLength(1);
+        expect(steps[0]).toContain("here");
+        expect(steps[0]).toContain("log");
+    });
+
+    it("says to create the file first when the doc is missing", () => {
+        const steps = nextSteps({ found: true, exact: true, docExists: false, docPath: "/v/d.md", ...cmds });
+        expect(steps[0]).toContain("template");
+    });
+});
+
+describe("auditRegistry", () => {
+    const allPresent = () => true;
+
+    it("reports a branch-less entry as a catch-all", () => {
+        const issues = auditRegistry([{ projectDir: "/repos/Proj", obsidianDir: "/v" }], allPresent);
+        expect(issues.map((i) => i.kind)).toEqual(["catch-all"]);
+    });
+
+    it("reports a catch-all with a pinned docPath as sharing one file", () => {
+        const issues = auditRegistry(
+            [{ projectDir: "/repos/Proj", obsidianDir: "/v", docPath: "/v/one.md" }],
+            allPresent
+        );
+        expect(issues.map((i) => i.kind)).toEqual(["catch-all", "shared-doc"]);
+    });
+
+    it("stays silent on a healthy branch-pinned entry", () => {
+        const issues = auditRegistry([{ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" }], allPresent);
+        expect(issues).toEqual([]);
+    });
+
+    it("reports deleted project, worktree and vault directories", () => {
+        const entry: Entry = {
+            projectDir: "/gone/Proj",
+            obsidianDir: "/gone/vault",
+            branch: "feat/x",
+            worktreeDir: "/gone/wt",
+        };
+        const issues = auditRegistry([entry], () => false);
+        expect(issues.map((i) => i.kind).sort()).toEqual(["missing-project", "missing-vault-dir", "missing-worktree"]);
+    });
+
+    it("carries a fix command on every issue", () => {
+        const issues = auditRegistry([{ projectDir: "/repos/Proj", obsidianDir: "/v" }], allPresent);
+        expect(issues.every((i) => i.fix.length > 0)).toBe(true);
     });
 });
 

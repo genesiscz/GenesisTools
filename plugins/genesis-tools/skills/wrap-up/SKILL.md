@@ -40,6 +40,8 @@ bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" resolve --project 
 
 Without `--project` the answer comes from the shell's current directory, and the shell's directory is not reliably your session's project: the Bash tool keeps its cwd between calls, worktrees move it, and a single earlier `cd` makes every later `resolve` answer for a different repo. That failure is silent — you get a confident path into another project's vault folder. Pin it.
 
+Any path inside the checkout works. A subdirectory is normalized to the checkout root, and a worktree path (nested or sibling) reports its own branch plus `worktreeOf`, the main checkout it belongs to. Entries registered against the main checkout still match from inside a worktree; an entry that names this exact `worktreeDir` outranks them.
+
 Claude Code substitutes the plugin-root placeholder into this document at load time; it is NOT a shell variable. If any command in this document still shows a literal unsubstituted `CLAUDE_PLUGIN_ROOT` placeholder, do not run it through the shell — build the path yourself from the "Base directory for this skill" line printed when this skill loaded (the plugin root is that directory minus the trailing `skills/wrap-up`).
 
 #### 🛑 Check the answer before you write anything
@@ -50,6 +52,8 @@ Claude Code substitutes the plugin-root placeholder into this document at load t
 - **`exact`** — `true` only when a registry entry pins your exact branch, or the doc path was derived per branch from config. `false` means a project-wide entry claimed you.
 - **`warnings`** — non-empty means something may be wrong. Read every line.
 - **`alternatives`** — other entries that also matched, most specific first.
+
+`nextSteps` then spells out what to do with that verdict, with the exact commands filled in. Follow it instead of improvising a procedure.
 
 **If `exact` is `false` or `warnings` is non-empty, confirm the target with the user (`AskUserQuestion`) before writing.** Offer the resolved `docPath`, the `alternatives`, and a fresh per-branch doc. A wrap-up appended to the wrong project's doc corrupts an audit trail that is append-only by design, so a single question is much cheaper than the repair.
 
@@ -78,7 +82,22 @@ It reads your git toplevel + branch + cwd, matches the most specific entry, and 
 
 `branch` and `worktreeDir` are optional. `docPath` is optional; when absent the resolver derives `<obsidianDir>/<project>-<branch-slug>.wrapup.md` so each branch accumulates its own file.
 
-⚠️ **A branch-less entry claims every branch of that project, forever.** It is the main way this skill resolves wrong: one old session registers a project-wide target, and months later every new branch of that repo still resolves to that session's doc. Worse when it also pins `docPath` — then all branches append into one file. So `register` pins the current branch unless you pass `--all-branches`, and `resolve` warns whenever a branch-less entry wins. Two entries of equal specificity are broken by registration order, newest first.
+⚠️ **A branch-less entry claims every branch of that project, forever.** It is the main way this skill resolves wrong: one old session registers a project-wide target, and months later every new branch of that repo still resolves to that session's doc. Worse when it also pins `docPath` — then all branches append into one file.
+
+This is not hypothetical. `register --obsidian "<dir>"` with no other flag created exactly such an entry for GenesisTools on 2026-07-28, and at least five later sessions each resolved to that unrelated security-incident doc and had to detect the mismatch by hand. So:
+
+- `register` pins the current branch unless you pass `--all-branches`, and creating a catch-all prints a warning saying what it will claim.
+- `resolve` reports `exact:false` plus a warning whenever a branch-less entry wins.
+- Two entries of equal specificity are broken by registration order, newest first.
+- **Do not register a catch-all to silence a question.** Register the branch, or ask the user.
+
+Audit the registry any time a resolution looks off:
+
+```bash
+bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" doctor
+```
+
+It is read-only. It lists catch-all entries, entries where several branches share one `docPath`, and entries pointing at deleted projects, deleted worktrees or missing vault folders — each with the command that fixes it.
 
 ### Tier 2.5 — shared plugin config (automatic)
 `resolve` falls back to `~/.genesis-tools/plugins/config.json` by itself when the registry has no match — the result then carries `"source": "config"` and you just use its `docPath`, no user interaction needed. The file is a per-skill map shared by all genesis-tools plugin skills:
