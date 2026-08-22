@@ -24,6 +24,19 @@ export function hasValidLongLivedToken(tokens: { longLivedToken?: string }): boo
     return Boolean(tokens.longLivedToken && tokens.longLivedToken.length >= LONG_TOKEN_MIN_LENGTH);
 }
 
+/** Length-valid and not past a known mint expiry. Pasted tokens have no expiry, so they stay usable. */
+export function longLivedTokenUsable(tokens: { longLivedToken?: string; longLivedTokenExpiresAt?: number }): boolean {
+    if (!hasValidLongLivedToken(tokens)) {
+        return false;
+    }
+
+    if (tokens.longLivedTokenExpiresAt !== undefined && tokens.longLivedTokenExpiresAt <= Date.now()) {
+        return false;
+    }
+
+    return true;
+}
+
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 /** A blackholed connection must not hang an interactive login forever. */
@@ -73,8 +86,13 @@ export async function probeLongLivedToken(token: string): Promise<TokenVerdict> 
     }
 }
 
-/** One-token call: proves the token authenticates. 429 means authenticated but rate-limited. */
-export async function verifyLongLivedToken(token: string): Promise<TokenVerdict> {
+/**
+ * POST /v1/messages with the oat-required claude-cli user-agent.
+ *
+ * Capture-time verify and warmup fallback share this: oat tokens reject 401
+ * without that UA, and ChatEngine does not send it.
+ */
+export async function sendLongLivedInferencePing(token: string): Promise<TokenVerdict> {
     try {
         const res = await fetch(MESSAGES_URL, {
             method: "POST",
@@ -117,4 +135,9 @@ export async function verifyLongLivedToken(token: string): Promise<TokenVerdict>
         logger.debug({ error }, "[token-verify] verification request failed");
         return "unreachable";
     }
+}
+
+/** One-token call: proves the token authenticates. 429 means authenticated but rate-limited. */
+export async function verifyLongLivedToken(token: string): Promise<TokenVerdict> {
+    return sendLongLivedInferencePing(token);
 }

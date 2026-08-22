@@ -711,7 +711,19 @@ function sessionLabel(session: SessionSummary): string {
 /** True when the user already told claude what to open (`--resume`, `-c`, `-p`, …). */
 export function passthroughHandlesSession(passthrough: string[]): boolean {
     return passthrough.some((arg) =>
-        ["--resume", "-r", "--continue", "-c", "--fork-session", "--print", "-p"].includes(arg.split("=")[0])
+        [
+            "--resume",
+            "-r",
+            "--continue",
+            "-c",
+            "--fork-session",
+            "--print",
+            "-p",
+            // Teammate re-attach. Without this, `tools claude teams` attach
+            // with `--agent-id` and no `--resume` pops the unrelated
+            // limit-killed session picker ("Cancelled, nothing launched").
+            "--agent-id",
+        ].includes(arg.split("=")[0])
     );
 }
 

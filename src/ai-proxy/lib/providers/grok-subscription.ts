@@ -5,15 +5,35 @@ import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
+import {
+    braveSearchFn,
+    type EmulationOutcome,
+    emulateWebSearch,
+    emulationStream,
+    nativeTranslationLoss,
+    nativeWebSearch,
+    parseWebSearchServerTool,
+    type WebSearchServerTool,
+} from "@app/ai-proxy/lib/server-tools/web-search";
+import {
+    anthropicToGrokResponses,
+    stripReasoningInput,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
+import {
+    grokResponsesSseToAnthropic,
+    grokResponsesToAnthropicMessage,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
 import {
     repairAnthropicSseIndices,
     type ToolMatcher,
     toolMatchersFromBody,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
+import { findServerTools } from "@app/ai-proxy/lib/translators/formats/anthropic/server-tools";
 import { stringifyUnknownToolResultBlocks } from "@app/ai-proxy/lib/translators/formats/anthropic/stringify-unknown-blocks";
+import { tagConfusableTools } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import {
     formatBillingSummary,
@@ -22,6 +42,7 @@ import {
     resolveGrokSubToken,
 } from "@genesiscz/utils/ai/grok";
 import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok/paths";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -106,12 +127,66 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
         let outBody = bodyText;
         let toolMatchers: ToolMatcher[] = [];
+        let taggedTools = new Set<string>();
 
         if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+            // Anthropic server tools execute inside Anthropic's API; grok's
+            // deserializer rejects them with an opaque `missing field
+            // description` that reads like a proxy bug (probe session
+            // d20dfdfe, Claude Code's WebSearch). web_search runs on xAI's
+            // native /responses server tool; every OTHER server tool gets an
+            // error naming the real cause — judged over the whole tools list,
+            // so a mixed request cannot smuggle one past the web_search path.
+            const serverTools = findServerTools(parsed as Record<string, unknown>);
+            const unsupported = serverTools.find((type) => !type.startsWith("web_search_"));
+
+            if (unsupported !== undefined) {
+                return new Response(
+                    SafeJSON.stringify({
+                        type: "error",
+                        error: {
+                            type: "invalid_request_error",
+                            message: `The grok upstream models custom tools only; this request offers "${unsupported}", a typed Anthropic tool it cannot deserialize. Server tools such as code_execution run inside Anthropic's API, which this account does not reach; client-executed typed tools (bash, text_editor) carry no description or input_schema, which is the field the upstream rejects. Web search is the one typed tool this proxy serves, on xAI's native server-side search.`,
+                        },
+                    }),
+                    { status: 400, headers: { "Content-Type": "application/json" } }
+                );
+            }
+
+            if (serverTools.length > 0) {
+                const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
+
+                if (webSearch) {
+                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch);
+                }
+            }
+
+            // Default route: the /responses wire. The shim merges parallel
+            // tool calls into ONE block (raw wire capture 2026-08-21, nine
+            // request variants tried); /responses streams every call as its
+            // own named item, and reasoning survives via encrypted reasoning
+            // items round-tripped through thinking signatures.
+            // AI_PROXY_GROK_MESSAGES_ROUTE=shim restores the passthrough
+            // below instantly.
+            if (env.aiProxy.getGrokMessagesRoute() === "responses") {
+                return this.messagesViaResponses(req, model, parsed as Record<string, unknown>);
+            }
+
             const body = stringifyUnknownToolResultBlocks(
                 hoistSystemMessages(ensureToolRequiredArrays(parsed as Record<string, unknown>))
             );
             body.model = model;
+
+            // Grok's STREAMING /messages merges parallel calls into one block
+            // and keeps only the first name, so a `{}` orphan matches every
+            // no-argument tool equally and the splitter has nothing to go on.
+            // Tagging those schemas puts the name back INTO the arguments,
+            // which keeps the stream a stream — the tag never reaches the
+            // client. Non-streaming replies name every call already.
+            if (body.stream === true) {
+                taggedTools = tagConfusableTools(body);
+            }
+
             outBody = SafeJSON.stringify(body);
             toolMatchers = toolMatchersFromBody(body);
         }
@@ -140,13 +215,182 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         // which makes Anthropic SDKs overwrite the thinking block with the text
         // block. Verified live 2026-08-19; repaired, not translated.
         if (response.body && contentType.includes("text/event-stream")) {
-            return new Response(repairAnthropicSseIndices(response.body, { tools: toolMatchers }), {
+            return new Response(repairAnthropicSseIndices(response.body, { tools: toolMatchers, taggedTools }), {
                 status: response.status,
                 headers: relayHeaders(response),
             });
         }
 
         return new Response(response.body, { status: response.status, headers: relayHeaders(response) });
+    }
+
+    /**
+     * Anthropic body → /responses wire → Anthropic reply. One upstream output
+     * item maps to one content block, so the shim's merge defect cannot occur,
+     * and `encrypted_content` reasoning replay is stronger than the shim's
+     * plaintext thinking (grok decrypts and consumes it — a tampered blob is
+     * rejected).
+     */
+    private async messagesViaResponses(
+        req: Request,
+        model: string,
+        parsed: Record<string, unknown>
+    ): Promise<Response> {
+        const anthropicBody = hoistSystemMessages(ensureToolRequiredArrays(parsed));
+        const responsesBody = anthropicToGrokResponses(anthropicBody, model);
+
+        const send = (bodyText: string): Promise<Response> =>
+            this.dispatch({
+                path: "/responses",
+                req,
+                bodyText,
+                modelOverride: model,
+                requestedModel: model,
+                imageRouted: false,
+            });
+
+        let response = await send(SafeJSON.stringify(responsesBody));
+
+        if (!response.ok) {
+            const errorText = await response.text();
+
+            // A signature packed by a different conversation (or truncated by
+            // the client) fails decryption for the WHOLE request. Replaying
+            // once without reasoning items loses continuity for one turn
+            // instead of failing it.
+            if (response.status === 400 && errorText.includes("Could not decrypt")) {
+                logger.warn({ model }, "ai-proxy: grok rejected replayed reasoning — retrying without reasoning items");
+                response = await send(SafeJSON.stringify(stripReasoningInput(responsesBody)));
+
+                if (!response.ok) {
+                    return toAnthropicErrorResponse(response);
+                }
+            } else {
+                return toAnthropicErrorResponse(
+                    new Response(errorText, { status: response.status, headers: response.headers })
+                );
+            }
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+
+        if (response.body && contentType.includes("text/event-stream")) {
+            return new Response(grokResponsesSseToAnthropic(response.body, { model }), {
+                status: response.status,
+                headers: relayHeaders(response),
+            });
+        }
+
+        const envelope = SafeJSON.parse(await response.text(), { strict: true });
+        const message = grokResponsesToAnthropicMessage(
+            typeof envelope === "object" && envelope !== null && !Array.isArray(envelope)
+                ? (envelope as Record<string, unknown>)
+                : {},
+            { model }
+        );
+
+        return new Response(SafeJSON.stringify(message), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
+
+    /**
+     * Plays Anthropic's role for the web_search server tool. Preferred path:
+     * ONE /responses call with xAI's native `{type:"web_search"}` server tool
+     * (the upstream searches itself, with citations). Fallback: the Brave
+     * loop, when a key is available. Either way the final turn streams with
+     * pings so a slow search does not read as a dead connection.
+     */
+    private async emulatedWebSearchResponse(
+        req: Request,
+        model: string,
+        body: Record<string, unknown>,
+        tool: WebSearchServerTool
+    ): Promise<Response> {
+        logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: running web_search server tool for grok");
+
+        const loss = nativeTranslationLoss(body, tool);
+        const run = async (signal?: AbortSignal): Promise<EmulationOutcome | Response> => {
+            const native =
+                loss === undefined
+                    ? await nativeWebSearch({
+                          body,
+                          tool,
+                          callResponses: async (responsesBody) => {
+                              responsesBody.model = model;
+                              const response = await this.dispatch({
+                                  path: "/responses",
+                                  req,
+                                  bodyText: SafeJSON.stringify(responsesBody),
+                                  modelOverride: model,
+                                  requestedModel: model,
+                                  imageRouted: false,
+                                  signal,
+                              });
+
+                              return response.ok ? response : toAnthropicErrorResponse(response);
+                          },
+                      })
+                    : unsupportedNativeResponse(loss);
+
+            if (!(native instanceof Response)) {
+                return native;
+            }
+
+            const braveKey = env.brave.getKey();
+
+            if (braveKey === undefined) {
+                return native;
+            }
+
+            logger.warn(
+                { status: native.status, model, loss },
+                "ai-proxy: native /responses web_search unavailable — falling back to the Brave loop"
+            );
+            return emulateWebSearch({
+                body,
+                tool,
+                signal,
+                search: braveSearchFn(braveKey, signal),
+                callUpstream: async (turnBody) => {
+                    const repaired = stringifyUnknownToolResultBlocks(
+                        hoistSystemMessages(ensureToolRequiredArrays(turnBody))
+                    );
+                    repaired.model = model;
+                    const response = await this.dispatch({
+                        path: "/messages",
+                        req,
+                        bodyText: SafeJSON.stringify(repaired),
+                        modelOverride: model,
+                        requestedModel: model,
+                        imageRouted: false,
+                        headers: { "anthropic-version": "2023-06-01" },
+                        signal,
+                    });
+
+                    return response.ok ? response : toAnthropicErrorResponse(response);
+                },
+            });
+        };
+
+        if (body.stream === true) {
+            return new Response(emulationStream(run), {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+            });
+        }
+
+        const outcome = await run();
+
+        if (outcome instanceof Response) {
+            return outcome;
+        }
+
+        return new Response(SafeJSON.stringify(outcome.message), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
     }
 
     async getUsage(): Promise<UsageSummary> {
@@ -188,6 +432,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         requestedModel,
         imageRouted,
         headers,
+        signal,
     }: {
         path: string;
         req: Request;
@@ -196,6 +441,8 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         requestedModel: string;
         imageRouted: boolean;
         headers?: Record<string, string>;
+        /** Extra abort source (the emulation stream's), composed with the client's. */
+        signal?: AbortSignal;
     }): Promise<Response> {
         const started = performance.now();
 
@@ -204,7 +451,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 method: "POST",
                 body: bodyText,
                 modelOverride,
-                signal: req.signal,
+                signal: signal === undefined ? req.signal : AbortSignal.any([req.signal, signal]),
                 headers: {
                     Accept: req.headers.get("Accept") ?? "application/json",
                     ...headers,
@@ -300,4 +547,24 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             throw err;
         }
     }
+}
+
+/**
+ * Stands in for a failed native call when the /responses translation would
+ * drop part of the request, so the Brave fallback (which keeps the original
+ * Anthropic body) is chosen instead. Without a Brave key this is what the
+ * client sees, and it names what is unsupported rather than answering from a
+ * silently truncated conversation.
+ */
+function unsupportedNativeResponse(loss: string): Response {
+    return new Response(
+        SafeJSON.stringify({
+            type: "error",
+            error: {
+                type: "invalid_request_error",
+                message: `web_search on grok cannot be combined with ${loss}: xAI's native server-side search takes plain text only. Set BRAVE_API_KEY to run the emulated search loop, which keeps the full request.`,
+            },
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+    );
 }

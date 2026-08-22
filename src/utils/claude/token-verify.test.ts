@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
     hasValidLongLivedToken,
     LONG_TOKEN_MIN_LENGTH,
+    longLivedTokenUsable,
     probeLongLivedToken,
     verifyLongLivedToken,
 } from "./token-verify";
@@ -27,6 +28,30 @@ describe("hasValidLongLivedToken", () => {
 
     test("a full-length token is valid", () => {
         expect(hasValidLongLivedToken({ longLivedToken: "x".repeat(LONG_TOKEN_MIN_LENGTH) })).toBe(true);
+    });
+});
+
+describe("longLivedTokenUsable", () => {
+    const token = "x".repeat(LONG_TOKEN_MIN_LENGTH);
+
+    test("a full-length token with no expiry is usable", () => {
+        expect(longLivedTokenUsable({ longLivedToken: token })).toBe(true);
+    });
+
+    test("a truncated token is not usable", () => {
+        expect(longLivedTokenUsable({ longLivedToken: "short" })).toBe(false);
+    });
+
+    test("a minted token past its expiry is not usable", () => {
+        expect(longLivedTokenUsable({ longLivedToken: token, longLivedTokenExpiresAt: Date.now() - 1_000 })).toBe(
+            false
+        );
+    });
+
+    test("a minted token still inside its expiry is usable", () => {
+        expect(longLivedTokenUsable({ longLivedToken: token, longLivedTokenExpiresAt: Date.now() + 60_000 })).toBe(
+            true
+        );
     });
 });
 

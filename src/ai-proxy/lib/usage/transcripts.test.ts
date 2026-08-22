@@ -97,6 +97,36 @@ describe("parseResponseBody", () => {
         expect(parsed.usage).toEqual({ input_tokens: 10, output_tokens: 7 });
     });
 
+    it("folds input_json_delta into the streamed tool call (grok probe recorded every input as {})", () => {
+        const body = [
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}}',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":"}}',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\"/tmp/a\\"}"}}',
+            'data: {"type":"content_block_stop","index":0}',
+            'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_2","name":"ListAgents","input":{}}}',
+            'data: {"type":"content_block_stop","index":1}',
+        ].join("\n\n");
+
+        const parsed = parseResponseBody(body, true);
+        expect(parsed.toolCalls?.[0]?.function?.arguments).toBe('{"file_path":"/tmp/a"}');
+        // A call that never streams deltas keeps its (empty) start input.
+        expect(parsed.toolCalls?.[1]?.function?.name).toBe("ListAgents");
+        expect(parsed.toolCalls?.[1]?.function?.arguments).toBe("{}");
+    });
+
+    it("routes interleaved input_json_delta frames by block index, not recency", () => {
+        const body = [
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_a","name":"Read","input":{}}}',
+            'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_b","name":"Bash","input":{}}}',
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"/tmp/a\\"}"}}',
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"ls\\"}"}}',
+        ].join("\n\n");
+
+        const parsed = parseResponseBody(body, true);
+        expect(parsed.toolCalls?.[0]?.function?.arguments).toBe('{"file_path":"/tmp/a"}');
+        expect(parsed.toolCalls?.[1]?.function?.arguments).toBe('{"command":"ls"}');
+    });
+
     it("reads a Responses JSON body", () => {
         const parsed = parseResponseBody(
             '{"object":"response","status":"completed","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"hm"}]},{"type":"message","content":[{"type":"output_text","text":"4"}]},{"type":"function_call","call_id":"fc_1","name":"Read","arguments":"{}"}],"usage":{"input_tokens":3,"output_tokens":2}}',

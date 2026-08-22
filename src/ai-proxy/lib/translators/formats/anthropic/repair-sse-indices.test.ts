@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { repairAnthropicSseIndices } from "@app/ai-proxy/lib/translators/formats/anthropic/repair-sse-indices";
+import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
@@ -253,5 +254,234 @@ describe("repairAnthropicSseIndices", () => {
 
         expect(out).toContain('"type":"content_block_start"');
         expect(out).toContain('"index":0');
+    });
+
+    it("swaps arguments back when grok puts another call's args under the declared name", async () => {
+        // Observed live 2026-08-20: a merged block declaring `Edit` carried
+        // {query, count} first, so Edit was rejected for a missing file_path it
+        // was never given and the search call never ran at all.
+        const tools = [
+            {
+                name: "Edit",
+                required: ["file_path", "old_string"],
+                properties: ["file_path", "old_string", "new_string"],
+            },
+            { name: "brave_web_search", required: ["query"], properties: ["query", "count"] },
+        ];
+        const input = [
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Edit","input":{}}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"grok bugs\\",\\"count\\":3}"}}\n\n',
+            'data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"/tmp/a\\",\\"old_string\\":\\"x\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+        ];
+
+        const out = await collect(repairAnthropicSseIndices(sseStream(input), { tools }));
+        const frames = out
+            .split("\n")
+            .filter((line) => line.startsWith("data: "))
+            .map((line) => SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>);
+
+        const calls = new Map<number, { name?: string; args: string }>();
+        for (const frame of frames) {
+            const index = frame.index as number;
+            if (frame.type === "content_block_start") {
+                calls.set(index, { name: (frame.content_block as Record<string, unknown>).name as string, args: "" });
+            } else if (frame.type === "content_block_delta") {
+                const delta = frame.delta as Record<string, unknown>;
+                if (delta.type === "input_json_delta") {
+                    const call = calls.get(index);
+                    if (call) {
+                        call.args += delta.partial_json as string;
+                    }
+                }
+            }
+        }
+
+        // Edit keeps its name and now receives the Edit arguments; the search
+        // arguments go out under the tool they uniquely match.
+        expect(calls.get(0)?.name).toBe("Edit");
+        expect(SafeJSON.parse(calls.get(0)?.args ?? "", { strict: true })).toEqual({
+            file_path: "/tmp/a",
+            old_string: "x",
+        });
+        expect(calls.get(1)?.name).toBe("brave_web_search");
+        expect(SafeJSON.parse(calls.get(1)?.args ?? "", { strict: true })).toEqual({ query: "grok bugs", count: 3 });
+    });
+
+    describe("no-argument calls in a merged block", () => {
+        const tools = [
+            { name: "run_command", required: ["command"], properties: ["command"] },
+            { name: "list_agents", required: [TOOL_ROUTING_TAG], properties: [TOOL_ROUTING_TAG] },
+            { name: "list_tasks", required: [TOOL_ROUTING_TAG], properties: [TOOL_ROUTING_TAG] },
+            { name: "read_file", required: ["path"], properties: ["path"] },
+        ];
+
+        /** Verbatim shape captured from grok's wire on 2026-08-21: ONE start frame, N complete objects. */
+        function mergedStream(argObjects: string[], blockName = "run_command"): ReadableStream<Uint8Array> {
+            return sseStream([
+                `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call-abc-0","name":"${blockName}","input":{}}}\n\n`,
+                ...argObjects.map(
+                    (args) =>
+                        `data: ${SafeJSON.stringify({
+                            type: "content_block_delta",
+                            delta: { type: "input_json_delta", partial_json: args },
+                        })}\n\n`
+                ),
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            ]);
+        }
+
+        async function toolCalls(
+            stream: ReadableStream<Uint8Array>,
+            taggedTools?: Set<string>
+        ): Promise<{ name: string; args: string }[]> {
+            const out = await collect(repairAnthropicSseIndices(stream, { tools, taggedTools }));
+            const calls = new Map<number, { name: string; args: string }>();
+
+            for (const line of out.split("\n")) {
+                if (!line.startsWith("data: ")) {
+                    continue;
+                }
+
+                const frame = SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>;
+                const index = frame.index as number;
+                const block = frame.content_block as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_start" && block?.type === "tool_use") {
+                    calls.set(index, { name: String(block.name), args: "" });
+                }
+
+                const delta = frame.delta as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_delta" && delta?.type === "input_json_delta") {
+                    const call = calls.get(index);
+
+                    if (call) {
+                        call.args += String(delta.partial_json);
+                    }
+                }
+            }
+
+            return [...calls.values()];
+        }
+
+        const tagged = [
+            '{"command":"date"}',
+            `{"${TOOL_ROUTING_TAG}":"list_agents"}`,
+            `{"${TOOL_ROUTING_TAG}":"list_tasks"}`,
+            '{"path":"/etc/hosts"}',
+        ];
+
+        it("names every merged no-arg call from its routing tag and strips the tag", async () => {
+            const calls = await toolCalls(mergedStream(tagged), new Set(["list_agents", "list_tasks"]));
+
+            expect(calls.map((c) => c.name)).toEqual(["run_command", "list_agents", "list_tasks", "read_file"]);
+            // The tag is the proxy's own addition; the client asked for an
+            // empty-object schema and must get exactly that.
+            expect(calls.map((c) => c.args)).toEqual(['{"command":"date"}', "{}", "{}", '{"path":"/etc/hosts"}']);
+        });
+
+        it("negative control: the same stream is unresolvable without the tag", async () => {
+            // Two no-arg tools produce byte-identical `{}` objects, so key
+            // matching has nothing to separate them and both inherit the
+            // block's name. This is the defect the tag exists to remove.
+            const untagged = ['{"command":"date"}', "{}", "{}", '{"path":"/etc/hosts"}'];
+            const calls = await toolCalls(mergedStream(untagged));
+
+            expect(calls.map((c) => c.name)).toEqual(["run_command", "run_command", "run_command", "read_file"]);
+        });
+
+        it("swaps by the tag's VALUE when two tagged objects arrive in the wrong order", async () => {
+            // Both objects carry the tag KEY, so key fitting sees them as
+            // interchangeable — a block declared list_agents whose first object
+            // is tagged list_tasks would silently emit list_tasks's arguments
+            // under list_agents and duplicate list_agents from the orphan.
+            // Only the tag's value can order them.
+            const calls = await toolCalls(
+                mergedStream(
+                    [`{"${TOOL_ROUTING_TAG}":"list_tasks"}`, `{"${TOOL_ROUTING_TAG}":"list_agents"}`],
+                    "list_agents"
+                ),
+                new Set(["list_agents", "list_tasks"])
+            );
+
+            expect(calls.map((c) => c.name)).toEqual(["list_agents", "list_tasks"]);
+            expect(calls.map((c) => c.args)).toEqual(["{}", "{}"]);
+        });
+
+        it("routes a merged Glob/Grep-shaped orphan by its tag, not by its overlapping keys", async () => {
+            // {"pattern":…} fits both glob_search and grep_search, so before
+            // confusability tagging this orphan inherited the block's name.
+            const overlapTools = [
+                {
+                    name: "glob_search",
+                    required: ["pattern", TOOL_ROUTING_TAG],
+                    properties: ["pattern", "path", TOOL_ROUTING_TAG],
+                },
+                {
+                    name: "grep_search",
+                    required: ["pattern", TOOL_ROUTING_TAG],
+                    properties: ["pattern", "path", "output_mode", TOOL_ROUTING_TAG],
+                },
+            ];
+            const stream = mergedStream(
+                [
+                    `{"pattern":"*.ts","${TOOL_ROUTING_TAG}":"glob_search"}`,
+                    `{"pattern":"TODO","${TOOL_ROUTING_TAG}":"grep_search"}`,
+                ],
+                "glob_search"
+            );
+            const out = await collect(
+                repairAnthropicSseIndices(stream, {
+                    tools: overlapTools,
+                    taggedTools: new Set(["glob_search", "grep_search"]),
+                })
+            );
+            const calls = new Map<number, { name: string; args: string }>();
+
+            for (const line of out.split("\n")) {
+                if (!line.startsWith("data: ")) {
+                    continue;
+                }
+
+                const frame = SafeJSON.parse(line.slice("data: ".length), { strict: true }) as Record<string, unknown>;
+                const block = frame.content_block as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_start" && block?.type === "tool_use") {
+                    calls.set(frame.index as number, { name: String(block.name), args: "" });
+                }
+
+                const delta = frame.delta as Record<string, unknown> | undefined;
+
+                if (frame.type === "content_block_delta" && delta?.type === "input_json_delta") {
+                    const call = calls.get(frame.index as number);
+
+                    if (call) {
+                        call.args += String(delta.partial_json);
+                    }
+                }
+            }
+
+            const list = [...calls.values()];
+            expect(list.map((c) => c.name)).toEqual(["glob_search", "grep_search"]);
+            expect(list.map((c) => c.args)).toEqual(['{"pattern":"*.ts"}', '{"pattern":"TODO"}']);
+        });
+
+        it("never deletes a same-named property from a request it did not tag", async () => {
+            // A client is free to declare its own `__tool_route` parameter.
+            // With nothing tagged, the proxy injected nothing, so it must not
+            // remove anything either.
+            const calls = await toolCalls(mergedStream([`{"${TOOL_ROUTING_TAG}":"list_agents"}`]));
+
+            expect(calls[0].args).toBe(`{"${TOOL_ROUTING_TAG}":"list_agents"}`);
+        });
+
+        it("ignores a tag naming a tool this request never tagged", async () => {
+            // An empty tagged set means the proxy injected nothing, so a
+            // property that merely looks like the tag must not route a call.
+            const calls = await toolCalls(mergedStream(tagged), new Set());
+
+            expect(calls.map((c) => c.name)).toEqual(["run_command", "run_command", "run_command", "read_file"]);
+        });
     });
 });

@@ -1,4 +1,4 @@
-import { sendWarmupMessage } from "@app/claude/lib/warmup/service";
+import { formatWarmupViaHint, sendWarmupMessage } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
@@ -55,19 +55,20 @@ export function registerWarmupCommand(program: Command): void {
             selectedNames = selected as string[];
         }
 
-        const results: Array<{ name: string; success: boolean; duration: number }> = [];
+        const results: Array<{ name: string; success: boolean; duration: number; viaHint: string }> = [];
 
         const spinner = p.spinner();
 
         for (const name of selectedNames) {
             spinner.start(`Warming up ${pc.cyan(name)}...`);
             const start = performance.now();
-            const success = await sendWarmupMessage(name);
+            const sent = await sendWarmupMessage(name);
             const duration = Math.round(performance.now() - start);
-            results.push({ name, success, duration });
+            const viaHint = formatWarmupViaHint(sent.via);
+            results.push({ name, success: sent.success, duration, viaHint });
 
-            if (success) {
-                spinner.stop(`${pc.cyan(name)} ${pc.green("\u2713")} ${pc.dim(`${duration}ms`)}`);
+            if (sent.success) {
+                spinner.stop(`${pc.cyan(name)} ${pc.green("\u2713")} ${pc.dim(`${duration}ms`)}${pc.dim(viaHint)}`);
             } else {
                 spinner.stop(`${pc.cyan(name)} ${pc.red("\u2717 failed")} ${pc.dim(`${duration}ms`)}`);
             }
@@ -83,7 +84,7 @@ export function registerWarmupCommand(program: Command): void {
             const icon = r.success ? pc.green("\u2713") : pc.red("\u2717");
             const label = allAccounts.find((a) => a.name === r.name)?.label;
             const hint = label ? pc.dim(` (${label})`) : "";
-            lines.push(`  ${icon} ${r.name}${hint}  ${pc.dim(`${r.duration}ms`)}`);
+            lines.push(`  ${icon} ${r.name}${hint}  ${pc.dim(`${r.duration}ms`)}${pc.dim(r.viaHint)}`);
         }
 
         lines.push("");
@@ -117,12 +118,12 @@ export function registerWarmupCommand(program: Command): void {
 
             for (const name of accountNames) {
                 const start = performance.now();
-                const success = await sendWarmupMessage(name);
+                const sent = await sendWarmupMessage(name);
                 const duration = Math.round(performance.now() - start);
-                const icon = success ? "\u2713" : "\u2717";
-                out.println(`  ${icon} ${name} (${duration}ms)`);
+                const icon = sent.success ? "\u2713" : "\u2717";
+                out.println(`  ${icon} ${name} (${duration}ms)${formatWarmupViaHint(sent.via)}`);
 
-                if (!success) {
+                if (!sent.success) {
                     failures++;
                 }
             }

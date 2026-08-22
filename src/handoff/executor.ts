@@ -440,10 +440,23 @@ export interface ListHandoffsInput {
     include?: string[];
 }
 
+/**
+ * A task as it appears on a LIST row: the proof is a preview, never the whole
+ * thing. `answer` may be clipped, `context` is always dropped, and the id
+ * arrays hold at most the first few entries. Call handoff_get for the stored
+ * proof — treating this shape as complete loses evidence.
+ */
+export type HandoffTaskPreview = Omit<Handoff["tasks"][number], "proof"> & {
+    proof?: Omit<NonNullable<Handoff["tasks"][number]["proof"]>, "context"> & { context?: undefined };
+};
+
 export interface ListHandoffsResponse {
-    handoffs: (HandoffListRow & { taskList?: Handoff["tasks"] })[];
+    handoffs: (HandoffListRow & { taskList?: HandoffTaskPreview[] })[];
     info: string[];
 }
+
+const PROOF_PREVIEW_CHARS = 200;
+const PROOF_PREVIEW_IDS = 5;
 
 export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = {}): ListHandoffsResponse {
     const by = buildBy(deps);
@@ -475,9 +488,10 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
         const total = rows.length;
         const page = rows.slice(offset, offset + limit);
         const now = Date.now();
-        const handoffs = page.map((h): HandoffListRow & { taskList?: Handoff["tasks"] } => {
+        let proofsClipped = false;
+        const handoffs = page.map((h): HandoffListRow & { taskList?: HandoffTaskPreview[] } => {
             const p = progress(h);
-            const row: HandoffListRow & { taskList?: Handoff["tasks"] } = {
+            const row: HandoffListRow & { taskList?: HandoffTaskPreview[] } = {
                 id: h.id,
                 title: h.title,
                 status: h.status,
@@ -497,13 +511,40 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
             }
 
             if (wantTasks) {
-                row.taskList = h.tasks;
+                // List is a browse surface; full proof blobs belong to
+                // handoff_get. Returning them verbatim made a limit:2 list a
+                // token bomb (grok probe 81442272).
+                row.taskList = h.tasks.map((task): HandoffTaskPreview => {
+                    if (task.proof === undefined) {
+                        return { ...task, proof: undefined };
+                    }
+
+                    const clipped = task.proof.answer.length > PROOF_PREVIEW_CHARS;
+                    const idsClipped =
+                        (task.proof.commitIds?.length ?? 0) > PROOF_PREVIEW_IDS ||
+                        (task.proof.attachmentIds?.length ?? 0) > PROOF_PREVIEW_IDS;
+                    proofsClipped ||= clipped || idsClipped || task.proof.context !== undefined;
+                    return {
+                        ...task,
+                        proof: {
+                            ...task.proof,
+                            answer: clipped ? `${task.proof.answer.slice(0, PROOF_PREVIEW_CHARS)}…` : task.proof.answer,
+                            context: undefined,
+                            commitIds: task.proof.commitIds?.slice(0, PROOF_PREVIEW_IDS),
+                            attachmentIds: task.proof.attachmentIds?.slice(0, PROOF_PREVIEW_IDS),
+                        },
+                    };
+                });
             }
 
             return row;
         });
 
         const info: string[] = [`${total} handoff${total === 1 ? "" : "s"} matched; showing ${page.length}.`];
+
+        if (proofsClipped) {
+            info.push("Task proofs are previews on list — call handoff_get for the full proof.");
+        }
 
         if (total > offset + page.length) {
             info.push(`More available — pass offset: ${offset + page.length}.`);

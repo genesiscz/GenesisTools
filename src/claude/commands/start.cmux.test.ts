@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildLaunchArgs, cmuxPermissionArgs } from "./start";
+import { buildLaunchArgs, cmuxPermissionArgs, passthroughHandlesSession } from "./start";
 
 describe("cmuxPermissionArgs", () => {
     test("injects the bypass because cmux claude-teams execs past the ccc wrapper", () => {
@@ -55,5 +55,15 @@ describe("buildLaunchArgs", () => {
         const args = buildLaunchArgs({ resumeArgs: ["--continue"], passthrough: ["-p"], cmux: false });
 
         expect(args).toEqual(["--continue", "-p"]);
+    });
+});
+
+describe("passthroughHandlesSession", () => {
+    test("--agent-id counts so teammate attach does not open the limit-killed picker", () => {
+        expect(passthroughHandlesSession(["--agent-id", "pageobjects-fable@session-8f96d99f"])).toBe(true);
+    });
+
+    test("bare teammate-unrelated flags do not", () => {
+        expect(passthroughHandlesSession(["--model", "fable"])).toBe(false);
     });
 });

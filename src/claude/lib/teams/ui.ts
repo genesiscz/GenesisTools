@@ -7,7 +7,7 @@ import { renderTree, type TreeNode } from "@genesiscz/utils/prompts/p/tree";
 import { stripAnsi } from "@genesiscz/utils/string";
 import pc from "picocolors";
 import { discoverTeam, discoverTeams } from "./discover";
-import { buildToolsCcTeammateCommand, launchTeammate, pickDefaultAccount } from "./launch";
+import { buildToolsCcTeammateCommand, isLiveSidechain, launchTeammate, pickDefaultAccount } from "./launch";
 import { formatStatusBadge, readProcessEnvKeys } from "./status";
 import type { TeamMemberView, TeamView } from "./types";
 
@@ -56,6 +56,32 @@ function colorStatus(status: TeamMemberView["status"], label: string): string {
     }
 }
 
+/** In-process mates write under the lead session. A new `--agent-id` spawn re-invokes. */
+function isInProcessMate(t: TeamMemberView): boolean {
+    return t.backend === "in-process" || Boolean(t.transcript?.sidechain);
+}
+
+function inProcessSpawnWarning(t: TeamMemberView): string | undefined {
+    if (!isInProcessMate(t)) {
+        return undefined;
+    }
+
+    if (isLiveSidechain(t.transcript)) {
+        return "in-process still live: attach/split starts a new session and re-invokes the assignment";
+    }
+
+    return "in-process: attach/split does not restore the last tool call (new session, or lead resume)";
+}
+
+function teamSelectHint(all: boolean | undefined, teams: TeamView[]): string {
+    const scope = all ? "(all projects)" : "(this project)";
+    if (teams.some((t) => t.teammates.some((m) => isInProcessMate(m)))) {
+        return `${scope} in-process attach re-invokes`;
+    }
+
+    return scope;
+}
+
 export function renderTeamsTree(teams: TeamView[]): string[] {
     if (teams.length === 0) {
         return [pc.dim("(no agent teams found)")];
@@ -93,8 +119,13 @@ export function renderTeamsTree(teams: TeamView[]): string[] {
 
             if (t.transcript && !t.transcript.hasLeadAssignment && t.member.prompt) {
                 children.push({
-                    text: pc.yellow("missing lead assignment — attach injects it"),
+                    text: pc.yellow("missing lead assignment: attach injects it"),
                 });
+            }
+
+            const spawnWarn = inProcessSpawnWarning(t);
+            if (spawnWarn) {
+                children.push({ text: pc.yellow(spawnWarn) });
             }
 
             return {
@@ -161,7 +192,7 @@ export async function runTeamsInteractive(opts: { all?: boolean; account?: strin
 
         const teamPick = await tableSelect({
             message: "Select team",
-            hint: opts.all ? "(all projects)" : "(this project)",
+            hint: teamSelectHint(opts.all, teams),
             columns: [
                 { label: "TEAM", minWidth: 16 },
                 { label: "LIVE", minWidth: 4, align: "right" },
@@ -194,6 +225,9 @@ export async function runTeamsInteractive(opts: { all?: boolean; account?: strin
                                     )
                                 ),
                             t.teammates.length > 6 ? pc.dim(`… +${t.teammates.length - 6} more`) : "",
+                            t.teammates.some((m) => isInProcessMate(m))
+                                ? pc.yellow("in-process attach re-invokes: it does not restore the last tool call")
+                                : "",
                         ].filter(Boolean),
                     };
                 }),
@@ -259,7 +293,9 @@ async function runTeamDetail(teamName: string, accountFlag?: string): Promise<"b
 
     const matePick = await tableSelect({
         message: `Teammates · ${fresh.teamName}`,
-        hint: "(enter to act)",
+        hint: fresh.teammates.some((m) => isInProcessMate(m))
+            ? "in-process attach re-invokes, it does not restore the last tool call"
+            : "(enter to act)",
         columns: [
             { label: "NAME", minWidth: 14 },
             { label: "STATUS", minWidth: 12 },
@@ -335,7 +371,12 @@ function buildTeammateDetail(team: TeamView, t: TeamMemberView): string[] {
     }
 
     if (!t.transcript?.hasLeadAssignment && t.member.prompt) {
-        lines.push(pc.yellow("First assignment missing — attach/split will inject prompt"));
+        lines.push(pc.yellow("First assignment missing: attach/split will inject prompt"));
+    }
+
+    const spawnWarn = inProcessSpawnWarning(t);
+    if (spawnWarn) {
+        lines.push(pc.yellow(spawnWarn));
     }
 
     // Do NOT dump the full tools cc run command here — it wraps and wrecks the frame.
@@ -371,49 +412,86 @@ async function resolveAccountForUi(team: TeamView, accountFlag?: string): Promis
     return pickDefaultAccount(team);
 }
 
+function attachPlanDetail(teammate: TeamMemberView): string {
+    const spawnWarn = inProcessSpawnWarning(teammate);
+    if (spawnWarn) {
+        return pc.yellow(spawnWarn);
+    }
+
+    const t = teammate.transcript;
+    if (t?.hasLeadAssignment && t.sessionId) {
+        return pc.dim(`will --resume ${t.sessionId.slice(0, 8)}`);
+    }
+
+    return pc.yellow("will inject lead assignment after boot");
+}
+
+function attachActionLabel(teammate: TeamMemberView): string {
+    if (isLiveSidechain(teammate.transcript)) {
+        return pc.yellow("Do not spawn: in-process still live (attach would re-invoke)");
+    }
+
+    if (isInProcessMate(teammate)) {
+        return pc.yellow("Resume lead only: in-process attach does not restore last tool call");
+    }
+
+    return pc.cyan("Launch / re-attach (new window or foreground)");
+}
+
+function splitActionLabel(teammate: TeamMemberView): string {
+    if (isInProcessMate(teammate)) {
+        return pc.yellow("Do not split-spawn: that starts a new session and re-invokes");
+    }
+
+    return pc.cyan("Split lead tmux pane + launch with OAuth");
+}
+
 async function runTeammateActions(
     team: TeamView,
     teammate: TeamMemberView,
     accountFlag?: string
 ): Promise<"back" | "quit" | "refresh"> {
-    const account = await resolveAccountForUi(team, accountFlag);
-    const cmd = buildToolsCcTeammateCommand(account, team, teammate);
+    const freshTeam = discoverTeam(team.teamName) ?? team;
+    const freshMate = freshTeam.teammates.find((m) => m.member.name === teammate.member.name) ?? teammate;
+    const account = await resolveAccountForUi(freshTeam, accountFlag);
+    const cmd = buildToolsCcTeammateCommand(account, freshTeam, freshMate);
 
     const action = await tableSelect({
-        message: `${teammate.member.name} · ${team.teamName}`,
-        hint: `account ${account}`,
+        message: `${freshMate.member.name} · ${freshTeam.teamName}`,
+        hint: isInProcessMate(freshMate)
+            ? `account ${account} · in-process attach re-invokes, it does not restore the last tool call`
+            : `account ${account}`,
         columns: [{ label: "ACTION", minWidth: 48 }],
         rows: [
             {
                 value: "focus",
                 cells: [
-                    teammate.live
+                    freshMate.live || isLiveSidechain(freshMate.transcript)
                         ? pc.green("Focus live pane (select in tmux)")
                         : pc.dim("Focus live pane (not running)"),
                 ],
                 detail: [
-                    teammate.live ? pc.dim(`${teammate.live.tmuxSession}:${teammate.live.tmuxPaneId}`) : "",
+                    freshMate.live ? pc.dim(`${freshMate.live.tmuxSession}:${freshMate.live.tmuxPaneId}`) : "",
+                    isLiveSidechain(freshMate.transcript)
+                        ? pc.yellow("in-process: focus the lead pane. Do not attach-spawn.")
+                        : "",
                 ].filter(Boolean),
             },
             {
                 value: "split",
-                cells: [pc.cyan("Split lead tmux pane + launch with OAuth")],
+                cells: [splitActionLabel(freshMate)],
                 detail: [
-                    team.tmuxSession
-                        ? pc.dim(`lead tmux ${team.tmuxSession}`)
+                    attachPlanDetail(freshMate),
+                    freshTeam.tmuxSession
+                        ? pc.dim(`lead tmux ${freshTeam.tmuxSession}`)
                         : pc.yellow("No lead tmux session detected"),
                     pc.dim(ellipsize(cmd, 90)),
                 ],
             },
             {
                 value: "attach",
-                cells: [pc.cyan("Launch / re-attach (new window or foreground)")],
-                detail: [
-                    teammate.transcript?.hasLeadAssignment
-                        ? pc.dim(`will --resume ${teammate.transcript.sessionId.slice(0, 8)}`)
-                        : pc.yellow("will inject lead assignment after boot"),
-                    pc.dim(ellipsize(cmd, 90)),
-                ],
+                cells: [attachActionLabel(freshMate)],
+                detail: [attachPlanDetail(freshMate), pc.dim(ellipsize(cmd, 90))],
             },
             {
                 value: "print",
@@ -440,24 +518,30 @@ async function runTeammateActions(
         return "back";
     }
 
-    if (action === "focus" && !teammate.live) {
-        out.println(pc.yellow("Teammate is not running — use split or attach."));
+    if (action === "focus" && !freshMate.live && !isLiveSidechain(freshMate.transcript)) {
+        out.println(pc.yellow("Teammate is not running. Use split or attach."));
         return "back";
     }
 
     try {
         const result = await launchTeammate({
-            team,
-            teammate,
+            team: freshTeam,
+            teammate: freshMate,
             account,
             mode: action as "focus" | "attach" | "split",
         });
-        out.println(pc.green(`✓ ${result.detail}`));
+        const mark = result.action === "noop" ? pc.yellow("•") : pc.green("✓");
+        out.println(`${mark} ${result.detail}`);
         if (result.command && action !== "focus") {
             out.println(pc.dim(result.command));
         }
 
-        if (action === "split" || action === "attach") {
+        if (
+            (action === "split" || action === "attach") &&
+            result.action !== "noop" &&
+            !freshMate.transcript?.hasLeadAssignment &&
+            !freshMate.transcript?.sidechain
+        ) {
             out.println(
                 pc.dim("If the mate boots empty, the lead assignment is injected when missing from the transcript.")
             );

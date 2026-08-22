@@ -79,7 +79,7 @@ function usageFrom(raw: unknown): AnthropicUsage {
     return usage;
 }
 
-function parsedToolInput(rawArguments: unknown): unknown {
+export function parsedToolInput(rawArguments: unknown): unknown {
     if (typeof rawArguments !== "string" || rawArguments.trim().length === 0) {
         return {};
     }
@@ -146,9 +146,11 @@ export function openAiCompletionToAnthropicMessage(
     };
 }
 
-function frame(type: string, data: Record<string, unknown>): string {
+export function anthropicSseFrame(type: string, data: Record<string, unknown>): string {
     return `event: ${type}\ndata: ${SafeJSON.stringify({ type, ...data })}\n\n`;
 }
+
+const frame = anthropicSseFrame;
 
 type BlockKind = "thinking" | "text" | "tool_use";
 

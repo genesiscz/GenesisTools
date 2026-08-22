@@ -78,7 +78,8 @@ export const HANDOFF_LIST_DESCRIPTION =
     "List recent handoffs, newest-updated first — ALL projects by default; project: '<name>' narrows. " +
     "open: true → only unresolved (not done/cancelled); mine: true → posted by, claimed by, or targeted at " +
     "this session; limit (default 20) + offset page through. Open rows are detailed, claimed rows concise. " +
-    'Optional include: ["tasks"] adds the full task array per row (other include values are ignored with an info line). ' +
+    'Optional include: ["tasks"] adds a task array per row with proof PREVIEWS (answer clipped, context dropped, ' +
+    "id lists capped) — call handoff_get for full proofs. Other include values are ignored with an info line. " +
     "Use the id with handoff_get.";
 
 export const HANDOFF_ACTION_DESCRIPTION =
@@ -179,7 +180,8 @@ export const HANDOFF_LIST_INPUT_SCHEMA = {
         include: {
             type: "array",
             items: { type: "string" },
-            description: 'optional — only "tasks" is honored on list rows (adds full task array as taskList)',
+            description:
+                'optional — only "tasks" is honored on list rows (adds taskList with proof previews; handoff_get returns full proofs)',
         },
     },
 } as const;
