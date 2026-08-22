@@ -4,13 +4,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-/**
- * Check if we're in an interactive TTY context.
- * When false, prompts would hang — callers should suggest CLI flags instead.
- */
-export function isInteractive(): boolean {
-    return !!process.stdin.isTTY;
-}
+export { isInteractive } from "./is-interactive";
 
 /**
  * Enhance a Commander program with better help UX:
