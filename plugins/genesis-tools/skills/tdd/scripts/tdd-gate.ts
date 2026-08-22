@@ -31,9 +31,9 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
-import { env } from "@genesiscz/utils/env";
 
 interface SnapshotEntry {
     path: string;
@@ -96,11 +96,13 @@ interface SessionState {
     green?: GreenRecord;
 }
 
-// TDD_GATE_SESSIONS_ROOT is the test-only override. env.tools.getHome() is GENESIS_TOOLS_HOME ?? homedir()
-// (the sandbox-aware home root; callers append ".genesis-tools" themselves). The @genesiscz import resolves
-// because this plugin runs live from the repo checkout, not from a plugin-cache copy.
-const SESSIONS_ROOT =
-    process.env.TDD_GATE_SESSIONS_ROOT ?? join(env.tools.getHome(), ".genesis-tools", "tdd", "sessions");
+// This script must also run from a plugin-cache copy (Claude plugin cache, ~/.grok/skills) where the
+// repo's node_modules is absent, so it cannot import @genesiscz/utils/env. TOOLS_HOME mirrors
+// env.tools.getHome() exactly: GENESIS_TOOLS_HOME (the sandbox root) ?? homedir(), with callers
+// appending ".genesis-tools" themselves. TDD_GATE_SESSIONS_ROOT is the test-only override.
+// lint-rules-ignore: standalone script without access to @genesiscz/utils/env
+const TOOLS_HOME = process.env.GENESIS_TOOLS_HOME?.trim() || homedir();
+const SESSIONS_ROOT = process.env.TDD_GATE_SESSIONS_ROOT ?? join(TOOLS_HOME, ".genesis-tools", "tdd", "sessions");
 const STATE_FILE = "state.json";
 const LAST_POINTER = ".last";
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
