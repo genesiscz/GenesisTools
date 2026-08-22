@@ -31,9 +31,9 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
+import { env } from "@genesiscz/utils/env";
 
 interface SnapshotEntry {
     path: string;
@@ -97,7 +97,8 @@ interface SessionState {
 }
 
 // Test-only override; a standalone plugin script cannot import the repo's env facade.
-const SESSIONS_ROOT = process.env.TDD_GATE_SESSIONS_ROOT ?? join(homedir(), ".genesis-tools", "tdd", "sessions");
+const SESSIONS_ROOT =
+    process.env.TDD_GATE_SESSIONS_ROOT ?? join(env.tools.getHome(), ".genesis-tools", "tdd", "sessions");
 const STATE_FILE = "state.json";
 const LAST_POINTER = ".last";
 const ANSI_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
