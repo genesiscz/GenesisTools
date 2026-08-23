@@ -3,14 +3,20 @@ import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    auditRegistry,
     blockquote,
     buildLogBody,
     derivedDocPath,
     type Entry,
+    entryBranch,
     expandHome,
     innerBlock,
     matches,
+    nextSteps,
     parseFlags,
+    parsePorcelainMain,
+    rankEntries,
+    resolutionWarnings,
     sh,
     slug,
     splitSentinels,
@@ -100,6 +106,199 @@ describe("matches", () => {
     it("does not match a sibling dir sharing a name prefix", () => {
         const sibling = { toplevel: "/repos/ProjOther", branch: "feat/x", cwd: "/repos/ProjOther" };
         expect(matches({ projectDir: "/repos/Proj", obsidianDir: "/v" }, sibling)).toBe(0);
+    });
+
+    it("does not match a nested git checkout under a parent projectDir", () => {
+        const nestedGit = {
+            toplevel: "/repos/parent/child",
+            branch: "main",
+            cwd: "/repos/parent/child",
+        };
+        expect(matches({ projectDir: "/repos/parent", obsidianDir: "/v" }, nestedGit)).toBe(0);
+    });
+});
+
+describe("matches — linked worktrees", () => {
+    const sibling = {
+        toplevel: "/repos/Proj-wt-feature",
+        branch: "feat/x",
+        cwd: "/repos/Proj-wt-feature",
+        mainProject: "/repos/Proj",
+    };
+
+    it("matches an entry registered against the main checkout", () => {
+        expect(matches({ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" }, sibling)).toBeGreaterThan(0);
+    });
+
+    it("still respects the entry's branch pin from a worktree", () => {
+        expect(matches({ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/other" }, sibling)).toBe(0);
+    });
+
+    it("ranks the worktree-specific entry above the main-checkout one", () => {
+        const viaMain = matches({ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" }, sibling);
+        const viaWorktree = matches(
+            {
+                projectDir: "/repos/Proj",
+                obsidianDir: "/v",
+                branch: "feat/x",
+                worktreeDir: "/repos/Proj-wt-feature",
+            },
+            sibling
+        );
+        expect(viaWorktree).toBeGreaterThan(viaMain);
+    });
+
+    it("does not match another project just because we are in a worktree", () => {
+        expect(matches({ projectDir: "/repos/Other", obsidianDir: "/v" }, sibling)).toBe(0);
+    });
+});
+
+describe("nextSteps", () => {
+    const cmds = { registerCmd: "REGISTER", entriesCmd: "ENTRIES" };
+
+    it("walks Tier 1 → entries → confirm → register when nothing resolved", () => {
+        const steps = nextSteps({ found: false, exact: false, docExists: false, docPath: "", ...cmds });
+        expect(steps[0]).toContain("Tier 1");
+        expect(steps.some((s) => s.includes("ENTRIES"))).toBe(true);
+        expect(steps.some((s) => s.includes("REGISTER"))).toBe(true);
+    });
+
+    it("blocks writing and offers the pin command on a non-exact match", () => {
+        const steps = nextSteps({ found: true, exact: false, docExists: true, docPath: "/v/d.md", ...cmds });
+        expect(steps[0]).toContain("Do not write yet");
+        expect(steps[1]).toContain("REGISTER");
+    });
+
+    it("goes straight to here/log on an exact match with an existing doc", () => {
+        const steps = nextSteps({ found: true, exact: true, docExists: true, docPath: "/v/d.md", ...cmds });
+        expect(steps).toHaveLength(1);
+        expect(steps[0]).toContain("here");
+        expect(steps[0]).toContain("log");
+    });
+
+    it("says to create the file first when the doc is missing", () => {
+        const steps = nextSteps({ found: true, exact: true, docExists: false, docPath: "/v/d.md", ...cmds });
+        expect(steps[0]).toContain("template");
+    });
+});
+
+describe("auditRegistry", () => {
+    const allPresent = () => true;
+
+    it("reports a branch-less entry as a catch-all", () => {
+        const issues = auditRegistry([{ projectDir: "/repos/Proj", obsidianDir: "/v" }], allPresent);
+        expect(issues.map((i) => i.kind)).toEqual(["catch-all"]);
+    });
+
+    it("reports a catch-all with a pinned docPath as sharing one file", () => {
+        const issues = auditRegistry(
+            [{ projectDir: "/repos/Proj", obsidianDir: "/v", docPath: "/v/one.md" }],
+            allPresent
+        );
+        expect(issues.map((i) => i.kind)).toEqual(["catch-all", "shared-doc"]);
+    });
+
+    it("stays silent on a healthy branch-pinned entry", () => {
+        const issues = auditRegistry([{ projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" }], allPresent);
+        expect(issues).toEqual([]);
+    });
+
+    it("reports deleted project, worktree and vault directories", () => {
+        const entry: Entry = {
+            projectDir: "/gone/Proj",
+            obsidianDir: "/gone/vault",
+            branch: "feat/x",
+            worktreeDir: "/gone/wt",
+        };
+        const issues = auditRegistry([entry], () => false);
+        expect(issues.map((i) => i.kind).sort()).toEqual(["missing-project", "missing-vault-dir", "missing-worktree"]);
+    });
+
+    it("carries a fix command on every issue", () => {
+        const issues = auditRegistry([{ projectDir: "/repos/Proj", obsidianDir: "/v" }], allPresent);
+        expect(issues.every((i) => i.fix.length > 0)).toBe(true);
+    });
+});
+
+describe("rankEntries", () => {
+    const ctx = { toplevel: "/repos/Proj", branch: "feat/x", cwd: "/repos/Proj" };
+
+    it("puts the branch-pinned entry above the project-wide one", () => {
+        const wide: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/wide" };
+        const pinned: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/pinned", branch: "feat/x" };
+        expect(rankEntries([wide, pinned], ctx)[0].entry.obsidianDir).toBe("/v/pinned");
+    });
+
+    it("breaks an equal-specificity tie with the newest registration", () => {
+        const old: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/old" };
+        const recent: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/recent" };
+        expect(rankEntries([old, recent], ctx)[0].entry.obsidianDir).toBe("/v/recent");
+    });
+
+    it("drops entries for other projects and other branches", () => {
+        const foreign: Entry = { projectDir: "/repos/Other", obsidianDir: "/v/foreign" };
+        const otherBranch: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/other", branch: "feat/y" };
+        const mine: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/mine", branch: "feat/x" };
+        expect(rankEntries([foreign, otherBranch, mine], ctx).map((r) => r.entry.obsidianDir)).toEqual(["/v/mine"]);
+    });
+});
+
+describe("resolutionWarnings", () => {
+    const ctx = { toplevel: "/repos/Proj", branch: "feat/x", cwd: "/repos/Proj" };
+
+    it("flags a project-wide entry as claiming every branch", () => {
+        const warnings = resolutionWarnings({
+            entry: { projectDir: "/repos/Proj", obsidianDir: "/v" },
+            ctx,
+            alternatives: [],
+            docExists: true,
+        });
+        expect(warnings.some((w) => w.includes("project-wide entry"))).toBe(true);
+    });
+
+    it("flags a project-wide entry that also pins a shared docPath", () => {
+        const warnings = resolutionWarnings({
+            entry: { projectDir: "/repos/Proj", obsidianDir: "/v", docPath: "/v/one.md" },
+            ctx,
+            alternatives: [],
+            docExists: true,
+        });
+        expect(warnings.some((w) => w.includes("same file"))).toBe(true);
+    });
+
+    it("stays silent for a branch-exact match whose doc exists", () => {
+        const warnings = resolutionWarnings({
+            entry: { projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" },
+            ctx,
+            alternatives: [],
+            docExists: true,
+        });
+        expect(warnings).toEqual([]);
+    });
+
+    it("counts the other matching entries and the missing doc", () => {
+        const warnings = resolutionWarnings({
+            entry: { projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" },
+            ctx,
+            alternatives: [{ entry: { projectDir: "/repos/Proj", obsidianDir: "/v2" }, score: 1 }],
+            docExists: false,
+        });
+        expect(warnings.some((w) => w.includes("1 other registry entry"))).toBe(true);
+        expect(warnings.some((w) => w.includes("does not exist yet"))).toBe(true);
+    });
+});
+
+describe("entryBranch", () => {
+    it("pins the current branch when none is given", () => {
+        expect(entryBranch({ obsidian: "/v" }, "feat/x")).toBe("feat/x");
+    });
+
+    it("keeps an explicit branch", () => {
+        expect(entryBranch({ branch: "feat/y" }, "feat/x")).toBe("feat/y");
+    });
+
+    it("makes a catch-all only when --all-branches is passed", () => {
+        expect(entryBranch({ "all-branches": "" }, "feat/x")).toBe("");
     });
 });
 
@@ -269,6 +468,28 @@ describe("parseFlags", () => {
 
     it("ignores positional noise", () => {
         expect(parseFlags(["stray", "--branch", "feat/x"])).toEqual({ branch: "feat/x" });
+    });
+
+    it("does not let a boolean flag swallow the next flag's value", () => {
+        expect(parseFlags(["--all-branches", "--obsidian", "/vault"])).toEqual({
+            "all-branches": "",
+            obsidian: "/vault",
+        });
+    });
+});
+
+describe("parsePorcelainMain", () => {
+    it("returns the first worktree path when it is not this checkout", () => {
+        const text = "worktree /repos/Proj\nHEAD abc\n\nworktree /repos/Proj-wt\nHEAD def\n";
+        expect(parsePorcelainMain(text, "/repos/Proj-wt")).toBe("/repos/Proj");
+    });
+
+    it("returns empty when this checkout is already the main one", () => {
+        expect(parsePorcelainMain("worktree /repos/Proj\nHEAD abc\n", "/repos/Proj")).toBe("");
+    });
+
+    it("returns empty on blank git output", () => {
+        expect(parsePorcelainMain("", "/repos/Proj")).toBe("");
     });
 });
 
