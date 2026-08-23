@@ -110,6 +110,28 @@ Empirically verified 2026-07-13 (two live probe tests + teammate-transcript fore
 
 Never put the payload only in `SendMessage` (not durable, not cursor-tracked) and never rely on the agents channel alone to wake an idle teammate. A teammate that is mid-turn WILL receive Monitor events normally between tool calls — the nudge is only load-bearing for idle recipients, but since the sender can't know, always send it.
 
+## 🛑 Protocol JSON on `SendMessage` is LIVE CONTROL, never a test payload
+
+Observed 2026-08-20 in a probe session. `SendMessage` carrying
+`{"type":"shutdown_request"}` was treated by the harness as a real shutdown:
+the recipient approved it and terminated. A second teammate emitted
+`shutdown_approved` and terminated as well, without ever being sent a shutdown.
+A teammate that received no shutdown at all answered with eight
+`shutdown_rejected` messages in 105 seconds.
+
+- **Never send harness protocol JSON to "see what happens".** There is no dry
+  run. The shape IS the command, so a probe payload kills the agent.
+- To test message delivery, send prose, or send JSON under a key of your own
+  (`{"probe": {...}}`) that no harness verb matches.
+- Protocol replies are also positional: a `shutdown_response` is rejected
+  unless it is addressed to `team-lead`, while other reply shapes are accepted
+  from anywhere. Do not infer one rule from the other.
+- This concerns the harness `SendMessage` tool only. **`tools agents` never
+  does this**: `message`/`request` bodies are opaque strings, the receiver only
+  prints them (`src/agents/lib/filter.ts`), and shutdown is triggered solely by
+  OS signals (`src/agents/lib/lifecycle.ts`). Nothing you put in an agents-channel
+  body can terminate a peer.
+
 `login` writes received events to stdout as JSONL lines. Each line is one event you should react to.
 
 ```bash
