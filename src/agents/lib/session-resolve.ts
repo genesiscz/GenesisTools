@@ -7,6 +7,8 @@ import { agentsRoot } from "./paths";
 
 const SINGLE_RECENT_WINDOW_MS = 60_000;
 
+const SESSION_ENV_KEYS = ["GENESIS_AGENTS_SESSION", "CLAUDE_CODE_SESSION_ID", "GROK_SESSION_ID"] as const;
+
 const log = logger.child({ component: "agents:session-resolve" });
 
 export interface SessionResolveResult {
@@ -16,11 +18,9 @@ export interface SessionResolveResult {
 }
 
 function envSession(): string | null {
-    // Dynamic-key lookup (same helper used for ask ProviderConfig.envKey) routed
-    // through the env facade so env.testing.set()/withOverrides() stays the
-    // single override mechanism for this codebase, instead of a parallel
-    // process.env read path.
-    return env.ai.getByEnvKey("CLAUDE_CODE_SESSION_ID") ?? null;
+    // Routed through the env facade so env.testing.set()/withOverrides() stays
+    // the single override mechanism, instead of a parallel process.env read.
+    return env.getFirstValue(SESSION_ENV_KEYS) ?? null;
 }
 
 function singleRecentSession(): string | null {
@@ -93,7 +93,7 @@ export function resolveSession(explicit: string | undefined): SessionResolveResu
     }
 
     throw new FriendlyError(
-        "could not resolve a session: --session was not given, $CLAUDE_CODE_SESSION_ID is unset, and no other session has been active in the last 60s",
-        "Pass --session <id> explicitly, OR set CLAUDE_CODE_SESSION_ID, OR start a fresh swarm by running a register/login command with --session <id> first."
+        "could not resolve a session: --session was not given, $GENESIS_AGENTS_SESSION / $CLAUDE_CODE_SESSION_ID / $GROK_SESSION_ID are unset, and no other session has been active in the last 60s",
+        "Pass --session <id> explicitly, OR set GENESIS_AGENTS_SESSION (or CLAUDE_CODE_SESSION_ID / GROK_SESSION_ID), OR start a fresh swarm by running a login command with --session <id> first."
     );
 }

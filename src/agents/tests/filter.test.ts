@@ -57,6 +57,18 @@ describe("filter.isVisibleToAgent", () => {
         expect(isVisibleToAgent(e, agentAlpha)).toBe(false);
     });
 
+    test("main agent sees peer-to-peer messages (orchestrator follow)", () => {
+        const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
+        const e = msgEvent({ type: "message", to_agent_ids: ["agt_other"] });
+        expect(isVisibleToAgent(e, main)).toBe(true);
+    });
+
+    test("main agent does not see its own sends", () => {
+        const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
+        const e = msgEvent({ type: "message", from_agent_id: "main_x", to_agent_ids: ["agt_other"] });
+        expect(isVisibleToAgent(e, main)).toBe(false);
+    });
+
     test("delivers routed replies to the original sender", () => {
         const reply: FeedEvent = {
             seq: 11,
@@ -229,5 +241,16 @@ describe("filter.filterForAgent", () => {
         ];
         const result = filterForAgent(events, agentAlpha);
         expect(result.length).toBe(2);
+    });
+
+    test("main keeps peer-to-peer directs and drops its own sends", () => {
+        const main: AgentRecord = { ...agentAlpha, agent_id: "main_x", agent_name: "lead", is_main: true };
+        const events: FeedEvent[] = [
+            msgEvent({ type: "message", to_agent_ids: ["agt_other"] }),
+            msgEvent({ type: "message", from_agent_id: "main_x", to_agent_ids: ["agt_other"] }),
+        ];
+        const result = filterForAgent(events, main);
+        expect(result.length).toBe(1);
+        expect(result[0]?.type === "message" && result[0].to_agent_ids).toEqual(["agt_other"]);
     });
 });
