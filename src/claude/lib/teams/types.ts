@@ -38,12 +38,23 @@ export interface TeammateLastMessage {
 }
 
 export interface TeammateTranscriptRef {
+    /**
+     * Id to pass to `claude --resume`. For a standalone teammate jsonl this is
+     * that file's session. For an in-process sidechain it is the LEAD session
+     * (the jsonl lives under `<lead>/subagents/` and shares the lead's id).
+     */
     sessionId: string;
     path: string;
     mtimeMs: number;
     hasLeadAssignment: boolean;
     lastMessage?: TeammateLastMessage;
     messageCount: number;
+    /**
+     * True when this file is `<lead-session>/subagents/agent-*.jsonl` — the
+     * in-process teammate transcript. It is not a session you can --resume as
+     * a new `--agent-id` process.
+     */
+    sidechain?: boolean;
 }
 
 export interface LiveTeammateProcess {

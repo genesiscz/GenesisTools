@@ -31,11 +31,31 @@ export interface LaunchResult {
     command?: string;
 }
 
+/** In-process sidechain still being written: do not spawn a second `--agent-id` process. */
+export const LIVE_SIDECHAIN_MS = 90_000;
+
+export function isLiveSidechain(transcript: TeamMemberView["transcript"] | undefined, now = Date.now()): boolean {
+    if (!transcript?.sidechain) {
+        return false;
+    }
+
+    return now - transcript.mtimeMs < LIVE_SIDECHAIN_MS;
+}
+
 /**
  * Build the argv Claude needs to rejoin an agent-team as this teammate.
  * Prefer --resume when a transcript exists (keeps history + first assignment).
+ *
+ * In-process teammates write under `<lead>/subagents/`. That file shares the
+ * lead's session id, so the only honest resume is the lead itself — never a
+ * fresh `--agent-id` spawn, which re-invokes the assignment as a new session.
  */
 export function buildTeammateClaudeArgs(team: TeamView, teammate: TeamMemberView): string[] {
+    const transcript = teammate.transcript;
+    if (transcript?.sidechain && transcript.sessionId) {
+        return ["--resume", transcript.sessionId];
+    }
+
     const m = teammate.member;
     const teamName = team.config.name || team.teamName;
     const args = [
@@ -62,8 +82,8 @@ export function buildTeammateClaudeArgs(team: TeamView, teammate: TeamMemberView
 
     // Resume a prior transcript only when it already has the lead assignment
     // (or any real messages). Empty/auth-fail sessions are better restarted.
-    if (teammate.transcript?.hasLeadAssignment && teammate.transcript.sessionId) {
-        args.push("--resume", teammate.transcript.sessionId);
+    if (transcript?.hasLeadAssignment && transcript.sessionId) {
+        args.push("--resume", transcript.sessionId);
     }
 
     return args;
@@ -253,7 +273,80 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
     const command = buildToolsCcTeammateCommand(account, opts.team, opts.teammate);
     const cwd = opts.teammate.member.cwd || opts.team.cwd || process.cwd();
     const inject = opts.injectAssignment !== false;
-    const needsInject = inject && Boolean(opts.teammate.member.prompt) && !opts.teammate.transcript?.hasLeadAssignment;
+    const needsInject =
+        inject &&
+        Boolean(opts.teammate.member.prompt) &&
+        !opts.teammate.transcript?.hasLeadAssignment &&
+        !opts.teammate.transcript?.sidechain;
+
+    if (isLiveSidechain(opts.teammate.transcript) && opts.mode !== "focus") {
+        const ageSec = Math.max(0, Math.round((Date.now() - opts.teammate.transcript!.mtimeMs) / 1000));
+        logger.info(
+            { path: opts.teammate.transcript!.path, ageSec, mode: opts.mode },
+            "[teams] refusing to spawn a second process for a live in-process teammate"
+        );
+
+        return {
+            action: "noop",
+            detail:
+                `in-process teammate still live (transcript updated ${ageSec}s ago). ` +
+                `Not spawning a second process — that re-invokes the assignment as a new session. ` +
+                `Tail: tools claude tail -a ${opts.teammate.member.name}` +
+                (opts.teammate.transcript!.sessionId
+                    ? `  Resume lead: tools cc run ${account} -- --resume ${opts.teammate.transcript!.sessionId}`
+                    : ""),
+            command,
+        };
+    }
+
+    // In-process mate: focus the lead pane if we have one. Do not fall through
+    // to a `--agent-id` spawn — that is a new session, not this teammate.
+    if (opts.mode === "focus" && isLiveSidechain(opts.teammate.transcript)) {
+        const leadLive = opts.team.lead?.live;
+        if (leadLive?.tmuxSession && leadLive.tmuxPaneId) {
+            const tmux = resolveTmuxBin();
+            const selected = Bun.spawnSync([tmux, "select-pane", "-t", leadLive.tmuxPaneId], {
+                stdout: "ignore",
+                stderr: "pipe",
+            });
+
+            if (selected.exitCode !== 0) {
+                throw new Error(
+                    `tmux select-pane ${leadLive.tmuxPaneId} failed: ${selected.stderr.toString().trim() || "unknown error"}`
+                );
+            }
+
+            if (!env.get("TMUX")) {
+                Bun.spawnSync([tmux, "attach-session", "-t", leadLive.tmuxSession], {
+                    stdout: "inherit",
+                    stderr: "inherit",
+                    stdin: "inherit",
+                });
+            }
+
+            return {
+                action: "focused",
+                detail: `Focused lead ${leadLive.tmuxSession}:${leadLive.tmuxPaneId} (in-process teammate)`,
+                command,
+            };
+        }
+
+        // Discovery cannot always name the lead's pane for a team whose
+        // teammates are all in-process: lead records carry no teamName or
+        // parentSessionId, and there are no teammate panes to locate it by.
+        // The sidechain transcript still knows the lead SESSION, so hand that
+        // over instead of leaving the user with nothing actionable.
+        const ageSec = Math.max(0, Math.round((Date.now() - opts.teammate.transcript!.mtimeMs) / 1000));
+        const leadSession = opts.teammate.transcript!.sessionId;
+        return {
+            action: "noop",
+            detail:
+                `in-process teammate still live (transcript updated ${ageSec}s ago) with no tmux pane to focus. ` +
+                `Tail: tools claude tail -a ${opts.teammate.member.name}` +
+                (leadSession ? `  Focus the lead: tools claude cmux focus ${leadSession}` : ""),
+            command,
+        };
+    }
 
     // Already running → focus pane
     if (opts.mode === "focus" || (opts.mode === "attach" && opts.teammate.live?.tmuxPaneId)) {
@@ -273,7 +366,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             }
 
             // If we are inside tmux, also select the window; attach is for outside
-            if (!process.env.TMUX) {
+            if (!env.get("TMUX")) {
                 Bun.spawnSync([tmux, "attach-session", "-t", live.tmuxSession], {
                     stdout: "inherit",
                     stderr: "inherit",
@@ -324,7 +417,7 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
     }
 
     // attach / launch in current context
-    if (process.env.TMUX) {
+    if (env.get("TMUX")) {
         // Launch in a new window of the current session so we don't clobber the caller
         const tmux = resolveTmuxBin();
         const name = opts.teammate.member.name.slice(0, 20);

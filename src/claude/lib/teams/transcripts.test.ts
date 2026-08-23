@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -85,5 +85,166 @@ describe("indexTeamTranscripts with awkward agent names", () => {
         writeTranscript(dir, "elsewhere", "someone");
 
         expect(indexTeamTranscripts(dir, "session-different").size).toBe(0);
+    });
+});
+
+describe("indexTeamTranscripts in-process sidechains", () => {
+    const leadId = "3ef3c468-e0f1-4959-8f16-e2d3ce7c4feb";
+
+    function writeSidechain(dir: string, agentName: string, lastText: string): string {
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = `agent-a${agentName}-629d28c8906398e7`;
+        writeFileSync(
+            join(sub, `${stem}.meta.json`),
+            SafeJSON.stringify({
+                name: agentName,
+                teamName: TEAM,
+                taskKind: "in_process_teammate",
+            })
+        );
+
+        const lines = [
+            {
+                type: "user",
+                sessionId: leadId,
+                timestamp: "2026-08-20T16:50:36.000Z",
+                message: { content: `<teammate-message teammate_id="team-lead">Do the thing</teammate-message>` },
+            },
+            {
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: lastText }] },
+            },
+        ];
+        const path = join(sub, `${stem}.jsonl`);
+        writeFileSync(path, `${lines.map((l) => SafeJSON.stringify(l)).join("\n")}\n`);
+        return path;
+    }
+
+    test("meta.teamName owns the sidechain — transcript text cannot claim it for another team", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = "agent-aborrowed-629d28c8906398e7";
+        writeFileSync(
+            join(sub, `${stem}.meta.json`),
+            SafeJSON.stringify({ name: "borrowed", teamName: "team-alpha", taskKind: "in_process_teammate" })
+        );
+        // The body mentions the other team, which used to be enough to index
+        // this agent under it and later resume the wrong lead session.
+        writeFileSync(
+            join(sub, `${stem}.jsonl`),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: `working alongside ${TEAM} on the same repo` }] },
+            })}\n`
+        );
+
+        expect(indexTeamTranscripts(dir, TEAM).get("borrowed")).toBeUndefined();
+        expect(indexTeamTranscripts(dir, "team-alpha").get("borrowed")).toBeDefined();
+    });
+
+    test("an ordinary subagent sidecar is not indexed as a teammate", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = "agent-aexplore-629d28c8906398e7";
+        writeFileSync(
+            join(sub, `${stem}.meta.json`),
+            SafeJSON.stringify({ name: "explore", teamName: TEAM, taskKind: "task" })
+        );
+        writeFileSync(
+            join(sub, `${stem}.jsonl`),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: "searched the repo" }] },
+            })}\n`
+        );
+
+        expect(indexTeamTranscripts(dir, TEAM).get("explore")).toBeUndefined();
+    });
+
+    test("indexes <lead>/subagents/agent-*.jsonl via meta.json even without agentName fields", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        writeSidechain(dir, "pageobjects-fable", "While the retry downloads, verifying the MePAS locators.");
+
+        const found = indexTeamTranscripts(dir, TEAM).get("pageobjects-fable");
+        expect(found).toBeDefined();
+        expect(found?.sidechain).toBe(true);
+        expect(found?.sessionId).toBe(leadId);
+        expect(found?.hasLeadAssignment).toBe(true);
+        expect(found?.lastMessage?.text).toContain("MePAS locators");
+        expect(found?.path).toContain(`${leadId}/subagents/`);
+    });
+
+    test("a newer sidechain wins over an older standalone jsonl of the same agent", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        const standaloneId = "b9799f97-ead9-4d25-ada1-51635a3e924f";
+        writeTranscript(dir, standaloneId, "pageobjects-fable");
+        const side = writeSidechain(dir, "pageobjects-fable", "MePAS selectors confirmed correct.");
+        expect(side).toContain("subagents");
+
+        // Back-to-back writes can land on the same mtime, and the standalone
+        // file is indexed first, so a tie would keep it and fail this test for
+        // a reason that has nothing to do with the rule under test.
+        const hour = new Date(Date.now() - 3_600_000);
+        utimesSync(join(dir, `${standaloneId}.jsonl`), hour, hour);
+
+        const found = indexTeamTranscripts(dir, TEAM).get("pageobjects-fable");
+        expect(found?.sidechain).toBe(true);
+        expect(found?.sessionId).toBe(leadId);
+        expect(found?.lastMessage?.text).toContain("MePAS selectors");
+    });
+
+    test("does not treat the filename agent-a… as the --resume id", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
+        writeSidechain(dir, "pageobjects-fable", "on it");
+
+        const found = indexTeamTranscripts(dir, TEAM).get("pageobjects-fable");
+        expect(found?.sessionId).toBe(leadId);
+        expect(found?.sessionId.startsWith("agent-")).toBe(false);
+    });
+});
+
+describe("indexTeamTranscripts cache invalidation", () => {
+    const leadId = "8b1c1f2e-1111-4222-8333-444455556666";
+
+    test("editing only the sidecar meta re-indexes: the cache key covers it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "teams-cache-"));
+        const sub = join(dir, leadId, "subagents");
+        mkdirSync(sub, { recursive: true });
+        const stem = "agent-amover-629d28c8906398e7";
+        const metaPath = join(sub, `${stem}.meta.json`);
+        const write = (teamName: string): void => {
+            writeFileSync(metaPath, SafeJSON.stringify({ name: "mover", teamName, taskKind: "in_process_teammate" }));
+        };
+
+        write(TEAM);
+        writeFileSync(
+            join(sub, `${stem}.jsonl`),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                sessionId: leadId,
+                timestamp: "2026-08-20T17:12:25.000Z",
+                message: { content: [{ type: "text", text: "on it" }] },
+            })}\n`
+        );
+
+        // Warm the cache for this project dir.
+        expect(indexTeamTranscripts(dir, TEAM).get("mover")).toBeDefined();
+
+        // Hand the sidechain to a different team, touching ONLY the meta. A
+        // fingerprint built from the jsonl alone would keep serving the old
+        // mapping and leave this teammate on the wrong team.
+        write("team-elsewhere");
+
+        expect(indexTeamTranscripts(dir, TEAM).get("mover")).toBeUndefined();
+        expect(indexTeamTranscripts(dir, "team-elsewhere").get("mover")).toBeDefined();
     });
 });
