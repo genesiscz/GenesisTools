@@ -1,3 +1,4 @@
+import { routedToolName, stripRoutingTag } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -45,13 +46,88 @@ export function toolMatchersFromBody(body: JsonRecord): ToolMatcher[] {
  * match is trusted; anything else falls back to the original block's name and
  * fails loudly client-side rather than running the wrong tool.
  */
+function toolFits(tool: ToolMatcher, argKeys: string[]): boolean {
+    return tool.required.every((key) => argKeys.includes(key)) && argKeys.every((key) => tool.properties.includes(key));
+}
+
 function matchToolName(argKeys: string[], tools: ToolMatcher[], fallback: string): string {
-    const matches = tools.filter(
-        (tool) =>
-            tool.required.every((key) => argKeys.includes(key)) && argKeys.every((key) => tool.properties.includes(key))
-    );
+    const matches = tools.filter((tool) => toolFits(tool, argKeys));
 
     return matches.length === 1 ? matches[0].name : fallback;
+}
+
+function parseRecord(text: string): JsonRecord | undefined {
+    try {
+        const parsed = SafeJSON.parse(text, { strict: true });
+        return isJsonRecord(parsed) ? parsed : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Which held object belongs to the name the wire already sent.
+ *
+ * Grok does not only lose the second call's NAME, it also puts the wrong
+ * arguments first: a merged block declaring `Edit` arrived carrying
+ * `{query, count}`, so Edit was rejected for a missing `file_path` while the
+ * search call it belonged to never ran. When the first object does not fit the
+ * declared tool but one orphan does, they are swapped and BOTH calls come out
+ * right. When nothing fits, the order is left alone so the call still fails
+ * loudly rather than being quietly reassigned to a guess.
+ */
+function assignFirstCallArgs(
+    block: ToolBlockState,
+    held: string[],
+    tools: ToolMatcher[],
+    taggedTools: Set<string>
+): { firstArgs: string; leftovers: string[] } {
+    const declared = tools.find((tool) => tool.name === block.toolName);
+    const first = parseRecord(block.firstText);
+
+    if (first === undefined) {
+        return { firstArgs: block.firstText, leftovers: held };
+    }
+
+    // A routing tag is authoritative: two tagged tools share the same KEY, so
+    // key fitting cannot tell their objects apart — only the tag's value can.
+    const firstRouted = routedToolName(first, taggedTools);
+    const firstBelongs =
+        firstRouted !== undefined
+            ? firstRouted === block.toolName
+            : declared === undefined || toolFits(declared, Object.keys(first));
+
+    if (firstBelongs) {
+        return { firstArgs: block.firstText, leftovers: held };
+    }
+
+    const swapIndex = held.findIndex((candidate) => {
+        const parsed = parseRecord(candidate);
+
+        if (parsed === undefined) {
+            return false;
+        }
+
+        const routed = routedToolName(parsed, taggedTools);
+
+        if (routed !== undefined) {
+            return routed === block.toolName;
+        }
+
+        return declared !== undefined && toolFits(declared, Object.keys(parsed));
+    });
+
+    if (swapIndex === -1) {
+        return { firstArgs: block.firstText, leftovers: held };
+    }
+
+    logger.warn(
+        { tool: block.toolName, position: swapIndex + 1 },
+        "ai-proxy: grok put another call's arguments first in a merged block — swapped them back so both calls are valid"
+    );
+    const leftovers = [...held];
+    leftovers[swapIndex] = block.firstText;
+    return { firstArgs: held[swapIndex], leftovers };
 }
 
 /**
@@ -113,6 +189,14 @@ interface ToolBlockState {
     orphanScanner: JsonScanner;
     /** Set when trailing bytes were not a second object — stop interpreting. */
     disabled: boolean;
+    /**
+     * The FIRST object's bytes, held until the block stops. Grok also mismatches
+     * which arguments ride under which name: a merged block declaring `Edit`
+     * arrived carrying `{query, count}`, so Edit was rejected for a missing
+     * file_path it was never given. Holding lets the stop handler hand each
+     * parsed object to the tool whose schema it actually fits.
+     */
+    firstText: string;
 }
 
 /**
@@ -140,12 +224,22 @@ interface ToolBlockState {
  */
 export function repairAnthropicSseIndices(
     upstream: ReadableStream<Uint8Array>,
-    options?: { tools?: ToolMatcher[] }
+    options?: { tools?: ToolMatcher[]; taggedTools?: Set<string> }
 ): ReadableStream<Uint8Array> {
     const reader = upstream.getReader();
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
     const tools = options?.tools ?? [];
+    const taggedTools = options?.taggedTools ?? new Set<string>();
+
+    /**
+     * Strip the routing tag, but ONLY when this request actually injected it.
+     * A client is free to declare a real parameter of the same name, and
+     * deleting it would corrupt a call this proxy never touched.
+     */
+    function untag(argsText: string): string {
+        return taggedTools.size > 0 ? stripRoutingTag(argsText) : argsText;
+    }
     let buffer = "";
     let nextIndex = 0;
     let currentIndex = 0;
@@ -185,7 +279,9 @@ export function repairAnthropicSseIndices(
             }
 
             if (!block.scanner.complete) {
-                pending += char;
+                // Held, not streamed: which tool these arguments belong to is
+                // not known until the block stops and the orphans are in.
+                block.firstText += char;
                 scanChar(block.scanner, char);
                 continue;
             }
@@ -198,11 +294,15 @@ export function repairAnthropicSseIndices(
 
                 if (char !== "{") {
                     // Not a second call: give up on splitting and hand ALL held
-                    // bytes back verbatim — including orphans already buffered —
-                    // so the ONE call fails loudly instead of pairing a guessed
-                    // split with a corrupted first call.
+                    // bytes back — the held first object and any buffered
+                    // orphans — so the ONE call fails loudly instead of pairing
+                    // a guessed split with a corrupted first call. Each held
+                    // object is still complete JSON, so the routing tag comes
+                    // off here too: giving up on the split is no reason to show
+                    // the client a property this proxy invented.
                     block.disabled = true;
-                    pending += [...block.orphans, char].join("");
+                    pending += [...[block.firstText, ...block.orphans].map(untag), char].join("");
+                    block.firstText = "";
                     block.orphans = [];
                     continue;
                 }
@@ -229,28 +329,74 @@ export function repairAnthropicSseIndices(
 
     /** The real stop closes the original block, then the orphans become blocks. */
     function emitStopAndOrphans(block: ToolBlockState): string {
-        const frames = [frameText("content_block_stop", { index: block.index })];
-        const leftovers = block.orphanText !== null ? [...block.orphans, block.orphanText] : block.orphans;
+        const held = block.orphanText !== null ? [...block.orphans, block.orphanText] : block.orphans;
+        const { firstArgs, leftovers } = assignFirstCallArgs(block, held, tools, taggedTools);
+        const frames: string[] = [];
+
+        // The held first object goes out now, under the name the wire already
+        // sent — possibly swapped with an orphan that actually fits that name.
+        // The routing tag is this proxy's own addition and is stripped here, so
+        // the client only ever sees the schema it asked for.
+        if (firstArgs.length > 0) {
+            frames.push(
+                frameText("content_block_delta", {
+                    index: block.index,
+                    delta: { type: "input_json_delta", partial_json: untag(firstArgs) },
+                })
+            );
+        }
+
+        frames.push(frameText("content_block_stop", { index: block.index }));
 
         for (const orphan of leftovers) {
             currentIndex = nextIndex;
             nextIndex += 1;
 
             let name = block.toolName;
+            let routed = false;
             try {
                 const parsed = SafeJSON.parse(orphan, { strict: true });
 
                 if (isJsonRecord(parsed)) {
-                    name = matchToolName(Object.keys(parsed), tools, block.toolName);
+                    // The routing tag names its own tool, so it settles the
+                    // no-argument case that key matching cannot. Key matching
+                    // still runs for every untagged call.
+                    const tagged = routedToolName(parsed, taggedTools);
+                    routed = tagged !== undefined;
+                    name = tagged ?? matchToolName(Object.keys(parsed), tools, block.toolName);
                 }
             } catch (err) {
                 logger.debug({ err }, "ai-proxy: merged-call orphan did not parse; keeping the original tool name");
             }
 
-            logger.warn(
-                { from: block.toolName, to: name, index: currentIndex },
-                "ai-proxy: grok merged an extra tool call into one block — emitted as its own tool_use"
-            );
+            // An orphan with NO arguments is a no-arg call whose name the wire
+            // destroyed. If the fallback tool requires arguments, the name we
+            // are about to emit is certainly wrong and the client will reject
+            // it — say so here, or the InputValidationError reads as a bug in
+            // the tool being blamed.
+            const noArgs = orphan.trim() === "{}";
+            const fallbackNeedsArgs = tools.some((t) => t.name === name && t.required.length > 0);
+
+            if (routed) {
+                logger.debug(
+                    { from: block.toolName, to: name, index: currentIndex },
+                    "ai-proxy: merged tool call named by its routing tag"
+                );
+            } else if (noArgs && fallbackNeedsArgs) {
+                logger.warn(
+                    {
+                        blamed: name,
+                        candidates: tools.filter((t) => t.required.length === 0).map((t) => t.name),
+                        index: currentIndex,
+                    },
+                    "ai-proxy: grok destroyed the name of a no-arg tool call; no unique match, so it goes out under a tool that requires arguments and the client will reject it"
+                );
+            } else {
+                logger.warn(
+                    { from: block.toolName, to: name, index: currentIndex },
+                    "ai-proxy: grok merged an extra tool call into one block — emitted as its own tool_use"
+                );
+            }
 
             frames.push(
                 frameText("content_block_start", {
@@ -264,7 +410,7 @@ export function repairAnthropicSseIndices(
                 }),
                 frameText("content_block_delta", {
                     index: currentIndex,
-                    delta: { type: "input_json_delta", partial_json: orphan },
+                    delta: { type: "input_json_delta", partial_json: untag(orphan) },
                 }),
                 frameText("content_block_stop", { index: currentIndex })
             );
@@ -312,6 +458,7 @@ export function repairAnthropicSseIndices(
                               orphanText: null,
                               orphanScanner: createJsonScanner(),
                               disabled: false,
+                              firstText: "",
                           }
                         : null;
 
@@ -330,11 +477,11 @@ export function repairAnthropicSseIndices(
                     const block = toolBlock;
                     toolBlock = null;
 
-                    if (block.orphans.length > 0 || block.orphanText !== null) {
-                        // The original data line is replaced wholesale; the stop's
-                        // own event: line already passed through above it.
-                        return emitStopAndOrphans(block).replace(/^event: content_block_stop\n/, "");
-                    }
+                    // Always go through the stop handler: the first call's
+                    // arguments are held until here even when nothing merged.
+                    // The original data line is replaced wholesale; the stop's
+                    // own event: line already passed through above it.
+                    return emitStopAndOrphans(block).replace(/^event: content_block_stop\n/, "");
                 }
             }
 
@@ -380,7 +527,7 @@ export function repairAnthropicSseIndices(
                     // client any merged calls sitting in the buffer — dropping them
                     // here would destroy bytes the client received before this
                     // transformer existed.
-                    if (toolBlock && (toolBlock.orphans.length > 0 || toolBlock.orphanText !== null)) {
+                    if (toolBlock) {
                         const block = toolBlock;
                         toolBlock = null;
                         parts.push(emitStopAndOrphans(block));

@@ -66,11 +66,42 @@ Anthropic-shaped bodies — see the known gap below.
 
 ## Translation paths
 
+### Anthropic in, grok upstream — the /responses translation (grok's DEFAULT since 2026-08-21)
+
+```text
+Claude Code --Anthropic--> /v1/messages --anthropic-to-responses--> cli-chat-proxy /responses
+/responses SSE --grok-responses-to-anthropic--> Anthropic SSE --> client
+```
+
+The shim passthrough below merges parallel tool calls into one block; `/responses` streams every
+call as its own named output item, so the whole repair class (index repair, routing tags) is
+structurally unnecessary on this route. This is the translation every other xAI proxy ships
+(sub2api, fleet-harness, 9router: an `output_index → content-block-index` map), plus the piece
+none of them has:
+
+- **Reasoning continuity is preserved, and it is STRONGER than the shim's.** Every request sends
+  `store: false` + `include: ["reasoning.encrypted_content"]`; the returned blob rides the
+  thinking block's `signature` as `grokrs1:<id>:<blob>`, which Anthropic clients replay verbatim.
+  The upstream decrypts and consumes the replay — a tampered blob is rejected with a decrypt
+  error (verified live 2026-08-21), so this is real state restoration, not tolerated noise. The
+  shim replays only plaintext summaries.
+- **Decrypt-retry:** a signature from another conversation (or truncated by a client) fails
+  decryption for the whole request; the proxy retries once without reasoning items, losing
+  continuity for that turn instead of failing it.
+- **Terminal-frame reconciliation:** items that appear only in the `response.completed` snapshot
+  are synthesized as full blocks; a stream that ends without the terminal frame still closes
+  cleanly (fleet-harness measured 1 dropped terminal frame in 38 calls against this upstream).
+- **Known losses, all deliberate:** `stop_sequences`, `metadata`, `top_k`, the `thinking` budget
+  (grok reasons regardless), `cache_control` breakpoints (a no-op — grok caches implicitly,
+  measured), and unknown content block types become stringified text.
+- **Instant fallback:** `AI_PROXY_GROK_MESSAGES_ROUTE=shim` restores the passthrough below.
+
 ### Anthropic in, Anthropic upstream — passthrough (no reshape)
 
 Used when the provider implements `ProxyProvider.messages()`. Today: `anthropic-subscription`
-and `grok-subscription` (added 2026-08-19; preserves reasoning continuity — Grok accepts its own
-`thinking` blocks replayed). The grok passthrough performs four spec repairs, not translations:
+always, and `grok-subscription` only behind `AI_PROXY_GROK_MESSAGES_ROUTE=shim` (it was grok's
+default 2026-08-19 → 2026-08-21). The grok passthrough performs five spec repairs, not
+translations:
 
 - `ensureToolRequiredArrays` — Grok rejects a tool whose `input_schema` omits `required`.
 - `hoistSystemMessages` — Claude Code sometimes puts a `role:"system"` entry inside `messages[]`;
@@ -85,6 +116,18 @@ and `grok-subscription` (added 2026-08-19; preserves reasoning continuity — Gr
   deltas (Anthropic SDKs would overwrite the thinking block with the text block), and it merges
   several parallel tool calls into ONE `tool_use` block. The extra calls are re-emitted as their
   own blocks, each named by matching its argument keys against the request's tool schemas.
+- `tagConfusableTools` — key matching cannot separate two tools that can share an argument
+  object (`A.required ∪ B.required ⊆ A.properties ∩ B.properties`): two no-arg tools both fit
+  `{}`, Glob and Grep both fit `{"pattern":…}`. On STREAMING requests every tool in such a pair
+  gets one required property whose only legal value is its own name; the splitter routes by the
+  tag's value (order-proof, since two tagged objects share the same KEY) and strips it before the
+  client sees the call. Raw wire capture 2026-08-21 confirmed the names are absent from the
+  stream and that no request variant restores them — nine arms tried (`tool_choice`,
+  `disable_parallel_tool_use`, `stream_options`, the fine-grained-streaming beta header,
+  `stream_tool_calls` both ways, `streamToolCalls`, a spoofed `x-grok-client-identifier`): each
+  one `content_block_start`, four argument objects. The grok CLI never hits this: its own binary
+  defaults to `/chat/completions` (with `/responses` as the alternate), formats that carry a name
+  on every tool-call delta; `/v1/messages` is a compatibility shim xAI does not dogfood.
 
 ```text
 Claude Code --Anthropic--> /v1/messages --Anthropic (verbatim)--> api.anthropic.com
