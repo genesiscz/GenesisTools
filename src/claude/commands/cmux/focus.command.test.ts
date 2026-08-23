@@ -18,10 +18,6 @@ let events: string[] = [];
 let stdout: string[] = [];
 let originalWrite: typeof process.stdout.write;
 
-mock.module("@genesiscz/utils/cmux/lib/live-snapshot", () => ({
-    fetchCmuxLiveSnapshot: async () => snapshot,
-}));
-
 mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxJSON: async (args: string[]) => {
         events.push(args.join(" "));
@@ -35,6 +31,10 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
         return { bundle_identifier: "com.cmuxterm.app", caller: { pane_ref: CALLER_PANE } };
     },
     runCmuxOk: async (args: string[]) => {
+        events.push(args.join(" "));
+        return { code: 0, stdout: "", stderr: "" };
+    },
+    runCmux: async (args: string[]) => {
         events.push(args.join(" "));
         return { code: 0, stdout: "", stderr: "" };
     },
@@ -115,11 +115,15 @@ afterEach(() => {
 
 async function runFocus(
     query: string,
-    opts: Record<string, boolean> = {}
+    opts: Record<string, boolean> = {},
+    lookupSession: (query: string) => Promise<{ aliases: string[]; sessionId: string | null }> = async () => ({
+        aliases: [],
+        sessionId: null,
+    })
 ): Promise<{ exitCode: number; result: string }> {
     const { focusCommand } = await import("@app/claude/commands/cmux/focus");
     // Never let a test raise the real cmux app: `activateApp()` shells out to `open -b`.
-    await focusCommand(query, { activate: false, ...opts });
+    await focusCommand(query, { activate: false, ...opts }, { fetchSnapshot: async () => snapshot, lookupSession });
 
     return { exitCode: process.exitCode === undefined ? 0 : Number(process.exitCode), result: await capturedResult() };
 }
@@ -189,6 +193,20 @@ describe("focusCommand", () => {
         ]);
     });
 
+    test("uses the snapshot windowRef and skips identify --workspace", async () => {
+        setSnapshot([
+            pane({
+                id: "pane:33",
+                windowRef: "window:7",
+                preview: resumeScreen(SESSION_A),
+            }),
+        ]);
+
+        await runFocus(SESSION_A);
+
+        expect(events).toEqual(["identify", "focus-window --window window:7", "focus-pane workspace:11 pane:33"]);
+    });
+
     test("a match on the pane's own screen switches no tab", async () => {
         setSnapshot([pane({ id: "pane:33", preview: resumeScreen(SESSION_A) })]);
 
@@ -196,6 +214,33 @@ describe("focusCommand", () => {
 
         expect(events).not.toContain("focus-surface surface:45");
         expect(events.filter((event) => event.startsWith("focus-surface"))).toEqual([]);
+    });
+
+    test("session-id focus uses lookup aliases to match a topic tab", async () => {
+        setSnapshot([
+            pane({
+                id: "pane:1",
+                title: "pane:1",
+                surfaces: [
+                    surface({
+                        id: "surface:124",
+                        selected: true,
+                        title: "◑ Clauderoo cwd slowdown",
+                    }),
+                ],
+            }),
+        ]);
+
+        const { exitCode, result } = await runFocus("4691ef7b", { json: true, dryRun: true }, async () => ({
+            aliases: ["clauderoo cwd slowdown"],
+            sessionId: "4691ef7b-0ab5-4f05-8513-e7b118f05f50",
+        }));
+
+        expect(exitCode).toBe(0);
+        expect(result).toContain('"paneId": "pane:1"');
+        expect(result).toContain('"surfaceId": "surface:124"');
+        expect(result).toContain('"matchedOn": "session-name"');
+        expect(result).toContain("4691ef7b-0ab5-4f05-8513-e7b118f05f50");
     });
 
     test("the calling pane is skipped by default and searched with --include-self", async () => {

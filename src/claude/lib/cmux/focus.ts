@@ -27,11 +27,80 @@ const TITLE_SHORT_ID_RE = /·\s*([0-9a-f]{8})\s*$/i;
  * Eight is the short form printed everywhere else in this tool (`sessionId.slice(0, 8)`).
  */
 const MIN_ID_PREFIX = 8;
+const MIN_ALIAS_LENGTH = 8;
+
+export interface SessionFocusRecord {
+    sessionId: string | null;
+    customTitle: string | null;
+    summary: string | null;
+    firstPrompt: string | null;
+}
+
+/** Basenames of html/md/txt/pdf paths cited in a prompt, without the extension. */
+function fileStemsIn(prompt: string): string[] {
+    const stems: string[] = [];
+
+    for (const match of prompt.matchAll(/\/([^/\s"'<>]+)\.(html?|md|txt|pdf)\b/gi)) {
+        const stem = match[1];
+
+        if (stem && stem.length >= MIN_ALIAS_LENGTH) {
+            stems.push(stem);
+        }
+    }
+
+    return stems;
+}
+
+/**
+ * Title needles for a session-id query: `/rename` first, else a file the prompt cited.
+ *
+ * Untitled sessions still show a topic tab (Claude OSC or a file-stem name). The id
+ * is not in that title, so focus has to look the topic up from the session record.
+ */
+export function matchingSession(query: string, sessions: SessionFocusRecord[]): SessionFocusRecord | null {
+    const needle = query.trim().toLowerCase();
+    return (
+        sessions.find((session) => {
+            const id = (session.sessionId ?? "").toLowerCase();
+            return id === needle || (needle.length >= MIN_ID_PREFIX && id.startsWith(needle));
+        }) ?? null
+    );
+}
+
+export function aliasesForSession(query: string, sessions: SessionFocusRecord[]): string[] {
+    const record = matchingSession(query, sessions);
+
+    if (!record) {
+        return [];
+    }
+
+    const aliases: string[] = [];
+    const push = (raw: string | null | undefined) => {
+        const text = raw?.replace(/\s+/g, " ").trim();
+
+        if (text && text.length >= MIN_ALIAS_LENGTH) {
+            aliases.push(text);
+        }
+    };
+
+    push(record.customTitle);
+    push(record.summary);
+
+    if (!record.customTitle && record.firstPrompt) {
+        for (const stem of fileStemsIn(record.firstPrompt)) {
+            push(stem);
+            push(stem.replace(/[-_]+/g, " "));
+        }
+    }
+
+    return [...new Set(aliases)];
+}
 
 export type FocusMatchKind =
     | "resume-command"
     | "resume-prefix"
     | "title-id"
+    | "session-name"
     | "session-id"
     | "id-prefix"
     | "pane-title"
@@ -42,6 +111,13 @@ export type FocusMatchKind =
 export interface FindFocusOptions {
     /** Pane to leave out of the search, normally the one this process runs in. */
     excludePaneId?: string;
+    /**
+     * Extra title needles from the session record (custom title, prompt file stem).
+     * Used when the tab was named from the topic and never got ` · 8b6e69bf`.
+     */
+    aliases?: string[];
+    /** Full session UUID looked up from the query. Stamped onto a session-name match. */
+    resolvedSessionId?: string;
 }
 
 export interface FocusTarget {
@@ -50,6 +126,8 @@ export interface FocusTarget {
     paneId: string;
     paneTitle: string;
     cwd?: string;
+    /** Owning cmux window, when the live snapshot already knew it. */
+    windowRef?: string;
     /**
      * The surface (tab) the match came from, when it was not the pane's own visible text.
      *
@@ -146,6 +224,14 @@ export function resumedSessionIdsIn(text: string): string[] {
  * `matched` is the text of the scope that actually matched; `rest` is the remainder of the
  * pane, kept so the field is still a full inventory of what the pane shows.
  */
+function sessionIdsForMatch(kind: FocusMatchKind, ids: string[], resolved?: string): string[] {
+    if (!resolved || kind !== "session-name") {
+        return ids;
+    }
+
+    return [...new Set([resolved.toLowerCase(), ...ids])];
+}
+
 export function paneSessionIds(matched: string, rest = ""): string[] {
     return [
         ...new Set([
@@ -215,14 +301,30 @@ function scoreScope(scope: PaneScope, needle: string): { kind: FocusMatchKind; s
     return null;
 }
 
+function scoreAliasOnTitle(scope: PaneScope, alias: string): { kind: FocusMatchKind; score: number } | null {
+    const needle = alias.trim().toLowerCase();
+
+    if (needle.length < MIN_ALIAS_LENGTH) {
+        return null;
+    }
+
+    if (scope.title.toLowerCase().includes(needle)) {
+        return { kind: "session-name", score: 88 };
+    }
+
+    return null;
+}
+
 function scorePane({
     pane,
     query,
     workspaceName,
+    aliases = [],
 }: {
     pane: CmuxLivePane;
     query: string;
     workspaceName: string;
+    aliases?: string[];
 }): PaneMatch | null {
     const scopes = paneScopes(pane);
     const needle = query.toLowerCase();
@@ -233,6 +335,14 @@ function scorePane({
 
         if (hit && (!best || hit.score > best.score)) {
             best = { ...hit, surfaceId: scope.surfaceId, matchedText: scopeText(scope) };
+        }
+
+        for (const alias of aliases) {
+            const aliasHit = scoreAliasOnTitle(scope, alias);
+
+            if (aliasHit && (!best || aliasHit.score > best.score)) {
+                best = { ...aliasHit, surfaceId: scope.surfaceId, matchedText: scopeText(scope) };
+            }
         }
     }
 
@@ -285,7 +395,7 @@ export function findFocusTargets(
         }
 
         const workspaceName = names.get(pane.workspaceId) ?? pane.workspaceId;
-        const hit = scorePane({ pane, query: trimmed, workspaceName });
+        const hit = scorePane({ pane, query: trimmed, workspaceName, aliases: opts.aliases });
 
         if (!hit) {
             continue;
@@ -297,8 +407,13 @@ export function findFocusTargets(
             paneId: pane.id,
             paneTitle: pane.title,
             cwd: pane.cwd,
+            windowRef: pane.windowRef,
             surfaceId: hit.surfaceId,
-            sessionIds: paneSessionIds(hit.matchedText, paneText(pane)),
+            sessionIds: sessionIdsForMatch(
+                hit.kind,
+                paneSessionIds(hit.matchedText, paneText(pane)),
+                opts.resolvedSessionId
+            ),
             matchedOn: hit.kind,
             score: hit.score,
             active: pane.active,
@@ -353,7 +468,10 @@ export function isUnambiguous(targets: FocusTarget[]): boolean {
  */
 function ownsSession(target: FocusTarget): boolean {
     return (
-        target.matchedOn === "resume-command" || target.matchedOn === "resume-prefix" || target.matchedOn === "title-id"
+        target.matchedOn === "resume-command" ||
+        target.matchedOn === "resume-prefix" ||
+        target.matchedOn === "title-id" ||
+        target.matchedOn === "session-name"
     );
 }
 
@@ -365,6 +483,8 @@ export function describeMatch(target: FocusTarget): string {
             return "resuming this session (id prefix)";
         case "title-id":
             return "session id in the tab title";
+        case "session-name":
+            return "session name in the tab title";
         case "session-id":
             return "session id on screen";
         case "id-prefix":

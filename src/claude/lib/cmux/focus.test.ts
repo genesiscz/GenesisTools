@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    aliasesForSession,
     describeMatch,
     findFocusTargets,
     isUnambiguous,
@@ -104,6 +105,22 @@ describe("findFocusTargets", () => {
         expect(targets[0].paneId).toBe("pane:33");
         expect(targets[0].matchedOn).toBe("resume-command");
         expect(targets[0].sessionIds).toEqual([SESSION_A]);
+    });
+
+    test("copies windowRef from the live pane so focus can skip identify --workspace", () => {
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:33",
+                    workspaceId: "workspace:11",
+                    windowRef: "window:4",
+                    preview: resumeScreen(SESSION_A),
+                }),
+            ]),
+            SESSION_A
+        );
+
+        expect(targets[0].windowRef).toBe("window:4");
     });
 
     test("the 8-character short form matches as a prefix", () => {
@@ -246,6 +263,106 @@ describe("findFocusTargets", () => {
 
         expect(targets).toHaveLength(1);
         expect(targets[0].paneId).toBe("pane:33");
+    });
+
+    test("an untitled session matches a tab named from its prompt file stem", () => {
+        // Live 4691ef7b: no customTitle, first prompt cites clauderoo-cwd-slowdown.html,
+        // cmux tab is "◑ Clauderoo cwd slowdown" with no ` · 4691ef7b` suffix and no
+        // --resume line still on screen (previews=none). Id-only focus returned no match.
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:1",
+                    workspaceId: "workspace:11",
+                    title: "pane:1",
+                    preview: busyTuiScreen(),
+                    surfaces: [
+                        {
+                            id: "surface:124",
+                            title: "◑ Clauderoo cwd slowdown",
+                            type: "terminal",
+                            index: 0,
+                            selected: true,
+                            active: true,
+                        },
+                    ],
+                }),
+            ]),
+            "4691ef7b",
+            { aliases: ["clauderoo cwd slowdown"] }
+        );
+
+        expect(targets).toHaveLength(1);
+        expect(targets[0].paneId).toBe("pane:1");
+        expect(targets[0].surfaceId).toBe("surface:124");
+        expect(targets[0].matchedOn).toBe("session-name");
+    });
+
+    test("a session-name match still reports the queried session id", () => {
+        // Live: focus 4691ef7b landed on the Clauderoo tab (statusline AC 4691ef7b)
+        // but printed "no session" because previews=none left sessionIds empty.
+        const sessionId = "4691ef7b-0ab5-4f05-8513-e7b118f05f50";
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:1",
+                    workspaceId: "workspace:11",
+                    title: "pane:1",
+                    preview: busyTuiScreen(),
+                    surfaces: [
+                        {
+                            id: "surface:124",
+                            title: "◑ Clauderoo cwd slowdown",
+                            type: "terminal",
+                            index: 0,
+                            selected: true,
+                            active: true,
+                        },
+                    ],
+                }),
+            ]),
+            "4691ef7b",
+            { aliases: ["clauderoo cwd slowdown"], resolvedSessionId: sessionId }
+        );
+
+        expect(targets[0].sessionIds).toEqual([sessionId]);
+    });
+
+    test("a /rename title matches the OSC tab even with an activity prefix", () => {
+        const title = "col-294936-295714-pr-7210-logouts-newest-invesgitations-redirect-loop";
+        const targets = findFocusTargets(
+            snapshot([
+                pane({
+                    id: "pane:35",
+                    workspaceId: "workspace:11",
+                    title: "pane:35",
+                    preview: busyTuiScreen(),
+                    surfaces: [
+                        {
+                            id: "surface:57",
+                            title: `✳ ${title}`,
+                            type: "terminal",
+                            index: 0,
+                            selected: false,
+                            active: false,
+                        },
+                        {
+                            id: "surface:38",
+                            title: "✳ col-294936-295714-pr-7210-logouts-newest-invesgitations",
+                            type: "terminal",
+                            index: 1,
+                            selected: true,
+                            active: false,
+                        },
+                    ],
+                }),
+            ]),
+            "c53c4440",
+            { aliases: [title] }
+        );
+
+        expect(targets[0].surfaceId).toBe("surface:57");
+        expect(targets[0].matchedOn).toBe("session-name");
     });
 
     test("a full id still finds a busy pane whose resume command has scrolled away", () => {
@@ -391,6 +508,37 @@ describe("findFocusTargets", () => {
     });
 });
 
+describe("aliasesForSession", () => {
+    test("custom title beats the prompt", () => {
+        expect(
+            aliasesForSession("c53c4440", [
+                {
+                    sessionId: "c53c4440-ffd5-41ad-af8e-07bbbbf4a55f",
+                    customTitle: "col-294936-295714-pr-7210-logouts-newest-invesgitations-redirect-loop",
+                    summary: null,
+                    firstPrompt: "file:///tmp/other.html",
+                },
+            ])
+        ).toEqual(["col-294936-295714-pr-7210-logouts-newest-invesgitations-redirect-loop"]);
+    });
+
+    test("untitled session aliases a file stem from the first prompt", () => {
+        // Regression: 4691ef7b has no /rename. The tab is "Clauderoo cwd slowdown"
+        // because the prompt cited clauderoo-cwd-slowdown.html.
+        expect(
+            aliasesForSession("4691ef7b", [
+                {
+                    sessionId: "4691ef7b-0ab5-4f05-8513-e7b118f05f50",
+                    customTitle: null,
+                    summary: null,
+                    firstPrompt:
+                        "pls can you see file:///Users/Martin/Tresors/Projects/GenesisBrain/GenesisPlayground/clauderoo-cwd-slowdown.html and tell me if its bullshit or wtf is happening?",
+                },
+            ])
+        ).toEqual(["clauderoo-cwd-slowdown", "clauderoo cwd slowdown"]);
+    });
+});
+
 describe("isUnambiguous", () => {
     test("no matches is not unambiguous", () => {
         expect(isUnambiguous([])).toBe(false);
@@ -456,6 +604,7 @@ describe("describeMatch", () => {
             "resume-command",
             "resume-prefix",
             "title-id",
+            "session-name",
             "session-id",
             "id-prefix",
             "pane-title",
