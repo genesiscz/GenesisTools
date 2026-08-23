@@ -19,8 +19,37 @@ if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
     exit 0
 fi
 
-echo "▶ bun run lint..."
-bun run lint
+# Biome runs on the files this push actually changes, not `biome check .`:
+# CI lints the committed checkout only, so untracked local scratch files
+# (e.g. scripts/_dump-*.ts from a parallel session) must not block a push.
+# --diff-filter=ACMR skips deletes; the empty-list guard matters because
+# biome exits 1 when given no files.
+echo "▶ biome (push-range files)..."
+if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range_base=$(git merge-base "$local_sha" origin/master 2>/dev/null || echo "")
+else
+    range_base="$remote_sha"
+fi
+
+changed=""
+if [ -n "$range_base" ]; then
+    changed=$(git diff --name-only --diff-filter=ACMR "$range_base" "$local_sha" | while IFS= read -r f; do
+        case "$f" in
+            (*.ts | *.tsx | *.js | *.jsx | *.json | *.jsonc | *.css)
+                [ -f "$f" ] && printf '%s\n' "$f"
+                ;;
+        esac
+    done)
+fi
+
+if [ -n "$changed" ]; then
+    printf '%s\n' "$changed" | xargs bunx biome check
+else
+    echo "  (no lintable files in push range)"
+fi
+
+echo "▶ bun run lint:rules..."
+bun run lint:rules
 
 echo "▶ bun run lint:dashboard..."
 bun run lint:dashboard

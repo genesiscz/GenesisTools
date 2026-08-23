@@ -349,6 +349,7 @@ describe("doctor never mutates", () => {
     test.each([
         ["src/claude/lib/doctor.ts"],
         ["src/claude/commands/doctor.ts"],
+        ["src/claude/commands/doctor-impl.ts"],
     ])("%s calls no mutating API", async (path) => {
         const source = await Bun.file(path).text();
 
@@ -358,10 +359,10 @@ describe("doctor never mutates", () => {
     });
 
     test("the doctor command reads the cache through peekSharedUsage", async () => {
-        expect(await Bun.file("src/claude/commands/doctor.ts").text()).toContain("peekSharedUsage");
+        expect(await Bun.file("src/claude/commands/doctor-impl.ts").text()).toContain("peekSharedUsage");
     });
 
     test("the doctor command probes tokens read-only", async () => {
-        expect(await Bun.file("src/claude/commands/doctor.ts").text()).toContain("probeLongLivedToken");
+        expect(await Bun.file("src/claude/commands/doctor-impl.ts").text()).toContain("probeLongLivedToken");
     });
 });

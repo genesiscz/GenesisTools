@@ -46,10 +46,8 @@ mock.module("@inquirer/prompts", () => ({
     },
 }));
 
-// Also mock @app/utils/cli for isInteractive
-mock.module("@genesiscz/utils/cli", () => ({
+mock.module("@genesiscz/utils/cli/is-interactive", () => ({
     isInteractive: () => true,
-    suggestCommand: (cmd: string) => cmd,
 }));
 
 import { inquirerBackend } from "../inquirer-backend";

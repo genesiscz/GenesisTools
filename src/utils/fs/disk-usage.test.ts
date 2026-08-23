@@ -3,6 +3,7 @@ import { linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileAllocatedSize, fileLogicalSize, walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("disk-usage per-file sizers + walkFiles", () => {
     it("logical == byte length; allocated >= logical; walk skips symlinks", () => {
@@ -640,6 +641,37 @@ describe.skipIf(skip.unlessMac)("dedupeTree", () => {
             expect(again.cloned).toBe(0);
         } finally {
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("bulk fast path vs process.cwd()", () => {
+    const itOnDarwin = process.platform === "darwin" ? it : it.skip;
+
+    itOnDarwin("bulk availability does not depend on an unprobeable cwd", () => {
+        // cwd with execute-but-no-read permission: chdir succeeds, but any
+        // getattrlistbulk call against it fails with EACCES. A probe that
+        // targets process.cwd() therefore reports "unsupported" and every
+        // walk in the process silently downgrades to readdir+stat, which
+        // never fills privateSize. The bulk path must not care where the
+        // process happens to start.
+        const cwd = mkdtempSync(join(tmpdir(), "gt-du-noread-"));
+        const tree = mkdtempSync(join(tmpdir(), "gt-du-tree-"));
+        try {
+            writeFileSync(join(tree, "f.bin"), Buffer.alloc(4096, 3));
+            chmodSync(cwd, 0o111);
+            const script = [
+                `const { walkFiles } = await import(${SafeJSON.stringify(join(import.meta.dir, "disk-usage.ts"))});`,
+                `const entries = [...walkFiles(${SafeJSON.stringify(tree)})];`,
+                `console.log(entries.map((e) => e.privateSize !== undefined).join(","));`,
+            ].join("\n");
+            const r = spawnSync(process.execPath, ["-e", script], { cwd, encoding: "utf8" });
+            expect(r.status).toBe(0);
+            expect(r.stdout.trim()).toBe("true");
+        } finally {
+            chmodSync(cwd, 0o755);
+            rmSync(cwd, { recursive: true, force: true });
+            rmSync(tree, { recursive: true, force: true });
         }
     });
 });

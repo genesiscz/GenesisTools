@@ -75,6 +75,11 @@
             "types": "./cli/index.ts",
             "default": "./cli/index.ts"
         },
+        "./cli/is-interactive": {
+            "bun": "./cli/is-interactive.ts",
+            "types": "./cli/is-interactive.ts",
+            "default": "./cli/is-interactive.ts"
+        },
         "./clipboard": {
             "bun": "./clipboard.ts",
             "types": "./clipboard.ts",

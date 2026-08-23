@@ -1,12 +1,30 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
-import chalk from "chalk";
-import pino from "pino";
-import PinoPretty from "pino-pretty";
+import pc from "picocolors";
+import type pino from "pino";
+import type PinoPretty from "pino-pretty";
+
+// pino + pino-pretty cost ~25ms to parse. Every module in the repo imports
+// the logger, so both load lazily on the first log call instead of taxing
+// every import (guarded by logger/import-graph.test.ts). `require` (not
+// `await import`) because createLogger is synchronous.
+type PinoFn = typeof import("pino");
+type PinoPrettyFn = typeof import("pino-pretty");
+const requireLazy = createRequire(import.meta.url);
+
+let _pinoFn: PinoFn | null = null;
+function loadPino(): PinoFn {
+    if (_pinoFn === null) {
+        _pinoFn = requireLazy("pino") as PinoFn;
+    }
+
+    return _pinoFn;
+}
+
 // ESM cycle logger.ts ⇄ logger/out.ts is safe: makeOut is a HOISTED
 // `export function` (resolvable while out.ts is mid-eval) and out.ts touches
 // `logger` only inside closures, never at module-eval. Never convert to
@@ -26,6 +44,10 @@ type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";
 // createLogger) drops sub-threshold records before pino-pretty. Mutating this
 // via setConsoleLevel()/configureLogger() retroactively re-gates already
 // created children — no rebuild, see spec §3.1.
+// Mirrors pino.levels.values (no "silent" — pino's map omits it too). Static
+// so validating the env var does not force pino to load at module scope.
+const PINO_LEVEL_VALUES: Record<string, number> = { trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 };
+
 function getConsoleLevel(): pino.LevelWithSilent {
     if (env.log.isTrace()) {
         return "trace";
@@ -40,7 +62,7 @@ function getConsoleLevel(): pino.LevelWithSilent {
     }
 
     const consoleLevelEnv = env.log.getConsoleLevel() as pino.LevelWithSilent | undefined;
-    if (consoleLevelEnv && consoleLevelEnv in pino.levels.values) {
+    if (consoleLevelEnv && consoleLevelEnv in PINO_LEVEL_VALUES) {
         return consoleLevelEnv;
     }
 
@@ -217,17 +239,19 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         };
 
         // minimalLevels: hide level for info/debug/trace, colored WARN:/ERROR:.
+        // picocolors, not chalk: pc costs ~2ms at import vs chalk's ~4ms and
+        // is the repo-standard color lib.
         if (minimalLevels) {
             prettyOptions.customPrettifiers = {
                 level: (logLevelValue: unknown) => {
                     const lvl = String(logLevelValue).toLowerCase();
                     // pino sends level as number (40=warn, 50=error) or label
                     if (lvl === "warn" || lvl === "40") {
-                        return isTerminal ? chalk.yellow("WARN:") : "WARN:";
+                        return isTerminal ? pc.yellow("WARN:") : "WARN:";
                     }
 
                     if (lvl === "error" || lvl === "50") {
-                        return isTerminal ? chalk.red("ERROR:") : "ERROR:";
+                        return isTerminal ? pc.red("ERROR:") : "ERROR:";
                     }
 
                     return ""; // hide for trace/debug/info
@@ -235,12 +259,16 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
             };
         }
 
-        const pretty = PinoPretty(prettyOptions);
+        const pretty = (requireLazy("pino-pretty") as PinoPrettyFn)(prettyOptions);
         const gated = new Writable({
             write(chunk, _enc, cb) {
                 try {
-                    const lvl = (SafeJSON.parse(chunk.toString()) as { level: number }).level;
-                    if (lvl >= pino.levels.values[consoleLevel]) {
+                    // biome-ignore lint/style/noRestrictedGlobals: pino records are strict machine JSON; comment-json would re-add the import-time cost this file avoids
+                    const lvl = (JSON.parse(chunk.toString()) as { level: number }).level;
+                    // "silent" has no entry → threshold undefined → drop all,
+                    // matching pino.levels.values[consoleLevel] semantics.
+                    const threshold = PINO_LEVEL_VALUES[consoleLevel];
+                    if (threshold !== undefined && lvl >= threshold) {
                         pretty.write(chunk);
                     }
                 } catch {
@@ -255,20 +283,21 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         streams.push({ level: "trace" as pino.Level, stream: gated });
     }
 
+    const pinoFn = loadPino();
     const baseConfig: pino.LoggerOptions = {
         level: "trace",
         // Always stamp records — the file sink needs `time` for forensics;
         // console visibility is controlled via pino-pretty's ignore list above.
-        timestamp: pino.stdTimeFunctions.isoTime,
+        timestamp: pinoFn.stdTimeFunctions.isoTime,
         // An Error's own properties are non-enumerable, so `logger.warn({ error: err })`
         // serialized to a useless `error: {}` (observed while triaging a failed
         // consolidate vote batch). The house convention is to pass the raw error, so
         // both key spellings get pino's error serializer; non-Errors pass through.
-        serializers: { err: pino.stdSerializers.err, error: pino.stdSerializers.err },
+        serializers: { err: pinoFn.stdSerializers.err, error: pinoFn.stdSerializers.err },
         ...(showPid && { base: { pid: process.pid } }),
     };
 
-    const logger = pino(baseConfig, pino.multistream(streams));
+    const logger = pinoFn(baseConfig, pinoFn.multistream(streams));
 
     // Streams are sync (file + pretty); no per-call flush wrap needed — pino
     // writes synchronously, so output ordering is preserved as-is.

@@ -1,4 +1,4 @@
-import { isInteractive } from "@genesiscz/utils/cli";
+import { isInteractive } from "@genesiscz/utils/cli/is-interactive";
 import { checkbox, confirm, editor, input, number, password, search, select } from "@inquirer/prompts";
 import pc from "picocolors";
 

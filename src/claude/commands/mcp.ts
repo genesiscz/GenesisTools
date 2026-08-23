@@ -1,4 +1,3 @@
-import { startMcpServer } from "@app/claude/mcp/server";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { registerMcpInstallCommand } from "./mcp-install";
@@ -14,6 +13,9 @@ export function registerMcpCommand(program: Command): void {
         )
         .action(async () => {
             log.info("starting MCP server");
+            // Deferred: the MCP SDK graph costs ~180ms to import and is only
+            // needed once the server actually starts.
+            const { startMcpServer } = await import("@app/claude/mcp/server");
             await startMcpServer();
         });
     registerMcpInstallCommand(mcp);

@@ -15,15 +15,17 @@ import type {
 } from "./types";
 
 export { isCancel } from "@clack/prompts";
+// tableSelect and inquirerBackend are deliberately NOT value-re-exported:
+// both pulled their whole implementation (clack table renderer, all of
+// @inquirer/prompts) into every `import * as p` at module load. Import them
+// from their own subpaths instead; the type re-exports below stay free.
 export type {
     TableSelectColumn,
     TableSelectOptions,
     TableSelectRow,
 } from "@genesiscz/utils/prompts/clack/table-select";
-export { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 export type { PromptBackend } from "./backend";
 export type { InquirerBackend } from "./inquirer-backend";
-export { inquirerBackend } from "./inquirer-backend";
 export type * from "./types";
 export { setBackend };
 

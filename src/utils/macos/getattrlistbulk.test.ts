@@ -19,7 +19,7 @@ const isDarwin = process.platform === "darwin";
 const describeOnDarwin = isDarwin ? describe : describe.skip;
 
 describeOnDarwin("getattrlistbulk", () => {
-    it("feature-detects on cwd (darwin/APFS)", () => {
+    it("feature-detects (darwin, cwd-independent probe)", () => {
         expect(isGetattrlistbulkSupported()).toBe(true);
     });
 

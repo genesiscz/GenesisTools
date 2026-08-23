@@ -113,3 +113,17 @@ describe.skipIf(skip.claudeData)("discovery.ts — discoverSessionFilesInDir", (
         }
     });
 });
+
+describe.skipIf(skip.claudeData)("discovery.ts — excludeSubagents fast path parity", () => {
+    it("matches the recursive glob walk with the subagent filter applied", async () => {
+        const { discoverSessionFiles } = await import("./discovery");
+        const fast = await discoverSessionFiles({ excludeSubagents: true, allProjects: true });
+        const deep = await discoverSessionFiles({ includeSubagents: true, allProjects: true });
+        const expected = deep.filter((f) => {
+            const name = f.split("/").pop() || "";
+            return !f.includes("/subagents/") && !name.startsWith("agent-");
+        });
+        expect(new Set(fast)).toEqual(new Set(expected));
+        expect(fast.length).toBeGreaterThan(0);
+    });
+});
