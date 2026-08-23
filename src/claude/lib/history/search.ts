@@ -16,7 +16,6 @@ import {
     type DailyStats,
     type DateRange,
     getAllSessionMetadata,
-    getAllSessionMetadataFilePaths,
     getCachedDates,
     getCachedTotals,
     getCacheMeta,
@@ -24,7 +23,6 @@ import {
     getDailyStatsInRange,
     getDatabase,
     getFileIndex,
-    getSessionMetadata,
     getSessionMetadataByDir,
     getSessionMetadataBySessionId,
     invalidateDateRange,
@@ -1343,23 +1341,42 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         ? discoverSessionFilesInDir(projectDir, { excludeSubagents })
         : await discoverSessionFiles({ excludeSubagents, allProjects: true });
 
-    // 2. Incrementally index: only parse new/changed files
+    // 2. Incrementally index: only parse new/changed files.
+    // Stat every file in parallel. Sequential `await stat` was the sessions
+    // JSON bottleneck (listingMs 5s+, tailMs ~1).
     const total = files.length;
     let processed = 0;
     let indexed = 0;
-    for (const filePath of files) {
-        processed++;
-        try {
-            const fileStat = await stat(filePath);
-            const mtime = Math.floor(fileStat.mtimeMs);
-
-            const cached = getSessionMetadata(filePath);
-            if (cached && cached.mtime === mtime) {
-                continue;
+    const stats = await Promise.all(
+        files.map(async (filePath) => {
+            try {
+                const fileStat = await stat(filePath);
+                return { filePath, mtime: Math.floor(fileStat.mtimeMs) };
+            } catch {
+                return null;
             }
+        })
+    );
 
-            options.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+    // One SELECT for the whole table instead of one query per file — the
+    // per-file lookup was ~26ms of the listing across 1.3k files.
+    const cachedByPath = new Map(getAllSessionMetadata().map((r) => [r.filePath, r]));
 
+    for (const entry of stats) {
+        if (!entry) {
+            continue;
+        }
+
+        processed++;
+        const { filePath, mtime } = entry;
+        const cached = cachedByPath.get(filePath);
+        if (cached && cached.mtime === mtime) {
+            continue;
+        }
+
+        options.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+
+        try {
             const metadata = await extractSessionMetadataFromFile(filePath, mtime);
             if (metadata) {
                 upsertSessionMetadata(metadata);
@@ -1372,7 +1389,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
 
     // Clean up stale entries for deleted files (scoped to current listing)
     const diskFiles = new Set(files);
-    const cachedPaths = getAllSessionMetadataFilePaths();
+    const cachedPaths = [...cachedByPath.keys()];
     const cachedPathsInScope = projectDir
         ? cachedPaths.filter((p) => p.startsWith(projectDir + sep) || p === projectDir)
         : cachedPaths;

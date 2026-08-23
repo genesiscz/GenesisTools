@@ -1,6 +1,6 @@
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/p";
+import { type TableSelectOptions, tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import type { ScoredAccount } from "./account-picker";
 import { atYourPace, type PaceScope } from "./burn-pace";
 import { UsageHistoryDb } from "./history-db";

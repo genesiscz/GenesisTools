@@ -394,7 +394,7 @@ export function SessionsView({ notifications }: SessionsViewProps) {
                           ? abbreviateModel(s.model)
                           : "    ";
 
-                const lastMsg = formatRelativeTime(new Date(s.mtime), { compact: true });
+                const lastMsg = formatRelativeTime(new Date(s.lastCacheAt), { compact: true });
 
                 return (
                     <Box key={s.sessionId} flexDirection="row">

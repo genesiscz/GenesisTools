@@ -24,6 +24,7 @@ interface CacheSessionRow {
     title: string | null;
     cwdShort: string;
     mtime: number;
+    lastCacheAt: number;
     cacheStatus: CacheStatus;
 }
 
@@ -222,7 +223,7 @@ export class NotificationManager {
     }
 
     // Track which cache thresholds have been notified per session
-    private cacheTrackers = new Map<string, { lastThreshold: number | null; lastMtime: number }>();
+    private cacheTrackers = new Map<string, { lastThreshold: number | null; lastCacheAt: number }>();
 
     processCacheSessions(sessions: CacheSessionRow[]): void {
         if (!this.config.enabled) {
@@ -235,14 +236,15 @@ export class NotificationManager {
             const key = session.sessionId;
             let tracker = this.cacheTrackers.get(key);
 
-            // Reset tracker if session sent a new message (mtime changed = cache refreshed)
-            if (tracker && tracker.lastMtime !== session.mtime) {
+            // Reset only when the cache clock moves. A metadata rewrite
+            // changes mtime while lastCacheAt (and HOT/COOLING/CRITICAL) stay put.
+            if (tracker && tracker.lastCacheAt !== session.lastCacheAt) {
                 tracker = undefined;
                 this.cacheTrackers.delete(key);
             }
 
             if (!tracker) {
-                tracker = { lastThreshold: null, lastMtime: session.mtime };
+                tracker = { lastThreshold: null, lastCacheAt: session.lastCacheAt };
                 this.cacheTrackers.set(key, tracker);
             }
 
@@ -252,7 +254,7 @@ export class NotificationManager {
 
             if (status === "COOLING" && tracker.lastThreshold === null) {
                 tracker.lastThreshold = 10;
-                tracker.lastMtime = session.mtime;
+                tracker.lastCacheAt = session.lastCacheAt;
 
                 const message = `Cache cooling — 10 min left\n${sessionLabel}\n${projectLabel}`;
 
@@ -276,7 +278,7 @@ export class NotificationManager {
                 });
             } else if (status === "CRITICAL" && (tracker.lastThreshold === null || tracker.lastThreshold < 5)) {
                 tracker.lastThreshold = 5;
-                tracker.lastMtime = session.mtime;
+                tracker.lastCacheAt = session.lastCacheAt;
 
                 const message = `Cache critical — 5 min left\n${sessionLabel}\n${projectLabel}`;
 
