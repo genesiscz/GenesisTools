@@ -11,6 +11,7 @@ import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
 import { invalidateSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
+import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
@@ -822,7 +823,8 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
             lines.push("  Today's warmups:");
             for (const evt of w.todayLog.events) {
                 const icon = evt.success ? pc.green("\u2713") : pc.red("\u2717");
-                lines.push(`    ${evt.time}  ${evt.account.padEnd(20)} ${evt.type.padEnd(8)} ${icon}`);
+                const via = pc.dim(formatWarmupViaHint(evt.via));
+                lines.push(`    ${evt.time}  ${evt.account.padEnd(20)} ${evt.type.padEnd(8)} ${icon}${via}`);
             }
         }
     }

@@ -53,6 +53,8 @@ export interface WarmupTodayEvent {
     type: "session" | "weekly";
     time: string; // "06:00"
     success: boolean;
+    /** Set when the ping used the login-long oat token instead of the short-lived OAuth pair. */
+    via?: "login-long";
 }
 
 export interface WarmupTodayLog {
