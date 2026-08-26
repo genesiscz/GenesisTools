@@ -51,6 +51,51 @@ const VERIFY_TIMEOUT_MS = 15_000;
  * perturb the rate-limit state it was invoked to report on. `tools claude doctor` uses
  * this one; nothing here writes.
  */
+/**
+ * A 403 whose body says the SCOPE was insufficient, not that the caller was
+ * unknown. Setup tokens (`sk-ant-oat…`) are minted for inference and never
+ * carry `user:profile`, so the profile endpoint answers every healthy oat token
+ * with `permission_error: OAuth token does not meet scope requirement
+ * any_of(user:profile, user:office)`.
+ *
+ * Reaching a scope check PROVES authentication: the server resolved the token
+ * to a live grant before evaluating what that grant may do. An expired or
+ * revoked token never gets that far — it answers 401 `authentication_error`.
+ */
+export function isScopeRefusal(status: number, body: string): boolean {
+    if (status !== 403) {
+        return false;
+    }
+
+    return /permission_error/.test(body) && /scope/i.test(body);
+}
+
+/**
+ * Auth verdict for one probe response. Split out from the request so the
+ * status/body mapping is unit-testable — the bug it exists to prevent shipped
+ * for months because only the live call could exercise it.
+ */
+export function verdictFromProbeResponse(status: number, body: string): TokenVerdict {
+    if (isScopeRefusal(status, body)) {
+        return "ok";
+    }
+
+    if (status === 401 || status === 403) {
+        return "invalid";
+    }
+
+    if (status === 429) {
+        return "limited";
+    }
+
+    if (status < 200 || status >= 300) {
+        // Not an auth verdict — say so rather than inventing one.
+        return "unreachable";
+    }
+
+    return "ok";
+}
+
 export async function probeLongLivedToken(token: string): Promise<TokenVerdict> {
     try {
         const res = await fetch(PROFILE_URL, {
@@ -64,22 +109,18 @@ export async function probeLongLivedToken(token: string): Promise<TokenVerdict> 
             signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
         });
 
-        if (res.status === 401 || res.status === 403) {
+        const body = res.ok ? "" : await res.text().catch(() => "");
+        const verdict = verdictFromProbeResponse(res.status, body);
+
+        if (verdict === "unreachable") {
+            logger.warn(`[token-verify] probe returned ${res.status}, treating as unreachable: ${body.slice(0, 200)}`);
+        } else if (verdict === "invalid") {
             logger.debug(`[token-verify] probe: token rejected with ${res.status}`);
-            return "invalid";
+        } else if (res.status === 403) {
+            logger.debug("[token-verify] probe: token authenticated but lacks user:profile scope (expected for oat)");
         }
 
-        if (res.status === 429) {
-            return "limited";
-        }
-
-        if (!res.ok) {
-            // Not an auth verdict — say so rather than inventing one.
-            logger.warn(`[token-verify] probe returned ${res.status}, treating as unreachable`);
-            return "unreachable";
-        }
-
-        return "ok";
+        return verdict;
     } catch (error) {
         logger.debug({ error }, "[token-verify] probe request failed");
         return "unreachable";
