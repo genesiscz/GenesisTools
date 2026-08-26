@@ -133,4 +133,7 @@ Never trust the self-report (see above). Run the verification command yourself, 
 
 For a long grok handoff, spawn a `genesis-tools:agent-driver` subagent with `BACKEND: grok` in its prompt (sonnet by default) so the resume loop and its logs stay out of this session. The driver runs the run/steer/read/verify loop itself and reports a `VERDICT:` — see that agent's grok section.
 
-The `tools agents` bus is optional here: the transcript already lands in the turn logs. Add bus reporting (per `gt:agents-talk`) only when the worker is part of a multi-agent swarm.
+The `tools agents` bus is optional here: the transcript already lands in the turn logs. Add bus reporting (per `gt:agents-talk`) only when the worker is part of a multi-agent swarm — and then know its limits, verified in a live 5-agent chain probe (2026-08-26):
+
+- A grok worker **receives** bus mail fine (blocking `tools agents login --once` inside its turn works, including session auto-detection from the inherited env).
+- Its **sends are unreliable under the Auto-mode jail**: the policy layer auto-cancelled the second `tools agents` command in each observed turn ("User cancelled the execution for tool `run_terminal_command`"), and the worker **reported the send as successful anyway**. Budget ONE bus send per turn, split extra reports across steered turns, and confirm every hop by watching the feed from the lead side — never from the worker's claim. A steered retry of a cancelled send succeeded unchanged.
