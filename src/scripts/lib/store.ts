@@ -290,6 +290,8 @@ export async function ensureStoreScaffold(root = storeRoot()): Promise<void> {
         compilerOptions: {
             paths: {
                 "@gt/scripts/*": [join(LIB_DIR, "*")],
+                // chrome-devtools scaffold recipes import the cdp lib this way
+                "@gt/chrome-devtools/*": [join(LIB_DIR, "..", "..", "chrome-devtools", "lib", "*")],
             },
         },
     };
