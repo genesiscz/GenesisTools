@@ -311,7 +311,28 @@ export function estimateAccountHeight(account: AccountUsage, prominentBuckets: s
     return lines;
 }
 
+/**
+ * Raw fetch errors dumped under the name. A dead plan is not a fetch failure —
+ * those cards stay on the stale "plan expired" path even when the poll-gate
+ * still holds an invalid_grant cooldown.
+ */
+export function overviewFetchError(account: AccountUsage): string | null {
+    if (isPlanDead(account)) {
+        return null;
+    }
+
+    if (account.error && !account.usage) {
+        return account.error;
+    }
+
+    return null;
+}
+
 export function staleHeaderText(account: AccountUsage): string | null {
+    if (isPlanDead(account) && !account.stale) {
+        return "⚠ plan expired";
+    }
+
     if (!account.stale) {
         return null;
     }
@@ -353,6 +374,10 @@ const GRANT_WARNING_MS = 14 * 24 * 3_600_000;
  * Shares the header line with the renewal marker; both are dropped when narrow.
  */
 export function grantWarningText(account: AccountUsage, now: number): string | null {
+    if (isPlanDead(account)) {
+        return null;
+    }
+
     if (!account.refreshExpiresAt) {
         return null;
     }
@@ -480,7 +505,9 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     const sectionWidth = width ?? termWidth - 2;
     const layout = layoutFor(sectionWidth);
 
-    if (account.error && !account.usage) {
+    const fetchError = overviewFetchError(account);
+
+    if (fetchError) {
         return (
             <Box flexDirection="column" marginBottom={1}>
                 <AccountHeader
@@ -488,20 +515,27 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
                     dotColor="red"
                     {...headerExtras({ account, staleText: null, width: sectionWidth })}
                 />
-                <Text color="red">{`  ${account.error}`}</Text>
+                <Text color="red">{`  ${fetchError}`}</Text>
             </Box>
         );
     }
 
     if (!account.usage) {
+        const planDead = isPlanDead(account);
+        const staleText = staleHeaderText(account);
+        const staleInline = staleText !== null && staleFitsHeader(account, sectionWidth);
+
         return (
             <Box flexDirection="column" marginBottom={1}>
                 <AccountHeader
                     account={account}
-                    dotColor={undefined}
-                    {...headerExtras({ account, staleText: null, width: sectionWidth })}
+                    dotColor={planDead ? "red" : undefined}
+                    staleText={staleInline ? staleText : null}
+                    staleColor={planDead ? "red" : "yellow"}
+                    {...headerExtras({ account, staleText: staleInline ? staleText : null, width: sectionWidth })}
                 />
-                <Text dimColor>{"  No usage data"}</Text>
+                {staleText && !staleInline ? <Text color={planDead ? "red" : "yellow"}>{`  ${staleText}`}</Text> : null}
+                {planDead ? null : <Text dimColor>{"  No usage data"}</Text>}
             </Box>
         );
     }

@@ -271,14 +271,21 @@ async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> {
     const tag = `[usage:${account.name}]`;
 
     const blocked = blockedEntry(gate, account.name, now);
+    const anchorDue = isAnchorDue(account, now);
+    const planDead = !planAllowsClaudeCode(account);
 
     if (blocked) {
+        // A dead plan outranks the poll-gate string: invalid_grant is why we
+        // stopped fetching, not what the row should say. Keep skipping the
+        // network (the gate still holds) but surface the plan.
+        if (planDead && !anchorDue) {
+            throw new PollSuppressedError(planReason(account));
+        }
+
         throw new PollSuppressedError(blocked.reason, blocked.blockedUntil);
     }
 
-    const anchorDue = isAnchorDue(account, now);
-
-    if (!planAllowsClaudeCode(account) && !anchorDue) {
+    if (planDead && !anchorDue) {
         throw new PollSuppressedError(planReason(account));
     }
 

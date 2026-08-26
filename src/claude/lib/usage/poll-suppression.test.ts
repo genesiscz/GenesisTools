@@ -137,6 +137,31 @@ describe("poll suppression never spends a refresh token", () => {
         expect(resolveCalls).toEqual(["healthy"]);
     });
 
+    it("a gate-blocked dead-plan account reports the plan, not the gate reason", async () => {
+        useTempHome();
+        accounts = [
+            account("shop", {
+                subscriptionPlan: "claude_free",
+                subscriptionStatus: "canceled",
+            } as Partial<AIAccountEntry>),
+        ];
+        const now = Date.now();
+        await savePollGate(
+            recordFailure(
+                recordFailure({}, "shop", "Token expired (invalid_grant)", now),
+                "shop",
+                "Token expired (invalid_grant)",
+                now
+            )
+        );
+
+        const [usage] = await fetchAllAccountsUsage();
+
+        expect(resolveCalls).toEqual([]);
+        expect(usage.error).toContain("claude_free");
+        expect(usage.error).not.toContain("invalid_grant");
+    });
+
     it("a suppressed account does not record a failure in the gate", async () => {
         useTempHome();
         accounts = [account("free", { subscriptionPlan: "claude_free" } as Partial<AIAccountEntry>)];
