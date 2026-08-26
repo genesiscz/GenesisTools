@@ -146,6 +146,8 @@ describe("listSessionRows", () => {
         expect(hot?.totalTokens).toBe(30);
         expect(hot?.cacheReadTokens).toBe(100);
         expect(hot?.cacheCreateTokens).toBe(5);
+        expect(hot?.contextTokens).toBe(115); // input 10 + cacheRead 100 + cacheCreate 5, output excluded
+        expect(hot?.compacted).toBe(false);
         expect(hot?.cacheTtlSec).toBeGreaterThan(0);
         expect(Object.keys(hot ?? {}).sort()).toEqual(
             [
@@ -153,10 +155,13 @@ describe("listSessionRows", () => {
                 "cacheReadTokens",
                 "cacheStatus",
                 "cacheTtlSec",
+                "compacted",
+                "contextTokens",
                 "cwd",
                 "cwdShort",
                 "filePath",
                 "lastCacheAt",
+                "lastUserAt",
                 "model",
                 "modelSwitched",
                 "mtime",
@@ -313,6 +318,101 @@ describe("listSessionRows", () => {
         expect(rows[0]?.model).toBe("fable");
         expect(rows[0]?.cacheStatus).toBe("HOT");
         expect(rows[1]?.cacheStatus).toBe("COOLING");
+    });
+
+    test("a trailing <synthetic> notice does not become the session's model or usage", async () => {
+        const path = "/tmp/synthetic.jsonl";
+        const synthetic =
+            '{"type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0},"content":[{"type":"text","text":"No response."}]}}';
+
+        listing.sessions = [record({ filePath: path, sessionId: "synth", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE, synthetic]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.model).toBe("opus");
+        expect(rows[0]?.modelSwitched).toBe(false);
+        expect(rows[0]?.contextTokens).toBe(115);
+    });
+
+    test("compact_boundary after the last turn yields the exact postTokens context", async () => {
+        const path = "/tmp/compacted.jsonl";
+        const boundary =
+            '{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":427444,"postTokens":27268}}';
+
+        listing.sessions = [record({ filePath: path, sessionId: "compacted", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE, boundary]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.compacted).toBe(true);
+        expect(rows[0]?.contextTokens).toBe(27268);
+        expect(rows[0]?.model).toBe("opus"); // pre-compact turn still names the model
+    });
+
+    test("a compact_boundary older than the last turn changes nothing", async () => {
+        const path = "/tmp/old-boundary.jsonl";
+        const boundary =
+            '{"type":"system","subtype":"compact_boundary","compactMetadata":{"preTokens":9,"postTokens":5}}';
+
+        listing.sessions = [record({ filePath: path, sessionId: "old-boundary", mtime: NOW - 5 * MIN })];
+        tails.set(path, [boundary, OPUS_LINE]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.compacted).toBe(false);
+        expect(rows[0]?.contextTokens).toBe(115);
+    });
+
+    test("lastUserAt takes typed user messages, not tool results or compact summaries", async () => {
+        const path = "/tmp/last-user.jsonl";
+        const typedTs = new Date(NOW - 30 * MIN).toISOString();
+        const toolTs = new Date(NOW - 5 * MIN).toISOString();
+        const summaryTs = new Date(NOW - MIN).toISOString();
+
+        listing.sessions = [record({ filePath: path, sessionId: "last-user", mtime: NOW - 5 * MIN })];
+        tails.set(path, [
+            `{"type":"user","timestamp":"${typedTs}","isSidechain":false,"message":{"role":"user","content":"do the thing"}}`,
+            OPUS_LINE,
+            `{"type":"user","timestamp":"${toolTs}","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+            `{"type":"user","timestamp":"${summaryTs}","isSidechain":false,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued..."}}`,
+        ]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.lastUserAt).toBe(NOW - 30 * MIN);
+    });
+
+    test("lastUserAt is found even below two model turns (no early break)", async () => {
+        const path = "/tmp/deep-user.jsonl";
+        const typedTs = new Date(NOW - 40 * MIN).toISOString();
+
+        listing.sessions = [record({ filePath: path, sessionId: "deep-user", mtime: NOW - 5 * MIN })];
+        tails.set(path, [
+            `{"type":"user","timestamp":"${typedTs}","isSidechain":false,"message":{"role":"user","content":"start"}}`,
+            SONNET_LINE,
+            OPUS_LINE,
+        ]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.lastUserAt).toBe(NOW - 40 * MIN);
+        expect(rows[0]?.model).toBe("opus");
+        expect(rows[0]?.modelSwitched).toBe(true);
+    });
+
+    test("rows with equal clocks keep a deterministic order across polls", async () => {
+        const ts = new Date(NOW - 2 * 60 * MIN).toISOString();
+        const line = `{"type":"assistant","timestamp":"${ts}","isSidechain":false,"message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`;
+
+        listing.sessions = [
+            record({ filePath: "/tmp/z.jsonl", sessionId: "zzz", mtime: NOW - 5 * MIN }),
+            record({ filePath: "/tmp/a.jsonl", sessionId: "aaa", mtime: NOW - 5 * MIN }),
+        ];
+        tails.set("/tmp/z.jsonl", [line]);
+        tails.set("/tmp/a.jsonl", [line]);
+
+        const first = await listSessionRows({ hours: 6, now: NOW });
+        listing.sessions.reverse();
+        const second = await listSessionRows({ hours: 6, now: NOW });
+
+        expect(first.map((r) => r.sessionId)).toEqual(["aaa", "zzz"]);
+        expect(second.map((r) => r.sessionId)).toEqual(["aaa", "zzz"]);
     });
 });
 
