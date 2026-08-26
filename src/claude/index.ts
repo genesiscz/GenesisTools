@@ -34,6 +34,7 @@ import { registerTailCommand } from "./commands/tail";
 import { registerTeamsCommand } from "./commands/teams";
 import { registerUsageCommand } from "./commands/usage";
 import { registerWarmupCommand } from "./commands/warmup";
+import { registerWhoCommand } from "./commands/who";
 
 const program = new Command();
 
@@ -68,6 +69,7 @@ registerStartCommand(program);
 registerRunCommand(program);
 registerTeamsCommand(program);
 registerCmuxCommand(program);
+registerWhoCommand(program);
 
 addGlobalVerboseOption(program);
 
