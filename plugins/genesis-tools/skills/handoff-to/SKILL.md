@@ -81,16 +81,17 @@ The harness is **`tools grok`** (`src/grok/`) — the grok counterpart of `tools
 ## Drive loop
 
 ```bash
-tools grok run   --name <task> --cwd <abs project path> --prompt-file /tmp/grok-<task>-brief.md [--readonly]
+tools grok run   --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly]
 tools grok steer --name <task> --prompt '<correction + the negative constraints restated>'
 tools grok read  --name <task> [--turn N]
 tools grok sessions
 ```
 
 - **`run` and `steer` block for the whole turn (minutes).** Run them with Bash `run_in_background: true` and wait for the completion notification. A foreground call is killed at the Bash timeout cap mid-turn.
-- Write the brief to a file and pass `--prompt-file`; inline `--prompt` breaks on backticks and `$(...)`.
+- Write the brief to a file (session scratchpad) and pass `--prompt-file`; inline `--prompt` breaks on backticks and `$(...)`.
 - On completion the harness prints the worker's report (stdout) and its tool calls (stderr), and **exits 1 when the turn died mid-flight** (the raw grok CLI exits 0 even then). Turn transcripts live at `~/.genesis-tools/grok/sessions/<task>.turn<N>.jsonl` (+ `.err`); `tools grok read` re-prints them.
-- To abort a running turn, kill the grok process; the session survives and the next `steer` resumes it.
+- `--name` is the session handle: `run` refuses an existing name, so pick a fresh one per handoff and use `steer` for every later turn.
+- To abort a running turn, kill the grok child process by its cwd — `pkill -f "grok .*--cwd <abs project path>"` (matches both the spawn and resume forms). The harness then returns a died-mid-flight result, and the session survives, so the next `steer` resumes it.
 - Auth is `XAI_API_KEY` from the environment. If a turn reports a login problem, stop and report — never run `grok login` for the user.
 
 ## What the harness bakes in (do not hand-roll bare `grok`)
@@ -135,5 +136,7 @@ For a long grok handoff, spawn a `genesis-tools:agent-driver` subagent with `BAC
 
 The `tools agents` bus is optional here: the transcript already lands in the turn logs. Add bus reporting (per `gt:agents-talk`) only when the worker is part of a multi-agent swarm — and then know its limits, verified in a live 5-agent chain probe (2026-08-26):
 
-- A grok worker **receives** bus mail fine (blocking `tools agents login --once` inside its turn works, including session auto-detection from the inherited env).
-- Its **sends are unreliable under the Auto-mode jail**: the policy layer auto-cancelled the second `tools agents` command in each observed turn ("User cancelled the execution for tool `run_terminal_command`"), and the worker **reported the send as successful anyway**. Budget ONE bus send per turn, split extra reports across steered turns, and confirm every hop by watching the feed from the lead side — never from the worker's claim. A steered retry of a cancelled send succeeded unchanged.
+- **Pass `--session <id>` explicitly** in every `tools agents` command you put in a grok brief. That is what was tested; do not rely on session auto-detection inside a worker.
+- A grok worker **receives** bus mail fine: a blocking `tools agents login --agent-name <name> --once --session <id>` inside its turn delivered the message.
+- Its **sends are unreliable**: in both observed turns the *second* `tools agents` command of the turn was cancelled by grok's own permission layer ("User cancelled the execution for tool `run_terminal_command`"), while the first succeeded. The cause was not isolated — treat it as an observation, not a rule. What matters: the worker **reported the cancelled send as successful anyway**. Budget ONE bus send per turn, split extra reports across steered turns, and confirm every hop by reading the feed from the lead side — never from the worker's claim. A steered retry of a cancelled send succeeded unchanged.
+- **The worker's bus identity is not yours to choose.** A codex worker auto-registers as `codex_<name from --spawn>`; a grok worker has no auto-registration and uses whatever `--agent-name` its brief tells it to log in with. Naming a different identity in `--from` fails with "not registered". Write the brief's identity to match the spawn name exactly.
