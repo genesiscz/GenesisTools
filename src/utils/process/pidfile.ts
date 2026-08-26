@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -277,4 +278,100 @@ export function clearPidFile(path: string, opts: { force?: boolean } = {}): bool
         logger.debug({ err, path }, "[pidfile] could not remove file");
         return false;
     }
+}
+
+function errnoCode(err: unknown): string | undefined {
+    return err instanceof Error && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+}
+
+/**
+ * Atomically steal a pidfile whose content the caller pre-validated as STALE.
+ *
+ * Rename into a unique temp name, verify the stolen bytes are exactly the
+ * validated artifact (a mismatch means a fresh owner claimed between check and
+ * rename — restore it best-effort and lose), then either `wx`-create our own
+ * record (`claim: true`, the default) or leave the slot empty (`claim: false`,
+ * a race-safe DELETE for cleanup paths). Returns true only for the single
+ * racer that stole the validated artifact.
+ *
+ * Async on purpose: Bun's synchronous fs calls reenter under concurrent
+ * async-driven load (many concurrent `renameSync` callers can each observe a
+ * "successful" rename of one source — verified empirically in the daemon),
+ * which breaks the single-winner guarantee this function exists to provide.
+ * The sync `writePidFile({ exclusive })` above is therefore NOT a race
+ * primitive; racing callers belong here.
+ */
+export async function attemptStaleTakeover(
+    path: string,
+    expectedContent: string,
+    opts: { claim?: boolean } = {}
+): Promise<boolean> {
+    const tempPath = `${path}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
+
+    try {
+        await rename(path, tempPath);
+    } catch (err) {
+        if (errnoCode(err) === "ENOENT") {
+            return false;
+        }
+
+        throw err;
+    }
+
+    let stolen: string | null = null;
+    try {
+        stolen = await readFile(tempPath, "utf-8");
+    } catch (err) {
+        logger.debug({ err, tempPath }, "[pidfile] stolen file unreadable");
+    }
+
+    if (stolen === null || stolen.trim() !== expectedContent.trim()) {
+        // We grabbed something other than the validated-stale file — a fresh
+        // owner wrote between the caller's check and our rename. Put it back
+        // and lose; if the slot was re-claimed meanwhile, the robbed owner's
+        // own liveness checks are the backstop.
+        if (stolen !== null) {
+            try {
+                await writeFile(path, stolen, { flag: "wx" });
+            } catch (err) {
+                logger.debug({ err, path }, "[pidfile] stale-takeover restore skipped (slot re-claimed)");
+            }
+        }
+
+        try {
+            unlinkSync(tempPath);
+        } catch (err) {
+            logger.debug({ err, tempPath }, "[pidfile] takeover temp cleanup failed");
+        }
+
+        return false;
+    }
+
+    if (opts.claim !== false) {
+        try {
+            await writeFile(path, serializePidRecord(buildPidRecord()), { flag: "wx" });
+        } catch (err) {
+            if (errnoCode(err) === "EEXIST") {
+                return false;
+            }
+
+            throw err;
+        } finally {
+            try {
+                unlinkSync(tempPath);
+            } catch (err) {
+                logger.debug({ err, tempPath }, "[pidfile] takeover temp cleanup failed");
+            }
+        }
+
+        return true;
+    }
+
+    try {
+        unlinkSync(tempPath);
+    } catch (err) {
+        logger.debug({ err, tempPath }, "[pidfile] takeover temp cleanup failed");
+    }
+
+    return true;
 }

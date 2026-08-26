@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { mkdirSync, readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { configureLogger, logger } from "@genesiscz/utils/logger";
 import {
+    attemptStaleTakeover,
     buildPidRecord,
     clearPidFile,
     ownsPidFile,
@@ -27,98 +28,9 @@ function isEexist(err: unknown): boolean {
     return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST";
 }
 
-function isEnoent(err: unknown): boolean {
-    return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
-}
-
-/**
- * Atomically steal a stale pidfile whose content was pre-validated as dead.
- *
- * Renames it to a unique temp path first — rename is atomic on POSIX, so
- * under N concurrent racers (e.g. a launchd respawn storm) exactly one
- * rename succeeds; every loser gets ENOENT (the source is already gone
- * under them) and returns false rather than also "winning".
- *
- * The rename alone is NOT sufficient: rename steals whatever currently sits
- * at the path, so a late racer can grab the pidfile the previous winner just
- * wrote (validated-stale at check time, fresh at rename time — TOCTOU; a
- * 12-racer test reproduced two "winners" without this guard). So after the
- * rename, the stolen content must still equal `expectedContent` — the exact
- * stale artifact the caller validated. A mismatch means a fresh file was
- * grabbed: restore it (best-effort `wx`; if someone claimed the slot
- * meanwhile, the robbed owner's per-tick `verifyPidfileOwnership` self-exit
- * is the backstop) and lose.
- *
- * Uses the async `rename()` (not `renameSync`): Bun's synchronous fs calls
- * are reentrant under concurrent async-driven load (verified empirically —
- * many concurrent `renameSync` callers in one process can each observe a
- * "successful" rename of the same source), which breaks the single-winner
- * guarantee this function exists to provide. The async version dispatches
- * through the normal I/O completion queue with no such reentrancy.
- *
- * Exported for direct concurrency testing (see daemon.test.ts).
- */
-export async function attemptStaleTakeover(pidFile: string, expectedContent: string): Promise<boolean> {
-    const tempPath = `${pidFile}.stale-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
-
-    try {
-        await rename(pidFile, tempPath);
-    } catch (err) {
-        if (isEnoent(err)) {
-            return false;
-        }
-
-        throw err;
-    }
-
-    let stolen: string | null = null;
-
-    try {
-        stolen = await readFile(tempPath, "utf-8");
-    } catch {
-        stolen = null;
-    }
-
-    if (stolen === null || stolen.trim() !== expectedContent.trim()) {
-        // We grabbed something other than the validated-stale file — a fresh
-        // owner wrote between our check and our rename. Put it back and lose.
-        if (stolen !== null) {
-            try {
-                await writeFile(pidFile, stolen, { flag: "wx" });
-            } catch (err) {
-                // Slot already re-claimed — the robbed owner self-heals via
-                // its per-tick ownership check.
-                logger.debug({ err, pidFile }, "[daemon] stale-takeover restore skipped (slot re-claimed)");
-            }
-        }
-
-        try {
-            unlinkSync(tempPath);
-        } catch {
-            // best-effort cleanup
-        }
-
-        return false;
-    }
-
-    try {
-        await writeFile(pidFile, serializePidRecord(buildPidRecord()), { flag: "wx" });
-    } catch (err) {
-        if (isEexist(err)) {
-            return false;
-        }
-
-        throw err;
-    } finally {
-        try {
-            unlinkSync(tempPath);
-        } catch {
-            // best-effort cleanup; ENOENT if somehow already gone
-        }
-    }
-
-    return true;
-}
+// The atomic stale-takeover protocol now lives in the shared pidfile util;
+// re-exported so daemon.test.ts (and older callers) keep their import path.
+export { attemptStaleTakeover };
 
 /**
  * Claim the daemon pidfile as our own.
