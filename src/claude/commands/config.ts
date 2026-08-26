@@ -6,10 +6,9 @@ import {
     updateConfig,
 } from "@app/claude/lib/config";
 import { identityMismatch } from "@app/claude/lib/identity-guard";
+import { renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
 import { fetchUsage } from "@app/claude/lib/usage/api";
-import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
-import { invalidateSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
@@ -17,6 +16,7 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -883,9 +883,10 @@ export function registerConfigCommand(program: Command): void {
         });
 
     configCmd
-        .command("rename <oldName> <newName>")
-        .description("Rename an account, carrying its usage history and defaults across")
-        .action(async (oldName: string, newName: string) => {
+        .command("rename <oldName> [newName]")
+        .description("Rename an account, carrying its usage history, warmup lists, and defaults across")
+        .option("--to <newName>", "New account name (required in non-interactive mode)")
+        .action(async (oldName: string, newName: string | undefined, opts: { to?: string }) => {
             const aiConfig = await AIConfig.load();
 
             if (!aiConfig.getAccount(oldName)) {
@@ -893,17 +894,52 @@ export function registerConfigCommand(program: Command): void {
                 process.exit(1);
             }
 
-            await aiConfig.renameAccount(oldName, newName);
+            const resolved = resolveRenameTo({
+                positional: newName,
+                toFlag: opts.to,
+                interactive: isInteractive(),
+            });
 
-            // History is keyed by NAME, so it has to move in the same breath or
-            // the account's burn pace silently restarts from zero.
-            const moved = new UsageHistoryDb().renameAccount(oldName, newName);
+            let target: string;
 
-            // The shared usage cache is name-keyed too; drop it so the next poll
-            // rebuilds it under the new name instead of showing a ghost row.
-            await invalidateSharedUsage();
+            if ("error" in resolved) {
+                if (resolved.error === "to-required") {
+                    out.error(pc.red("--to is required in non-interactive mode."));
+                    out.info(
+                        suggestCommand("tools claude config rename", {
+                            subcommand: ["config", "rename"],
+                            add: ["--to", "<newName>"],
+                        })
+                    );
+                    process.exit(1);
+                }
 
-            p.log.success(`Renamed "${oldName}" → "${newName}" (${moved} history row${moved === 1 ? "" : "s"} moved).`);
+                const typed = await p.text({
+                    message: "New name:",
+                    placeholder: oldName,
+                    defaultValue: oldName,
+                });
+
+                if (p.isCancel(typed) || !String(typed).trim()) {
+                    p.cancel("Cancelled.");
+                    return;
+                }
+
+                target = String(typed).trim();
+            } else {
+                target = resolved.name;
+            }
+
+            if (aiConfig.getAccount(target) && target !== oldName) {
+                p.log.error(`Account "${target}" already exists.`);
+                process.exit(1);
+            }
+
+            const moved = await renameClaudeAccount(oldName, target);
+
+            p.log.success(
+                `Renamed "${oldName}" → "${target}" (${moved.historyRows} history row${moved.historyRows === 1 ? "" : "s"} moved).`
+            );
             out.println(pc.dim("Sessions already running keep reporting the old name until they exit."));
         });
 

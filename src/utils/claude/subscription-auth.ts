@@ -151,6 +151,23 @@ export async function clearInvalidGrant(account: string): Promise<void> {
     });
 }
 
+/** Carry the cooldown across an account rename so the next poll does not re-hammer a dead grant. */
+export async function rekeyInvalidGrant(oldName: string, newName: string): Promise<void> {
+    if (oldName === newName) {
+        return;
+    }
+
+    await mutateInvalidGrants(oldName, (all) => {
+        if (!(oldName in all)) {
+            return false;
+        }
+
+        all[newName] = all[oldName];
+        delete all[oldName];
+        return true;
+    });
+}
+
 /**
  * Append the old and freshly-issued token pair to a journal BEFORE the config
  * write. Refresh tokens are single-use: if the process dies (or the write is
