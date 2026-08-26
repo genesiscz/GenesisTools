@@ -91,14 +91,15 @@ tools grok sessions
 - Write the brief to a file (session scratchpad) and pass `--prompt-file`; inline `--prompt` breaks on backticks and `$(...)`.
 - On completion the harness prints the worker's report (stdout) and its tool calls (stderr), and **exits 1 when the turn died mid-flight** (the raw grok CLI exits 0 even then). Turn transcripts live at `~/.genesis-tools/grok/sessions/<task>.turn<N>.jsonl` (+ `.err`); `tools grok read` re-prints them.
 - `--name` is the session handle: `run` refuses an existing name, so pick a fresh one per handoff and use `steer` for every later turn.
-- To abort a running turn, kill the grok child process by its cwd — `pkill -f "grok .*--cwd <abs project path>"` (matches both the spawn and resume forms). The harness then returns a died-mid-flight result, and the session survives, so the next `steer` resumes it.
+- To abort a running turn, kill the grok child process by its cwd — `pkill -f "grok .*--cwd <abs project path>"` (matches both the spawn and resume forms), or by the session id from `tools grok sessions`. Verified: the harness then reports `exit 143`, `died mid-flight`, and exits 1, while the session survives and the next `steer` resumes it normally.
 - Auth is `XAI_API_KEY` from the environment. If a turn reports a login problem, stop and report — never run `grok login` for the user.
 
 ## What the harness bakes in (do not hand-roll bare `grok`)
 
 - **Isolation.** Workers run with `GROK_HOME=~/.genesis-tools/grok/worker-home` plus the `GROK_CLAUDE_*_ENABLED=0` toggles. Without them the worker loads the user's `~/.claude/CLAUDE.md`, permission settings, and ~200 personal skills — and *acts* on them (verified: an un-isolated worker ran the user's personal `tools say` ritual mid-task). A `CLAUDE.md` in the worker's own `--cwd` project still loads (usually wanted); use a scratch dir or worktree when not.
 - **Session bookkeeping.** The session uuid and cwd live in `~/.genesis-tools/grok/sessions/<task>.meta.json`; grok keys sessions by cwd, and `steer` resumes with the identical cwd automatically.
-- **Sticky `--readonly`.** The raw grok CLI forgets `--tools` on every `--resume` (verified: a read-only session edited a file on its first unflagged resume). The harness re-arms the allowlist on each steer; `--writable` on a steer switches back deliberately.
+- **Sticky `--readonly`.** The raw grok CLI forgets `--tools` on every `--resume` (verified: a read-only session edited a file on its first unflagged resume). The harness re-arms the allowlist on every steer — verified: an unflagged steer of a read-only session still had only `read_file,list_dir,grep` and left the target file untouched. `--writable` on a steer deliberately switches back (verified: write tools returned, the edit landed, and `sessions` then shows the session as `jail`).
+- **A per-handoff worker home** via `--worker-home <path>` when running handoffs in parallel (verified: grok populated the override directory instead of the default one). Keep it constant for the whole handoff — grok keys sessions by cwd inside that home.
 - **Direct binary spawn.** No shell in the path, so the user's zsh `grok` wrapper function (proxy env injection) cannot interfere.
 
 ## Safety dial

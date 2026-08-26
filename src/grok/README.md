@@ -17,7 +17,7 @@ tools grok sessions
 
 - **Isolation.** Workers get `GROK_HOME=~/.genesis-tools/grok/worker-home` and the `GROK_CLAUDE_*_ENABLED=0` toggles, so they never load the user's `~/.claude` rules, permission settings, or personal skills. Override the home with `--worker-home` for parallel or test isolation, and keep it constant per session (sessions live inside it).
 - **Session bookkeeping.** The session uuid and cwd are stored in `~/.genesis-tools/grok/sessions/<name>.meta.json`; `steer` resumes with the identical `--cwd` automatically (grok keys sessions by cwd).
-- **Sticky read-only.** The grok CLI forgets `--tools` on every `--resume`; the harness re-arms the read-only allowlist on each steer of a `--readonly` session.
+- **Sticky read-only.** The grok CLI forgets `--tools` on every `--resume`; the harness re-arms the read-only allowlist on each steer of a `--readonly` session. `steer --writable` switches the session back to the project jail deliberately.
 - **Honest exit codes.** The grok CLI exits 0 even when a turn dies. `tools grok` parses the stream and exits 1 when no terminal `end` event is present.
 
 ## Safety model (verified against grok CLI 1.0.3, 2026-08-26)
