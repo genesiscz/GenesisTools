@@ -1,14 +1,13 @@
 import type { PollResult } from "@app/claude/commands/usage/types";
-import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { AccountSection, estimateAccountHeight, MIN_ACCOUNT_COLUMN_WIDTH } from "./account-section";
+import { applySort, type OverviewSortMode } from "./overview-sort";
 
-/** `config` keeps the account order from the config file; `urgency` applies grouped scoring. */
-export type OverviewSortMode = "config" | "urgency";
+export type { OverviewSortMode };
 
 // Frame chrome around the account list: TabBar(1) + StatusBar(2) +
 // paddingY(2) + height clamp margin(1).
@@ -23,19 +22,6 @@ interface OverviewViewProps {
     results: PollResult | null;
     config: UsageDashboardConfig;
     sortMode?: OverviewSortMode;
-}
-
-/** Reorder by the shared grouped-urgency scoring (`s` in the TUI); same lib the cc run picker uses. */
-function applySort(accounts: AccountUsage[], mode: OverviewSortMode): AccountUsage[] {
-    if (mode === "config") {
-        return accounts;
-    }
-
-    const byName = new Map(accounts.map((a) => [a.accountName, a]));
-
-    return sortGrouped(scoreAccounts(accounts))
-        .map((scored) => byName.get(scored.accountName))
-        .filter((account): account is AccountUsage => account !== undefined);
 }
 
 /** Split accounts into two columns balanced by rendered height, order kept. */
@@ -61,7 +47,7 @@ function splitByHeight(
     return [accounts.slice(0, Math.max(1, splitAt)), accounts.slice(Math.max(1, splitAt))];
 }
 
-export function OverviewView({ results, config, sortMode = "config" }: OverviewViewProps) {
+export function OverviewView({ results, config, sortMode = "urgency" }: OverviewViewProps) {
     const { columns: termWidth, rows: termHeight } = useTerminalSize();
     const [, setTick] = useState(0);
 
