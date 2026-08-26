@@ -1,0 +1,182 @@
+{
+ "pages": [
+  {
+   "id": "page_1",
+   "startedDateTime": "2018-11-23T11:48:51.302Z",
+   "title": "https://www.sitespeed.io/documentation/",
+   "pageTimings": {
+    "onLoad": 53.814,
+    "onContentLoad": 54.09
+   }
+  }
+ ],
+ "entries": [
+  {
+   "cache": {},
+   "startedDateTime": "2018-11-23T11:48:51.302Z",
+   "_requestId": "498739478C13F27AE4EFDA7A005918D6",
+   "_initialPriority": "VeryHigh",
+   "_priority": "VeryHigh",
+   "pageref": "page_1",
+   "request": {
+    "method": "GET",
+    "url": "https://www.sitespeed.io/documentation/",
+    "queryString": [],
+    "headersSize": -1,
+    "bodySize": 0,
+    "cookies": [],
+    "headers": [
+     {
+      "name": ":authority",
+      "value": "www.sitespeed.io"
+     },
+     {
+      "name": ":method",
+      "value": "GET"
+     },
+     {
+      "name": ":path",
+      "value": "/documentation/"
+     },
+     {
+      "name": ":scheme",
+      "value": "https"
+     },
+     {
+      "name": "accept",
+      "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"
+     },
+     {
+      "name": "accept-encoding",
+      "value": "gzip, deflate, br"
+     },
+     {
+      "name": "accept-language",
+      "value": "en-GB,en-US;q=0.9,en;q=0.8"
+     },
+     {
+      "name": "upgrade-insecure-requests",
+      "value": "1"
+     },
+     {
+      "name": "user-agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.102 Safari/537.36"
+     }
+    ],
+    "httpVersion": "h2"
+   },
+   "time": 35.491,
+   "_initiator_detail": "{\"type\":\"other\"}",
+   "_initiator_type": "other",
+   "_resourceType": "document",
+   "response": {
+    "httpVersion": "h2",
+    "redirectURL": "",
+    "status": 200,
+    "statusText": "",
+    "content": {
+     "mimeType": "text/html",
+     "size": 30175,
+     "compression": 21781
+    },
+    "headersSize": -1,
+    "bodySize": 8394,
+    "cookies": [],
+    "headers": [
+     {
+      "name": "age",
+      "value": "12099"
+     },
+     {
+      "name": "cache-control",
+      "value": "public, max-age=0, must-revalidate"
+     },
+     {
+      "name": "content-encoding",
+      "value": "gzip"
+     },
+     {
+      "name": "content-length",
+      "value": "8261"
+     },
+     {
+      "name": "content-security-policy",
+      "value": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+     },
+     {
+      "name": "content-type",
+      "value": "text/html; charset=UTF-8"
+     },
+     {
+      "name": "date",
+      "value": "Fri, 23 Nov 2018 08:27:12 GMT"
+     },
+     {
+      "name": "etag",
+      "value": "\"5845d0af318484658eb606d3cdf8dec0-ssl-df\""
+     },
+     {
+      "name": "referrer-policy",
+      "value": "no-referrer"
+     },
+     {
+      "name": "server",
+      "value": "Netlify"
+     },
+     {
+      "name": "status",
+      "value": "200"
+     },
+     {
+      "name": "strict-transport-security",
+      "value": "max-age=31536000"
+     },
+     {
+      "name": "vary",
+      "value": "Accept-Encoding"
+     },
+     {
+      "name": "x-content-type-options",
+      "value": "nosniff"
+     },
+     {
+      "name": "x-frame-options",
+      "value": "SAMEORIGIN"
+     },
+     {
+      "name": "x-nf-request-id",
+      "value": "cf03b3c7-2996-41f4-bf4a-a12fd10aefa1-11213500"
+     },
+     {
+      "name": "x-xss-protection",
+      "value": "1; mode=block"
+     }
+    ],
+    "_transferSize": 8394,
+    "fromDiskCache": false,
+    "fromEarlyHints": false,
+    "fromServiceWorker": false,
+    "fromPrefetchCache": false
+   },
+   "connection": "46",
+   "serverIPAddress": "142.93.108.123",
+   "timings": {
+    "blocked": 0.494,
+    "dns": -1,
+    "connect": -1,
+    "send": 0.06,
+    "wait": 33.361,
+    "receive": 1.576,
+    "ssl": -1,
+    "_queued": 0.305
+   },
+   "_requestTime": 186182.089366,
+   "_chunks": [
+    {
+     "ts": 36.588,
+     "bytes": 30175
+    }
+   ]
+  }
+ ]
+}

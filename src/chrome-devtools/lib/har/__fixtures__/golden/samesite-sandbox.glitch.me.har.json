@@ -1,0 +1,817 @@
+{
+ "pages": [
+  {
+   "id": "page_1",
+   "startedDateTime": "2020-07-29T03:49:00.608Z",
+   "title": "https://samesite-sandbox.glitch.me/",
+   "pageTimings": {
+    "onContentLoad": 1036.245,
+    "onLoad": 1921.607
+   }
+  }
+ ],
+ "entries": [
+  {
+   "cache": {},
+   "startedDateTime": "2020-07-29T03:49:00.609Z",
+   "_requestId": "8370893B3D16ACE10B5AA20C4E9069A4",
+   "_initialPriority": "VeryHigh",
+   "_priority": "VeryHigh",
+   "pageref": "page_1",
+   "request": {
+    "method": "GET",
+    "url": "https://samesite-sandbox.glitch.me/",
+    "queryString": [],
+    "headersSize": -1,
+    "bodySize": 0,
+    "cookies": [],
+    "headers": [
+     {
+      "name": ":method",
+      "value": "GET"
+     },
+     {
+      "name": ":authority",
+      "value": "samesite-sandbox.glitch.me"
+     },
+     {
+      "name": ":scheme",
+      "value": "https"
+     },
+     {
+      "name": ":path",
+      "value": "/"
+     },
+     {
+      "name": "upgrade-insecure-requests",
+      "value": "1"
+     },
+     {
+      "name": "user-agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
+     },
+     {
+      "name": "accept",
+      "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
+     },
+     {
+      "name": "sec-fetch-site",
+      "value": "none"
+     },
+     {
+      "name": "sec-fetch-mode",
+      "value": "navigate"
+     },
+     {
+      "name": "sec-fetch-user",
+      "value": "?1"
+     },
+     {
+      "name": "sec-fetch-dest",
+      "value": "document"
+     },
+     {
+      "name": "accept-encoding",
+      "value": "gzip, deflate, br"
+     },
+     {
+      "name": "accept-language",
+      "value": "en-GB,en-US;q=0.9,en;q=0.8"
+     }
+    ],
+    "httpVersion": "h2"
+   },
+   "time": 886.834,
+   "_initiator_detail": "{\"type\":\"other\"}",
+   "_initiator_type": "other",
+   "_resourceType": "document",
+   "response": {
+    "httpVersion": "h2",
+    "redirectURL": "",
+    "status": 200,
+    "statusText": "",
+    "content": {
+     "mimeType": "text/html",
+     "size": 10494
+    },
+    "headersSize": -1,
+    "bodySize": 10985,
+    "cookies": [
+     {
+      "name": "ck03",
+      "value": "vl03",
+      "httpOnly": false,
+      "secure": false
+     },
+     {
+      "name": "ck00",
+      "value": "vl00",
+      "path": "/",
+      "httpOnly": false,
+      "secure": false
+     },
+     {
+      "name": "ck01",
+      "value": "vl01",
+      "path": "/",
+      "httpOnly": false,
+      "secure": true
+     },
+     {
+      "name": "ck02",
+      "value": "vl02",
+      "path": "/",
+      "httpOnly": false,
+      "secure": false
+     },
+     {
+      "name": "ck04",
+      "value": "vl04",
+      "path": "/",
+      "httpOnly": false,
+      "secure": false
+     },
+     {
+      "name": "ck05",
+      "value": "vl05",
+      "path": "/",
+      "httpOnly": false,
+      "secure": false
+     }
+    ],
+    "headers": [
+     {
+      "name": "status",
+      "value": "200"
+     },
+     {
+      "name": "date",
+      "value": "Wed, 29 Jul 2020 03:49:01 GMT"
+     },
+     {
+      "name": "content-type",
+      "value": "text/html; charset=UTF-8"
+     },
+     {
+      "name": "content-length",
+      "value": "10494"
+     },
+     {
+      "name": "x-powered-by",
+      "value": "Express"
+     },
+     {
+      "name": "strict-transport-security",
+      "value": "max-age=63072000; inlcudeSubdomains; preload"
+     },
+     {
+      "name": "referrer-policy",
+      "value": "strict-origin-when-cross-origin"
+     },
+     {
+      "name": "set-cookie",
+      "value": "ck03=vl03; SameSite=InvalidValue\nck00=vl00; Path=/\nck01=vl01; Path=/; Secure; SameSite=None\nck02=vl02; Path=/; SameSite=None\nck04=vl04; Path=/; SameSite=Lax\nck05=vl05; Path=/; SameSite=Strict"
+     },
+     {
+      "name": "accept-ranges",
+      "value": "bytes"
+     },
+     {
+      "name": "cache-control",
+      "value": "public, max-age=0"
+     },
+     {
+      "name": "last-modified",
+      "value": "Thu, 26 Mar 2020 12:31:57 GMT"
+     },
+     {
+      "name": "etag",
+      "value": "W/\"28fe-17116d3e248\""
+     }
+    ],
+    "_transferSize": 10985,
+    "fromDiskCache": false,
+    "fromEarlyHints": false,
+    "fromServiceWorker": false,
+    "fromPrefetchCache": false
+   },
+   "connection": "27",
+   "serverIPAddress": "54.164.246.13",
+   "timings": {
+    "blocked": 0.219,
+    "dns": 16.139,
+    "connect": 437.532,
+    "send": 0.087,
+    "wait": 432.289,
+    "receive": 0.568,
+    "ssl": 224.861,
+    "_queued": 0.652
+   },
+   "_requestTime": 101502.530878,
+   "_chunks": [
+    {
+     "ts": 901.065,
+     "bytes": 10494
+    }
+   ]
+  },
+  {
+   "cache": {},
+   "startedDateTime": "2020-07-29T03:49:01.646Z",
+   "_requestId": "6FD5005E76F02FF80B1A28761D02BA11",
+   "_initialPriority": "VeryHigh",
+   "_priority": "VeryHigh",
+   "pageref": "page_1",
+   "request": {
+    "method": "GET",
+    "url": "https://googlechromelabs.github.io/samesite-examples/crosssite-embed.html",
+    "queryString": [],
+    "headersSize": -1,
+    "bodySize": 0,
+    "cookies": [],
+    "headers": [
+     {
+      "name": ":method",
+      "value": "GET"
+     },
+     {
+      "name": ":authority",
+      "value": "googlechromelabs.github.io"
+     },
+     {
+      "name": ":scheme",
+      "value": "https"
+     },
+     {
+      "name": ":path",
+      "value": "/samesite-examples/crosssite-embed.html"
+     },
+     {
+      "name": "upgrade-insecure-requests",
+      "value": "1"
+     },
+     {
+      "name": "user-agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
+     },
+     {
+      "name": "accept",
+      "value": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"
+     },
+     {
+      "name": "sec-fetch-site",
+      "value": "cross-site"
+     },
+     {
+      "name": "sec-fetch-mode",
+      "value": "navigate"
+     },
+     {
+      "name": "sec-fetch-dest",
+      "value": "iframe"
+     },
+     {
+      "name": "referer",
+      "value": "https://samesite-sandbox.glitch.me/"
+     },
+     {
+      "name": "accept-encoding",
+      "value": "gzip, deflate, br"
+     },
+     {
+      "name": "accept-language",
+      "value": "en-GB,en-US;q=0.9,en;q=0.8"
+     }
+    ],
+    "httpVersion": "h2"
+   },
+   "time": 874.4,
+   "_initiator_detail": "{\"type\":\"script\",\"stack\":{\"callFrames\":[{\"functionName\":\"\",\"scriptId\":\"13\",\"url\":\"https://samesite-sandbox.glitch.me/\",\"lineNumber\":372,\"columnNumber\":18}]}}",
+   "_initiator_type": "script",
+   "_resourceType": "document",
+   "_initiator": "https://samesite-sandbox.glitch.me/",
+   "_initiator_line": 373,
+   "_initiator_column": 19,
+   "_initiator_function_name": "",
+   "_initiator_script_id": "13",
+   "response": {
+    "httpVersion": "h2",
+    "redirectURL": "",
+    "status": 200,
+    "statusText": "",
+    "content": {
+     "mimeType": "text/html",
+     "size": 697
+    },
+    "headersSize": -1,
+    "bodySize": 796,
+    "cookies": [],
+    "headers": [
+     {
+      "name": "status",
+      "value": "200"
+     },
+     {
+      "name": "content-type",
+      "value": "text/html; charset=utf-8"
+     },
+     {
+      "name": "server",
+      "value": "GitHub.com"
+     },
+     {
+      "name": "strict-transport-security",
+      "value": "max-age=31556952"
+     },
+     {
+      "name": "last-modified",
+      "value": "Thu, 02 Apr 2020 11:29:48 GMT"
+     },
+     {
+      "name": "etag",
+      "value": "W/\"5e85ccac-2b9\""
+     },
+     {
+      "name": "access-control-allow-origin",
+      "value": "*"
+     },
+     {
+      "name": "expires",
+      "value": "Wed, 29 Jul 2020 03:48:56 GMT"
+     },
+     {
+      "name": "cache-control",
+      "value": "max-age=600"
+     },
+     {
+      "name": "content-encoding",
+      "value": "gzip"
+     },
+     {
+      "name": "x-proxy-cache",
+      "value": "MISS"
+     },
+     {
+      "name": "x-github-request-id",
+      "value": "16B8:5823:26B58:32FB9:5F20EF50"
+     },
+     {
+      "name": "accept-ranges",
+      "value": "bytes"
+     },
+     {
+      "name": "date",
+      "value": "Wed, 29 Jul 2020 03:49:02 GMT"
+     },
+     {
+      "name": "via",
+      "value": "1.1 varnish"
+     },
+     {
+      "name": "age",
+      "value": "0"
+     },
+     {
+      "name": "x-served-by",
+      "value": "cache-syd10121-SYD"
+     },
+     {
+      "name": "x-cache",
+      "value": "HIT"
+     },
+     {
+      "name": "x-cache-hits",
+      "value": "1"
+     },
+     {
+      "name": "x-timer",
+      "value": "S1595994542.820717,VS0,VE804"
+     },
+     {
+      "name": "vary",
+      "value": "Accept-Encoding"
+     },
+     {
+      "name": "x-fastly-request-id",
+      "value": "2a80e9628aaf66d0eac077a1eb53e623008b2cae"
+     },
+     {
+      "name": "content-length",
+      "value": "409"
+     }
+    ],
+    "_transferSize": 796,
+    "fromDiskCache": false,
+    "fromEarlyHints": false,
+    "fromServiceWorker": false,
+    "fromPrefetchCache": false
+   },
+   "connection": "42",
+   "serverIPAddress": "185.199.108.153",
+   "timings": {
+    "blocked": 0.576,
+    "dns": 25.522,
+    "connect": 32.225,
+    "send": 0.096,
+    "wait": 815.707,
+    "receive": 0.274,
+    "ssl": 20.667,
+    "_queued": 1.573
+   },
+   "_requestTime": 101503.568005,
+   "_chunks": [
+    {
+     "ts": 1919.008,
+     "bytes": 697
+    }
+   ]
+  },
+  {
+   "cache": {},
+   "startedDateTime": "2020-07-29T03:49:02.529Z",
+   "_requestId": "13720.3",
+   "_initialPriority": "High",
+   "_priority": "High",
+   "pageref": "page_1",
+   "request": {
+    "method": "GET",
+    "url": "https://samesite-sandbox.glitch.me/cookies.json",
+    "queryString": [],
+    "headersSize": -1,
+    "bodySize": 0,
+    "cookies": [
+     {
+      "name": "ck03",
+      "value": "vl03",
+      "path": "/",
+      "domain": "samesite-sandbox.glitch.me",
+      "expires": "1969-12-31T23:59:59.999Z",
+      "httpOnly": false,
+      "secure": false
+     },
+     {
+      "name": "ck00",
+      "value": "vl00",
+      "path": "/",
+      "domain": "samesite-sandbox.glitch.me",
+      "expires": "1969-12-31T23:59:59.999Z",
+      "httpOnly": false,
+      "secure": false
+     },
+     {
+      "name": "ck01",
+      "value": "vl01",
+      "path": "/",
+      "domain": "samesite-sandbox.glitch.me",
+      "expires": "1969-12-31T23:59:59.999Z",
+      "httpOnly": false,
+      "secure": true
+     },
+     {
+      "name": "ck02",
+      "value": "vl02",
+      "path": "/",
+      "domain": "samesite-sandbox.glitch.me",
+      "expires": "1969-12-31T23:59:59.999Z",
+      "httpOnly": false,
+      "secure": false
+     }
+    ],
+    "headers": [
+     {
+      "name": "Referer",
+      "value": "https://googlechromelabs.github.io/samesite-examples/crosssite-embed.html"
+     },
+     {
+      "name": "User-Agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
+     },
+     {
+      "name": ":method",
+      "value": "GET"
+     },
+     {
+      "name": ":authority",
+      "value": "samesite-sandbox.glitch.me"
+     },
+     {
+      "name": ":scheme",
+      "value": "https"
+     },
+     {
+      "name": ":path",
+      "value": "/cookies.json"
+     },
+     {
+      "name": "user-agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
+     },
+     {
+      "name": "accept",
+      "value": "*/*"
+     },
+     {
+      "name": "origin",
+      "value": "https://googlechromelabs.github.io"
+     },
+     {
+      "name": "sec-fetch-site",
+      "value": "cross-site"
+     },
+     {
+      "name": "sec-fetch-mode",
+      "value": "cors"
+     },
+     {
+      "name": "sec-fetch-dest",
+      "value": "empty"
+     },
+     {
+      "name": "referer",
+      "value": "https://googlechromelabs.github.io/samesite-examples/crosssite-embed.html"
+     },
+     {
+      "name": "accept-encoding",
+      "value": "gzip, deflate, br"
+     },
+     {
+      "name": "accept-language",
+      "value": "en-GB,en-US;q=0.9,en;q=0.8"
+     },
+     {
+      "name": "cookie",
+      "value": "ck03=vl03; ck00=vl00; ck01=vl01; ck02=vl02"
+     }
+    ],
+    "httpVersion": "h2"
+   },
+   "time": 229.1,
+   "_initiator_detail": "{\"type\":\"script\",\"stack\":{\"callFrames\":[{\"functionName\":\"fetchCookies\",\"scriptId\":\"17\",\"url\":\"https://googlechromelabs.github.io/samesite-examples/crosssite-embed.html\",\"lineNumber\":16,\"columnNumber\":8},{\"functionName\":\"\",\"scriptId\":\"17\",\"url\":\"https://googlechromelabs.github.io/samesite-examples/crosssite-embed.html\",\"lineNumber\":19,\"columnNumber\":2}]}}",
+   "_initiator_type": "script",
+   "_resourceType": "xhr",
+   "_initiator": "https://googlechromelabs.github.io/samesite-examples/crosssite-embed.html",
+   "_initiator_line": 17,
+   "_initiator_column": 9,
+   "_initiator_function_name": "fetchCookies",
+   "_initiator_script_id": "17",
+   "response": {
+    "httpVersion": "h2",
+    "redirectURL": "",
+    "status": 200,
+    "statusText": "",
+    "content": {
+     "mimeType": "application/json",
+     "size": 57
+    },
+    "headersSize": -1,
+    "bodySize": 315,
+    "cookies": [],
+    "headers": [
+     {
+      "name": "status",
+      "value": "200"
+     },
+     {
+      "name": "date",
+      "value": "Wed, 29 Jul 2020 03:49:02 GMT"
+     },
+     {
+      "name": "content-type",
+      "value": "application/json; charset=utf-8"
+     },
+     {
+      "name": "content-length",
+      "value": "57"
+     },
+     {
+      "name": "x-powered-by",
+      "value": "Express"
+     },
+     {
+      "name": "strict-transport-security",
+      "value": "max-age=63072000; inlcudeSubdomains; preload"
+     },
+     {
+      "name": "access-control-allow-origin",
+      "value": "https://googlechromelabs.github.io"
+     },
+     {
+      "name": "access-control-allow-credentials",
+      "value": "true"
+     },
+     {
+      "name": "etag",
+      "value": "W/\"39-P/NBn2GNcAA8yGJ1I79HEa1fh8I\""
+     }
+    ],
+    "_transferSize": 315,
+    "fromDiskCache": false,
+    "fromEarlyHints": false,
+    "fromServiceWorker": false,
+    "fromPrefetchCache": false
+   },
+   "connection": "27",
+   "serverIPAddress": "54.164.246.13",
+   "timings": {
+    "blocked": 0.247,
+    "dns": -1,
+    "connect": -1,
+    "send": 0.128,
+    "wait": 227.72,
+    "receive": 1.005,
+    "ssl": -1,
+    "_queued": 0.433
+   },
+   "_requestTime": 101504.450842,
+   "_chunks": [
+    {
+     "ts": 2151.254,
+     "bytes": 57
+    }
+   ]
+  },
+  {
+   "cache": {},
+   "startedDateTime": "2020-07-29T03:49:02.531Z",
+   "_requestId": "13720.4",
+   "_initialPriority": "High",
+   "_priority": "High",
+   "pageref": "page_1",
+   "request": {
+    "method": "GET",
+    "url": "https://cdn.glitch.com/e304e580-9956-4cb6-9f62-9e89ad6cd85f%2Fcookie.png?v=1572981153632",
+    "queryString": [
+     {
+      "name": "v",
+      "value": "1572981153632"
+     }
+    ],
+    "headersSize": 719,
+    "bodySize": 0,
+    "cookies": [],
+    "headers": [
+     {
+      "name": "Referer",
+      "value": "https://samesite-sandbox.glitch.me/"
+     },
+     {
+      "name": "User-Agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
+     },
+     {
+      "name": "Host",
+      "value": "cdn.glitch.com"
+     },
+     {
+      "name": "Connection",
+      "value": "keep-alive"
+     },
+     {
+      "name": "User-Agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
+     },
+     {
+      "name": "Accept",
+      "value": "image/webp,image/apng,image/*,*/*;q=0.8"
+     },
+     {
+      "name": "Sec-Fetch-Site",
+      "value": "cross-site"
+     },
+     {
+      "name": "Sec-Fetch-Mode",
+      "value": "no-cors"
+     },
+     {
+      "name": "Sec-Fetch-Dest",
+      "value": "image"
+     },
+     {
+      "name": "Referer",
+      "value": "https://samesite-sandbox.glitch.me/"
+     },
+     {
+      "name": "Accept-Encoding",
+      "value": "gzip, deflate, br"
+     },
+     {
+      "name": "Accept-Language",
+      "value": "en-GB,en-US;q=0.9,en;q=0.8"
+     }
+    ],
+    "httpVersion": "http/1.1"
+   },
+   "time": 459.499,
+   "_initiator_detail": "{\"type\":\"other\"}",
+   "_initiator_type": "other",
+   "_resourceType": "other",
+   "response": {
+    "httpVersion": "http/1.1",
+    "redirectURL": "",
+    "status": 200,
+    "statusText": "OK",
+    "content": {
+     "mimeType": "image/png",
+     "size": 10010
+    },
+    "headersSize": 587,
+    "bodySize": 10010,
+    "cookies": [],
+    "headers": [
+     {
+      "name": "Content-Type",
+      "value": "image/png"
+     },
+     {
+      "name": "Content-Length",
+      "value": "10010"
+     },
+     {
+      "name": "Connection",
+      "value": "keep-alive"
+     },
+     {
+      "name": "Date",
+      "value": "Mon, 22 Jun 2020 10:05:03 GMT"
+     },
+     {
+      "name": "Access-Control-Allow-Origin",
+      "value": "*"
+     },
+     {
+      "name": "Access-Control-Allow-Methods",
+      "value": "GET, HEAD, POST"
+     },
+     {
+      "name": "Access-Control-Max-Age",
+      "value": "86400"
+     },
+     {
+      "name": "Cache-Control",
+      "value": "max-age=31536000"
+     },
+     {
+      "name": "Last-Modified",
+      "value": "Tue, 05 Nov 2019 19:12:33 GMT"
+     },
+     {
+      "name": "ETag",
+      "value": "\"4fc7568972cffeaa3b02ff05668179d4\""
+     },
+     {
+      "name": "Server",
+      "value": "AmazonS3"
+     },
+     {
+      "name": "X-Cache",
+      "value": "Hit from cloudfront"
+     },
+     {
+      "name": "Via",
+      "value": "1.1 0cd88f29d8c6e29a267867c45efda9a9.cloudfront.net (CloudFront)"
+     },
+     {
+      "name": "X-Amz-Cf-Pop",
+      "value": "SIN52-C2"
+     },
+     {
+      "name": "X-Amz-Cf-Id",
+      "value": "POKa3J20B_ZaSB17GG2WukHAyh4lRGmfUCfk-PtMyGfmGK6f7VbSYg=="
+     },
+     {
+      "name": "Age",
+      "value": "3174242"
+     }
+    ],
+    "_transferSize": 10597,
+    "fromDiskCache": false,
+    "fromEarlyHints": false,
+    "fromServiceWorker": false,
+    "fromPrefetchCache": false
+   },
+   "connection": "57",
+   "serverIPAddress": "13.225.5.120",
+   "timings": {
+    "blocked": 0.141,
+    "dns": 19.67,
+    "connect": 328.469,
+    "send": 0.194,
+    "wait": 110.103,
+    "receive": 0.922,
+    "ssl": 225.277,
+    "_queued": 0.264
+   },
+   "_requestTime": 101504.453423,
+   "_chunks": [
+    {
+     "ts": 2382.954,
+     "bytes": 10010
+    },
+    {
+     "ts": 2383.994,
+     "bytes": 0
+    }
+   ]
+  }
+ ]
+}

@@ -231,6 +231,7 @@
         "supports-color": "^10.2.2",
         "tar-stream": "^3.2.0",
         "telegram": "^2.26.22",
+        "tough-cookie": "^6.0.2",
         "ts-lsp-client": "^1.1.0",
         "turndown": "^7.2.1",
         "tweetnacl": "^1.0.3",
