@@ -439,11 +439,14 @@ describe("monitor honours dated and context-banded pricing", () => {
         rmSync(home, { recursive: true, force: true });
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
         home = mkdtempSync(join(tmpdir(), "ai-spend-rules-"));
         const projDir = join(home, ".claude", "projects", "p1");
         mkdirSync(projDir, { recursive: true });
-        writeFileSync(join(projDir, "s1.jsonl"), line("msg-r", new Date().toISOString(), { input_tokens: 1_000_000 }));
+        await Bun.write(
+            join(projDir, "s1.jsonl"),
+            line("msg-r", new Date().toISOString(), { input_tokens: 1_000_000 })
+        );
     });
 
     test("a dated rule beats the list rate for an event inside its window", () => {
@@ -468,5 +471,34 @@ describe("monitor honours dated and context-banded pricing", () => {
 
         // 1M input tokens: $1 under the rule, $100 if the rules are dropped.
         expect(report.today.cost).toBeCloseTo(1, 5);
+    });
+
+    test("the context band is picked by the event's own prompt size", () => {
+        // Two disjoint bands over the same list rate. The fixture event carries
+        // 1M input and no cache tokens, so only the lower band may apply. A caller
+        // that forgets contextTokens matches neither band and falls back to $100/1M.
+        const banded: PricingTable = {
+            [MODEL]: {
+                input: 100,
+                output: 100,
+                cacheWrite: 100,
+                cacheRead: 100,
+                rules: [
+                    { ctxTo: 1_999_999, inputPer1M: 2 },
+                    { ctxFrom: 2_000_000, inputPer1M: 50 },
+                ],
+            },
+        };
+
+        const report = buildMonitorReport({
+            home,
+            pricing: banded,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            readTailFn: (path) => readFileSync(path, "utf8"),
+        });
+
+        // $2 in the matching band; $50 in the wrong one, $100 with no band at all.
+        expect(report.today.cost).toBeCloseTo(2, 5);
     });
 });

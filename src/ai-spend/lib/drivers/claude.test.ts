@@ -70,6 +70,28 @@ describe("claude driver", () => {
         expect(events[0]).toMatchObject({ id: "msg-p", inputTokens: 7, outputTokens: 3 });
     });
 
+    test("a whitespace-formatted assistant record survives the prefilter", () => {
+        // Claude Code writes minified JSONL, but the prefilter must not be the
+        // thing that decides that. A needle of `"type":"assistant"` would drop
+        // this line unparsed and silently undercount the day.
+        const formatted = SafeJSON.stringify(
+            {
+                type: "assistant",
+                timestamp: "2026-08-27T09:00:00.000Z",
+                message: { id: "msg-fmt", model: "claude-3-5-haiku", usage: { input_tokens: 11 } },
+            },
+            null,
+            4
+        ).replace(/\n\s*/g, " ");
+
+        expect(formatted).toContain('"type": "assistant"');
+
+        const events = collectEvents(claudeDriver, [formatted]);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ id: "msg-fmt", inputTokens: 11 });
+    });
+
     test("a line with no timestamp still emits, and the monitor drops it without burning the id", () => {
         // `parseTranscriptLine` defaults a missing timestamp to "". The driver passes
         // that through; rejecting it is `parseChunk`'s job, and it must reject BEFORE
