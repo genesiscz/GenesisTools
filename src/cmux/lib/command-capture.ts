@@ -131,8 +131,13 @@ export interface ReplayDerivation {
     drift: string[];
 }
 
-const CLAUDE_LAUNCHER = /(^|\s)(tools cc run|tools claude run|claude)\b/;
-const CC_RUN_LAUNCHER = /(^|\s)tools (?:cc|claude) run\b/;
+// Anchored at the START of the command on purpose. `(^|\s)` matched a launcher
+// ANYWHERE, so `echo tools cc run` was rewritten wholesale to
+// `tools cc run -- --resume <id>` and the original command was lost. The policy
+// is that a non-Claude command replays verbatim, so an embedded mention is not
+// a launcher.
+const CLAUDE_LAUNCHER = /^(tools cc run|tools claude run|claude)\b/;
+const CC_RUN_LAUNCHER = /^tools (?:cc|claude) run\b/;
 
 /**
  * Pin the resume target inside the original command without touching anything

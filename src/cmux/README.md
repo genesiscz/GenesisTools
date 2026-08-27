@@ -11,6 +11,8 @@ Crash recovery and repeatable layouts for cmux. A profile captures the workspace
 | Command | Description |
 |---------|-------------|
 | `profiles` | Manage saved workspace profiles |
+| `doctor` | Read-only health probe: is cmux running, does its socket answer, is the UI thread starved |
+| `rescue [name]` | Guided recovery from a livelocked cmux — offline capture, confirmed kill, clean relaunch, command replay |
 | `send-self <text>` | Type text into the terminal surface this process is running in, then press Enter |
 
 ### `profiles` subcommands
@@ -49,6 +51,12 @@ tools cmux profiles save work --force            # overwrite
 | `--no-history` | Skip last-shell-command capture |
 | `--note <text>` | Free-form note stored on the profile |
 | `-f, --force` | Overwrite an existing profile of the same name |
+| `--offline` | Build the profile from the autosave file plus the process table instead of the socket |
+
+`--offline` exists for the case the socket cannot answer, which is exactly when you most
+need a capture. ⚠️ It is a **weaker** capture: no visible screen and no scrollback, so the
+per-pane command comes from the process table rather than from history. `save` falls back to
+it automatically when the UI is starved, and says so.
 
 ---
 
@@ -63,6 +71,41 @@ Three capture behaviours are **on by default**, and they are what makes a restor
 Pre-typing rather than auto-running is deliberate. Restoring a layout should not silently re-execute commands.
 
 `restore` is always non-destructive: it creates workspaces, it never closes yours.
+
+`restore --enter` opts into **executing** each captured command instead of pre-typing it.
+That reverses the safe default above, so it is opt-in and never implied.
+
+Captured commands are reported with their **drift**: every difference between what the
+process table showed and what will actually be replayed (an account added, a
+`-- --resume <id>` appended). Restore prints the diff rather than hiding the rewrite.
+
+## Recovery: `doctor` and `rescue`
+
+```bash
+tools cmux doctor                  # is it healthy, starved, or gone
+tools cmux rescue --dry-run        # the full plan, touching nothing
+tools cmux rescue before-reboot    # asks before it kills anything
+```
+
+`doctor` only reads. It reports whether the app is running, whether the socket answers a
+ping and an identify inside their timeouts, and the app's CPU — a pegged UI thread that
+still answers pings is the livelock signature.
+
+`rescue` is the destructive counterpart and runs in this order:
+
+1. capture an offline profile **before** anything else, so an abort still leaves it saved;
+2. ask for confirmation (`--yes` to skip, and in a non-interactive shell `--yes` is
+   **required** — it refuses rather than assuming);
+3. `SIGTERM` the app, escalating to `SIGKILL` only after a 5 s grace window;
+4. relaunch with a deliberately minimal environment, so agent markers like `CLAUDECODE`
+   do not leak into every pane's login shell;
+5. wait for the app to reopen its own workspaces, then type each captured command into the
+   matching surface.
+
+Replay is **title-checked per surface**: equal surface counts do not prove the panes still
+correspond, so a surface whose reopened title differs from the captured one is skipped and
+reported rather than typed into. Whatever a pane shows afterwards (an account gate, a resume
+dialog) is reported, never answered — `rescue` types commands, it does not answer prompts.
 
 ## `send-self`
 

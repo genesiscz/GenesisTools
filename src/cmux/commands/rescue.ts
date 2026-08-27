@@ -1,5 +1,12 @@
 import { renderProfileCommandDetail } from "@app/cmux/lib/format";
 import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
+import {
+    cleanRelaunchEnv,
+    collectReplayEntries,
+    killApp,
+    mayReplayIntoSurface,
+    type ReplayEntry,
+} from "@app/cmux/lib/rescue";
 import { scanForInteractivePrompts } from "@app/cmux/lib/restore";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
@@ -8,7 +15,6 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { paneList, workspaceList } from "@genesiscz/utils/cmux/lib/socket";
-import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
@@ -30,6 +36,13 @@ interface RescueFlags {
     dryRun?: boolean;
 }
 
+export interface RescueDeps {
+    /** Injected so a test can spy on the irreversible call and make it throw. */
+    killApp: typeof killApp;
+}
+
+const defaultDeps: RescueDeps = { killApp };
+
 export function registerRescueCommand(parent: Command): void {
     parent
         .command("rescue [name]")
@@ -43,41 +56,7 @@ export function registerRescueCommand(parent: Command): void {
         });
 }
 
-interface ReplayEntry {
-    workspaceIndex: number;
-    workspaceTitle: string;
-    paneRef: string;
-    tabIndex: number;
-    title: string;
-    command?: string;
-}
-
-function collectReplayEntries(profile: Profile): ReplayEntry[] {
-    const entries: ReplayEntry[] = [];
-    let workspaceIndex = 0;
-
-    for (const window of profile.windows) {
-        for (const ws of window.workspaces) {
-            for (const pane of ws.panes) {
-                pane.surfaces.forEach((surface, tabIndex) => {
-                    entries.push({
-                        workspaceIndex,
-                        workspaceTitle: ws.title,
-                        paneRef: pane.ref,
-                        tabIndex,
-                        title: surface.title,
-                        command: surface.type === "terminal" ? surface.command : undefined,
-                    });
-                });
-            }
-            workspaceIndex += 1;
-        }
-    }
-
-    return entries;
-}
-
-async function runRescue(name: string, flags: RescueFlags): Promise<void> {
+export async function runRescue(name: string, flags: RescueFlags, deps: RescueDeps = defaultDeps): Promise<void> {
     p.intro(pc.bgRed(pc.white(" cmux rescue ")));
 
     const health = await probeCmuxHealth({ full: true, identifyTimeoutMs: 5000 });
@@ -149,7 +128,10 @@ async function runRescue(name: string, flags: RescueFlags): Promise<void> {
     }
 
     if (health.appPid) {
-        await killApp(health.appPid);
+        const outcome = await deps.killApp(health.appPid, { onStep: (message) => p.log.step(message) });
+        p.log.info(
+            `Sent ${outcome.signals.join(" then ") || "no signal"}; cmux ${outcome.exited ? "exited" : "may still be alive"}.`
+        );
     } else {
         p.log.warn("No running cmux app found — skipping the kill step.");
     }
@@ -181,61 +163,15 @@ async function runRescue(name: string, flags: RescueFlags): Promise<void> {
     p.outro(pc.green("Rescue complete."));
 }
 
-async function killApp(pid: number): Promise<void> {
-    p.log.step(`Sending SIGTERM to cmux (pid ${pid})…`);
-    try {
-        process.kill(pid, "SIGTERM");
-    } catch (error) {
-        logger.warn({ error, pid }, "[rescue] SIGTERM failed");
-    }
-
-    for (let i = 0; i < 10; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (!isAlive(pid)) {
-            p.log.info("cmux terminated on SIGTERM.");
-            return;
-        }
-    }
-
-    p.log.warn("Still alive after 5 s — sending SIGKILL.");
-    try {
-        process.kill(pid, "SIGKILL");
-    } catch (error) {
-        logger.warn({ error, pid }, "[rescue] SIGKILL failed");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-}
-
-function isAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * `open` forwards its ENTIRE environment to the launched app, and every pane's
- * login shell inherits it. Launched from an agent session that would propagate
- * CLAUDECODE/CLAUDE_CODE_* markers and silently disable transcript saving in
- * every resumed claude — so the relaunch runs with a minimal clean environment.
- */
 async function cleanRelaunch(): Promise<void> {
-    const user = env.device.getUser() ?? "";
-    const childEnv: Record<string, string> = {
-        HOME: env.paths.getHome(),
-        USER: user,
-        LOGNAME: env.device.getLogname() ?? user,
-        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
-    };
     const proc = Bun.spawn(["/usr/bin/open", "-a", "cmux"], {
-        env: childEnv,
+        env: cleanRelaunchEnv(),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "pipe",
     });
     const code = await proc.exited;
+
     if (code !== 0) {
         const stderr = await new Response(proc.stderr).text();
         throw new Error(`Relaunch failed (open exit ${code}): ${stderr.trim()}`);
@@ -315,6 +251,7 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
         }
 
         let sent = 0;
+        let skipped = 0;
         for (let i = 0; i < wsEntries.length; i += 1) {
             const entry = wsEntries[i];
             const target = liveSurfaces[i];
@@ -322,12 +259,22 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
                 continue;
             }
 
-            const titleMatches = !target.title || !entry.title || target.title === entry.title;
+            // The contract says surfaces are title-checked, and equal surface
+            // COUNTS do not prove the panes still correspond. Replaying by
+            // position into a renamed surface types a captured command into a
+            // different terminal than the reviewed plan showed, so a real
+            // mismatch refuses this surface exactly as a count mismatch does.
+            const titleMatches = mayReplayIntoSurface(entry, target);
             if (!titleMatches) {
                 logger.debug(
                     { saved: entry.title, live: target.title, surface: target.ref },
-                    "[rescue] title mismatch — replaying by position anyway"
+                    "[rescue] title mismatch — refusing to type into this surface"
                 );
+                p.log.warn(
+                    `  skipped ${target.ref}: saved "${entry.title}" but the reopened surface is "${target.title}".`
+                );
+                skipped += 1;
+                continue;
             }
 
             await runCmuxOk(["send", "--workspace", liveWs.ref, "--surface", target.ref, `${entry.command}\n`]);
@@ -335,7 +282,9 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
             await new Promise((resolve) => setTimeout(resolve, 300));
         }
 
-        p.log.info(`Workspace "${saved.title}": replayed ${sent} command(s) into ${wsEntries.length} surface(s).`);
+        p.log.info(
+            `Workspace "${saved.title}": replayed ${sent} command(s) into ${wsEntries.length} surface(s)${skipped ? `, skipped ${skipped} on a title mismatch` : ""}.`
+        );
     }
 
     return workspaceRefs;
