@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { closeTabCandidates, makeMatcher, NoMatchingTabError, pickPageTarget } from "./cdp.ts";
+import { classifyEvalError, closeTabCandidates, makeMatcher, NoMatchingTabError, pickPageTarget } from "./cdp.ts";
 
 describe("pickPageTarget", () => {
     test("throws when no tab URL matches instead of returning the first tab", () => {
@@ -78,5 +78,33 @@ describe("closeTabCandidates", () => {
         const pages = Array.from({ length: 20 }, (_, i) => ({ title: "t", url: `https://a.example/${i}` }));
 
         expect(closeTabCandidates(pages, "zzzzzz")).toHaveLength(6);
+    });
+});
+
+/**
+ * Regression test: PR #336 review t1. The eval path treated any error whose text
+ * contained "connection closed" as proof the script had navigated, and exited 0.
+ * That is a websocket-level failure, not a CDP navigation signal — the browser
+ * dying mid-eval produces it too, and the expression may never have run. Exit 0
+ * there tells an automation caller a navigation happened when nothing did.
+ */
+describe("classifyEvalError", () => {
+    test("the two CDP protocol errors mean the script navigated the page", () => {
+        expect(classifyEvalError("Execution context was destroyed.")).toBe("navigated");
+        expect(classifyEvalError("Inspected target navigated or closed")).toBe("navigated");
+    });
+
+    test("matching is case-insensitive, as Chrome's casing has changed between versions", () => {
+        expect(classifyEvalError("execution CONTEXT WAS DESTROYED")).toBe("navigated");
+    });
+
+    test("a closed connection is a failure, not a navigation", () => {
+        expect(classifyEvalError("connection closed")).toBe("failed");
+        expect(classifyEvalError("WebSocket connection closed before the response arrived")).toBe("failed");
+    });
+
+    test("anything else is a failure", () => {
+        expect(classifyEvalError("SyntaxError: Unexpected token")).toBe("failed");
+        expect(classifyEvalError("")).toBe("failed");
     });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { COMPLETENESS_NOTE, type ExportedMessage, type ThreadExport } from "../types";
+import { sizeMarkdownImages } from "./image-embed";
 import { renderMarkdown } from "./markdown";
 
 const OBJECT_ID = "0-weu-d1-0123456789abcdef01234567";
@@ -203,5 +204,39 @@ describe("renderMarkdown", () => {
         expect(speakerHeadings(md, "Ada Lovelace")).toHaveLength(1);
         expect(md).toContain("ada first");
         expect(md).toContain("ada second");
+    });
+});
+
+/**
+ * Regression test: PR #336 review t2. sizeMarkdownImages ran one regex over the
+ * whole document, so image syntax INSIDE a code fence or inline code — i.e. a
+ * message that is documenting markdown rather than using it — was rewritten into
+ * an <img> tag, corrupting the exported text.
+ */
+describe("sizeMarkdownImages leaves code alone", () => {
+    test("rewrites a real image", () => {
+        expect(sizeMarkdownImages("![cat](https://example.invalid/c.png)")).toContain("<img src=");
+    });
+
+    test("leaves image syntax inside a fenced block untouched", () => {
+        const md = ["Here is how you embed one:", "", "```md", "![cat](https://example.invalid/c.png)", "```"].join(
+            "\n"
+        );
+
+        expect(sizeMarkdownImages(md)).toBe(md);
+    });
+
+    test("leaves image syntax inside inline code untouched", () => {
+        const md = "Write `![cat](c.png)` to embed it.";
+
+        expect(sizeMarkdownImages(md)).toBe(md);
+    });
+
+    test("still rewrites a real image that sits beside a fenced block", () => {
+        const md = ["```md", "![doc](doc.png)", "```", "", "![real](real.png)"].join("\n");
+        const out = sizeMarkdownImages(md);
+
+        expect(out).toContain("![doc](doc.png)");
+        expect(out).toContain('<img src="real.png"');
     });
 });

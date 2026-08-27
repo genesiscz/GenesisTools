@@ -1,7 +1,7 @@
 /** cookies / rm-cookie / console / eval / nav / shot / grid / trace — page and browser inspection. */
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { browser, newTab } from "../lib/cdp.ts";
+import { browser, classifyEvalError, newTab } from "../lib/cdp.ts";
 import { artifactPath } from "../lib/platform.ts";
 import { attachTab, ignoreSigpipe, positiveNumber, resolvePort, suggest, withPage, withPort } from "./shared.ts";
 
@@ -136,7 +136,7 @@ export function registerInspect(program: Command): void {
                 // location.reload() / location.href = … tear the execution
                 // context down before the eval can answer. That is the script
                 // doing its job, not a failure, so say so and exit 0.
-                if (/context was destroyed|Inspected target navigated|connection closed/i.test(message)) {
+                if (classifyEvalError(message) === "navigated") {
                     out.log.info("page navigated; eval context gone before it returned a value");
                     process.exit(0);
                 }

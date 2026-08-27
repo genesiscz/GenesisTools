@@ -368,6 +368,20 @@ export async function targets(port = 9222, opts: { signal?: AbortSignal } = {}):
  * `/substr/flags` is a regex, anything else is a plain substring. The --match
  * help text promised regex support from day one; only substring was wired up.
  */
+/**
+ * Why an eval threw: did the script navigate the page, or did the call fail?
+ *
+ * Only two Chrome protocol errors mean "your script did its job and tore its own
+ * execution context down" — `location.reload()` and `location.href = …` both
+ * produce one of them. A closed websocket is NOT one: the browser exiting or the
+ * endpoint disappearing produces the same text, and there the expression may
+ * never have run at all. Reporting that as success told automation callers a
+ * navigation had happened when nothing did (PR #336 review t1).
+ */
+export function classifyEvalError(message: string): "navigated" | "failed" {
+    return /context was destroyed|Inspected target navigated/i.test(message) ? "navigated" : "failed";
+}
+
 export function makeMatcher(pattern: string): (value: string) => boolean {
     const re = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
 
