@@ -1,3 +1,5 @@
+import { loadPins } from "@app/claude/lib/cmux/pins";
+import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -42,7 +44,25 @@ export interface SessionRow {
     compacted: boolean;
     /** Timestamp of the last real typed user message (not tool results, not compact summaries). */
     lastUserAt: number | null;
+    /**
+     * Account this session bills, from the SessionStart pin journal. `null` covers
+     * both "no pin recorded" and a plain keychain launch (pin with account null).
+     */
+    account: string | null;
+    /** Recorded cmux location from the refs journal — where the session started, unverified. */
+    cmux: SessionCmuxLocation | null;
     filePath: string;
+}
+
+export interface SessionCmuxLocation {
+    workspaceId: string | null;
+    workspaceRef: string | null;
+    paneRef: string | null;
+    surfaceId: string | null;
+    surfaceRef: string | null;
+    windowRef: string | null;
+    /** When the location was journaled; staleness is the consumer's call. */
+    at: number;
 }
 
 interface TailUsage {
@@ -278,13 +298,19 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
     }
 }
 
-function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number): SessionRow {
+interface RowJoins {
+    accounts: Map<string, string | null>;
+    cmux: Map<string, SessionCmuxLocation>;
+}
+
+function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, joins: RowJoins): SessionRow {
     const cwd = record.cwd ?? "(unknown)";
     const lastCacheAt = usage.lastCacheAt ?? record.mtime;
     const { status, ttlSec } = computeCacheStatus(lastCacheAt, now);
+    const sessionId = record.sessionId ?? record.filePath.split("/").pop()?.replace(".jsonl", "") ?? "";
 
     return {
-        sessionId: record.sessionId ?? record.filePath.split("/").pop()?.replace(".jsonl", "") ?? "",
+        sessionId,
         title: record.customTitle ?? record.summary ?? record.firstPrompt?.slice(0, 60) ?? null,
         cwd,
         cwdShort: collapsePath(cwd),
@@ -301,6 +327,8 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number):
         contextTokens: usage.compactedPostTokens ?? usage.inputTokens + usage.cacheReadTokens + usage.cacheCreateTokens,
         compacted: usage.compactedPostTokens !== null,
         lastUserAt: usage.lastUserAt,
+        account: joins.accounts.get(sessionId.toLowerCase()) ?? null,
+        cmux: joins.cmux.get(sessionId.toLowerCase()) ?? null,
         filePath: record.filePath,
     };
 }
@@ -312,6 +340,8 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number):
 export interface SessionRowTimings {
     listingMs: number;
     tailMs: number;
+    /** Pin + cmux-refs journal reads. */
+    joinMs: number;
     totalMs: number;
     records: number;
 }
@@ -349,9 +379,35 @@ export async function listSessionRowsWithTimings(
     });
 
     const tailMs = performance.now() - tailStarted;
+    const joinStarted = performance.now();
+    const joins = await prof.measureAsync("journals", async () => {
+        const pins = await loadPins({ readOnly: true }).catch(() => new Map());
+        const accounts = new Map<string, string | null>();
+
+        for (const [sessionId, pin] of pins) {
+            accounts.set(sessionId.toLowerCase(), pin.account ?? null);
+        }
+
+        const cmux = new Map<string, SessionCmuxLocation>();
+
+        for (const [sessionId, entry] of loadAllSessionCmuxRefs()) {
+            cmux.set(sessionId, {
+                workspaceId: entry.workspaceId ?? null,
+                workspaceRef: entry.workspaceRef ?? null,
+                paneRef: entry.paneRef ?? null,
+                surfaceId: entry.surfaceId ?? null,
+                surfaceRef: entry.surfaceRef ?? null,
+                windowRef: entry.windowRef ?? null,
+                at: entry.at ?? 0,
+            });
+        }
+
+        return { accounts, cmux };
+    });
+    const joinMs = performance.now() - joinStarted;
     const rank: Record<CacheStatus, number> = { HOT: 0, COOLING: 1, CRITICAL: 2, COLD: 3 };
     const rows = records
-        .map((r, i) => buildRow(r, usages[i], now))
+        .map((r, i) => buildRow(r, usages[i], now, joins))
         .sort(
             (a, b) =>
                 rank[a.cacheStatus] - rank[b.cacheStatus] ||
@@ -365,6 +421,7 @@ export async function listSessionRowsWithTimings(
         timings: {
             listingMs,
             tailMs,
+            joinMs,
             totalMs: performance.now() - started,
             records: records.length,
         },

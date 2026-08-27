@@ -24,6 +24,17 @@ mock.module("@genesiscz/utils/claude/session.utils", () => ({
     readTailBytes: async (filePath: string) => tails.get(filePath) ?? [],
 }));
 
+const pins = new Map<string, { account: string | null }>();
+const cmuxRefs = new Map<string, { surfaceId: string | null; at: number }>();
+
+mock.module("@app/claude/lib/cmux/pins", () => ({
+    loadPins: async () => pins,
+}));
+
+mock.module("@app/claude/lib/cmux/session-refs", () => ({
+    loadAllSessionCmuxRefs: () => cmuxRefs,
+}));
+
 import {
     CACHE_TTL_MS,
     COOLING_THRESHOLD_MS,
@@ -91,6 +102,8 @@ describe("listSessionRows", () => {
     beforeEach(() => {
         listing.sessions = [];
         tails.clear();
+        pins.clear();
+        cmuxRefs.clear();
     });
 
     test("filters mtime by hours, includes COLD, and serializes a full SessionRow", async () => {
@@ -151,10 +164,12 @@ describe("listSessionRows", () => {
         expect(hot?.cacheTtlSec).toBeGreaterThan(0);
         expect(Object.keys(hot ?? {}).sort()).toEqual(
             [
+                "account",
                 "cacheCreateTokens",
                 "cacheReadTokens",
                 "cacheStatus",
                 "cacheTtlSec",
+                "cmux",
                 "compacted",
                 "contextTokens",
                 "cwd",
@@ -394,6 +409,19 @@ describe("listSessionRows", () => {
         expect(rows[0]?.lastUserAt).toBe(NOW - 40 * MIN);
         expect(rows[0]?.model).toBe("opus");
         expect(rows[0]?.modelSwitched).toBe(true);
+    });
+
+    test("rows carry the pinned account and recorded cmux location", async () => {
+        const path = "/tmp/pinned.jsonl";
+
+        listing.sessions = [record({ filePath: path, sessionId: "PINNED-ID", mtime: NOW - 5 * MIN })];
+        tails.set(path, [OPUS_LINE]);
+        pins.set("PINNED-ID", { account: "uzivatel-a" });
+        cmuxRefs.set("pinned-id", { surfaceId: "surface-uuid", at: NOW });
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.account).toBe("uzivatel-a");
+        expect(rows[0]?.cmux?.surfaceId).toBe("surface-uuid");
     });
 
     test("rows with equal clocks keep a deterministic order across polls", async () => {

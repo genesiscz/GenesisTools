@@ -1,19 +1,11 @@
-import {
-    aliasesForSession,
-    describeMatch,
-    type FocusTarget,
-    findFocusTargets,
-    isUnambiguous,
-    matchingSession,
-} from "@app/claude/lib/cmux/focus";
+import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
+import { findSessionTargets, type ResolveDeps } from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/controls";
-import { fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { profiler } from "@genesiscz/utils/profile";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 
@@ -27,30 +19,11 @@ export interface FocusOptions {
     includeSelf?: boolean;
 }
 
-export interface FocusCommandDeps {
-    fetchSnapshot?: typeof fetchCmuxLiveSnapshot;
-    lookupSession?: (query: string) => Promise<{ aliases: string[]; sessionId: string | null }>;
-}
+export type FocusCommandDeps = ResolveDeps;
 
 interface IdentifyResponse {
     bundle_identifier?: string;
     caller?: { window_ref?: string; pane_ref?: string };
-}
-
-/**
- * Who we are and which pane we are in, when this process is running inside cmux at all.
- *
- * Needed because typing the query puts it on the caller's own screen, so without this the
- * weak text rule matches the calling pane for every query. Also carries the bundle id
- * `activateApp` needs, so focus does not spend a second `identify` after the snapshot.
- */
-async function identifyCmux(): Promise<IdentifyResponse | undefined> {
-    try {
-        return await runCmuxJSON<IdentifyResponse>(["identify"]);
-    } catch (err) {
-        log.debug({ err }, "could not identify the calling pane; searching every pane");
-        return undefined;
-    }
 }
 
 /**
@@ -102,6 +75,41 @@ async function activateApp(identity?: IdentifyResponse): Promise<boolean> {
     }
 }
 
+/**
+ * Raise window, pane, and tab for one target. Returns the window ref used.
+ *
+ * A recorded target's surface IS the match, so its focus failure throws and
+ * lets the caller fall back to the matcher; a matcher target keeps the lenient
+ * pane-focused-but-tab-hidden behavior.
+ */
+async function focusTarget(target: FocusTarget): Promise<string | undefined> {
+    const windowRef = target.windowRef ?? (await windowRefFor(target.workspaceId));
+
+    if (windowRef) {
+        await runCmuxOk(["focus-window", "--window", windowRef]);
+    }
+
+    if (target.paneId) {
+        await focusCmuxPane({ workspaceId: target.workspaceId, paneId: target.paneId });
+    }
+
+    if (target.surfaceId) {
+        // The match came from a background tab. Without this the pane is focused and the
+        // command claims success while the user still looks at a different surface.
+        try {
+            await focusCmuxSurface({ surfaceId: target.surfaceId });
+        } catch (err) {
+            if (!target.paneId || target.matchedOn === "recorded") {
+                throw err;
+            }
+            log.warn({ err, surfaceId: target.surfaceId }, "could not focus the matched surface");
+            out.printlnErr(pc.dim("  The pane is focused, but its matching tab could not be raised."));
+        }
+    }
+
+    return windowRef;
+}
+
 function renderTargets(targets: FocusTarget[]): void {
     const table = createBoxTable(["WORKSPACE", "PANE", "MATCHED ON", "SESSION", "CWD"]);
 
@@ -142,54 +150,20 @@ async function pickTarget(targets: FocusTarget[]): Promise<FocusTarget | null> {
  * This never creates anything. A session with no pane is a `restore` job, and saying so
  * beats silently opening a second copy of a session that is already running somewhere.
  */
-const SESSION_ID_QUERY = /^[0-9a-f-]{8,}$/i;
-
 export async function focusCommand(query: string, opts: FocusOptions, deps: FocusCommandDeps = {}): Promise<void> {
-    const prof = profiler.scope("cmux-focus");
-    // Commander passes the Command as the third argument. Only tests inject fetchSnapshot.
-    // Session-id queries match the ` · 8b6e69bf` tab title restore stamps. Skip
-    // capture-pane so focus does not dump every terminal.
+    // Commander passes the Command as the third argument. Only tests inject deps.
     const queryTrim = query.trim();
-    const sessionQuery = SESSION_ID_QUERY.test(queryTrim);
-    const fetchSnapshot =
-        typeof deps.fetchSnapshot === "function"
-            ? deps.fetchSnapshot
-            : () =>
-                  fetchCmuxLiveSnapshot({
-                      previews: sessionQuery ? "none" : "selected",
-                  });
-    const lookupSession =
-        deps.lookupSession ??
-        (async (q: string) => {
-            const { getSessionListing } = await import("@app/claude/lib/history/search");
-            const listing = await getSessionListing({ excludeSubagents: true });
-            const record = matchingSession(q, listing.sessions);
-            return {
-                aliases: aliasesForSession(q, listing.sessions),
-                sessionId: record?.sessionId ?? null,
-            };
-        });
-    const [snapshot, identity, resolved] = await Promise.all([
-        prof.measureAsync("snapshot", () => fetchSnapshot()),
-        prof.measureAsync("identify", () => identifyCmux()),
-        prof.measureAsync("aliases", () =>
-            sessionQuery ? lookupSession(queryTrim) : Promise.resolve({ aliases: [], sessionId: null })
-        ),
-    ]);
+    const result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, deps });
 
-    if (!snapshot.available) {
-        out.error(pc.red(`cmux is not reachable${snapshot.error ? `: ${snapshot.error}` : "."}`));
+    if (result.unavailable) {
+        out.error(pc.red(`cmux is not reachable: ${result.unavailable}`));
         out.printlnErr(pc.dim("  Start cmux, then run this again."));
         process.exit(1);
     }
 
-    const excludePaneId = opts.includeSelf ? undefined : identity?.caller?.pane_ref;
-    const targets = findFocusTargets(snapshot, query, {
-        excludePaneId,
-        aliases: resolved.aliases,
-        resolvedSessionId: resolved.sessionId ?? undefined,
-    });
-    log.debug({ query, panes: snapshot.panes.length, matches: targets.length, excludePaneId }, "focus match");
+    const identity = result.identity;
+    const targets = result.targets;
+    log.debug({ query, matches: targets.length, source: result.source }, "focus match");
 
     if (targets.length === 0) {
         if (opts.json) {
@@ -201,7 +175,13 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         }
 
         out.error(pc.red(`No cmux pane matches "${query}".`));
-        out.printlnErr(pc.dim(`  Searched ${snapshot.panes.length} pane(s) across ${snapshot.workspaces.length}.`));
+        if (result.snapshot) {
+            out.printlnErr(
+                pc.dim(
+                    `  Searched ${result.snapshot.panes.length} pane(s) across ${result.snapshot.workspaces.length}.`
+                )
+            );
+        }
         out.printlnErr(
             pc.dim(
                 `  If the session is not open anywhere, reopen it: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "restore"] })}`
@@ -261,23 +241,36 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         return;
     }
 
-    const windowRef = target.windowRef ?? (await windowRefFor(target.workspaceId));
+    let windowRef: string | undefined;
 
-    if (windowRef) {
-        await runCmuxOk(["focus-window", "--window", windowRef]);
-    }
-
-    await focusCmuxPane({ workspaceId: target.workspaceId, paneId: target.paneId });
-
-    if (target.surfaceId) {
-        // The match came from a background tab. Without this the pane is focused and the
-        // command claims success while the user still looks at a different surface.
-        try {
-            await focusCmuxSurface({ surfaceId: target.surfaceId });
-        } catch (err) {
-            log.warn({ err, surfaceId: target.surfaceId }, "could not focus the matched surface");
-            out.printlnErr(pc.dim("  The pane is focused, but its matching tab could not be raised."));
+    try {
+        windowRef = await focusTarget(target);
+    } catch (err) {
+        if (result.source !== "recorded") {
+            throw err;
         }
+        // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
+        log.debug({ err }, "recorded cmux refs are stale; retrying with the text matcher");
+        const retry = await findSessionTargets(queryTrim, {
+            includeSelf: opts.includeSelf,
+            skipRecorded: true,
+            deps,
+        });
+
+        if (retry.targets.length === 0) {
+            process.exitCode = 1;
+
+            if (opts.json) {
+                out.result(SafeJSON.stringify({ query, focused: null, matches: [] }, null, 2));
+                return;
+            }
+
+            out.error(pc.red(`The recorded pane for "${query}" is gone and no other pane matches.`));
+            return;
+        }
+
+        target = retry.targets[0];
+        windowRef = await focusTarget(target);
     }
 
     const activated = opts.activate === false ? false : await activateApp(identity);

@@ -2,7 +2,9 @@ import { type Command, Option } from "commander";
 import { focusCommand } from "./focus";
 import { pinsCommand } from "./pins";
 import { restoreCommand } from "./restore";
+import { sendCommand } from "./send";
 import { forgetCommand, listCommand, snapshotCommand } from "./snapshot";
+import { treeCommand } from "./tree";
 
 export function registerCmuxCommand(program: Command): void {
     const cmux = program
@@ -41,6 +43,16 @@ export function registerCmuxCommand(program: Command): void {
         .option("--json", "Emit the match as JSON instead of a status line")
         .action(focusCommand);
 
+    cmux.command("send <session> <text>")
+        .description("Type text into the cmux pane a session is running in, then press Enter")
+        .option("--first", "Take the best match instead of failing when several panes match")
+        .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
+        .option("--no-enter", "Send the text only, leave it unsubmitted at the prompt")
+        .option("--enter-delay <ms>", "Wait this long between the text and Enter", "500")
+        .option("--dry-run", "Print what would receive the text and stop")
+        .option("--json", "Emit the outcome as JSON instead of a status line")
+        .action(sendCommand);
+
     cmux.command("snapshot [name]")
         .description("Save the currently-active sessions as a named set you can restore after a crash")
         .option("--last <n>", "Max sessions to consider", "20")
@@ -61,4 +73,9 @@ export function registerCmuxCommand(program: Command): void {
         .option("--limit <n>", "How many recent pins to show", "15")
         .option("--json", "Emit the pins as JSON instead of a table")
         .action(pinsCommand);
+
+    cmux.command("tree")
+        .description("Live window → workspace → pane → surface hierarchy, with known session ids")
+        .option("--json", "Emit the tree as JSON instead of an indented listing")
+        .action(treeCommand);
 }

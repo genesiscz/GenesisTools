@@ -5,6 +5,18 @@ import { profiler } from "@genesiscz/utils/profile";
 export interface CmuxLiveWorkspace {
     id: string;
     name: string;
+    /** Owning cmux window ref (e.g. `window:1`), when the listing was window-scoped. */
+    windowRef?: string;
+}
+
+export interface CmuxLiveWindow {
+    id: string;
+    /** `window:N` ref as other RPCs report it, when resolvable. */
+    ref?: string;
+    index: number;
+    /** True for the key (frontmost) window. */
+    key: boolean;
+    workspaceCount: number;
 }
 
 export interface CmuxLivePane {
@@ -44,6 +56,8 @@ export interface CmuxLiveSnapshot {
     fetchedAt: string;
     available: boolean;
     error?: string;
+    /** Populated in `allWindows` mode; the default snapshot covers only the key window. */
+    windows?: CmuxLiveWindow[];
     workspaces: CmuxLiveWorkspace[];
     panes: CmuxLivePane[];
 }
@@ -53,6 +67,14 @@ type CmuxRunner = (args: string[]) => Promise<CmuxRunResult>;
 
 interface WorkspaceListRpc {
     workspaces?: WorkspaceRpc[];
+    window_ref?: string;
+}
+
+interface WindowRpc {
+    id?: string;
+    index?: number;
+    key?: boolean;
+    workspace_count?: number;
 }
 
 interface WorkspaceRpc {
@@ -108,6 +130,11 @@ interface SnapshotDeps {
     run?: CmuxRunner;
     /** `all` (default) captures every surface. `selected` is the focus-command fast path. */
     previews?: SnapshotPreviewMode;
+    /**
+     * Enumerate every cmux window (`list-windows` + `list-workspaces --window`).
+     * Default false: one `list-workspaces` call, which covers only the key window.
+     */
+    allWindows?: boolean;
 }
 
 const SECRET_LINE_PATTERNS: RegExp[] = [
@@ -292,22 +319,49 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
 
     const prof = profiler.scope("cmux");
     try {
-        const workspaceResponse = await prof.measureAsync("list-workspaces", () =>
-            runJson<WorkspaceListRpc>(["list-workspaces"])
+        let windows: CmuxLiveWindow[] | undefined;
+        let workspaceLists: WorkspaceListRpc[];
+
+        if (deps.allWindows) {
+            const rawWindows = await prof.measureAsync("list-windows", () => runJson<WindowRpc[]>(["list-windows"]));
+            workspaceLists = await prof.measureAsync("list-workspaces", () =>
+                Promise.all(
+                    rawWindows.map((w) =>
+                        runJson<WorkspaceListRpc>(["list-workspaces", "--window", w.id ?? String(w.index ?? 0)])
+                    )
+                )
+            );
+            windows = rawWindows.map((w, i) => ({
+                id: w.id ?? `window:${i}`,
+                ref: workspaceLists[i]?.window_ref,
+                index: w.index ?? i,
+                key: w.key === true,
+                workspaceCount: w.workspace_count ?? workspaceLists[i]?.workspaces?.length ?? 0,
+            }));
+        } else {
+            workspaceLists = [
+                await prof.measureAsync("list-workspaces", () => runJson<WorkspaceListRpc>(["list-workspaces"])),
+            ];
+        }
+
+        const rawWorkspaces = workspaceLists.flatMap(
+            (list) => list.workspaces?.map((workspace) => ({ workspace, windowRef: list.window_ref })) ?? []
         );
-        const rawWorkspaces = workspaceResponse.workspaces ?? [];
-        const workspaces: CmuxLiveWorkspace[] = rawWorkspaces.map((workspace) => ({
+        const workspaces: CmuxLiveWorkspace[] = rawWorkspaces.map(({ workspace, windowRef }) => ({
             id: workspaceId(workspace),
             name: workspaceName(workspace),
+            windowRef,
         }));
 
         const paneGroups = await prof.measureAsync("list-panes+surfaces", () =>
-            Promise.all(rawWorkspaces.map((rawWorkspace) => fetchWorkspacePanes(rawWorkspace, runJson, run, previews)))
+            Promise.all(
+                rawWorkspaces.map(({ workspace }) => fetchWorkspacePanes(workspace, runJson, run, previews))
+            )
         );
         const panes = paneGroups.flat();
         prof.summary(`snapshot previews=${previews}`);
 
-        return { fetchedAt, available: true, workspaces, panes };
+        return { fetchedAt, available: true, windows, workspaces, panes };
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.debug({ err: message }, "cmux live snapshot failed");

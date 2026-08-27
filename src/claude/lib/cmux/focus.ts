@@ -17,7 +17,7 @@ const RESUME_ID_RE = /--resume[=\s]+['"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
  * Anchored at the end because that function truncates a long name and never the id, so the
  * marker is always the last thing in the title.
  */
-const TITLE_SHORT_ID_RE = /·\s*([0-9a-f]{8})\s*$/i;
+export const TITLE_SHORT_ID_RE = /·\s*([0-9a-f]{8})\s*$/i;
 
 /**
  * Shortest prefix accepted as "this is a session id, not a word".
@@ -97,6 +97,7 @@ export function aliasesForSession(query: string, sessions: SessionFocusRecord[])
 }
 
 export type FocusMatchKind =
+    | "recorded"
     | "resume-command"
     | "resume-prefix"
     | "title-id"
@@ -111,6 +112,17 @@ export type FocusMatchKind =
 export interface FindFocusOptions {
     /** Pane to leave out of the search, normally the one this process runs in. */
     excludePaneId?: string;
+    /**
+     * Surface (tab) to leave out, normally the one this process runs in.
+     *
+     * Preferred over `excludePaneId`: a cmux pane holds many tabs, so skipping the whole
+     * pane hides every SIBLING tab in it. That is not hypothetical — on 2026-08-26 a focus
+     * for a session sitting one tab away from the caller skipped its own pane, then focused
+     * a different pane whose tab had a near-identical name, and reported success. Excluding
+     * only the caller's own surface keeps the original protection (the query is echoed on
+     * THAT tab's screen, nowhere else) without blinding the search to the rest of the pane.
+     */
+    excludeSurfaceId?: string;
     /**
      * Extra title needles from the session record (custom title, prompt file stem).
      * Used when the tab was named from the topic and never got ` · 8b6e69bf`.
@@ -158,11 +170,20 @@ interface PaneScope {
  * came from. Selected-first settles ties in favour of the tab the user already sees, so a
  * focus never switches tabs unless a background one is a strictly better match.
  */
-function paneScopes(pane: CmuxLivePane): PaneScope[] {
-    const surfaces = [...pane.surfaces].sort((a, b) => Number(b.selected) - Number(a.selected));
+function paneScopes(pane: CmuxLivePane, excludeSurfaceId?: string): PaneScope[] {
+    const surfaces = [...pane.surfaces]
+        .filter((surface) => surface.id !== excludeSurfaceId)
+        .sort((a, b) => Number(b.selected) - Number(a.selected));
+
+    // The pane's own preview mirrors whatever tab is selected, so when that tab is the
+    // caller's it carries the echoed query and would match everything. Drop it with the tab.
+    const ownScope: PaneScope[] =
+        excludeSurfaceId && pane.surfaces.some((surface) => surface.id === excludeSurfaceId && surface.selected)
+            ? []
+            : [{ title: pane.title, screen: pane.preview ?? "" }];
 
     return [
-        { title: pane.title, screen: pane.preview ?? "" },
+        ...ownScope,
         ...surfaces.map((surface) => ({
             surfaceId: surface.id,
             title: surface.title,
@@ -176,8 +197,8 @@ function scopeText(scope: PaneScope): string {
 }
 
 /** Every scrap of text a pane exposes, for the full session-id inventory. */
-function paneText(pane: CmuxLivePane): string {
-    return paneScopes(pane).map(scopeText).join("\n");
+function paneText(pane: CmuxLivePane, excludeSurfaceId?: string): string {
+    return paneScopes(pane, excludeSurfaceId).map(scopeText).join("\n");
 }
 
 export function sessionIdsIn(text: string): string[] {
@@ -320,13 +341,20 @@ function scorePane({
     query,
     workspaceName,
     aliases = [],
+    excludeSurfaceId,
 }: {
     pane: CmuxLivePane;
     query: string;
     workspaceName: string;
     aliases?: string[];
+    excludeSurfaceId?: string;
 }): PaneMatch | null {
-    const scopes = paneScopes(pane);
+    const scopes = paneScopes(pane, excludeSurfaceId);
+
+    if (scopes.length === 0) {
+        return null;
+    }
+
     const needle = query.toLowerCase();
     let best: PaneMatch | null = null;
 
@@ -395,7 +423,13 @@ export function findFocusTargets(
         }
 
         const workspaceName = names.get(pane.workspaceId) ?? pane.workspaceId;
-        const hit = scorePane({ pane, query: trimmed, workspaceName, aliases: opts.aliases });
+        const hit = scorePane({
+            pane,
+            query: trimmed,
+            workspaceName,
+            aliases: opts.aliases,
+            excludeSurfaceId: opts.excludeSurfaceId,
+        });
 
         if (!hit) {
             continue;
@@ -411,7 +445,7 @@ export function findFocusTargets(
             surfaceId: hit.surfaceId,
             sessionIds: sessionIdsForMatch(
                 hit.kind,
-                paneSessionIds(hit.matchedText, paneText(pane)),
+                paneSessionIds(hit.matchedText, paneText(pane, opts.excludeSurfaceId)),
                 opts.resolvedSessionId
             ),
             matchedOn: hit.kind,
@@ -477,6 +511,8 @@ function ownsSession(target: FocusTarget): boolean {
 
 export function describeMatch(target: FocusTarget): string {
     switch (target.matchedOn) {
+        case "recorded":
+            return "recorded by the session hook";
         case "resume-command":
             return "resuming this session";
         case "resume-prefix":

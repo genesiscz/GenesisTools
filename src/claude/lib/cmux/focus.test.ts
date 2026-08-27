@@ -629,3 +629,81 @@ describe("describeMatch", () => {
         }
     });
 });
+
+describe("excludeSurfaceId (caller's own tab, not its whole pane)", () => {
+    // 2026-08-26: focus for a session sitting one tab away from the caller skipped
+    // the caller's ENTIRE pane, then focused a different pane whose tab had a
+    // near-identical name — and reported success.
+    const callerPane = pane({
+        id: "pane:35",
+        workspaceId: "workspace:11",
+        active: true,
+        surfaceCount: 2,
+        surfaces: [
+            surface({ id: "surface:57", title: restoredTitle(SESSION_A, "col-logouts-redirect-loop") }),
+            surface({ id: "surface:193", title: "Foltyn account usage verification", selected: true }),
+        ],
+    });
+
+    test("a sibling tab in the caller's own pane is still findable", () => {
+        const targets = findFocusTargets(snapshot([callerPane]), SESSION_A.slice(0, 8), {
+            excludeSurfaceId: "surface:193",
+        });
+
+        expect(targets).toHaveLength(1);
+        expect(targets[0].paneId).toBe("pane:35");
+        expect(targets[0].surfaceId).toBe("surface:57");
+    });
+
+    test("excluding the whole pane hides that sibling — the old behaviour", () => {
+        expect(findFocusTargets(snapshot([callerPane]), SESSION_A.slice(0, 8), { excludePaneId: "pane:35" })).toEqual(
+            []
+        );
+    });
+
+    test("the caller's own tab never matches its own echoed query", () => {
+        const echoing = pane({
+            id: "pane:35",
+            workspaceId: "workspace:11",
+            surfaceCount: 1,
+            surfaces: [
+                surface({
+                    id: "surface:193",
+                    title: "asking about a session",
+                    selected: true,
+                    preview: `tools claude cmux focus ${SESSION_A}`,
+                }),
+            ],
+        });
+
+        expect(findFocusTargets(snapshot([echoing]), SESSION_A, { excludeSurfaceId: "surface:193" })).toEqual([]);
+    });
+
+    test("the pane's own preview goes with the excluded tab when that tab is selected", () => {
+        // pane.preview mirrors the SELECTED surface, so keeping it would smuggle the
+        // caller's echoed text back in through the pane-level scope.
+        const mirrored = pane({
+            id: "pane:35",
+            workspaceId: "workspace:11",
+            preview: `tools claude cmux focus ${SESSION_A}`,
+            surfaceCount: 1,
+            surfaces: [surface({ id: "surface:193", title: "caller", selected: true })],
+        });
+
+        expect(findFocusTargets(snapshot([mirrored]), SESSION_A, { excludeSurfaceId: "surface:193" })).toEqual([]);
+    });
+
+    test("a pane whose only surface is excluded contributes nothing", () => {
+        const onlyCaller = pane({
+            id: "pane:35",
+            workspaceId: "workspace:11",
+            title: "genesistools",
+            surfaceCount: 1,
+            surfaces: [surface({ id: "surface:193", title: "genesistools", selected: true })],
+        });
+
+        expect(findFocusTargets(snapshot([onlyCaller]), "genesistools", { excludeSurfaceId: "surface:193" })).toEqual(
+            []
+        );
+    });
+});
