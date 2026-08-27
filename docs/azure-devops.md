@@ -251,9 +251,16 @@ The history commands support fuzzy user matching with diacritics normalization:
 
 ## SSL Issues (Proxy/Corporate Environments)
 
-If SSL errors occur:
-1. Close Proxyman/proxy tools
-2. Or use: `AZURE_CLI_DISABLE_CONNECTION_VERIFICATION=1 az ...`
+If SSL errors occur, in this order:
+
+1. Close Proxyman or whatever else is intercepting TLS.
+2. Point the CLI at your corporate root CA, which is the supported fix:
+   `REQUESTS_CA_BUNDLE=/path/to/corp-ca.pem az ...`
+3. 🛑 Emergency only: `AZURE_CLI_DISABLE_CONNECTION_VERIFICATION=1 az ...`
+   This disables certificate verification, so anything intercepting the
+   connection can read the token. It also does **not** affect `az login`, which
+   goes through MSAL and enforces verification regardless — so if the failure is
+   in login, this will not help and step 2 is the only route.
 
 ## Configuration Reference
 
