@@ -3,6 +3,7 @@ import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isRecord, num } from "./parse-helpers";
 import type { CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
 
 /**
@@ -64,12 +65,15 @@ interface CodexState {
     totals?: CodexRawUsage;
 }
 
-function num(value: number | undefined): number {
-    return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
+/** First candidate that is genuinely a non-empty string. */
+function firstString(...candidates: (string | undefined)[]): string | undefined {
+    for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.length > 0) {
+            return candidate;
+        }
+    }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
+    return undefined;
 }
 
 function readState(state: unknown): CodexState {
@@ -255,7 +259,10 @@ export const codexDriver: MonitorDriver = {
                 }
 
                 const timestamp = typeof raw.timestamp === "string" ? raw.timestamp : "";
-                const model = raw.payload.model ?? info?.model ?? state.model ?? "unknown";
+                // The cast to CodexLine is a shape hint, not a validation: these files
+                // are a system boundary. A non-string `model` would reach
+                // `priceCandidates()` and throw on `.endsWith`, aborting the chunk.
+                const model = firstString(raw.payload.model, info?.model, state.model) ?? "unknown";
                 const inputTokens = inputTotal - cached;
 
                 emit({

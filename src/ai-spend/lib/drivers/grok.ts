@@ -4,6 +4,7 @@ import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isRecord, num } from "./parse-helpers";
 import type { CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
 
 /**
@@ -63,12 +64,21 @@ interface GrokLine {
     };
 }
 
-function num(value: number | undefined): number {
-    return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
+/** The widest epoch a JS Date accepts; beyond it `toISOString()` throws RangeError. */
+const MAX_EPOCH_MS = 8.64e15;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
+/**
+ * ISO-8601 for an epoch, or "" when the record's clock is unusable. A corrupt
+ * `timestamp` (seconds are multiplied by 1000 here) can overflow the Date range,
+ * and an unguarded `toISOString()` would throw out of `parseLine` and abandon
+ * every remaining line of the file.
+ */
+function isoFromEpochMs(ms: number): string {
+    if (ms <= 0 || ms > MAX_EPOCH_MS) {
+        return "";
+    }
+
+    return new Date(ms).toISOString();
 }
 
 /** Split `inputTokens` into its uncached, cache-read and cache-write parts. */
@@ -187,7 +197,7 @@ export const grokDriver: MonitorDriver = {
                 const agentMs = num(meta?.agentTimestampMs);
                 // Grok writes Unix SECONDS on the envelope and milliseconds on `_meta`.
                 const ms = agentMs > 0 ? agentMs : num(raw.timestamp) * 1000;
-                const timestamp = ms > 0 ? new Date(ms).toISOString() : "";
+                const timestamp = isoFromEpochMs(ms);
                 const sessionId = raw.params?.sessionId ?? fallbackSessionId;
                 const usage = update.usage;
                 const perModel = usage.modelUsage;
@@ -202,6 +212,14 @@ export const grokDriver: MonitorDriver = {
 
                     rows = [[sessionModel ?? "unknown", usage]];
                 }
+
+                // `costUsdTicks` normally appears on both the turn and each model row.
+                // When the turn recorded a figure and the SOLE model row did not, the
+                // turn total IS that row's cost — a sum over one term. With two or more
+                // rows the total cannot be attributed, so it is left alone rather than
+                // guessed at.
+                const turnTicks = num(usage.costUsdTicks);
+                const soleRowTicks = rows.length === 1 && num(rows[0][1].costUsdTicks) === 0 ? turnTicks : 0;
 
                 for (const [model, modelUsage] of rows) {
                     const [inputTokens, cacheReadTokens, cacheCreationTokens] = splitInput(
@@ -222,7 +240,7 @@ export const grokDriver: MonitorDriver = {
                         continue;
                     }
 
-                    const ticks = num(modelUsage.costUsdTicks);
+                    const ticks = num(modelUsage.costUsdTicks) || soleRowTicks;
                     const eventId = meta?.eventId;
                     const event: DriverUsageEvent = {
                         id: eventId

@@ -253,6 +253,11 @@ function fastCandidates(driver: MonitorDriver, roots: string[], cache: AgentCach
 
     const knownChildren = new Set(cache.rootChildren);
 
+    // ⚠️ This block MUTATES `cache.rootChildren`, and the caller persists the
+    // cache afterwards. That is deliberate: a project directory created since
+    // the last sweep has to be recorded, or every later fast pass would rescan
+    // it from scratch. Keep the mutation here rather than hiding it in a helper
+    // that reads as pure discovery.
     for (const child of listRootChildren(roots)) {
         if (knownChildren.has(child)) {
             continue;
@@ -349,18 +354,23 @@ function parseChunk(options: ParseChunkOptions): void {
     const seen = new Set(entry.recentIds);
 
     const emit = (event: DriverUsageEvent): void => {
+        const when = new Date(event.timestamp);
+
+        // Validate BEFORE the dedup bookkeeping. Recording the id first would burn
+        // it on an unusable event, and a later well-formed record carrying the same
+        // id (a streaming rewrite that finally has a timestamp) would be suppressed.
+        if (Number.isNaN(when.getTime())) {
+            logger.debug({ agent: driver.id, id: event.id }, "ai-spend monitor: event has no usable timestamp");
+
+            return;
+        }
+
         if (seen.has(event.id)) {
             return;
         }
 
         seen.add(event.id);
         entry.recentIds.push(event.id);
-
-        const when = new Date(event.timestamp);
-
-        if (Number.isNaN(when.getTime())) {
-            return;
-        }
 
         const day = localDayString(when);
         const tokens = event.inputTokens + event.outputTokens + event.cacheCreationTokens + event.cacheReadTokens;
@@ -474,10 +484,17 @@ function scanAgent(options: ScanOptions): ScanResult {
         }
 
         const chunk = tailReader(file, entry.offset, stat.size);
-        parseChunk({ driver, file, entry, chunk, pricing });
+        // A live agent appends to these files, so a stat can land mid-line. Parse
+        // only through the last newline and leave the offset there: the trailing
+        // fragment is re-read whole once the writer finishes it. Advancing to
+        // stat.size instead would split that line across two runs, and neither
+        // half would parse, so the request would never be counted.
+        const lastNewline = chunk.lastIndexOf("\n");
+        const complete = lastNewline >= 0 ? chunk.slice(0, lastNewline + 1) : "";
+        parseChunk({ driver, file, entry, chunk: complete, pricing });
+        entry.offset += Buffer.byteLength(complete, "utf8");
         entry.size = stat.size;
         entry.mtimeMs = stat.mtimeMs;
-        entry.offset = stat.size;
         cache.files[file] = entry;
         parsedFiles++;
     }
@@ -545,7 +562,16 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
     const today: MonitorTotals = { cost: 0, tokens: 0 };
     const week: MonitorTotals = { cost: 0, tokens: 0 };
 
+    // Only the agents scanned on this run may contribute. An unscanned agent still
+    // has cached day sums on disk, and reporting those next to freshly refreshed
+    // ones would silently mix stale and current figures.
+    const scanned = new Set(drivers.map((driver) => driver.id));
+
     for (const id of AGENT_IDS) {
+        if (!scanned.has(id)) {
+            continue;
+        }
+
         const totals = agents[id];
 
         for (const entry of Object.values(cache.agents[id].files)) {

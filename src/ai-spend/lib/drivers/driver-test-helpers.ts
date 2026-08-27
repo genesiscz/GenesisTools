@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { costOf, DEFAULT_PRICING } from "../pricing";
 import type { DriverUsageEvent, MonitorDriver } from "./types";
 
@@ -7,12 +9,11 @@ import type { DriverUsageEvent, MonitorDriver } from "./types";
  * account name, session id or path ever appears in a fixture.
  */
 
+/** A path that does not have to exist: only the grok driver reads a sibling of it. */
+const FIXTURE_FILE = join(tmpdir(), "ai-spend-fixture", "updates.jsonl");
+
 /** Run `lines` through a fresh parser and collect every event it emits. */
-export function collectEvents(
-    driver: MonitorDriver,
-    lines: string[],
-    file = "/tmp/fixture/updates.jsonl"
-): DriverUsageEvent[] {
+export function collectEvents(driver: MonitorDriver, lines: string[], file = FIXTURE_FILE): DriverUsageEvent[] {
     const parser = driver.createParser({ file, state: undefined });
     const events: DriverUsageEvent[] = [];
 

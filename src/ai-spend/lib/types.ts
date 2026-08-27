@@ -1,3 +1,4 @@
+import type { ModelPricing } from "@genesiscz/utils/ai/catalog";
 export interface UsageEvent {
     messageId: string;
     model: string;
@@ -20,7 +21,17 @@ export interface ModelPrice {
     cacheRead: number;
 }
 
-export type PricingTable = Record<string, ModelPrice>;
+/**
+ * Catalog rules the flat rates above cannot express: dated promotions and
+ * long-context bands. Kept on the entry so `resolvePrice()` can apply them per
+ * EVENT — flattening them away billed every event at the list rate and silently
+ * ignored e.g. the dated Sonnet 5 promotion.
+ */
+export interface ModelPriceEntry extends ModelPrice {
+    rules?: ModelPricing["rules"];
+}
+
+export type PricingTable = Record<string, ModelPriceEntry>;
 
 export interface TokenTotals {
     input: number;

@@ -8,7 +8,7 @@ import { aggregate } from "./lib/aggregate";
 import { loadPricing } from "./lib/config";
 import { findTranscriptFiles, readEvents } from "./lib/discover";
 import { parseTranscriptLine } from "./lib/parse";
-import { costOf, DEFAULT_PRICING, priceFor } from "./lib/pricing";
+import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "./lib/pricing";
 import { renderSummary } from "./lib/render";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
@@ -88,6 +88,36 @@ describe("pricing", () => {
 
     it("returns null for genuinely unknown models", () => {
         expect(priceFor("glm-4.6", DEFAULT_PRICING)).toBeNull();
+    });
+
+    it("carries the catalog's dated rules through instead of flattening them away", () => {
+        // claude-sonnet-5 has a promotion through 2026-08-31 ($2/$10 vs the list rate).
+        const entry = priceFor("claude-sonnet-5", DEFAULT_PRICING);
+        expect(entry?.rules?.length).toBeGreaterThan(0);
+
+        const inWindow = resolvePrice(entry!, { at: new Date("2026-08-01T00:00:00.000Z") });
+        const afterWindow = resolvePrice(entry!, { at: new Date("2026-09-01T00:00:00.000Z") });
+
+        expect(inWindow.input).toBe(2);
+        expect(inWindow.output).toBe(10);
+        expect(afterWindow.input).not.toBe(2);
+    });
+
+    it("applies a long-context band to the request that is actually large", () => {
+        const entry = priceFor("claude-sonnet-4-5-20250929", DEFAULT_PRICING);
+        expect(entry?.rules?.length).toBeGreaterThan(0);
+
+        const small = resolvePrice(entry!, { contextTokens: 1000 });
+        const large = resolvePrice(entry!, { contextTokens: 250_000 });
+
+        expect(large.input).toBeGreaterThan(small.input);
+        expect(large.input).toBe(6);
+    });
+
+    it("a model with no rules resolves to its flat rates unchanged", () => {
+        const entry = priceFor("claude-opus-4-8", DEFAULT_PRICING);
+
+        expect(resolvePrice(entry!, { at: new Date() })).toEqual(entry!);
     });
 });
 

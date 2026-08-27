@@ -1,4 +1,4 @@
-import { priceFor } from "./pricing";
+import { priceFor, resolvePrice } from "./pricing";
 import type {
     DayBreakdown,
     Filters,
@@ -54,10 +54,18 @@ function passesFilters(ev: UsageEvent, f: Filters): boolean {
 }
 
 function eventCost(ev: UsageEvent, pricing: PricingTable): number {
-    const price = priceFor(ev.model, pricing);
-    if (!price) {
+    const entry = priceFor(ev.model, pricing);
+    if (!entry) {
         return 0;
     }
+
+    // Per event, not per table: a dated promotion or a long-context band only
+    // resolves against THIS event's timestamp and request size.
+    const at = new Date(ev.timestamp);
+    const price = resolvePrice(entry, {
+        at: Number.isNaN(at.getTime()) ? undefined : at,
+        contextTokens: ev.inputTokens + ev.cacheReadTokens + ev.cacheCreationTokens,
+    });
 
     return (
         (ev.inputTokens * price.input +

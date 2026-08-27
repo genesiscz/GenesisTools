@@ -4,7 +4,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_PRICING } from "../pricing";
 import { codexDriver } from "./codex";
 import { billedCost, collectEvents } from "./driver-test-helpers";
+import { isolateAgentHomeEnv } from "./test-env";
 import type { DriverUsageEvent } from "./types";
+
+// An ambient CODEX_HOME would relocate the roots asserted below.
+isolateAgentHomeEnv();
 
 const turnContext = (model: string): string =>
     SafeJSON.stringify({
@@ -145,6 +149,21 @@ describe("codex driver", () => {
         // Nothing to peel and nothing in the catalog: unpriced, so $0.
         expect(codexDriver.priceCandidates("codex-auto-review")).toEqual(["codex-auto-review"]);
         expect(DEFAULT_PRICING["codex-auto-review"]).toBeUndefined();
+    });
+
+    test("a non-string model on a corrupt line never reaches the event", () => {
+        // These files are a system boundary; the CodexLine cast validates nothing.
+        // A number here used to flow into priceCandidates() and throw on .endsWith.
+        const events = collectEvents(codexDriver, [
+            turnContext("gpt-5"),
+            '{"timestamp":"2026-08-27T09:00:10.000Z","type":"event_msg","payload":{"type":"token_count","model":404,"info":{"last_token_usage":{"input_tokens":100,"output_tokens":10}}}}',
+        ]);
+
+        expect(events).toHaveLength(1);
+        // Falls through the invalid value to the sticky turn_context model.
+        expect(events[0].model).toBe("gpt-5");
+        expect(() => codexDriver.priceCandidates(events[0].model)).not.toThrow();
+        expect(billedCost(codexDriver, events[0])).toBeCloseTo(100 * 1.25e-6 + 10 * 10e-6, 12);
     });
 
     test("roots follow CODEX_HOME, comma-separated, sessions + archived_sessions", async () => {

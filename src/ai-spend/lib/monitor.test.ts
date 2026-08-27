@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { claudeDriver, codexDriver, grokDriver } from "./drivers";
+import { isolateAgentHomeEnv } from "./drivers/test-env";
 import {
     buildMonitorReport,
     findRecentTranscripts,
@@ -17,6 +18,9 @@ import {
 import { DEFAULT_PRICING } from "./pricing";
 
 setupStorageSandbox();
+// CLAUDE_CONFIG_DIR / CODEX_HOME / GROK_HOME would drag real transcript trees
+// into every fixture-home assertion below.
+isolateAgentHomeEnv();
 
 // claude-3-5-haiku (literal legacy rates): input $0.8/M, output $4/M, cacheWrite $1.0/M, cacheRead $0.08/M.
 const MODEL = "claude-3-5-haiku";
@@ -52,6 +56,12 @@ describe("monitor report", () => {
     let home: string;
     let mainFile: string;
     let oldFile: string;
+
+    // The suite writes real transcript trees; leaving them behind accumulates
+    // across runs and lets one run's files leak into the next one's roots.
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
 
     beforeEach(() => {
         home = mkdtempSync(join(tmpdir(), "ai-spend-monitor-"));
@@ -177,13 +187,41 @@ describe("monitor report", () => {
         expect(files.every((f) => f.startsWith(roots[0]) || f.startsWith(roots[1]))).toBe(true);
         expect(files.some((f) => f.endsWith("old.jsonl"))).toBe(false);
     });
-});
 
-/** Every agent root must resolve under the fixture home, never an ambient override. */
-const FIXTURE_HOME_ONLY = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GROK_HOME: undefined };
+    test("a timestamp-less record does not burn its id for the real record that follows", () => {
+        const iso = new Date().toISOString();
+        // Claude Code rewrites a streaming message in place, so the same id can appear
+        // first without a timestamp and again complete. Counting the first one into the
+        // dedup frontier would make the second — the billable one — invisible forever.
+        writeFileSync(
+            join(home, ".claude", "projects", "p1", "stream.jsonl"),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                cwd: "/tmp/proj",
+                sessionId: "s9",
+                message: { id: "msg-stream", model: MODEL, usage: { output_tokens: 250_000 } },
+            })}\n${line("msg-stream", iso, { output_tokens: 250_000 })}`
+        );
+
+        const report = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+        });
+
+        // 0.25M output at $4/M = $1.00, counted exactly once on top of the $3.48 fixture.
+        expect(report.today.cost).toBeCloseTo(4.48, 5);
+        expect(report.today.tokens).toBe(2_850_000 + 250_000);
+    });
+});
 
 describe("multi-agent monitor report", () => {
     let home: string;
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
 
     beforeEach(() => {
         home = mkdtempSync(join(tmpdir(), "ai-spend-agents-"));
@@ -258,21 +296,18 @@ describe("multi-agent monitor report", () => {
         writeFileSync(join(grokDir, "events.jsonl"), `${SafeJSON.stringify({ nonsense: true })}\n`);
     });
 
-    test("splits today/week per agent and sums them at the top level", async () => {
+    test("splits today/week per agent and sums them at the top level", () => {
         const opened: string[] = [];
-        let report!: MonitorReport;
-        await env.testing.withOverrides(FIXTURE_HOME_ONLY, () => {
-            report = buildMonitorReport({
-                home,
-                pricing: DEFAULT_PRICING,
-                storage: new Storage("ai-spend"),
-                sweepTtlMs: 0,
-                readTailFn: (path, _offset, _size) => {
-                    opened.push(path);
+        const report = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            readTailFn: (path, _offset, _size) => {
+                opened.push(path);
 
-                    return readFileSync(path, "utf8");
-                },
-            });
+                return readFileSync(path, "utf8");
+            },
         });
 
         expect(report.agents.claude.today.cost).toBeCloseTo(0.8, 6);
@@ -292,22 +327,104 @@ describe("multi-agent monitor report", () => {
         expect(opened.some((path) => path.endsWith("events.jsonl"))).toBe(false);
     });
 
-    test("the cache is keyed per agent — a second run parses nothing", async () => {
+    test("the cache is keyed per agent — a second run parses nothing", () => {
         const storage = new Storage("ai-spend");
-        const run = async (): Promise<MonitorReport> => {
-            let report!: MonitorReport;
-            await env.testing.withOverrides(FIXTURE_HOME_ONLY, () => {
-                report = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
-            });
+        const run = (): MonitorReport => buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
 
-            return report;
-        };
-
-        const first = await run();
-        const second = await run();
+        const first = run();
+        const second = run();
 
         expect(second.parsedFiles).toBe(0);
         expect(second.today.cost).toBeCloseTo(first.today.cost, 10);
         expect(second.agents).toEqual(first.agents);
+    });
+
+    test("a driver subset reports only the agents it scanned, never stale cached ones", () => {
+        const storage = new Storage("ai-spend");
+        const all = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(all.agents.codex.today.tokens).toBe(2_100_000);
+        expect(all.agents.grok.today.tokens).toBe(102_000);
+
+        // Codex and Grok day sums are now cached. Asking for claude alone must not
+        // report them, and must not fold them into the top-level totals either.
+        const claudeOnly = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage,
+            sweepTtlMs: 0,
+            drivers: [claudeDriver],
+        });
+
+        expect(claudeOnly.agents.codex).toEqual({ today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } });
+        expect(claudeOnly.agents.grok).toEqual({ today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } });
+        expect(claudeOnly.today.cost).toBeCloseTo(0.8, 6);
+        expect(claudeOnly.today.tokens).toBe(1_000_000);
+    });
+
+    test("a tail ending mid-line is re-read whole once the writer completes it", () => {
+        const storage = new Storage("ai-spend");
+        const codexFile = join(
+            home,
+            ".codex",
+            "sessions",
+            "2026",
+            "08",
+            "27",
+            "rollout-2026-08-27T09-00-00-synthetic.jsonl"
+        );
+        const iso = new Date().toISOString();
+        const nextEvent = SafeJSON.stringify({
+            timestamp: iso,
+            type: "event_msg",
+            payload: {
+                type: "token_count",
+                info: {
+                    total_token_usage: {
+                        input_tokens: 3_000_000,
+                        cached_input_tokens: 1_000_000,
+                        output_tokens: 100_000,
+                    },
+                    last_token_usage: { input_tokens: 1_000_000, output_tokens: 0, total_tokens: 1_000_000 },
+                },
+            },
+        });
+
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0, drivers: [codexDriver] });
+
+        // Append HALF of a line, exactly as a stat landing mid-write would observe.
+        const split = Math.floor(nextEvent.length / 2);
+        appendFileSync(codexFile, nextEvent.slice(0, split));
+
+        const partial = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage,
+            sweepTtlMs: 0,
+            drivers: [codexDriver],
+        });
+        // The fragment is not parseable, so nothing new is counted yet.
+        expect(partial.agents.codex.today.tokens).toBe(2_100_000);
+
+        // The writer finishes the line. Its FIRST half must not have been consumed.
+        appendFileSync(codexFile, `${nextEvent.slice(split)}\n`);
+
+        const complete = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage,
+            sweepTtlMs: 0,
+            drivers: [codexDriver],
+        });
+        // +1M uncached input on gpt-5 = +$1.25 on top of $2.375.
+        expect(complete.agents.codex.today.tokens).toBe(2_100_000 + 1_000_000);
+        expect(complete.agents.codex.today.cost).toBeCloseTo(2.375 + 1.25, 6);
+    });
+
+    test("grok's roots follow GROK_HOME even when the fixture home has its own tree", () => {
+        expect(grokDriver.roots(home)).toEqual([join(home, ".grok", "sessions")]);
+        expect(codexDriver.roots(home)).toEqual([
+            join(home, ".codex", "sessions"),
+            join(home, ".codex", "archived_sessions"),
+        ]);
     });
 });

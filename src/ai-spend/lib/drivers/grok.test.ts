@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -7,6 +7,10 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_PRICING } from "../pricing";
 import { billedCost, collectEvents } from "./driver-test-helpers";
 import { grokDriver } from "./grok";
+import { isolateAgentHomeEnv } from "./test-env";
+
+// An ambient GROK_HOME would relocate the root asserted below.
+isolateAgentHomeEnv();
 
 const turnCompleted = (eventId: string, usage: Record<string, unknown>): string =>
     SafeJSON.stringify({
@@ -116,21 +120,85 @@ describe("grok driver", () => {
 
     test("no modelUsage map falls back to summary.json's current_model_id", () => {
         const dir = mkdtempSync(join(tmpdir(), "ai-spend-grok-"));
-        const sessionDir = join(dir, "sess-x");
-        mkdirSync(sessionDir, { recursive: true });
-        writeFileSync(
-            join(sessionDir, "summary.json"),
-            SafeJSON.stringify({ info: { id: "sess-x" }, current_model_id: "grok-4.6" })
-        );
 
-        const events = collectEvents(
-            grokDriver,
-            [turnCompleted("evt-4", { inputTokens: 50, outputTokens: 5, cachedReadTokens: 10 })],
-            join(sessionDir, "updates.jsonl")
-        );
+        try {
+            const sessionDir = join(dir, "sess-x");
+            mkdirSync(sessionDir, { recursive: true });
+            writeFileSync(
+                join(sessionDir, "summary.json"),
+                SafeJSON.stringify({ info: { id: "sess-x" }, current_model_id: "grok-4.6" })
+            );
+
+            const events = collectEvents(
+                grokDriver,
+                [turnCompleted("evt-4", { inputTokens: 50, outputTokens: 5, cachedReadTokens: 10 })],
+                join(sessionDir, "updates.jsonl")
+            );
+
+            expect(events).toHaveLength(1);
+            expect(events[0]).toMatchObject({
+                model: "grok-4.6",
+                inputTokens: 40,
+                cacheReadTokens: 10,
+                outputTokens: 5,
+            });
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("a turn-level costUsdTicks survives when the SOLE model row omits it", () => {
+        const events = collectEvents(grokDriver, [
+            turnCompleted("evt-sole", {
+                inputTokens: 100,
+                outputTokens: 20,
+                cachedReadTokens: 40,
+                costUsdTicks: 185_192_000,
+                modelUsage: {
+                    "grok-4.5-build": { inputTokens: 100, outputTokens: 20, cachedReadTokens: 40 },
+                },
+            }),
+        ]);
 
         expect(events).toHaveLength(1);
-        expect(events[0]).toMatchObject({ model: "grok-4.6", inputTokens: 40, cacheReadTokens: 10, outputTokens: 5 });
+        // A sum over one term IS that term, so the turn figure is the row's cost.
+        expect(events[0].recordedCostUsd).toBeCloseTo(0.0185192, 12);
+    });
+
+    test("a turn-level costUsdTicks is NOT split across two model rows", () => {
+        const events = collectEvents(grokDriver, [
+            turnCompleted("evt-two", {
+                costUsdTicks: 185_192_000,
+                modelUsage: {
+                    "model-a": { inputTokens: 10, outputTokens: 2 },
+                    "model-b": { inputTokens: 20, outputTokens: 4 },
+                },
+            }),
+        ]);
+
+        expect(events).toHaveLength(2);
+        // Neither row may claim the whole turn total — that would double-bill it.
+        expect(events[0].recordedCostUsd).toBeUndefined();
+        expect(events[1].recordedCostUsd).toBeUndefined();
+    });
+
+    test("an out-of-range timestamp yields an empty stamp instead of throwing", () => {
+        // 1e15 SECONDS becomes 1e18 ms, far past the 8.64e15 Date limit. An
+        // unguarded toISOString() would throw and abandon the rest of the file.
+        const line = SafeJSON.stringify({
+            timestamp: 1e15,
+            params: {
+                sessionId: "sess-overflow",
+                update: { sessionUpdate: "turn_completed", usage: { inputTokens: 10, outputTokens: 1 } },
+            },
+        });
+
+        let events: ReturnType<typeof collectEvents> = [];
+        expect(() => {
+            events = collectEvents(grokDriver, [line]);
+        }).not.toThrow();
+        expect(events).toHaveLength(1);
+        expect(events[0].timestamp).toBe("");
     });
 
     test("non-usage updates, zero rows and hook lines are skipped", () => {

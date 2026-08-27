@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { claudeDriver } from "./claude";
 import { billedCost, collectEvents } from "./driver-test-helpers";
+import { isolateAgentHomeEnv } from "./test-env";
+
+// An ambient CLAUDE_CONFIG_DIR adds a third root and would break the exact list below.
+isolateAgentHomeEnv();
 
 function line(id: string, usage: Record<string, number>): string {
     return SafeJSON.stringify({
@@ -47,6 +51,23 @@ describe("claude driver", () => {
         ]);
 
         expect(events).toEqual([]);
+    });
+
+    test("a line with no timestamp still emits, and the monitor drops it without burning the id", () => {
+        // `parseTranscriptLine` defaults a missing timestamp to "". The driver passes
+        // that through; rejecting it is `parseChunk`'s job, and it must reject BEFORE
+        // recording the id — see monitor.test.ts for the end-to-end assertion.
+        const events = collectEvents(claudeDriver, [
+            SafeJSON.stringify({
+                type: "assistant",
+                cwd: "/tmp/p",
+                message: { id: "msg-x", usage: { input_tokens: 5 } },
+            }),
+        ]);
+
+        expect(events).toHaveLength(1);
+        expect(events[0].timestamp).toBe("");
+        expect(Number.isNaN(new Date(events[0].timestamp).getTime())).toBe(true);
     });
 
     test("roots cover both fixed trees, and every .jsonl counts", () => {

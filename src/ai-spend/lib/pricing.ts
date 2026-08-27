@@ -1,5 +1,5 @@
-import { byProvider, stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
-import type { ModelPrice, PricingTable, TokenTotals } from "./types";
+import { byProvider, effectivePricing, stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
+import type { ModelPrice, ModelPriceEntry, PricingTable, TokenTotals } from "./types";
 
 /**
  * EXACT id match, with one boundary-safe fallback: a trailing `-YYYYMMDD` /
@@ -35,11 +35,15 @@ function fromRegistry(): PricingTable {
                 continue;
             }
 
-            const price: ModelPrice = {
+            // `rules` rides along: flattening the catalog to four numbers billed
+            // every event at the list rate, so dated promotions (the Sonnet 5
+            // $2/$10 window) and long-context bands never reached the report.
+            const price: ModelPriceEntry = {
                 input: model.pricing.inputPer1M,
                 output: model.pricing.outputPer1M,
                 cacheWrite: model.pricing.cachedCreatePer1M ?? model.pricing.inputPer1M * 1.25,
                 cacheRead: model.pricing.cachedReadPer1M ?? model.pricing.inputPer1M * 0.1,
+                rules: model.pricing.rules,
             };
 
             for (const id of [model.id, model.flags?.cli?.id]) {
@@ -62,7 +66,7 @@ const LEGACY_PRICING: PricingTable = {
 
 export const DEFAULT_PRICING: PricingTable = { ...fromRegistry(), ...LEGACY_PRICING };
 
-export function priceFor(model: string, pricing: PricingTable): ModelPrice | null {
+export function priceFor(model: string, pricing: PricingTable): ModelPriceEntry | null {
     const exact = pricing[model];
 
     if (exact) {
@@ -71,6 +75,35 @@ export function priceFor(model: string, pricing: PricingTable): ModelPrice | nul
 
     const base = stripModelVariantSuffix(model);
     return (base && pricing[base]) || null;
+}
+
+/**
+ * Apply the catalog's dated / context-banded rules to ONE event's own moment and
+ * size. `effectivePricing` is the single resolver for that (see the AI-subsystem
+ * rules); this only translates its per-1M fields into the flat shape costOf wants.
+ */
+export function resolvePrice(entry: ModelPriceEntry, context: { at?: Date; contextTokens?: number } = {}): ModelPrice {
+    if (!entry.rules?.length) {
+        return entry;
+    }
+
+    const resolved = effectivePricing(
+        {
+            inputPer1M: entry.input,
+            outputPer1M: entry.output,
+            cachedCreatePer1M: entry.cacheWrite,
+            cachedReadPer1M: entry.cacheRead,
+            rules: entry.rules,
+        },
+        context
+    );
+
+    return {
+        input: resolved.inputPer1M,
+        output: resolved.outputPer1M,
+        cacheWrite: resolved.cachedCreatePer1M ?? resolved.inputPer1M * 1.25,
+        cacheRead: resolved.cachedReadPer1M ?? resolved.inputPer1M * 0.1,
+    };
 }
 
 export function costOf(tokens: TokenTotals, price: ModelPrice): number {
