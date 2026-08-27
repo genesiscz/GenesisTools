@@ -120,6 +120,7 @@ export function buildTeammateWrapperScript(input: { claudeBin: string; env: Team
     const { claudeBin, env: auth } = input;
     const exports: Array<[string, string]> = [
         ["TOOLS_CLAUDE_ACCOUNT", auth.accountName],
+        ["TOOLS_CLAUDE_AUTH", "token"],
         ["CLAUDE_CODE_OAUTH_TOKEN", auth.oauthToken],
         ["CLAUDE_CODE_SUBSCRIPTION_TYPE", auth.subscriptionType],
     ];

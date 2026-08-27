@@ -939,7 +939,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         // setup-token workarounds — the bootstrap catalog loads natively.
         // TOOLS_CLAUDE_ACCOUNT lets the statusline (a child of claude) show
         // which account this session was launched as.
-        launchEnv = { ...process.env, TOOLS_CLAUDE_ACCOUNT: account.name };
+        launchEnv = {
+            ...process.env,
+            TOOLS_CLAUDE_ACCOUNT: account.name,
+            TOOLS_CLAUDE_AUTH: "keychain",
+        };
         delete launchEnv.CLAUDE_CODE_OAUTH_TOKEN;
     } else {
         launchEnv = { ...process.env, ...pinnedLaunchEnv(account, account.tokens.longLivedToken!) };

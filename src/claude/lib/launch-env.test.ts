@@ -4,11 +4,12 @@ import { pinnedLaunchEnv, subscriptionTypeOf } from "./launch-env";
 describe("pinnedLaunchEnv", () => {
     // Pinned key-by-key: dropping any one of these silently changes how the
     // launched session authenticates or which models `/model` offers.
-    test("carries all seven keys", () => {
+    test("carries all eight keys", () => {
         const env = pinnedLaunchEnv({ name: "work", label: "max 20x" }, "sk-ant-oat01-token");
 
         expect(env).toEqual({
             TOOLS_CLAUDE_ACCOUNT: "work",
+            TOOLS_CLAUDE_AUTH: "token",
             CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-token",
             CLAUDE_CODE_SUBSCRIPTION_TYPE: "max",
             ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",

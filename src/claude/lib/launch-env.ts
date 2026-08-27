@@ -80,6 +80,9 @@ export function pinnedLaunchEnv(
 ): Record<string, string> {
     return {
         TOOLS_CLAUDE_ACCOUNT: account.name,
+        // Survives Claude Code's hook env allowlist (the OAuth token does not).
+        // SessionStart records this so cmux resume does not invent --keychain.
+        TOOLS_CLAUDE_AUTH: "token",
         CLAUDE_CODE_OAUTH_TOKEN: longLivedToken,
         // Interactive CC can't resolve the tier from an inference-only setup token,
         // which blocks opus/sonnet [1m] model switches (see claude-code#70124).

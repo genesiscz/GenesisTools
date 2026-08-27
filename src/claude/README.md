@@ -129,9 +129,13 @@ Nothing in Claude Code's transcripts records which account a session ran as, so 
 recorded at session start by `hooks/record-session-account.ts` in the **genesis-tools
 plugin** — no settings.json editing, it ships with the plugin's other SessionStart hooks.
 
-The hook reads `TOOLS_CLAUDE_ACCOUNT` (exported by `tools claude start`), walks up to the
-claude process for its `--model`, and appends `session id → account` plus cwd and cmux
-workspace to `~/.genesis-tools/claude-code/session-pins.jsonl`.
+The hook reads `TOOLS_CLAUDE_ACCOUNT` and `TOOLS_CLAUDE_AUTH` (exported by
+`tools claude start`). Auth is `token` (long-lived `CLAUDE_CODE_OAUTH_TOKEN`) or
+`keychain` (`--keychain` injects that account's secondary login into the macOS
+keychain for the session). Do not infer keychain from a missing OAuth env: Claude
+Code strips that secret from hook children. `--resume` after `--` still goes to
+claude verbatim. Pre-fix pins that claimed `auth: keychain` without a trusted
+source resume on the token path.
 
 ```bash
 tools claude cmux pins           # what has been recorded, newest first

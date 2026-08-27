@@ -72,6 +72,46 @@ describe("record-session-account hook", () => {
 
         expect(pins).toHaveLength(1);
         expect(pins[0].account).toBeNull();
+        expect(pins[0].auth).toBe("keychain");
+        expect(pins[0].authSource).toBe("default-bare");
+    });
+
+    test("a named account without CLAUDE_CODE_OAUTH_TOKEN is still a token launch", async () => {
+        // Claude Code strips the OAuth token from hook children. Inferring
+        // keychain from its absence marked every `tools claude start <account>`
+        // session as --keychain and resumed them on the wrong credential.
+        await runHook('{"session_id":"abc","cwd":"/tmp"}', { TOOLS_CLAUDE_ACCOUNT: "work" });
+
+        expect(await readPins()).toEqual([
+            expect.objectContaining({
+                account: "work",
+                auth: "token",
+                authSource: "default-named",
+            }),
+        ]);
+    });
+
+    test("TOOLS_CLAUDE_AUTH=keychain wins even when an OAuth token is in the env", async () => {
+        await runHook('{"session_id":"abc","cwd":"/tmp"}', {
+            TOOLS_CLAUDE_ACCOUNT: "work",
+            TOOLS_CLAUDE_AUTH: "keychain",
+            CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-should-not-matter",
+        });
+
+        expect((await readPins())[0]).toEqual(
+            expect.objectContaining({ auth: "keychain", authSource: "launch-env" })
+        );
+    });
+
+    test("TOOLS_CLAUDE_AUTH=token wins when the OAuth token was stripped", async () => {
+        await runHook('{"session_id":"abc","cwd":"/tmp"}', {
+            TOOLS_CLAUDE_ACCOUNT: "work",
+            TOOLS_CLAUDE_AUTH: "token",
+        });
+
+        expect((await readPins())[0]).toEqual(
+            expect.objectContaining({ auth: "token", authSource: "launch-env" })
+        );
     });
 
     test("appends, so a resumed session re-pins without losing history", async () => {

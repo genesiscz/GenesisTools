@@ -29,12 +29,12 @@ interface SessionPin {
     sessionId: string;
     account: string | null;
     /**
-     * How the session authenticated. `tools claude start` exports the OAuth token for a
-     * token launch and exports nothing for `--keychain`, while BOTH set the account name.
-     * Restoring a keychain session through the token path would bill another credential,
-     * so the mode has to be recorded, not inferred from the account.
+     * How the session authenticated. Do NOT infer this from CLAUDE_CODE_OAUTH_TOKEN:
+     * Claude Code strips that secret from hook children, so every token launch used
+     * to be recorded as keychain. Prefer TOOLS_CLAUDE_AUTH from `tools claude start`.
      */
     auth: "token" | "keychain";
+    authSource: "launch-env" | "argv" | "oauth-env" | "default-named" | "default-bare";
     model: string | null;
     cwd: string;
     workspaceId: string | null;
@@ -95,6 +95,54 @@ function modelFromAncestors(): string | null {
     return null;
 }
 
+function ancestorHasKeychainFlag(): boolean {
+    let pid = process.ppid;
+
+    for (let hop = 0; hop < MAX_PS_HOPS && pid > 1; hop++) {
+        const result = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], { encoding: "utf8" });
+
+        if (result.status !== 0 || !result.stdout) {
+            return false;
+        }
+
+        const match = /^\s*(\d+)\s+(.*)$/.exec(result.stdout.trim());
+
+        if (!match) {
+            return false;
+        }
+
+        if (/\s--keychain(\s|$)/.test(match[2]) && /claude/.test(match[2])) {
+            return true;
+        }
+
+        pid = Number(match[1]);
+    }
+
+    return false;
+}
+
+function resolveAuth(env: NodeJS.ProcessEnv): Pick<SessionPin, "auth" | "authSource"> {
+    const explicit = env.TOOLS_CLAUDE_AUTH;
+
+    if (explicit === "keychain" || explicit === "token") {
+        return { auth: explicit, authSource: "launch-env" };
+    }
+
+    if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+        return { auth: "token", authSource: "oauth-env" };
+    }
+
+    if (ancestorHasKeychainFlag()) {
+        return { auth: "keychain", authSource: "argv" };
+    }
+
+    if (env.TOOLS_CLAUDE_ACCOUNT) {
+        return { auth: "token", authSource: "default-named" };
+    }
+
+    return { auth: "keychain", authSource: "default-bare" };
+}
+
 function main(raw: string): void {
     if (!raw.trim()) {
         return;
@@ -116,7 +164,7 @@ function main(raw: string): void {
         sessionId: input.session_id,
         // Absent means a plain keychain login, which is a real answer, not a missing one.
         account: process.env.TOOLS_CLAUDE_ACCOUNT || null,
-        auth: process.env.CLAUDE_CODE_OAUTH_TOKEN ? "token" : "keychain",
+        ...resolveAuth(process.env),
         model: modelFromAncestors(),
         cwd: input.cwd || process.cwd(),
         workspaceId: process.env.CMUX_WORKSPACE_ID || null,

@@ -28,7 +28,16 @@ function ranOnBareKeychain(session: PlannedSession): boolean {
  * no opinion, and keep the token path they have always used.
  */
 function ranOnNamedKeychain(session: PlannedSession): boolean {
-    return session.account !== null && session.candidate.auth === "keychain";
+    if (session.account === null || session.candidate.auth !== "keychain") {
+        return false;
+    }
+
+    // Pre-fix SessionStart pins claimed keychain whenever the OAuth env was
+    // missing from the hook child (Claude Code strips it). Those resume on the
+    // token path. Only a launch that recorded --keychain explicitly is trusted.
+    const source = session.candidate.authSource;
+
+    return source === "launch-env" || source === "argv";
 }
 
 /**

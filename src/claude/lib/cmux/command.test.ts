@@ -102,7 +102,9 @@ describe("buildLaunchCommand", () => {
 
 describe("buildLaunchCommand auth modes", () => {
     test("a --keychain session resumes through --keychain, not the token path", () => {
-        const command = buildLaunchCommand(session({ pinned: true, auth: "keychain" }, { account: "work" }));
+        const command = buildLaunchCommand(
+            session({ pinned: true, auth: "keychain", authSource: "launch-env" }, { account: "work" })
+        );
 
         expect(command).toContain("tools claude start 'work' --keychain --");
     });
@@ -118,6 +120,26 @@ describe("buildLaunchCommand auth modes", () => {
         const command = buildLaunchCommand(session({ pinned: true }, { account: "work" }));
 
         expect(command).not.toContain("--keychain");
+    });
+
+    test("a pre-fix hook pin that claimed keychain because the OAuth env was stripped resumes on the token path", () => {
+        const command = buildLaunchCommand(
+            session({ pinned: true, auth: "keychain" }, { account: "work" })
+        );
+
+        expect(command).toContain("tools claude start 'work' --");
+        expect(command).not.toContain("--keychain");
+    });
+
+    test("a --keychain launch recorded via TOOLS_CLAUDE_AUTH still resumes with --keychain", () => {
+        const command = buildLaunchCommand(
+            session(
+                { pinned: true, auth: "keychain", authSource: "launch-env" },
+                { account: "work" }
+            )
+        );
+
+        expect(command).toContain("tools claude start 'work' --keychain --");
     });
 
     test("a keychain session with no account still resumes as a bare claude", () => {

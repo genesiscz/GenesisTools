@@ -143,6 +143,7 @@ describe("buildTeammateWrapperScript", () => {
         expect(script).toContain("export CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat-secret'");
         expect(script).toContain("export CLAUDE_CODE_SUBSCRIPTION_TYPE='max'");
         expect(script).toContain("export TOOLS_CLAUDE_ACCOUNT='max-primary'");
+        expect(script).toContain("export TOOLS_CLAUDE_AUTH='token'");
         expect(script.trimEnd().endsWith(`exec '/Users/x/.bun/bin/claude' "$@"`)).toBe(true);
     });
 

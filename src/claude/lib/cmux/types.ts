@@ -17,11 +17,20 @@ export type PinSource = "hook" | "manual";
  * Absent on pins written before this was recorded.
  */
 export type PinAuth = "token" | "keychain";
+/**
+ * Where `auth` came from. The SessionStart hook used to infer `keychain` whenever
+ * `CLAUDE_CODE_OAUTH_TOKEN` was missing, but Claude Code strips that secret from
+ * hook children — so every `tools claude start <account>` pin was recorded as
+ * keychain. Resume only trusts `keychain` when the source is the launch env or
+ * the `--keychain` argv. Pre-fix pins have no source and resume on the token path.
+ */
+export type PinAuthSource = "launch-env" | "argv" | "oauth-env" | "default-named" | "default-bare";
 
 export interface SessionPin {
     sessionId: string;
     account: string | null;
     auth?: PinAuth;
+    authSource?: PinAuthSource;
     model: string | null;
     cwd: string;
     /** cmux's stable workspace UUID (CMUX_WORKSPACE_ID), when the session ran inside cmux. */
@@ -52,6 +61,7 @@ export interface RestoreCandidate {
     model: string | null;
     /** How the pinned session authenticated; absent for sessions with no pin. */
     auth?: PinAuth;
+    authSource?: PinAuthSource;
     /** True when a pin record exists; distinguishes "keychain login" from "never recorded". */
     pinned: boolean;
 }
