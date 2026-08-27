@@ -1,4 +1,4 @@
-import { SafeJSON } from "@genesiscz/utils/json";
+import { parseTranscriptLine } from "./parse-line";
 import { clipResult, type TranscriptTurn } from "./types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,11 +21,8 @@ export function codexGtEventsToTurns(lines: readonly (string | unknown)[]): Tran
     };
 
     for (const line of lines) {
-        if (typeof line === "string" && !line.trim()) {
-            continue;
-        }
-        const parsed = typeof line === "string" ? SafeJSON.parse(line) : line;
-        if (!isRecord(parsed)) {
+        const parsed = parseTranscriptLine(line);
+        if (!parsed) {
             continue;
         }
         const method = asString(parsed.method);
@@ -65,8 +62,8 @@ function previewFromArguments(raw: string): string {
     if (!raw) {
         return "";
     }
-    const parsed = SafeJSON.parse(raw);
-    if (isRecord(parsed)) {
+    const parsed = parseTranscriptLine(raw);
+    if (parsed) {
         const candidate = parsed.command ?? parsed.cmd ?? parsed.path ?? parsed.file_path ?? parsed.target_file;
         if (typeof candidate === "string" && candidate) {
             return candidate;
@@ -87,11 +84,8 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
     };
 
     for (const line of lines) {
-        if (typeof line === "string" && !line.trim()) {
-            continue;
-        }
-        const parsed = typeof line === "string" ? SafeJSON.parse(line) : line;
-        if (!isRecord(parsed)) {
+        const parsed = parseTranscriptLine(line);
+        if (!parsed) {
             continue;
         }
         const type = asString(parsed.type);

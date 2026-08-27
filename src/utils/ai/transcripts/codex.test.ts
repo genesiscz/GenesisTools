@@ -26,6 +26,21 @@ describe("codexGtEventsToTurns", () => {
         expect(tool?.inputPreview).toBe("git status");
         expect(tool?.result).toBe("clean");
     });
+
+    test("skips malformed JSONL in GT event logs", () => {
+        const lines = [
+            "not json",
+            SafeJSON.stringify({
+                seq: 1,
+                ts: "2026-08-27T20:00:00.000Z",
+                source: "app-server",
+                method: "item/agentMessage/delta",
+                params: { delta: "Working on it." },
+            }),
+        ];
+        const turns = codexGtEventsToTurns(lines);
+        expect(turns.some((t) => t.text.includes("Working on it."))).toBe(true);
+    });
 });
 
 describe("codexNativeLinesToTurns", () => {
@@ -68,5 +83,25 @@ describe("codexNativeLinesToTurns", () => {
             result: "clean",
             isError: false,
         });
+    });
+
+    test("skips malformed and truncated JSONL lines", () => {
+        const lines = [
+            "not json",
+            '{"type":"event_msg"',
+            SafeJSON.stringify({
+                type: "event_msg",
+                timestamp: "2026-08-27T20:00:00.000Z",
+                payload: { type: "user_message", message: "run status" },
+            }),
+            SafeJSON.stringify({
+                type: "event_msg",
+                timestamp: "2026-08-27T20:00:01.000Z",
+                payload: { type: "agent_message", message: "checking" },
+            }),
+        ];
+        const turns = codexNativeLinesToTurns(lines);
+        expect(turns[0]?.text).toBe("run status");
+        expect(turns[1]?.text).toBe("checking");
     });
 });

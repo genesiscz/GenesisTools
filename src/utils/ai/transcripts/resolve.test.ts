@@ -81,6 +81,7 @@ describe("resolveTranscript", () => {
         expect(hit.provider).toBe("codex");
         expect(hit.source).toBe("native");
         expect(hit.filePath).toBe(file);
+        expect(hit.sessionId).toBe(id);
     });
 
     test("finds a claude jsonl under an injected projects dir", async () => {

@@ -3,7 +3,7 @@
  * Provides path resolution, JSONL transcript parsing, and shared types.
  */
 
-export { cleanPromptText, cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
+export { cleanPromptText, cleanTranscriptText } from "../ai/transcripts/clean-text";
 export * from "./auth";
 export * from "./projects";
 export { humanTextOf } from "./session.utils";

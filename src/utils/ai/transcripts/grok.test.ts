@@ -49,6 +49,29 @@ describe("grokNativeLinesToTurns", () => {
             { id: "tc1", name: "bash", inputPreview: "ls", result: "a.txt", isError: false },
         ]);
     });
+
+    test("skips malformed and truncated JSONL lines", () => {
+        const lines = [
+            "not json",
+            '{"params":',
+            SafeJSON.stringify({
+                timestamp: 1_700_000_000,
+                params: {
+                    update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "ok" },
+                    },
+                },
+            }),
+            SafeJSON.stringify({
+                timestamp: 1_700_000_001,
+                params: { update: { sessionUpdate: "turn_completed" } },
+            }),
+        ];
+        const turns = grokNativeLinesToTurns(lines);
+        expect(turns).toHaveLength(1);
+        expect(turns[0]?.text).toBe("ok");
+    });
 });
 
 describe("grokWorkerTextToTurns", () => {

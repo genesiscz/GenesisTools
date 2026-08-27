@@ -1,5 +1,6 @@
 import { parseTurnLog } from "@genesiscz/utils/grok/stream";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { parseTranscriptLine } from "./parse-line";
 import { clipResult, type TranscriptTurn } from "./types";
 
 interface GrokUpdate {
@@ -58,11 +59,8 @@ export function grokNativeLinesToTurns(lines: readonly (string | unknown)[]): Tr
     };
 
     for (const line of lines) {
-        if (typeof line === "string" && !line.trim()) {
-            continue;
-        }
-        const parsed = typeof line === "string" ? SafeJSON.parse(line) : line;
-        if (!isRecord(parsed)) {
+        const parsed = parseTranscriptLine(line);
+        if (!parsed) {
             continue;
         }
         const params = isRecord(parsed.params) ? parsed.params : {};

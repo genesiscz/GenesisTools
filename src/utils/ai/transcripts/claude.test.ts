@@ -96,6 +96,53 @@ describe("claudeMessagesToTurns", () => {
         expect(turns[2]?.text).toBe("The clock is lastCacheAt.");
     });
 
+    test("keeps pending tools when results arrive across two user messages", () => {
+        const messages: ConversationMessage[] = [
+            assistant({
+                uuid: "a1",
+                message: {
+                    role: "assistant",
+                    id: "msg-a1",
+                    model: "claude-opus-4-6",
+                    type: "message",
+                    stop_reason: "tool_use",
+                    stop_sequence: null,
+                    usage: { input_tokens: 1, output_tokens: 1 },
+                    content: [
+                        {
+                            type: "tool_use",
+                            id: "toolu_01",
+                            name: "Read",
+                            input: { file_path: "a.swift" },
+                        },
+                        {
+                            type: "tool_use",
+                            id: "toolu_02",
+                            name: "Read",
+                            input: { file_path: "b.swift" },
+                        },
+                    ],
+                },
+            }),
+            user({
+                uuid: "u1",
+                message: {
+                    role: "user",
+                    content: [{ type: "tool_result", tool_use_id: "toolu_01", content: "struct A" }],
+                },
+            }),
+            user({
+                uuid: "u2",
+                message: {
+                    role: "user",
+                    content: [{ type: "tool_result", tool_use_id: "toolu_02", content: "struct B" }],
+                },
+            }),
+        ];
+        const turns = claudeMessagesToTurns(messages);
+        expect(turns[0]?.tools.map((t) => t.result)).toEqual(["struct A", "struct B"]);
+    });
+
     test("slash-command XML becomes a slash name", () => {
         const turns = claudeMessagesToTurns([
             user({

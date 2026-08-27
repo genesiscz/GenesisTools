@@ -1,7 +1,11 @@
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { followTranscript } from "@genesiscz/utils/ai/transcripts/tail";
-import { DEFAULT_TURN_LIMIT, type TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
+import {
+    DEFAULT_TURN_LIMIT,
+    type TranscriptEnvelope,
+    type TranscriptProvider,
+} from "@genesiscz/utils/ai/transcripts/types";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -17,9 +21,7 @@ function parseProvider(value: string | undefined): TranscriptProvider | undefine
     return value as TranscriptProvider;
 }
 
-function printHuman(envelope: {
-    turns: Array<{ role: string; text: string; tools: Array<{ name: string; inputPreview: string }> }>;
-}): void {
+function printHuman(envelope: TranscriptEnvelope): void {
     for (const turn of envelope.turns) {
         const tools = turn.tools.map((t) => `${t.name}(${t.inputPreview})`).join(", ");
         out.println(`${turn.role}: ${turn.text}${tools ? ` [${tools}]` : ""}`);
@@ -89,7 +91,7 @@ export function registerSessionsCommands(program: Command): void {
                     }
 
                     const ac = new AbortController();
-                    process.on("SIGINT", () => ac.abort());
+                    process.once("SIGINT", () => ac.abort());
                     await followTranscript(resolved, {
                         slice,
                         signal: ac.signal,

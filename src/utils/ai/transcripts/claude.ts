@@ -59,7 +59,9 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
             const results = toolResultsFromUser(msg);
             if (results.length > 0 && pendingTools.length > 0) {
                 attachResults(pendingTools, results);
-                flushPending();
+                if (pendingTools.every((tool) => tool.result !== null)) {
+                    flushPending();
+                }
             }
             if (!userHasVisibleText(msg) || msg.isMeta) {
                 continue;

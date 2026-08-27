@@ -146,7 +146,8 @@ function findGrokNative(query: string, grokHome: string): RankedHit[] {
 
 function findGrokWorker(query: string, workerDir: string): RankedHit[] {
     const hits: RankedHit[] = [];
-    for (const entry of listDir(workerDir)) {
+    const entries = listDir(workerDir);
+    for (const entry of entries) {
         if (!entry.endsWith(".meta.json")) {
             continue;
         }
@@ -163,7 +164,7 @@ function findGrokWorker(query: string, workerDir: string): RankedHit[] {
         if (!idMatches(query, name) && !idMatches(query, sessionId)) {
             continue;
         }
-        const turns = listDir(workerDir)
+        const turns = entries
             .filter((file) => file.startsWith(`${name}.turn`) && file.endsWith(".jsonl"))
             .sort((a, b) => turnNumber(a) - turnNumber(b))
             .map((file) => join(workerDir, file));
@@ -184,12 +185,26 @@ function findGrokWorker(query: string, workerDir: string): RankedHit[] {
     return hits;
 }
 
+function splitCodexHomes(codexHome: string): string[] {
+    const override = env.codex.getHomeOverride();
+    if (override && codexHome === override) {
+        return override
+            .split(",")
+            .map((part) => part.trim())
+            .filter((part) => part.length > 0);
+    }
+    return [codexHome];
+}
+
+function codexNativeSessionId(entry: string): string {
+    const stem = basename(entry, ".jsonl").replace(/^rollout-/, "");
+    const uuid = stem.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    return uuid?.[0] ?? stem;
+}
+
 function findCodexNative(query: string, codexHome: string): RankedHit[] {
     const hits: RankedHit[] = [];
-    const homes = codexHome
-        .split(",")
-        .map((part) => part.trim())
-        .filter((part) => part.length > 0);
+    const homes = splitCodexHomes(codexHome);
     for (const home of homes) {
         for (const bucket of ["sessions", "archived_sessions"]) {
             const root = join(home, bucket);
@@ -213,7 +228,7 @@ function findCodexNative(query: string, codexHome: string): RankedHit[] {
                                 continue;
                             }
                             const filePath = join(dayDir, entry);
-                            const id = basename(entry, ".jsonl").replace(/^rollout-/, "");
+                            const id = codexNativeSessionId(entry);
                             hits.push({
                                 provider: "codex",
                                 source: "native",
