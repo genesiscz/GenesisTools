@@ -341,11 +341,8 @@ export function sweepDeadTakeoverTemps(pidPath: string): void {
             continue;
         }
 
-        // isProcessAlive owns this exact ESRCH-vs-EPERM distinction (EPERM means
-        // alive but not ours, so the creator is still mid-takeover). Hand-rolling
-        // the probe here is what the pid-safety guard rejects, and the shared
-        // helper also guards a non-finite or non-positive pid, which a filename
-        // can absolutely produce.
+        // EPERM means alive but not ours, so the creator is still mid-takeover.
+        // The pid comes from a filename, so it may be non-finite or non-positive.
         const alive = isProcessAlive(creator);
 
         if (alive) {

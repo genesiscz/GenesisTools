@@ -37,6 +37,17 @@ if [ ${#roots[@]} -eq 0 ]; then
     external_roots=0
 fi
 
+# A root that cannot be entered must stop the guard, not be skipped.
+# `cd "$root" && git grep …` reports bash's exit 1 when the cd fails, and 1 is
+# also git grep's "no match", so an unscannable root used to read as a clean
+# one and the guard printed OK having looked at nothing (review t40).
+for root in "${roots[@]}"; do
+    if [ ! -d "$root" ]; then
+        echo "::error:: scan root '${root}' is not a directory, so this guard would report a clean result without scanning it."
+        exit 1
+    fi
+done
+
 # Run one PCRE over the configured roots. Prints matching lines; returns 0 when
 # something matched and 1 when nothing did.
 #
@@ -61,7 +72,13 @@ scan() {
 
     for root in "${roots[@]}"; do
         if [ "$external_roots" -eq 1 ]; then
-            out=$(cd "$root" && git grep --no-index -nP -e "$pattern" -- . "$@") && rc=0 || rc=$?
+            if ! cd "$root" 2>&1; then
+                echo "::error:: could not enter scan root '${root}'."
+                exit 1
+            fi
+
+            out=$(git grep --no-index -nP -e "$pattern" -- . "$@") && rc=0 || rc=$?
+            cd "$OLDPWD" || exit 1
         else
             out=$(git grep -nP -e "$pattern" -- "$root" "$@") && rc=0 || rc=$?
         fi

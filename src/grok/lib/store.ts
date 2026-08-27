@@ -29,6 +29,31 @@ function isNonEmpty(value: unknown): value is string {
     return typeof value === "string" && value.trim().length > 0;
 }
 
+/** The first field that would make a resume unsafe or impossible, or null. */
+function firstInvalidField(meta: Partial<GrokSessionMeta> | null | undefined): string | null {
+    if (!isNonEmpty(meta?.sessionId)) {
+        return "sessionId";
+    }
+
+    if (!isNonEmpty(meta?.cwd)) {
+        return "cwd";
+    }
+
+    if (!isNonEmpty(meta?.workerHome)) {
+        return "workerHome";
+    }
+
+    if (typeof meta?.readOnly !== "boolean") {
+        return "readOnly";
+    }
+
+    if (!Number.isInteger(meta?.turns) || (meta?.turns ?? -1) < 0) {
+        return "turns";
+    }
+
+    return null;
+}
+
 export class GrokSessionStore {
     ensureSessionsDir(): string {
         const path = sessionsDir();
@@ -49,12 +74,24 @@ export class GrokSessionStore {
             // build (or a half-written file) reached the sessions table with an
             // absent id and rendered a blank cell. A record with no sessionId
             // also cannot be resumed, so treating it as unreadable is honest.
-            // Blank counts as absent. A `sessionId: ""` passes a typeof check
-            // and then produces `--resume ""`, which the CLI accepts and starts
-            // a NEW conversation under the old name — the session looks resumed
-            // and has silently lost its history (PR #330 review t16).
-            if (!isNonEmpty(parsed?.sessionId) || !isNonEmpty(parsed?.cwd)) {
-                log.warn({ path, name }, "grok session metadata has a blank sessionId or cwd; ignoring it");
+            // Every field a resume depends on is checked, not just the two that
+            // are obviously identifying.
+            //
+            // Blank counts as absent: `sessionId: ""` passes a typeof check and
+            // then produces `--resume ""`, which the CLI accepts by starting a
+            // NEW conversation under the old name (review t16).
+            //
+            // `readOnly` and `workerHome` are SAFETY fields, which is why a
+            // missing one is fatal rather than defaulted. An absent `readOnly`
+            // reaches `options.readOnly ?? meta.readOnly` as undefined, which is
+            // falsy, so `--tools` is omitted and a session the user started
+            // read-only resumes with WRITE tools. A blank `workerHome` leaves
+            // GROK_HOME unpinned and the worker loads the user's own config
+            // (review t17). Defaulting either one would guess at a safety
+            // posture; refusing to resume makes the damage visible instead.
+            const invalid = firstInvalidField(parsed);
+            if (invalid) {
+                log.warn({ path, name, field: invalid }, "grok session metadata cannot be safely resumed; ignoring it");
                 return null;
             }
 

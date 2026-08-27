@@ -74,3 +74,40 @@ describe("argless provider factories", () => {
         expect(code).toBe(0);
     });
 });
+
+/**
+ * Regression test: PR #330 review t40. `scan()` ran `cd "$root" && git grep …`
+ * and read the combined status, so a failed `cd` produced bash's exit 1, which
+ * is git grep's "no match" — the guard printed OK having scanned nothing. That
+ * is the silent-pass shape this guard was converted to eliminate.
+ */
+describe("unscannable roots", () => {
+    async function runGuardOnRoot(root: string): Promise<{ code: number; output: string }> {
+        const proc = Bun.spawn(["bash", GUARD, root], { stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+
+        return { code, output: stdout + stderr };
+    }
+
+    test("a root that does not exist fails the guard instead of reporting OK", async () => {
+        const { code, output } = await runGuardOnRoot(join(tmpdir(), "creds-guard-absent-00000000"));
+
+        expect(code).toBe(1);
+        expect(output).not.toContain("ai-credentials-guard: OK");
+    });
+
+    test("a root that is a file, not a directory, also fails", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "creds-guard-file-"));
+        const file = join(dir, "not-a-dir.ts");
+        writeFileSync(file, "const p = createOpenAI({ apiKey });\n");
+
+        const { code, output } = await runGuardOnRoot(file);
+
+        expect(code).toBe(1);
+        expect(output).not.toContain("ai-credentials-guard: OK");
+    });
+});

@@ -129,3 +129,48 @@ describe("GrokSessionStore metadata validation", () => {
         });
     });
 });
+
+/**
+ * Regression tests: PR #330 review t17. The t16 fix validated only sessionId
+ * and cwd, then cast. A record with those two but no `readOnly` was accepted,
+ * and `options.readOnly ?? meta.readOnly` then yielded undefined — falsy in
+ * buildSteerArgs, so `--tools` was omitted and a session the user started
+ * read-only resumed with WRITE tools. A blank `workerHome` likewise left
+ * GROK_HOME unpinned, defeating the isolation this store exists to carry.
+ */
+describe("GrokSessionStore rejects metadata that cannot be safely resumed", () => {
+    async function readBack(overrides: Partial<GrokSessionMeta>): Promise<GrokSessionMeta | null> {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-required-"));
+        let out: GrokSessionMeta | null = null;
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new GrokSessionStore();
+            store.ensureSessionsDir();
+            writeFileSync(sessionMetaPath("reviewer"), SafeJSON.stringify({ ...makeMeta(), ...overrides }, null, 2));
+            out = store.readMeta("reviewer");
+        });
+
+        return out;
+    }
+
+    test("a missing readOnly is rejected — undefined would resume with write tools", async () => {
+        expect(await readBack({ readOnly: undefined })).toBeNull();
+    });
+
+    test("a non-boolean readOnly is rejected", async () => {
+        expect(await readBack({ readOnly: "true" as unknown as boolean })).toBeNull();
+    });
+
+    test("a blank workerHome is rejected — GROK_HOME would go unpinned", async () => {
+        expect(await readBack({ workerHome: "  " })).toBeNull();
+    });
+
+    test("a negative or non-integer turn count is rejected", async () => {
+        expect(await readBack({ turns: -1 })).toBeNull();
+        expect(await readBack({ turns: 1.5 })).toBeNull();
+    });
+
+    test("a complete record still reads back", async () => {
+        expect(await readBack({})).not.toBeNull();
+    });
+});

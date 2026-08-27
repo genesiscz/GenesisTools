@@ -37,21 +37,36 @@ interface ImportHit {
     spec: string;
 }
 
-/** rg every `from "<spec>"`, bare `import "<spec>"`, dynamic `import("<spec>")`, and `require("<spec>")` across scopes, excluding node_modules. */
+/** Find every `from "<spec>"`, bare `import "<spec>"`, dynamic `import("<spec>")`, and `require("<spec>")` across scopes. */
 async function collectImports(scopes: string[]): Promise<ImportHit[]> {
-    // NOTE: glob patterns are interpolated as variables so Bun's `$` quotes
-    // them — passing bare `-g *.ts` lets the embedded shell glob-expand `*.ts`
-    // (to nothing) before rg ever sees it, silently dropping every match.
-    const excludeNodeModules = "!node_modules";
-    const excludeCodemods = "!scripts/codemods";
-    const globTs = "*.ts";
-    const globTsx = "*.tsx";
+    // Uses `git grep`, not `rg`. The GitHub ubuntu runner has no ripgrep, and
+    // this call used `.nothrow().text()` — so a missing binary returned an
+    // empty string, `hits` came back empty, and the guard printed
+    // "package boundaries clean" having scanned nothing. Verified: with `rg`
+    // stubbed to exit 127 the guard reported 0 warnings and exit 0, against 313
+    // warnings when it runs. That is the same silent pass the sibling guards
+    // were converted away from; see scripts/ci/require-grep.sh.
+    //
+    // `git grep` also searches tracked files only, which is what a boundary
+    // guard wants, so the node_modules exclusion is no longer needed.
     const pattern =
         "(?:from\\s+[\"']([^\"']+)[\"']|^\\s*import\\s+[\"']([^\"']+)[\"']|import\\s*\\(\\s*[\"']([^\"']+)[\"']|require\\s*\\(\\s*[\"']([^\"']+)[\"'])";
-    const raw =
-        await $`rg -n --no-heading -g ${excludeNodeModules} -g ${excludeCodemods} -g ${globTs} -g ${globTsx} ${pattern} ${scopes}`
-            .nothrow()
-            .text();
+    // Pathspecs are OR'd, not AND'd, so the extension filter cannot live here —
+    // `-- src "*.ts"` means "under src OR ending in .ts" and pulled in .md docs.
+    // It is applied per hit below instead.
+    const result = await $`git grep -nP -e ${pattern} -- ${scopes} ":(exclude)scripts/codemods"`.nothrow().quiet();
+
+    // 0 = matches, 1 = no matches. Anything else means the scan did not run,
+    // and a scan that did not run must never be reported as a clean one.
+    if (result.exitCode > 1) {
+        console.error(
+            `::error:: \`git grep\` failed (exit ${result.exitCode}) while scanning imports — refusing to report a clean result from a scan that did not run.`
+        );
+        console.error(result.stderr.toString().trim());
+        process.exit(1);
+    }
+
+    const raw = result.stdout.toString();
     const hits: ImportHit[] = [];
     for (const rawLine of raw.split("\n")) {
         const line = rawLine.trim();
@@ -65,6 +80,12 @@ async function collectImports(scopes: string[]): Promise<ImportHit[]> {
         }
 
         const [, file, lineNo, rest] = m;
+        // `tools` is the extensionless root dispatcher, and rule 2 names it
+        // explicitly, so it must survive the extension filter.
+        if (!file.endsWith(".ts") && !file.endsWith(".tsx") && file !== "tools") {
+            continue;
+        }
+
         // Static `from "spec"` first, then side-effect `import "spec"`, then
         // dynamic `import("spec")` / `require("spec")` — the dynamic forms are
         // exactly how the @ask leak in ai/resolvers dodged the first version

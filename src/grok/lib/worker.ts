@@ -125,7 +125,6 @@ function promptArgs(options: { prompt?: string; promptFile?: string }): string[]
     throw new Error("A prompt is required: pass --prompt-file <path> or --prompt '<text>'.");
 }
 
-/** `--prompt <text>` and `--prompt-file <path>` both name user data; keep the flag, drop the value. */
 /**
  * Blank the prompt payload before the invocation is logged.
  *

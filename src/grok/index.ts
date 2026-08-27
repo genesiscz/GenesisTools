@@ -64,7 +64,7 @@ program
             prompt: options.prompt,
             promptFile: options.promptFile,
             model: options.model,
-            readOnly: Boolean(options.readonly),
+            readOnly: options.readonly,
             workerHome: options.workerHome,
         });
         printTurn(result);

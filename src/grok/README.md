@@ -53,4 +53,4 @@ Nothing is rolled back, and that is deliberate: a dead turn's transcript is the 
 - **`Grok session '<name>' already exists`** means the name is claimed. Steer it or pick another name.
 - **A session missing from `tools grok sessions`** has metadata with a blank or absent `sessionId`, which cannot be resumed. It is skipped rather than shown as a resumable row that would silently start a new conversation.
 
-Skill: `gt:handoff-to` § Grok mechanics (readiness gate, checkpoint contract, verification discipline).
+Skill: `gt:handoff-to`, then `references/grok.md` (readiness gate, checkpoint contract, verification discipline).

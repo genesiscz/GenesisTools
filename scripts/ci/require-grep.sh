@@ -1,4 +1,9 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# SOURCE-ONLY. There is deliberately no shebang and no executable bit: running
+# this file standalone would do nothing useful, and its `exit 1` calls are meant
+# to take down the guard that sourced it, not a subshell (review t9).
+#
 # Sourced by every guard that greps the tree.
 #
 # WHY THIS EXISTS: the guards are written as `if <grep> <pattern>; then fail; fi`.
