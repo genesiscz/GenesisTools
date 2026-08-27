@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
     hasValidLongLivedToken,
+    isScopeRefusal,
     LONG_TOKEN_MIN_LENGTH,
     longLivedTokenUsable,
     probeLongLivedToken,
+    verdictFromProbeResponse,
     verifyLongLivedToken,
 } from "./token-verify";
 
@@ -169,5 +171,46 @@ describe("probeLongLivedToken", () => {
 
         expect(await verifyLongLivedToken("tok")).toBe("ok");
         expect(calls[0]).toEqual({ url: "https://api.anthropic.com/v1/messages", method: "POST" });
+    });
+});
+
+describe("verdictFromProbeResponse", () => {
+    // The live body, verbatim, from a healthy `sk-ant-oat…` token on 2026-08-26.
+    const SCOPE_403 =
+        '{"type":"error","error":{"type":"permission_error","message":"OAuth token does not meet scope requirement any_of(user:profile, user:office)"}}';
+
+    test("a scope refusal proves the token authenticated", () => {
+        // This is the bug that made doctor call EVERY valid setup token expired:
+        // setup tokens are inference-scoped and never carry user:profile.
+        expect(verdictFromProbeResponse(403, SCOPE_403)).toBe("ok");
+        expect(isScopeRefusal(403, SCOPE_403)).toBe(true);
+    });
+
+    test("a real auth failure is still invalid", () => {
+        expect(verdictFromProbeResponse(401, '{"error":{"type":"authentication_error"}}')).toBe("invalid");
+    });
+
+    test("a 403 that is NOT about scope stays invalid", () => {
+        expect(verdictFromProbeResponse(403, '{"error":{"type":"permission_error","message":"org blocked"}}')).toBe(
+            "invalid"
+        );
+        expect(isScopeRefusal(403, '{"error":{"type":"permission_error","message":"org blocked"}}')).toBe(false);
+    });
+
+    test("429 is authenticated but limited, never invalid", () => {
+        expect(verdictFromProbeResponse(429, '{"error":{"type":"rate_limit_error"}}')).toBe("limited");
+    });
+
+    test("server errors are unreachable, not an auth verdict", () => {
+        expect(verdictFromProbeResponse(500, "boom")).toBe("unreachable");
+        expect(verdictFromProbeResponse(502, "")).toBe("unreachable");
+    });
+
+    test("2xx is ok", () => {
+        expect(verdictFromProbeResponse(200, "")).toBe("ok");
+    });
+
+    test("only 403 can be a scope refusal", () => {
+        expect(isScopeRefusal(401, SCOPE_403)).toBe(false);
     });
 });

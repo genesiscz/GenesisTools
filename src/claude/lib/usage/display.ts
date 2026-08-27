@@ -4,6 +4,7 @@ import pc from "picocolors";
 import type { AccountUsage } from "./api";
 import type { NormalizedSpend, Severity } from "./limits";
 import { normalizeLimits, normalizeSpend } from "./limits";
+import { planAllowsClaudeCode } from "./subscription";
 
 const BAR_WIDTH = 40;
 const BLOCK_FULL = "\u2588"; // █
@@ -147,7 +148,7 @@ export function renderAccountUsage(account: AccountUsage): string {
     const header = account.label ? `${account.accountName} (${account.label})` : account.accountName;
     lines.push(pc.bold(`── ${header} ${"─".repeat(Math.max(0, 40 - header.length))}`));
 
-    if (account.error && !account.usage) {
+    if (account.error && !account.usage && planAllowsClaudeCode(account)) {
         lines.push(pc.red(`  Error: ${account.error}`));
         return lines.join("\n");
     }

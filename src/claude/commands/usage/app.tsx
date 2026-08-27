@@ -46,7 +46,7 @@ function Dashboard({ config, accountFilter }: DashboardProps) {
     );
 
     const [paused, setPaused] = useState(false);
-    const [sortMode, setSortMode] = useState<OverviewSortMode>("config");
+    const [sortMode, setSortMode] = useState<OverviewSortMode>("urgency");
     const [, forceUpdate] = useState(0);
 
     const cycleInterval = useCallback(() => {

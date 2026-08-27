@@ -138,7 +138,7 @@ program
             return;
         }
 
-        const table = createBoxTable(["NAME", "TURNS", "MODE", "LAST TURN", "CWD"]);
+        const table = createBoxTable(["NAME", "TURNS", "MODE", "LAST TURN", "SESSION ID", "CWD"]);
         for (const name of names) {
             const meta = store.readMeta(name);
             if (!meta) {
@@ -153,7 +153,8 @@ program
                 String(meta.turns),
                 meta.readOnly ? "readonly" : "jail",
                 last,
-                truncateDisplay(meta.cwd, 48),
+                meta.sessionId,
+                truncateDisplay(meta.cwd, 40),
             ]);
         }
 

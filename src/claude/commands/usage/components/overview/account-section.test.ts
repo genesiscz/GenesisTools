@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import { grantWarningText, headerExtras, staleHeaderText } from "./account-section";
+import { grantWarningText, headerExtras, overviewFetchError, staleHeaderText } from "./account-section";
 
 const NOW = new Date("2026-07-24T20:00:00.000Z").getTime();
 const WIDE = 200;
 
 function account(overrides: Partial<AccountUsage> = {}): AccountUsage {
-    return { accountName: "foltyn", ...overrides };
+    return { accountName: "personal", ...overrides };
 }
 
 function daysFromNow(days: number): number {
@@ -28,6 +28,19 @@ describe("grantWarningText", () => {
 
     test("an already-passed expiry reads as expired", () => {
         expect(grantWarningText(account({ refreshExpiresAt: daysFromNow(-1) }), NOW)).toBe("⚠ login expired");
+    });
+
+    test("a dead plan does not surface the login-expired grant warning", () => {
+        expect(
+            grantWarningText(
+                account({
+                    refreshExpiresAt: daysFromNow(-1),
+                    subscriptionPlan: "claude_free",
+                    subscriptionStatus: "canceled",
+                }),
+                NOW
+            )
+        ).toBeNull();
     });
 });
 
@@ -129,6 +142,12 @@ describe("staleHeaderText", () => {
         expect(staleHeaderText(account())).toBeNull();
     });
 
+    test("a plan-gated account with no stale marker still reads as expired", () => {
+        expect(staleHeaderText(account({ subscriptionPlan: "claude_free", subscriptionStatus: "canceled" }))).toBe(
+            "⚠ plan expired"
+        );
+    });
+
     test("a plan-gated account reads as expired, not as a failing fetch", () => {
         const text = staleHeaderText(
             stale(PLAN_REASON, { subscriptionPlan: "claude_free", subscriptionStatus: "canceled" })
@@ -148,12 +167,27 @@ describe("staleHeaderText", () => {
 
     test("a live plan with a dead login keeps its own reason", () => {
         const text = staleHeaderText(
-            stale("Error: Token expired (invalid_grant). Run: tools claude login foltyn", {
+            stale("Error: Token expired (invalid_grant). Run: tools claude login personal", {
                 subscriptionPlan: "claude_max",
                 subscriptionStatus: "active",
             })
         );
 
         expect(text).toContain("needs re-login");
+    });
+});
+
+describe("overviewFetchError", () => {
+    test("a plan-expired account does not dump the invalid_grant poll-gate error", () => {
+        // Regression: a claude_free/canceled account used to dump the poll-gate
+        // invalid_grant line instead of the plan-expired card.
+        const text = overviewFetchError({
+            accountName: "shop",
+            subscriptionPlan: "claude_free",
+            subscriptionStatus: "canceled",
+            error: "Token expired (invalid_grant). Run: tools claude login shop (paused until 2026-08-26T15:59:07.298Z)",
+        });
+
+        expect(text).toBeNull();
     });
 });
