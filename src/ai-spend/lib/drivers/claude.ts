@@ -1,6 +1,9 @@
-import { join } from "node:path";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
-import { env } from "@genesiscz/utils/env";
+import {
+    isNativeTranscript,
+    nativeSessionRoots,
+    nativeTranscriptMaxDepth,
+} from "@genesiscz/utils/providers/session-paths";
 import { parseTranscriptLine } from "../parse";
 import type { DriverUsageEvent, MonitorDriver } from "./types";
 
@@ -17,26 +20,15 @@ export const claudeDriver: MonitorDriver = {
     id: "claude",
 
     roots(home: string): string[] {
-        const roots = [join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")];
-        const configDir = env.paths.getClaudeConfigDir();
-
-        if (configDir) {
-            const extra = join(configDir, "projects");
-
-            if (!roots.includes(extra)) {
-                roots.push(extra);
-            }
-        }
-
-        return roots;
+        return nativeSessionRoots("claude", home);
     },
 
     isTranscript(name: string): boolean {
-        return name.endsWith(".jsonl");
+        return isNativeTranscript("claude", name);
     },
 
     // Subagent transcripts nest below the project directory.
-    maxDepth: 6,
+    maxDepth: nativeTranscriptMaxDepth("claude"),
 
     createParser() {
         return {

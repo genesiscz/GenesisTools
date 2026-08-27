@@ -1,9 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    isNativeTranscript,
+    nativeSessionRoots,
+    nativeTranscriptMaxDepth,
+} from "@genesiscz/utils/providers/session-paths";
 import { isRecord, num } from "./parse-helpers";
 import type { CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
 
@@ -144,17 +148,15 @@ export const grokDriver: MonitorDriver = {
     id: "grok",
 
     roots(home: string): string[] {
-        const override = env.grok.getHomeOverride();
-
-        return [join(override ?? join(home, ".grok"), "sessions")];
+        return nativeSessionRoots("grok", home);
     },
 
     isTranscript(name: string): boolean {
-        return name === "updates.jsonl";
+        return isNativeTranscript("grok", name);
     },
 
     // sessions/<encoded-cwd>/<session-id>/updates.jsonl
-    maxDepth: 3,
+    maxDepth: nativeTranscriptMaxDepth("grok"),
 
     createParser(options: CreateParserOptions): DriverLineParser {
         // Only ever needed when a turn omits `modelUsage`, so it stays lazy: the

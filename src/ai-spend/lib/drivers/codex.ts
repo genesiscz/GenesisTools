@@ -1,8 +1,11 @@
-import { join } from "node:path";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    isNativeTranscript,
+    nativeSessionRoots,
+    nativeTranscriptMaxDepth,
+} from "@genesiscz/utils/providers/session-paths";
 import { isRecord, num } from "./parse-helpers";
 import type { CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
 
@@ -151,46 +154,19 @@ function codexPriceCandidates(model: string): string[] {
     return candidates;
 }
 
-function codexHomes(home: string): string[] {
-    const override = env.codex.getHomeOverride();
-
-    if (override) {
-        const homes = override
-            .split(",")
-            .map((path) => path.trim())
-            .filter((path) => path.length > 0);
-
-        if (homes.length > 0) {
-            return homes;
-        }
-    }
-
-    return [join(home, ".codex")];
-}
-
 export const codexDriver: MonitorDriver = {
     id: "codex",
 
     roots(home: string): string[] {
-        const roots: string[] = [];
-
-        for (const codexHome of codexHomes(home)) {
-            for (const dir of [join(codexHome, "sessions"), join(codexHome, "archived_sessions")]) {
-                if (!roots.includes(dir)) {
-                    roots.push(dir);
-                }
-            }
-        }
-
-        return roots;
+        return nativeSessionRoots("codex", home);
     },
 
     isTranscript(name: string): boolean {
-        return name.endsWith(".jsonl");
+        return isNativeTranscript("codex", name);
     },
 
     // sessions/YYYY/MM/DD/rollout-*.jsonl
-    maxDepth: 4,
+    maxDepth: nativeTranscriptMaxDepth("codex"),
 
     createParser(options: CreateParserOptions): DriverLineParser {
         const state = readState(options.state);

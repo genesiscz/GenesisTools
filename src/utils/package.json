@@ -85,6 +85,11 @@
             "types": "./clipboard.ts",
             "default": "./clipboard.ts"
         },
+        "./codex/worker-paths": {
+            "bun": "./codex/worker-paths.ts",
+            "types": "./codex/worker-paths.ts",
+            "default": "./codex/worker-paths.ts"
+        },
         "./curl": {
             "bun": "./curl.ts",
             "types": "./curl.ts",
@@ -135,6 +140,11 @@
             "types": "./fs/index.ts",
             "default": "./fs/index.ts"
         },
+        "./fs/file-tailer": {
+            "bun": "./fs/file-tailer.ts",
+            "types": "./fs/file-tailer.ts",
+            "default": "./fs/file-tailer.ts"
+        },
         "./fuzzy-match": {
             "bun": "./fuzzy-match.ts",
             "types": "./fuzzy-match.ts",
@@ -159,6 +169,16 @@
             "bun": "./github/index.ts",
             "types": "./github/index.ts",
             "default": "./github/index.ts"
+        },
+        "./grok/stream": {
+            "bun": "./grok/stream.ts",
+            "types": "./grok/stream.ts",
+            "default": "./grok/stream.ts"
+        },
+        "./grok/worker-paths": {
+            "bun": "./grok/worker-paths.ts",
+            "types": "./grok/worker-paths.ts",
+            "default": "./grok/worker-paths.ts"
         },
         "./hash": {
             "bun": "./hash.ts",
@@ -285,6 +305,11 @@
             "bun": "./prompts/index.ts",
             "types": "./prompts/index.ts",
             "default": "./prompts/index.ts"
+        },
+        "./providers/session-paths": {
+            "bun": "./providers/session-paths.ts",
+            "types": "./providers/session-paths.ts",
+            "default": "./providers/session-paths.ts"
         },
         "./qr": {
             "bun": "./qr.ts",
