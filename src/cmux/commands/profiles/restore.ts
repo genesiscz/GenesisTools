@@ -1,5 +1,5 @@
 import { renderProfileCommandDetail } from "@app/cmux/lib/format";
-import { buildPlan, type RestoreOptions, restoreProfile, scanForInteractivePrompts } from "@app/cmux/lib/restore";
+import { buildPlan, type RestoreOptions, reportWaitingPrompts, restoreProfile } from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
@@ -30,29 +30,6 @@ export function registerRestoreCommand(parent: Command): void {
         .action(async (name: string, flags: RestoreFlags) => {
             await runRestore(name, flags);
         });
-}
-
-/**
- * After an --enter run, list panes stopped at an interactive prompt (account
- * headroom gate, resume-mode dialog, session picker). Restore never answers
- * them — confirming is deliberately left to the user.
- */
-async function reportWaitingPrompts(workspaceRefs: string[]): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, 4000));
-
-    try {
-        const waiting = await scanForInteractivePrompts(workspaceRefs);
-        if (waiting.length === 0) {
-            p.log.info("No panes are waiting at an interactive prompt.");
-            return;
-        }
-
-        const lines = waiting.map((w) => `  ${pc.yellow("⚠")} ${w.workspaceRef} ${w.surfaceRef} — ${w.prompt}`);
-        lines.push(pc.dim("  Restore does not auto-confirm these; answer each pane yourself."));
-        p.note(lines.join("\n"), "Panes waiting for you");
-    } catch (error) {
-        logger.debug({ error }, "[cmux restore] waiting-prompt scan failed");
-    }
 }
 
 async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
@@ -142,7 +119,10 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         p.note(summary, "Result");
 
         if (opts.enter) {
-            await reportWaitingPrompts(outcome.workspaces.map((w) => w.ref));
+            await reportWaitingPrompts(
+                outcome.workspaces.map((w) => w.ref),
+                "Restore"
+            );
         }
 
         p.outro(pc.green("Done."));

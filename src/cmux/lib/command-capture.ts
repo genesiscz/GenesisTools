@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
+import { parseEtime } from "@app/macos/lib/swap/scanner";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -29,23 +30,24 @@ function isShellOrLogin(command: string): boolean {
     return first === "/usr/bin/login" || base === "login";
 }
 
+// Interpolating homedir() into a fresh RegExp on every call recompiled it 10-60
+// times per capture. The home directory does not change while the process runs.
+const GROK_LOCAL_BIN_RE = new RegExp(`^${homedir()}/\\.local/bin/grok\\b`);
+
 /** Normalize an absolute launcher path back to what the user actually types. */
 export function cleanLaunchCommand(command: string): string {
     return command
         .replace(/^\S*\bbun (?:run )?\S*\/tools\s+/, "tools ")
-        .replace(new RegExp(`^${homedir()}/\\.local/bin/grok\\b`), "grok")
+        .replace(GROK_LOCAL_BIN_RE, "grok")
         .replace(/^\S*\/grok\b/, "grok")
         .trim();
 }
 
 /** `[[dd-]hh:]mm:ss` → seconds. Returns 0 for unparseable values. */
 export function etimeToSeconds(etime: string): number {
-    const match = etime.trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
-    if (!match) {
-        return 0;
-    }
-    const [, days, hours, minutes, seconds] = match;
-    return Number(days ?? 0) * 86400 + Number(hours ?? 0) * 3600 + Number(minutes) * 60 + Number(seconds);
+    // parseEtime owns this format (same `ps -o etime=` output, same regex); it
+    // answers in milliseconds, and the tty scan compares ages in seconds.
+    return parseEtime(etime) / 1000;
 }
 
 /**

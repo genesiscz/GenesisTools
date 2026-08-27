@@ -2,11 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
+import * as p from "@clack/prompts";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import { paneList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
 import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
+import pc from "picocolors";
 
 export type { SplitTree };
 
@@ -254,41 +256,34 @@ async function populatePane(
     // cmux inserts each new tab immediately after the anchor, which reverses the tail
     // order for multi-tab panes. Put every surface back at its saved index, then land
     // the pane's selection on the saved active tab.
+    const reorder = async (surfaceRef: string, index: number, focus: boolean): Promise<void> => {
+        await runCmuxOk([
+            "reorder-surface",
+            "--workspace",
+            workspaceRef,
+            "--surface",
+            surfaceRef,
+            "--index",
+            String(index),
+            "--focus",
+            String(focus),
+        ]).catch((error) => {
+            logger.debug({ error, surfaceRef, index, focus }, "[restore] reorder-surface failed");
+        });
+    };
+
     if (expectedCount > 1) {
         for (let i = 0; i < surfaceRefs.length; i += 1) {
-            await runCmuxOk([
-                "reorder-surface",
-                "--workspace",
-                workspaceRef,
-                "--surface",
-                surfaceRefs[i],
-                "--index",
-                String(i),
-                "--focus",
-                "false",
-            ]).catch((error) => {
-                logger.debug({ error, surfaceRef: surfaceRefs[i] }, "[restore] reorder-surface failed");
-            });
+            await reorder(surfaceRefs[i], i, false);
         }
     }
 
     // cmux leaves the last-created tab selected, so the saved selection must be
     // restored explicitly even when it is the first tab.
     const selectedIndex = savedPane.selected_surface_index;
+
     if (surfaceRefs.length > 1 && selectedIndex >= 0 && selectedIndex < surfaceRefs.length) {
-        await runCmuxOk([
-            "reorder-surface",
-            "--workspace",
-            workspaceRef,
-            "--surface",
-            surfaceRefs[selectedIndex],
-            "--index",
-            String(selectedIndex),
-            "--focus",
-            "true",
-        ]).catch((error) => {
-            logger.debug({ error, selectedIndex }, "[restore] selecting saved tab failed");
-        });
+        await reorder(surfaceRefs[selectedIndex], selectedIndex, true);
     }
 
     // Rename + replay
@@ -342,7 +337,6 @@ export function detectInteractivePrompt(screenText: string): string | undefined 
 export interface WaitingPane {
     workspaceRef: string;
     surfaceRef: string;
-    title: string;
     prompt: string;
 }
 
@@ -367,13 +361,52 @@ export async function scanForInteractivePrompts(workspaceRefs: string[]): Promis
 
                 const prompt = detectInteractivePrompt(result.stdout);
                 if (prompt) {
-                    waiting.push({ workspaceRef, surfaceRef, title: "", prompt });
+                    waiting.push({ workspaceRef, surfaceRef, prompt });
                 }
             }
         }
     }
 
     return waiting;
+}
+
+/**
+ * Report the panes a run left sitting at an interactive prompt. Neither rescue
+ * nor restore ever answers one: confirming an account-headroom gate or a session
+ * picker on the user's behalf is exactly the automation this tool refuses.
+ *
+ * `actor` only names the caller in the advice line — the scan is identical, and
+ * having two copies of it meant a fix to one never reached the other.
+ */
+export async function reportWaitingPrompts(workspaceRefs: string[], actor: "Rescue" | "Restore"): Promise<void> {
+    // The replayed commands need a moment to draw whatever they are going to ask.
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+
+    let waiting: WaitingPane[];
+    try {
+        waiting = await scanForInteractivePrompts(workspaceRefs);
+    } catch (error) {
+        // Reporting "nothing is waiting" here would be a lie: the scan never ran.
+        logger.debug({ error, actor }, "[cmux] waiting-prompt scan failed");
+
+        return;
+    }
+
+    if (waiting.length === 0) {
+        p.log.info("No panes are waiting at an interactive prompt.");
+
+        return;
+    }
+
+    p.note(formatWaitingPanes(waiting, actor).join("\n"), "Panes waiting for you");
+}
+
+/** The note body: one line per waiting pane, then the advice line. Pure, so it is testable. */
+export function formatWaitingPanes(waiting: WaitingPane[], actor: "Rescue" | "Restore"): string[] {
+    const lines = waiting.map((w) => `  ${pc.yellow("⚠")} ${w.workspaceRef} ${w.surfaceRef} — ${w.prompt}`);
+    lines.push(pc.dim(`  ${actor} does not auto-confirm these; answer each pane yourself.`));
+
+    return lines;
 }
 
 async function replayTerminal(

@@ -7,7 +7,7 @@ import {
     mayReplayIntoSurface,
     type ReplayEntry,
 } from "@app/cmux/lib/rescue";
-import { scanForInteractivePrompts } from "@app/cmux/lib/restore";
+import { reportWaitingPrompts } from "@app/cmux/lib/restore";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
@@ -162,15 +162,7 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
     const entries = collectReplayEntries(profile);
     const workspaceRefs = await replayIntoReopenedSurfaces(profile, entries);
 
-    await new Promise((resolve) => setTimeout(resolve, 4000));
-    const waiting = await scanForInteractivePrompts(workspaceRefs).catch(() => []);
-    if (waiting.length > 0) {
-        const lines = waiting.map((w) => `  ${pc.yellow("⚠")} ${w.workspaceRef} ${w.surfaceRef} — ${w.prompt}`);
-        lines.push(pc.dim("  Rescue does not auto-confirm these; answer each pane yourself."));
-        p.note(lines.join("\n"), "Panes waiting for you");
-    } else {
-        p.log.info("No panes are waiting at an interactive prompt.");
-    }
+    await reportWaitingPrompts(workspaceRefs, "Rescue");
 
     p.outro(pc.green("Rescue complete."));
 }
