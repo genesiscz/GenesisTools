@@ -1,0 +1,172 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { buildMonitorReport, findRecentTranscripts, localDayString, mondayOfWeek, transcriptRoots } from "./monitor";
+import { DEFAULT_PRICING } from "./pricing";
+
+setupStorageSandbox();
+
+// claude-3-5-haiku (literal legacy rates): input $0.8/M, output $4/M, cacheWrite $1.0/M, cacheRead $0.08/M.
+const MODEL = "claude-3-5-haiku";
+
+function line(id: string, iso: string, usage: Record<string, number>): string {
+    return `${SafeJSON.stringify({
+        type: "assistant",
+        timestamp: iso,
+        cwd: "/tmp/proj",
+        sessionId: "s1",
+        message: { id, model: MODEL, usage },
+    })}\n`;
+}
+
+describe("local time helpers", () => {
+    test("localDayString uses local clock fields", () => {
+        expect(localDayString(new Date(2026, 0, 5, 0, 30))).toBe("2026-01-05");
+        expect(localDayString(new Date(2026, 11, 31, 23, 59))).toBe("2026-12-31");
+    });
+
+    test("mondayOfWeek returns the local Monday midnight (Monday week start)", () => {
+        // 2026-08-27 is a Thursday; 2026-08-30 a Sunday — both map to Monday 2026-08-24.
+        expect(localDayString(mondayOfWeek(new Date(2026, 7, 27, 15, 0)))).toBe("2026-08-24");
+        expect(localDayString(mondayOfWeek(new Date(2026, 7, 30, 1, 0)))).toBe("2026-08-24");
+        // A Monday maps to itself.
+        expect(localDayString(mondayOfWeek(new Date(2026, 7, 24, 0, 0)))).toBe("2026-08-24");
+        const monday = mondayOfWeek(new Date(2026, 7, 27, 15, 42));
+        expect([monday.getHours(), monday.getMinutes()]).toEqual([0, 0]);
+    });
+});
+
+describe("monitor report", () => {
+    let home: string;
+    let mainFile: string;
+    let oldFile: string;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "ai-spend-monitor-"));
+        const projDir = join(home, ".claude", "projects", "p1");
+        const subDir = join(projDir, "subagents");
+        const cfgDir = join(home, ".config", "claude", "projects", "p2");
+        mkdirSync(subDir, { recursive: true });
+        mkdirSync(cfgDir, { recursive: true });
+
+        const now = new Date();
+        const iso = now.toISOString();
+        mainFile = join(projDir, "s1.jsonl");
+        // msg-a duplicated with huge usage — dedup must keep the first.
+        writeFileSync(
+            mainFile,
+            line("msg-a", iso, { input_tokens: 1_000_000 }) +
+                line("msg-a", iso, { input_tokens: 999_000_000 }) +
+                line("msg-b", iso, { output_tokens: 500_000, cache_read_input_tokens: 1_000_000 })
+        );
+        // Subagent transcript nests deeper — must be found by recursion.
+        writeFileSync(join(subDir, "sub.jsonl"), line("msg-c", iso, { output_tokens: 100_000 }));
+        // Second root: ~/.config/claude/projects.
+        writeFileSync(join(cfgDir, "x.jsonl"), line("msg-d", iso, { input_tokens: 250_000 }));
+
+        // A transcript last touched WAY before the week start must never be opened.
+        oldFile = join(projDir, "old.jsonl");
+        writeFileSync(oldFile, line("msg-old", "2026-01-01T10:00:00Z", { output_tokens: 900_000_000 }));
+        const old = new Date("2026-01-02T00:00:00Z");
+        utimesSync(oldFile, old, old);
+    });
+
+    test("pins today/week numbers, skips the old file, recurses both roots", () => {
+        const opened: string[] = [];
+        const report = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            readTailFn: (path, _offset, _size) => {
+                opened.push(path);
+
+                return readFileSync(path, "utf8");
+            },
+        });
+
+        // msg-a: 1M input = $0.80 · msg-b: 0.5M out = $2.00 + 1M cacheRead = $0.08
+        // msg-c: 0.1M out = $0.40 · msg-d: 0.25M input = $0.20 → $3.48 total
+        expect(report.today.cost).toBeCloseTo(3.48, 5);
+        expect(report.today.tokens).toBe(2_850_000);
+        // Every fixture event is stamped "now", so week == today.
+        expect(report.week).toEqual(report.today);
+        expect(report.todayDate).toBe(localDayString(new Date()));
+        expect(report.weekStart).toBe(localDayString(mondayOfWeek(new Date())));
+        expect(report.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+        // The stale file was never opened (mtime pruning), and 3 recent files were.
+        expect(opened.some((p) => p.includes("old.jsonl"))).toBe(false);
+        expect(report.recentFiles).toBe(3);
+        expect(report.parsedFiles).toBe(3);
+    });
+
+    test("second run is a full cache hit; appended lines parse only the tail", () => {
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage: new Storage("ai-spend"), sweepTtlMs: 0 });
+
+        const second = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+        });
+        expect(second.parsedFiles).toBe(0);
+        expect(second.today.cost).toBeCloseTo(3.48, 5);
+
+        // Append one event → exactly one file re-parses, from a non-zero offset.
+        const offsets: number[] = [];
+        appendFileSync(mainFile, line("msg-e", new Date().toISOString(), { output_tokens: 1_000_000 }));
+
+        const third = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            readTailFn: (path, offset, _size) => {
+                offsets.push(offset);
+
+                return readFileSync(path, "utf8").slice(offset);
+            },
+        });
+        expect(third.parsedFiles).toBe(1);
+        expect(offsets).toHaveLength(1);
+        expect(offsets[0]).toBeGreaterThan(0);
+        expect(third.today.cost).toBeCloseTo(3.48 + 4.0, 5);
+        expect(third.today.tokens).toBe(3_850_000);
+    });
+
+    test("fast path within sweep TTL catches appends, new siblings, and new project dirs", () => {
+        const storage = new Storage("ai-spend");
+        const iso = new Date().toISOString();
+        // Rebase the cache on THIS home with a forced sweep, then stay inside the TTL.
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+
+        appendFileSync(mainFile, line("msg-f", iso, { output_tokens: 1_000_000 }));
+        writeFileSync(
+            join(home, ".claude", "projects", "p1", "s2.jsonl"),
+            line("msg-g", iso, { input_tokens: 1_000_000 })
+        );
+        const p3 = join(home, ".claude", "projects", "p3");
+        mkdirSync(p3, { recursive: true });
+        writeFileSync(join(p3, "y.jsonl"), line("msg-h", iso, { input_tokens: 500_000 }));
+
+        const second = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 60 * 60 * 1000 });
+        expect(second.parsedFiles).toBe(3);
+        // +$4.00 append, +$0.80 sibling, +$0.40 new project dir on top of $3.48.
+        expect(second.today.cost).toBeCloseTo(8.68, 5);
+        expect(second.today.tokens).toBe(2_850_000 + 1_000_000 + 1_000_000 + 500_000);
+    });
+
+    test("transcriptRoots and findRecentTranscripts never look outside the fixed roots", () => {
+        const roots = transcriptRoots(home);
+        expect(roots).toEqual([join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")]);
+
+        const files = findRecentTranscripts(roots, Date.now() - 60_000);
+        expect(files.every((f) => f.startsWith(roots[0]) || f.startsWith(roots[1]))).toBe(true);
+        expect(files.some((f) => f.endsWith("old.jsonl"))).toBe(false);
+    });
+});

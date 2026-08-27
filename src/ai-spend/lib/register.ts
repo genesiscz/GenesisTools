@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";
 import { findTranscriptFiles, readEvents } from "./discover";
+import { buildMonitorReport } from "./monitor";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { resolveSince } from "./since";
 import type { Report } from "./types";
@@ -97,6 +98,36 @@ export function registerSpendCommand(program: Command): Command {
             await runSpend(cmd, "today");
         }
     );
+
+    program
+        .command("monitor")
+        .description("Today + current week (local timezone, Monday start) in <1s — for status bars/monitors")
+        .option("--json", "Emit {today, week, todayDate, weekStart, timezone} as JSON")
+        .action(async (_opts: { json?: boolean }, cmd: Command) => {
+            // Root also defines --json (addSpendOptions), so commander binds it there;
+            // optsWithGlobals() merges it back — same as runSpend above.
+            const opts = cmd.optsWithGlobals() as { json?: boolean };
+            const storage = new Storage("ai-spend");
+            const pricing = await loadPricing(storage);
+            const report = buildMonitorReport({ pricing, storage });
+
+            if (opts.json) {
+                out.result({
+                    today: report.today,
+                    week: report.week,
+                    todayDate: report.todayDate,
+                    weekStart: report.weekStart,
+                    timezone: report.timezone,
+                });
+
+                return;
+            }
+
+            out.println(
+                `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
+                    `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]`
+            );
+        });
 
     return program;
 }

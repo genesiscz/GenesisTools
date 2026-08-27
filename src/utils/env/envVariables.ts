@@ -67,6 +67,13 @@ export const env = {
 
     grok: {
         getHome: () => getWithDefault("GROK_HOME", `${homedir()}/.grok`),
+        /** The raw override, with NO homedir fallback — callers that resolve their own home base. */
+        getHomeOverride: () => getTrimmed("GROK_HOME"),
+    },
+
+    codex: {
+        /** Codex CLI data root override. Codex accepts a comma-separated list of homes. */
+        getHomeOverride: () => getTrimmed("CODEX_HOME"),
     },
 
     copilot: {
