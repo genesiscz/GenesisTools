@@ -46,7 +46,10 @@ function resolveCmuxPath(): string {
     throw new Error(`cmux is not installed (or not found in ${searched})`);
 }
 
-export async function runCmux(args: string[], opts: { json?: boolean; timeoutMs?: number } = {}): Promise<CmuxRunResult> {
+export async function runCmux(
+    args: string[],
+    opts: { json?: boolean; timeoutMs?: number } = {}
+): Promise<CmuxRunResult> {
     const finalArgs = opts.json ? ["--json", ...args] : args;
     const cmuxPath = resolveCmuxPath();
     logger.debug({ args: finalArgs, cmuxPath }, "[cmux] spawn");
@@ -54,21 +57,30 @@ export async function runCmux(args: string[], opts: { json?: boolean; timeoutMs?
 
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     if (opts.timeoutMs) {
         timer = setTimeout(() => {
             timedOut = true;
             proc.kill();
+            // SIGTERM can be ignored, and proc.exited only settles on a real exit —
+            // escalate so the timeout is an upper bound, not a suggestion.
+            killTimer = setTimeout(() => proc.kill("SIGKILL"), 2000);
         }, opts.timeoutMs);
     }
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    let stdout: string;
+    let stderr: string;
+    let exitCode: number | null;
 
-    if (timer) {
+    try {
+        [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+    } finally {
         clearTimeout(timer);
+        clearTimeout(killTimer);
     }
 
     if (timedOut) {

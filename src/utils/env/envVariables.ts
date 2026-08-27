@@ -220,6 +220,7 @@ export const env = {
 
     device: {
         getUser: () => getTrimmed("USER"),
+        getLogname: () => getTrimmed("LOGNAME"),
         isRoot: () => getRaw("USER") === "root",
         getTermProgram: () => getTrimmed("TERM_PROGRAM"),
         getCmuxBundleId: () => getTrimmed("CMUX_BUNDLE_ID"),

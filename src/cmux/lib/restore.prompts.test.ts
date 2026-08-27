@@ -3,7 +3,8 @@ import { detectInteractivePrompt } from "@app/cmux/lib/restore";
 
 describe("detectInteractivePrompt", () => {
     test("recognizes the cc-run account headroom gate", () => {
-        const screen = "⚠ Fable weekly on \"work\" is spent.\n◆ Launch anyway? (No cancels so you can pick another account)\n● Yes / ○ No";
+        const screen =
+            '⚠ Fable weekly on "work" is spent.\n◆ Launch anyway? (No cancels so you can pick another account)\n● Yes / ○ No';
         expect(detectInteractivePrompt(screen)).toContain("account-headroom");
     });
 
@@ -13,7 +14,7 @@ describe("detectInteractivePrompt", () => {
     });
 
     test("recognizes the session picker and warns about verification", () => {
-        const screen = "Select session to resume: matching \"burn\"\n  NAME    BRANCH   AGE\n❯ one     develop  22m";
+        const screen = 'Select session to resume: matching "burn"\n  NAME    BRANCH   AGE\n❯ one     develop  22m';
         expect(detectInteractivePrompt(screen)).toContain("verify the highlighted session");
     });
 

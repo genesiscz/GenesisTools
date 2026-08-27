@@ -55,7 +55,9 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     let offline = !!flags.offline;
 
     if (offline && (flags.workspace || flags.window || flags.scope)) {
-        throw new Error("--offline captures everything in the autosave; it cannot combine with --scope/--workspace/--window");
+        throw new Error(
+            "--offline captures everything in the autosave; it cannot combine with --scope/--workspace/--window"
+        );
     }
 
     const scope = offline ? "all" : await resolveScope(flags, interactive);
@@ -69,6 +71,16 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
         // Fail fast + degrade: a livelocked UI thread would starve every capture call.
         const health = await probeCmuxHealth({ identifyTimeoutMs: 3500 });
         if (health.state !== "healthy") {
+            // Offline capture always covers everything in the autosave, with cwd and
+            // process-table commands — degrading silently would ignore these flags.
+            if (scope !== "all" || !captureCwd || !captureHistory) {
+                throw new Error(
+                    `cmux is ${health.state}, and live capture is unavailable. The requested flags ` +
+                        "(--scope/--workspace/--window/--no-cwd/--no-history) are not supported by offline capture. " +
+                        "Retry without them, use --offline explicitly, or run `tools cmux doctor` for triage."
+                );
+            }
+
             offline = true;
             out.log.warn(
                 `cmux is ${health.state} — falling back to OFFLINE capture (autosave + process table). ` +

@@ -132,6 +132,33 @@ export interface ReplayDerivation {
 }
 
 const CLAUDE_LAUNCHER = /(^|\s)(tools cc run|tools claude run|claude)\b/;
+const CC_RUN_LAUNCHER = /(^|\s)tools (?:cc|claude) run\b/;
+
+/**
+ * Pin the resume target inside the original command without touching anything
+ * else — the launcher and every other flag (e.g. `--model`) stay as typed.
+ */
+function replaceResumeInPlace(original: string, sessionId: string): ReplayDerivation {
+    const drift: string[] = [];
+    const match = original.match(/--resume(?:[= ]("[^"]*"|\S+))?/);
+
+    if (!match) {
+        drift.push(`--resume ${sessionId} added (session that was active in this pane)`);
+        return { command: `${original} --resume ${sessionId}`, drift };
+    }
+
+    if (match[1]) {
+        if (match[1].replace(/"/g, "") === sessionId) {
+            return { command: original, drift };
+        }
+
+        drift.push(`resume target "${match[1]}" replaced with the session that was active here`);
+    } else {
+        drift.push(`bare --resume (interactive picker) replaced with the concrete session id`);
+    }
+
+    return { command: original.replace(match[0], `--resume ${sessionId}`), drift };
+}
 
 /**
  * Derive the replay command from the captured original plus what we know about
@@ -145,6 +172,12 @@ export function deriveReplayCommand(input: {
     const original = input.original.trim();
     if (!input.sessionId || !CLAUDE_LAUNCHER.test(original)) {
         return { command: original, drift: [] };
+    }
+
+    if (!CC_RUN_LAUNCHER.test(original)) {
+        // Bare `claude …` launchers keep their command verbatim (rebuilding as
+        // `tools cc run` would drop options and change the launcher the user ran).
+        return replaceResumeInPlace(original, input.sessionId);
     }
 
     const drift: string[] = [];

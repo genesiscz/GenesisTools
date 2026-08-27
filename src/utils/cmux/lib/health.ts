@@ -33,7 +33,11 @@ export interface ProbeCmuxHealthOptions {
     full?: boolean;
 }
 
-export function classifyCmuxHealth(input: { appRunning: boolean; pingOk: boolean; identifyOk: boolean }): CmuxHealthState {
+export function classifyCmuxHealth(input: {
+    appRunning: boolean;
+    pingOk: boolean;
+    identifyOk: boolean;
+}): CmuxHealthState {
     if (input.pingOk && input.identifyOk) {
         return "healthy";
     }
@@ -49,7 +53,11 @@ const APP_BINARY_SUFFIX = "cmux.app/Contents/MacOS/cmux";
 
 async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> {
     try {
-        const proc = Bun.spawn(["ps", "-axo", "pid=,%cpu=,comm="], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+        const proc = Bun.spawn(["ps", "-axo", "pid=,%cpu=,comm="], {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+        });
         const text = await new Response(proc.stdout).text();
         await proc.exited;
 
@@ -85,7 +93,11 @@ async function timedProbe(args: string[], timeoutMs: number, expect?: string): P
 
         return { ok: true, ms };
     } catch (error) {
-        return { ok: false, ms: Date.now() - startedAt, detail: error instanceof Error ? error.message : String(error) };
+        return {
+            ok: false,
+            ms: Date.now() - startedAt,
+            detail: error instanceof Error ? error.message : String(error),
+        };
     }
 }
 

@@ -1,3 +1,4 @@
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
@@ -411,14 +412,18 @@ async function replayTerminal(
     if (surface.cwd) {
         parts.push(`cd -- ${shellQuote(surface.cwd)} 2>/dev/null`);
     }
+    // The screen text can hold tokens and private output, so it goes into a fresh
+    // 0700 mkdtemp dir (unpredictable path, unreadable by other local users). The
+    // replayed pipeline itself deletes the dir right after the cat — the pane's
+    // shell is the only consumer, so that is the earliest race-free moment.
+    let screenDir: string | undefined;
     if (surface.screen?.text) {
-        const screenFile = join(
-            tmpdir(),
-            `cmux-restore-screen-${process.pid}-${surfaceRef.replace(/[^A-Za-z0-9]/g, "-")}.txt`
-        );
+        screenDir = await mkdtemp(join(tmpdir(), "cmux-restore-screen-"));
+        const screenFile = join(screenDir, `${surfaceRef.replace(/[^A-Za-z0-9]/g, "-")}.txt`);
         await Bun.write(screenFile, surface.screen.text);
         parts.push("printf '\\033[2J\\033[3J\\033[H'");
         parts.push(`cat -- ${shellQuote(screenFile)}`);
+        parts.push(`rm -rf -- ${shellQuote(screenDir)}`);
     }
     let payload = parts.length > 0 ? `${parts.join("; ")}\n` : "";
     if (surface.command && surface.command_source && surface.command_source !== "none") {
@@ -427,5 +432,17 @@ async function replayTerminal(
     if (!payload) {
         return;
     }
-    await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
+
+    try {
+        await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
+    } catch (error) {
+        if (screenDir) {
+            // The pipeline never reached the pane, so nothing will consume the file.
+            await rm(screenDir, { recursive: true, force: true }).catch((cleanupError) => {
+                logger.debug({ error: cleanupError, dir: screenDir }, "[restore] screen temp cleanup failed");
+            });
+        }
+
+        throw error;
+    }
 }

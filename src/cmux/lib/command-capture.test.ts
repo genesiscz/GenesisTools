@@ -56,6 +56,28 @@ describe("deriveReplayCommand", () => {
         expect(result.drift.some((d) => d.includes("bare --resume"))).toBe(true);
     });
 
+    test("bare claude launchers keep the launcher and other flags, only pinning the resume target", () => {
+        const result = deriveReplayCommand({
+            original: "claude --model opus --resume burn",
+            sessionId,
+            account: "work",
+        });
+        expect(result.command).toBe(`claude --model opus --resume ${sessionId}`);
+        expect(result.drift.some((d) => d.includes('resume target "burn" replaced'))).toBe(true);
+    });
+
+    test("bare claude without --resume gets one appended", () => {
+        const result = deriveReplayCommand({ original: "claude --model opus", sessionId });
+        expect(result.command).toBe(`claude --model opus --resume ${sessionId}`);
+        expect(result.drift.some((d) => d.includes("added"))).toBe(true);
+    });
+
+    test("bare claude already resuming the right session passes through with no drift", () => {
+        const result = deriveReplayCommand({ original: `claude --resume ${sessionId}`, sessionId });
+        expect(result.command).toBe(`claude --resume ${sessionId}`);
+        expect(result.drift).toEqual([]);
+    });
+
     test("without any account the command defers to cc run's own prompt and says so", () => {
         const result = deriveReplayCommand({ original: "tools cc run", sessionId });
         expect(result.command).toBe(`tools cc run -- --resume ${sessionId}`);

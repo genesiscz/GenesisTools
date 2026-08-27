@@ -1,13 +1,14 @@
 import { renderProfileCommandDetail } from "@app/cmux/lib/format";
 import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 import { scanForInteractivePrompts } from "@app/cmux/lib/restore";
-import { ProfileStore } from "@app/cmux/lib/store";
+import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { paneList, workspaceList } from "@genesiscz/utils/cmux/lib/socket";
+import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
@@ -90,9 +91,6 @@ async function runRescue(name: string, flags: RescueFlags): Promise<void> {
 
     p.log.step("Capturing offline profile (autosave + process table)…");
     const profile = await captureOfflineProfile({ name, note: `rescue capture (cmux was ${health.state})` });
-    const store = new ProfileStore();
-    const profilePath = store.write(name, profile, { force: true });
-    p.log.info(`Profile saved: ${pc.dim(profilePath)}`);
 
     const detail = renderProfileCommandDetail(profile);
     if (detail.length > 0) {
@@ -112,6 +110,26 @@ async function runRescue(name: string, flags: RescueFlags): Promise<void> {
         p.outro(pc.dim("Dry run — nothing changed."));
         return;
     }
+
+    // Persist the capture BEFORE the kill (and before the confirm, so an abort
+    // still leaves it recoverable). Never clobber an existing profile: `name` is
+    // user-supplied and may collide with a hand-curated save.
+    const store = new ProfileStore();
+    let profilePath: string;
+
+    try {
+        profilePath = store.write(name, profile);
+    } catch (error) {
+        if (!(error instanceof ProfileExistsError)) {
+            throw error;
+        }
+
+        const stamped = `${name}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+        p.log.warn(`Profile "${name}" already exists — saving as "${stamped}" instead.`);
+        profilePath = store.write(stamped, profile);
+    }
+
+    p.log.info(`Profile saved: ${pc.dim(profilePath)}`);
 
     if (!flags.yes) {
         if (!isInteractive()) {
@@ -204,13 +222,19 @@ function isAlive(pid: number): boolean {
  * every resumed claude — so the relaunch runs with a minimal clean environment.
  */
 async function cleanRelaunch(): Promise<void> {
-    const env: Record<string, string> = {
-        HOME: process.env.HOME ?? "",
-        USER: process.env.USER ?? "",
-        LOGNAME: process.env.LOGNAME ?? process.env.USER ?? "",
+    const user = env.device.getUser() ?? "";
+    const childEnv: Record<string, string> = {
+        HOME: env.paths.getHome(),
+        USER: user,
+        LOGNAME: env.device.getLogname() ?? user,
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     };
-    const proc = Bun.spawn(["/usr/bin/open", "-a", "cmux"], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    const proc = Bun.spawn(["/usr/bin/open", "-a", "cmux"], {
+        env: childEnv,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+    });
     const code = await proc.exited;
     if (code !== 0) {
         const stderr = await new Response(proc.stderr).text();
@@ -250,16 +274,23 @@ interface ListPaneSurfacesResponse {
 async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry[]): Promise<string[]> {
     const live = await workspaceList();
     const workspaceRefs: string[] = [];
+    // cmux titles derive from directories/branches, so two workspaces can share a
+    // title — an already-claimed live workspace must never match a second saved one.
+    const claimed = new Set<string>();
     const profileWorkspaces = profile.windows.flatMap((w) => w.workspaces);
 
     for (let wsIndex = 0; wsIndex < profileWorkspaces.length; wsIndex += 1) {
         const saved = profileWorkspaces[wsIndex];
-        const liveWs = live.workspaces.find((ws) => ws.title === saved.title) ?? live.workspaces[wsIndex];
+        const positional = live.workspaces[wsIndex];
+        const liveWs =
+            live.workspaces.find((ws) => !claimed.has(ws.ref) && ws.title === saved.title) ??
+            (positional && !claimed.has(positional.ref) ? positional : undefined);
         if (!liveWs) {
             p.log.warn(`No reopened workspace matches "${saved.title}" — skipped.`);
             continue;
         }
 
+        claimed.add(liveWs.ref);
         workspaceRefs.push(liveWs.ref);
         const wsEntries = entries.filter((e) => e.workspaceIndex === wsIndex);
 

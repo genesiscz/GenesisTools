@@ -40,7 +40,9 @@ async function runDoctor(flags: DoctorFlags): Promise<void> {
             ui.ok(`healthy — socket and UI thread both answer`);
             break;
         case "not-running":
-            ui.warn("cmux is not running. Start it from the Dock/Finder (NOT via `open` from an agent shell — see below).");
+            ui.warn(
+                "cmux is not running. Start it from the Dock/Finder (NOT via `open` from an agent shell — see below)."
+            );
             break;
         case "socket-dead":
             ui.err("the app is running but the socket does not answer. A restart of cmux is likely required.");
