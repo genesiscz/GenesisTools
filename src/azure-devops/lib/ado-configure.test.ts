@@ -29,7 +29,7 @@ describe("saveAdoConfig", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
         writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "contoso",
                 project: "Widgets",
@@ -50,7 +50,7 @@ describe("saveAdoConfig", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
         writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "contoso",
                 project: "Widgets",
@@ -75,7 +75,7 @@ describe("saveAdoConfig", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
         writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "fabrikam",
                 project: "Gadgets",
@@ -103,7 +103,7 @@ describe("saveAdoConfig", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
         writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "fabrikam",
                 project: "Gadgets",
@@ -124,7 +124,7 @@ describe("saveAdoConfig", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
         writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "contoso",
                 project: "Gadgets",
@@ -163,7 +163,7 @@ describe("saveAdoConfig", () => {
 `
         );
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "contoso",
                 project: "Widgets",
@@ -179,10 +179,34 @@ describe("saveAdoConfig", () => {
         expect(saved.timelog?.functionsKey).toBe("kept-secret");
     });
 
+    /**
+     * Regression test: PR #333 review t7. `configure` printed the team from the
+     * config it was ABOUT to save, so after the merge landed it announced
+     * "Team: (none)" while the file it had just written still carried one.
+     */
+    test("returns what was written, not what was passed in", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
+        writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
+
+        const saved = saveAdoConfig(
+            {
+                org: "contoso",
+                project: "Widgets",
+                projectId: "00000000-0000-0000-0000-000000000001",
+                apiResource: "499b84ac-0000-0000-0000-000000000000",
+            },
+            dir
+        );
+
+        expect(saved.config.team).toBe("Payments Team");
+        expect(saved.config.timelog?.functionsKey).toBe("kept-secret");
+        expect(SafeJSON.parse(readFileSync(saved.path, "utf8"), { strict: true })).toEqual(saved.config);
+    });
+
     test("writes a fresh config when none exists", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
 
-        const path = saveAdoConfig(
+        const { path } = saveAdoConfig(
             {
                 org: "contoso",
                 project: "Widgets",

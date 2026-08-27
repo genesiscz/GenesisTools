@@ -51,21 +51,25 @@ async function handleConfigure(url: string): Promise<void> {
     out.println(`  Project: ${newConfig.project}`);
     out.println(`  Project ID: ${newConfig.projectId}`);
 
-    if (newConfig.team) {
-        out.println(`  Team: ${newConfig.team}`);
+    const configDir = getLocalConfigDir();
+    // Report what was SAVED, not what the URL carried. A same-project reconfigure
+    // keeps the team and the timelog block, so printing newConfig said
+    // "Team: (none)" while the file on disk still had one (PR #333 review t7).
+    const saved = saveAdoConfig(newConfig, configDir);
+
+    if (saved.config.team) {
+        const kept = newConfig.team ? "" : " (kept from the existing config)";
+        out.println(`  Team: ${saved.config.team}${kept}`);
     } else {
         out.println(
             "  Team: (none — pass a board/backlog URL to capture it, or use --team on `iterations` / `sprint`)"
         );
     }
 
-    const configDir = getLocalConfigDir();
-    const configPath = saveAdoConfig(newConfig, configDir);
-
-    out.println(`\n✅ Configuration saved to: ${configPath}`);
+    out.println(`\n✅ Configuration saved to: ${saved.path}`);
     out.println("\nConfig values:");
     out.println("```json");
-    out.println(SafeJSON.stringify(newConfig, null, 2));
+    out.println(SafeJSON.stringify(saved.config, null, 2));
     out.println("```");
 
     out.println("\nConfiguring az devops defaults...");

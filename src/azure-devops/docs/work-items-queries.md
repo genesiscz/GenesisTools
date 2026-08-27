@@ -119,16 +119,17 @@ CREATE TABLE workItemLinks (
 [Custom.ApprovalRM]                 BOOLEAN,    -- RM approval required
 
 -- String selections
-[Custom.Aplikace]                   VARCHAR(256),   -- Application name (Czech)
 [Custom.Application]                VARCHAR(256),   -- Application name (English)
 [Custom.Applicationsubcategories]   VARCHAR(256),   -- App subcategories
 [Custom.ApplicatonorSystem]         VARCHAR(256),   -- App or System
 [Custom.AssignedGroup]              VARCHAR(256),   -- Team/Group assignment
 
--- Czech-specific
-[Custom.d099ca66-d0ca-4125-813c-773ff61eeab3]   VARCHAR(256),   -- Číslo SD
-[Custom.d3a5f967-2afb-4070-8bd0-e3b5ec50fab5]   VARCHAR(256),   -- Číslo transportu
-[Custom.aececa28-281f-42f2-95f5-d3898b867d7f]   VARCHAR(256),   -- Bezpečnostně významná změna
+-- GUID-named custom fields. Azure DevOps mints these when a field is created
+-- through the UI rather than with a reference name, so the id carries no meaning
+-- and the label lives only in the process template. Query them by the exact id.
+[Custom.00000000-0000-0000-0000-000000000001]   VARCHAR(256),   -- Service desk ticket
+[Custom.00000000-0000-0000-0000-000000000002]   VARCHAR(256),   -- Transport number
+[Custom.00000000-0000-0000-0000-000000000003]   VARCHAR(256),   -- Security-relevant change
 ```
 
 ### Work Item Types (organisation-specific)

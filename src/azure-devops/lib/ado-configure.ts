@@ -47,7 +47,13 @@ export async function buildAdoConfig(url: string): Promise<AzureConfig & { orgId
  * Project identity is still authoritative from the caller: switching projects
  * must not merge the previous project's ids into the new one.
  */
-export function saveAdoConfig(config: AzureConfig, configDir: string): string {
+export interface SavedAdoConfig {
+    path: string;
+    /** What was actually written — the merge may retain a team the URL did not carry. */
+    config: AzureConfigWithTimeLog;
+}
+
+export function saveAdoConfig(config: AzureConfig, configDir: string): SavedAdoConfig {
     if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true });
     }
@@ -64,7 +70,7 @@ export function saveAdoConfig(config: AzureConfig, configDir: string): string {
     const merged = sameProject ? { ...existing, ...config } : { ...config };
 
     writeFileSync(configPath, SafeJSON.stringify(merged, null, 2));
-    return configPath;
+    return { path: configPath, config: merged as AzureConfigWithTimeLog };
 }
 
 function readExistingConfig(configPath: string): Partial<AzureConfigWithTimeLog> {

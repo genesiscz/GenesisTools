@@ -36,6 +36,53 @@ describe("iterationContainsDate", () => {
     });
 });
 
+/**
+ * Regression test: PR #333 review t9. `iterationContainsDate` compares a
+ * UTC-derived date string (datePart slices the API's ISO timestamp) against a
+ * LOCAL one (formatLocalDate reads getFullYear/getMonth/getDate). Sprint
+ * boundaries are calendar days, so local is the semantic we want — but that
+ * only holds if the comparison is pinned, because a timestamp comparison here
+ * would silently drop the whole final day.
+ */
+describe("iterationContainsDate across the local midnight boundary", () => {
+    const withTz = (tz: string, run: () => void): void => {
+        const original = process.env.TZ;
+        process.env.TZ = tz;
+
+        try {
+            run();
+        } finally {
+            process.env.TZ = original;
+        }
+    };
+
+    const sprint = ITERATIONS[1]; // 2026-08-20 .. 2026-09-02
+
+    test("the last day counts until local midnight, not until the UTC timestamp", () => {
+        // 23:59 local on the finish day is still inside the sprint.
+        expect(iterationContainsDate(sprint, new Date(2026, 8, 2, 23, 59))).toBe(true);
+        // 00:01 local the next day is not.
+        expect(iterationContainsDate(sprint, new Date(2026, 8, 3, 0, 1))).toBe(false);
+    });
+
+    test("the first day counts from local midnight", () => {
+        expect(iterationContainsDate(sprint, new Date(2026, 7, 20, 0, 0))).toBe(true);
+        expect(iterationContainsDate(sprint, new Date(2026, 7, 19, 23, 59))).toBe(false);
+    });
+
+    test("a timezone far from UTC still resolves by local calendar day", () => {
+        withTz("Pacific/Auckland", () => {
+            expect(iterationContainsDate(sprint, new Date(2026, 8, 2, 12, 0))).toBe(true);
+            expect(iterationContainsDate(sprint, new Date(2026, 8, 3, 12, 0))).toBe(false);
+        });
+
+        withTz("America/Los_Angeles", () => {
+            expect(iterationContainsDate(sprint, new Date(2026, 7, 20, 12, 0))).toBe(true);
+            expect(iterationContainsDate(sprint, new Date(2026, 7, 19, 12, 0))).toBe(false);
+        });
+    });
+});
+
 describe("findCurrentIteration", () => {
     test("picks the iteration whose range contains today", () => {
         const current = findCurrentIteration(ITERATIONS, new Date(2026, 7, 27));

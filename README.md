@@ -200,7 +200,7 @@ is large, and as skills they would load into sessions that never needed them.
 |-------|--------------|
 | `agents-talk` | Cross-agent messaging protocol via `tools agents`. Invoke before spawning subagents that must talk to each other. |
 | `analyze-har` | Token-efficient HAR analysis. The rule it enforces: never `cat` or `jq` a HAR file. |
-| `azure-devops` | Work items, queries, dashboards. Defers time logging to `/gt:timelog`. |
+| `azure-devops` | Work items, queries, sprints, dashboards. Defers time logging to `/gt:timelog`. |
 | `claude-history` | Find a past Claude Code conversation by topic, file, or date. |
 | `debugging-master` | Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation (Node/TS, PHP, browser). |
 | `git-rebaser` | Cascade rebase for a parent branch plus the children stacked on it, using `git rebase --onto`. |
@@ -377,7 +377,7 @@ onto the merged base first, then optionally deletes the head branch.
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`azure-devops`](src/azure-devops/README.md) | Azure DevOps work items, queries, dashboards, and time logs, with caching and change detection. | `configure` `query` `workitem` `workitem-create` `list` `dashboard` `timelog` `history` |
+| [`azure-devops`](src/azure-devops/README.md) | Azure DevOps work items, queries, sprints, dashboards, and time logs, with caching and change detection. | `configure` `query` `workitem` `workitem-create` `list` `iterations` `sprint` `dashboard` `timelog` `history` |
 | [`timely`](src/timely/README.md) | Timely time tracking: OAuth login, accounts and projects, events, auto-tracked memories, monthly exports. | `login` `status` `accounts` `projects` `events` `memories` `create` `export-month` `cache` |
 | [`clarity`](src/clarity/README.md) | CA PPM Clarity timesheet management, filled from Azure DevOps time logs and Timely activity. | `configure` `timesheet` `fill` `link-workitems` `ui` |
 | [`timer`](src/timer/README.md) | Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks. | `list` `cancel` |
