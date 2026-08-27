@@ -20,7 +20,7 @@ import type {
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
-import { flattenIterationNodes } from "@app/azure-devops/lib/iterations";
+import { findTruncatedNodes, flattenIterationNodes } from "@app/azure-devops/lib/iterations";
 import type {
     AzureConfig,
     AzWorkItemRaw,
@@ -843,6 +843,14 @@ export class Api {
     }
 
     /**
+     * How far `classificationnodes` is asked to walk. Deep enough for
+     * `Project > Year > Release > Sprint` style hierarchies with headroom;
+     * anything past it is reported by findTruncatedNodes() rather than dropped
+     * without a word.
+     */
+    private static readonly ITERATION_NODE_DEPTH = 10;
+
+    /**
      * Every dated iteration of the project, with no team involved.
      *
      * Iterations are project-level classification nodes; a team merely subscribes
@@ -850,8 +858,20 @@ export class Api {
      * `getTeamIterations()` returns, which is what makes `--team` optional.
      */
     async getProjectIterations(): Promise<TeamIteration[]> {
-        const url = Api.witUrl(this.config, ["classificationnodes", "iterations"], { $depth: "3" });
+        // Depth 3 covered the common `Project > Release > Sprint` shape and
+        // silently dropped anything nested deeper, which the caller could not
+        // tell apart from "that sprint does not exist" (review t1).
+        const url = Api.witUrl(this.config, ["classificationnodes", "iterations"], {
+            $depth: String(Api.ITERATION_NODE_DEPTH),
+        });
         const root = await this.get<IterationClassificationNode>(url, "project iteration classification nodes");
+        const truncated = findTruncatedNodes(root);
+        if (truncated.length > 0) {
+            logger.warn(
+                `[api] iteration tree truncated at depth ${Api.ITERATION_NODE_DEPTH}; ${truncated.length} node(s) have unlisted children, first: ${truncated[0]}`
+            );
+        }
+
         const iterations = flattenIterationNodes(root);
         logger.debug(`[api] Project "${this.config.project}" has ${iterations.length} dated iterations`);
         return iterations;

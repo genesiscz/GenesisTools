@@ -458,7 +458,7 @@ export function registerSprintCommands(program: Command): void {
     program
         .command("iterations")
         .alias("sprints")
-        .description("List the team's iterations (sprints) with dates and the current one marked")
+        .description("List the project's iterations (sprints) with dates and the current one marked")
         .option("-f, --format <format>", "Output format: ai, md, json", "ai")
         .option("--team <name>", "Optional: narrow to one team's subscribed iterations (overrides config.team)")
         .action(async (_opts: RawSprintOptions, command: Command) => {

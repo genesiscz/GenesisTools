@@ -3,6 +3,7 @@ import type { IterationClassificationNode, TeamIteration } from "@app/azure-devo
 import {
     describeIterationSource,
     findCurrentIteration,
+    findTruncatedNodes,
     flattenIterationNodes,
     iterationContainsDate,
     resolveIteration,
@@ -267,5 +268,43 @@ describe("describeIterationSource", () => {
         expect(describeIterationSource({ kind: "project", team: null, count: 26 })).toBe(
             "project classification nodes (26 iterations)"
         );
+    });
+});
+
+/**
+ * Regression test: PR #334 review t1. The classification-node request only
+ * walks `$depth` levels, so sprints nested deeper were absent from every
+ * result with nothing saying so.
+ */
+describe("findTruncatedNodes", () => {
+    let nextId = 1;
+    const node = (name: string, extra: Partial<IterationClassificationNode> = {}): IterationClassificationNode => ({
+        id: nextId++,
+        identifier: name,
+        name,
+        path: `\\Widgets\\Iteration\\${name}`,
+        ...extra,
+    });
+
+    test("reports a container the API said has children but did not return", () => {
+        const root = node("Widgets", {
+            hasChildren: true,
+            children: [node("FY26", { hasChildren: true })],
+        });
+
+        expect(findTruncatedNodes(root)).toEqual(["Widgets\\FY26"]);
+    });
+
+    test("a fully returned tree reports nothing", () => {
+        const root = node("Widgets", {
+            hasChildren: true,
+            children: [node("FY26", { hasChildren: true, children: [node("Q3 Sprint 5")] })],
+        });
+
+        expect(findTruncatedNodes(root)).toEqual([]);
+    });
+
+    test("a childless leaf is not truncation", () => {
+        expect(findTruncatedNodes(node("Q3 Sprint 5"))).toEqual([]);
     });
 });

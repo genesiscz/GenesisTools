@@ -48,6 +48,34 @@ export function toIterationPath(nodePath: string): string {
  * returns. Nodes without a start date are structural containers (the project root,
  * a release folder) rather than sprints, so they are dropped.
  */
+/**
+ * Container nodes the API said have children but did not return any.
+ *
+ * `classificationnodes` only walks `$depth` levels down. A project that nests
+ * its iterations deeper than that gets a silently truncated tree, and the
+ * dated sprints below the cap simply do not exist as far as the caller is
+ * concerned — `iterations` would not list them and `sprint` could not resolve
+ * them (PR #334 review t1). `hasChildren` on a childless node is the tell, so
+ * truncation can be reported instead of guessed at.
+ */
+export function findTruncatedNodes(root: IterationClassificationNode): string[] {
+    const truncated: string[] = [];
+
+    const walk = (node: IterationClassificationNode): void => {
+        const children = node.children ?? [];
+        if (node.hasChildren && children.length === 0) {
+            truncated.push(toIterationPath(node.path));
+        }
+
+        for (const child of children) {
+            walk(child);
+        }
+    };
+
+    walk(root);
+    return truncated;
+}
+
 export function flattenIterationNodes(root: IterationClassificationNode): TeamIteration[] {
     const flat: TeamIteration[] = [];
 
