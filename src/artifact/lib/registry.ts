@@ -59,6 +59,12 @@ export function addEntry(input: { dir: string; name?: string; entry?: string }):
         let changed = false;
 
         if (input.name && input.name !== existing.name) {
+            const clash = entries.find((e) => e.name === input.name && e.dir !== dir);
+
+            if (clash) {
+                throw new Error(`Name "${input.name}" is already registered for ${clash.dir}.`);
+            }
+
             existing.name = input.name;
             changed = true;
         }
@@ -90,7 +96,8 @@ export function addEntry(input: { dir: string; name?: string; entry?: string }):
     };
     entries.push(entry);
     saveRegistry(entries);
-    logger.info({ name, dir }, "[artifact] registered");
+    // File-only: the CLI prints its own confirmation; info would double-print.
+    logger.debug({ name, dir }, "[artifact] registered");
 
     return { entry, created: true };
 }
@@ -119,7 +126,7 @@ export function removeEntry(name: string): DashboardEntry | null {
 
     const [removed] = entries.splice(idx, 1);
     saveRegistry(entries);
-    logger.info({ name }, "[artifact] removed");
+    logger.debug({ name }, "[artifact] removed");
 
     return removed;
 }

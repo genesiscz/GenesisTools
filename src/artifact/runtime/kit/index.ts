@@ -1,5 +1,17 @@
 // The artifact component kit. Import from any served/built artifact:
 //   import { Page, Hero, Tabs, Section, MdViewer, Timeline, Simulator } from "@artifact/kit";
+
+export { type ChartConfiguration, ChartJs, type ChartJsProps } from "./chartjs";
+export {
+    type ChartMarker,
+    type ChartSeries,
+    DayChart,
+    type DayChartProps,
+    DonutChart,
+    type DonutChartProps,
+    type DonutSlice,
+    TONE_COLOR,
+} from "./charts";
 export {
     Bullets,
     type BulletsProps,
@@ -46,6 +58,8 @@ export {
     type ClaimProps,
     CodeBlock,
     type CodeBlockProps,
+    Collapse,
+    type CollapseProps,
     FileMark,
     type FileMarkProps,
     Hero,

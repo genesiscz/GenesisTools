@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { out } from "@genesiscz/utils/logger";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { renderMarkdownToCli } from "./markdown/index.js";
 
 /**
@@ -18,7 +19,8 @@ export function printReadmeAndExit(toolDir: string): never {
     if (existsSync(readmePath)) {
         const content = readFileSync(readmePath, "utf-8");
         const rendered = renderMarkdownToCli(content);
-        out.println(rendered);
+        // Piped/captured output gets plain text — ANSI leaks as literal escapes there.
+        out.println(process.stdout.isTTY ? rendered : stripAnsi(rendered));
         process.exit(0);
     }
 

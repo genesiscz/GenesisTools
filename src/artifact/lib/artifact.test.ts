@@ -6,6 +6,7 @@ import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import {
     collectEmbeddableFiles,
     collectReferencedFiles,
+    embedScopeFor,
     fetchShimScript,
     hasLocalAssetRefs,
     injectShim,
@@ -70,15 +71,15 @@ describe("registry", () => {
 });
 
 describe("running tracker", () => {
-    test("records live pids and prunes dead ones", () => {
-        recordRunning({ pid: process.pid, port: 3999, dir, name: "self", startedAt: new Date().toISOString() });
-        recordRunning({ pid: 999999999, port: 4000, dir, name: "ghost", startedAt: new Date().toISOString() });
+    test("records live pids and prunes dead ones", async () => {
+        await recordRunning({ pid: process.pid, port: 3999, dir, name: "self", startedAt: new Date().toISOString() });
+        await recordRunning({ pid: 999999999, port: 4000, dir, name: "ghost", startedAt: new Date().toISOString() });
 
         const alive = listRunning();
         expect(alive.map((s) => s.name)).toContain("self");
         expect(alive.map((s) => s.name)).not.toContain("ghost");
 
-        removeRunning(process.pid);
+        await removeRunning(process.pid);
         expect(listRunning()).toHaveLength(0);
     });
 });
@@ -147,12 +148,35 @@ describe("build helpers", () => {
     });
 
     test("referenced embed scope inlines only what the entry names (vault safety)", () => {
-        writeFileSync(join(dir, "single.tsx"), `export default () => { fetch("./data.json"); return null; };\n`);
-        writeFileSync(join(dir, "single.data.extra.json"), `{"b":2}`);
+        // Own tmp dir: mutating the shared fixture dir would couple this test
+        // to execution order of the enumerating tests above.
+        const own = realpathSync(mkdtempSync(join(tmpdir(), "artifact-ref-")));
+        writeFileSync(join(own, "data.json"), `{"a":1}`);
+        writeFileSync(join(own, "notes.md"), "# unreferenced");
+        writeFileSync(join(own, "single.tsx"), `export default () => { fetch("./data.json"); return null; };\n`);
+        writeFileSync(join(own, "single.data.extra.json"), `{"b":2}`);
 
-        const scan = collectReferencedFiles(dir, "single.tsx", 1024 * 1024, new Set());
+        const scan = collectReferencedFiles(own, "single.tsx", 1024 * 1024, new Set());
         // notes.md exists in the dir but is NOT referenced — it must stay out.
         expect(scan.embedded).toEqual(["data.json", "single.data.extra.json"]);
+        rmSync(own, { recursive: true, force: true });
+    });
+
+    test("any explicitly named entry scopes embeds to referenced files (dir + --entry is not a vault dump)", () => {
+        // Regression: `build <dir> --entry adr.tsx` embedded every sibling .md/.json
+        // because scoping keyed only on target-was-a-file.
+        expect(embedScopeFor({ fileTargetEntry: "single.tsx" })).toBe("referenced");
+        expect(embedScopeFor({ entryFlag: "adr.tsx" })).toBe("referenced");
+        expect(embedScopeFor({ registryEntry: "dash.tsx" })).toBe("referenced");
+        expect(embedScopeFor({ fileTargetEntry: null })).toBe("tree");
+        expect(embedScopeFor({})).toBe("tree");
+    });
+
+    test("fetch shim aliases entry-relative keys for subdirectory entries", () => {
+        const shim = fetchShimScript({ "sub/data.json": `{"x":1}` }, "sub/report.html");
+        // Both the dir-relative and the page-relative key must resolve.
+        expect(shim).toContain(`"sub/data.json"`);
+        expect(shim).toContain(`"data.json"`);
     });
 
     test("fetch shim escapes </script> and injectShim lands after <head>", () => {

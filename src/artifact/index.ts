@@ -1,16 +1,18 @@
 #!/usr/bin/env bun
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 import pc from "picocolors";
-import { buildSingleFile, resolveEntry, watchAndRebuild } from "./lib/build";
-import { kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
+import { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } from "./lib/build";
+import { filterKitDts, kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
 import { startLibrary } from "./lib/library";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
 import { findRunning, listRunning, recordRunning, removeRunning } from "./lib/running";
@@ -96,18 +98,43 @@ program
 
 program
     .command("serve")
-    .description("Serve a folder (registered name or path; default: cwd). Run it several times for several folders.")
-    .argument("[target]", "registered name or directory")
+    .description(
+        "Serve a folder (registered name, path, or a single artifact file; default: cwd). Run it several times for several folders."
+    )
+    .argument("[target]", "registered name, directory, or a single .tsx/.html/.md file")
     .option("--port <port>", "dev server port (auto-bumps when busy)", String(DEFAULT_PORT))
     .option("--host <host>", "bind address", "127.0.0.1")
     .option("--template <nameOrDir>", "page-chrome template (shipped name or a directory)")
     .option("--no-open", "do not open the browser")
     .option("--no-register", "do not auto-register the folder")
+    .option("--detach", "daemonize: spawn the server detached and return (agent shells reap `nohup … &` children)")
     .action(
         async (
             target: string | undefined,
-            opts: { port: string; host: string; template?: string; open: boolean; register: boolean }
+            opts: {
+                port: string;
+                host: string;
+                template?: string;
+                open: boolean;
+                register: boolean;
+                detach?: boolean;
+            }
         ) => {
+            if (opts.detach) {
+                const logPath = join(tmpdir(), `artifact-serve-${opts.port}.log`);
+                const argvRest = process.argv.slice(1).filter((a) => a !== "--detach");
+                const child = Bun.spawn([process.execPath, ...argvRest, "--no-open"], {
+                    stdout: Bun.file(logPath),
+                    stderr: Bun.file(logPath),
+                    env: process.env,
+                });
+                child.unref();
+                out.log.success(`Detached server pid ${child.pid} (requested port ${opts.port}).`);
+                out.log.info(`Log: ${logPath} · status: tools artifact ps · stop: tools artifact stop ${opts.port}`);
+
+                return;
+            }
+
             const resolved = resolveTarget(target);
             let name = resolved.registryEntry?.name ?? basename(resolved.dir);
 
@@ -127,7 +154,7 @@ program
             });
             const url = server.resolvedUrls?.local[0] ?? `http://${opts.host}:${opts.port}/`;
             const actualPort = Number.parseInt(new URL(url).port, 10) || Number.parseInt(opts.port, 10);
-            recordRunning({
+            await recordRunning({
                 pid: process.pid,
                 port: actualPort,
                 dir: resolved.dir,
@@ -136,15 +163,25 @@ program
             });
 
             const cleanup = (): void => {
-                removeRunning(process.pid);
-                process.exit(0);
+                void removeRunning(process.pid).finally(() => process.exit(0));
             };
             process.on("SIGINT", cleanup);
             process.on("SIGTERM", cleanup);
 
             const openUrl = resolved.entry ? url.replace(/\/$/, "") + entryRoute(resolved.entry) : url;
             out.log.success(`Serving ${pc.bold(resolved.entry ? join(resolved.dir, resolved.entry) : resolved.dir)}`);
-            out.log.info(`${pc.cyan(openUrl)} ${pc.dim("(catalog at /__catalog; Ctrl-C stops)")}`);
+            out.log.info(
+                `${pc.cyan(openUrl)} ${pc.dim("(catalog at /__catalog; Ctrl-C stops, or: tools artifact stop " + actualPort + ")")}`
+            );
+
+            const cleanUrls = readdirSync(resolved.dir)
+                .filter((f) => /\.(tsx|jsx|html|md)$/.test(f) && !f.startsWith("."))
+                .slice(0, 3)
+                .map((f) => entryRoute(f));
+
+            if (cleanUrls.length > 0 && !resolved.entry) {
+                out.log.info(pc.dim(`clean URLs: ${cleanUrls.map((r) => url.replace(/\/$/, "") + r).join("  ")}`));
+            }
 
             if (opts.open && process.platform === "darwin") {
                 Bun.spawn(["open", openUrl], { stdout: "ignore", stderr: "ignore" });
@@ -188,7 +225,7 @@ program
     .command("stop")
     .description("Stop a running artifact server by name, directory, or port")
     .argument("<target>", "name, directory, or port")
-    .action((target: string) => {
+    .action(async (target: string) => {
         const server = findRunning(target);
 
         if (!server) {
@@ -199,15 +236,17 @@ program
         }
 
         process.kill(server.pid, "SIGTERM");
-        removeRunning(server.pid);
+        await removeRunning(server.pid);
         out.log.success(`Stopped ${pc.bold(server.name)} (pid ${server.pid}, port ${server.port})`);
     });
 
 program
     .command("init")
-    .description("Scaffold a starter artifact (report.html or dashboard.tsx shape) at the given path")
-    .argument("<file>", "target file to create (.html or .tsx)")
-    .action((file: string) => {
+    .description(
+        "Scaffold a starter artifact at the given path — any <name>.html (report shape, with data.json) or <name>.tsx (kit dashboard shape)"
+    )
+    .argument("<file>", "target file to create (any name ending .html or .tsx)")
+    .action(async (file: string) => {
         const target = resolve(file);
 
         if (existsSync(target)) {
@@ -229,8 +268,25 @@ program
 
         const title = basename(target, ext).replaceAll("-", " ");
         const content = readFileSync(join(RUNTIME_DIR, "starters", starter), "utf8").replaceAll("{{TITLE}}", title);
-        writeFileSync(target, content);
+        await Bun.write(target, content);
         out.log.success(`Created ${pc.bold(target)} from the ${starter} starter.`);
+
+        // The report starter fetches ./data.json (silently falling back to its inline
+        // sample) — ship the sample file too, so edits to it are live from minute one.
+        const dataPath = join(resolve(target, ".."), "data.json");
+
+        if (starter === "report.html" && !existsSync(dataPath)) {
+            const sample = {
+                stats: [
+                    { label: "sample stat", value: "42" },
+                    { label: "another", value: "7/9" },
+                ],
+                rows: [{ item: "sample row", status: "ok", value: "1.21" }],
+            };
+            await Bun.write(dataPath, `${SafeJSON.stringify(sample, { strict: true }, 4)}\n`);
+            out.log.info(`Created ${pc.bold(dataPath)} (the starter fetches it — put your numbers there).`);
+        }
+
         out.log.info(`Serve it: tools artifact serve ${pc.dim(resolve(target, ".."))}`);
     });
 
@@ -239,7 +295,7 @@ const library = program.command("library").description("The artifact library —
 library
     .command("up", { isDefault: true })
     .description("Start the library server: / lists all registered artifacts; each mounts at /a/<name>/")
-    .option("--port <port>", "library port", String(DEFAULT_PORT + 20))
+    .option("--port <port>", "library port", String(DASHBOARDS["artifact-library"].port))
     .option("--host <host>", "bind address", "127.0.0.1")
     .option("--template <nameOrDir>", "page-chrome template")
     .option("--no-open", "do not open the browser")
@@ -247,7 +303,7 @@ library
         const port = Number.parseInt(opts.port, 10);
         await startLibrary({ port, host: opts.host, templateDir: resolveTemplateDir(opts.template) });
         const url = `http://${opts.host}:${port}/`;
-        recordRunning({
+        await recordRunning({
             pid: process.pid,
             port,
             dir: "(library)",
@@ -256,8 +312,7 @@ library
         });
 
         const cleanup = (): void => {
-            removeRunning(process.pid);
-            process.exit(0);
+            void removeRunning(process.pid).finally(() => process.exit(0));
         };
         process.on("SIGINT", cleanup);
         process.on("SIGTERM", cleanup);
@@ -289,8 +344,10 @@ program
     .command("kit")
     .alias("api")
     .description("Print the @artifact/kit typed API (generated .d.ts) — author against it without reading source")
-    .action(() => {
-        out.print(kitApiDts());
+    .argument("[names...]", "print only declarations mentioning these names (e.g. Tabs DayChart QA)")
+    .action(async (names: string[]) => {
+        const dts = await kitApiDts();
+        out.print(names.length > 0 ? filterKitDts(dts, names) : dts);
     });
 
 program
@@ -299,8 +356,8 @@ program
         "Write an OPTIONAL tsconfig.json into an artifact folder for editor IntelliSense (runtime never needs it)"
     )
     .argument("[dir]", "artifact folder (default: cwd)")
-    .action((dir: string | undefined) => {
-        const result = writeEditorTsconfig(resolve(dir ?? process.cwd()));
+    .action(async (dir: string | undefined) => {
+        const result = await writeEditorTsconfig(resolve(dir ?? process.cwd()));
 
         if (result.created) {
             out.log.success(`Wrote ${pc.bold(result.path)} (editor-only; safe to delete or gitignore).`);
@@ -314,16 +371,24 @@ program
 program
     .command("build")
     .description("Build a self-contained single-file HTML artifact (works from file://)")
-    .argument("[target]", "registered name or directory (default: cwd)")
-    .option("--entry <file>", "entry HTML, relative to the folder")
-    .option("--out <file>", "output path (default: <dir>/dist/<entry>)")
+    .argument("[target]", "registered name, directory, or a single artifact file (default: cwd)")
+    .option("-e, --entry <file>", "entry file, relative to the folder")
+    .option("-o, --out <file>", "output path (default: <dir>/dist/<entry>)")
     .option("--max-embed <mb>", "per-file cap for embedded sibling data files", "5")
+    .option("--embed <scope>", "referenced (only files the entry names) or tree (every sibling data file)")
     .option("--watch", "stay running and rebuild on every source change")
     .action(
         async (
             target: string | undefined,
-            opts: { entry?: string; out?: string; maxEmbed: string; watch?: boolean }
+            opts: { entry?: string; out?: string; maxEmbed: string; embed?: string; watch?: boolean }
         ) => {
+            if (opts.embed && opts.embed !== "referenced" && opts.embed !== "tree") {
+                out.log.error(`--embed must be "referenced" or "tree" (got "${opts.embed}").`);
+                process.exitCode = 1;
+
+                return;
+            }
+
             const resolved = resolveTarget(target);
             const entry = resolveEntry(resolved.dir, opts.entry ?? resolved.entry ?? resolved.registryEntry?.entry);
             const buildOpts = {
@@ -331,9 +396,13 @@ program
                 entry,
                 out: opts.out,
                 embedLimitMb: Number.parseFloat(opts.maxEmbed),
-                // A single-file target embeds only what the entry references —
-                // never the whole surrounding folder (it may be a vault).
-                embedScope: (resolved.entry ? "referenced" : "tree") as "referenced" | "tree",
+                embedScope:
+                    (opts.embed as "referenced" | "tree" | undefined) ??
+                    embedScopeFor({
+                        fileTargetEntry: resolved.entry,
+                        entryFlag: opts.entry,
+                        registryEntry: resolved.registryEntry?.entry,
+                    }),
             };
             const report = (result: Awaited<ReturnType<typeof buildSingleFile>>): void => {
                 out.log.success(

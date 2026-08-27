@@ -209,6 +209,18 @@ export async function runTool(
         );
     }
 
+    // Conflicting color envs (agent harnesses set FORCE_COLOR while user shells set
+    // NO_COLOR) make Bun print an 8-line warning stack on EVERY invocation and force
+    // ANSI into piped output. Resolve before anything queries the tty: an interactive
+    // stdout keeps color, a piped one goes plain.
+    if (process.env.FORCE_COLOR && process.env.NO_COLOR) {
+        if (process.stdout.isTTY) {
+            delete process.env.NO_COLOR;
+        } else {
+            delete process.env.FORCE_COLOR;
+        }
+    }
+
     const tool = opts.tool ?? program.name() ?? basename(argv[1] ?? "tool");
 
     if (!opts.ignoreParams?.includes("verbose")) {

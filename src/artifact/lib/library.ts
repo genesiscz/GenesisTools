@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { artifactServePlugin, scanArtifacts } from "./catalog";
 import { type DashboardEntry, loadRegistry } from "./registry";
-import { loadTemplate, loadThemeCss, renderTemplate } from "./templates";
+import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate } from "./templates";
 import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, REPO_ROOT } from "./vite";
 
 /**
@@ -24,10 +24,6 @@ export interface LibraryOptions {
 export interface LibraryHandle {
     port: number;
     close: () => Promise<void>;
-}
-
-function escapeHtml(text: string): string {
-    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
 function ageLabel(iso: string): string {
@@ -55,7 +51,7 @@ function renderLibraryHtml(entries: DashboardEntry[], templateDir: string): stri
             const meta = [counts || "empty", ageLabel(e.createdAt), e.entry ?? ""].filter(Boolean).join(" · ");
 
             return (
-                `<li><a href="/a/${encodeURIComponent(e.name)}/${e.entry ? e.entry.replace(/\.(tsx|jsx|html|md)$/, "") : ""}">` +
+                `<li><a href="${escapeHtml(`/a/${encodeURIComponent(e.name)}/${e.entry ? encodeHrefPath(e.entry.replace(/\.(tsx|jsx|html|md)$/, "")) : ""}`)}">` +
                 `<span class="name">${escapeHtml(e.name)}<br><small style="color:var(--dim)">${escapeHtml(e.dir)}</small></span>` +
                 `<span class="kind">${escapeHtml(meta)}</span></a></li>`
             );
@@ -85,7 +81,7 @@ export async function startLibrary(options: LibraryOptions): Promise<LibraryHand
         }
 
         logger.info({ name: entry.name, dir: entry.dir }, "[artifact] library: starting mount");
-        const urlBase = `/a/${entry.name}`;
+        const urlBase = `/a/${encodeURIComponent(entry.name)}`;
         const created = createViteServer({
             configFile: false,
             envFile: false,
@@ -107,6 +103,11 @@ export async function startLibrary(options: LibraryOptions): Promise<LibraryHand
             },
         });
         subServers.set(entry.name, created);
+        // A failed mount must not stay cached: the next request retries.
+        created.catch((err: unknown) => {
+            logger.warn({ err, name: entry.name }, "[artifact] library mount failed");
+            subServers.delete(entry.name);
+        });
 
         return created;
     };
@@ -173,7 +174,11 @@ export async function startLibrary(options: LibraryOptions): Promise<LibraryHand
         port: options.port,
         close: async () => {
             for (const pending of subServers.values()) {
-                await (await pending).close();
+                try {
+                    await (await pending).close();
+                } catch (err) {
+                    logger.debug({ err }, "[artifact] library mount close failed");
+                }
             }
 
             await new Promise<void>((r) => httpServer.close(() => r()));

@@ -13,5 +13,5 @@
     --info: #1d4ed8;
     --radius: 8px;
     --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
-    --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", "Menlo", monospace;
 }

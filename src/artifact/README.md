@@ -17,7 +17,7 @@ tools artifact library up                                                 # ONE 
 |---|---|
 | `serve [target]` | Vite dev server (registered name, folder, or a single file). HMR on edit. Folders auto-register; ports auto-bump from 3076, so several serves run side by side. `--template <name>` swaps the theme. |
 | `library up` | ONE server: `/` lists every registered artifact folder (counts, age, click to open); each mounts at `/a/<name>/` via a lazily-started sub-server. Clean URLs work under every mount. |
-| `build [target]` | Self-contained single-file HTML into `<dir>/dist/`. `.html` entries bundle local refs; `.tsx` entries bundle via a generated wrapper. Sibling text-data files embed behind a `fetch()` shim so `file://` works. Single-file targets embed ONLY referenced files (never the surrounding vault). `--watch` rebuilds on change. Idempotent. |
+| `build [target]` | Self-contained single-file HTML into `<dir>/dist/` (override with `-o/--out`; pick the entry with `-e/--entry`). `.html` entries bundle local refs; `.tsx` entries bundle via a generated wrapper. Sibling text-data files embed behind a `fetch()` shim so `file://` works. Any explicitly named entry (file target, `--entry`, or a registry entry) embeds ONLY referenced files (never the surrounding vault); a bare directory embeds every sibling data file (`--embed referenced\|tree` overrides). `--watch` rebuilds on change. Idempotent. |
 | `templates` | List the shipped themes: graphite (default), bone, forest, steel, tan, cobalt. |
 | `kit` | Print the kit's generated `.d.ts` API — author against it without reading component source. |
 | `types [dir]` | Write an OPTIONAL editor-only `tsconfig.json` (IntelliSense for `@artifact/kit`, repo imports, react). |
@@ -50,10 +50,14 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
 `tools artifact kit` prints the full typed API. Highlights (every `Tone` is
 `ok | warn | err | info | neutral`; string bodies render as markdown):
 
-- Layout: `Page`, `Hero`, `Section`, `Card`/`CardGrid`, `Tabs` (hash-synced), `Router`/
+- Layout: `Page`, `Hero`, `Section`, `Card`/`CardGrid`, `Collapse` (styled details/summary),
+  `Tabs` (hash-synced, sticky bar, per-tab status `badge`), `Router`/
   `RouterLink`/`useParams`/`useNavigate` (history API, base-aware, hash fallback on `file://`)
 - Data: `StatGrid`, `DataTable` (filter, `rowTone`, toned/markdown cells), `SeriesTable`,
   `Timeline`, `Bullets`, `QA` (per-item `open`/`featured`/`meta`), `Matrix`-style via cells
+- Charts: `DayChart` (bars/lines/stacks over labeled points, log scales, reference markers),
+  `DonutChart` — recharts-backed, colored by theme tones; `ChartJs` renders a raw Chart.js v4
+  `config` for anything they don't cover
 - Evidence: `CodeBlock` (copy button, `highlightLines`/`badLines`), `FileMark`, `Claim`
   (`[NN%]` badge), `Quote`, `Callout`, `Badge`, `Chips`, `Note`, `Superseded`
 - Markdown: `Md`, `MdInline`, `MdViewer` (`src` fetches a sibling .md live — TOC + section
@@ -77,6 +81,14 @@ when served; embedded by `build` for `file://`). Static `import data from "./dat
 works and gets bundled. The `<entry>.data*.json` naming convention is auto-embedded for
 single-file builds.
 
+## Headless smoke-testing (curl, CI, agents)
+
+The clean URL (`/name`) returns the SPA shell only — page text renders client-side, so grep
+the shell for `__ARTIFACT_BASE__` (exactly 1 hit = the artifact resolved) and grep your own
+strings in the transformed module at `/name.tsx` instead. In agent shells that reap
+backgrounded children, start the server with `serve --detach` and stop it with
+`tools artifact stop <port>`.
+
 ## Port
 
-3076 (`DASHBOARDS.artifact`), non-strict; the library defaults to 3096.
+3076 by default, non-strict (auto-bumps); the library defaults to 3096.

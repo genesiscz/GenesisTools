@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { marked } from "marked";
 import type { Plugin } from "vite";
-import { loadTemplate, loadThemeCss, renderTemplate, themeCssPath } from "./templates";
+import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate, themeCssPath } from "./templates";
 import { RUNTIME_DIR } from "./vite";
 
 const TSX_ENTRY_PREFIX = "/__artifact-entry/";
@@ -57,10 +58,6 @@ export function scanArtifacts(dir: string): ArtifactListing {
     return listing;
 }
 
-function escapeHtml(text: string): string {
-    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-}
-
 /** Clean-URL precedence when several artifacts share a basename. */
 const CLEAN_EXTENSIONS = [".tsx", ".jsx", ".html", ".md"] as const;
 
@@ -94,7 +91,7 @@ export function renderCatalogHtml(dir: string, listing: ArtifactListing, templat
         const items = files
             .map(
                 (rel) =>
-                    `<li><a href="${hrefPrefix}${cleanHref(rel, listing)}"><span class="name">${escapeHtml(rel)}</span>` +
+                    `<li><a href="${escapeHtml(`${hrefPrefix}${encodeHrefPath(cleanHref(rel, listing))}`)}"><span class="name">${escapeHtml(rel)}</span>` +
                     `<span class="kind">${kind}</span></a></li>`
             )
             .join("\n");
@@ -132,9 +129,9 @@ function safeResolve(dir: string, relUrl: string): string | null {
     return full;
 }
 
-/** JSON-quote a string for embedding in generated JS. */
+/** JSON-quote a string for embedding in generated JS (control chars + <-escape for script blocks). */
 function quoteForJs(value: string): string {
-    return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+    return SafeJSON.stringify(value, { strict: true }).replaceAll("<", "\\u003c");
 }
 
 interface CleanResolution {

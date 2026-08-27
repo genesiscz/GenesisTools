@@ -172,7 +172,11 @@ export function MdViewer({ src, source, title, chrome = true, filterPlaceholder 
     const [query, setQuery] = useState("");
 
     useEffect(() => {
-        if (!src) {
+        // `source` wins outright; and a NEW src must not show a stale error/body.
+        setError(null);
+        setFetched(null);
+
+        if (!src || source !== undefined) {
             return;
         }
 
@@ -198,7 +202,7 @@ export function MdViewer({ src, source, title, chrome = true, filterPlaceholder 
         return () => {
             cancelled = true;
         };
-    }, [src]);
+    }, [src, source]);
 
     const text = source ?? fetched;
     const sections = useMemo(() => (text ? splitSections(text) : []), [text]);

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { runningPath } from "./storage";
 
@@ -22,10 +23,20 @@ function isAlive(pid: number): boolean {
 
         return true;
     } catch (err) {
+        // EPERM = the process exists but we may not signal it — still alive.
+        if ((err as NodeJS.ErrnoException).code === "EPERM") {
+            return true;
+        }
+
         logger.debug({ err, pid }, "[artifact] pid liveness probe");
 
         return false;
     }
+}
+
+function lockPath(): string {
+    // withFileLock writes its pid record TO the given path — never lock the data file itself.
+    return `${runningPath()}.lock`;
 }
 
 function readAll(): RunningServer[] {
@@ -56,14 +67,20 @@ export function listRunning(): RunningServer[] {
     return alive;
 }
 
-export function recordRunning(server: RunningServer): void {
-    const alive = listRunning().filter((s) => s.pid !== server.pid);
-    alive.push(server);
-    writeAll(alive);
+export async function recordRunning(server: RunningServer): Promise<void> {
+    // Concurrent serves start together (serve + library) — lock the
+    // read-modify-write so one record cannot clobber the other.
+    await withFileLock(lockPath(), async () => {
+        const alive = readAll().filter((s) => isAlive(s.pid) && s.pid !== server.pid);
+        alive.push(server);
+        writeAll(alive);
+    });
 }
 
-export function removeRunning(pid: number): void {
-    writeAll(readAll().filter((s) => s.pid !== pid));
+export async function removeRunning(pid: number): Promise<void> {
+    await withFileLock(lockPath(), async () => {
+        writeAll(readAll().filter((s) => s.pid !== pid));
+    });
 }
 
 /** Match by registry name, directory, or port. */

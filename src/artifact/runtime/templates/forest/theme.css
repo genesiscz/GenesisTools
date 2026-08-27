@@ -13,5 +13,5 @@
     --info: #7fbcc9;
     --radius: 12px;
     --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
-    --font-code: "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --font-code: "IBM Plex Mono", "JetBrains Mono", ui-monospace, "Menlo", monospace;
 }

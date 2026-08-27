@@ -13,17 +13,20 @@ const DEFAULT_TEMPLATE = "default";
  * shipped default, so a custom template may override just one page.
  */
 export function resolveTemplateDir(nameOrDir: string | undefined): string {
-    if (!nameOrDir) {
+    // "graphite" is the default palette's real name — the shipped dir is "default".
+    const requested = nameOrDir === "graphite" ? DEFAULT_TEMPLATE : nameOrDir;
+
+    if (!requested) {
         return join(SHIPPED_TEMPLATES_DIR, DEFAULT_TEMPLATE);
     }
 
-    const shipped = join(SHIPPED_TEMPLATES_DIR, nameOrDir);
+    const shipped = join(SHIPPED_TEMPLATES_DIR, requested);
 
     if (existsSync(shipped) && statSync(shipped).isDirectory()) {
         return shipped;
     }
 
-    const asDir = resolve(nameOrDir);
+    const asDir = resolve(requested);
 
     if (existsSync(asDir) && statSync(asDir).isDirectory()) {
         return asDir;
@@ -78,4 +81,17 @@ export function describeShippedTemplates(): TemplateInfo[] {
 /** Fill {{KEY}} placeholders. Unknown placeholders are left intact. */
 export function renderTemplate(template: string, vars: Record<string, string>): string {
     return template.replace(/\{\{([A-Z_]+)\}\}/g, (full, key: string) => vars[key] ?? full);
+}
+
+/** HTML-escape text for element/attribute interpolation. */
+export function escapeHtml(text: string): string {
+    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+/** Percent-encode each path segment (spaces, #, ?) while keeping the slashes. */
+export function encodeHrefPath(path: string): string {
+    return path
+        .split("/")
+        .map((segment) => encodeURIComponent(segment))
+        .join("/");
 }

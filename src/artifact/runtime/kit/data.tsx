@@ -15,6 +15,8 @@ import {
 export interface TabItem {
     id: string;
     label: string;
+    /** Status pill rendered after the label (e.g. MERGED, OPEN, OUR BUG). */
+    badge?: { text: string; tone?: Tone };
     content: ReactNode;
 }
 
@@ -22,10 +24,14 @@ export interface TabsProps {
     tabs: TabItem[];
     /** Initial tab id (default: first, or the location hash). */
     initial?: string;
+    /** Pin the tab bar to the top while the panel scrolls (default true). */
+    sticky?: boolean;
+    /** One-line bar that scrolls horizontally instead of wrapping (default: wrap to multiple lines). */
+    scroll?: boolean;
 }
 
 /** Tab bar + panels. The active tab syncs to the URL hash, so tabs are linkable. */
-export function Tabs({ tabs, initial }: TabsProps) {
+export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps) {
     const fromHash = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
     const start = tabs.some((t) => t.id === fromHash) ? fromHash : (initial ?? tabs[0]?.id);
     const [active, setActive] = useState(start);
@@ -33,7 +39,11 @@ export function Tabs({ tabs, initial }: TabsProps) {
 
     return (
         <div>
-            <div className="mb-6 flex flex-wrap gap-1 border-b border-line">
+            <div
+                className={`mb-6 flex gap-1 border-b border-line ${
+                    scroll ? "flex-nowrap overflow-x-auto [scrollbar-width:thin]" : "flex-wrap"
+                } ${sticky ? "sticky top-0 z-20 bg-canvas/95 pt-1 backdrop-blur-sm" : ""}`}
+            >
                 {tabs.map((t) => (
                     <button
                         key={t.id}
@@ -42,13 +52,18 @@ export function Tabs({ tabs, initial }: TabsProps) {
                             setActive(t.id);
                             history.replaceState(null, "", `#${t.id}`);
                         }}
-                        className={
+                        className={`${scroll ? "shrink-0 " : ""}${
                             t.id === current?.id
-                                ? "rounded-t-card border border-b-0 border-line bg-panel px-4 py-2 text-sm font-medium text-ink"
-                                : "rounded-t-card px-4 py-2 text-sm text-dim transition-colors hover:bg-panel/60 hover:text-ink"
-                        }
+                                ? "inline-flex items-center gap-1.5 rounded-t-card border border-b-0 border-line bg-panel px-4 py-2 text-sm font-medium text-ink"
+                                : "inline-flex items-center gap-1.5 rounded-t-card px-4 py-2 text-sm text-dim transition-colors hover:bg-panel/60 hover:text-ink"
+                        }`}
                     >
                         {t.label}
+                        {t.badge ? (
+                            <Badge tone={t.badge.tone ?? "neutral"} pill>
+                                {t.badge.text}
+                            </Badge>
+                        ) : null}
                     </button>
                 ))}
             </div>
@@ -116,6 +131,8 @@ export interface DataTableProps {
     filter?: boolean;
     caption?: string;
     /** Row tint (claim/verdict tables): return a Tone for a row, or undefined. */
+    /** Row highlight. Receives the row exactly as passed in `rows` — i.e. AFTER any
+     * cell-object mapping you did — so read tones back out of your own cell shapes. */
     rowTone?: (row: Record<string, DataTableCell>, index: number) => Tone | undefined;
     /** Render string cells as inline markdown (extracted data carries bold and code spans). */
     markdown?: boolean;
@@ -140,8 +157,9 @@ export function DataTable({ columns, rows, filter = false, caption, rowTone, mar
     const renderCell = (cell: DataTableCell): ReactNode => {
         if (isCellObject(cell)) {
             const inner = (cell.md ?? markdown) ? <MdInline>{cell.text}</MdInline> : cell.text;
+            const toned = cell.tone ? <span className={TONE_TEXT[cell.tone]}>{inner}</span> : inner;
 
-            return cell.tone ? <span className={TONE_TEXT[cell.tone]}>{inner}</span> : inner;
+            return cell.mono ? <span className="font-mono text-[0.82rem]">{toned}</span> : toned;
         }
 
         if (typeof cell === "string" && markdown) {

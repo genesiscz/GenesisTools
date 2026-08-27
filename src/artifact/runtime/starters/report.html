@@ -78,12 +78,19 @@
         } catch { return fallback; }
     }
 
+    // Escape everything interpolated into innerHTML — data.json is content, not markup.
+    const esc = (v) => String(v)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+
     const data = await loadData();
     document.getElementById("stats").innerHTML = data.stats
-        .map((s) => `<div class="stat"><b>${s.value}</b><span>${s.label}</span></div>`)
+        .map((s) => `<div class="stat"><b>${esc(s.value)}</b><span>${esc(s.label)}</span></div>`)
         .join("");
     document.getElementById("rows").innerHTML = data.rows
-        .map((r) => `<tr><td>${r.item}</td><td>${r.status}</td><td class="num">${r.value}</td></tr>`)
+        .map((r) => `<tr><td>${esc(r.item)}</td><td>${esc(r.status)}</td><td class="num">${esc(r.value)}</td></tr>`)
         .join("");
 </script>
 </body>

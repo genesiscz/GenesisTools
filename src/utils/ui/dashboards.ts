@@ -141,6 +141,18 @@ export const DASHBOARDS = {
         note: "Serves arbitrary registered folders; registry at ~/.genesis-tools/artifact/registry.json.",
         matchProcess: matchGenesisTool("src/artifact", "artifact serve"),
     },
+    "artifact-library": {
+        key: "artifact-library",
+        name: "Artifact Library",
+        description: "ONE server for every registered artifact folder (/a/<name>/ mounts).",
+        port: 3096,
+        strictPort: true,
+        launch: "tools artifact library up",
+        portOverride: { flag: "--port" },
+        tech: "vite",
+        auth: "none",
+        matchProcess: matchGenesisTool("artifact library", "src/artifact"),
+    },
     "claude-history": {
         key: "claude-history",
         name: "Claude History Browser",

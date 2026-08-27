@@ -79,7 +79,7 @@ export function Hero({ kicker, title, subtitle, chips, children }: HeroProps) {
                 <div className="mb-1 font-mono text-[0.7rem] uppercase tracking-[0.16em] text-dim">{kicker}</div>
             ) : null}
             <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">{title}</h1>
-            {subtitle ? <div className="mt-2 max-w-prose text-dim">{renderBody(subtitle)}</div> : null}
+            {subtitle ? <div className="mt-2 text-dim">{renderBody(subtitle)}</div> : null}
             {chips?.length ? <Chips items={chips} className="mt-3" /> : null}
             {children}
         </header>
@@ -116,11 +116,32 @@ export function Chips({ items, className }: ChipsProps) {
 
 export interface BadgeProps {
     tone?: Tone;
+    /** Saturated rounded pill (deep tone fill, no border) — the status-chip look. */
+    pill?: boolean;
     children: ReactNode;
 }
 
+/** Deep tone fills for pill badges — saturated enough to read as a colored chip. */
+const TONE_BG_PILL: Record<Tone, string> = {
+    ok: "bg-ok/20",
+    warn: "bg-warn/20",
+    err: "bg-err/20",
+    info: "bg-info/20",
+    neutral: "bg-panel",
+};
+
 /** Inline status/verdict badge. */
-export function Badge({ tone = "neutral", children }: BadgeProps) {
+export function Badge({ tone = "neutral", pill = false, children }: BadgeProps) {
+    if (pill) {
+        return (
+            <span
+                className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-[0.68rem] font-bold uppercase tracking-wide ${TONE_BG_PILL[tone]} ${TONE_TEXT[tone]}`}
+            >
+                {children}
+            </span>
+        );
+    }
+
     return (
         <span
             className={`inline-block rounded-card border px-1.5 py-0.5 font-mono text-[0.72rem] font-semibold uppercase tracking-wide ${TONE_BORDER[tone]} ${TONE_BG[tone]} ${TONE_TEXT[tone]}`}
@@ -143,6 +164,30 @@ export function Callout({ tone = "info", title, children }: CalloutProps) {
             {title ? <div className={`mb-1 font-semibold ${TONE_TEXT[tone]}`}>{title}</div> : null}
             <div className="text-ink/90">{renderBody(children)}</div>
         </div>
+    );
+}
+
+export interface CollapseProps {
+    summary: ReactNode;
+    /** Right-aligned metadata on the summary row (counts, totals). */
+    meta?: ReactNode;
+    open?: boolean;
+    children: ReactNode;
+}
+
+/** Collapsed-by-default drill-down row (native details/summary, kit-styled). */
+export function Collapse({ summary, meta, open = false, children }: CollapseProps) {
+    return (
+        <details className="group border-t border-line" open={open}>
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded px-1 py-2 font-medium text-ink hover:bg-panel/60 [&::-webkit-details-marker]:hidden">
+                <span className="inline-flex items-center gap-1.5">
+                    <span className="text-dim transition-transform group-open:rotate-90">▸</span>
+                    {summary}
+                </span>
+                {meta ? <span className="whitespace-nowrap font-mono text-xs text-dim">{meta}</span> : null}
+            </summary>
+            <div className="pb-4">{children}</div>
+        </details>
     );
 }
 
@@ -213,6 +258,14 @@ export function CodeBlock({ children, label, wrap = false, copy = true, highligh
     const [copied, setCopied] = useState(false);
     const marked = (highlightLines?.length ?? 0) + (badLines?.length ?? 0) > 0;
     const onCopy = (): void => {
+        // navigator.clipboard is undefined in non-secure contexts (plain http
+        // on a non-loopback host) — the property access itself would throw.
+        if (!navigator.clipboard) {
+            setCopied(false);
+
+            return;
+        }
+
         navigator.clipboard
             .writeText(children)
             .then(() => {

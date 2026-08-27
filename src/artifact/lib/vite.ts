@@ -66,7 +66,10 @@ export function baseResolve(): { alias: Record<string, string> } {
             // react ships CJS, and only the prebundle gives it ESM named exports.
             react: join(REPO_ROOT, "node_modules", "react"),
             "react-dom": join(REPO_ROOT, "node_modules", "react-dom"),
+            "react-is": join(REPO_ROOT, "node_modules", "react-is"),
+            "chart.js": join(REPO_ROOT, "node_modules", "chart.js"),
             marked: join(REPO_ROOT, "node_modules", "marked"),
+            recharts: join(REPO_ROOT, "node_modules", "recharts"),
         },
     };
 }
@@ -78,7 +81,16 @@ export function baseResolve(): { alias: Record<string, string> } {
  */
 export function baseOptimizeDeps(): { include: string[] } {
     return {
-        include: ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom/client", "marked"],
+        include: [
+            "react",
+            "react/jsx-runtime",
+            "react/jsx-dev-runtime",
+            "react-dom/client",
+            "react-is",
+            "marked",
+            "recharts",
+            "chart.js",
+        ],
     };
 }
 

@@ -75,8 +75,10 @@ code retints completely. A custom template dir may override just `theme.css`.
   copy. Czech content stays Czech. No em-dashes anywhere in visible text.
 - Density with breathing room: stats in `StatGrid`, long lists in filterable `DataTable` or
   `QA`/`Bullets`, evidence in `CodeBlock` with the load-bearing lines highlighted.
-- Charts: read the `dataviz` skill before writing any chart code; `SeriesTable` is the
-  no-dependency fallback.
+- Charts: read the `dataviz` skill before writing any chart code. `DayChart` (bars/lines/
+  stacks, log scales, markers) and `DonutChart` cover the common shapes and follow the theme
+  tones; `ChartJs` takes a raw Chart.js v4 config when you need something they don't cover;
+  `SeriesTable` renders any series as a plain table.
 
 ## Verify with curl, not a browser
 

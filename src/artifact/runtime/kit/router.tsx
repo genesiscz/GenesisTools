@@ -79,7 +79,18 @@ function currentPath(base: string): string {
     const pathname = window.location.pathname;
     const rest = pathname.startsWith(base) ? pathname.slice(base.length) : pathname;
 
-    return rest === "" ? "/" : normalizePath(decodeURIComponent(rest));
+    // Keep the path RAW here: matchRoute decodes per segment, and decoding the
+    // whole path would corrupt %2F params and double-decode literals.
+    return rest === "" ? "/" : normalizePath(rest);
+}
+
+function safeDecode(segment: string): string {
+    try {
+        return decodeURIComponent(segment);
+    } catch {
+        // Malformed sequences (%zz) must not throw during render.
+        return segment;
+    }
 }
 
 /** Match a pattern like "/items/:id" against a concrete path. */
@@ -98,7 +109,7 @@ export function matchRoute(pattern: string, path: string): Record<string, string
         const actual = pathParts[i];
 
         if (expected.startsWith(":")) {
-            params[expected.slice(1)] = decodeURIComponent(actual);
+            params[expected.slice(1)] = safeDecode(actual);
         } else if (expected !== actual) {
             return null;
         }

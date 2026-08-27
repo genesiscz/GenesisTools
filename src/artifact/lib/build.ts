@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -36,6 +36,20 @@ export interface BuildResult {
 
 function isTsxEntry(entry: string): boolean {
     return entry.endsWith(".tsx") || entry.endsWith(".jsx");
+}
+
+/**
+ * Any EXPLICITLY named entry (file target, --entry flag, or a registry entry)
+ * means "build this one artifact" — embed only what it references, never the
+ * surrounding folder (it may be a vault). Only a bare directory whose entry was
+ * auto-detected is folder-shaped and embeds the whole tree.
+ */
+export function embedScopeFor(source: {
+    fileTargetEntry?: string | null;
+    entryFlag?: string;
+    registryEntry?: string;
+}): "referenced" | "tree" {
+    return source.fileTargetEntry || source.entryFlag || source.registryEntry ? "referenced" : "tree";
 }
 
 /** Pick the entry: explicit (.html/.tsx/.jsx) > index.html > the only .html in the dir root. */
@@ -234,9 +248,23 @@ export function collectReferencedFiles(
  * file is blocked), relative-URL fetches are answered from the embedded map.
  * Served over http the shim is inert and the real files stay authoritative.
  */
-export function fetchShimScript(files: Record<string, string>): string {
+export function fetchShimScript(files: Record<string, string>, entryRel = ""): string {
+    // The browser resolves relative fetches against the BUILT PAGE's location,
+    // not the artifact root — for an entry in a subdirectory the two disagree.
+    // Alias every embedded file under its entry-relative key too.
+    const entryDir = entryRel.includes("/") ? entryRel.slice(0, entryRel.lastIndexOf("/") + 1) : "";
+    const aliased: Record<string, string> = { ...files };
+
+    if (entryDir) {
+        for (const [key, value] of Object.entries(files)) {
+            if (key.startsWith(entryDir)) {
+                aliased[key.slice(entryDir.length)] = value;
+            }
+        }
+    }
+
     // <-escape so no embedded content can contain "</script>" and end the tag early.
-    const json = SafeJSON.stringify(files, { strict: true }).replaceAll("<", "\\u003c");
+    const json = SafeJSON.stringify(aliased, { strict: true }).replaceAll("<", "\\u003c");
 
     return `<script>/* artifact:fetch-shim — embedded sibling files for file:// use; inert over http(s) */
 (() => {
@@ -244,8 +272,15 @@ export function fetchShimScript(files: Record<string, string>): string {
     const FILES = ${json};
     const orig = window.fetch ? window.fetch.bind(window) : null;
     window.fetch = (input, init) => {
-        const raw = typeof input === "string" ? input : (input && input.url) || "";
-        const key = decodeURIComponent(raw.replace(/^\\.\\//, "").split(/[?#]/)[0]);
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.href : (input && input.url) || "";
+        const noQuery = raw.split(/[?#]/)[0];
+        const segments = [];
+        for (const part of noQuery.split("/")) {
+            if (part === "" || part === ".") { continue; }
+            if (part === "..") { segments.pop(); continue; }
+            segments.push(part);
+        }
+        const key = decodeURIComponent(segments.join("/"));
         if (Object.prototype.hasOwnProperty.call(FILES, key)) {
             return Promise.resolve(new Response(FILES[key], { status: 200 }));
         }
@@ -312,16 +347,22 @@ async function buildTsxEntry(dir: string, entryRel: string, entryAbs: string): P
     const tmpRoot = join(cacheDirFor(dir), "tsx-entry");
     const stylesAbs = join(RUNTIME_DIR, "styles.css");
     mkdirSync(tmpRoot, { recursive: true });
-    writeFileSync(
+    // Tailwind's automatic source detection is rooted at tmpRoot here, so the
+    // artifact dir must be registered explicitly or entry-only classes drop.
+    const buildCss = `@import ${SafeJSON.stringify(relative(tmpRoot, stylesAbs).split(sep).join("/"), { strict: true })};
+@source ${SafeJSON.stringify(relative(tmpRoot, dir).split(sep).join("/"), { strict: true })};
+`;
+    await Bun.write(join(tmpRoot, "build.css"), buildCss);
+    await Bun.write(
         join(tmpRoot, "mount.tsx"),
-        `import ${SafeJSON.stringify(stylesAbs, { strict: true })};
+        `import "./build.css";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import Component from ${SafeJSON.stringify(entryAbs, { strict: true })};
 createRoot(document.getElementById("root") as HTMLElement).render(React.createElement(Component));
 `
     );
-    writeFileSync(
+    await Bun.write(
         join(tmpRoot, "index.html"),
         `<!doctype html>
 <html lang="en">
@@ -385,13 +426,19 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
             : collectEmbeddableFiles(dir, limitBytes, exclude);
 
     if (scan.embedded.length > 0) {
-        html = injectShim(html, fetchShimScript(scan.files));
+        html = injectShim(html, fetchShimScript(scan.files, entryRel));
     }
 
     mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, html);
+    await Bun.write(outPath, html);
     logger.info(
-        { outPath, bytes: html.length, bundled, embedded: scan.embedded.length, skipped: scan.skipped.length },
+        {
+            outPath,
+            bytes: Buffer.byteLength(html),
+            bundled,
+            embedded: scan.embedded.length,
+            skipped: scan.skipped.length,
+        },
         "[artifact] build finished"
     );
 
@@ -409,8 +456,18 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
  * (debounced). Rebuilds cover the entry, its imports, and embedded data files
  * alike — the whole pipeline re-runs, which keeps the logic in one place.
  */
+export function resolveOutPath(options: BuildOptions): string {
+    const dir = resolve(options.dir);
+    const outBase = isTsxEntry(options.entry)
+        ? `${basename(options.entry).replace(/\.(tsx|jsx)$/, "")}.html`
+        : basename(options.entry);
+
+    return resolve(options.out ?? join(dir, "dist", outBase));
+}
+
 export function watchAndRebuild(options: BuildOptions, onBuild: (result: BuildResult) => void): () => void {
     const dir = resolve(options.dir);
+    const outAbs = resolveOutPath(options);
     let timer: ReturnType<typeof setTimeout> | null = null;
     let building = false;
     let dirty = false;
@@ -439,9 +496,16 @@ export function watchAndRebuild(options: BuildOptions, onBuild: (result: BuildRe
     };
 
     const watcher = watch(dir, { recursive: true }, (_event, filename) => {
-        const name = filename ?? "";
+        const name = (filename ?? "").split(sep).join("/");
 
-        if (name.startsWith("dist/") || name.startsWith(".") || name.includes("node_modules")) {
+        // Skipping the output file is what breaks the rebuild->watch->rebuild loop
+        // when --out points inside the watched dir but not under dist/.
+        if (
+            name.startsWith("dist/") ||
+            name.startsWith(".") ||
+            name.includes("node_modules") ||
+            resolve(dir, name) === outAbs
+        ) {
             return;
         }
 

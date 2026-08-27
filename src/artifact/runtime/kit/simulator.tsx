@@ -57,7 +57,9 @@ export function Simulator({ title, initial, steps, interval = 1400 }: SimulatorP
     const [index, setIndex] = useState(0);
     const [playing, setPlaying] = useState(false);
     const frames = useMemo(() => computeFrames(initial, steps), [initial, steps]);
-    const frame = frames[index];
+    // Clamp: a consumer may re-render with a SHORTER steps array while index
+    // still points past the new end.
+    const frame = frames[Math.min(index, frames.length - 1)];
     const logRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
