@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { MdViewer } from "./md";
-import { CodeBlock, Collapse } from "./primitives";
+import { CodeBlock, Collapse, SegmentedControl } from "./primitives";
 import { matchRoute } from "./router";
 import { mountDom } from "./test-dom";
 
@@ -165,6 +165,47 @@ describe("DataTable accessibility", () => {
 
         // The placeholder disappears once the user types; aria-label does not.
         expect(input?.getAttribute("aria-label")).toBe("filter rows: Runs");
+
+        await dom.unmount();
+    });
+});
+
+describe("SegmentedControl accessibility", () => {
+    const options = [
+        { value: "day", label: "Day" },
+        { value: "week", label: "Week" },
+    ];
+
+    test("the active option is announced, not just tinted", async () => {
+        const dom = await mountDom(<SegmentedControl options={options} value="week" onChange={() => {}} />);
+        const buttons = [...dom.container.querySelectorAll("button")];
+
+        expect(buttons.map((b) => b.getAttribute("role"))).toEqual(["radio", "radio"]);
+        expect(buttons.map((b) => b.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+
+        await dom.unmount();
+    });
+
+    test("the visible label names the group programmatically", async () => {
+        const dom = await mountDom(
+            <SegmentedControl options={options} value="day" onChange={() => {}} label="Range" />
+        );
+        const group = dom.container.querySelector('[role="radiogroup"]');
+        const labelledBy = group?.getAttribute("aria-labelledby");
+
+        // getElementById, not a selector: React's useId emits colons (":r1:"),
+        // which are not valid in a CSS id selector without escaping.
+        expect(labelledBy).toBeTruthy();
+        expect(dom.window.document.getElementById(labelledBy ?? "")?.textContent).toBe("Range");
+
+        await dom.unmount();
+    });
+
+    test("with no label the group carries no dangling aria-labelledby", async () => {
+        const dom = await mountDom(<SegmentedControl options={options} value="day" onChange={() => {}} />);
+        const group = dom.container.querySelector('[role="radiogroup"]');
+
+        expect(group?.hasAttribute("aria-labelledby")).toBe(false);
 
         await dom.unmount();
     });

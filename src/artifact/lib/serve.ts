@@ -1,6 +1,6 @@
 import { createServer, type ViteDevServer } from "vite";
 import { artifactServePlugin } from "./catalog";
-import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, REPO_ROOT } from "./vite";
+import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, fsAllowRoots } from "./vite";
 
 export interface ServeOptions {
     dir: string;
@@ -30,7 +30,7 @@ export async function serveArtifacts(options: ServeOptions): Promise<ViteDevServ
             port: options.port,
             strictPort: false,
             host: options.host ?? "127.0.0.1",
-            fs: { allow: [options.dir, REPO_ROOT] },
+            fs: { allow: fsAllowRoots(options.dir) },
         },
     });
 

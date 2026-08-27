@@ -95,6 +95,24 @@ export function baseOptimizeDeps(): { include: string[] } {
 }
 
 /**
+ * What a dev server may read off disk, for `server.fs.allow`.
+ *
+ * Vite serves any allowed file over `/@fs/<absolute path>`, and `serve --host`
+ * publishes the server beyond loopback, so this list is the blast radius of a
+ * hostile request. The whole REPO_ROOT used to be on it, which handed a remote
+ * client every plan, script, plugin and dotfile in the checkout.
+ *
+ * `src` and `node_modules` are what the aliases actually reach: `@artifact/kit`
+ * and `@genesiscz/utils` live under `src`, the pinned react/recharts/chart.js
+ * copies under `node_modules`, and `@genesistools/…` is documented in both the
+ * README and the skill as `@genesistools/src/<path>`. An import that points
+ * outside those two now fails loudly instead of being served.
+ */
+export function fsAllowRoots(dir: string): string[] {
+    return [dir, join(REPO_ROOT, "src"), join(REPO_ROOT, "node_modules")];
+}
+
+/**
  * Per-served-dir Vite cache under the REPO's node_modules, never under the
  * served directory: the served dir is user content (often a vault folder) and
  * must not grow a node_modules/.vite of its own.

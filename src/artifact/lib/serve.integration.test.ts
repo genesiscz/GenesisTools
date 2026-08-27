@@ -29,6 +29,13 @@ beforeAll(async () => {
     outside = realpathSync(mkdtempSync(join(tmpdir(), "artifact-serve-outside-")));
 
     writeFileSync(join(dir, "widget.tsx"), "export default () => null;\n");
+    // Imports the two repo-backed aliases, so the transform only succeeds if the
+    // dev server may still READ them under the narrowed server.fs.allow.
+    writeFileSync(
+        join(dir, "kitted.tsx"),
+        'import { Page } from "@artifact/kit";\nimport { formatBytes } from "@genesiscz/utils/format";\n' +
+            "export default () => <Page>{formatBytes(1024)}</Page>;\n"
+    );
     writeFileSync(join(dir, "notes.md"), "# Notes\n\nplain body\n");
     writeFileSync(join(dir, "report.html"), "<html><head></head><body>REPORT_BODY</body></html>");
     writeFileSync(join(dir, "data.json"), `{"a":1}`);
@@ -127,5 +134,27 @@ describe("serveArtifacts middleware", () => {
         const { status, body } = await get("/deep");
         expect(status).toBe(200);
         expect(body).toContain(`href="/deep/inner"`);
+    });
+
+    /**
+     * server.fs.allow used to be the whole checkout, and `serve --host` puts that
+     * on the network. It is now the served dir, the repo's src and its
+     * node_modules — exactly what the aliases need. These two tests are the pair:
+     * the kit still loads, the rest of the checkout does not.
+     */
+    test("a tsx artifact importing @artifact/kit and @genesiscz/utils still transforms", async () => {
+        const { status, body } = await get("/kitted.tsx");
+
+        expect(status).toBe(200);
+        expect(body).not.toContain("not allowed");
+        expect(body).toContain("formatBytes");
+    });
+
+    test("the repo's non-source trees are not readable through Vite's /@fs endpoint", async () => {
+        const repoRoot = join(import.meta.dir, "..", "..", "..");
+        const denied = await get(`/@fs${join(repoRoot, "package.json")}`);
+
+        expect(denied.status).not.toBe(200);
+        expect(denied.body).not.toContain("devDependencies");
     });
 });

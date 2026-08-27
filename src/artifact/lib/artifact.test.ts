@@ -10,7 +10,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import {
@@ -22,6 +22,7 @@ import {
     hasLocalAssetRefs,
     injectShim,
     inlineAssets,
+    resolveEmbedBudget,
     resolveEntry,
     resolveOutPath,
 } from "./build";
@@ -38,7 +39,8 @@ import { renderMarkdown } from "./markdown";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
 import { findRunning, holdServer, isSignalable, listRunning, recordRunning, removeRunning } from "./running";
 import { runningPath } from "./storage";
-import { renderTemplate, resolveTemplateDir } from "./templates";
+import { listShippedTemplates, renderTemplate, resolveTemplateDir } from "./templates";
+import { fsAllowRoots } from "./vite";
 
 setupStorageSandbox();
 
@@ -419,6 +421,90 @@ describe("templates", () => {
 
     test("unknown template name throws with the shipped list", () => {
         expect(() => resolveTemplateDir("nope-template")).toThrow(/default/);
+    });
+
+    // The page shell is shared by EVERY template, so a literal color in it is
+    // baked into themes it was never picked for. `bone` is light (--bg #f3f4f2),
+    // and the headings used to be a hardcoded #eef2f8: near-white on near-white.
+    test("the shared page shell colors nothing literally, only through theme tokens", () => {
+        const shell = readFileSync(join(resolveTemplateDir(undefined), "page.html"), "utf8");
+        const styles = shell.slice(shell.indexOf("<style>"), shell.lastIndexOf("</style>"));
+
+        expect(styles).not.toMatch(/color:\s*#[0-9a-fA-F]{3,8}/);
+        expect(styles).toContain("color: var(--text)");
+    });
+
+    test("every shipped theme defines the tokens the shared page shell paints with", () => {
+        const required = ["--bg", "--text", "--dim", "--border", "--panel", "--accent"];
+        const missing = listShippedTemplates().flatMap((name) => {
+            const theme = readFileSync(join(resolveTemplateDir(name), "theme.css"), "utf8");
+
+            return required.filter((token) => !theme.includes(`${token}:`)).map((token) => `${name}${token}`);
+        });
+
+        expect(missing).toEqual([]);
+        expect(listShippedTemplates().length).toBeGreaterThanOrEqual(6);
+    });
+});
+
+describe("dev-server filesystem exposure", () => {
+    // Vite serves every allowed path over /@fs/<absolute path>, and `serve --host`
+    // publishes that beyond loopback, so this list IS the blast radius.
+    test("only the served dir, the repo's src and its node_modules are reachable", () => {
+        const roots = fsAllowRoots("/tmp/served");
+        const repo = resolve(import.meta.dir, "../../..");
+
+        expect(roots).toEqual(["/tmp/served", join(repo, "src"), join(repo, "node_modules")]);
+        expect(roots).not.toContain(repo);
+    });
+
+    test("the repo's non-source trees stay off the list", () => {
+        const roots = fsAllowRoots("/tmp/served");
+        const repo = resolve(import.meta.dir, "../../..");
+
+        for (const tree of [".claude", ".github", "plugins", "scripts"]) {
+            expect(roots.some((root) => join(repo, tree).startsWith(`${root}/`))).toBe(false);
+        }
+    });
+
+    test("both start paths share ONE definition, so neither can drift open", () => {
+        const serveSource = readFileSync(join(import.meta.dir, "serve.ts"), "utf8");
+        const librarySource = readFileSync(join(import.meta.dir, "library.ts"), "utf8");
+
+        expect(serveSource).toContain("fs: { allow: fsAllowRoots(");
+        expect(librarySource).toContain("fs: { allow: fsAllowRoots(");
+        expect(serveSource).not.toContain("REPO_ROOT");
+        expect(librarySource).not.toContain("REPO_ROOT");
+    });
+});
+
+describe("embed budget", () => {
+    test("defaults apply when the caller passes nothing", () => {
+        expect(resolveEmbedBudget({})).toEqual({ limitBytes: 5 * 1024 * 1024, totalBytes: 32 * 1024 * 1024 });
+    });
+
+    test("explicit megabytes convert to bytes", () => {
+        expect(resolveEmbedBudget({ embedLimitMb: 0.5, embedTotalMb: 2 })).toEqual({
+            limitBytes: 512 * 1024,
+            totalBytes: 2 * 1024 * 1024,
+        });
+    });
+
+    // Both defeat every comparison in admits(), so an unvalidated value does not
+    // widen the cap, it REMOVES it — silently, while the build still reports ok.
+    test("a cap that is not a finite positive number is refused, not silently uncapped", () => {
+        expect(() => resolveEmbedBudget({ embedTotalMb: Number.NaN })).toThrow(/--max-embed-total/);
+        expect(() => resolveEmbedBudget({ embedTotalMb: Number.POSITIVE_INFINITY })).toThrow(/--max-embed-total/);
+        expect(() => resolveEmbedBudget({ embedTotalMb: 0 })).toThrow(/--max-embed-total/);
+        expect(() => resolveEmbedBudget({ embedTotalMb: -1 })).toThrow(/--max-embed-total/);
+        expect(() => resolveEmbedBudget({ embedLimitMb: Number.NaN })).toThrow(/--max-embed/);
+        expect(() => resolveEmbedBudget({ embedLimitMb: Number.POSITIVE_INFINITY })).toThrow(/--max-embed/);
+    });
+
+    test("the CLI's own parse of a malformed flag is what the guard catches", () => {
+        expect(() => resolveEmbedBudget({ embedTotalMb: Number.parseFloat("nope") })).toThrow(/finite/);
+        expect(() => resolveEmbedBudget({ embedTotalMb: Number.parseFloat("Infinity") })).toThrow(/finite/);
+        expect(resolveEmbedBudget({ embedTotalMb: Number.parseFloat("32") }).totalBytes).toBe(32 * 1024 * 1024);
     });
 });
 

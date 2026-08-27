@@ -180,6 +180,34 @@ export interface EmbedBudget {
     totalBytes: number;
 }
 
+/**
+ * Turn the megabyte options into a byte budget, REJECTING anything that would
+ * silently uncap it.
+ *
+ * `--max-embed-total nope` parses to NaN and `--max-embed-total Infinity` to
+ * Infinity. Both make every comparison in `admits()` false (`size > NaN` and
+ * `total + size > Infinity` alike), so the advertised cap would be gone and a
+ * tree build would read an unbounded amount of data into the output string
+ * while still reporting success. Guarding here rather than in the CLI action
+ * covers the programmatic callers too.
+ */
+export function resolveEmbedBudget(options: Pick<BuildOptions, "embedLimitMb" | "embedTotalMb">): EmbedBudget {
+    const megabytes = (value: number | undefined, fallback: number, flag: string): number => {
+        const mb = value ?? fallback;
+
+        if (!Number.isFinite(mb) || mb <= 0) {
+            throw new Error(`${flag} must be a finite number of megabytes greater than 0 (got ${mb}).`);
+        }
+
+        return mb * 1024 * 1024;
+    };
+
+    return {
+        limitBytes: megabytes(options.embedLimitMb, DEFAULT_EMBED_LIMIT_MB, "--max-embed"),
+        totalBytes: megabytes(options.embedTotalMb, DEFAULT_EMBED_TOTAL_MB, "--max-embed-total"),
+    };
+}
+
 interface EmbedScan {
     files: Record<string, string>;
     embedded: string[];
@@ -530,10 +558,7 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
         throw new Error("Output path equals the entry file — refusing to overwrite the source.");
     }
 
-    const budget: EmbedBudget = {
-        limitBytes: (options.embedLimitMb ?? DEFAULT_EMBED_LIMIT_MB) * 1024 * 1024,
-        totalBytes: (options.embedTotalMb ?? DEFAULT_EMBED_TOTAL_MB) * 1024 * 1024,
-    };
+    const budget = resolveEmbedBudget(options);
     const exclude = new Set([entryAbs, outPath]);
     const scan =
         options.embedScope === "referenced"

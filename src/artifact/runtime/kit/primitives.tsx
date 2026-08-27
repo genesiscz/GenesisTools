@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Md } from "./md";
 
 export type Tone = "ok" | "warn" | "err" | "info" | "neutral";
@@ -445,16 +445,36 @@ export interface SegmentedControlProps {
     label?: string;
 }
 
-/** Pick-one segmented control (drives simulators, filters, mode switches). */
+/**
+ * Pick-one segmented control (drives simulators, filters, mode switches).
+ *
+ * The group is a `radiogroup` rather than a row of buttons: which option is
+ * active was carried only by the accent fill, so a screen reader heard three
+ * ordinary buttons and nothing about the current mode. `aria-checked` states it,
+ * and the optional visual label is tied to the group through `aria-labelledby`
+ * instead of merely sitting next to it.
+ */
 export function SegmentedControl({ options, value, onChange, label }: SegmentedControlProps) {
+    const labelId = useId();
+
     return (
         <div className="inline-flex items-center gap-2">
-            {label ? <span className="text-xs text-dim">{label}</span> : null}
-            <div className="inline-flex overflow-hidden rounded-card border border-line">
+            {label ? (
+                <span id={labelId} className="text-xs text-dim">
+                    {label}
+                </span>
+            ) : null}
+            <div
+                role="radiogroup"
+                aria-labelledby={label ? labelId : undefined}
+                className="inline-flex overflow-hidden rounded-card border border-line"
+            >
                 {options.map((option) => (
                     <button
                         key={option.value}
                         type="button"
+                        role="radio"
+                        aria-checked={option.value === value}
                         onClick={() => onChange(option.value)}
                         className={
                             option.value === value

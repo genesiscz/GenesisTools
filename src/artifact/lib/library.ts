@@ -7,7 +7,7 @@ import { artifactServePlugin, cachedScan } from "./catalog";
 import { createMountCache } from "./mount-cache";
 import { type DashboardEntry, loadRegistry } from "./registry";
 import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate } from "./templates";
-import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, REPO_ROOT } from "./vite";
+import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, fsAllowRoots } from "./vite";
 
 /**
  * `tools artifact library up`: ONE server for every registered artifact folder.
@@ -96,7 +96,7 @@ function startMount(
         server: {
             middlewareMode: true,
             hmr: { server: httpServer, path: `${urlBase}/__hmr` },
-            fs: { allow: [entry.dir, REPO_ROOT] },
+            fs: { allow: fsAllowRoots(entry.dir) },
         },
     });
 }

@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { out } from "@genesiscz/utils/logger";
-import { stripAnsi } from "@genesiscz/utils/string";
 import { renderMarkdownToCli } from "./markdown/index.js";
 
 /**
@@ -18,9 +17,14 @@ export function printReadmeAndExit(toolDir: string): never {
 
     if (existsSync(readmePath)) {
         const content = readFileSync(readmePath, "utf-8");
-        const rendered = renderMarkdownToCli(content);
-        // Piped/captured output gets plain text — ANSI leaks as literal escapes there.
-        out.println(process.stdout.isTTY ? rendered : stripAnsi(rendered));
+        // Piped/captured output gets plain text — ANSI leaks as literal escapes
+        // there. The renderer owns the stripping, so this does not re-walk the
+        // output a second time to undo what it just wrote.
+        //
+        // Boolean(), not the raw value: `isTTY` is UNDEFINED when stdout is a
+        // pipe, and the renderer strips on `color === false` exactly, so passing
+        // it through would colour piped output.
+        out.println(renderMarkdownToCli(content, { color: Boolean(process.stdout.isTTY) }));
         process.exit(0);
     }
 
