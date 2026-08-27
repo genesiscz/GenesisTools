@@ -6,6 +6,7 @@ import { out } from "@genesiscz/utils/logger";
 import { type MarkdownRenderOptions, renderMarkdownToCli } from "@genesiscz/utils/markdown/index.js";
 import chokidar from "chokidar";
 import { Command, Option } from "commander";
+import { resolveColor } from "./lib/color";
 
 interface MarkdownCLIOptions {
     watch?: boolean;
@@ -37,11 +38,20 @@ program
             .default("auto")
     )
     .option("--no-color", "Strip ANSI color codes from output")
-    .action((file?: string, opts?: MarkdownCLIOptions) => {
+    .option("--color", "Force ANSI colour even when stdout is not a TTY (piping to `less -R`)")
+    .action((file: string | undefined, opts: MarkdownCLIOptions | undefined, command: Command) => {
         const renderOpts: MarkdownRenderOptions = {
             width: opts?.width && !Number.isNaN(opts.width) ? opts.width : undefined,
             theme: (opts?.theme as MarkdownRenderOptions["theme"]) || "dark",
-            color: opts?.color !== false,
+            // Colour follows the TTY unless the user says otherwise. It used to
+            // default to on unconditionally, so piping to a file or another
+            // program embedded raw escapes. `--color` keeps the piped-with-colour
+            // case (`… | less -R`) reachable.
+            //
+            // Boolean() matters: process.stdout.isTTY is `undefined` when stdout
+            // is a pipe, not false, and the renderer strips only on an exact
+            // `color === false`.
+            color: resolveColor(opts?.color, command.getOptionValueSource("color"), Boolean(process.stdout.isTTY)),
             tableEngine: (opts?.tableEngine as MarkdownRenderOptions["tableEngine"]) || "auto",
         };
 
@@ -83,4 +93,9 @@ program
         }
     });
 
-await runTool(program, { tool: "markdown-cli" });
+// Guarded so importing this module does not run the CLI. src/markdown-cli/lib/
+// holds the testable pieces; an unguarded entrypoint is what made the full test
+// suite hang indefinitely on transcribe (see PR #335).
+if (import.meta.main) {
+    await runTool(program, { tool: "markdown-cli" });
+}

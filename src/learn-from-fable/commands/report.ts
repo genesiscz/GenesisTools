@@ -281,5 +281,5 @@ export function reportCommand(config: FableConfig, options: ReportOptions): void
         return;
     }
 
-    out.print(renderMarkdownToCli(markdown));
+    out.print(renderMarkdownToCli(markdown, { color: Boolean(process.stdout.isTTY) }));
 }
