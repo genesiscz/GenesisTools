@@ -2,7 +2,8 @@
  * Iteration (sprint) resolution.
  *
  * Pure logic only: no API calls, no output. The caller fetches the iteration
- * list with `Api.getTeamIterations()` and passes it in.
+ * list with `Api.getTeamIterations()` or `Api.getProjectIterations()` and
+ * passes it in.
  *
  * Why not `@CurrentIteration`: that WIQL macro needs a team context and is
  * resolved server-side, so the CLI cannot tell which iteration it picked. We
@@ -10,8 +11,67 @@
  * predicate in the query instead.
  */
 
-import type { TeamIteration } from "@app/azure-devops/api.types";
+import type { IterationClassificationNode, TeamIteration } from "@app/azure-devops/api.types";
 import { formatLocalDate } from "@genesiscz/utils/date";
+
+/** Which endpoint produced the iteration list the command is working from. */
+export interface IterationSource {
+    kind: "team" | "project";
+    /** The team name for `kind: "team"`, null for the project-wide list. */
+    team: string | null;
+    count: number;
+}
+
+/** One line naming the source, so a row-count difference is never a silent surprise. */
+export function describeIterationSource(source: IterationSource): string {
+    if (source.kind === "team") {
+        return `team "${source.team}" (${source.count} iterations)`;
+    }
+
+    return `project classification nodes (${source.count} iterations)`;
+}
+
+/**
+ * Convert a classification-node path to the `System.IterationPath` form WIQL needs.
+ *
+ * Classification nodes carry a structural path with an `Iteration` segment and a
+ * leading backslash (`\Widgets\Iteration\Sprint 17`). `System.IterationPath` has
+ * neither (`Widgets\Sprint 17`). Strip one leading backslash, then drop the
+ * `\Iteration` segment.
+ */
+export function toIterationPath(nodePath: string): string {
+    return nodePath.replace(/^\\/, "").replace(/\\Iteration(\\|$)/, "$1");
+}
+
+/**
+ * Flatten the iteration classification tree into the shape `getTeamIterations()`
+ * returns. Nodes without a start date are structural containers (the project root,
+ * a release folder) rather than sprints, so they are dropped.
+ */
+export function flattenIterationNodes(root: IterationClassificationNode): TeamIteration[] {
+    const flat: TeamIteration[] = [];
+
+    const walk = (node: IterationClassificationNode): void => {
+        if (node.attributes?.startDate) {
+            flat.push({
+                id: node.identifier,
+                name: node.name,
+                path: toIterationPath(node.path),
+                attributes: {
+                    startDate: node.attributes.startDate,
+                    finishDate: node.attributes.finishDate ?? null,
+                },
+            });
+        }
+
+        for (const child of node.children ?? []) {
+            walk(child);
+        }
+    };
+
+    walk(root);
+    return flat;
+}
 
 export type IterationResolution =
     | { kind: "resolved"; iteration: TeamIteration; matchedBy: "path" | "name" | "substring" | "current" }

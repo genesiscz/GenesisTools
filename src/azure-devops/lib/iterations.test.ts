@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { TeamIteration } from "@app/azure-devops/api.types";
-import { findCurrentIteration, iterationContainsDate, resolveIteration } from "@app/azure-devops/lib/iterations";
+import type { IterationClassificationNode, TeamIteration } from "@app/azure-devops/api.types";
+import {
+    describeIterationSource,
+    findCurrentIteration,
+    flattenIterationNodes,
+    iterationContainsDate,
+    resolveIteration,
+    toIterationPath,
+} from "@app/azure-devops/lib/iterations";
 
 function iteration(name: string, start: string, finish: string, project = "Widgets"): TeamIteration {
     return {
@@ -160,5 +167,105 @@ describe("resolveIteration", () => {
 
     test("reports not-found for a query that matches nothing", () => {
         expect(resolveIteration(ITERATIONS, "Sprint 99", now)).toEqual({ kind: "not-found", query: "Sprint 99" });
+    });
+});
+
+describe("toIterationPath", () => {
+    test("strips the leading backslash and the Iteration segment", () => {
+        expect(toIterationPath("\\Widgets\\Iteration\\Sprint 17")).toBe("Widgets\\Sprint 17");
+    });
+
+    test("keeps a nested release folder below the Iteration segment", () => {
+        expect(toIterationPath("\\Widgets\\Iteration\\Release 3\\Sprint 17")).toBe("Widgets\\Release 3\\Sprint 17");
+    });
+
+    test("the project root node collapses to the project name", () => {
+        expect(toIterationPath("\\Widgets\\Iteration")).toBe("Widgets");
+    });
+
+    test("a path already in System.IterationPath form is left alone", () => {
+        expect(toIterationPath("Widgets\\Sprint 17")).toBe("Widgets\\Sprint 17");
+    });
+
+    test("only the Iteration segment goes, not a sprint whose name starts with it", () => {
+        expect(toIterationPath("\\Widgets\\Iteration\\Iteration planning")).toBe("Widgets\\Iteration planning");
+    });
+});
+
+describe("flattenIterationNodes", () => {
+    const ROOT: IterationClassificationNode = {
+        id: 1,
+        identifier: "00000000-0000-0000-0000-000000000001",
+        name: "Widgets",
+        path: "\\Widgets\\Iteration",
+        structureType: "iteration",
+        hasChildren: true,
+        children: [
+            {
+                id: 2,
+                identifier: "00000000-0000-0000-0000-000000000002",
+                name: "Sprint 16",
+                path: "\\Widgets\\Iteration\\Sprint 16",
+                attributes: { startDate: "2026-08-06T00:00:00Z", finishDate: "2026-08-19T00:00:00Z" },
+            },
+            {
+                id: 3,
+                identifier: "00000000-0000-0000-0000-000000000003",
+                name: "Release 3",
+                path: "\\Widgets\\Iteration\\Release 3",
+                hasChildren: true,
+                children: [
+                    {
+                        id: 4,
+                        identifier: "00000000-0000-0000-0000-000000000004",
+                        name: "Sprint 17",
+                        path: "\\Widgets\\Iteration\\Release 3\\Sprint 17",
+                        attributes: { startDate: "2026-08-20T00:00:00Z", finishDate: "2026-09-02T00:00:00Z" },
+                    },
+                ],
+            },
+        ],
+    };
+
+    test("normalises every path to System.IterationPath form", () => {
+        expect(flattenIterationNodes(ROOT).map((it) => it.path)).toEqual([
+            "Widgets\\Sprint 16",
+            "Widgets\\Release 3\\Sprint 17",
+        ]);
+    });
+
+    test("drops undated container nodes: the project root and the release folder", () => {
+        expect(flattenIterationNodes(ROOT).map((it) => it.name)).toEqual(["Sprint 16", "Sprint 17"]);
+    });
+
+    test("carries the node guid and both dates through", () => {
+        expect(flattenIterationNodes(ROOT)[0]).toEqual({
+            id: "00000000-0000-0000-0000-000000000002",
+            name: "Sprint 16",
+            path: "Widgets\\Sprint 16",
+            attributes: { startDate: "2026-08-06T00:00:00Z", finishDate: "2026-08-19T00:00:00Z" },
+        });
+    });
+
+    test("the flattened list feeds resolveIteration unchanged", () => {
+        const flat = flattenIterationNodes(ROOT);
+        expect(resolveIteration(flat, undefined, new Date(2026, 7, 27))).toMatchObject({
+            kind: "resolved",
+            matchedBy: "current",
+        });
+    });
+});
+
+describe("describeIterationSource", () => {
+    test("names the team and the row count", () => {
+        expect(describeIterationSource({ kind: "team", team: "Payments Team", count: 22 })).toBe(
+            'team "Payments Team" (22 iterations)'
+        );
+    });
+
+    test("names the project fallback and the row count", () => {
+        expect(describeIterationSource({ kind: "project", team: null, count: 26 })).toBe(
+            "project classification nodes (26 iterations)"
+        );
     });
 });

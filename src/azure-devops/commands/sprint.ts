@@ -1,19 +1,29 @@
 /**
  * Azure DevOps CLI - Sprint / iteration commands.
  *
- * `iterations` lists a team's sprints. `sprint` lists the work items of one of
- * them, with the effort columns the ADO Backlog tab shows.
+ * `iterations` lists the project's sprints. `sprint` lists the work items of one
+ * of them, with the effort columns the ADO Backlog tab shows.
+ *
+ * `--team` is optional. Iterations are project-level classification nodes and a
+ * team only subscribes to a subset of them, so a team narrows the list without
+ * ever changing which work items come back. With no team these commands read
+ * the project's classification nodes instead of failing.
  *
  * The queries never use `@CurrentIteration`. That macro needs a team context,
  * fails with `VS402612` when none is available, and hides which iteration the
- * server picked even when it works. We resolve the iteration from the team
- * settings endpoint and put an explicit `[System.IterationPath]` predicate in
- * the WIQL instead.
+ * server picked even when it works. We resolve the iteration ourselves and put
+ * an explicit `[System.IterationPath]` predicate in the WIQL instead.
  */
 
 import { Api } from "@app/azure-devops/api";
 import type { TeamIteration } from "@app/azure-devops/api.types";
-import { findCurrentIteration, iterationContainsDate, resolveIteration } from "@app/azure-devops/lib/iterations";
+import {
+    describeIterationSource,
+    findCurrentIteration,
+    type IterationSource,
+    iterationContainsDate,
+    resolveIteration,
+} from "@app/azure-devops/lib/iterations";
 import {
     buildSprintWiql,
     mapSprintRow,
@@ -23,7 +33,7 @@ import {
     sortById,
     sumTaskEffort,
 } from "@app/azure-devops/lib/sprint";
-import { NO_TEAM_MESSAGE, resolveTeam } from "@app/azure-devops/lib/team";
+import { resolveTeam } from "@app/azure-devops/lib/team";
 import type { AzureConfig, OutputFormat } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -61,17 +71,35 @@ function parseFormat(raw: string | undefined): OutputFormat {
     process.exit(1);
 }
 
-/** Resolve the team, or exit naming both ways to set it. */
-function requireTeam(config: AzureConfig, explicit?: string): string {
+/** The team narrows the iteration list when it is set. Absent is normal, not an error. */
+function optionalTeam(config: AzureConfig, explicit?: string): string | null {
     const resolved = resolveTeam(config, explicit);
 
     if (!resolved) {
-        out.error(NO_TEAM_MESSAGE);
-        process.exit(1);
+        logger.debug("[sprint] No team set; reading the project's iteration classification nodes");
+        return null;
     }
 
     logger.debug(`[sprint] Using team "${resolved.team}" (source: ${resolved.source})`);
     return resolved.team;
+}
+
+/**
+ * Team-subscribed iterations when a team is known, the project's classification
+ * nodes otherwise. The source travels with the list so the row-count difference
+ * between the two is never a silent surprise.
+ */
+async function loadIterations(
+    api: Api,
+    team: string | null
+): Promise<{ iterations: TeamIteration[]; source: IterationSource }> {
+    if (team) {
+        const iterations = await api.getTeamIterations(team);
+        return { iterations, source: { kind: "team", team, count: iterations.length } };
+    }
+
+    const iterations = await api.getProjectIterations();
+    return { iterations, source: { kind: "project", team: null, count: iterations.length } };
 }
 
 function formatDate(iso: string | null | undefined): string {
@@ -100,12 +128,13 @@ function mdRow(cells: string[]): string {
 
 async function handleIterations(options: IterationsOptions): Promise<void> {
     const config = requireConfig();
-    const team = requireTeam(config, options.team);
+    const team = optionalTeam(config, options.team);
     const api = new Api(config);
-    const iterations = await api.getTeamIterations(team);
+    const { iterations, source } = await loadIterations(api, team);
+    const sourceLabel = describeIterationSource(source);
 
     if (iterations.length === 0) {
-        out.error(`Team "${team}" has no iterations configured.`);
+        out.error(`No iterations found: ${sourceLabel}.`);
         process.exit(1);
     }
 
@@ -115,14 +144,17 @@ async function handleIterations(options: IterationsOptions): Promise<void> {
     if (options.format === "json") {
         out.result(
             SafeJSON.stringify(
-                iterations.map((it) => ({
-                    id: it.id,
-                    name: it.name,
-                    path: it.path,
-                    startDate: it.attributes?.startDate ?? null,
-                    finishDate: it.attributes?.finishDate ?? null,
-                    isCurrent: iterationContainsDate(it, now),
-                })),
+                {
+                    source: { ...source, label: sourceLabel },
+                    iterations: iterations.map((it) => ({
+                        id: it.id,
+                        name: it.name,
+                        path: it.path,
+                        startDate: it.attributes?.startDate ?? null,
+                        finishDate: it.attributes?.finishDate ?? null,
+                        isCurrent: iterationContainsDate(it, now),
+                    })),
+                },
                 null,
                 2
             )
@@ -132,7 +164,9 @@ async function handleIterations(options: IterationsOptions): Promise<void> {
 
     if (options.format === "md") {
         const lines = [
-            `# Iterations - ${escapeMd(team)}`,
+            "# Iterations",
+            "",
+            `Source: ${escapeMd(sourceLabel)}`,
             "",
             mdRow(["Current", "Name", "Path", "Start", "Finish"]),
             mdRow(["---", "---", "---", "---", "---"]),
@@ -150,7 +184,7 @@ async function handleIterations(options: IterationsOptions): Promise<void> {
         return;
     }
 
-    renderCliHeader("Iterations", `team ${team}`);
+    renderCliHeader("Iterations", sourceLabel);
     const table = createBoxTable(["", "NAME", "PATH", "START", "FINISH"]);
 
     for (const it of iterations) {
@@ -188,13 +222,18 @@ function exitAmbiguous(query: string, candidates: TeamIteration[]): never {
     process.exit(1);
 }
 
-async function resolveSprintIteration(api: Api, team: string, nameOrPath: string | undefined): Promise<TeamIteration> {
-    const iterations = await api.getTeamIterations(team);
+async function resolveSprintIteration(
+    api: Api,
+    team: string | null,
+    nameOrPath: string | undefined
+): Promise<{ iteration: TeamIteration; source: IterationSource }> {
+    const { iterations, source } = await loadIterations(api, team);
+    const sourceLabel = describeIterationSource(source);
     const resolution = resolveIteration(iterations, nameOrPath, new Date());
 
     if (resolution.kind === "resolved") {
         logger.debug(`[sprint] Resolved iteration "${resolution.iteration.path}" by ${resolution.matchedBy}`);
-        return resolution.iteration;
+        return { iteration: resolution.iteration, source };
     }
 
     if (resolution.kind === "ambiguous") {
@@ -203,13 +242,13 @@ async function resolveSprintIteration(api: Api, team: string, nameOrPath: string
 
     if (resolution.kind === "no-current") {
         out.error(
-            `No iteration of team "${team}" contains today. Name one explicitly, for example: tools azure-devops sprint "17. Sprint"`
+            `No iteration in ${sourceLabel} contains today. Name one explicitly, for example: tools azure-devops sprint "Sprint 17"`
         );
         process.exit(1);
     }
 
     out.error(
-        `No iteration of team "${team}" matches "${resolution.query}". List them with: tools azure-devops iterations --team "${team}"`
+        `No iteration in ${sourceLabel} matches "${resolution.query}". List them with: tools azure-devops iterations`
     );
     process.exit(1);
 }
@@ -248,11 +287,12 @@ function toJsonItems(rows: SprintRow[]): Array<Record<string, unknown>> {
     }));
 }
 
-/** Both renderers take the same three, and `withOrder` is unreadable positionally. */
+/** Both renderers take the same four, and the two trailing values are unreadable positionally. */
 interface SprintRenderArgs {
     rows: SprintRow[];
     iteration: TeamIteration;
     withOrder: boolean;
+    sourceLabel: string;
 }
 
 function renderSprintMd({ rows, iteration, withOrder }: SprintRenderArgs): string {
@@ -287,6 +327,7 @@ function renderSprintMd({ rows, iteration, withOrder }: SprintRenderArgs): strin
         `# ${escapeMd(iteration.name)}`,
         "",
         `Iteration path: \`${iteration.path}\``,
+        `Source: ${escapeMd(sourceLabel)}`,
         "",
         mdRow(header),
         mdRow(header.map(() => "---")),
@@ -294,8 +335,8 @@ function renderSprintMd({ rows, iteration, withOrder }: SprintRenderArgs): strin
     ].join("\n");
 }
 
-function renderSprintTable({ rows, iteration, withOrder }: SprintRenderArgs): void {
-    renderCliHeader(iteration.name, iteration.path);
+function renderSprintTable({ rows, iteration, withOrder, sourceLabel }: SprintRenderArgs): void {
+    renderCliHeader(iteration.name, `${iteration.path}  ·  source: ${sourceLabel}`);
 
     const headers = ["ID", "TYPE", "TITLE", "STATE", "ASSIGNED", "DONE", "LEFT"];
 
@@ -334,29 +375,32 @@ async function handleSprint(nameOrPath: string | undefined, options: SprintOptio
     }
 
     const config = requireConfig();
-    const team = requireTeam(config, options.team);
+    const team = optionalTeam(config, options.team);
     const assignedTo = options.mine ? "@Me" : options.assignedTo;
     const api = new Api(config);
-    const iteration = await resolveSprintIteration(api, team, nameOrPath);
+    const { iteration, source } = await resolveSprintIteration(api, team, nameOrPath);
+    const sourceLabel = describeIterationSource(source);
     const fetched = await fetchSprintRows(api, iteration, assignedTo);
     const withOrder = options.order ?? false;
     const rows = withOrder ? sortByBacklogOrder(fetched) : sortById(fetched);
     const totals = sumTaskEffort(rows);
 
     if (options.format === "json") {
-        const items = toJsonItems(rows);
-        const payload = options.totals
-            ? {
-                  iteration: { name: iteration.name, path: iteration.path },
-                  items,
-                  totals: {
-                      itemCount: totals.itemCount,
-                      taskCount: totals.taskCount,
-                      taskCompletedWork: totals.completedWork,
-                      taskRemainingWork: totals.remainingWork,
-                  },
-              }
-            : items;
+        const payload = {
+            iteration: { name: iteration.name, path: iteration.path },
+            source: { ...source, label: sourceLabel },
+            items: toJsonItems(rows),
+            ...(options.totals
+                ? {
+                      totals: {
+                          itemCount: totals.itemCount,
+                          taskCount: totals.taskCount,
+                          taskCompletedWork: totals.completedWork,
+                          taskRemainingWork: totals.remainingWork,
+                      },
+                  }
+                : {}),
+        };
         out.result(SafeJSON.stringify(payload, null, 2));
         return;
     }
@@ -369,7 +413,7 @@ async function handleSprint(nameOrPath: string | undefined, options: SprintOptio
     ];
 
     if (options.format === "md") {
-        const md = renderSprintMd({ rows, iteration, withOrder });
+        const md = renderSprintMd({ rows, iteration, withOrder, sourceLabel });
         const withTotals = options.totals
             ? `${md}\n\n## Totals\n\n${totalsLines.map((line) => `- ${line}`).join("\n")}`
             : md;
@@ -377,7 +421,7 @@ async function handleSprint(nameOrPath: string | undefined, options: SprintOptio
         return;
     }
 
-    renderSprintTable({ rows, iteration, withOrder });
+    renderSprintTable({ rows, iteration, withOrder, sourceLabel });
 
     if (options.totals) {
         renderCliSection("Totals");
@@ -416,7 +460,7 @@ export function registerSprintCommands(program: Command): void {
         .alias("sprints")
         .description("List the team's iterations (sprints) with dates and the current one marked")
         .option("-f, --format <format>", "Output format: ai, md, json", "ai")
-        .option("--team <name>", "Team name (overrides the global --team and config.team)")
+        .option("--team <name>", "Optional: narrow to one team's subscribed iterations (overrides config.team)")
         .action(async (_opts: RawSprintOptions, command: Command) => {
             const opts = optionsWithGlobalTeam(command);
             await handleIterations({ format: parseFormat(opts.format), team: opts.team });
@@ -426,7 +470,7 @@ export function registerSprintCommands(program: Command): void {
         .command("sprint [nameOrPath]")
         .description("List the work items of one iteration (defaults to the iteration containing today)")
         .option("-f, --format <format>", "Output format: ai, md, json", "ai")
-        .option("--team <name>", "Team name (overrides the global --team and config.team)")
+        .option("--team <name>", "Optional: narrow to one team's subscribed iterations (overrides config.team)")
         .option("--mine", "Only work items assigned to me (@Me)")
         .option("--assigned-to <name>", "Only work items assigned to this display name or unique name")
         .option("--totals", "Print the Task-only CompletedWork / RemainingWork sums")

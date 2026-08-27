@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { NO_TEAM_MESSAGE, resolveTeam } from "@app/azure-devops/lib/team";
+import { resolveTeam } from "@app/azure-devops/lib/team";
 import type { AzureConfig } from "@app/azure-devops/types";
 
 const BASE: AzureConfig = {
@@ -22,12 +22,7 @@ describe("resolveTeam", () => {
         expect(resolveTeam({ ...BASE, team: "Team A" }, "   ")).toEqual({ team: "Team A", source: "config" });
     });
 
-    test("returns null when neither is set", () => {
+    test("returns null when neither is set, which callers treat as 'no narrowing'", () => {
         expect(resolveTeam(BASE, undefined)).toBeNull();
-    });
-
-    test("the failure message names both the flag and configure", () => {
-        expect(NO_TEAM_MESSAGE).toContain("--team");
-        expect(NO_TEAM_MESSAGE).toContain("tools azure-devops configure");
     });
 });

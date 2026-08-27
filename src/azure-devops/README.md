@@ -15,21 +15,19 @@ CLI tool for fetching, tracking, and managing Azure DevOps work items, queries, 
 -   ✅ **Batch Operations**: Fetch multiple work items or download all items from a query
 -   ✅ **Filtering**: Filter queries by state and severity
 -   ✅ **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
--   ✅ **Sprint Backlog**: List a team's iterations and the work items of one sprint, with the effort columns the ADO Backlog tab shows
+-   ✅ **Sprint Backlog**: List the project's iterations and the work items of one sprint, with the effort columns the ADO Backlog tab shows
 
 ## Sprint / iteration commands
 
-`iterations` lists a team's sprints. `sprint` lists the work items of one of them. Together they replace the manual screenshot of the ADO Backlog tab.
+`iterations` lists the project's sprints. `sprint` lists the work items of one of them. Together they replace the manual screenshot of the ADO Backlog tab.
 
-Both commands are team-scoped, because iteration settings belong to a team, not to the project. Set the team once with `configure` using a board or backlog URL, or pass `--team` per run.
+**Neither command needs a team.** `--team` is an optional narrowing filter, never a precondition. See "No team required" below for why.
 
 ```bash
-# Store the team in .claude/azure/config.json (the URL carries it)
-tools azure-devops configure \
-  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/{team}/Stories"
-
-# List the team's sprints; the one containing today is marked
+# List the project's sprints; the one containing today is marked
 tools azure-devops iterations
+
+# Narrow to the iterations one team subscribes to
 tools azure-devops iterations --team "Payments Team" -f json
 
 # The current sprint, everything assigned to me, with the Task-only effort sums
@@ -43,17 +41,63 @@ tools azure-devops sprint "Widgets\Sprint 17"
 tools azure-devops sprint "Sprint 17" --mine --order -f md
 ```
 
-Worked example, `Sprint 17` with `--mine --totals`:
+Worked example, `Sprint 17` with `--mine --totals` and no team configured:
 
-```
-│ ID     │ TYPE       │ TITLE                    │ STATE       │ ASSIGNED  │ DONE │ LEFT │
-│ 41207  │ Task       │ Build the checkout form  │ New         │ ...       │ 0    │ 4    │
-│ 41219  │ Task       │ Wire the payments API    │ In Progress │ ...       │ 85   │ 56   │
+```text
+  Sprint 17
+  Widgets\Sprint 17  ·  source: project classification nodes (26 iterations)
+
+│ ID    │ TYPE  │ TITLE                     │ STATE       │ ASSIGNED    │ DONE │ LEFT │
+│ 10005 │ Task  │ Build the payment form    │ New         │ Jane Doe    │ 0    │ 4    │
+│ 10007 │ Task  │ Wire the refund endpoint  │ In Progress │ Jane Doe    │ 85   │ 56   │
 
   Totals
   Items: 17 (Tasks: 9)
   Task CompletedWork: 139.75 h
   Task RemainingWork: 88 h
+```
+
+### No team required
+
+Iterations are **project-level classification nodes**. A team does not own them; it merely subscribes to a subset of them. `System.IterationPath` never contains a team segment, so the work items a sprint contains do not depend on which team you ask through.
+
+The commands therefore read from one of two sources:
+
+| When | Endpoint | Returns |
+| ---- | -------- | ------- |
+| Team known (`--team` or `config.team`) | `GET {org}/{project}/{team}/_apis/work/teamsettings/iterations` | only that team's subscribed iterations |
+| No team at all | `GET {org}/{project}/_apis/wit/classificationnodes/iterations?$depth=3` | every dated iteration in the project |
+
+The project-wide list is a superset, so it can contain iterations the team list does not. Which source was used is always printed, and `-f json` carries it as a `source` field, so the row-count difference is never a silent surprise:
+
+```
+source: team "Payments Team" (22 iterations)
+source: project classification nodes (26 iterations)
+```
+
+The two sources resolve the same sprint to the same `System.IterationPath`, so the work items returned are identical either way.
+
+**Path normalisation.** Classification nodes report a structural path that `System.IterationPath` does not use. It carries a leading backslash and an extra `Iteration` segment:
+
+```
+\Widgets\Iteration\Sprint 17     classification node path
+Widgets\Sprint 17                System.IterationPath, which is what WIQL needs
+```
+
+Strip one leading backslash, then remove the `\Iteration` segment. Nested release folders survive: `\Widgets\Iteration\Release 3\Sprint 17` becomes `Widgets\Release 3\Sprint 17`. Nodes with no start date are structural containers rather than sprints and are dropped.
+
+Worked no-team example:
+
+```bash
+$ tools azure-devops iterations
+  Iterations
+  project classification nodes (26 iterations)
+  ...
+  Current
+  * Sprint 17  (2026-08-20 -> 2026-09-02)
+
+$ tools azure-devops sprint --mine --totals
+  # resolves Sprint 17 by date range, queries [System.IterationPath] = 'Widgets\Sprint 17'
 ```
 
 ### Iteration resolution
@@ -75,20 +119,15 @@ A substring that matches several iterations is refused: the command lists every 
 -   Without a team context Azure DevOps answers `VS402612: The macro '@CurrentIteration' is not supported without a team context` and the request fails with HTTP 500.
 -   Even when it resolves, the CLI cannot tell which iteration the server picked, so the output cannot be checked.
 
-These commands therefore resolve the iteration first, through `GET {org}/{project}/{team}/_apis/work/teamsettings/iterations`, and then send an explicit `[System.IterationPath] = '<path>'` predicate. Single quotes in the path are doubled; backslashes are literal in WIQL and need no escaping.
+These commands therefore resolve the iteration first, from whichever source the "No team required" section describes, and then send an explicit `[System.IterationPath] = '<path>'` predicate. Single quotes in the path are doubled; backslashes are literal in WIQL and need no escaping.
 
-The two saved queries that look like they would do this job cannot be run from the CLI at all:
-
--   `Shared Queries/FE Tasky aktuálního sprintu` (`dbfe2de1-abb1-48ca-80ce-cefd42e11917`)
--   `Shared Queries/Vyhodnocování/Team A/MF - Not Closed` (`7a4cbaea-0c7a-460a-a82f-ce2d97ad9d1a`)
-
-Both return `VS402612`, project-scoped and team-scoped alike, because their stored WIQL calls `@currentIteration` with a team that no longer exists. Adding a team route segment does not fix them. Use `sprint` instead.
+A saved query whose stored WIQL calls `@currentIteration` cannot be run from the CLI either. Such a query returns `VS402612` both project-scoped and team-scoped whenever the team it was authored against no longer exists, and adding a team route segment does not fix it. Use `sprint` instead.
 
 ### Sprint options
 
 | Option                 | Description                                                                      | Default |
 | ---------------------- | -------------------------------------------------------------------------------- | ------- |
-| `--team <name>`        | Team name; overrides `config.team`. Also accepted before the subcommand.          | config  |
+| `--team <name>`        | Optional. Narrows the iteration list to one team's subscriptions. Also accepted before the subcommand. | config  |
 | `--mine`               | Only items assigned to me (WIQL `@Me`)                                            | -       |
 | `--assigned-to <name>` | Only items assigned to this display name or unique name                           | -       |
 | `--totals`             | Print the Task-only CompletedWork / RemainingWork sums                            | -       |
@@ -99,7 +138,9 @@ Both return `VS402612`, project-scoped and team-scoped alike, because their stor
 
 `--order` sorts by `Microsoft.VSTS.Common.StackRank`, falling back to `Microsoft.VSTS.Common.BacklogPriority`. Only backlog-level types carry a rank, so Tasks usually have none. Unranked rows sort last by ascending id, which is deterministic across runs.
 
-`-f json` emits one object per row with the keys `id`, `type`, `title`, `state`, `assignedTo`, `completedWork`, `remainingWork`, `order`, `changedDate`. `completedWork` and `remainingWork` are always numbers; a missing field reads as `0`. `order` is `null` when the item is unranked. Adding `--totals` wraps the array as `{ iteration, items, totals }`.
+`-f json` emits `{ iteration, source, items }`, where `items` holds one object per row with the keys `id`, `type`, `title`, `state`, `assignedTo`, `completedWork`, `remainingWork`, `order`, `changedDate`. `completedWork` and `remainingWork` are always numbers; a missing field reads as `0`. `order` is `null` when the item is unranked. Adding `--totals` adds a `totals` key. `source` names the iteration list the sprint was resolved from: `{ kind: "team" | "project", team, count, label }`.
+
+`tools azure-devops iterations -f json` emits `{ source, iterations }` with the same `source` shape.
 
 ## CLI Usage
 
@@ -174,7 +215,7 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 | `--dashboard`  | Extract queries from a dashboard               |
 | `--list`       | List all cached work items                     |
 | `--create`     | Create new work items (interactive or from template) |
-| `iterations`   | List the team's sprints (alias `sprints`)      |
+| `iterations`   | List the project's sprints (alias `sprints`)      |
 | `sprint`       | List the work items of one sprint              |
 
 ### Options
@@ -701,17 +742,17 @@ tools azure-devops timelog types
 tools azure-devops timelog types --format json
 
 # List time logs for a work item
-tools azure-devops timelog list -w 268935
-tools azure-devops timelog list -w 268935 --format md
+tools azure-devops timelog list -w 12345
+tools azure-devops timelog list -w 12345 --format md
 
 # Add time log entry (quick)
-tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
-tools azure-devops timelog add -w 268935 -h 0 -m 30 -t "Test"
+tools azure-devops timelog add -w 12345 -h 2 -t "Development"
+tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
+tools azure-devops timelog add -w 12345 -h 0 -m 30 -t "Test"
 
 # Add time log entry (interactive)
 tools azure-devops timelog add -i
-tools azure-devops timelog add -w 268935 -i
+tools azure-devops timelog add -w 12345 -i
 
 # Bulk import from JSON file
 tools azure-devops timelog import entries.json
@@ -724,14 +765,14 @@ tools azure-devops timelog import entries.json --dry-run
 {
   "entries": [
     {
-      "workItemId": 268935,
+      "workItemId": 12345,
       "hours": 2,
       "timeType": "Development",
       "date": "2026-02-04",
       "comment": "Implemented feature X"
     },
     {
-      "workItemId": 268936,
+      "workItemId": 12346,
       "hours": 1,
       "minutes": 30,
       "timeType": "Code Review",

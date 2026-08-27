@@ -96,3 +96,22 @@ export interface QueryNode {
     hasChildren?: boolean;
     children?: QueryNode[];
 }
+
+/**
+ * One node of the project's iteration classification tree, as returned by
+ * `wit/classificationnodes/iterations`. Only leaf-ish nodes carry dates.
+ */
+export interface IterationClassificationNode {
+    id: number;
+    identifier: string;
+    name: string;
+    /** Structural path, e.g. `\Widgets\Iteration\Sprint 17` (note the `Iteration` segment). */
+    path: string;
+    structureType?: string;
+    hasChildren?: boolean;
+    attributes?: {
+        startDate?: string | null;
+        finishDate?: string | null;
+    };
+    children?: IterationClassificationNode[];
+}

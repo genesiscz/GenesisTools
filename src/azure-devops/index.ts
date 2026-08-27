@@ -52,7 +52,7 @@ program
     .version("1.0.0")
     .showHelpAfterError(true)
     .option("-v, --verbose", "Enable verbose debug logging")
-    .option("--team <name>", "Azure DevOps team name for team-scoped commands (overrides config.team)")
+    .option("--team <name>", "Optional Azure DevOps team name; narrows team-scoped lists (overrides config.team)")
     .option("-?, --help-full", "Show detailed help with examples")
     .on("option:help-full", () => {
         showHelpFull();
@@ -86,11 +86,11 @@ Commands:
   workitem-create        Create a new work item (interactive or from template)
   timelog                Manage time log entries (add, list, delete, types, import)
   history                Work item history commands (show, search, sync)
-  iterations             List the team's sprints (alias: sprints)
+  iterations             List the project's sprints (alias: sprints)
   sprint [nameOrPath]    List the work items of one sprint
 
 Global Options:
-  --team <name>          Team for team-scoped commands (overrides config.team)
+  --team <name>          Optional team; narrows team-scoped lists (overrides config.team)
 
 Sprint Options:
   -f, --format <fmt>     ai | md | json (default: ai)
@@ -176,13 +176,13 @@ Examples:
   tools azure-devops workitem-create --type Task --title "Fix login bug"
 
   # Time logging
-  tools azure-devops timelog add --workitem 268935 --hours 2 --type "Development"
-  tools azure-devops timelog list --workitem 268935
+  tools azure-devops timelog add --workitem 12345 --hours 2 --type "Development"
+  tools azure-devops timelog list --workitem 12345
   tools azure-devops timelog delete <timeLogId> --yes
   tools azure-devops timelog types
 
 Sprint Commands:
-  tools azure-devops iterations                          List the team's sprints
+  tools azure-devops iterations                          List the project's sprints
   tools azure-devops sprint --mine --totals               Current sprint, my items, effort sums
   tools azure-devops sprint "Sprint 17" --order   One sprint in Backlog order
   # These never use @CurrentIteration: that macro needs a team context and

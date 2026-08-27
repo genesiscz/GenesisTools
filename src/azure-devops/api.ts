@@ -11,6 +11,7 @@ import type {
     DashboardDetailResponse,
     DashboardsListResponse,
     GetWorkItemsOptions,
+    IterationClassificationNode,
     QueryNode,
     TeamIteration,
     TeamIterationsResponse,
@@ -19,6 +20,7 @@ import type {
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
+import { flattenIterationNodes } from "@app/azure-devops/lib/iterations";
 import type {
     AzureConfig,
     AzWorkItemRaw,
@@ -838,6 +840,21 @@ export class Api {
         const data = await this.get<TeamIterationsResponse>(url, `iterations for team "${team}"`);
         logger.debug(`[api] Team "${team}" has ${data.value?.length ?? 0} iterations`);
         return data.value ?? [];
+    }
+
+    /**
+     * Every dated iteration of the project, with no team involved.
+     *
+     * Iterations are project-level classification nodes; a team merely subscribes
+     * to a subset of them. This endpoint therefore returns a superset of what
+     * `getTeamIterations()` returns, which is what makes `--team` optional.
+     */
+    async getProjectIterations(): Promise<TeamIteration[]> {
+        const url = Api.witUrl(this.config, ["classificationnodes", "iterations"], { $depth: "3" });
+        const root = await this.get<IterationClassificationNode>(url, "project iteration classification nodes");
+        const iterations = flattenIterationNodes(root);
+        logger.debug(`[api] Project "${this.config.project}" has ${iterations.length} dated iterations`);
+        return iterations;
     }
 
     /**

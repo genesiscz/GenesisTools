@@ -16,7 +16,7 @@ tools azure-devops workitem <id|ids>             # Fetch work item(s)
 tools azure-devops query <id|url|name>           # Fetch query results (supports name matching)
 tools azure-devops query <id> --download-workitems  # Download all to files
 tools azure-devops dashboard <id|url>            # Get dashboard queries
-tools azure-devops iterations                    # List the team's sprints (alias: sprints)
+tools azure-devops iterations                    # List the project's sprints (alias: sprints)
 tools azure-devops sprint [nameOrPath]           # Work items of one sprint (default: current)
 tools azure-devops list                          # List cached items
 tools azure-devops workitem-create               # Create work item
@@ -64,7 +64,7 @@ Columns: `ID | Type | Title | State | AssignedTo | CompletedWork | RemainingWork
 
 | Option | Description |
 |--------|-------------|
-| `--team <name>` | Team name; overrides `config.team`. Also valid before the subcommand. |
+| `--team <name>` | Optional. Narrows the iteration list to one team's subscriptions. Also valid before the subcommand. |
 | `--mine` | Only items assigned to me (WIQL `@Me`) |
 | `--assigned-to <name>` | Only items assigned to this display name or unique name |
 | `--totals` | Task-only CompletedWork / RemainingWork sums |
@@ -76,18 +76,20 @@ Rules that matter when reading the output:
 - `--totals` sums Tasks only, so a User Story and its child Task are never counted twice.
 - The iteration argument resolves as exact path, then exact name, then case-insensitive substring. An ambiguous substring exits 1 and lists every candidate. Omit it for the sprint containing today.
 
-**Never use `@CurrentIteration`.** The macro needs a team context and fails with `VS402612: The macro '@CurrentIteration' is not supported without a team context`. `sprint` resolves the iteration from the team settings endpoint and sends an explicit `[System.IterationPath] = '<path>'` predicate instead. The two saved queries that look right, `FE Tasky aktualniho sprintu` (`dbfe2de1-abb1-48ca-80ce-cefd42e11917`) and `MF - Not Closed` (`7a4cbaea-0c7a-460a-a82f-ce2d97ad9d1a`), return `VS402612` from the CLI both project-scoped and team-scoped, because their stored WIQL names a team that no longer exists. Do not retry them.
+**Never use `@CurrentIteration`.** The macro needs a team context and fails with `VS402612: The macro '@CurrentIteration' is not supported without a team context`. `sprint` resolves the iteration itself and sends an explicit `[System.IterationPath] = '<path>'` predicate instead. A saved query whose stored WIQL calls `@currentIteration` against a team that no longer exists returns `VS402612` from the CLI both project-scoped and team-scoped. Do not retry it.
 
 **Never scan the local work item cache instead.** `.claude/azure/tasks/**` accumulates every work item ever fetched and its `RemainingWork` is never zeroed, so filtering it produces sprints full of items closed months earlier.
 
-Team setup, once per project:
+**No team is required.** Iterations are project-level classification nodes; a team only subscribes to a subset of them, and `System.IterationPath` never contains a team. With no team, `iterations` and `sprint` read `wit/classificationnodes/iterations` and get every dated iteration in the project. `--team` narrows that list to one team's subscriptions and never changes which work items come back. Both commands print which source they used, and `-f json` carries it as a `source` field.
+
+Optional team setup, once per project:
 
 ```bash
 tools azure-devops configure \
-  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/Delivery%20Team%20C/Stories"
+  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/Payments%20Team/Stories"
 ```
 
-The board URL carries the team, and `configure` stores it as `team` in `.claude/azure/config.json`. Without it, pass `--team "<Your Team>"` per run.
+The board URL carries the team, and `configure` stores it as `team` in `.claude/azure/config.json`. You can also pass `--team "<Your Team>"` per run.
 
 ### Output Paths
 
@@ -118,10 +120,10 @@ Inline images (screenshots embedded in description/comments HTML) are downloaded
 ### Fetch Work Items
 
 ```bash
-tools azure-devops workitem 261575
-tools azure-devops workitem 261575,261576,261577
-tools azure-devops workitem 261575 --category react19
-tools azure-devops workitem 261575 --force
+tools azure-devops workitem 12345
+tools azure-devops workitem 12345,12346,12347
+tools azure-devops workitem 12345 --category react19
+tools azure-devops workitem 12345 --force
 ```
 
 ### Fetch Query
@@ -130,7 +132,7 @@ The `--query` option supports three input formats:
 
 1. **Query ID (GUID)**: `d6e14134-9d22-4cbb-b897-b1514f888667`
 2. **Full URL**: `https://dev.azure.com/org/project/_queries/query/abc123`
-3. **Query Name**: `"Otevřené bugy"` (fuzzy matching supported)
+3. **Query Name**: `"Open bugs"` (fuzzy matching supported)
 
 ```bash
 # By ID
@@ -138,7 +140,7 @@ tools azure-devops query d6e14134-9d22-4cbb-b897-b1514f888667
 
 # By name (uses fuzzy matching to find the query)
 tools azure-devops query "Open Bugs"
-tools azure-devops query "Otevřené bugy"
+tools azure-devops query "Open bugs"
 
 # With filters
 tools azure-devops query <id> --state Active,Development
@@ -194,8 +196,8 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
    ```
 
 5. Write `.analysis.md` next to the work item file:
-   - Work item: `.claude/azure/tasks/261575-Title.md`
-   - Analysis: `.claude/azure/tasks/261575-Title.analysis.md`
+   - Work item: `.claude/azure/tasks/12345-Title.md`
+   - Analysis: `.claude/azure/tasks/12345-Title.analysis.md`
 
 ### Analysis Document Format
 
@@ -228,20 +230,20 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 
 | User Request | Action |
 |--------------|--------|
-| "Get workitem 261575" | `tools azure-devops workitem 261575` |
+| "Get workitem 12345" | `tools azure-devops workitem 12345` |
 | "What is in the current sprint" | `tools azure-devops sprint --mine --totals` |
 | "List the sprints" | `tools azure-devops iterations` |
 | "Show sprint 17 in backlog order" | `tools azure-devops sprint "Sprint 17" --mine --order` |
 | "Show query results for X" | `tools azure-devops query X` |
 | "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
-| "Fetch Otevřené bugy" | `tools azure-devops query "Otevřené bugy"` |
+| "Fetch Open bugs" | `tools azure-devops query "Open bugs"` |
 | "Download React19 bugs" | `tools azure-devops query "React19 Bugs" --download-workitems --category react19` |
-| "Analyze task 261575" | Fetch → Explore agent → Write .analysis.md |
+| "Analyze task 12345" | Fetch → Explore agent → Write .analysis.md |
 | "Analyze all active bugs" | Fetch query with --download-workitems → Parallel Explore agents → Write .analysis.md files |
 | "Download .har files from task 12345" | `tools azure-devops workitem 12345 --attachments-suffix .har` |
 | "Get attachments from last hour for 12345" | Compute datetime 1h ago, then `tools azure-devops workitem 12345 --attachments-from "2026-02-12T10:00:00"` |
 | "Download all attachments for task 12345" | `tools azure-devops workitem 12345 --attachments-from 2000-01-01` |
-| "Get task 261575 with screenshots" | `tools azure-devops workitem 261575 --task-folders --images` |
+| "Get task 12345 with screenshots" | `tools azure-devops workitem 12345 --task-folders --images` |
 | "Analyze bug with images" | Fetch with `--images` → Read images → Explore agent with visual context |
 
 ## Creating Work Items
@@ -462,7 +464,7 @@ tools azure-devops timelog types --format json  # JSON output
 
 ```bash
 tools azure-devops timelog list -w <workItemId>
-tools azure-devops timelog list -w 268935 --format md
+tools azure-devops timelog list -w 12345 --format md
 tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --format json
 tools azure-devops timelog list --from 2026-02-01 --to 2026-02-08 --user @me --format json
 ```
@@ -474,12 +476,12 @@ The `--user @me` resolves to the configured default username. Use `--from`/`--to
 ```bash
 # Quick mode (all options on CLI)
 tools azure-devops timelog add -w <id> -h <hours> -t <type>
-tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+tools azure-devops timelog add -w 12345 -h 2 -t "Development"
+tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
 
 # Interactive mode
 tools azure-devops timelog add -i
-tools azure-devops timelog add -w 268935 -i
+tools azure-devops timelog add -w 12345 -i
 ```
 
 Before creating the entry, the command runs a workitem type precheck (see Workitem Type Validation below).
@@ -491,7 +493,7 @@ The `prepare-import` workflow allows you to stage, review, and validate entries 
 ```bash
 # Stage entries for review
 tools azure-devops timelog prepare-import add --from 2026-02-01 --to 2026-02-08 --entry '{
-  "workItemId": 268935,
+  "workItemId": 12345,
   "date": "2026-02-04",
   "hours": 2,
   "timeType": "Development",
@@ -519,7 +521,7 @@ tools azure-devops timelog prepare-import clear --name 2026-02-01.2026-02-08
 
 The name is auto-generated from `--from` and `--to` as `<from>.<to>` (e.g., `2026-02-01.2026-02-08`). Each entry is validated with Zod schema and runs workitem type precheck before being added.
 
-Do **not** include `workItemTitle` in staged `--entry` JSON unless you already have the exact ADO title. Precheck backfills it on `prepare-import add`; `prepare-import list` and `import --dry-run` fill any still-missing titles. Run from the project directory that has `.claude/azure/config.json` (e.g. `col-fe/`).
+Do **not** include `workItemTitle` in staged `--entry` JSON unless you already have the exact ADO title. Precheck backfills it on `prepare-import add`; `prepare-import list` and `import --dry-run` fill any still-missing titles. Run from the project directory that has `.claude/azure/config.json` (e.g. `web-app/`).
 
 ### Import Time Logs
 
@@ -562,9 +564,9 @@ Before creating time log entries, the tool validates that the workitem type is c
 
 | User Request | Action |
 |--------------|--------|
-| "Log 2 hours on task 268935" | `tools azure-devops timelog add -w 268935 -h 2 -t "Development"` |
+| "Log 2 hours on task 12345" | `tools azure-devops timelog add -w 12345 -h 2 -t "Development"` |
 | "What time types are available?" | `tools azure-devops timelog types` |
-| "Show time logged on 268935" | `tools azure-devops timelog list -w 268935` |
+| "Show time logged on 12345" | `tools azure-devops timelog list -w 12345` |
 | "Help me log time" | `tools azure-devops timelog add -i` |
 | "Stage entries for review" | `tools azure-devops timelog prepare-import add --from ... --to ... --entry '{...}'` |
 | "Review staged entries" | `tools azure-devops timelog prepare-import list --name 2026-02-01.2026-02-08` |
@@ -582,9 +584,9 @@ When user asks to log time in natural language, parse their request and construc
 - "2 hours 15 minutes" → `-h 2 -m 15`
 
 **2. Extract Work Item IDs:**
-- From explicit mention: "on task 268935", "workitem #268935", "WI 268935"
-- From git branch: `feature/268935-fix-login` → work item 268935
-- From recent commits: `feat(#268935): fix login bug` → work item 268935
+- From explicit mention: "on task 12345", "workitem #12345", "WI 12345"
+- From git branch: `feature/12345-fix-login` → work item 12345
+- From recent commits: `feat(#12345): fix login bug` → work item 12345
 
 To extract from git context:
 ```bash
@@ -623,7 +625,7 @@ Use the commit subject line as the time log comment.
 
 | User Request | Parsed Command |
 |--------------|----------------|
-| "log 1h on 268935 for Development" | `timelog add -w 268935 -h 1 -t "Development"` |
+| "log 1h on 12345 for Development" | `timelog add -w 12345 -h 1 -t "Development"` |
 | "spent 30min reviewing PR on task 789" | `timelog add -w 789 -h 0 -m 30 -t "Code Review"` |
 | "log 2 hours, use last commit message" | Get work item from branch/commit, use commit msg as comment |
 | "log my work on the current task" | Extract ID from branch, infer type from commits |
@@ -635,9 +637,9 @@ When user says "log time for my work" without explicit details:
 
 1. **Get work item ID**:
    ```bash
-   git branch --show-current  # e.g., feature/268935-fix-login
+   git branch --show-current  # e.g., feature/12345-fix-login
    ```
-   Extract number: 268935
+   Extract number: 12345
 
 2. **Get commit messages for note**:
    ```bash
@@ -650,7 +652,7 @@ When user says "log time for my work" without explicit details:
 
 5. **Execute**:
    ```bash
-   tools azure-devops timelog add -w 268935 -h <hours> -t "<inferred-type>" -c "<commit-message>"
+   tools azure-devops timelog add -w 12345 -h <hours> -t "<inferred-type>" -c "<commit-message>"
    ```
 
 ## Integration with `tools git`
