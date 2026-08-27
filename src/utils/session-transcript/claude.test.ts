@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { clipResult, sliceTurns } from "./types";
-import { claudeMessagesToTurns } from "./claude";
 import type { AssistantMessage, ConversationMessage, UserMessage } from "@genesiscz/utils/claude/types";
+import { claudeMessagesToTurns } from "./claude";
+import { clipResult, sliceTurns } from "./types";
 
 function user(partial: Partial<UserMessage> & Pick<UserMessage, "uuid" | "message">): UserMessage {
     return {
@@ -14,9 +14,7 @@ function user(partial: Partial<UserMessage> & Pick<UserMessage, "uuid" | "messag
     };
 }
 
-function assistant(
-    partial: Partial<AssistantMessage> & Pick<AssistantMessage, "uuid" | "message">
-): AssistantMessage {
+function assistant(partial: Partial<AssistantMessage> & Pick<AssistantMessage, "uuid" | "message">): AssistantMessage {
     return {
         type: "assistant",
         parentUuid: null,
@@ -104,8 +102,7 @@ describe("claudeMessagesToTurns", () => {
                 uuid: "u1",
                 message: {
                     role: "user",
-                    content:
-                        "<command-message><command-name>speckit.implement</command-name></command-message>",
+                    content: "<command-message><command-name>speckit.implement</command-name></command-message>",
                 },
             }),
         ]);

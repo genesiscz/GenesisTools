@@ -1,14 +1,21 @@
 import { statSync } from "node:fs";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
-import { extractToolInputSummary, extractToolResultText } from "@genesiscz/utils/claude/session-helpers";
 import { extractUserText } from "@genesiscz/utils/claude/session.utils";
+import { extractToolInputSummary, extractToolResultText } from "@genesiscz/utils/claude/session-helpers";
 import type {
     AssistantMessage,
     ConversationMessage,
     ToolResultBlock,
     UserMessage,
 } from "@genesiscz/utils/claude/types";
-import { clipResult, sliceTurns, type SliceOptions, type TranscriptEnvelope, type TranscriptTool, type TranscriptTurn } from "./types";
+import {
+    clipResult,
+    type SliceOptions,
+    sliceTurns,
+    type TranscriptEnvelope,
+    type TranscriptTool,
+    type TranscriptTurn,
+} from "./types";
 
 const NOISE_BLOCKS =
     /<(local-command-caveat|local-command-stdout|system-reminder|command-name|command-message|command-args)>[\s\S]*?<\/\1>/g;
