@@ -34,6 +34,14 @@ function printTurn(result: TurnResult): void {
         return;
     }
 
+    // A turn can end cleanly and still have written warnings to stderr (a
+    // deprecated flag, a failed tool). Dropping those on success meant the only
+    // way to see them was to know the .err file existed (PR #330 review t7).
+    if (result.stderr.trim()) {
+        out.log.warn(`turn ${result.turn} wrote to stderr:`);
+        out.log.message(result.stderr.trim());
+    }
+
     out.log.success(
         `turn ${result.turn} completed — verify yourself before trusting this report (log: ${result.logPath})`
     );

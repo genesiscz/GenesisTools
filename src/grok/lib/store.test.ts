@@ -87,3 +87,45 @@ describe("GrokSessionStore", () => {
         });
     });
 });
+
+/**
+ * Regression tests: PR #330 review t16 and t17.
+ */
+describe("GrokSessionStore metadata validation", () => {
+    test("a blank sessionId is treated as unreadable, not as a resumable session", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-blank-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new GrokSessionStore();
+            store.writeMeta({ ...makeMeta(), sessionId: "   " });
+
+            // A blank id survived the old typeof check and became `--resume ""`,
+            // which starts a NEW conversation under the same name.
+            expect(store.readMeta("reviewer")).toBeNull();
+        });
+    });
+
+    test("a blank cwd is rejected the same way", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-blankcwd-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new GrokSessionStore();
+            store.writeMeta({ ...makeMeta(), cwd: "" });
+
+            expect(store.readMeta("reviewer")).toBeNull();
+        });
+    });
+
+    test("the duplicate-name error names the session, so the suggested command is copy-pasteable", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-dup-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new GrokSessionStore();
+            store.createMeta(makeMeta());
+
+            expect(() => store.createMeta(makeMeta())).toThrow(
+                "Grok session 'reviewer' already exists. Use 'tools grok steer --name reviewer' or pick a new name."
+            );
+        });
+    });
+});

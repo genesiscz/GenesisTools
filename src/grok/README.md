@@ -27,4 +27,30 @@ tools grok sessions
 - `--readonly` maps to the `--tools read_file,list_dir,grep` allowlist — the worker physically lacks edit and terminal tools.
 - Do not hand-roll bare `grok` flags for safety: `--permission-mode plan` does not restrict headless runs, and `--disallowed-tools` silently keeps `run_terminal_command`.
 
+## Authentication
+
+`tools grok` never authenticates for you. It resolves the `grok` binary on PATH and nothing else, so an unauthenticated CLI produces a turn that starts and then fails inside grok rather than a clear error up front.
+
+- Authenticate the CLI itself: `XAI_API_KEY` in the environment, or `grok login`.
+- The worker inherits your environment, so `XAI_API_KEY` reaches it. The `GROK_CLAUDE_*_ENABLED=0` toggles switch off `~/.claude` pickup, not credentials.
+- `--worker-home` gives a run its own `GROK_HOME`. A fresh home has no stored login, so a run pointed at one needs `XAI_API_KEY` in the environment.
+
+Failure shapes:
+
+| Symptom | Cause |
+|---|---|
+| `grok CLI not found on PATH` | binary missing — this check does not look at credentials |
+| turn exits non-zero on turn 1 with auth text in `.err` | binary present, not authenticated |
+| turn 1 works, a `--worker-home` run does not | credentials were in the default home, not the environment |
+
+## When a turn fails
+
+Nothing is rolled back, and that is deliberate: a dead turn's transcript is the evidence.
+
+- **Read it.** `tools grok read --name <name> --turn <n>`. Raw log and stderr live at `~/.genesis-tools/grok/sessions/<name>.turn<n>.jsonl` and `.turn<n>.err`.
+- **A turn that died mid-flight** (no terminal `end` event) exits 1 and prints stderr. The session stays resumable: `tools grok steer` starts the next turn number.
+- **`Turn <n> ... already has a transcript`** means that turn number is reserved — another turn is running, or one died uncleanly. The reservation is intentional; it is what stops a second invocation truncating the first's transcript. Read turn `n` first, then remove its `.jsonl` only if you are certain no process is still writing to it.
+- **`Grok session '<name>' already exists`** means the name is claimed. Steer it or pick another name.
+- **A session missing from `tools grok sessions`** has metadata with a blank or absent `sessionId`, which cannot be resumed. It is skipped rather than shown as a resumable row that would silently start a new conversation.
+
 Skill: `gt:handoff-to` § Grok mechanics (readiness gate, checkpoint contract, verification discipline).

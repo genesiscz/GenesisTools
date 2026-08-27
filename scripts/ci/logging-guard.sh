@@ -10,6 +10,11 @@
 # the extension + relative-path + any-local-name variants.
 set -euo pipefail
 
+# Reach the repo root first. `git grep -- src apps scripts` is resolved relative
+# to the cwd, so running this from a subdirectory scanned nothing, and
+# require-grep.sh below refuses to run outside a work tree at all.
+cd "$(dirname "$0")/../.."
+
 # A missing grep would make every `if … ; then` below read as "no matches" and pass silently.
 source "$(dirname "${BASH_SOURCE[0]}")/require-grep.sh"
 

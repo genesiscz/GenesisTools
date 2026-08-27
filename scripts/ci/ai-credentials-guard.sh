@@ -18,6 +18,11 @@
 # variable, log the source, and can be pointed at an account.
 set -euo pipefail
 
+# Reach the repo root first. `git grep -- src apps scripts` is resolved relative
+# to the cwd, so running this from a subdirectory scanned nothing, and
+# require-grep.sh below refuses to run outside a work tree at all.
+cd "$(dirname "$0")/../.."
+
 # A missing grep would make every `if … ; then` below read as "no matches" and pass silently.
 source "$(dirname "${BASH_SOURCE[0]}")/require-grep.sh"
 
@@ -26,9 +31,56 @@ fail=0
 # Roots default to the repo's own trees. Passing them in is what lets the guard's
 # own test point it at a fixture directory of known violations.
 roots=("$@")
+external_roots=1
 if [ ${#roots[@]} -eq 0 ]; then
     roots=(src apps scripts)
+    external_roots=0
 fi
+
+# Run one PCRE over the configured roots. Prints matching lines; returns 0 when
+# something matched and 1 when nothing did.
+#
+# Two modes on purpose. `git grep` searches TRACKED files relative to the work
+# tree, which is exactly right for the repo's own scan, and it flatly refuses a
+# path outside the repository ("is outside repository", exit 128). The guard's
+# own test passes an absolute /tmp fixture directory, so the repo-mode call
+# errored on every fixture — and because the callers were written as
+# `if git grep …`, exit 128 read as "no matches" and the guard exited 0 while
+# the test expected 1. That is the same silent-pass shape this guard was just
+# converted to eliminate, reintroduced one layer up. Caught by review t27 on
+# PR #330; 7 of the 9 tests in ai-credentials-guard.test.ts were failing.
+#
+# For an external root the fix is `git grep --no-index` run from INSIDE it. It
+# keeps the PCRE dialect identical in both modes, which a plain-grep fallback
+# would not: BSD grep on macOS has no -P at all, so the patterns would have to
+# be rewritten as POSIX ERE and the two modes could drift apart silently.
+scan() {
+    pattern="$1"
+    shift
+    matched=1
+
+    for root in "${roots[@]}"; do
+        if [ "$external_roots" -eq 1 ]; then
+            out=$(cd "$root" && git grep --no-index -nP -e "$pattern" -- . "$@") && rc=0 || rc=$?
+        else
+            out=$(git grep -nP -e "$pattern" -- "$root" "$@") && rc=0 || rc=$?
+        fi
+
+        # 0 = matched, 1 = no match. Anything else is a broken scan, and a broken
+        # scan must never be reported as a clean one.
+        if [ "$rc" -gt 1 ]; then
+            echo "::error:: scanning '${root}' failed (git grep exit ${rc}) — refusing to report a clean result from a scan that did not run."
+            exit 1
+        fi
+
+        if [ "$rc" -eq 0 ]; then
+            printf '%s\n' "$out"
+            matched=0
+        fi
+    done
+
+    return "$matched"
+}
 
 # 1. No argless provider factories. Matches `createOpenAI()` and friends with an
 #    empty argument list only; an explicit `createOpenAI({ apiKey })` is the whole
@@ -40,8 +92,8 @@ fi
 #    while they performed exactly the same hidden env read. That prefix was really
 #    there to skip prose that NAMES the pattern, so prose is now skipped directly:
 #    comment lines and backticked mentions are dropped from the results.
-argless=$(git grep -nP -e '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
-        -- "${roots[@]}" ':(exclude)**/*.md' ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
+argless=$(scan '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
+        ':(exclude)**/*.md' ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
         | grep -Ev ':[[:space:]]*(//|\*|#)' | grep -Fv '`create' || true)
 if [ -n "$argless" ]; then
     echo "$argless"
@@ -53,8 +105,8 @@ fi
 #    read their own environment variables, which is the pickup this phase made
 #    explicit.
 singleton_re='^\s*import\s+\{[^}]*\b(openai|groq|anthropic|google)\b[^}]*\}\s+from\s+["'"'"']@ai-sdk/'
-if git grep -nP -e "$singleton_re" \
-        -- "${roots[@]}" ':(exclude)**/*.md' ':(exclude)src/utils/ai/providers/**' \
+if scan "$singleton_re" \
+        ':(exclude)**/*.md' ':(exclude)src/utils/ai/providers/**' \
         ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' ; then
     echo "::error:: bare @ai-sdk singleton imported outside src/utils/ai/providers/ — use a provider plugin (registry.ts) so the credential is resolved through one auditable path."
     fail=1
@@ -67,8 +119,8 @@ fi
 #        shape before the v4 one can convert it.
 #      - `AIConfig.ts`, the deprecated v3 facade, deleted once its last consumer
 #        moves to AiConfigStore (Phase 8).
-if git grep -nP -e 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
-        -- "${roots[@]}" ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
+if scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
+        ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
         ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
         ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' ; then
     echo "::error:: new Storage(\"ai\") outside src/utils/ai/config/ — go through AiConfigStore, which owns the lock order (config first, vault second) and the migration chain."

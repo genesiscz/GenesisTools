@@ -51,10 +51,63 @@ export interface TurnResult {
     errPath: string;
 }
 
+/**
+ * The environment a worker turn runs under.
+ *
+ * ISOLATION_ENV is applied AFTER the caller's environment on purpose: whoever
+ * launches `tools grok` may already export GROK_CLAUDE_SKILLS_ENABLED=1, and
+ * letting that through would hand the worker the user's personal rules, skills
+ * and hooks. Extracted so the isolation contract is asserted rather than
+ * described (PR #330 review t2).
+ */
+export function buildTurnEnv(
+    baseEnv: Record<string, string | undefined>,
+    workerHome: string
+): Record<string, string | undefined> {
+    return { ...baseEnv, GROK_HOME: workerHome, ...ISOLATION_ENV };
+}
+
+/** Arguments for the first turn of a session. */
+export function buildRunArgs(
+    session: { sessionId: string; model?: string; readOnly: boolean },
+    promptArguments: string[]
+): string[] {
+    const args = [...promptArguments, "--session-id", session.sessionId];
+    if (session.model) {
+        args.push("-m", session.model);
+    }
+
+    if (session.readOnly) {
+        args.push("--tools", READ_ONLY_TOOLS);
+    }
+
+    return args;
+}
+
+/**
+ * Arguments for a resumed turn. `--tools` is re-armed every time because the
+ * grok CLI drops safety flags on `--resume`; without this a session started
+ * read-only silently gains write tools from turn 2 onward.
+ */
+export function buildSteerArgs(session: { sessionId: string }, readOnly: boolean, promptArguments: string[]): string[] {
+    const args = [...promptArguments, "--resume", session.sessionId];
+    if (readOnly) {
+        args.push("--tools", READ_ONLY_TOOLS);
+    }
+
+    return args;
+}
+
 export function resolveGrokBinary(): string {
     const binary = Bun.which("grok");
     if (!binary) {
-        throw new Error("grok CLI not found on PATH. Install it and log in (auth via XAI_API_KEY) first.");
+        // Says only what it checked. It used to read as though authentication
+        // had been verified too, so an unauthenticated grok produced a turn that
+        // failed for a reason this message had implicitly ruled out
+        // (PR #330 review t8).
+        throw new Error(
+            "grok CLI not found on PATH. Install it, then authenticate separately (XAI_API_KEY or `grok login`) — this check only looks for the binary."
+        );
     }
 
     return binary;
@@ -73,8 +126,18 @@ function promptArgs(options: { prompt?: string; promptFile?: string }): string[]
 }
 
 /** `--prompt <text>` and `--prompt-file <path>` both name user data; keep the flag, drop the value. */
-function redactArgs(args: string[]): string[] {
-    return args.map((arg, i) => (args[i - 1] === "--prompt" || args[i - 1] === "--prompt-file" ? "<redacted>" : arg));
+/**
+ * Blank the prompt payload before the invocation is logged.
+ *
+ * The flag list must match what `promptArgs` actually emits. It did not: an
+ * inline prompt is passed as `-p`, which this only matched in its long
+ * `--prompt` spelling, so every inline prompt was written verbatim into the
+ * day-stamped log (PR #330 review t15).
+ */
+const PROMPT_FLAGS = new Set(["-p", "--prompt", "--prompt-file"]);
+
+export function redactArgs(args: string[]): string[] {
+    return args.map((arg, i) => (i > 0 && PROMPT_FLAGS.has(args[i - 1]) ? "<redacted>" : arg));
 }
 
 function openTurnLog(logPath: string, name: string, turn: number): number {
@@ -95,7 +158,16 @@ async function runTurn(
     store: GrokSessionStore,
     meta: GrokSessionMeta,
     turn: number,
-    turnArgs: string[]
+    turnArgs: string[],
+    /**
+     * Metadata to persist only once this turn has WON the reservation below.
+     * A safety-mode change must not be written before that: two concurrent
+     * steers derive the same next turn, and the loser used to persist its own
+     * `readOnly` on the way past. A `steer --writable` that then lost the race
+     * left `readOnly: false` behind, so the next unflagged steer of a read-only
+     * session ran writable (PR #330 review t28).
+     */
+    reservedMetaPatch?: Partial<GrokSessionMeta>
 ): Promise<TurnResult> {
     const binary = resolveGrokBinary();
     const logPath = turnLogPath(meta.name, turn);
@@ -109,13 +181,28 @@ async function runTurn(
     // steers derive the same next turn from the same metadata, and "w" would
     // let the loser silently truncate the winner's transcript.
     const logFd = openTurnLog(logPath, meta.name, turn);
-    const errFd = openSync(errPath, "w");
+    let errFd: number;
+
+    try {
+        if (reservedMetaPatch) {
+            store.updateMeta(meta.name, reservedMetaPatch);
+        }
+
+        errFd = openSync(errPath, "w");
+    } catch (err) {
+        // Anything between winning the reservation and entering the spawn block
+        // used to leak logFd, because the try/finally that closes it started
+        // after both opens had succeeded (PR #330 review t12).
+        closeSync(logFd);
+        throw err;
+    }
+
     let exitCode: number | null = null;
     try {
         const proc = Bun.spawn({
             cmd: [binary, ...args],
             cwd: meta.cwd,
-            env: { ...env.getProcessEnv(), GROK_HOME: meta.workerHome, ...ISOLATION_ENV },
+            env: buildTurnEnv(env.getProcessEnv(), meta.workerHome),
             stdin: "ignore",
             stdout: logFd,
             stderr: errFd,
@@ -154,16 +241,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     };
     store.createMeta(meta);
 
-    const args = [...promptArgs(options), "--session-id", meta.sessionId];
-    if (meta.model) {
-        args.push("-m", meta.model);
-    }
-
-    if (meta.readOnly) {
-        args.push("--tools", READ_ONLY_TOOLS);
-    }
-
-    return runTurn(store, meta, 1, args);
+    return runTurn(store, meta, 1, buildRunArgs(meta, promptArgs(options)));
 }
 
 export async function steerSession(options: SteerSessionOptions): Promise<TurnResult> {
@@ -174,15 +252,8 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
     }
 
     const readOnly = options.readOnly ?? meta.readOnly;
-    if (readOnly !== meta.readOnly) {
-        store.updateMeta(meta.name, { readOnly });
-    }
+    const args = buildSteerArgs(meta, readOnly, promptArgs(options));
+    const modeChange = readOnly === meta.readOnly ? undefined : { readOnly };
 
-    const args = [...promptArgs(options), "--resume", meta.sessionId];
-    if (readOnly) {
-        // The grok CLI forgets safety flags on every --resume; re-arming here is the fix at the root.
-        args.push("--tools", READ_ONLY_TOOLS);
-    }
-
-    return runTurn(store, { ...meta, readOnly }, meta.turns + 1, args);
+    return runTurn(store, { ...meta, readOnly }, meta.turns + 1, args, modeChange);
 }

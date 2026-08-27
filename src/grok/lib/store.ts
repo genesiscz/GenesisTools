@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -25,6 +25,10 @@ export interface GrokSessionMeta {
     lastTurn?: GrokTurnRecord;
 }
 
+function isNonEmpty(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
 export class GrokSessionStore {
     ensureSessionsDir(): string {
         const path = sessionsDir();
@@ -45,8 +49,12 @@ export class GrokSessionStore {
             // build (or a half-written file) reached the sessions table with an
             // absent id and rendered a blank cell. A record with no sessionId
             // also cannot be resumed, so treating it as unreadable is honest.
-            if (typeof parsed?.sessionId !== "string" || typeof parsed.cwd !== "string") {
-                log.warn({ path, name }, "grok session metadata is missing sessionId or cwd; ignoring it");
+            // Blank counts as absent. A `sessionId: ""` passes a typeof check
+            // and then produces `--resume ""`, which the CLI accepts and starts
+            // a NEW conversation under the old name — the session looks resumed
+            // and has silently lost its history (PR #330 review t16).
+            if (!isNonEmpty(parsed?.sessionId) || !isNonEmpty(parsed?.cwd)) {
+                log.warn({ path, name }, "grok session metadata has a blank sessionId or cwd; ignoring it");
                 return null;
             }
 
@@ -85,9 +93,17 @@ export class GrokSessionStore {
 
         try {
             writeSync(fd, SafeJSON.stringify(meta, null, 2));
-        } finally {
+        } catch (err) {
+            // The O_EXCL open already claimed the name. Leaving a zero-byte file
+            // behind makes that claim permanent: every later `run` gets EEXIST
+            // and every `readMeta` gets unparseable JSON, so the name is dead
+            // until someone deletes it by hand (PR #330 review t13).
             closeSync(fd);
+            rmSync(sessionMetaPath(meta.name), { force: true });
+            throw err;
         }
+
+        closeSync(fd);
     }
 
     updateMeta(name: string, update: Partial<GrokSessionMeta>): GrokSessionMeta {

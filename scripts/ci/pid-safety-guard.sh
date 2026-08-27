@@ -24,6 +24,10 @@
 # depends only on POSIX tools.
 set -euo pipefail
 
+# Reach the repo root first: the source roots below are relative, so running the
+# guard from a subdirectory would scan nothing.
+cd "$(dirname "$0")/../.."
+
 fail=0
 
 # Shared exclusions. `grep -r` has no --glob, so directories and suffixes are
@@ -34,17 +38,30 @@ common_excludes=(
     --exclude-dir=.git
     --exclude-dir=dist
     --exclude-dir=build
-    # Git worktrees live INSIDE this repo. Without these the scan walks every
-    # other branch's full checkout, which makes it unusably slow locally and
-    # reports violations that belong to a different branch entirely. CI has no
-    # worktrees, so this only ever bit developers running the guard by hand.
-    --exclude-dir=.worktrees
-    --exclude-dir=worktrees
-    # A log file is not source; story.log.backup was matching on captured output.
-    --exclude-dir=logs
     --exclude=*.md
     --exclude=pid-safety-guard.sh
 )
+
+# Scan the source roots by name instead of the whole repo.
+#
+# This used to be `.` plus `--exclude-dir=worktrees` / `--exclude-dir=logs`, and
+# review t26 on PR #330 was right to call that a bypass: `--exclude-dir` matches
+# a bare directory NAME at EVERY depth, so a real source file at
+# `src/<tool>/logs/process.ts` was silently skipped by a required guard.
+#
+# Naming the roots fixes both halves. Git worktrees live at `.worktrees/` and
+# `.claude/worktrees/`, neither of which is a source root, so the scan no longer
+# walks another branch's full checkout (100s+ down to ~24s locally, and it no
+# longer reports violations belonging to a different branch). Nothing under a
+# source root is excluded by directory name any more.
+scan_roots=(src apps scripts plugins tools)
+
+for scan_root in "${scan_roots[@]}"; do
+    if [ ! -e "$scan_root" ]; then
+        echo "::error:: source root '$scan_root' is missing, so this guard would scan less than it claims to."
+        exit 1
+    fi
+done
 
 # 1. The signal-0 liveness probe belongs to the two helpers that own it.
 #    A hand-rolled `process.kill(x, 0)` anywhere else is either a pid-recycling
@@ -53,7 +70,7 @@ common_excludes=(
 #    processes as gone).
 probe_hits=$(grep -rnE "${common_excludes[@]}" \
     --exclude=process-alive.ts --exclude=process-identity.ts \
-    'process\.kill\([^,)]*,[[:space:]]*0[[:space:]]*\)' . || true)
+    'process\.kill\([^,)]*,[[:space:]]*0[[:space:]]*\)' "${scan_roots[@]}" || true)
 
 if [ -n "$probe_hits" ]; then
     printf '%s\n' "$probe_hits"
@@ -67,7 +84,7 @@ fi
 #    backward-compatible read path is proved to still work.
 bare_write_hits=$(grep -rnE "${common_excludes[@]}" \
     --exclude=*.test.ts --exclude=pidfile.ts \
-    'write(File)?(Sync)?\([[:space:]]*[A-Za-z0-9_$]*[Pp][Ii][Dd][A-Za-z0-9_$]*[[:space:]]*,[[:space:]]*(String\(|`)' . || true)
+    'write(File)?(Sync)?\([[:space:]]*[A-Za-z0-9_$]*[Pp][Ii][Dd][A-Za-z0-9_$]*[[:space:]]*,[[:space:]]*(String\(|`)' "${scan_roots[@]}" || true)
 
 if [ -n "$bare_write_hits" ]; then
     printf '%s\n' "$bare_write_hits"
@@ -108,14 +125,19 @@ while IFS= read -r hit; do
     hit_file=${hit%%:*}
     rest=${hit#*:}
     hit_line=${rest%%:*}
+    # Clamp to 1: a hit on line 1 would ask for line 0, and `sed -n '0,1p'` is a
+    # GNU extension that BSD sed rejects. That error used to be sent to
+    # /dev/null, which meant a failing sed produced empty output and read as
+    # "no marker here" — the silent-pass shape this whole PR exists to remove.
     previous=$((hit_line - 1))
+    [ "$previous" -ge 1 ] || previous=1
 
     # The marker may sit on the signal line itself or immediately above it.
-    if ! sed -n "${previous},${hit_line}p" "$hit_file" 2>/dev/null | grep -q 'pid-verified:'; then
+    if ! sed -n "${previous},${hit_line}p" "$hit_file" | grep -q 'pid-verified:'; then
         unmarked="${unmarked}${hit_file}:${hit_line}"$'\n'
     fi
 done <<EOF
-$(grep -rnE "${common_excludes[@]}" --exclude=*.test.ts "$signal_re" . 2>/dev/null | sed 's|^\./||' || true)
+$(grep -rnE "${common_excludes[@]}" --exclude=*.test.ts "$signal_re" "${scan_roots[@]}" || true)
 EOF
 
 if [ -n "${unmarked//[$'\n' ]/}" ]; then

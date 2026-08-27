@@ -12,10 +12,13 @@
 
 set -euo pipefail
 
+# Reach the repo root BEFORE the preflight. require-grep.sh refuses to continue
+# when it is not inside a work tree, so sourcing it first made a direct
+# invocation from outside the checkout exit before this `cd` could fix that.
+cd "$(dirname "$0")/../.."
+
 # A missing grep would make every scan below return empty and read as "no hits".
 source "$(dirname "${BASH_SOURCE[0]}")/require-grep.sh"
-
-cd "$(dirname "$0")/../.."
 
 EXIT=0
 
