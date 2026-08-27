@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
-import { extractUserText } from "@genesiscz/utils/claude/session.utils";
+import { getToolUseBlocks, humanTextOf } from "@genesiscz/utils/claude/session.utils";
 import { extractToolInputSummary, extractToolResultText } from "@genesiscz/utils/claude/session-helpers";
 import type {
     AssistantMessage,
@@ -8,6 +8,7 @@ import type {
     ToolResultBlock,
     UserMessage,
 } from "@genesiscz/utils/claude/types";
+import { cleanTranscriptText } from "./clean-text";
 import {
     clipResult,
     type SliceOptions,
@@ -16,26 +17,6 @@ import {
     type TranscriptTool,
     type TranscriptTurn,
 } from "./types";
-
-const NOISE_BLOCKS =
-    /<(local-command-caveat|local-command-stdout|system-reminder|command-name|command-message|command-args)>[\s\S]*?<\/\1>/g;
-
-function cleanTranscriptText(raw: string): string {
-    const commands: string[] = [];
-    for (const match of raw.matchAll(/<command-name>\s*([^<]+?)\s*<\/command-name>/gi)) {
-        const name = match[1]?.trim();
-        if (name) {
-            commands.push(name.startsWith("/") ? name : `/${name}`);
-        }
-    }
-    const text = raw
-        .replace(/\[Image #\d+\]/g, " ")
-        .replace(NOISE_BLOCKS, " ")
-        .replace(/<\/?[a-z][\w-]*>/gi, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-    return text || commands.join(" ");
-}
 
 function toolResultsFromUser(msg: UserMessage): ToolResultBlock[] {
     const content = msg.message.content;
@@ -83,7 +64,7 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
             if (!userHasVisibleText(msg) || msg.isMeta) {
                 continue;
             }
-            const raw = extractUserText(msg.message.content);
+            const raw = humanTextOf(msg.message.content);
             const text = cleanTranscriptText(raw);
             if (!text) {
                 continue;
@@ -106,15 +87,13 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
                 .map((b) => b.text)
                 .join("\n")
                 .trim();
-            const tools: TranscriptTool[] = content
-                .filter((b) => b.type === "tool_use")
-                .map((b) => ({
-                    id: b.id,
-                    name: b.name,
-                    inputPreview: extractToolInputSummary(b),
-                    result: null,
-                    isError: false,
-                }));
+            const tools: TranscriptTool[] = getToolUseBlocks(content).map((b) => ({
+                id: b.id,
+                name: b.name,
+                inputPreview: extractToolInputSummary(b),
+                result: null,
+                isError: false,
+            }));
             if (!text && tools.length === 0) {
                 continue;
             }

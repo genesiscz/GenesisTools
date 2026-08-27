@@ -113,6 +113,20 @@ export async function readTailBytes(filePath: string, bytes = 8192): Promise<str
     return lines;
 }
 
+/** User-visible text only. Does not join tool_result payloads. */
+export function humanTextOf(content: string | ContentBlock[] | undefined): string {
+    if (typeof content === "string") {
+        return content;
+    }
+    if (!Array.isArray(content)) {
+        return "";
+    }
+    return content
+        .filter((block) => block.type === "text")
+        .map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
+        .join(" ");
+}
+
 /** Extract readable text from a single user message content field. */
 export function extractUserText(content: string | ContentBlock[]): string {
     if (typeof content === "string") {

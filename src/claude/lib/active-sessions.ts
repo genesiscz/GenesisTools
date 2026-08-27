@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { CMUX_REFS_PATH, type SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { getActiveSessionIds } from "@app/claude/lib/tail-list";
-import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
+import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
+import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -132,20 +133,7 @@ export function parseSessionTail(lines: string[]): SessionTail {
  * ("Bash completed with no output") as the user's last message — which is exactly
  * backwards for a column meant to answer "who asked this session to do something".
  */
-export function humanTextOf(content: string | ContentBlock[] | undefined): string {
-    if (typeof content === "string") {
-        return content;
-    }
-
-    if (!Array.isArray(content)) {
-        return "";
-    }
-
-    return content
-        .filter((block) => block.type === "text")
-        .map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
-        .join(" ");
-}
+export { humanTextOf } from "@genesiscz/utils/claude/session.utils";
 
 /**
  * Strip the wrappers the harness injects around a prompt. Without this the
@@ -153,13 +141,7 @@ export function humanTextOf(content: string | ContentBlock[] | undefined): strin
  * what the user typed.
  */
 export function cleanUserText(raw: string): string {
-    return raw
-        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
-        .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, "")
-        .replace(/<command-(name|message|args)>[\s\S]*?<\/command-\1>/g, "")
-        .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
+    return cleanTranscriptText(raw, { slashFallback: false });
 }
 
 /** First slice. Grows up to TAIL_MAX_BYTES while the answer is still missing. */

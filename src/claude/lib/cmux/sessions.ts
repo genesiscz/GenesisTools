@@ -3,6 +3,7 @@ import { loadPins } from "@app/claude/lib/cmux/pins";
 import type { RestoreCandidate } from "@app/claude/lib/cmux/types";
 import { readTranscriptTail } from "@app/claude/lib/history/limit-kill";
 import { getSessionListing } from "@app/claude/lib/history/search";
+import { cleanPromptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import type { SessionMetadataRecord } from "@genesiscz/utils/claude/history-cache";
 import { logger } from "@genesiscz/utils/logger";
@@ -136,56 +137,7 @@ async function toCandidate(
     };
 }
 
-/** Harness blocks whose CONTENT is noise, not something the user typed. */
-const NOISE_BLOCKS =
-    /<(local-command-caveat|local-command-stdout|system-reminder|command-name|command-message|command-args)>[\s\S]*?<\/\1>/g;
-
-/** Lines pasted from a terminal screenshot: the Claude Code status line and its neighbours. */
-const NOISE_LINES = [/bypass permissions/i, /\d+k\/\d+k\(/, /^\s*claude-[a-z]+-[\d.]/i, /for agents\s*$/];
-
-/** Long enough to identify a session, short enough that the picker keeps its columns. */
-const TITLE_MAX = 120;
-
-/**
- * A session's prompt text, with the parts the user did not write removed.
- *
- * The raw first prompt is whatever the transcript recorded, and that is often harness
- * boilerplate: a `<local-command-caveat>` block for a session opened with a slash
- * command, or a pasted status line above the real question. Both then became the row
- * title AND the cmux tab name, which is how a tab ended up called
- * `<local-command-caveat>Caveat: T…`.
- */
-export function cleanPromptText(raw: string | null | undefined): string | null {
-    if (!raw) {
-        return null;
-    }
-
-    const commands: string[] = [];
-    for (const match of raw.matchAll(/<command-name>\s*([^<]+?)\s*<\/command-name>/gi)) {
-        const name = match[1]?.trim();
-        if (name) {
-            commands.push(name.startsWith("/") ? name : `/${name}`);
-        }
-    }
-
-    const text = raw
-        .replace(/\[Image #\d+\]/g, " ")
-        .replace(NOISE_BLOCKS, " ")
-        // Any leftover tag: keep what it wrapped, drop the markup.
-        .replace(/<\/?[a-z][\w-]*>/gi, " ")
-        .split("\n")
-        .filter((line) => !NOISE_LINES.some((pattern) => pattern.test(line)))
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const cleaned = text || commands.join(" ");
-    if (!cleaned) {
-        return null;
-    }
-
-    return cleaned.length > TITLE_MAX ? `${cleaned.slice(0, TITLE_MAX - 1)}…` : cleaned;
-}
+export { cleanPromptText };
 
 /**
  * Which directory the session actually ran in, when that is not the project root.
