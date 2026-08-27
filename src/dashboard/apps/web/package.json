@@ -96,7 +96,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.2",
-    "@workos/authkit-session": "0.3.2",
+    "@workos/authkit-session": "0.5.1",
     "babel-plugin-react-compiler": "^1.0.0",
     "dotenv": "^17.2.3",
     "drizzle-kit": "^0.31.8",
