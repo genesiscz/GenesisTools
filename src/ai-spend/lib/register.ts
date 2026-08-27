@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";
 import { findTranscriptFiles, readEvents } from "./discover";
+import { AGENT_IDS } from "./drivers";
 import { buildMonitorReport } from "./monitor";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { resolveSince } from "./since";
@@ -101,8 +102,10 @@ export function registerSpendCommand(program: Command): Command {
 
     program
         .command("monitor")
-        .description("Today + current week (local timezone, Monday start) in <1s — for status bars/monitors")
-        .option("--json", "Emit {today, week, todayDate, weekStart, timezone} as JSON")
+        .description(
+            "Today + current week (local timezone, Monday start) across claude/codex/grok in <1s — for status bars/monitors"
+        )
+        .option("--json", "Emit {today, week, todayDate, weekStart, timezone, agents} as JSON")
         .action(async (_opts: { json?: boolean }, cmd: Command) => {
             // Root also defines --json (addSpendOptions), so commander binds it there;
             // optsWithGlobals() merges it back — same as runSpend above.
@@ -118,14 +121,20 @@ export function registerSpendCommand(program: Command): Command {
                     todayDate: report.todayDate,
                     weekStart: report.weekStart,
                     timezone: report.timezone,
+                    agents: report.agents,
                 });
 
                 return;
             }
 
+            const perAgent = AGENT_IDS.filter((id) => report.agents[id].week.tokens > 0)
+                .map((id) => `${id} $${report.agents[id].today.cost.toFixed(2)}`)
+                .join(" · ");
+
             out.println(
                 `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
-                    `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]`
+                    `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]` +
+                    (perAgent ? `\ntoday by agent: ${perAgent}` : "")
             );
         });
 

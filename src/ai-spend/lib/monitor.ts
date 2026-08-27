@@ -1,33 +1,46 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { parseTranscriptLine } from "./parse";
-import { costOf, priceFor } from "./pricing";
-import type { PricingTable } from "./types";
+import {
+    AGENT_IDS,
+    type AgentId,
+    claudeDriver,
+    type DriverUsageEvent,
+    MONITOR_DRIVERS,
+    type MonitorDriver,
+} from "./drivers";
+import { costOf } from "./pricing";
+import type { ModelPrice, PricingTable } from "./types";
 
 /**
  * `ai-spend monitor` — today + current week (local timezone, Monday start)
- * in well under a second. Two tricks keep it fast:
+ * in well under a second, across every agent that leaves usage on disk.
+ * Two tricks keep it fast:
  *
  * 1. mtime pruning: a transcript whose mtime predates the local week start
  *    cannot contain events inside the week (transcripts are append-only), so
  *    it is never opened.
  * 2. incremental cache: per file we persist (size, mtime, byte offset, per-day
- *    sums). An unchanged file is never re-read; a grown file is parsed only
- *    from the previous end-of-file offset.
+ *    sums, driver resume state). An unchanged file is never re-read; a grown
+ *    file is parsed only from the previous end-of-file offset.
  *
- * The walker touches ONLY the fixed transcript roots (~/.claude/projects and
- * ~/.config/claude/projects, recursively — subagent transcripts nest deeper).
- * It never lists process.cwd() or $HOME.
+ * The walker touches ONLY each driver's fixed roots (~/.claude/projects,
+ * ~/.codex/sessions, ~/.grok/sessions and their documented overrides). It never
+ * lists process.cwd() or $HOME. Which files and which line shapes each agent
+ * contributes lives in `drivers/`, never here.
  */
 
 export interface MonitorTotals {
     cost: number;
     tokens: number;
+}
+
+export interface AgentTotals {
+    today: MonitorTotals;
+    week: MonitorTotals;
 }
 
 export interface MonitorReport {
@@ -36,6 +49,8 @@ export interface MonitorReport {
     todayDate: string;
     weekStart: string;
     timezone: string;
+    /** Per-agent split of the same today/week windows. Sums to the top level. */
+    agents: Record<AgentId, AgentTotals>;
     /** Files parsed (fully or incrementally) on this run — cache misses. */
     parsedFiles: number;
     /** Recent files considered (mtime within the week). */
@@ -61,25 +76,14 @@ export function mondayOfWeek(date: Date): Date {
     return midnight;
 }
 
+/** Claude Code transcript roots. Kept exported: the claude driver owns the list. */
 export function transcriptRoots(home: string): string[] {
-    const roots = [join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")];
-    const configDir = env.paths.getClaudeConfigDir();
-
-    if (configDir) {
-        const extra = join(configDir, "projects");
-
-        if (!roots.includes(extra)) {
-            roots.push(extra);
-        }
-    }
-
-    return roots;
+    return claudeDriver.roots(home);
 }
 
-const MAX_WALK_DEPTH = 6;
-
-/** All *.jsonl under the fixed roots whose mtime is >= minMtimeMs. */
-export function findRecentTranscripts(roots: string[], minMtimeMs: number): string[] {
+/** All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test. */
+export function findRecentTranscripts(roots: string[], minMtimeMs: number, driver?: MonitorDriver): string[] {
+    const activeDriver = driver ?? claudeDriver;
     const out: string[] = [];
 
     const walk = (dir: string, depth: number): void => {
@@ -96,14 +100,14 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number): stri
             const full = join(dir, entry.name);
 
             if (entry.isDirectory()) {
-                if (depth < MAX_WALK_DEPTH) {
+                if (depth < activeDriver.maxDepth) {
                     walk(full, depth + 1);
                 }
 
                 continue;
             }
 
-            if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+            if (!entry.isFile() || !activeDriver.isTranscript(entry.name)) {
                 continue;
             }
 
@@ -138,14 +142,15 @@ interface FileCacheEntry {
     offset: number;
     days: Record<string, DaySums>;
     /**
-     * Message-id dedup frontier: transcript duplicates of one message id sit
+     * Event-id dedup frontier: transcript duplicates of one event sit
      * adjacent (streaming rewrites), so a bounded tail window is enough.
      */
     recentIds: string[];
+    /** Driver resume state (codex's sticky model and cumulative totals). */
+    state?: unknown;
 }
 
-interface MonitorCache {
-    version: 2;
+interface AgentCache {
     /** Epoch ms of the last FULL tree sweep. */
     sweepAt: number;
     /** First-level children (project dirs) of the roots at the last sweep. */
@@ -153,14 +158,19 @@ interface MonitorCache {
     files: Record<string, FileCacheEntry>;
 }
 
+interface MonitorCache {
+    version: 3;
+    agents: Record<AgentId, AgentCache>;
+}
+
 const RECENT_ID_WINDOW = 50;
 
 /**
- * A full walk of ~/.claude/projects costs seconds on a large tree (11k+ files;
- * even warm `find` takes ~6s on this class of machine), so it runs at most
- * once per TTL. Between sweeps the fast path stats only the known-recent files
- * and readdirs their parent dirs — appends, new sibling transcripts and brand
- * new project dirs are caught immediately; a genuinely new file in a
+ * A full walk of the transcript trees costs seconds on this class of machine
+ * (~11.5k Claude files, ~33k Grok directory entries), so it runs at most once
+ * per TTL. Between sweeps the fast path stats only the known-recent files and
+ * readdirs their parent dirs — appends, new sibling transcripts and brand new
+ * project dirs are caught immediately; a genuinely new file in a
  * previously-quiet DEEP directory waits for the next sweep.
  */
 const SWEEP_TTL_MS = 10 * 60 * 1000;
@@ -169,8 +179,15 @@ function cachePath(storage: Storage): string {
     return join(storage.getCacheDir(), "monitor-cache.json");
 }
 
+function freshAgentCache(): AgentCache {
+    return { sweepAt: 0, rootChildren: [], files: {} };
+}
+
 function freshCache(): MonitorCache {
-    return { version: 2, sweepAt: 0, rootChildren: [], files: {} };
+    return {
+        version: 3,
+        agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
+    };
 }
 
 function loadCache(storage: Storage): MonitorCache {
@@ -183,8 +200,18 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 2 && raw.files) {
-            return raw;
+        if (raw?.version === 3 && raw.agents) {
+            const cache = freshCache();
+
+            for (const id of AGENT_IDS) {
+                const agent = raw.agents[id];
+
+                if (agent?.files) {
+                    cache.agents[id] = agent;
+                }
+            }
+
+            return cache;
         }
     } catch (err) {
         logger.debug({ err, path }, "ai-spend monitor: cache unreadable, rebuilding");
@@ -216,7 +243,7 @@ function listRootChildren(roots: string[]): string[] {
 }
 
 /** Between sweeps: known files + new siblings in hot dirs + fully-walked new project dirs. */
-function fastCandidates(roots: string[], cache: MonitorCache, minMtimeMs: number): string[] {
+function fastCandidates(driver: MonitorDriver, roots: string[], cache: AgentCache, minMtimeMs: number): string[] {
     const out = new Set(Object.keys(cache.files));
     const hotDirs = new Set<string>();
 
@@ -231,7 +258,7 @@ function fastCandidates(roots: string[], cache: MonitorCache, minMtimeMs: number
             continue;
         }
 
-        for (const file of findRecentTranscripts([child], minMtimeMs)) {
+        for (const file of findRecentTranscripts([child], minMtimeMs, driver)) {
             out.add(file);
         }
 
@@ -248,7 +275,7 @@ function fastCandidates(roots: string[], cache: MonitorCache, minMtimeMs: number
         }
 
         for (const entry of entries) {
-            if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+            if (!entry.isFile() || !driver.isTranscript(entry.name)) {
                 continue;
             }
 
@@ -296,39 +323,64 @@ function readTail(path: string, offset: number, size: number): string {
     }
 }
 
-function parseChunk(entry: FileCacheEntry, chunk: string, pricing: PricingTable): void {
+function priceForDriver(driver: MonitorDriver, model: string, pricing: PricingTable): ModelPrice | null {
+    for (const candidate of driver.priceCandidates(model)) {
+        const price = pricing[candidate];
+
+        if (price) {
+            return price;
+        }
+    }
+
+    return null;
+}
+
+interface ParseChunkOptions {
+    driver: MonitorDriver;
+    file: string;
+    entry: FileCacheEntry;
+    chunk: string;
+    pricing: PricingTable;
+}
+
+function parseChunk(options: ParseChunkOptions): void {
+    const { driver, entry, chunk, pricing } = options;
+    const parser = driver.createParser({ file: options.file, state: entry.state });
     const seen = new Set(entry.recentIds);
 
-    for (const line of chunk.split("\n")) {
-        const ev = parseTranscriptLine(line);
-
-        if (!ev || seen.has(ev.messageId)) {
-            continue;
+    const emit = (event: DriverUsageEvent): void => {
+        if (seen.has(event.id)) {
+            return;
         }
 
-        seen.add(ev.messageId);
-        entry.recentIds.push(ev.messageId);
+        seen.add(event.id);
+        entry.recentIds.push(event.id);
 
-        const when = new Date(ev.timestamp);
+        const when = new Date(event.timestamp);
 
         if (Number.isNaN(when.getTime())) {
-            continue;
+            return;
         }
 
         const day = localDayString(when);
-        const price = priceFor(ev.model, pricing);
-        const tokens = ev.inputTokens + ev.outputTokens + ev.cacheCreationTokens + ev.cacheReadTokens;
-        const cost = price
-            ? costOf(
-                  {
-                      input: ev.inputTokens,
-                      output: ev.outputTokens,
-                      cacheWrite: ev.cacheCreationTokens,
-                      cacheRead: ev.cacheReadTokens,
-                  },
-                  price
-              )
-            : 0;
+        const tokens = event.inputTokens + event.outputTokens + event.cacheCreationTokens + event.cacheReadTokens;
+        let cost = event.recordedCostUsd;
+
+        if (cost === undefined) {
+            const price = priceForDriver(driver, event.model, pricing);
+            cost = price
+                ? costOf(
+                      {
+                          input: event.inputTokens,
+                          output: event.outputTokens,
+                          cacheWrite: event.cacheCreationTokens,
+                          cacheRead: event.cacheReadTokens,
+                      },
+                      price
+                  )
+                : 0;
+        }
+
         let sums = entry.days[day];
 
         if (!sums) {
@@ -338,7 +390,13 @@ function parseChunk(entry: FileCacheEntry, chunk: string, pricing: PricingTable)
 
         sums.cost += cost;
         sums.tokens += tokens;
+    };
+
+    for (const line of chunk.split("\n")) {
+        parser.parseLine(line, emit);
     }
+
+    entry.state = parser.snapshot();
 
     if (entry.recentIds.length > RECENT_ID_WINDOW) {
         entry.recentIds = entry.recentIds.slice(-RECENT_ID_WINDOW);
@@ -354,28 +412,38 @@ export interface BuildMonitorOptions {
     readTailFn?: typeof readTail;
     /** Full-sweep interval override (tests; 0 = sweep every run). */
     sweepTtlMs?: number;
+    /** Subset of agents to read. Defaults to all of them. */
+    drivers?: readonly MonitorDriver[];
 }
 
-export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport {
-    const now = options.now ?? new Date();
-    const home = options.home ?? homedir();
-    const storage = options.storage ?? new Storage("ai-spend");
-    const tailReader = options.readTailFn ?? readTail;
-    const weekStartDate = mondayOfWeek(now);
-    const todayDate = localDayString(now);
-    const weekStart = localDayString(weekStartDate);
-    const cache = loadCache(storage);
-    const roots = transcriptRoots(home);
-    const minMtimeMs = weekStartDate.getTime();
-    const sweepDue = now.getTime() - cache.sweepAt >= (options.sweepTtlMs ?? SWEEP_TTL_MS);
+interface ScanResult {
+    parsedFiles: number;
+    recentFiles: number;
+}
+
+interface ScanOptions {
+    driver: MonitorDriver;
+    cache: AgentCache;
+    home: string;
+    now: Date;
+    minMtimeMs: number;
+    sweepTtlMs: number;
+    pricing: PricingTable;
+    tailReader: typeof readTail;
+}
+
+function scanAgent(options: ScanOptions): ScanResult {
+    const { driver, cache, now, minMtimeMs, pricing, tailReader } = options;
+    const roots = driver.roots(options.home);
+    const sweepDue = now.getTime() - cache.sweepAt >= options.sweepTtlMs;
     let files: string[];
 
     if (sweepDue) {
-        files = findRecentTranscripts(roots, minMtimeMs);
+        files = findRecentTranscripts(roots, minMtimeMs, driver);
         cache.sweepAt = now.getTime();
         cache.rootChildren = listRootChildren(roots);
     } else {
-        files = fastCandidates(roots, cache, minMtimeMs);
+        files = fastCandidates(driver, roots, cache, minMtimeMs);
     }
 
     let parsedFiles = 0;
@@ -406,7 +474,7 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         }
 
         const chunk = tailReader(file, entry.offset, stat.size);
-        parseChunk(entry, chunk, options.pricing);
+        parseChunk({ driver, file, entry, chunk, pricing });
         entry.size = stat.size;
         entry.mtimeMs = stat.mtimeMs;
         entry.offset = stat.size;
@@ -425,21 +493,76 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         }
     }
 
+    logger.debug(
+        { agent: driver.id, roots, sweepDue, files: files.length, parsedFiles },
+        "ai-spend monitor: agent scanned"
+    );
+
+    return { parsedFiles, recentFiles: files.length };
+}
+
+function emptyAgentTotals(): AgentTotals {
+    return { today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } };
+}
+
+export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport {
+    const now = options.now ?? new Date();
+    const home = options.home ?? homedir();
+    const storage = options.storage ?? new Storage("ai-spend");
+    const tailReader = options.readTailFn ?? readTail;
+    const drivers = options.drivers ?? MONITOR_DRIVERS;
+    const weekStartDate = mondayOfWeek(now);
+    const todayDate = localDayString(now);
+    const weekStart = localDayString(weekStartDate);
+    const cache = loadCache(storage);
+    const minMtimeMs = weekStartDate.getTime();
+    const sweepTtlMs = options.sweepTtlMs ?? SWEEP_TTL_MS;
+    const agents: Record<AgentId, AgentTotals> = {
+        claude: emptyAgentTotals(),
+        codex: emptyAgentTotals(),
+        grok: emptyAgentTotals(),
+    };
+    let parsedFiles = 0;
+    let recentFiles = 0;
+
+    for (const driver of drivers) {
+        const result = scanAgent({
+            driver,
+            cache: cache.agents[driver.id],
+            home,
+            now,
+            minMtimeMs,
+            sweepTtlMs,
+            pricing: options.pricing,
+            tailReader,
+        });
+        parsedFiles += result.parsedFiles;
+        recentFiles += result.recentFiles;
+    }
+
     atomicWriteFileSync(cachePath(storage), SafeJSON.stringify(cache, { strict: true }));
 
     const today: MonitorTotals = { cost: 0, tokens: 0 };
     const week: MonitorTotals = { cost: 0, tokens: 0 };
 
-    for (const entry of Object.values(cache.files)) {
-        for (const [day, sums] of Object.entries(entry.days)) {
-            if (day >= weekStart && day <= todayDate) {
-                week.cost += sums.cost;
-                week.tokens += sums.tokens;
-            }
+    for (const id of AGENT_IDS) {
+        const totals = agents[id];
 
-            if (day === todayDate) {
-                today.cost += sums.cost;
-                today.tokens += sums.tokens;
+        for (const entry of Object.values(cache.agents[id].files)) {
+            for (const [day, sums] of Object.entries(entry.days)) {
+                if (day >= weekStart && day <= todayDate) {
+                    totals.week.cost += sums.cost;
+                    totals.week.tokens += sums.tokens;
+                    week.cost += sums.cost;
+                    week.tokens += sums.tokens;
+                }
+
+                if (day === todayDate) {
+                    totals.today.cost += sums.cost;
+                    totals.today.tokens += sums.tokens;
+                    today.cost += sums.cost;
+                    today.tokens += sums.tokens;
+                }
             }
         }
     }
@@ -450,7 +573,8 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         todayDate,
         weekStart,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        agents,
         parsedFiles,
-        recentFiles: files.length,
+        recentFiles,
     };
 }

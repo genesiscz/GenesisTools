@@ -2,10 +2,18 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
-import { buildMonitorReport, findRecentTranscripts, localDayString, mondayOfWeek, transcriptRoots } from "./monitor";
+import {
+    buildMonitorReport,
+    findRecentTranscripts,
+    localDayString,
+    type MonitorReport,
+    mondayOfWeek,
+    transcriptRoots,
+} from "./monitor";
 import { DEFAULT_PRICING } from "./pricing";
 
 setupStorageSandbox();
@@ -168,5 +176,138 @@ describe("monitor report", () => {
         const files = findRecentTranscripts(roots, Date.now() - 60_000);
         expect(files.every((f) => f.startsWith(roots[0]) || f.startsWith(roots[1]))).toBe(true);
         expect(files.some((f) => f.endsWith("old.jsonl"))).toBe(false);
+    });
+});
+
+/** Every agent root must resolve under the fixture home, never an ambient override. */
+const FIXTURE_HOME_ONLY = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GROK_HOME: undefined };
+
+describe("multi-agent monitor report", () => {
+    let home: string;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "ai-spend-agents-"));
+        const iso = new Date().toISOString();
+
+        const claudeDir = join(home, ".claude", "projects", "p1");
+        mkdirSync(claudeDir, { recursive: true });
+        // 1M input on claude-3-5-haiku = $0.80.
+        writeFileSync(join(claudeDir, "s1.jsonl"), line("msg-a", iso, { input_tokens: 1_000_000 }));
+
+        const codexDir = join(home, ".codex", "sessions", "2026", "08", "27");
+        mkdirSync(codexDir, { recursive: true });
+        // gpt-5: $1.25 in · $10 out · $0.125 cacheRead per Mtok.
+        // 1M uncached in + 1M cacheRead + 0.1M out = 1.25 + 0.125 + 1.00 = $2.375
+        writeFileSync(
+            join(codexDir, "rollout-2026-08-27T09-00-00-synthetic.jsonl"),
+            `${SafeJSON.stringify({
+                timestamp: iso,
+                type: "turn_context",
+                payload: { turn_id: "t1", cwd: "/tmp/proj", model: "gpt-5" },
+            })}\n${SafeJSON.stringify({
+                timestamp: iso,
+                type: "event_msg",
+                payload: {
+                    type: "token_count",
+                    info: {
+                        total_token_usage: {
+                            input_tokens: 2_000_000,
+                            cached_input_tokens: 1_000_000,
+                            output_tokens: 100_000,
+                            total_tokens: 2_100_000,
+                        },
+                        last_token_usage: {
+                            input_tokens: 2_000_000,
+                            cached_input_tokens: 1_000_000,
+                            output_tokens: 100_000,
+                            total_tokens: 2_100_000,
+                        },
+                    },
+                },
+            })}\n`
+        );
+
+        const grokDir = join(home, ".grok", "sessions", "%2Ftmp%2Fproj", "sess-grok-1");
+        mkdirSync(grokDir, { recursive: true });
+        // 500_000_000 ticks / 1e10 = $0.05, recorded by grok itself.
+        writeFileSync(
+            join(grokDir, "updates.jsonl"),
+            `${SafeJSON.stringify({
+                timestamp: Math.floor(Date.now() / 1000),
+                method: "_x.ai/session/update",
+                params: {
+                    sessionId: "sess-grok-1",
+                    update: {
+                        sessionUpdate: "turn_completed",
+                        usage: {
+                            modelUsage: {
+                                "grok-4.6-build": {
+                                    inputTokens: 100_000,
+                                    outputTokens: 2_000,
+                                    cachedReadTokens: 60_000,
+                                    costUsdTicks: 500_000_000,
+                                },
+                            },
+                        },
+                    },
+                    _meta: { eventId: "evt-1", agentTimestampMs: Date.now() },
+                },
+            })}\n`
+        );
+        // events.jsonl sits next to it and must never be read.
+        writeFileSync(join(grokDir, "events.jsonl"), `${SafeJSON.stringify({ nonsense: true })}\n`);
+    });
+
+    test("splits today/week per agent and sums them at the top level", async () => {
+        const opened: string[] = [];
+        let report!: MonitorReport;
+        await env.testing.withOverrides(FIXTURE_HOME_ONLY, () => {
+            report = buildMonitorReport({
+                home,
+                pricing: DEFAULT_PRICING,
+                storage: new Storage("ai-spend"),
+                sweepTtlMs: 0,
+                readTailFn: (path, _offset, _size) => {
+                    opened.push(path);
+
+                    return readFileSync(path, "utf8");
+                },
+            });
+        });
+
+        expect(report.agents.claude.today.cost).toBeCloseTo(0.8, 6);
+        expect(report.agents.claude.today.tokens).toBe(1_000_000);
+        expect(report.agents.codex.today.cost).toBeCloseTo(2.375, 6);
+        expect(report.agents.codex.today.tokens).toBe(2_100_000);
+        expect(report.agents.grok.today.cost).toBeCloseTo(0.05, 8);
+        expect(report.agents.grok.today.tokens).toBe(102_000);
+
+        expect(report.today.cost).toBeCloseTo(0.8 + 2.375 + 0.05, 6);
+        expect(report.today.tokens).toBe(1_000_000 + 2_100_000 + 102_000);
+        expect(report.week).toEqual(report.today);
+
+        // One transcript per agent, and grok's events.jsonl was never opened.
+        expect(report.recentFiles).toBe(3);
+        expect(report.parsedFiles).toBe(3);
+        expect(opened.some((path) => path.endsWith("events.jsonl"))).toBe(false);
+    });
+
+    test("the cache is keyed per agent — a second run parses nothing", async () => {
+        const storage = new Storage("ai-spend");
+        const run = async (): Promise<MonitorReport> => {
+            let report!: MonitorReport;
+            await env.testing.withOverrides(FIXTURE_HOME_ONLY, () => {
+                report = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+            });
+
+            return report;
+        };
+
+        const first = await run();
+        const second = await run();
+
+        expect(second.parsedFiles).toBe(0);
+        expect(second.today.cost).toBeCloseTo(first.today.cost, 10);
+        expect(second.agents).toEqual(first.agents);
     });
 });
