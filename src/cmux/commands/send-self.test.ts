@@ -19,8 +19,22 @@ describe("resolveSelfTarget", () => {
         });
     });
 
-    it("ignores cmux when only one of the two ids is present", () => {
-        expect(resolveSelfTarget({ CMUX_SURFACE_ID: "F89A4C33" } as NodeJS.ProcessEnv)).toBeNull();
+    /**
+     * Behaviour change 2026-08-28: the surface used to be useless without a
+     * workspace, so this returned null. The workspace is now dropped from the
+     * command line for a self-identifying surface — it could only ever scope
+     * the lookup WRONG — so the surface alone is a complete target.
+     */
+    it("resolves cmux from the surface alone", () => {
+        expect(resolveSelfTarget({ CMUX_SURFACE_ID: "F89A4C33" } as NodeJS.ProcessEnv)).toEqual({
+            kind: "cmux",
+            workspaceId: undefined,
+            surfaceId: "F89A4C33",
+        });
+    });
+
+    it("still returns null when the surface id is missing", () => {
+        expect(resolveSelfTarget({ CMUX_WORKSPACE_ID: "C0503E81" } as NodeJS.ProcessEnv)).toBeNull();
     });
 
     it("prefers tmux when nested inside cmux", () => {

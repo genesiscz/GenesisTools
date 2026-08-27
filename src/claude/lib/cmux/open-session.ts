@@ -2,6 +2,7 @@ import { buildLaunchCommand, paneTitle } from "@app/claude/lib/cmux/command";
 import { findCandidate } from "@app/claude/lib/cmux/sessions";
 import type { PlannedSession } from "@app/claude/lib/cmux/types";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import {
     createWorkspaceWithName,
     openSplitInWorkspace,
@@ -91,7 +92,7 @@ export async function openSessionAt(
 
     const payload = `${command}${(opts.enter ?? true) ? "\n" : ""}`;
     await prof.measureAsync("send", () =>
-        runCmuxOk(["send", "--workspace", placed.workspaceRef, "--surface", placed.surfaceRef, payload])
+        runCmuxOk(["send", ...surfaceTargetArgs(placed.surfaceRef, placed.workspaceRef), payload])
     );
     prof.summary("open-session");
 

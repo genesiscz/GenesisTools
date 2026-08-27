@@ -6,6 +6,10 @@ import { out } from "@genesiscz/utils/logger";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const CALLER_PANE = "pane:2";
+const LIVE_SURFACE_UUID = "22222222-2222-4222-8222-222222222222";
+// A surface the app no longer knows: the send against it fails, which is what
+// makes the recorded-ref path fall back to the matcher.
+const DEAD_SURFACE_UUID = "44444444-4444-4444-8444-444444444444";
 
 let snapshot: CmuxLiveSnapshot;
 let events: string[] = [];
@@ -20,8 +24,8 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxOk: async (args: string[]) => {
         events.push(args.join(" "));
 
-        if (args.includes("dead-ws")) {
-            throw new Error("no such workspace");
+        if (args.includes(DEAD_SURFACE_UUID)) {
+            throw new Error("invalid_params: Surface is not a terminal");
         }
 
         return { code: 0, stdout: "", stderr: "" };
@@ -67,8 +71,8 @@ const deps = {
 function recordedRefs(overrides: Partial<SessionCmuxRefs> = {}): SessionCmuxRefs {
     return {
         sessionId: SESSION_A,
-        workspaceId: "ws-uuid",
-        surfaceId: "surf-uuid",
+        workspaceId: "11111111-1111-4111-8111-111111111111",
+        surfaceId: LIVE_SURFACE_UUID,
         workspaceRef: "workspace:11",
         paneRef: "pane:7",
         surfaceRef: "surface:41",
@@ -121,10 +125,10 @@ test("sends text then Enter to the pane whose tab carries the session marker", a
 
     await sendCommand(SESSION_A.slice(0, 8), "Just poking", { first: true, enter: true, enterDelay: "0" }, deps);
 
-    expect(events).toContain("send --workspace workspace:11 --surface surface:41 -- Just poking");
-    expect(events).toContain("send-key --workspace workspace:11 --surface surface:41 enter");
-    expect(events.indexOf("send --workspace workspace:11 --surface surface:41 -- Just poking")).toBeLessThan(
-        events.indexOf("send-key --workspace workspace:11 --surface surface:41 enter")
+    expect(events).toContain("send --surface surface:41 -- Just poking");
+    expect(events).toContain("send-key --surface surface:41 enter");
+    expect(events.indexOf("send --surface surface:41 -- Just poking")).toBeLessThan(
+        events.indexOf("send-key --surface surface:41 enter")
     );
 });
 
@@ -138,7 +142,7 @@ test("--no-enter sends the text only", async () => {
 
     await sendCommand(SESSION_A.slice(0, 8), "/keepalive", { first: true, enter: false, enterDelay: "0" }, deps);
 
-    expect(events).toContain("send --workspace workspace:11 --surface surface:41 -- /keepalive");
+    expect(events).toContain("send --surface surface:41 -- /keepalive");
     expect(events.some((event) => event.startsWith("send-key"))).toBe(false);
 });
 
@@ -154,7 +158,7 @@ test("a pane-scope match falls back to the pane's selected surface", async () =>
 
     await sendCommand(SESSION_A, "hello", { first: true, enter: false, enterDelay: "0" }, deps);
 
-    expect(events).toContain("send --workspace workspace:11 --surface surface:90 -- hello");
+    expect(events).toContain("send --surface surface:90 -- hello");
 });
 
 test("no match exits 1 with sent:false JSON", async () => {
@@ -184,7 +188,7 @@ test("the calling pane is excluded unless --include-self", async () => {
         { first: true, includeSelf: true, enter: false, enterDelay: "0" },
         deps
     );
-    expect(events).toContain(`send --workspace workspace:11 --surface surface:5 -- hi`);
+    expect(events).toContain(`send --surface surface:5 -- hi`);
 });
 
 test("dry run resolves but sends nothing", async () => {
@@ -216,7 +220,7 @@ test("recorded refs from the session hook win without any snapshot fetch", async
 
     await sendCommand(SESSION_A, "hi", { enter: false, enterDelay: "0" }, recordedDeps);
 
-    expect(events).toContain("send --workspace ws-uuid --surface surf-uuid -- hi");
+    expect(events).toContain(`send --surface ${LIVE_SURFACE_UUID} -- hi`);
     expect(snapshotFetches).toBe(0);
 });
 
@@ -229,13 +233,17 @@ test("stale recorded refs fall back to the matcher", async () => {
     ]);
     const staleDeps = {
         ...deps,
-        lookupRefs: () => recordedRefs({ workspaceId: "dead-ws", surfaceId: "dead-surf" }),
+        lookupRefs: () =>
+            recordedRefs({
+                workspaceId: "33333333-3333-4333-8333-333333333333",
+                surfaceId: DEAD_SURFACE_UUID,
+            }),
     };
 
     await sendCommand(SESSION_A.slice(0, 8), "hi", { first: true, enter: false, enterDelay: "0" }, staleDeps);
 
-    expect(events).toContain("send --workspace dead-ws --surface dead-surf -- hi");
-    expect(events).toContain("send --workspace workspace:11 --surface surface:41 -- hi");
+    expect(events).toContain(`send --surface ${DEAD_SURFACE_UUID} -- hi`);
+    expect(events).toContain("send --surface surface:41 -- hi");
 });
 
 test("a stale recorded ref falling back to two panes is still refused", async () => {
@@ -259,7 +267,11 @@ test("a stale recorded ref falling back to two panes is still refused", async ()
     const staleDeps = {
         ...deps,
         lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }),
-        lookupRefs: () => recordedRefs({ workspaceId: "dead-ws", surfaceId: "dead-surf" }),
+        lookupRefs: () =>
+            recordedRefs({
+                workspaceId: "33333333-3333-4333-8333-333333333333",
+                surfaceId: DEAD_SURFACE_UUID,
+            }),
     };
 
     await sendCommand(SESSION_A, "hi", { json: true, enter: false, enterDelay: "0" }, staleDeps);
@@ -268,7 +280,7 @@ test("a stale recorded ref falling back to two panes is still refused", async ()
     expect(result.sent).toBe(false);
     expect(result.ambiguous).toBe(true);
     // The dead recorded surface is attempted once; nothing lands on a live pane.
-    expect(events.some((event) => event.startsWith("send --workspace workspace:11"))).toBe(false);
+    expect(events.some((event) => event.includes("--surface surface:41"))).toBe(false);
 });
 
 test("refuses to type into an ambiguous working-directory match", async () => {
@@ -315,7 +327,7 @@ test("a single working-directory match still delivers", async () => {
 
     await sendCommand(SESSION_A, "hi", { first: true, enter: false, enterDelay: "0" }, cwdDeps);
 
-    expect(events).toContain("send --workspace workspace:11 --surface surface:1 -- hi");
+    expect(events).toContain("send --surface surface:1 -- hi");
 });
 
 test("deliverySurfaceId prefers the matched surface over the selected one", () => {

@@ -15,6 +15,7 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { paneList, workspaceList } from "@genesiscz/utils/cmux/lib/socket";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
@@ -281,7 +282,7 @@ async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry
                 continue;
             }
 
-            await runCmuxOk(["send", "--workspace", liveWs.ref, "--surface", target.ref, `${entry.command}\n`]);
+            await runCmuxOk(["send", ...surfaceTargetArgs(target.ref, liveWs.ref), `${entry.command}\n`]);
             sent += 1;
             await new Promise((resolve) => setTimeout(resolve, 300));
         }

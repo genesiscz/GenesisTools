@@ -2,6 +2,7 @@ import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/
 import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -46,7 +47,7 @@ interface Delivery {
 }
 
 async function deliver({ target, surfaceId, text, enter, enterDelayMs }: Delivery) {
-    const where = ["--workspace", target.workspaceId, "--surface", surfaceId];
+    const where = surfaceTargetArgs(surfaceId, target.workspaceId);
     await runCmuxOk(["send", ...where, "--", text]);
 
     if (enter) {

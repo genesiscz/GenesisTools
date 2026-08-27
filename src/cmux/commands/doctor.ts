@@ -1,3 +1,4 @@
+import { probeSelfSend } from "@app/cmux/lib/send-self-preflight";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { type CmuxHealth, type CmuxProbeResult, probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { out } from "@genesiscz/utils/logger";
@@ -19,10 +20,13 @@ export function registerDoctorCommand(parent: Command): void {
 
 async function runDoctor(flags: DoctorFlags): Promise<void> {
     const health = await probeCmuxHealth({ full: true, identifyTimeoutMs: 5000 });
+    // A green socket says nothing about whether THIS shell can type into its own
+    // prompt: send-self failed for weeks while every line below it read ok.
+    const selfSend = await probeSelfSend();
 
     if (flags.json) {
-        out.result(health);
-        setExitCode(health);
+        out.result({ ...health, selfSend });
+        setExitCode(health, selfSend.ok);
         return;
     }
 
@@ -34,6 +38,7 @@ async function runDoctor(flags: DoctorFlags): Promise<void> {
     }
 
     ui.kv("identify", probeLine(health.probes.identify));
+    ui.kv("send-self", selfSend.detail);
 
     switch (health.state) {
         case "healthy":
@@ -63,11 +68,15 @@ async function runDoctor(flags: DoctorFlags): Promise<void> {
             break;
     }
 
-    setExitCode(health);
+    if (!selfSend.ok) {
+        ui.warn(`send-self would not reach this prompt: ${selfSend.fix}`);
+    }
+
+    setExitCode(health, selfSend.ok);
 }
 
-function setExitCode(health: CmuxHealth): void {
-    if (health.state !== "healthy") {
+function setExitCode(health: CmuxHealth, selfSendOk: boolean): void {
+    if (health.state !== "healthy" || !selfSendOk) {
         process.exitCode = 1;
     }
 }

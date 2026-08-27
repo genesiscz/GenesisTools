@@ -1,11 +1,12 @@
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { Command } from "commander";
 
-export type SelfTarget = { kind: "tmux"; pane: string } | { kind: "cmux"; workspaceId: string; surfaceId: string };
+export type SelfTarget = { kind: "tmux"; pane: string } | { kind: "cmux"; workspaceId?: string; surfaceId: string };
 
 export function resolveSelfTarget(
     environment: NodeJS.ProcessEnv,
@@ -19,7 +20,9 @@ export function resolveSelfTarget(
         return { kind: "tmux", pane };
     }
 
-    if (prefer !== "tmux" && surfaceId && workspaceId) {
+    // The surface alone is enough: a UUID names one surface across the whole
+    // tree, and CMUX_WORKSPACE_ID goes stale the moment the surface is moved.
+    if (prefer !== "tmux" && surfaceId) {
         return { kind: "cmux", workspaceId, surfaceId };
     }
 
@@ -49,13 +52,13 @@ async function sendTmux(pane: string, text: string, enter: boolean, enterDelayMs
 }
 
 async function sendCmux(
-    workspaceId: string,
+    workspaceId: string | undefined,
     surfaceId: string,
     text: string,
     enter: boolean,
     enterDelayMs: number
 ): Promise<void> {
-    const where = ["--workspace", workspaceId, "--surface", surfaceId];
+    const where = surfaceTargetArgs(surfaceId, workspaceId);
     await runCmuxOk(["send", ...where, text]);
 
     if (!enter) {
@@ -88,9 +91,7 @@ export function registerSendSelfCommand(program: Command): void {
                 const target = resolveSelfTarget(env.getProcessEnv(), prefer);
 
                 if (!target) {
-                    throw new Error(
-                        "not running inside tmux or cmux (no TMUX_PANE, no CMUX_SURFACE_ID/CMUX_WORKSPACE_ID)"
-                    );
+                    throw new Error("not running inside tmux or cmux (no TMUX_PANE, no CMUX_SURFACE_ID)");
                 }
 
                 const enterDelayMs = Number(opts.enterDelay);

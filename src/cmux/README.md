@@ -128,6 +128,17 @@ tools cmux send-self 'text' --dry-run
 nohup zsh -c "sleep 300; tools cmux send-self '/compact'" </dev/null >/dev/null 2>&1 &
 ```
 
+⚠️ **That form is silent when it fails**, so check first: `tools cmux doctor` prints a
+`send-self` line saying whether this surface would actually accept the keystrokes. A failed
+send is still recorded in `~/.genesis-tools/logs/<today>.log` even with stderr discarded.
+
+🛑 **Never pass `--workspace` alongside a surface UUID or `surface:N` ref.** `cmux send` looks
+the surface up INSIDE the workspace you name, so a stale `CMUX_WORKSPACE_ID` — which is what
+you get the moment a surface is moved to another workspace — makes the app answer
+`invalid_params: Surface is not a terminal` about a perfectly good terminal. The surface id
+alone is unique across the whole tree; `surfaceTargetArgs()` in `src/utils/cmux/lib/target.ts`
+is the one place that decides this.
+
 ## Notes
 
 - Profiles are JSON under `~/.genesis-tools/cmux/profiles/`. `edit` opens one, and `path` tells you where it is, so hand-tuning a layout is expected rather than discouraged.

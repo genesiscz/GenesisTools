@@ -353,7 +353,7 @@ Key names accepted by `send-key`: `enter`, `tab`, `escape`, `up`/`down`/`left`/`
 
 ### Sending to your own surface (`tools cmux send-self`)
 
-`cmux send`/`send-key` accept the caller's own `$CMUX_WORKSPACE_ID` / `$CMUX_SURFACE_ID` as `--workspace` / `--surface`, so a process can type into the terminal it is running in. `tools cmux send-self <text>` wraps that, and falls back to `tmux send-keys -t $TMUX_PANE` when `TMUX_PANE` is set (tmux wins when nested inside cmux; `--target` forces one).
+`cmux send`/`send-key` accept the caller's own `$CMUX_SURFACE_ID` as `--surface`, so a process can type into the terminal it is running in. Pass the surface ALONE: `send` resolves a surface UUID or `surface:N` ref across the whole tree, but adding `--workspace` scopes the lookup to that workspace, and a stale `$CMUX_WORKSPACE_ID` then fails with `invalid_params: Surface is not a terminal`. `tools cmux send-self <text>` wraps that, and falls back to `tmux send-keys -t $TMUX_PANE` when `TMUX_PANE` is set (tmux wins when nested inside cmux; `--target` forces one).
 
 This is the only reliable way to make an agent CLI parse a slash command it did not receive from the keyboard — the bytes arrive on the PTY exactly as if typed.
 

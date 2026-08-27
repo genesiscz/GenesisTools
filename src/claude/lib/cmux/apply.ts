@@ -4,6 +4,7 @@ import type { PlannedPane, PlannedWorkspace, RestorePlan } from "@app/claude/lib
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import { paneList, rpc, windowList } from "@genesiscz/utils/cmux/lib/socket";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { createWorkspaceWithName } from "@genesiscz/utils/cmux/workspace";
 import { logger } from "@genesiscz/utils/logger";
@@ -190,7 +191,7 @@ async function fillPane(
             { workspaceRef, surfaceRef, sessionId: session.candidate.sessionId, enter: opts.enter },
             "[claude-cmux] sending launch command"
         );
-        await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
+        await runCmuxOk(["send", ...surfaceTargetArgs(surfaceRef, workspaceRef), payload]);
     }
 
     return skipped;

@@ -6,6 +6,7 @@ import * as p from "@clack/prompts";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import { paneList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
+import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -419,10 +420,7 @@ async function replayTerminal(
         if (surface.cwd) {
             await runCmuxOk([
                 "send",
-                "--workspace",
-                workspaceRef,
-                "--surface",
-                surfaceRef,
+                ...surfaceTargetArgs(surfaceRef, workspaceRef),
                 `cd -- ${shellQuote(surface.cwd)}\n`,
             ]);
         }
@@ -467,7 +465,7 @@ async function replayTerminal(
     }
 
     try {
-        await runCmuxOk(["send", "--workspace", workspaceRef, "--surface", surfaceRef, payload]);
+        await runCmuxOk(["send", ...surfaceTargetArgs(surfaceRef, workspaceRef), payload]);
     } catch (error) {
         if (screenDir) {
             // The pipeline never reached the pane, so nothing will consume the file.
