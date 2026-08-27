@@ -1,9 +1,10 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
+import { captureFrameGrid } from "@app/chrome-devtools/lib/frame-grid";
 import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
-import { captureFrameGrid } from "@app/youtube/lib/devtools/frame-grid";
 import { withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
 import * as p from "@clack/prompts";
+import { env } from "@genesiscz/utils/env.client";
 import { createWatcher } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -12,6 +13,27 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 const DEV_RELOAD_PORT = 9877;
+
+/**
+ * The port behind this tool's CDP endpoint.
+ *
+ * The MCP path takes a full URL; the shared frame-grid attaches by port. Same default
+ * chain as mcp-client.ts: explicit flag, then $CDP_URL, then 9333.
+ */
+function cdpPortFrom(cdpUrl: string | undefined): number {
+    const raw = cdpUrl ?? env.extension.getCdpUrl() ?? "http://127.0.0.1:9333";
+
+    try {
+        const port = Number(new URL(raw).port);
+
+        return Number.isInteger(port) && port > 0 ? port : 9333;
+    } catch {
+        logger.debug({ raw }, "extension devtools: unparseable CDP url, defaulting to 9333");
+
+        return 9333;
+    }
+}
+
 type DevReloadTarget = "tabs" | "runtime";
 
 export function registerExtensionCommand(program: Command): void {
@@ -118,18 +140,16 @@ export function registerExtensionCommand(program: Command): void {
         .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
         .action(async (outPath: string, opts: { region?: string; step: string; cdpUrl?: string }) => {
             logger.info({ outPath, region: opts.region ?? null, step: opts.step }, "extension devtools: frame grid");
-            await withDevtoolsClient(
-                async (client) => {
-                    const written = await captureFrameGrid(client, {
-                        outPath,
-                        region: opts.region,
-                        gridStep: Number(opts.step),
-                    });
-                    logger.debug({ written }, "extension devtools: frame grid written");
-                    p.log.success(`Labeled grid written to ${written}`);
-                },
-                { cdpUrl: opts.cdpUrl }
-            );
+            // No MCP client here: the shared implementation screenshots over raw CDP, so
+            // this path no longer spawns a chrome-devtools-mcp server just to take a PNG.
+            const written = await captureFrameGrid({
+                outPath,
+                region: opts.region,
+                gridStep: Number(opts.step),
+                port: cdpPortFrom(opts.cdpUrl),
+            });
+            logger.debug({ written }, "extension devtools: frame grid written");
+            p.log.success(`Labeled grid written to ${written}`);
         });
 }
 
