@@ -43,15 +43,6 @@ const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 const VERIFY_TIMEOUT_MS = 15_000;
 
 /**
- * Read-only liveness probe: a GET that spends nothing.
- *
- * `verifyLongLivedToken` below proves the token by making a real inference request. That
- * is right at CAPTURE time — the user just pasted a token and asked "is it good?" — but
- * wrong for a DIAGNOSTIC, which must not consume quota, create provider-side history, or
- * perturb the rate-limit state it was invoked to report on. `tools claude doctor` uses
- * this one; nothing here writes.
- */
-/**
  * A 403 whose body says the SCOPE was insufficient, not that the caller was
  * unknown. Setup tokens (`sk-ant-oat…`) are minted for inference and never
  * carry `user:profile`, so the profile endpoint answers every healthy oat token
@@ -96,6 +87,15 @@ export function verdictFromProbeResponse(status: number, body: string): TokenVer
     return "ok";
 }
 
+/**
+ * Read-only liveness probe: a GET that spends nothing.
+ *
+ * `verifyLongLivedToken` below proves the token by making a real inference request. That
+ * is right at CAPTURE time — the user just pasted a token and asked "is it good?" — but
+ * wrong for a DIAGNOSTIC, which must not consume quota, create provider-side history, or
+ * perturb the rate-limit state it was invoked to report on. `tools claude doctor` uses
+ * this one; nothing here writes.
+ */
 export async function probeLongLivedToken(token: string): Promise<TokenVerdict> {
     try {
         const res = await fetch(PROFILE_URL, {

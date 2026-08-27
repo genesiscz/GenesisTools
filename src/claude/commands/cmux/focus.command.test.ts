@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { out } from "@genesiscz/utils/logger";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const CALLER_PANE = "pane:2";
+const DEAD_SURFACE = "dead-surf";
 
 let snapshot: CmuxLiveSnapshot;
 
@@ -46,6 +48,11 @@ mock.module("@genesiscz/utils/cmux/lib/controls", () => ({
     },
     focusCmuxSurface: async ({ surfaceId }: { surfaceId: string }) => {
         events.push(`focus-surface ${surfaceId}`);
+
+        // A recorded surface that cmux no longer knows: the stale-ref case.
+        if (surfaceId === DEAD_SURFACE) {
+            throw new Error("no such surface");
+        }
     },
 }));
 
@@ -70,6 +77,24 @@ function setSnapshot(panes: CmuxLivePane[]): void {
         available: true,
         workspaces: [{ id: "workspace:11", name: "GenesisTools" }],
         panes,
+    };
+}
+
+const RECORDED_PANE = "pane:7";
+
+/** Refs the session hook journaled, pointing at a surface cmux has since forgotten. */
+function staleRefs(): SessionCmuxRefs {
+    return {
+        sessionId: SESSION_A,
+        workspaceId: "ws-uuid",
+        surfaceId: DEAD_SURFACE,
+        workspaceRef: "workspace:11",
+        paneRef: RECORDED_PANE,
+        surfaceRef: "surface:41",
+        windowRef: "window:1",
+        tmuxPane: null,
+        cwd: "/repo",
+        at: Date.now(),
     };
 }
 
@@ -258,5 +283,36 @@ describe("focusCommand", () => {
 
         expect(included.exitCode).toBe(0);
         expect(included.result).toContain(`"paneId": "${CALLER_PANE}"`);
+    });
+
+    test("a stale recorded ref falling back to two panes is not focused blindly", async () => {
+        // The fallback re-runs the matcher, so it can land on several panes exactly
+        // like the first pass can. It used to take targets[0] with no --first, so a
+        // cmux restart silently focused an arbitrary pane.
+        setSnapshot([
+            pane({ id: "pane:7", cwd: "/repo", surfaces: [surface({ id: "surface:1", selected: true })] }),
+            pane({ id: "pane:8", cwd: "/repo", surfaces: [surface({ id: "surface:2", selected: true })] }),
+        ]);
+
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        await focusCommand(
+            SESSION_A,
+            { activate: false, json: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }),
+                lookupRefs: () => staleRefs(),
+            }
+        );
+
+        const result = await capturedResult();
+
+        expect(process.exitCode).toBe(1);
+        expect(result).toContain(`"ambiguous": true`);
+        expect(result).toContain(`"focused": null`);
+        // The dead recorded surface is attempted once; no live pane is focused after it.
+        expect(events.filter((event) => event.startsWith("focus-pane"))).toEqual([
+            `focus-pane ws-uuid ${RECORDED_PANE}`,
+        ]);
     });
 });

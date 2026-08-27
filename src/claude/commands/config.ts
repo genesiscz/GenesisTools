@@ -6,7 +6,7 @@ import {
     updateConfig,
 } from "@app/claude/lib/config";
 import { identityMismatch } from "@app/claude/lib/identity-guard";
-import { renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
+import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
 import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
@@ -884,7 +884,9 @@ export function registerConfigCommand(program: Command): void {
 
     configCmd
         .command("rename <oldName> [newName]")
-        .description("Rename an account, carrying its usage history, warmup lists, and defaults across")
+        .description(
+            "Rename an account, carrying its usage history, warmup lists, and defaults across (best-effort per store)"
+        )
         .option("--to <newName>", "New account name (required in non-interactive mode)")
         .action(async (oldName: string, newName: string | undefined, opts: { to?: string }) => {
             const aiConfig = await AIConfig.load();
@@ -958,7 +960,10 @@ export function registerConfigCommand(program: Command): void {
                     out.println(pc.yellow(`  ${failure.step}: ${failure.error}`));
                 }
 
-                out.println(pc.dim("  Re-running rename will not fix these — AIConfig no longer knows the old name."));
+                for (const line of partialRenameAdvice(oldName, target)) {
+                    out.println(pc.dim(`  ${line}`));
+                }
+
                 process.exitCode = 1;
             }
             out.println(pc.dim("Sessions already running keep reporting the old name until they exit."));

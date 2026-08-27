@@ -2,6 +2,9 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+
+const log = logger.child({ component: "claude:cmux-refs" });
 
 /**
  * One line of the append-only journal `record-session-cmux.ts` writes on
@@ -30,15 +33,15 @@ export const CMUX_REFS_PATH = join(HOME, ".genesis-tools", "claude-code", "cmux-
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Newest recorded cmux location per session, one pass over the journal.
- * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
- * Terminal/tmux launches) are kept — callers that need a cmux target filter.
- */
-/**
  * The journal is append-only and only the NEWEST record per session wins, so
  * older bytes can never change the answer. Reading the whole file grew the cost
  * of every `claude who` / usage listing without changing the result, so the read
  * is capped at the tail and a truncated first line is dropped.
+ *
+ * The cap is not free: a session whose ONLY record sits in the truncated head
+ * resolves as unrecorded. `MAX_AGE_MS` keeps the journal from growing there in
+ * normal use, and the cost when it happens is one stage of the matcher rather
+ * than a failure, so the session still resolves from tab titles or a capture.
  */
 const MAX_JOURNAL_READ_BYTES = 512 * 1024;
 
@@ -68,7 +71,11 @@ function readJournalTail(refsPath: string): string | null {
         } finally {
             closeSync(fd);
         }
-    } catch {
+    } catch (err) {
+        // A permission or I/O failure must not read as "no journal": that
+        // silently disables session enrichment with nothing to triage from.
+        log.warn({ err, refsPath }, "cannot read the cmux refs journal");
+
         return null;
     }
 }
@@ -97,7 +104,12 @@ export function loadAllSessionCmuxRefs(refsPath: string = CMUX_REFS_PATH): Map<s
 
         try {
             entry = SafeJSON.parse(line, { jsonl: true }) as SessionCmuxRefs;
-        } catch {
+        } catch (err) {
+            // The parse error and the position are enough to triage. The line
+            // itself is not logged: this journal carries session ids and
+            // filesystem locations, and a corrupted record can hold arbitrary
+            // text from whatever clobbered it (PR #332 review t11).
+            log.debug({ err, refsPath, lineLength: line.length }, "skipping malformed cmux refs line");
             continue;
         }
 

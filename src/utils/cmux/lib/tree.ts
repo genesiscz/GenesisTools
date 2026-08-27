@@ -1,4 +1,4 @@
-import type { CmuxLivePane, CmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveWindow } from "@genesiscz/utils/cmux/lib/live-snapshot";
 
 /**
  * Shape a flat live snapshot into the window → workspace → pane hierarchy.
@@ -22,26 +22,26 @@ export interface CmuxHierarchyWindow {
 
 export function buildCmuxHierarchy(snapshot: CmuxLiveSnapshot): CmuxHierarchyWindow[] {
     // Windows come from list-windows in allWindows mode; a single-window snapshot
-    // (older cmux, or the default mode) collapses into one synthetic window.
-    const windowMetas = snapshot.windows?.length
-        ? snapshot.windows
-        : [{ id: "window:current", ref: undefined, index: 0, key: true, workspaceCount: snapshot.workspaces.length }];
+    // (older cmux, or the default mode) collapses into one synthetic window that
+    // owns every workspace, so there is nothing to distribute.
+    const listed = snapshot.windows ?? [];
+    const windowMetas: CmuxLiveWindow[] = listed.length
+        ? listed
+        : [{ id: "window:current", index: 0, key: true, workspaceCount: snapshot.workspaces.length }];
 
     const windows: CmuxHierarchyWindow[] = windowMetas.map((meta) => {
-        const workspaces = snapshot.workspaces.filter((ws) => {
-            if (!snapshot.windows?.length) {
-                return true;
-            }
+        const workspaces = listed.length
+            ? snapshot.workspaces.filter((ws) => {
+                  // Compare refs only when BOTH sides have one: with several windows
+                  // carrying no ref, `ws.windowRef === meta.ref` was undefined ===
+                  // undefined, which put every unreferenced workspace in every window.
+                  if (ws.windowRef && meta.ref) {
+                      return ws.windowRef === meta.ref;
+                  }
 
-            // Compare refs only when BOTH sides have one: with several windows
-            // carrying no ref, `ws.windowRef === meta.ref` was undefined ===
-            // undefined, which put every unreferenced workspace in every window.
-            if (ws.windowRef && meta.ref) {
-                return ws.windowRef === meta.ref;
-            }
-
-            return !ws.windowRef && meta.key;
-        });
+                  return !ws.windowRef && meta.key;
+              })
+            : snapshot.workspaces;
 
         return {
             id: meta.id,

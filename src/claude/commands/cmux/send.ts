@@ -1,5 +1,5 @@
 import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type ResolveDeps, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
+import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -37,7 +37,15 @@ export function deliverySurfaceId(
     return pane?.selectedSurfaceRef ?? pane?.surfaces.find((candidate) => candidate.selected)?.id;
 }
 
-async function deliver(target: FocusTarget, surfaceId: string, text: string, enter: boolean, enterDelayMs: number) {
+interface Delivery {
+    target: FocusTarget;
+    surfaceId: string;
+    text: string;
+    enter: boolean;
+    enterDelayMs: number;
+}
+
+async function deliver({ target, surfaceId, text, enter, enterDelayMs }: Delivery) {
     const where = ["--workspace", target.workspaceId, "--surface", surfaceId];
     await runCmuxOk(["send", ...where, "--", text]);
 
@@ -47,16 +55,6 @@ async function deliver(target: FocusTarget, surfaceId: string, text: string, ent
     }
 }
 
-/**
- * Type text into the pane a session is running in, then press Enter.
- *
- * The wakeup path for a session that is about to lose its prompt cache: the
- * Genesis usage monitor's notification buttons run exactly this command, and it
- * works from anywhere — the caller does not have to live inside cmux.
- *
- * Resolution is staged (hook journal → tab titles → pane captures); recorded
- * refs that went stale (cmux restarted) fail fast and fall back to the matcher.
- */
 /**
  * The no-wrong-pane guard, shared by the first pass and the stale-ref fallback.
  * Returns true when the caller must stop.
@@ -108,6 +106,16 @@ function refuseAmbiguous(
     return false;
 }
 
+/**
+ * Type text into the pane a session is running in, then press Enter.
+ *
+ * The wakeup path for a session that is about to lose its prompt cache: the
+ * Genesis usage monitor's notification buttons run exactly this command, and it
+ * works from anywhere — the caller does not have to live inside cmux.
+ *
+ * Resolution is staged (hook journal → tab titles → pane captures); recorded
+ * refs that went stale (cmux restarted) fail fast and fall back to the matcher.
+ */
 export async function sendCommand(
     query: string,
     text: string,
@@ -170,8 +178,8 @@ export async function sendCommand(
 
     if (surfaceId) {
         try {
-            await deliver(target, surfaceId, text, enter, enterDelayMs);
-            report(opts, queryTrim, target, surfaceId, enter, result.source);
+            await deliver({ target, surfaceId, text, enter, enterDelayMs });
+            report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
             return;
         } catch (err) {
             if (result.source !== "recorded") {
@@ -182,16 +190,20 @@ export async function sendCommand(
         }
     }
 
-    result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, skipRecorded: true, deps });
-
     // The stale-ref fallback re-runs the matcher, so it can land on several
-    // panes just like the first pass. Without this it typed into targets[0]
-    // with no --first, which is the exact case the guard exists to prevent.
-    if (refuseAmbiguous(result, queryTrim, opts)) {
+    // panes just like the first pass. `retryAfterStaleRefs` is what makes the
+    // guard unskippable: without it this typed into targets[0] with no --first,
+    // which is the exact case the guard exists to prevent.
+    const retry = await retryAfterStaleRefs(queryTrim, { includeSelf: opts.includeSelf, deps }, async (found) =>
+        refuseAmbiguous(found, queryTrim, opts) ? null : found.targets[0]
+    );
+    result = retry.result;
+
+    if (retry.status === "stopped") {
         return;
     }
 
-    const fallback = result.targets[0];
+    const fallback = retry.status === "ok" ? retry.target : undefined;
     const fallbackSurface = fallback ? deliverySurfaceId(fallback, result.snapshot?.panes ?? []) : undefined;
 
     if (!fallback || !fallbackSurface) {
@@ -208,18 +220,20 @@ export async function sendCommand(
 
     target = fallback;
     surfaceId = fallbackSurface;
-    await deliver(target, surfaceId, text, enter, enterDelayMs);
-    report(opts, queryTrim, target, surfaceId, enter, result.source);
+    await deliver({ target, surfaceId, text, enter, enterDelayMs });
+    report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
 }
 
-function report(
-    opts: SendOptions,
-    query: string,
-    target: FocusTarget,
-    surfaceId: string,
-    enter: boolean,
-    source: string
-): void {
+interface SendReport {
+    opts: SendOptions;
+    query: string;
+    target: FocusTarget;
+    surfaceId: string;
+    enter: boolean;
+    source: string;
+}
+
+function report({ opts, query, target, surfaceId, enter, source }: SendReport): void {
     if (opts.json) {
         out.result(SafeJSON.stringify({ query, sent: true, target, surfaceId, enter, source }, null, 2));
         return;

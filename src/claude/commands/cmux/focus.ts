@@ -1,5 +1,5 @@
 import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type ResolveDeps } from "@app/claude/lib/cmux/resolve";
+import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs } from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
@@ -126,6 +126,49 @@ function renderTargets(targets: FocusTarget[]): void {
     out.println(table.toString());
 }
 
+/**
+ * The one pane to focus, or null when the caller must stop.
+ *
+ * Shared by the first pass and the stale-ref retry. The retry re-runs the
+ * matcher with the recorded shortcut skipped, so it can match several panes
+ * exactly like a first pass can, and every null path here has already reported.
+ */
+async function chooseTarget(targets: FocusTarget[], query: string, opts: FocusOptions): Promise<FocusTarget | null> {
+    if (isUnambiguous(targets) || opts.first) {
+        return targets[0];
+    }
+
+    if (opts.json) {
+        // Nothing was focused, and `--json` has no TTY to disambiguate on, so this is
+        // the same failure the non-TTY human path exits 1 for.
+        process.exitCode = 1;
+        out.result(SafeJSON.stringify({ query, focused: null, ambiguous: true, matches: targets }, null, 2));
+        return null;
+    }
+
+    renderCliHeader("Several panes match", query);
+    renderTargets(targets);
+
+    if (!isInteractive()) {
+        out.error(pc.red("Ambiguous match, and there is no TTY to ask on."));
+        out.printlnErr(
+            pc.dim(
+                `  Narrow the query (a session id always wins), or take the top hit: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "focus", query, "--first"] })}`
+            )
+        );
+        process.exit(1);
+    }
+
+    const picked = await pickTarget(targets);
+
+    if (!picked) {
+        out.printlnErr(pc.dim("Nothing picked, nothing focused."));
+        return null;
+    }
+
+    return picked;
+}
+
 async function pickTarget(targets: FocusTarget[]): Promise<FocusTarget | null> {
     const choice = await p.select({
         message: "Which pane should I focus?",
@@ -190,38 +233,10 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         process.exit(1);
     }
 
-    let target = targets[0];
+    let target = await chooseTarget(targets, query, opts);
 
-    if (!isUnambiguous(targets) && !opts.first) {
-        if (opts.json) {
-            // Nothing was focused, and `--json` has no TTY to disambiguate on, so this is
-            // the same failure the non-TTY human path exits 1 for.
-            process.exitCode = 1;
-            out.result(SafeJSON.stringify({ query, focused: null, ambiguous: true, matches: targets }, null, 2));
-            return;
-        }
-
-        renderCliHeader("Several panes match", query);
-        renderTargets(targets);
-
-        if (!isInteractive()) {
-            out.error(pc.red("Ambiguous match, and there is no TTY to ask on."));
-            out.printlnErr(
-                pc.dim(
-                    `  Narrow the query (a session id always wins), or take the top hit: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "focus", query, "--first"] })}`
-                )
-            );
-            process.exit(1);
-        }
-
-        const picked = await pickTarget(targets);
-
-        if (!picked) {
-            out.printlnErr(pc.dim("Nothing picked, nothing focused."));
-            return;
-        }
-
-        target = picked;
+    if (!target) {
+        return;
     }
 
     if (opts.dryRun) {
@@ -251,13 +266,15 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         }
         // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
         log.debug({ err }, "recorded cmux refs are stale; retrying with the text matcher");
-        const retry = await findSessionTargets(queryTrim, {
-            includeSelf: opts.includeSelf,
-            skipRecorded: true,
-            deps,
-        });
+        const retry = await retryAfterStaleRefs(queryTrim, { includeSelf: opts.includeSelf, deps }, (found) =>
+            chooseTarget(found.targets, query, opts)
+        );
 
-        if (retry.targets.length === 0) {
+        if (retry.status === "stopped") {
+            return;
+        }
+
+        if (retry.status === "empty") {
             process.exitCode = 1;
 
             if (opts.json) {
@@ -269,7 +286,7 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
             return;
         }
 
-        target = retry.targets[0];
+        target = retry.target;
         windowRef = await focusTarget(target);
     }
 

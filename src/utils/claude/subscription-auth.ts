@@ -204,16 +204,6 @@ const JOURNAL_MAX_BYTES = 1_000_000;
 const JOURNAL_KEEP_DAYS = 30;
 
 /**
- * Keep the journal bounded without weakening it.
- *
- * The token VALUES have to stay readable: this file is the last resort when a
- * config write is lost mid-rotation, and `readJournalRecovery` reuses the pair
- * verbatim. Redacting or encrypting it would trade a real recovery path for
- * cosmetic hygiene, and the master key may be exactly what is unavailable in
- * that situation. So instead of touching entries, drop the old ones: anything
- * older than the retention window can no longer be the live pair.
- */
-/**
  * Newest-first until the budget runs out, then stop.
  *
  * Age alone does not bound the file: a burst of rotations inside the retention
@@ -239,7 +229,18 @@ function keepNewestWithinBudget(lines: string[], maxBytes: number): string[] {
     return kept.reverse();
 }
 
-/** Exported for its test: the byte bound has no other observable seam. */
+/**
+ * Keep the journal bounded without weakening it.
+ *
+ * The token VALUES have to stay readable: this file is the last resort when a
+ * config write is lost mid-rotation, and `readJournalRecovery` reuses the pair
+ * verbatim. Redacting or encrypting it would trade a real recovery path for
+ * cosmetic hygiene, and the master key may be exactly what is unavailable in
+ * that situation. So instead of touching entries, drop the old ones: anything
+ * older than the retention window can no longer be the live pair.
+ *
+ * Exported for its test: the byte bound has no other observable seam.
+ */
 export function pruneJournal(path: string): void {
     try {
         if (!existsSync(path) || statSync(path).size < JOURNAL_MAX_BYTES) {

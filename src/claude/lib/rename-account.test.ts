@@ -7,7 +7,13 @@ import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { env } from "@genesiscz/utils/env";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import type { WarmupConfig } from "./config";
-import { rekeyNamedRecord, renameClaudeAccount, resolveRenameTo, rewriteWarmupNames } from "./rename-account";
+import {
+    partialRenameAdvice,
+    rekeyNamedRecord,
+    renameClaudeAccount,
+    resolveRenameTo,
+    rewriteWarmupNames,
+} from "./rename-account";
 import { UsageHistoryDb } from "./usage/history-db";
 
 describe("resolveRenameTo", () => {
@@ -157,6 +163,15 @@ describe("rekeyNamedRecord", () => {
     });
 });
 
+describe("partialRenameAdvice", () => {
+    test("names the reverse rename rather than only the dead end", () => {
+        const advice = partialRenameAdvice("work", "work@shop");
+
+        expect(advice.join("\n")).toContain("tools claude config rename work@shop --to work");
+        expect(advice[0]).toContain('AIConfig no longer knows "work"');
+    });
+});
+
 describe("renameClaudeAccount partial failure", () => {
     test("a failing secondary step is reported, not swallowed or fatal", async () => {
         // Before this, one throw left the account renamed in AIConfig while the
@@ -174,6 +189,35 @@ describe("renameClaudeAccount partial failure", () => {
 
         expect(moved.historyRows).toBe(3);
         expect(moved.failed).toEqual([{ step: "warmup", error: "warmup file is locked" }]);
+    });
+
+    test("a failing history migration is reported like every other secondary store", async () => {
+        // renameHistory ran outside the guarded loop, so a locked SQLite file threw
+        // after AIConfig was already renamed and skipped every remaining step.
+        const ran: string[] = [];
+        const moved = await renameClaudeAccount("work", "work@shop", {
+            renameAiAccount: async () => {},
+            renameHistory: () => {
+                throw new Error("database is locked");
+            },
+            rewriteWarmup: async () => {
+                ran.push("warmup");
+            },
+            rekeyPollGate: async () => {
+                ran.push("pollGate");
+            },
+            rekeyInvalidGrant: async () => {
+                ran.push("invalidGrant");
+            },
+            invalidateUsageCache: async () => {
+                ran.push("usageCache");
+            },
+        });
+
+        expect(moved.failed).toEqual([{ step: "history", error: "database is locked" }]);
+        expect(moved.historyRows).toBe(0);
+        // The later stores must still be migrated rather than skipped.
+        expect(ran).toEqual(["warmup", "pollGate", "invalidGrant", "usageCache"]);
     });
 
     test("a clean rename reports no failures", async () => {

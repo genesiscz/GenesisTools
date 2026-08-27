@@ -233,3 +233,40 @@ export async function findSessionTargets(
 
     return { targets: [], source: "none", identity, snapshot, unavailable: false };
 }
+
+/**
+ * The outcome of a stale-ref retry.
+ *
+ * `stopped` means the caller's ambiguity gate already reported and set an exit
+ * code, so the command must return without printing anything else.
+ */
+export type StaleRefRetry =
+    | { status: "empty"; result: SessionTargetsResult }
+    | { status: "stopped"; result: SessionTargetsResult }
+    | { status: "ok"; result: SessionTargetsResult; target: FocusTarget };
+
+/**
+ * Re-resolve a session's panes after its recorded refs turned out to be stale.
+ *
+ * The recorded shortcut is skipped on this pass, so the matcher can return
+ * several panes exactly like a first pass can. `chooseTarget` is therefore a
+ * required argument and not an option: both commands used to read `targets[0]`
+ * straight off the retry, `send` grew its own guard afterwards and `focus` did
+ * not, so a cmux restart made `focus` raise an arbitrary pane. Owning the retry
+ * here is what keeps the two contracts from drifting apart again.
+ */
+export async function retryAfterStaleRefs(
+    query: string,
+    opts: FindSessionTargetsOpts,
+    chooseTarget: (result: SessionTargetsResult) => Promise<FocusTarget | null>
+): Promise<StaleRefRetry> {
+    const result = await findSessionTargets(query, { ...opts, skipRecorded: true });
+
+    if (result.targets.length === 0) {
+        return { status: "empty", result };
+    }
+
+    const target = await chooseTarget(result);
+
+    return target ? { status: "ok", result, target } : { status: "stopped", result };
+}

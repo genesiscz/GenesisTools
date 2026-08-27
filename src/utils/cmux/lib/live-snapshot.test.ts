@@ -29,6 +29,58 @@ describe("fetchCmuxLiveSnapshot", () => {
         expect(elapsed).toBeLessThan(110);
     });
 
+    test("allWindows lists every window and keeps each workspace with its own", async () => {
+        // The default path issues one bare `list-workspaces`. This branch fans out
+        // one `list-workspaces --window <id>` per listed window, and the window_ref
+        // each answer carries is what ties a workspace back to its window.
+        const calls: string[][] = [];
+
+        const runJson = async <T>(args: string[]): Promise<T> => {
+            calls.push(args);
+
+            if (args[0] === "list-windows") {
+                return [
+                    { id: "win-a", index: 0, key: true, workspace_count: 1 },
+                    { id: "win-b", index: 1, key: false, workspace_count: 1 },
+                ] as T;
+            }
+
+            if (args[0] === "list-workspaces") {
+                const window = args[args.indexOf("--window") + 1];
+
+                return window === "win-a"
+                    ? ({ window_ref: "window:1", workspaces: [{ ref: "ws-a" }] } as T)
+                    : ({ window_ref: "window:2", workspaces: [{ ref: "ws-b" }] } as T);
+            }
+
+            if (args[0] === "list-panes") {
+                return { panes: [] } as T;
+            }
+
+            return {} as T;
+        };
+
+        const snapshot = await fetchCmuxLiveSnapshot({
+            runJson,
+            run: async () => ({ code: 0, stdout: "", stderr: "" }),
+            allWindows: true,
+        });
+
+        expect(calls.filter((args) => args[0] === "list-windows")).toHaveLength(1);
+        expect(calls.filter((args) => args[0] === "list-workspaces")).toEqual([
+            ["list-workspaces", "--window", "win-a"],
+            ["list-workspaces", "--window", "win-b"],
+        ]);
+        expect(snapshot.windows?.map((window) => [window.id, window.ref, window.key])).toEqual([
+            ["win-a", "window:1", true],
+            ["win-b", "window:2", false],
+        ]);
+        expect(snapshot.workspaces.map((ws) => [ws.id, ws.windowRef])).toEqual([
+            ["ws-a", "window:1"],
+            ["ws-b", "window:2"],
+        ]);
+    });
+
     test("lists pane surfaces in parallel across panes in one workspace", async () => {
         let inflight = 0;
         let maxInflight = 0;

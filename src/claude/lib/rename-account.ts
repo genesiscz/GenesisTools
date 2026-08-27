@@ -37,6 +37,22 @@ export function resolveRenameTo(opts: { positional?: string; toFlag?: string; in
     return { error: "prompt" };
 }
 
+/**
+ * What a user can actually do after a partial rename.
+ *
+ * "Re-running rename will not fix these" was true and useless: it named the
+ * dead end without naming the way out. Reversing the rename IS a repair. Every
+ * store that failed still holds `oldName`, and the rekey helpers no-op on a key
+ * they cannot find, so renaming back leaves one consistent set of names again.
+ */
+export function partialRenameAdvice(oldName: string, newName: string): string[] {
+    return [
+        `Re-running the rename cannot fix these: AIConfig no longer knows "${oldName}".`,
+        "Rename back to get one consistent set of names again, then retry once the store is writable:",
+        `  tools claude config rename ${newName} --to ${oldName}`,
+    ];
+}
+
 export interface RenameClaudeAccountDeps {
     renameAiAccount?: (oldName: string, newName: string) => Promise<void>;
     rewriteWarmup?: (oldName: string, newName: string) => Promise<void>;
@@ -48,7 +64,7 @@ export interface RenameClaudeAccountDeps {
 
 const log = logger.child({ component: "claude:rename-account" });
 
-export type RenameStep = "warmup" | "pollGate" | "invalidGrant" | "usageCache";
+export type RenameStep = "history" | "warmup" | "pollGate" | "invalidGrant" | "usageCache";
 export type RenameStepFailure = { step: RenameStep; error: string };
 export type RenameClaudeAccountResult = { historyRows: number; failed: RenameStepFailure[] };
 
@@ -121,14 +137,21 @@ export async function renameClaudeAccount(
     // AIConfig first: it is the identity of record, and the only step whose
     // failure means "nothing happened".
     await renameAiAccount(oldName, newName);
-    const historyRows = renameHistory(oldName, newName);
 
-    // Every later store is secondary. Running them sequentially with no handler
-    // meant one throw left the account renamed in AIConfig while warmup lists,
-    // the poll gate and the cooldown still held oldName — a state no retry can
-    // repair, because a second rename exits with `Account "<oldName>" not found`.
+    // Every later store is secondary, history included. Running them with no
+    // handler meant one throw left the account renamed in AIConfig while warmup
+    // lists, the poll gate and the cooldown still held oldName. History used to
+    // sit outside this loop, so a locked SQLite file skipped all four remaining
+    // stores AND reported nothing (PR #332 review).
+    let historyRows = 0;
     const failed: RenameStepFailure[] = [];
     const steps: Array<[RenameStep, () => Promise<void>]> = [
+        [
+            "history",
+            async () => {
+                historyRows = renameHistory(oldName, newName);
+            },
+        ],
         ["warmup", () => rewriteWarmup(oldName, newName)],
         ["pollGate", () => rekeyPollGate(oldName, newName)],
         ["invalidGrant", () => rekeyInvalidGrant(oldName, newName)],

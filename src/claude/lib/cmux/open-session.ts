@@ -9,7 +9,10 @@ import {
     pickAnchorSurface,
     renameSurfaceTab,
 } from "@genesiscz/utils/cmux/workspace";
+import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+
+const log = logger.child({ component: "claude:cmux-open" });
 
 /**
  * Resume a session at a chosen level of the cmux hierarchy:
@@ -78,7 +81,12 @@ export async function openSessionAt(
     // A surface created for the session gets its tab named; an existing surface
     // (kind "surface") keeps whatever title its owner gave it.
     if (target.kind !== "surface") {
-        await renameSurfaceTab(placed.workspaceRef, placed.surfaceRef, paneTitle(planned)).catch(() => {});
+        // Best-effort: a session that opened fine must not fail because its tab
+        // kept the default name. Swallowing it silently, though, is how "tab
+        // renaming stopped working" becomes unexplainable (PR #332 review t8).
+        await renameSurfaceTab(placed.workspaceRef, placed.surfaceRef, paneTitle(planned)).catch((err: unknown) => {
+            log.debug({ err, surface: placed.surfaceRef }, "could not rename the surface tab");
+        });
     }
 
     const payload = `${command}${(opts.enter ?? true) ? "\n" : ""}`;
