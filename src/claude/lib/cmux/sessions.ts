@@ -131,6 +131,7 @@ async function toCandidate(
         account: pin?.account ?? null,
         model: pin?.model ?? null,
         auth: pin?.auth,
+        authSource: pin?.authSource,
         pinned: pin !== undefined,
     };
 }
@@ -159,7 +160,16 @@ export function cleanPromptText(raw: string | null | undefined): string | null {
         return null;
     }
 
+    const commands: string[] = [];
+    for (const match of raw.matchAll(/<command-name>\s*([^<]+?)\s*<\/command-name>/gi)) {
+        const name = match[1]?.trim();
+        if (name) {
+            commands.push(name.startsWith("/") ? name : `/${name}`);
+        }
+    }
+
     const text = raw
+        .replace(/\[Image #\d+\]/g, " ")
         .replace(NOISE_BLOCKS, " ")
         // Any leftover tag: keep what it wrapped, drop the markup.
         .replace(/<\/?[a-z][\w-]*>/gi, " ")
@@ -169,11 +179,12 @@ export function cleanPromptText(raw: string | null | undefined): string | null {
         .replace(/\s+/g, " ")
         .trim();
 
-    if (!text) {
+    const cleaned = text || commands.join(" ");
+    if (!cleaned) {
         return null;
     }
 
-    return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text;
+    return cleaned.length > TITLE_MAX ? `${cleaned.slice(0, TITLE_MAX - 1)}…` : cleaned;
 }
 
 /**

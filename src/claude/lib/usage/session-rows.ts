@@ -1,5 +1,6 @@
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
+import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -311,7 +312,11 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
 
     return {
         sessionId,
-        title: record.customTitle ?? record.summary ?? record.firstPrompt?.slice(0, 60) ?? null,
+        title:
+            cleanPromptText(record.customTitle) ??
+            cleanPromptText(record.summary) ??
+            cleanPromptText(record.firstPrompt) ??
+            null,
         cwd,
         cwdShort: collapsePath(cwd),
         project: record.project,

@@ -194,6 +194,23 @@ describe("listSessionRows", () => {
         expect(cold?.filePath).toBe(coldPath);
     });
 
+    test("strips command XML from the row title", async () => {
+        const path = "/tmp/cmd.jsonl";
+        listing.sessions = [
+            record({
+                filePath: path,
+                sessionId: "cmd-id",
+                customTitle:
+                    "<command-message><command-name>speckit.implement</command-name></command-message>",
+                mtime: NOW - 5 * MIN,
+            }),
+        ];
+        tails.set(path, [OPUS_LINE]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.title).toBe("/speckit.implement");
+    });
+
     test("minRows appends older sessions after the hours window", async () => {
         listing.sessions = [
             record({ filePath: "/tmp/hot.jsonl", sessionId: "hot-id", mtime: NOW - 5 * MIN }),

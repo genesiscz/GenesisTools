@@ -34,6 +34,18 @@ describe("cleanPromptText", () => {
         expect(cleanPromptText(null)).toBeNull();
     });
 
+    test("a slash-command title becomes /name instead of XML", () => {
+        const raw =
+            "<command-message>\n<command-name>speckit.implement</command-name>\n" +
+            "<command-args></command-args>\n</command-message>";
+
+        expect(cleanPromptText(raw)).toBe("/speckit.implement");
+    });
+
+    test("strips [Image #N] placeholders from titles", () => {
+        expect(cleanPromptText("[Image #1] fix the login")).toBe("fix the login");
+    });
+
     test("caps the length, since this text also becomes a cmux tab name", () => {
         const long = cleanPromptText("word ".repeat(200));
 
