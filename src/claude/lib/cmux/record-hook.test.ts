@@ -98,9 +98,7 @@ describe("record-session-account hook", () => {
             CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-should-not-matter",
         });
 
-        expect((await readPins())[0]).toEqual(
-            expect.objectContaining({ auth: "keychain", authSource: "launch-env" })
-        );
+        expect((await readPins())[0]).toEqual(expect.objectContaining({ auth: "keychain", authSource: "launch-env" }));
     });
 
     test("TOOLS_CLAUDE_AUTH=token wins when the OAuth token was stripped", async () => {
@@ -109,9 +107,7 @@ describe("record-session-account hook", () => {
             TOOLS_CLAUDE_AUTH: "token",
         });
 
-        expect((await readPins())[0]).toEqual(
-            expect.objectContaining({ auth: "token", authSource: "launch-env" })
-        );
+        expect((await readPins())[0]).toEqual(expect.objectContaining({ auth: "token", authSource: "launch-env" }));
     });
 
     test("appends, so a resumed session re-pins without losing history", async () => {

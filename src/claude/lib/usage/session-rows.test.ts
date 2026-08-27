@@ -200,8 +200,7 @@ describe("listSessionRows", () => {
             record({
                 filePath: path,
                 sessionId: "cmd-id",
-                customTitle:
-                    "<command-message><command-name>speckit.implement</command-name></command-message>",
+                customTitle: "<command-message><command-name>speckit.implement</command-name></command-message>",
                 mtime: NOW - 5 * MIN,
             }),
         ];
