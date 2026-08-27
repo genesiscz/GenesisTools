@@ -184,7 +184,7 @@ Examples:
 Sprint Commands:
   tools azure-devops iterations                          List the team's sprints
   tools azure-devops sprint --mine --totals               Current sprint, my items, effort sums
-  tools azure-devops sprint "17. Sprint 20.08." --order   One sprint in Backlog order
+  tools azure-devops sprint "Sprint 17" --order   One sprint in Backlog order
   # These never use @CurrentIteration: that macro needs a team context and
   # fails with VS402612. An explicit [System.IterationPath] predicate is used.
 

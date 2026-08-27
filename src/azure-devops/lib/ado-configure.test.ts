@@ -92,6 +92,54 @@ describe("saveAdoConfig", () => {
         expect(saved.projectId).toBe("00000000-0000-0000-0000-0000000000ff");
     });
 
+    /**
+     * Regression test: PR #333 review t1, a defect introduced by the t9 fix.
+     * Preserving supplemental settings is only correct WITHIN a project. Carried
+     * across a project switch, the stale team is silently reused by
+     * `iterations` / `sprint`, which then query a team that does not exist in
+     * the new project, and the stale timelog endpoint points at the old one.
+     */
+    test("switching project drops the previous project's team and timelog", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
+        writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
+
+        const path = saveAdoConfig(
+            {
+                org: "fabrikam",
+                project: "Gadgets",
+                projectId: "00000000-0000-0000-0000-0000000000ff",
+                apiResource: "499b84ac-0000-0000-0000-000000000000",
+            },
+            dir
+        );
+
+        const saved = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as AzureConfigWithTimeLog;
+
+        expect(saved.team).toBeUndefined();
+        expect(saved.timelog).toBeUndefined();
+        expect(saved.orgId).toBeUndefined();
+    });
+
+    test("switching only the project within the same org also drops them", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
+        writeFileSync(join(dir, "config.json"), SafeJSON.stringify(existingConfig(), null, 2));
+
+        const path = saveAdoConfig(
+            {
+                org: "contoso",
+                project: "Gadgets",
+                projectId: "00000000-0000-0000-0000-0000000000ff",
+                apiResource: "499b84ac-0000-0000-0000-000000000000",
+            },
+            dir
+        );
+
+        const saved = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as AzureConfigWithTimeLog;
+
+        expect(saved.team).toBeUndefined();
+        expect(saved.timelog).toBeUndefined();
+    });
+
     test("writes a fresh config when none exists", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
 

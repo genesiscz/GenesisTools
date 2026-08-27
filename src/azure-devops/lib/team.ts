@@ -34,9 +34,9 @@ export const NO_TEAM_MESSAGE = [
     "No Azure DevOps team is configured.",
     "",
     "This command reads team settings, so it needs a team name. Either:",
-    '  1. Pass it for this run:   tools azure-devops sprint --team "Delivery Team C"',
+    '  1. Pass it for this run:   tools azure-devops sprint --team "<Your Team>"',
     "  2. Store it in config:     tools azure-devops configure \\",
-    '       "https://dev.azure.com/{org}/{project}/_backlogs/backlog/Delivery%20Team%20C/Stories"',
+    '       "https://dev.azure.com/{org}/{project}/_backlogs/backlog/{team}/Stories"',
     "",
-    'Or add "team": "Delivery Team C" to .claude/azure/config.json by hand.',
+    'Or add "team": "<Your Team>" to .claude/azure/config.json by hand.',
 ].join("\n");

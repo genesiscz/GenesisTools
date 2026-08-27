@@ -56,7 +56,7 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 ```bash
 tools azure-devops iterations                                  # sprints + which one contains today
 tools azure-devops sprint --mine --totals                      # current sprint, my items, effort sums
-tools azure-devops sprint "17. Sprint 20.08." --mine --order    # one sprint, Backlog stack-rank order
+tools azure-devops sprint "Sprint 17" --mine --order    # one sprint, Backlog stack-rank order
 tools azure-devops sprint --mine -f json                        # machine-readable rows
 ```
 
@@ -87,7 +87,7 @@ tools azure-devops configure \
   "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/Delivery%20Team%20C/Stories"
 ```
 
-The board URL carries the team, and `configure` stores it as `team` in `.claude/azure/config.json`. Without it, pass `--team "Delivery Team C"` per run.
+The board URL carries the team, and `configure` stores it as `team` in `.claude/azure/config.json`. Without it, pass `--team "<Your Team>"` per run.
 
 ### Output Paths
 
@@ -231,7 +231,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "Get workitem 261575" | `tools azure-devops workitem 261575` |
 | "What is in the current sprint" | `tools azure-devops sprint --mine --totals` |
 | "List the sprints" | `tools azure-devops iterations` |
-| "Show sprint 17 in backlog order" | `tools azure-devops sprint "17. Sprint" --mine --order` |
+| "Show sprint 17 in backlog order" | `tools azure-devops sprint "Sprint 17" --mine --order` |
 | "Show query results for X" | `tools azure-devops query X` |
 | "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
 | "Fetch Otevřené bugy" | `tools azure-devops query "Otevřené bugy"` |

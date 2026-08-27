@@ -53,7 +53,16 @@ export function saveAdoConfig(config: AzureConfig, configDir: string): string {
     }
 
     const configPath = join(configDir, "config.json");
-    const merged = { ...readExistingConfig(configPath), ...config };
+    const existing = readExistingConfig(configPath);
+
+    // Supplemental settings are only meaningful within one project. `team` names
+    // a team of THAT project and `timelog` points at its endpoint, so carrying
+    // them across a switch leaves `iterations` / `sprint` querying a team the
+    // new project does not have (PR #333 review t1, a defect introduced by the
+    // fix for t9 — preserving everything was too broad).
+    const sameProject = existing.org === config.org && existing.project === config.project;
+    const merged = sameProject ? { ...existing, ...config } : { ...config };
+
     writeFileSync(configPath, SafeJSON.stringify(merged, null, 2));
     return configPath;
 }

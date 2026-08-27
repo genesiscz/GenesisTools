@@ -18,15 +18,15 @@ function row(overrides: Partial<SprintRow> & { id: number }): SprintRow {
         remainingWork: 0,
         order: null,
         changedDate: "2026-08-20T10:00:00Z",
-        iterationPath: "Contoso\\17. Sprint 20.08. - 02.09.",
+        iterationPath: "Contoso\\Sprint 17",
         ...overrides,
     };
 }
 
 describe("buildSprintWiql", () => {
     test("uses an explicit IterationPath predicate, never @CurrentIteration", () => {
-        const wiql = buildSprintWiql({ iterationPath: "Contoso\\17. Sprint 20.08. - 02.09." });
-        expect(wiql).toContain("[System.IterationPath] = 'Contoso\\17. Sprint 20.08. - 02.09.'");
+        const wiql = buildSprintWiql({ iterationPath: "Contoso\\Sprint 17" });
+        expect(wiql).toContain("[System.IterationPath] = 'Contoso\\Sprint 17'");
         expect(wiql).not.toContain("@CurrentIteration");
     });
 

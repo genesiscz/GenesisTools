@@ -26,29 +26,29 @@ Both commands are team-scoped, because iteration settings belong to a team, not 
 ```bash
 # Store the team in .claude/azure/config.json (the URL carries it)
 tools azure-devops configure \
-  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/Delivery%20Team%20C/Stories"
+  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/{team}/Stories"
 
 # List the team's sprints; the one containing today is marked
 tools azure-devops iterations
-tools azure-devops iterations --team "Delivery Team C" -f json
+tools azure-devops iterations --team "Payments Team" -f json
 
 # The current sprint, everything assigned to me, with the Task-only effort sums
 tools azure-devops sprint --mine --totals
 
 # Name a sprint by substring or by full iteration path (both resolve to the same one)
-tools azure-devops sprint "17. Sprint 20.08."
-tools azure-devops sprint "MŮJ ČEZ\17. Sprint 20.08. - 02.09."
+tools azure-devops sprint "Sprint 17"
+tools azure-devops sprint "Widgets\Sprint 17"
 
 # Backlog stack-rank order, with the Order column, as markdown for a report
-tools azure-devops sprint "17. Sprint 20.08." --mine --order -f md
+tools azure-devops sprint "Sprint 17" --mine --order -f md
 ```
 
-Worked example, `17. Sprint 20.08. - 02.09.` with `--mine --totals`:
+Worked example, `Sprint 17` with `--mine --totals`:
 
 ```
 │ ID     │ TYPE       │ TITLE                    │ STATE       │ ASSIGNED  │ DONE │ LEFT │
-│ 285747 │ Task       │ Vývoj - ...              │ New         │ ...       │ 0    │ 4    │
-│ 296936 │ Task       │ FE analýza/vývoj - ...   │ In Progress │ ...       │ 85   │ 56   │
+│ 41207  │ Task       │ Build the checkout form  │ New         │ ...       │ 0    │ 4    │
+│ 41219  │ Task       │ Wire the payments API    │ In Progress │ ...       │ 85   │ 56   │
 
   Totals
   Items: 17 (Tasks: 9)
@@ -60,9 +60,9 @@ Worked example, `17. Sprint 20.08. - 02.09.` with `--mine --totals`:
 
 The `[nameOrPath]` argument resolves in this order:
 
-1. Exact `System.IterationPath` (case-insensitive), e.g. `MŮJ ČEZ\17. Sprint 20.08. - 02.09.`
-2. Exact iteration name (case-insensitive), e.g. `17. Sprint 20.08. - 02.09.`
-3. Case-insensitive substring of the name or the path, e.g. `17. Sprint 20.08.`
+1. Exact `System.IterationPath` (case-insensitive), e.g. `Widgets\Sprint 17`
+2. Exact iteration name (case-insensitive), e.g. `Sprint 17`
+3. Case-insensitive substring of the name or the path, e.g. `Sprint 1`
 
 Omit the argument (or pass `current`) to get the iteration whose date range contains today. The finish date is inclusive, so the last day of a sprint still counts as current.
 
