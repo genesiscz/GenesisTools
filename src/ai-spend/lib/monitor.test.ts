@@ -7,15 +7,9 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { claudeDriver, codexDriver, grokDriver } from "./drivers";
 import { isolateAgentHomeEnv } from "./drivers/test-env";
-import {
-    buildMonitorReport,
-    findRecentTranscripts,
-    localDayString,
-    type MonitorReport,
-    mondayOfWeek,
-    transcriptRoots,
-} from "./monitor";
+import { buildMonitorReport, findRecentTranscripts, localDayString, type MonitorReport, mondayOfWeek } from "./monitor";
 import { DEFAULT_PRICING } from "./pricing";
+import type { PricingTable } from "./types";
 
 setupStorageSandbox();
 // CLAUDE_CONFIG_DIR / CODEX_HOME / GROK_HOME would drag real transcript trees
@@ -179,11 +173,11 @@ describe("monitor report", () => {
         expect(second.today.tokens).toBe(2_850_000 + 1_000_000 + 1_000_000 + 500_000);
     });
 
-    test("transcriptRoots and findRecentTranscripts never look outside the fixed roots", () => {
-        const roots = transcriptRoots(home);
+    test("the claude roots and findRecentTranscripts never look outside the fixed roots", () => {
+        const roots = claudeDriver.roots(home);
         expect(roots).toEqual([join(home, ".claude", "projects"), join(home, ".config", "claude", "projects")]);
 
-        const files = findRecentTranscripts(roots, Date.now() - 60_000);
+        const files = findRecentTranscripts(roots, Date.now() - 60_000, claudeDriver);
         expect(files.every((f) => f.startsWith(roots[0]) || f.startsWith(roots[1]))).toBe(true);
         expect(files.some((f) => f.endsWith("old.jsonl"))).toBe(false);
     });
@@ -426,5 +420,53 @@ describe("multi-agent monitor report", () => {
             join(home, ".codex", "sessions"),
             join(home, ".codex", "archived_sessions"),
         ]);
+    });
+});
+
+/**
+ * Regression test: the monitor path never called resolvePrice, so it billed every
+ * event at the catalog's list rate and ignored the dated promotions and
+ * long-context bands aggregate.ts already honoured. `ModelPriceEntry` extends
+ * `ModelPrice`, so dropping the rules type-checked silently.
+ *
+ * Drives buildMonitorReport, not resolvePrice — a test of the resolver alone
+ * would pass both before and after the fix.
+ */
+describe("monitor honours dated and context-banded pricing", () => {
+    let home: string;
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "ai-spend-rules-"));
+        const projDir = join(home, ".claude", "projects", "p1");
+        mkdirSync(projDir, { recursive: true });
+        writeFileSync(join(projDir, "s1.jsonl"), line("msg-r", new Date().toISOString(), { input_tokens: 1_000_000 }));
+    });
+
+    test("a dated rule beats the list rate for an event inside its window", () => {
+        // List rate $100/1M; a rule in force since 2020 drops input to $1/1M.
+        const ruled: PricingTable = {
+            [MODEL]: {
+                input: 100,
+                output: 100,
+                cacheWrite: 100,
+                cacheRead: 100,
+                rules: [{ from: "2020-01-01", inputPer1M: 1, outputPer1M: 1 }],
+            },
+        };
+
+        const report = buildMonitorReport({
+            home,
+            pricing: ruled,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            readTailFn: (path) => readFileSync(path, "utf8"),
+        });
+
+        // 1M input tokens: $1 under the rule, $100 if the rules are dropped.
+        expect(report.today.cost).toBeCloseTo(1, 5);
     });
 });

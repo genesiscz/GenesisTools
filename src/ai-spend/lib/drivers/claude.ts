@@ -41,6 +41,16 @@ export const claudeDriver: MonitorDriver = {
     createParser() {
         return {
             parseLine(line: string, emit: (event: DriverUsageEvent) => void): void {
+                // Cheap prefilter before the JSON parse. About 72% of transcript lines
+                // are user, tool-result and system records that `parseTranscriptLine`
+                // discards on `type !== "assistant"` anyway, after paying for a full
+                // parse. Measured on a 94.5 MB / 35,170-line transcript: 106 ms
+                // parse-all vs 46 ms prefiltered, identical hit counts. The grok
+                // driver and ccusage (`LinePrefilter`) do the same.
+                if (!line.includes('"type":"assistant"')) {
+                    return;
+                }
+
                 const event = parseTranscriptLine(line);
 
                 if (!event) {

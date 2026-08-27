@@ -4,16 +4,9 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import {
-    AGENT_IDS,
-    type AgentId,
-    claudeDriver,
-    type DriverUsageEvent,
-    MONITOR_DRIVERS,
-    type MonitorDriver,
-} from "./drivers";
-import { costOf } from "./pricing";
-import type { ModelPrice, PricingTable } from "./types";
+import { AGENT_IDS, type AgentId, type DriverUsageEvent, MONITOR_DRIVERS, type MonitorDriver } from "./drivers";
+import { costOf, resolvePrice } from "./pricing";
+import type { ModelPriceEntry, PricingTable } from "./types";
 
 /**
  * `ai-spend monitor` — today + current week (local timezone, Monday start)
@@ -76,14 +69,8 @@ export function mondayOfWeek(date: Date): Date {
     return midnight;
 }
 
-/** Claude Code transcript roots. Kept exported: the claude driver owns the list. */
-export function transcriptRoots(home: string): string[] {
-    return claudeDriver.roots(home);
-}
-
 /** All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test. */
-export function findRecentTranscripts(roots: string[], minMtimeMs: number, driver?: MonitorDriver): string[] {
-    const activeDriver = driver ?? claudeDriver;
+export function findRecentTranscripts(roots: string[], minMtimeMs: number, driver: MonitorDriver): string[] {
     const out: string[] = [];
 
     const walk = (dir: string, depth: number): void => {
@@ -100,14 +87,14 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number, drive
             const full = join(dir, entry.name);
 
             if (entry.isDirectory()) {
-                if (depth < activeDriver.maxDepth) {
+                if (depth < driver.maxDepth) {
                     walk(full, depth + 1);
                 }
 
                 continue;
             }
 
-            if (!entry.isFile() || !activeDriver.isTranscript(entry.name)) {
+            if (!entry.isFile() || !driver.isTranscript(entry.name)) {
                 continue;
             }
 
@@ -328,7 +315,16 @@ function readTail(path: string, offset: number, size: number): string {
     }
 }
 
-function priceForDriver(driver: MonitorDriver, model: string, pricing: PricingTable): ModelPrice | null {
+/**
+ * Returns the catalog ENTRY, not a flat price. The caller resolves it against
+ * the event's own timestamp and size — a dated promotion or a long-context band
+ * only means something per event.
+ *
+ * This used to return `ModelPrice`, and because `ModelPriceEntry extends
+ * ModelPrice` the rules were dropped with no type error: the monitor billed
+ * every event at the list rate while aggregate.ts honoured the rules.
+ */
+function priceForDriver(driver: MonitorDriver, model: string, pricing: PricingTable): ModelPriceEntry | null {
     for (const candidate of driver.priceCandidates(model)) {
         const price = pricing[candidate];
 
@@ -377,8 +373,8 @@ function parseChunk(options: ParseChunkOptions): void {
         let cost = event.recordedCostUsd;
 
         if (cost === undefined) {
-            const price = priceForDriver(driver, event.model, pricing);
-            cost = price
+            const entry = priceForDriver(driver, event.model, pricing);
+            cost = entry
                 ? costOf(
                       {
                           input: event.inputTokens,
@@ -386,7 +382,10 @@ function parseChunk(options: ParseChunkOptions): void {
                           cacheWrite: event.cacheCreationTokens,
                           cacheRead: event.cacheReadTokens,
                       },
-                      price
+                      resolvePrice(entry, {
+                          at: Number.isNaN(when.getTime()) ? undefined : when,
+                          contextTokens: event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
+                      })
                   )
                 : 0;
         }

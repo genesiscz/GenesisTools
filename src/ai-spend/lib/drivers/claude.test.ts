@@ -53,6 +53,23 @@ describe("claude driver", () => {
         expect(events).toEqual([]);
     });
 
+    test("the cheap prefilter keeps every assistant line and drops the rest", () => {
+        // The prefilter runs on the raw line before the JSON parse, so it must not
+        // change what the driver emits: a non-assistant line stays skipped, and an
+        // assistant line still parses into a full event.
+        const events = collectEvents(claudeDriver, [
+            SafeJSON.stringify({
+                type: "user",
+                timestamp: "2026-08-27T09:00:00.000Z",
+                message: { id: "u1", model: "claude-3-5-haiku", usage: { input_tokens: 9 } },
+            }),
+            line("msg-p", { input_tokens: 7, output_tokens: 3 }),
+        ]);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ id: "msg-p", inputTokens: 7, outputTokens: 3 });
+    });
+
     test("a line with no timestamp still emits, and the monitor drops it without burning the id", () => {
         // `parseTranscriptLine` defaults a missing timestamp to "". The driver passes
         // that through; rejecting it is `parseChunk`'s job, and it must reject BEFORE
