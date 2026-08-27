@@ -38,8 +38,10 @@ tools chrome-devtools attach     # scans 9222-9230 + lsof + DevToolsActivePort
 ```
 
 If two or more Chromium browsers are open, `attach` exits 1 and lists each app with its
-exact restart command; pass `--port` to pick. `attach` also starts the **background
-recorder** for each listed endpoint (one per port, pidfile-deduped across concurrent agent
+exact restart command; pass `--port` to pick. Once `attach --port N` succeeds, later verbs
+need no `--port` — they reuse that endpoint while it is live. With several live endpoints
+and nothing remembered, a verb exits 1 naming the ports rather than guessing. `attach` also
+starts the **background recorder** for each listed endpoint (one per port, pidfile-deduped across concurrent agent
 sessions, dies when the browser's CDP endpoint dies) and prints a guidance block with the
 next commands. That recorder is what makes retroactive HAR possible.
 
@@ -71,6 +73,26 @@ the literal examples.
 | `rm` capture dirs or the leftover buffer | that IS the retroactive HAR | `cleanup` (moves to trash), after dumping |
 | `cat`/`jq` a `.har` | token bonfire | `tools har-analyzer load x.har` |
 
+## When `mcp__chrome-devtools-mcp__*` goes away mid-session
+
+That is normal harness behaviour, not a crash of anything here. Claude Code tears the idle
+stdio server down and re-spawns it on the next tool call: its log shows
+`STDIO connection closed after 126s (cleanly)` then `Cleared connection cache for
+reconnection`, with no stderr beyond the npm banner and no non-zero exit
+(`~/Library/Caches/claude-cli-nodejs/<project>/mcp-logs-chrome-devtools-mcp/*.jsonl`,
+verified 2026-08-27 for session a6b9435f). Two consequences:
+
+- **The CLI is unaffected and is the fallback.** `tools chrome-devtools` speaks HTTP and
+  WebSocket to the browser's own port each time, so it holds no session to lose.
+- **The MCP server drives its OWN isolated Chrome on an ephemeral port.** When it goes, that
+  browser goes too, and its `DevToolsActivePort` files leave empty capture dirs that
+  `attach` discovers later. `cleanup` removes them.
+
+One real failure in that session was NOT a disconnect: `take_screenshot` into the session
+scratchpad returned `Access denied: path … is not within any of the configured workspace
+roots`. chrome-devtools-mcp 1.6.0 only writes inside a workspace root, so write MCP
+screenshots into the repo, or take them with `tools chrome-devtools shot`.
+
 Health at any time: `tools chrome-devtools status` (CPU, memory, buffer sizes) ·
 `doctor` (read-only findings + fix commands) · `cleanup` (applies them, interactively in a
 terminal). These rules exist because an unbounded recorder once pinned a core for hours
@@ -90,15 +112,17 @@ The tool runs on macOS, Linux and Windows; on Windows the capture root is
 | One-shot per-request assertion table (method/status/sizes/auth scheme) | `har --last 10m --match token --summary` |
 | Read page state | `eval '() => ({url: location.href, ls: {...localStorage}, ss: {...sessionStorage}})'` — quoting trouble or a hook blocking inline eval? write the JS to a file and use `eval --file <path>` |
 | Console messages incl. load-time ones | `console --match <substr> --reload` (attaches first — the MCP `list_console_messages` misses everything before ITS attach) |
-| Navigate / screenshot | `nav <url>` · `shot /tmp/x.png [--full]` |
+| Navigate / screenshot | `nav <url>` (reuses a tab) · `nav <url> --new` (opens one) · `shot /tmp/x.png [--full]` |
 | Surgical cookie delete | `rm-cookie --name X --domain Y --path /cas` |
 | Pixel-coordinate grid over a screenshot | `grid /tmp/g.png [--region x,y,w,h] [--step 60]` |
 | The real MCP tools, against ANY port | `mcp list` · `mcp navigate_page '{"url":"…"}'` |
 | CDP scratch script | `scaffold <name> --recipe redirect-chain\|cookie-diff\|storage-snapshot\|body-fetch\|console-trap\|blank` |
 | The scripting API | `cheatsheet` (or `references/cdp-cheatsheet.md`) |
 
-Page verbs take `--match <url substr>` to pick a tab and ERROR when nothing matches; they
-never grab a random tab.
+Page verbs take `--match <substr|/regex/>` to pick a tab by URL or title, and ERROR within
+a second when nothing matches, listing the closest open tabs; they never grab a random tab.
+No tab to reuse? `nav <url> --new` opens one. `targets --match <substr>` filters the tab
+list instead of printing one 40 KB JSON blob (`--json` still gives raw `/json/list`).
 
 ## The method that actually finds these bugs
 

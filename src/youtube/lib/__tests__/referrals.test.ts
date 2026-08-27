@@ -24,7 +24,7 @@ describe("findActiveOffer", () => {
 
 describe("maskEmail / generateReferralCode", () => {
     it("masks the local part after two characters", () => {
-        expect(maskEmail("martin@example.com")).toBe("ma***@example.com");
+        expect(maskEmail("alice@example.com")).toBe("al***@example.com");
         expect(maskEmail("a@b.c")).toBe("a***@b.c");
         expect(maskEmail("broken")).toBe("***");
     });

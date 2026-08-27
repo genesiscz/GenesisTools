@@ -1,5 +1,6 @@
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { rememberLastPort } from "../lib/paths.ts";
 import { CDP_PORTS, isPortSpecified, planAttach, renderAttachPlan } from "../lib/resolve-attach.ts";
 import {
     guidanceBlock,
@@ -50,6 +51,13 @@ A browser must be LAUNCHED with the flag — it cannot be enabled at runtime.
             out.println(text);
 
             if (plan.status === "list") {
+                // Remember the endpoint this attach settled on, so the very next
+                // `nav`/`eval`/`targets` needs no --port. Only meaningful when
+                // ONE endpoint is in play; with several, --port stays mandatory.
+                if (plan.endpoints.length === 1) {
+                    rememberLastPort(plan.endpoints[0].port);
+                }
+
                 for (const e of plan.endpoints) {
                     let recording = false;
                     if (ATTACH_AUTO_RECORD) {

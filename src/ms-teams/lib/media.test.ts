@@ -71,7 +71,10 @@ describe("materializeThreadMedia", () => {
         expect(readFileSync(attachment?.localPath ?? "")).toEqual(PNG);
         expect(got.messages[0]?.text).toBe("");
         const md = renderMarkdown(got);
-        expect(md).toContain(`![${OBJECT_ID}.png](${attachment?.localPath})`);
+        expect(md).toContain(
+            `<img src="${attachment?.localPath}" alt="${OBJECT_ID}.png" style="max-width: min(100%, 480px); height: auto;" />`
+        );
+        expect(md.includes(`![${OBJECT_ID}.png](${attachment?.localPath})`)).toBe(false);
         expect(md.includes("_(no text)_")).toBe(false);
         expect(md.includes("eu-api.asm.skype.com")).toBe(false);
     });

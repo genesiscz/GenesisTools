@@ -4,9 +4,9 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
-import { attach, type Page, targets } from "../lib/cdp.ts";
+import { attach, NoMatchingTabError, type Page, targets } from "../lib/cdp.ts";
 import { DEFAULT_CAPTURE_CHANNELS } from "../lib/channels.ts";
-import { captureDir, ensureCaptureDir, recorderPidPath } from "../lib/paths.ts";
+import { captureDir, ensureCaptureDir, readLastPort, recorderPidPath } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
 import { readRecorderMeta } from "../lib/recorder.ts";
 import {
@@ -18,9 +18,7 @@ import {
     listRunningBrowsers,
     mergeProbePorts,
     ownerOfPort,
-    planAttach,
     readDevToolsActivePortsFromDisk,
-    renderAttachPlan,
 } from "../lib/resolve-attach.ts";
 
 const { log } = logger.scoped("chrome-devtools:cli");
@@ -90,6 +88,24 @@ export async function probe(
     }
 }
 
+/**
+ * Is one specific port answering CDP right now?
+ *
+ * `/json/version` only — it answers instantly while `/json/list` can stall
+ * behind a busy tab, and the caller only needs liveness, not the page list.
+ */
+async function isEndpointLive(port: number): Promise<boolean> {
+    try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
+
+        return res.ok;
+    } catch (err) {
+        log.debug({ err, port }, "remembered port is not answering; falling back to a full scan");
+
+        return false;
+    }
+}
+
 export async function scanInventory(): Promise<Inventory> {
     const running = listRunningBrowsers();
     const ports = mergeProbePorts(CDP_PORTS, discoverListeningCdpPorts(), readDevToolsActivePortsFromDisk());
@@ -107,30 +123,70 @@ export async function scanInventory(): Promise<Inventory> {
     };
 }
 
-/** Refuse to guess between two open Chromium browsers unless --port picks one. */
-export async function refuseIfAmbiguous(): Promise<void> {
+/**
+ * The ONE place a verb decides which endpoint it talks to.
+ *
+ * Explicit --port wins. Otherwise: the port `attach` last worked on if it is
+ * still live, else the single live endpoint whatever its number, else an error
+ * naming the live ports. The old code defaulted to a hardcoded 9222 and then
+ * refused on ambiguity, so `attach --port 9223` followed by a bare `nav` printed
+ * the whole inventory and did nothing.
+ */
+export async function resolvePort(opts: { port?: string }): Promise<number> {
     if (isPortSpecified()) {
-        return;
+        return portOf(opts);
     }
 
-    const plan = planAttach(await scanInventory());
-    if (plan.status !== "ambiguous") {
-        return;
+    // Ask the remembered port directly before scanning. `scanInventory` runs
+    // `pgrep -x` once per known browser — 13 of them, sequentially, measured at
+    // 593/604/824 ms — and the remembered port is the answer most of the time,
+    // so paying that first threw away the whole point of remembering it.
+    const remembered = readLastPort();
+
+    if (remembered != null && (await isEndpointLive(remembered))) {
+        log.debug({ port: remembered }, "using the port attach last worked on");
+
+        return remembered;
     }
 
-    const { text } = renderAttachPlan(plan, { cmd: TOOL_CMD, suggestCommand: suggest });
-    out.log.error(text);
+    const inventory = await scanInventory();
+    const live = inventory.endpoints.map((e) => e.port);
+
+    if (live.length === 1) {
+        return live[0];
+    }
+
+    if (live.length === 0) {
+        out.log.error("No live CDP endpoint. A browser must be LAUNCHED with --remote-debugging-port.");
+        out.log.info(`  ${suggest(["attach"])}`);
+        process.exit(1);
+    }
+
+    out.log.error(`${live.length} live CDP endpoints (${live.join(", ")}). Pick one with --port; nothing is guessed.`);
+    out.log.info(`  ${suggest(["attach", "--port", String(live[0])])}   then bare verbs use that port`);
     process.exit(1);
 }
 
 /** attach() with the no-random-tab contract; exits with guidance when the match misses. */
 export async function attachTab(opts: { port?: string; match?: string }): Promise<Page> {
-    await refuseIfAmbiguous();
+    const port = await resolvePort(opts);
     try {
-        return await attach({ port: portOf(opts), url: opts.match });
+        return await attach({ port, url: opts.match });
     } catch (err) {
+        if (err instanceof NoMatchingTabError) {
+            out.log.error(`${err.message} on port ${port}.`);
+            out.log.info(
+                err.candidates.length
+                    ? `Closest open tabs:\n${err.candidates.map((c) => `    ${c.title ?? ""} :: ${c.url}`).join("\n")}`
+                    : `No page targets are open on ${port}.`
+            );
+            out.log.info(`  open a new tab instead: ${suggest(["nav", "<url>", "--new", "--port", String(port)])}`);
+            out.log.info(`  full list:              ${suggest(["targets", "--port", String(port)])}`);
+            process.exit(1);
+        }
+
         out.log.error(err instanceof Error ? err.message : String(err));
-        out.log.info(`See open tabs first: ${suggest(["targets", "--port", String(portOf(opts))])}`);
+        out.log.info(`See open tabs first: ${suggest(["targets", "--port", String(port)])}`);
         process.exit(1);
     }
 }

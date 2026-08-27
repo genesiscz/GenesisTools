@@ -8,7 +8,7 @@ import { captureDir, recorderPidPath } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
 import { probeCdp } from "../lib/recorder.ts";
 import { segmentStats } from "../lib/status.ts";
-import { portOf, positiveNumber, refuseIfAmbiguous, suggest, withPage } from "./shared.ts";
+import { positiveNumber, resolvePort, suggest, withPage } from "./shared.ts";
 
 const DEFAULT_HAR_OUT = artifactPath("cdp.har");
 
@@ -114,11 +114,9 @@ a tab navigates (Chrome discards them — Chromium #141129). For bodies use
 --now --reload, or start the recorder with --channels +body.`
         )
         .action(async (opts: HarOpts) => {
-            const port = portOf(opts);
+            const port = await resolvePort(opts);
 
             if (opts.now || opts.reload) {
-                await refuseIfAmbiguous();
-
                 if (!(await probeCdp(port))) {
                     out.log.error(`no CDP endpoint on port ${port} — nothing listens there.`);
                     out.log.info(`  see what is live: ${suggest(["attach"])}`);

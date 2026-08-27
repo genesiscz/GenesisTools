@@ -27,7 +27,7 @@ import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
  * guarded (a worktree build), so a health probe that refreshed would spend the
  * grant and be unable to persist the rotated pair, silently bricking the
  * account. Observed live on 2026-07-29: doctor printed
- * "[token-refresh] reservine: initiating refresh (reason: token-expired)".
+ * "[token-refresh] shop: initiating refresh (reason: token-expired)".
  *
  * These tests pin the rule at every end: the gate inside `resolveAccountToken`,
  * the plugin health path `doctor` walks, and the plugin BIND path

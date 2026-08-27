@@ -31,7 +31,7 @@ const SCORED: ScoredAccount[] = [
         weekly: { leftPct: 99, resetsAt: in38h },
         fable: { leftPct: 98, resetsAt: in38h },
     }),
-    scoredAccount("lpreservine", "weekly-blocked", {
+    scoredAccount("weekly-dead", "weekly-blocked", {
         session: { leftPct: 100, resetsAt: null },
         weekly: { leftPct: 20, resetsAt: in38h },
         fable: { leftPct: 0, resetsAt: null },
@@ -95,13 +95,13 @@ describe("account table select frame", () => {
     test("focused row name carries the accent color", () => {
         const parts = buildFrameParts(OPTS);
         const frame = renderFrame(OPTS, parts, "active", 1);
-        expect(frame).toContain("\x1b[1;38;5;75mlpreservine\x1b[22;39m");
+        expect(frame).toContain("\x1b[1;38;5;75mweekly-dead\x1b[22;39m");
     });
 
     test("submit frame collapses to the picked name", () => {
         const parts = buildFrameParts(OPTS);
         const frame = stripAnsi(renderFrame(OPTS, parts, "submit", 1));
-        expect(frame).toContain("lpreservine");
+        expect(frame).toContain("weekly-dead");
         expect(frame).not.toContain("RESETS");
     });
 });

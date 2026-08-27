@@ -3,6 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { teamsHtmlToMarkdown } from "../html-to-markdown";
 import { isImageAttachment } from "../media";
 import type { Attachment, ExportedMessage, ThreadExport } from "../types";
+import { sizeMarkdownImages } from "./image-embed";
 
 const log = logger.scoped("ms-teams").log;
 
@@ -23,11 +24,15 @@ export function renderMarkdown(thread: ThreadExport): string {
         lines.push("");
     }
 
+    let previous: ExportedMessage | undefined;
+
     for (const message of messages) {
-        const when = formatDateTime(message.time, { absolute: "datetime" });
-        const who = message.from.displayName + (message.isFromMe ? " (me)" : "");
-        lines.push(`## ${when} · ${who}`);
-        lines.push("");
+        if (!continuesSpeakerBurst(previous, message)) {
+            const when = formatDateTime(message.time, { absolute: "datetime" });
+            const who = message.from.displayName + (message.isFromMe ? " (me)" : "");
+            lines.push(`## ${when} · ${who}`);
+            lines.push("");
+        }
 
         if (message.replyTo) {
             lines.push(`> reply to ${message.replyTo.from}: ${message.replyTo.excerpt}`);
@@ -70,9 +75,42 @@ export function renderMarkdown(thread: ThreadExport): string {
         }
 
         lines.push("");
+        previous = message;
     }
 
-    return `${lines.join("\n").trim()}\n`;
+    return sizeMarkdownImages(`${lines.join("\n").trim()}\n`);
+}
+
+const SPEAKER_BURST_MS = 60 * 60 * 1000;
+
+function continuesSpeakerBurst(previous: ExportedMessage | undefined, message: ExportedMessage): boolean {
+    if (!previous) {
+        return false;
+    }
+
+    if (speakerKey(previous) !== speakerKey(message)) {
+        return false;
+    }
+
+    const gapMs = Date.parse(message.time) - Date.parse(previous.time);
+
+    if (!Number.isFinite(gapMs) || gapMs < 0 || gapMs >= SPEAKER_BURST_MS) {
+        return false;
+    }
+
+    return true;
+}
+
+function speakerKey(message: ExportedMessage): string {
+    if (message.isFromMe) {
+        return "me";
+    }
+
+    if (message.from.mri) {
+        return message.from.mri;
+    }
+
+    return message.from.displayName;
 }
 
 function messageBodyMarkdown(message: ExportedMessage): string {

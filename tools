@@ -3,6 +3,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { logger } from "@genesiscz/utils/logger";
 
 // --- Configuration ---
@@ -180,13 +181,14 @@ async function executeTool(scriptId, scriptArgs) {
     const sqliteVecPreload = join(workspaceRoot, "src/utils/search/stores/sqlite-vec-preload.ts");
     const exitCode = await runWithReinstallGuard(
         ["--preload", solidPreload, "--preload", sqliteVecPreload, targetScript, ...scriptArgs],
-        workspaceRoot
+        workspaceRoot,
+        namedBunExecPath(scriptId)
     );
     process.exit(exitCode);
 }
 
-async function runWithReinstallGuard(args: string[], workspaceRoot: string): Promise<number> {
-    const exitCode = await spawnAndCaptureStderr(args, workspaceRoot);
+async function runWithReinstallGuard(args: string[], workspaceRoot: string, execPath: string): Promise<number> {
+    const exitCode = await spawnAndCaptureStderr(args, workspaceRoot, execPath);
 
     if (exitCode === 0) {
         return 0;
@@ -222,19 +224,21 @@ async function runWithReinstallGuard(args: string[], workspaceRoot: string): Pro
 
 let capturedStderr = "";
 
-async function spawnAndCaptureStderr(args: string[], workspaceRoot: string): Promise<number> {
+async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, execPath: string): Promise<number> {
     capturedStderr = "";
     const TAIL_BYTES = 64 * 1024;
 
     return new Promise<number>((resolvePromise, reject) => {
-        const child = spawn(process.execPath, args, {
+        const child = spawn(execPath, args, {
             stdio: ["inherit", "inherit", "pipe"],
             // cwd stays at the user's shell so tools resolving `.claude/...`
             // via process.cwd() keep working. Bunfig's preload is forwarded
             // via the explicit --preload flag in executeTool().
-            // execPath (not PATH "bun"): a signed parent (Genesis.app, cmux)
-            // + `/usr/bin/env bun` is SIGKILL'd by Taskgated (Code Signature
-            // Invalid, ~5ms). Reuse this already-running interpreter.
+            // execPath is a gt-<tool> hardlink of this already-running
+            // interpreter (namedBunExecPath), never PATH "bun": a signed
+            // parent (Genesis.app, cmux) + `/usr/bin/env bun` is SIGKILL'd by
+            // Taskgated (Code Signature Invalid, ~5ms). The hardlink is the
+            // same signed binary, and names the process in Activity Monitor.
             cwd: process.cwd(),
             env: envWithoutProxy({ INIT_CWD: process.cwd() }),
             shell: process.platform === "win32",
@@ -327,7 +331,7 @@ async function main() {
 
     if (args.length === 0) {
         // Launch interactive tool browser
-        const result = spawnSync(process.execPath, ["run", join(srcDir, "tools", "index.ts")], {
+        const result = spawnSync(namedBunExecPath("tools"), ["run", join(srcDir, "tools", "index.ts")], {
             stdio: "inherit",
             cwd: process.cwd(),
             env: envWithoutProxy(),

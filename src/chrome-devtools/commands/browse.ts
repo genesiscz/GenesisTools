@@ -1,7 +1,7 @@
 /** open / restart / targets — getting a CDP endpoint to exist, on any platform. */
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { targets } from "../lib/cdp.ts";
+import { makeMatcher, targets } from "../lib/cdp.ts";
 import {
     BROWSER_APPS,
     BROWSERS,
@@ -12,7 +12,7 @@ import {
     quitBrowser,
     waitForCdp,
 } from "../lib/resolve-attach.ts";
-import { portOf, probe, refuseIfAmbiguous, suggest, withPort } from "./shared.ts";
+import { portOf, probe, resolvePort, suggest, withPort } from "./shared.ts";
 
 /** Chromium launch flags. Exported for tests: the --user-data-dir rule is what keeps `open` off the real profile. */
 export function launchArgs(port: number, opts: { fresh?: boolean; extension?: string }): string[] {
@@ -52,6 +52,10 @@ function browserDefOf(raw: unknown): { id: string; name: string } {
 }
 
 const BROWSER_IDS = BROWSERS.map((b) => b.id).join("|");
+
+function truncate(value: string, max: number): string {
+    return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
 
 interface OpenOpts {
     port?: string;
@@ -157,10 +161,31 @@ export function registerBrowse(program: Command): void {
         });
 
     withPort(program.command("targets"))
-        .description("raw /json/list of the endpoint (every tab, its targetId and URL)")
-        .action(async (opts: { port?: string }) => {
-            await refuseIfAmbiguous();
-            out.result(await targets(portOf(opts)));
-            process.exit(0);
+        .description("list the endpoint's tabs — one line per target (id, title, url). --json for raw /json/list.")
+        .option("--match <substr>", "only targets whose url or title contains this substring, or /regex/")
+        .option("--all", "include non-page targets (workers, iframes, extension pages)")
+        .option("--json", "raw /json/list JSON, as Chromium returns it")
+        .action(async (opts: { port?: string; match?: string; all?: boolean; json?: boolean }) => {
+            const port = await resolvePort(opts);
+            const all = await targets(port);
+            const scoped = opts.all ? all : all.filter((t) => t.type === "page");
+            const matches = opts.match ? makeMatcher(opts.match) : null;
+            const list = matches ? scoped.filter((t) => matches(t.url) || matches(t.title ?? "")) : scoped;
+
+            if (opts.json) {
+                out.result(list);
+                process.exit(0);
+            }
+
+            // A 40KB single-line JSON blob for 25 tabs is not readable output:
+            // finding one tab meant saving it to a file and running rg over it.
+            for (const t of list) {
+                out.println(`${t.id}  ${truncate(t.title ?? "", 46).padEnd(46)}  ${t.url}`);
+            }
+
+            out.println(
+                `\n${list.length} of ${scoped.length} ${opts.all ? "targets" : "page targets"} on ${port}${opts.match ? ` matching '${opts.match}'` : ""}.`
+            );
+            process.exit(list.length ? 0 : 1);
         });
 }

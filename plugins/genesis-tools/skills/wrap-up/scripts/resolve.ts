@@ -18,6 +18,8 @@
  *               auto-stamping the datetime and auto-generating the before→after
  *               snapshot from the outgoing header. stdin carries two parts split by
  *               sentinel lines: @@HERE@@ (new state bullets) then @@LOG@@ (log body).
+ *               Prints { logged:true, file, stamp, lines, linesAdded, linesModified }
+ *               so the caller can Read the rewritten header and the new section.
  *
  * The registry lives at ~/.claude/handoff-registry.json:
  *   { "entries": [ { projectDir, branch?, worktreeDir?, obsidianDir, docPath? }, ... ] }
@@ -34,7 +36,7 @@
 
 import { chmod, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 
 // lint-rules-ignore: standalone script without access to @genesiscz/utils/env
 const PLUGIN_CONFIG = join(homedir(), ".genesis-tools", "plugins", "config.json");
@@ -834,7 +836,73 @@ export function splitSentinels(raw: string): SentinelSplit {
     return { ok: true, hereBody, logBody };
 }
 
-export type LogBuild = { ok: true; body: string } | { ok: false; problem: string };
+export type LineSpan = {
+    count: number;
+    lineFirst: number;
+    lineLast: number;
+    heading: string;
+};
+
+export type LogBuild =
+    | { ok: true; body: string; lines: number; linesAdded: LineSpan; linesModified: LineSpan }
+    | { ok: false; problem: string };
+
+function lineAt(text: string, index: number): number {
+    let line = 1;
+    const limit = Math.min(Math.max(index, 0), text.length);
+    for (let i = 0; i < limit; i++) {
+        if (text.charCodeAt(i) === 10) {
+            line++;
+        }
+    }
+
+    return line;
+}
+
+function lineCount(text: string): number {
+    if (text.length === 0) {
+        return 0;
+    }
+
+    let n = 0;
+    for (let i = 0; i < text.length; i++) {
+        if (text.charCodeAt(i) === 10) {
+            n++;
+        }
+    }
+
+    return text.endsWith("\n") ? n : n + 1;
+}
+
+function headingOf(block: string): string {
+    for (const line of block.split("\n")) {
+        if (line.startsWith("## ")) {
+            return line;
+        }
+    }
+
+    for (const line of block.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed) {
+            return trimmed;
+        }
+    }
+
+    return "";
+}
+
+function spanFor(text: string, start: number, endExclusive: number, heading: string): LineSpan {
+    const lo = Math.max(0, start);
+    const hi = Math.max(lo, endExclusive);
+    const lineFirst = lineAt(text, lo);
+    const lineLast = lineAt(text, Math.max(lo, hi - 1));
+    return {
+        count: lineLast - lineFirst + 1,
+        lineFirst,
+        lineLast,
+        heading,
+    };
+}
 
 export function buildLogBody({
     text,
@@ -856,7 +924,6 @@ export function buildLogBody({
     const oldFull = text.slice(s, e + HERE_END.length);
     const newFull = `${HERE_START}\n## You are here (${stamp})\n${hereBody}\n${HERE_END}`;
     const rewritten = text.slice(0, s) + newFull + text.slice(e + HERE_END.length);
-
     const section = [
         logBody,
         "",
@@ -870,8 +937,19 @@ export function buildLogBody({
         "",
         blockquote(innerBlock(newFull)),
     ].join("\n");
+    const rewrittenTrimmed = rewritten.replace(/\s+$/, "");
+    const body = `${rewrittenTrimmed}\n\n${section}\n`;
+    const headerStart = body.indexOf(HERE_START);
+    const headerEnd = body.indexOf(HERE_END);
+    const addedStart = rewrittenTrimmed.length + 2;
 
-    return { ok: true, body: `${rewritten.replace(/\s+$/, "")}\n\n${section}\n` };
+    return {
+        ok: true,
+        body,
+        lines: lineCount(body),
+        linesModified: spanFor(body, headerStart, headerEnd + HERE_END.length, headingOf(newFull)),
+        linesAdded: spanFor(body, addedStart, body.length, headingOf(section)),
+    };
 }
 
 async function cmdLog(file: string) {
@@ -879,10 +957,11 @@ async function cmdLog(file: string) {
         failLog("no wrap-up file path given (first positional arg)");
     }
 
-    const f = Bun.file(file);
+    const absFile = resolve(file);
+    const f = Bun.file(absFile);
     if (!(await f.exists())) {
         failLog(
-            `file does not exist: ${file}\n  → create it from the template with Write first, then use 'log' for every session after`
+            `file does not exist: ${absFile}\n  → create it from the template with Write first, then use 'log' for every session after`
         );
     }
 
@@ -894,12 +973,25 @@ async function cmdLog(file: string) {
     const stamp = nowStamp();
     const built = buildLogBody({ text: await f.text(), hereBody: split.hereBody, logBody: split.logBody, stamp });
     if (!built.ok) {
-        failLog(`${built.problem} in ${file} — is this a wrap-up file created from the template?`);
+        failLog(`${built.problem} in ${absFile} — is this a wrap-up file created from the template?`);
     }
 
-    await writeAtomic(file, built.body);
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
-    console.log(JSON.stringify({ logged: file, stamp }, null, 2));
+    await writeAtomic(absFile, built.body);
+    console.log(
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
+        JSON.stringify(
+            {
+                logged: true,
+                file: absFile,
+                stamp,
+                lines: built.lines,
+                linesAdded: built.linesAdded,
+                linesModified: built.linesModified,
+            },
+            null,
+            2
+        )
+    );
 }
 
 export function parseFlags(argv: string[]): Record<string, string> {

@@ -8,7 +8,7 @@ const TEST_TOKEN = "sk-ant-oat01-TESTTOKEN";
 mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
     resolveAccountToken: async () => ({
         token: TEST_TOKEN,
-        account: { name: "martin", accessToken: TEST_TOKEN },
+        account: { name: "personal", accessToken: TEST_TOKEN },
         refreshed: false,
     }),
 }));
@@ -18,7 +18,7 @@ const account: AiProxyAccountConfig = {
     provider: "anthropic-subscription",
     providerSlug: "claude-sub",
     enabled: true,
-    anthropicSub: { accountName: "martin" },
+    anthropicSub: { accountName: "personal" },
 };
 
 const realFetch = globalThis.fetch;

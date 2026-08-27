@@ -4,7 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { findRecipe, recipeHelpLines, scaffoldRecipeScript } from "../lib/scaffold.ts";
-import { portOf, refuseIfAmbiguous, suggest, withPort } from "./shared.ts";
+import { resolvePort, suggest, withPort } from "./shared.ts";
 
 const CHEATSHEET_PATH = join(
     import.meta.dir,
@@ -93,9 +93,8 @@ Examples:
   ${suggest(["mcp", "take_snapshot"])}`
         )
         .action(async (tool: string, json: string, opts: { port?: string }) => {
-            await refuseIfAmbiguous();
             const { callTool, listTools } = await import("../lib/mcp.ts");
-            const port = portOf(opts);
+            const port = await resolvePort(opts);
 
             if (!tool || tool === "list") {
                 out.println((await listTools({ port })).join("\n"));

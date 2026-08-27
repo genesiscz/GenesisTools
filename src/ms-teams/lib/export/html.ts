@@ -2,6 +2,7 @@ import { formatDateTime } from "@genesiscz/utils/date";
 import { parseAmsObjectId } from "../disk-cache";
 import { isImageAttachment, toFileUrl } from "../media";
 import type { Attachment, ThreadExport } from "../types";
+import { EXPORT_IMAGE_STYLE } from "./image-embed";
 
 export function renderHtml(thread: ThreadExport): string {
     const { conversation, messages } = thread;
@@ -62,7 +63,7 @@ export function renderHtml(thread: ThreadExport): string {
   article.nested { margin-left: 1.5rem; }
   header { font-size: 0.85rem; color: GrayText; margin-bottom: 0.35rem; }
   blockquote.reply { margin: 0 0 0.5rem; padding-left: 0.75rem; border-left: 3px solid color-mix(in srgb, CanvasText 25%, transparent); color: GrayText; }
-  .html img { max-width: 100%; height: auto; }
+  img { ${EXPORT_IMAGE_STYLE} width: auto; }
 </style>
 </head>
 <body>

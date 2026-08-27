@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "@genesiscz/utils/env";
+import { namedBunExecPath } from "./bun-link";
 import type { ExecResult } from "./executor";
 
 function getToolsPath(): string {
@@ -20,7 +21,7 @@ export interface RunToolOptions {
  * Usage: `execTool(["claude", "usage"])` runs `tools claude usage`
  */
 export async function execTool(args: string[], options?: RunToolOptions): Promise<ExecResult> {
-    const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
+    const proc = Bun.spawn([namedBunExecPath("tools"), "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...env.getProcessEnv(), ...options?.env },
@@ -49,7 +50,7 @@ export async function execToolInteractive(
     args: string[],
     options?: Omit<RunToolOptions, "timeout">
 ): Promise<ExecResult> {
-    const proc = Bun.spawn(["bun", "run", getToolsPath(), ...args], {
+    const proc = Bun.spawn([namedBunExecPath("tools"), "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdio: ["inherit", "inherit", "inherit"],
         env: { ...env.getProcessEnv(), ...options?.env },

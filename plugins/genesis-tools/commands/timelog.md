@@ -105,7 +105,7 @@ Each Timely **event** represents a chunk of logged time. Match each to a work it
 
 | Event (project + note) | Linked Entries Context | Git Context | -> Work Item |
 |---|---|---|---|
-| MyProject 4h51m "Sprint 2" | Cursor: timelog.ts, Teams: meeting | Commits on feature/268935 | -> 268935 |
+| MyProject 4h51m "Sprint 2" | Cursor: timelog.ts, Teams: meeting | Commits on feature/12345 | -> 12345 |
 | Internal 30m | Teams: standup | No direct link | -> Ask user |
 
 Also check `unlinked[]` for unaccounted time:
@@ -120,8 +120,8 @@ Present a table for user approval:
 +---------+---------+--------------+---------------------------------+
 | Work ID | Hours   | Type         | Comment                         |
 +---------+---------+--------------+---------------------------------+
-| 268935  | 2.5     | Development  | Gen2 2: coding, timelog impl    |
-| 268935  | 0.5     | Code Review  | PR review and feedback          |
+| 12345  | 2.5     | Development  | Gen2 2: coding, timelog impl    |
+| 12345  | 0.5     | Code Review  | PR review and feedback          |
 | 123456  | 1.0     | Development  | fix: validation error handling  |
 | ???     | 0.75    | Ceremonie    | Teams standup (unlinked, assign) |
 +---------+---------+--------------+---------------------------------+
@@ -137,7 +137,7 @@ Instead of directly executing entries, the preferred workflow for multi-day sync
 ```bash
 # For each entry, stage it for review
 tools azure-devops timelog prepare-import add --from YYYY-MM-DD --to YYYY-MM-DD --entry '{
-  "workItemId": 268935,
+  "workItemId": 12345,
   "date": "2026-02-04",
   "hours": 2.5,
   "timeType": "Development",
@@ -288,14 +288,14 @@ For bulk importing time entries, create a JSON file:
 {
   "entries": [
     {
-      "workItemId": 268935,
+      "workItemId": 12345,
       "hours": 2,
       "timeType": "Development",
       "date": "2026-02-04",
       "comment": "Implemented feature X"
     },
     {
-      "workItemId": 268936,
+      "workItemId": 12346,
       "hours": 1,
       "minutes": 30,
       "timeType": "Code Review",
@@ -441,7 +441,7 @@ tools clarity link-workitems
 
 # Non-interactive: link directly (requires timesheet ID for task lookup)
 tools clarity link-workitems \
-  --azure-devops-workitem 268935 \
+  --azure-devops-workitem 12345 \
   --clarity-task "SampleTask_Release_External_Capex" \
   --timesheet 8524081
 
@@ -449,7 +449,7 @@ tools clarity link-workitems \
 tools clarity link-workitems --list
 
 # Remove a mapping
-tools clarity link-workitems --unlink 268935
+tools clarity link-workitems --unlink 12345
 ```
 
 ### Export + Fill Workflow

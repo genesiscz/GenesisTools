@@ -10,7 +10,7 @@ function configWith(tokens: AIAccountTokens): AIConfigData {
     return {
         _schemaVersion: 1,
         accounts: [
-            { name: "martin", provider: "anthropic-sub", tokens },
+            { name: "personal", provider: "anthropic-sub", tokens },
             { name: "other", provider: "anthropic-sub", tokens: {} },
         ],
         defaultAccounts: {},
@@ -23,7 +23,7 @@ function configWith(tokens: AIAccountTokens): AIConfigData {
 describe("applyLongLivedToken", () => {
     test("sets the token on the named account only", () => {
         const data = configWith({});
-        applyLongLivedToken(data, { accountName: "martin", token: "sk-ant-oat01-new" });
+        applyLongLivedToken(data, { accountName: "personal", token: "sk-ant-oat01-new" });
 
         expect(data.accounts[0].tokens.longLivedToken).toBe("sk-ant-oat01-new");
         expect(data.accounts[1].tokens.longLivedToken).toBeUndefined();
@@ -38,7 +38,7 @@ describe("applyLongLivedToken", () => {
             expiresAt: 1234,
         });
 
-        applyLongLivedToken(data, { accountName: "martin", token: "sk-ant-oat01-new" });
+        applyLongLivedToken(data, { accountName: "personal", token: "sk-ant-oat01-new" });
 
         expect(data.accounts[0].tokens.accessToken).toBe("fresh-access");
         expect(data.accounts[0].tokens.refreshToken).toBe("fresh-refresh");
@@ -47,14 +47,14 @@ describe("applyLongLivedToken", () => {
 
     test("a minted token records its expiry", () => {
         const data = configWith({});
-        applyLongLivedToken(data, { accountName: "martin", token: "tok", expiresAt: 999 });
+        applyLongLivedToken(data, { accountName: "personal", token: "tok", expiresAt: 999 });
 
         expect(data.accounts[0].tokens.longLivedTokenExpiresAt).toBe(999);
     });
 
     test("replacing a minted token with a PASTED one clears the stale expiry", () => {
         const data = configWith({ longLivedToken: "minted", longLivedTokenExpiresAt: 999 });
-        applyLongLivedToken(data, { accountName: "martin", token: "pasted" });
+        applyLongLivedToken(data, { accountName: "personal", token: "pasted" });
 
         expect(data.accounts[0].tokens.longLivedToken).toBe("pasted");
         expect(data.accounts[0].tokens.longLivedTokenExpiresAt).toBeUndefined();

@@ -349,14 +349,74 @@ export class Browser {
     }
 }
 
+/**
+ * /json/list must never be able to hang a command. Chromium answers
+ * /json/version instantly while /json/list stalls behind a busy tab, and an
+ * unbounded fetch there turned `nav --match <nothing>` into a 90s hang that
+ * had to be killed.
+ */
+export const TARGETS_TIMEOUT_MS = 5000;
+
 export async function targets(port = 9222, opts: { signal?: AbortSignal } = {}): Promise<Target[]> {
-    const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: opts.signal });
+    const signal = opts.signal ?? AbortSignal.timeout(TARGETS_TIMEOUT_MS);
+    const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal });
 
     return (await r.json()) as Target[];
 }
 
+/**
+ * `/substr/flags` is a regex, anything else is a plain substring. The --match
+ * help text promised regex support from day one; only substring was wired up.
+ */
+export function makeMatcher(pattern: string): (value: string) => boolean {
+    const re = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
+
+    if (re) {
+        const compiled = new RegExp(re[1], re[2].replace(/g/g, ""));
+
+        return (value) => compiled.test(value);
+    }
+
+    return (value) => value.includes(pattern);
+}
+
+/**
+ * Tabs worth suggesting when `--match` hit nothing, best first: a miss must
+ * say what IS open, not just that the guess failed.
+ */
+export function closeTabCandidates<T extends { title?: string; url: string }>(
+    pages: T[],
+    wanted: string,
+    limit = 6
+): T[] {
+    const tokens = wanted
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length > 1);
+    const score = (t: T) => {
+        const hay = `${t.title ?? ""} ${t.url}`.toLowerCase();
+
+        return tokens.filter((tok) => hay.includes(tok)).length;
+    };
+    const scored = pages.map((t) => ({ t, s: score(t) }));
+    const hits = scored.filter((x) => x.s > 0).sort((a, z) => z.s - a.s);
+
+    return (hits.length ? hits : scored).slice(0, limit).map((x) => x.t);
+}
+
+/** Thrown when --match names no open tab; carries the candidates to print. */
+export class NoMatchingTabError extends Error {
+    constructor(
+        readonly wanted: string,
+        readonly candidates: { title?: string; url: string }[]
+    ) {
+        super(`no tab matching "${wanted}"`);
+        this.name = "NoMatchingTabError";
+    }
+}
+
 /** Pick a page target. A given `url` must hit; never fall back to the first tab. */
-export function pickPageTarget<T extends { type?: string; url: string }>(
+export function pickPageTarget<T extends { type?: string; title?: string; url: string }>(
     list: T[],
     opts: { url?: string; index?: number; port?: number } = {}
 ): T {
@@ -364,9 +424,10 @@ export function pickPageTarget<T extends { type?: string; url: string }>(
     const wanted = opts.url;
 
     if (wanted) {
-        const t = pages.find((x) => x.url.includes(wanted));
+        const matches = makeMatcher(wanted);
+        const t = pages.find((x) => matches(x.url) || matches(x.title ?? ""));
         if (!t) {
-            throw new Error(`no tab matching "${wanted}"`);
+            throw new NoMatchingTabError(wanted, closeTabCandidates(pages, wanted));
         }
 
         return t;
@@ -389,6 +450,24 @@ export async function attach(opts: { port?: number; url?: string; index?: number
     await page.enable();
 
     return page;
+}
+
+/**
+ * Open a NEW tab. `PUT /json/new?<url>` is the only endpoint that creates one
+ * (Chromium ≥111 rejects the GET form), and it returns the fresh target — so
+ * attaching does not have to re-scan and guess which tab is the new one.
+ */
+export async function newTab(port: number, url: string): Promise<Target> {
+    const r = await fetch(`http://127.0.0.1:${port}/json/new?${url}`, {
+        method: "PUT",
+        signal: AbortSignal.timeout(TARGETS_TIMEOUT_MS),
+    });
+
+    if (!r.ok) {
+        throw new Error(`could not open a tab on ${port}: ${r.status} ${await r.text()}`);
+    }
+
+    return (await r.json()) as Target;
 }
 
 /** Browser-level connection (cookies across all domains). */

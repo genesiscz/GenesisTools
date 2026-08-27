@@ -21,7 +21,7 @@ describe("cleanPromptText", () => {
     test("drops a pasted status line and keeps the question", () => {
         const raw =
             " claude-opus-5 GenesisTools feat/claude-cmux-restore\n" +
-            "  313k/775k(40%) +1.6k AC 8b6e69bf @10:17:44 ⚿ martin\n" +
+            "  313k/775k(40%) +1.6k AC 8b6e69bf @10:17:44 ⚿ personal\n" +
             "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n\n" +
             "it still shows the old data";
 
@@ -52,16 +52,18 @@ describe("subdirOf", () => {
     });
 
     /**
-     * Claude Code files a SIBLING worktree (`web-app-297040`, next to `web-app`) under
+     * Claude Code files a SIBLING worktree (`web-app-issue-4821`, next to `web-app`) under
      * the plain project. Without this branch several different worktrees all render as
      * `web-app` and the picker cannot tell them apart.
      */
     test("a sibling worktree shows what distinguishes it, minus the repeated project name", () => {
-        expect(subdirOf("/Users/Martin/Projects/widgets/web-app-297040-auth", "web-app")).toBe("297040-auth");
+        expect(subdirOf("/Users/me/Projects/acme/web-app-issue-4821-burn-auth", "web-app")).toBe(
+            "issue-4821-burn-auth"
+        );
     });
 
     test("an unrelated directory shows its own name", () => {
-        expect(subdirOf("/Users/Martin/scratch/experiment", "web-app")).toBe("experiment");
+        expect(subdirOf("/Users/me/scratch/experiment", "web-app")).toBe("experiment");
     });
 
     test("a package inside the repo keeps its full path tail", () => {

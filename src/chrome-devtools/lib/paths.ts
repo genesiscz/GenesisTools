@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { currentPlatform, tmpRoot } from "./platform.ts";
@@ -39,6 +39,38 @@ export function metaPath(port: number): string {
 
 export function recorderPidPath(port: number): string {
     return join(captureDir(port), "recorder.pid");
+}
+
+/**
+ * Where `attach` records the port it worked on, so a later `nav`/`eval` with
+ * no --port does not have to re-guess between two open browsers. It lives
+ * under the capture root on purpose: /tmp clears on reboot, and so does the
+ * browser session the port belonged to.
+ */
+export function lastPortPath(): string {
+    return join(CAPTURE_ROOT, "last-port");
+}
+
+export function rememberLastPort(port: number): void {
+    try {
+        mkdirSync(CAPTURE_ROOT, { recursive: true, mode: 0o700 });
+        writeFileSync(lastPortPath(), `${port}\n`, { mode: 0o600 });
+    } catch (err) {
+        // Never fail a working command over a convenience hint.
+        log.debug({ err, port }, "could not record last attached port");
+    }
+}
+
+export function readLastPort(): number | null {
+    try {
+        const raw = Number(readFileSync(lastPortPath(), "utf8").trim());
+
+        return Number.isInteger(raw) && raw > 0 && raw < 65536 ? raw : null;
+    } catch (err) {
+        log.debug({ err }, "no remembered port");
+
+        return null;
+    }
 }
 
 /** Ports that have a capture dir on disk (live or leftover). */

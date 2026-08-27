@@ -1,18 +1,9 @@
 /** cookies / rm-cookie / console / eval / nav / shot / grid / trace — page and browser inspection. */
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { browser } from "../lib/cdp.ts";
+import { browser, newTab } from "../lib/cdp.ts";
 import { artifactPath } from "../lib/platform.ts";
-import {
-    attachTab,
-    ignoreSigpipe,
-    portOf,
-    positiveNumber,
-    refuseIfAmbiguous,
-    suggest,
-    withPage,
-    withPort,
-} from "./shared.ts";
+import { attachTab, ignoreSigpipe, positiveNumber, resolvePort, suggest, withPage, withPort } from "./shared.ts";
 
 export function registerInspect(program: Command): void {
     withPort(program.command("cookies"))
@@ -20,8 +11,7 @@ export function registerInspect(program: Command): void {
         .option("--domain <substr>", "only cookies whose domain contains this")
         .option("--json", "machine-readable, for diffing two browsers")
         .action(async (opts: { port?: string; domain?: string; json?: boolean }) => {
-            await refuseIfAmbiguous();
-            const b = await browser(portOf(opts));
+            const b = await browser(await resolvePort(opts));
             const cs = await b.cookies(opts.domain);
 
             if (opts.json) {
@@ -67,8 +57,7 @@ export function registerInspect(program: Command): void {
         .requiredOption("--domain <domain>", "cookie domain, exactly as listed by 'cookies'")
         .option("--path <path>", "cookie path", "/")
         .action(async (opts: { port?: string; name: string; domain: string; path: string }) => {
-            await refuseIfAmbiguous();
-            const b = await browser(portOf(opts));
+            const b = await browser(await resolvePort(opts));
             await b.deleteCookie(opts.name, opts.domain, opts.path);
             out.log.info(`deleted ${opts.name} ${opts.domain} ${opts.path}`);
             b.close();
@@ -130,18 +119,69 @@ export function registerInspect(program: Command): void {
             }
 
             const page = await attachTab(opts);
-            out.result(await page.evaluate(source));
+
+            try {
+                const value = await page.evaluate(source);
+
+                // undefined is a normal result (location.reload(), a void call).
+                // Say so on stderr; stdout still gets valid JSON.
+                if (value === undefined) {
+                    out.log.info("the expression returned no value (undefined); stdout gets null");
+                }
+
+                out.result(value);
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+
+                // location.reload() / location.href = … tear the execution
+                // context down before the eval can answer. That is the script
+                // doing its job, not a failure, so say so and exit 0.
+                if (/context was destroyed|Inspected target navigated|connection closed/i.test(message)) {
+                    out.log.info("page navigated; eval context gone before it returned a value");
+                    process.exit(0);
+                }
+
+                out.log.error(message);
+                process.exit(1);
+            }
+
             process.exit(0);
         });
 
     withPage(program.command("nav"))
-        .description("navigate the tab")
+        .description("navigate a tab, or open a new one with --new")
         .argument("<url>", "destination URL")
-        .action(async (url: string, opts: { port?: string; match?: string }) => {
+        .option("--new", "open a NEW tab instead of reusing one (cannot be combined with --match)")
+        .action(async (url: string, opts: { port?: string; match?: string; new?: boolean }) => {
+            if (opts.new) {
+                if (opts.match) {
+                    out.log.error("--new opens a fresh tab, so --match has nothing to pick. Use one or the other.");
+                    process.exit(1);
+                }
+
+                const port = await resolvePort(opts);
+                const target = await newTab(port, url).catch((err: unknown) => {
+                    out.log.error(err instanceof Error ? err.message : String(err));
+                    process.exit(1);
+                });
+                out.log.info(`new tab ${target.id} on ${port}: ${target.url || url}`);
+                process.exit(0);
+            }
+
             const page = await attachTab(opts);
+            const before = page.target.url;
+
+            if (!opts.match) {
+                out.log.info("no --match given: acting on the most recently active tab");
+            }
+
             await page.navigate(url);
             await Bun.sleep(2500);
-            out.log.info(`now at: ${page.target.url}`);
+            // page.target is the /json/list snapshot taken at attach time, so
+            // printing it after a navigate reported the tab's OLD url — which
+            // read as "nav clobbered some unrelated tab". Ask the tab itself.
+            const after = await page.evaluate("location.href").catch(() => url);
+            out.log.info(`tab ${page.target.id}: ${before}\n         -> ${String(after)}`);
             process.exit(0);
         });
 
@@ -164,12 +204,12 @@ export function registerInspect(program: Command): void {
         .option("--step <n>", "grid spacing in px", "60")
         .option("--full", "capture beyond the viewport")
         .action(async (path: string, opts: { port?: string; region?: string; step: string; full?: boolean }) => {
-            await refuseIfAmbiguous();
+            const port = await resolvePort(opts);
             const { captureFrameGrid } = await import("../lib/frame-grid.ts");
             out.println(
                 await captureFrameGrid({
                     outPath: path,
-                    port: portOf(opts),
+                    port,
                     region: opts.region,
                     gridStep: positiveNumber(opts.step, 60, "--step"),
                     fullPage: opts.full === true,

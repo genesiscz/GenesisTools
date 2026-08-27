@@ -408,6 +408,59 @@ describe("buildLogBody", () => {
         }
     });
 
+    it("reports the header rewrite and appended log as 1-indexed line spans", () => {
+        const res = buildLogBody({ text: docWith("- **State:** old"), ...args });
+        expect(res.ok).toBe(true);
+        if (!res.ok) {
+            return;
+        }
+
+        // Fixture is 12 lines; the append adds a blank separator plus a 13-line
+        // log section (topic heading through the quoted After block).
+        expect(res.lines).toBe(26);
+        expect(res.linesModified).toEqual({
+            count: 4,
+            lineFirst: 3,
+            lineLast: 6,
+            heading: "## You are here (2026-07-29 06:47)",
+        });
+        expect(res.linesAdded).toEqual({
+            count: 13,
+            lineFirst: 14,
+            lineLast: 26,
+            heading: "## 2026-07-29 06:47 — second",
+        });
+    });
+
+    it("shifts the added span when the new header is taller", () => {
+        const res = buildLogBody({
+            text: docWith("- **State:** old"),
+            hereBody: "- **State:** new\n- **Next:** do the thing\n- **Verify:** bun test",
+            logBody: "## 2026-07-29 06:47 — second",
+            stamp: "2026-07-29 06:47",
+        });
+        expect(res.ok).toBe(true);
+        if (!res.ok) {
+            return;
+        }
+
+        // Two extra header bullets: the YOU-ARE-HERE block grows by 2, AND the
+        // auto-quoted After snapshot grows by the same 2, so the file grows by 4.
+        expect(res.lines).toBe(30);
+        expect(res.linesModified).toEqual({
+            count: 6,
+            lineFirst: 3,
+            lineLast: 8,
+            heading: "## You are here (2026-07-29 06:47)",
+        });
+        expect(res.linesAdded).toEqual({
+            count: 15,
+            lineFirst: 16,
+            lineLast: 30,
+            heading: "## 2026-07-29 06:47 — second",
+        });
+    });
+
     it("is idempotent in shape — logging twice keeps one header and both sections", () => {
         const first = buildLogBody({ text: docWith("- **State:** old"), ...args });
         expect(first.ok).toBe(true);
@@ -558,6 +611,65 @@ describe("writeAtomic", () => {
         // The destination is untouched, which pins that the rejection came from
         // the rename onto the directory and not from something incidental.
         expect(await readdir(target)).toEqual(["keep.txt"]);
+    });
+});
+
+describe("log command JSON", () => {
+    const fixtures: string[] = [];
+
+    async function tempDir(): Promise<string> {
+        const dir = await mkdtemp(join(tmpdir(), "wrapup-log-"));
+        fixtures.push(dir);
+        return dir;
+    }
+
+    afterEach(async () => {
+        await Promise.all(fixtures.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it("prints logged, file, stamp, lines, and the added/modified spans", async () => {
+        const dir = await tempDir();
+        const file = join(dir, "doc.wrapup.md");
+        await writeFile(file, docWith("- **State:** old"));
+
+        const proc = Bun.spawn(["bun", join(import.meta.dir, "resolve.ts"), "log", file], {
+            stdin: new Response("@@HERE@@\n- **State:** new\n@@LOG@@\n## 2026-07-29 06:47 — second\n"),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const exit = await proc.exited;
+        expect(exit).toBe(0);
+        expect(stderr).toBe("");
+
+        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
+        const json = JSON.parse(stdout);
+        expect(json.logged).toBe(true);
+        expect(json.file).toBe(file);
+        expect(json.stamp).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+        expect(json.lines).toBe(26);
+        expect(json.linesAdded).toEqual({
+            count: 13,
+            lineFirst: 14,
+            lineLast: 26,
+            heading: "## 2026-07-29 06:47 — second",
+        });
+        expect(json.linesModified).toEqual({
+            count: 4,
+            lineFirst: 3,
+            lineLast: 6,
+            heading: `## You are here (${json.stamp})`,
+        });
+
+        const written = await Bun.file(file).text();
+        const fileLines = written.endsWith("\n") ? written.slice(0, -1).split("\n") : written.split("\n");
+        expect(fileLines).toHaveLength(json.lines);
+        expect(fileLines[json.linesModified.lineFirst - 1]).toBe(HERE_START);
+        expect(fileLines[json.linesModified.lineFirst]).toBe(json.linesModified.heading);
+        expect(fileLines[json.linesModified.lineLast - 1]).toBe(HERE_END);
+        expect(fileLines[json.linesAdded.lineFirst - 1]).toBe(json.linesAdded.heading);
+        expect(fileLines[json.linesAdded.lineLast - 1]).toBe("> - **State:** new");
     });
 });
 

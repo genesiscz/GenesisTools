@@ -4,7 +4,7 @@ import type { AIAccountTokens } from "@genesiscz/utils/config/ai.types";
 import { formatWarmupViaHint, sendWarmupMessage } from "./service";
 
 const LONG = "x".repeat(LONG_TOKEN_MIN_LENGTH);
-const INVALID_GRANT = "Token expired (invalid_grant). Run: tools claude login bfbc";
+const INVALID_GRANT = "Token expired (invalid_grant). Run: tools claude login side";
 
 function tokens(partial: AIAccountTokens): AIAccountTokens {
     return partial;
@@ -24,7 +24,7 @@ describe("formatWarmupViaHint", () => {
 describe("sendWarmupMessage", () => {
     test("OAuth success does not touch the login-long token", async () => {
         const longLivedCalls: string[] = [];
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "at", refreshToken: "rt", longLivedToken: LONG }),
             sendOAuth: async () => {},
             sendLongLived: async (token) => {
@@ -40,7 +40,7 @@ describe("sendWarmupMessage", () => {
     test("invalid_grant falls back to login-long and reports it", async () => {
         const oauthCalls: string[] = [];
         const longLivedCalls: string[] = [];
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "dead", refreshToken: "dead", longLivedToken: LONG }),
             sendOAuth: async (name) => {
                 oauthCalls.push(name);
@@ -52,13 +52,13 @@ describe("sendWarmupMessage", () => {
             },
         });
 
-        expect(oauthCalls).toEqual(["bfbc"]);
+        expect(oauthCalls).toEqual(["side"]);
         expect(longLivedCalls).toEqual([LONG]);
         expect(result).toEqual({ success: true, via: "login-long" });
     });
 
     test("a 429 on login-long still counts as warmup success", async () => {
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "dead", refreshToken: "dead", longLivedToken: LONG }),
             sendOAuth: async () => {
                 throw new Error(INVALID_GRANT);
@@ -71,7 +71,7 @@ describe("sendWarmupMessage", () => {
 
     test("invalid_grant with no login-long token fails", async () => {
         let longLivedCalled = false;
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "dead", refreshToken: "dead" }),
             sendOAuth: async () => {
                 throw new Error(INVALID_GRANT);
@@ -88,7 +88,7 @@ describe("sendWarmupMessage", () => {
 
     test("a truncated login-long token is treated as absent", async () => {
         let longLivedCalled = false;
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () =>
                 tokens({ accessToken: "dead", refreshToken: "dead", longLivedToken: "sk-ant-oat01-short" }),
             sendOAuth: async () => {
@@ -106,7 +106,7 @@ describe("sendWarmupMessage", () => {
 
     test("an expired minted login-long token is not used", async () => {
         let longLivedCalled = false;
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () =>
                 tokens({
                     accessToken: "dead",
@@ -129,7 +129,7 @@ describe("sendWarmupMessage", () => {
 
     test("a non-auth OAuth error does not fall back to login-long", async () => {
         let longLivedCalled = false;
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "at", refreshToken: "rt", longLivedToken: LONG }),
             sendOAuth: async () => {
                 throw new Error("No haiku model available");
@@ -145,7 +145,7 @@ describe("sendWarmupMessage", () => {
     });
 
     test("login-long invalid after invalid_grant is a failure", async () => {
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "dead", refreshToken: "dead", longLivedToken: LONG }),
             sendOAuth: async () => {
                 throw new Error(INVALID_GRANT);
@@ -158,7 +158,7 @@ describe("sendWarmupMessage", () => {
 
     test("no OAuth pair uses login-long directly", async () => {
         const oauthCalls: string[] = [];
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ longLivedToken: LONG }),
             sendOAuth: async (name) => {
                 oauthCalls.push(name);
@@ -173,7 +173,7 @@ describe("sendWarmupMessage", () => {
     test("credential-less accounts fail without sending", async () => {
         let oauthCalled = false;
         let longLivedCalled = false;
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({}),
             sendOAuth: async () => {
                 oauthCalled = true;
@@ -190,7 +190,7 @@ describe("sendWarmupMessage", () => {
     });
 
     test("an unreadable token store fails the warmup without throwing", async () => {
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => {
                 throw new Error("ENOENT config");
             },
@@ -204,7 +204,7 @@ describe("sendWarmupMessage", () => {
     });
 
     test("a 401 from OAuth also falls back to login-long", async () => {
-        const result = await sendWarmupMessage("bfbc", {
+        const result = await sendWarmupMessage("side", {
             loadTokens: async () => tokens({ accessToken: "stale", refreshToken: "stale", longLivedToken: LONG }),
             sendOAuth: async () => {
                 throw new Error("Unauthorized: 401");

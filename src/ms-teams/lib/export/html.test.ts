@@ -82,5 +82,7 @@ describe("renderHtml", () => {
         expect(html.includes("file://")).toBe(true);
         expect(html.includes("eu-api.asm.skype.com")).toBe(false);
         expect(html.split("<img").length - 1).toBe(1);
+        expect(html).toContain("max-width: min(100%, 480px)");
+        expect(html.includes(".html img { max-width: 100%;")).toBe(false);
     });
 });
