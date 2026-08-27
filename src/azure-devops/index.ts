@@ -33,6 +33,7 @@ import { registerConfigureCommand } from "@app/azure-devops/commands/configure";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
 import { registerHistoryCommand } from "@app/azure-devops/commands/history";
 import { registerQueryCommand, setWorkItemHandler } from "@app/azure-devops/commands/query";
+import { registerSprintCommands } from "@app/azure-devops/commands/sprint";
 import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
 import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
@@ -51,6 +52,7 @@ program
     .version("1.0.0")
     .showHelpAfterError(true)
     .option("-v, --verbose", "Enable verbose debug logging")
+    .option("--team <name>", "Azure DevOps team name for team-scoped commands (overrides config.team)")
     .option("-?, --help-full", "Show detailed help with examples")
     .on("option:help-full", () => {
         showHelpFull();
@@ -66,6 +68,7 @@ registerWorkitemCacheCommand(program);
 registerDashboardCommand(program);
 registerTimelogCommand(program);
 registerHistoryCommand(program);
+registerSprintCommands(program);
 
 function showHelpFull(): void {
     out.println(`
@@ -83,6 +86,18 @@ Commands:
   workitem-create        Create a new work item (interactive or from template)
   timelog                Manage time log entries (add, list, delete, types, import)
   history                Work item history commands (show, search, sync)
+  iterations             List the team's sprints (alias: sprints)
+  sprint [nameOrPath]    List the work items of one sprint
+
+Global Options:
+  --team <name>          Team for team-scoped commands (overrides config.team)
+
+Sprint Options:
+  -f, --format <fmt>     ai | md | json (default: ai)
+  --mine                 Only work items assigned to me (@Me)
+  --assigned-to <name>   Only work items assigned to this person
+  --totals               Task-only CompletedWork / RemainingWork sums
+  --order                Sort by Backlog stack rank and show the Order column
 
 Query Options:
   --format <ai|md|json>  Output format (default: ai)
@@ -165,6 +180,13 @@ Examples:
   tools azure-devops timelog list --workitem 268935
   tools azure-devops timelog delete <timeLogId> --yes
   tools azure-devops timelog types
+
+Sprint Commands:
+  tools azure-devops iterations                          List the team's sprints
+  tools azure-devops sprint --mine --totals               Current sprint, my items, effort sums
+  tools azure-devops sprint "17. Sprint 20.08." --order   One sprint in Backlog order
+  # These never use @CurrentIteration: that macro needs a team context and
+  # fails with VS402612. An explicit [System.IterationPath] predicate is used.
 
 History Commands:
   tools azure-devops history show <id>          Show history for a work item

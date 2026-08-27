@@ -39,6 +39,25 @@ export interface TeamsListResponse {
     value: Array<{ id: string; name: string }>;
 }
 
+/** One iteration (sprint) as returned by `work/teamsettings/iterations` */
+export interface TeamIteration {
+    id: string;
+    name: string;
+    path: string;
+    attributes?: {
+        startDate?: string | null;
+        finishDate?: string | null;
+        /** Azure's own classification: "past" | "current" | "future" */
+        timeFrame?: string;
+    };
+}
+
+/** Raw response from the team iterations endpoint */
+export interface TeamIterationsResponse {
+    count: number;
+    value: TeamIteration[];
+}
+
 /** Raw response from team members */
 export interface TeamMembersResponse {
     value: Array<{ identity: IdentityRef }>;

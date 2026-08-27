@@ -16,6 +16,11 @@ export interface AzureConfig {
     project: string;
     projectId: string;
     apiResource: string;
+    /**
+     * Team name used for team-scoped endpoints (iterations, team-context WIQL).
+     * Optional: only the `iterations` / `sprint` commands need it.
+     */
+    team?: string;
 }
 
 // ============= Output Types =============

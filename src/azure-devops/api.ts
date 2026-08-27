@@ -12,6 +12,8 @@ import type {
     DashboardsListResponse,
     GetWorkItemsOptions,
     QueryNode,
+    TeamIteration,
+    TeamIterationsResponse,
     TeamMembersResponse,
     TeamsListResponse,
 } from "@app/azure-devops/api.types";
@@ -127,6 +129,28 @@ export class Api {
         return buildUrl({
             base: config.org,
             segments: [encodeURIComponent(config.project), "_apis", ...path],
+            queryParams: { "api-version": apiVersion, ...Api.filterParams(queryParams) },
+        });
+    }
+
+    /**
+     * Team-scoped API URL: `{org}/{project}/{team}/_apis/{path}?api-version=...`
+     *
+     * Azure DevOps resolves team macros (`@CurrentIteration`) and team settings
+     * (`work/teamsettings/iterations`) from this route segment. A project-scoped
+     * URL falls back to the project's default team, which owns a different
+     * iteration set, so team-specific reads must go through here.
+     */
+    static teamApiUrl(
+        config: AzureConfig,
+        team: string,
+        path: string[],
+        queryParams?: Record<string, string | undefined>,
+        apiVersion = "7.1"
+    ): string {
+        return buildUrl({
+            base: config.org,
+            segments: [encodeURIComponent(config.project), encodeURIComponent(team), "_apis", ...path],
             queryParams: { "api-version": apiVersion, ...Api.filterParams(queryParams) },
         });
     }
@@ -791,9 +815,57 @@ export class Api {
 
     // ============= History & Reporting Methods =============
 
-    async runWiql(wiql: string, options?: { top?: number }): Promise<WiqlResponse> {
-        const url = Api.witUrl(this.config, "wiql", { $top: options?.top ? String(options.top) : undefined });
+    /**
+     * Run an ad-hoc WIQL query.
+     * Pass `team` to execute in a team context, which is required by macros such
+     * as `@CurrentIteration`.
+     */
+    async runWiql(wiql: string, options?: { top?: number; team?: string }): Promise<WiqlResponse> {
+        const queryParams = { $top: options?.top ? String(options.top) : undefined };
+        const url = options?.team
+            ? Api.teamApiUrl(this.config, options.team, ["wit", "wiql"], queryParams)
+            : Api.witUrl(this.config, "wiql", queryParams);
         return this.post<WiqlResponse>(url, { query: wiql }, "application/json", "WIQL query");
+    }
+
+    /**
+     * List the iterations (sprints) configured for one team.
+     * Project-scoped callers get the default team's iterations instead, which is
+     * usually not what the caller means, so `team` is required here.
+     */
+    async getTeamIterations(team: string): Promise<TeamIteration[]> {
+        const url = Api.teamApiUrl(this.config, team, ["work", "teamsettings", "iterations"]);
+        const data = await this.get<TeamIterationsResponse>(url, `iterations for team "${team}"`);
+        logger.debug(`[api] Team "${team}" has ${data.value?.length ?? 0} iterations`);
+        return data.value ?? [];
+    }
+
+    /**
+     * Batch-fetch a fixed field set for many work items (200 per request).
+     * Cheaper than getWorkItems(), which always expands relations and comments.
+     */
+    async getWorkItemFields(ids: number[], fields: string[]): Promise<Map<number, Record<string, unknown>>> {
+        const result = new Map<number, Record<string, unknown>>();
+        const batchSize = 200;
+
+        for (let i = 0; i < ids.length; i += batchSize) {
+            const batchIds = ids.slice(i, i + batchSize);
+            const url = Api.orgUrl(this.config, ["wit", "workitems"], {
+                ids: batchIds.join(","),
+                fields: fields.join(","),
+            });
+            const response = await this.get<{ value: Array<{ id: number; fields?: Record<string, unknown> }> }>(
+                url,
+                `fields batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(ids.length / batchSize)}`
+            );
+
+            for (const item of response.value) {
+                result.set(item.id, item.fields ?? {});
+            }
+        }
+
+        logger.debug(`[api] Fetched fields for ${result.size}/${ids.length} work items`);
+        return result;
     }
 
     /**

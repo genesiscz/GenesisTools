@@ -131,6 +131,44 @@ export function extractDashboardId(input: string): string {
     return match[1];
 }
 
+/**
+ * Extract the team name from a board / backlog / sprint URL.
+ *
+ * Azure DevOps puts the team either in a `team` query parameter or as a path
+ * segment right after the view name. Returns null when the URL carries no team
+ * (work item, query and dashboard URLs do not).
+ */
+export function extractTeamFromUrl(url: string): string | null {
+    const queryMatch = url.match(/[?&]team=([^&#]+)/i);
+
+    if (queryMatch) {
+        return decodeURIComponent(queryMatch[1].replace(/\+/g, " "));
+    }
+
+    // /_backlogs/backlog/<team>/..., /_backlogs/taskboard/<team>/..., /_sprints/taskboard/<team>/...
+    const viewMatch = url.match(/\/_(?:backlogs|sprints)\/[^/?#]+\/([^/?#]+)/i);
+
+    if (viewMatch) {
+        return decodeURIComponent(viewMatch[1]);
+    }
+
+    // /_boards/board/t/<team>/... (the "t" segment marks a team-scoped board)
+    const boardTeamMatch = url.match(/\/_boards\/board\/t\/([^/?#]+)/i);
+
+    if (boardTeamMatch) {
+        return decodeURIComponent(boardTeamMatch[1]);
+    }
+
+    // /_boards/board/<team>/<backlogLevel>
+    const boardMatch = url.match(/\/_boards\/board\/([^/?#]+)\/[^/?#]+/i);
+
+    if (boardMatch) {
+        return decodeURIComponent(boardMatch[1]);
+    }
+
+    return null;
+}
+
 export function parseAzureDevOpsUrl(url: string): ParsedUrl {
     const devAzureMatch = url.match(/https:\/\/dev\.azure\.com\/([^/]+)\/([^/]+)/i);
 

@@ -51,6 +51,14 @@ async function handleConfigure(url: string): Promise<void> {
     out.println(`  Project: ${newConfig.project}`);
     out.println(`  Project ID: ${newConfig.projectId}`);
 
+    if (newConfig.team) {
+        out.println(`  Team: ${newConfig.team}`);
+    } else {
+        out.println(
+            "  Team: (none — pass a board/backlog URL to capture it, or use --team on `iterations` / `sprint`)"
+        );
+    }
+
     const configDir = getLocalConfigDir();
     const configPath = saveAdoConfig(newConfig, configDir);
 
