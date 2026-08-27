@@ -39,7 +39,7 @@ function queryEntry(overrides: Partial<TimeLogQueryEntry> = {}): TimeLogQueryEnt
         userName: user.userName,
         userEmail: user.userEmail,
         projectId: "proj-1",
-        workItemId: 296936,
+        workItemId: 10007,
         createdOn: "2026-08-19T13:00:00Z",
         createdBy: user.userId,
         updatedOn: null,
@@ -169,7 +169,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         await appendEffortJournal(
             {
                 ts: "2026-08-19T13:03:11.482Z",
-                workItemId: 296936,
+                workItemId: 10007,
                 timeLogIds: ["log-1"],
                 minutes: 120,
                 remainingBefore: 10,
@@ -181,7 +181,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         );
         const apis = makeApis({ remaining: 8, completed: 6 });
         const result = await deleteTimeLogEntryWithEffort(
-            baseOpts(apis, { workItemId: 296936, knownMinutes: 120, journalPath })
+            baseOpts(apis, { workItemId: 10007, knownMinutes: 120, journalPath })
         );
 
         expect(result.status).toBe("deleted");
@@ -201,7 +201,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         await appendEffortJournal(
             {
                 ts: "2026-08-19T13:03:11.482Z",
-                workItemId: 303818,
+                workItemId: 10012,
                 timeLogIds: ["log-1"],
                 minutes: 480,
                 remainingBefore: 3,
@@ -213,7 +213,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         );
         const apis = makeApis({ remaining: 0, completed: 8 });
         const result = await deleteTimeLogEntryWithEffort(
-            baseOpts(apis, { workItemId: 303818, knownMinutes: 480, journalPath })
+            baseOpts(apis, { workItemId: 10012, knownMinutes: 480, journalPath })
         );
 
         expect(apis.patches[0].map((op) => op.value)).toEqual([3, 0]);
@@ -227,7 +227,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         const journalPath = join(root, "no-journal.jsonl");
         const apis = makeApis({ remaining: 0, completed: 38 });
         const result = await deleteTimeLogEntryWithEffort(
-            baseOpts(apis, { workItemId: 296936, knownMinutes: 480, journalPath })
+            baseOpts(apis, { workItemId: 10007, knownMinutes: 480, journalPath })
         );
 
         expect(apis.patches[0].map((op) => op.value)).toEqual([8, 30]);
@@ -275,7 +275,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
     test("--dry-run writes nothing at all", async () => {
         const apis = makeApis({ remaining: 8, completed: 6 });
         const result = await deleteTimeLogEntryWithEffort(
-            baseOpts(apis, { dryRun: true, workItemId: 296936, knownMinutes: 120 })
+            baseOpts(apis, { dryRun: true, workItemId: 10007, knownMinutes: 120 })
         );
         expect(result.status).toBe("dry-run");
         expect(apis.calls).toEqual(["get"]);
@@ -288,7 +288,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
             completed: 6,
             updateError: new Error("TF401320: InvalidNotEmpty"),
         });
-        const result = await deleteTimeLogEntryWithEffort(baseOpts(apis, { workItemId: 297506, knownMinutes: 120 }));
+        const result = await deleteTimeLogEntryWithEffort(baseOpts(apis, { workItemId: 10011, knownMinutes: 120 }));
         expect(result.status).toBe("deleted");
         expect(apis.calls).toContain("delete");
 
@@ -314,7 +314,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         expect(apis.calls).toContain("query");
 
         if (result.status === "deleted") {
-            expect(result.resolved).toEqual({ workItemId: 296936, minutes: 120, source: "query" });
+            expect(result.resolved).toEqual({ workItemId: 10007, minutes: 120, source: "query" });
         }
     });
 
@@ -332,7 +332,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         await appendEffortJournal(
             {
                 ts: "2026-08-19T13:03:11.482Z",
-                workItemId: 303818,
+                workItemId: 10012,
                 timeLogIds: ["log-1"],
                 minutes: 90,
                 remainingBefore: 5,
@@ -348,7 +348,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         expect(apis.calls.filter((c) => c === "query")).toHaveLength(0);
 
         if (result.status === "deleted") {
-            expect(result.resolved).toEqual({ workItemId: 303818, minutes: 90, source: "journal" });
+            expect(result.resolved).toEqual({ workItemId: 10012, minutes: 90, source: "journal" });
             expect(result.plan?.reason).toBe("exact-journal");
             expect(apis.patches[0].map((op) => op.value)).toEqual([5, 1]);
         }
@@ -367,7 +367,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         expect(apis.calls.filter((c) => c === "query")).toHaveLength(2);
 
         if (result.status === "deleted") {
-            expect(result.resolved).toEqual({ workItemId: 296936, minutes: 120, source: "query" });
+            expect(result.resolved).toEqual({ workItemId: 10007, minutes: 120, source: "query" });
         }
     });
 
@@ -389,7 +389,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
         await appendEffortJournal(
             {
                 ts: "2026-08-19T13:03:11.482Z",
-                workItemId: 296936,
+                workItemId: 10007,
                 timeLogIds: ["log-1"],
                 minutes: 120,
                 remainingBefore: 10,
@@ -400,7 +400,7 @@ describe("deleteTimeLogEntryWithEffort", () => {
             journalPath
         );
         const apis = makeApis({ remaining: 8, completed: 6 });
-        await deleteTimeLogEntryWithEffort(baseOpts(apis, { workItemId: 296936, knownMinutes: 120, journalPath }));
+        await deleteTimeLogEntryWithEffort(baseOpts(apis, { workItemId: 10007, knownMinutes: 120, journalPath }));
         const records = readEffortJournal(journalPath);
         expect(records).toHaveLength(1);
         expect(records[0].minutes).toBe(120);

@@ -409,7 +409,7 @@ export interface TimeLogEntry {
     timeTypeDescription: string; // "Development"
     minutes: number; // 120 (NOT hours!)
     date: string; // "2026-02-04" (YYYY-MM-DD)
-    userId: string; // "57c2e420-edce-6083-8a6a-a58deb1c6769"
+    userId: string; // "00000000-0000-0000-0000-000000000000"
     userName: string; // "John Doe"
     userEmail: string; // "user@example.com"
 }
@@ -427,8 +427,8 @@ export interface CreateTimeLogRequest {
     timeTypeDescription: string; // "Development" (display name, not UUID!)
     comment: string; // "analýza, fixing"
     date: string; // "2026-02-04"
-    workItemId: number; // 268935
-    projectId: string; // "de25c7dd-75d8-467a-bac0-f15fac9b560d"
+    workItemId: number; // 12345
+    projectId: string; // "00000000-0000-0000-0000-000000000000"
     users: TimeLogUser[];
     userMakingChange: string; // "John Doe"
 }

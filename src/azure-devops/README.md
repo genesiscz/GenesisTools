@@ -15,6 +15,91 @@ CLI tool for fetching, tracking, and managing Azure DevOps work items, queries, 
 -   ✅ **Batch Operations**: Fetch multiple work items or download all items from a query
 -   ✅ **Filtering**: Filter queries by state and severity
 -   ✅ **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
+-   ✅ **Sprint Backlog**: List a team's iterations and the work items of one sprint, with the effort columns the ADO Backlog tab shows
+
+## Sprint / iteration commands
+
+`iterations` lists a team's sprints. `sprint` lists the work items of one of them. Together they replace the manual screenshot of the ADO Backlog tab.
+
+Both commands are team-scoped, because iteration settings belong to a team, not to the project. Set the team once with `configure` using a board or backlog URL, or pass `--team` per run.
+
+```bash
+# Store the team in .claude/azure/config.json (the URL carries it)
+tools azure-devops configure \
+  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/Delivery%20Team%20C/Stories"
+
+# List the team's sprints; the one containing today is marked
+tools azure-devops iterations
+tools azure-devops iterations --team "Delivery Team C" -f json
+
+# The current sprint, everything assigned to me, with the Task-only effort sums
+tools azure-devops sprint --mine --totals
+
+# Name a sprint by substring or by full iteration path (both resolve to the same one)
+tools azure-devops sprint "17. Sprint 20.08."
+tools azure-devops sprint "MŮJ ČEZ\17. Sprint 20.08. - 02.09."
+
+# Backlog stack-rank order, with the Order column, as markdown for a report
+tools azure-devops sprint "17. Sprint 20.08." --mine --order -f md
+```
+
+Worked example, `17. Sprint 20.08. - 02.09.` with `--mine --totals`:
+
+```
+│ ID     │ TYPE       │ TITLE                    │ STATE       │ ASSIGNED  │ DONE │ LEFT │
+│ 285747 │ Task       │ Vývoj - ...              │ New         │ ...       │ 0    │ 4    │
+│ 296936 │ Task       │ FE analýza/vývoj - ...   │ In Progress │ ...       │ 85   │ 56   │
+
+  Totals
+  Items: 17 (Tasks: 9)
+  Task CompletedWork: 139.75 h
+  Task RemainingWork: 88 h
+```
+
+### Iteration resolution
+
+The `[nameOrPath]` argument resolves in this order:
+
+1. Exact `System.IterationPath` (case-insensitive), e.g. `MŮJ ČEZ\17. Sprint 20.08. - 02.09.`
+2. Exact iteration name (case-insensitive), e.g. `17. Sprint 20.08. - 02.09.`
+3. Case-insensitive substring of the name or the path, e.g. `17. Sprint 20.08.`
+
+Omit the argument (or pass `current`) to get the iteration whose date range contains today. The finish date is inclusive, so the last day of a sprint still counts as current.
+
+A substring that matches several iterations is refused: the command lists every candidate and exits 1. It never guesses.
+
+### Why not `@CurrentIteration`
+
+`@CurrentIteration` is a WIQL macro resolved by the server from a team context. Two problems make it unusable here:
+
+-   Without a team context Azure DevOps answers `VS402612: The macro '@CurrentIteration' is not supported without a team context` and the request fails with HTTP 500.
+-   Even when it resolves, the CLI cannot tell which iteration the server picked, so the output cannot be checked.
+
+These commands therefore resolve the iteration first, through `GET {org}/{project}/{team}/_apis/work/teamsettings/iterations`, and then send an explicit `[System.IterationPath] = '<path>'` predicate. Single quotes in the path are doubled; backslashes are literal in WIQL and need no escaping.
+
+The two saved queries that look like they would do this job cannot be run from the CLI at all:
+
+-   `Shared Queries/FE Tasky aktuálního sprintu` (`dbfe2de1-abb1-48ca-80ce-cefd42e11917`)
+-   `Shared Queries/Vyhodnocování/Team A/MF - Not Closed` (`7a4cbaea-0c7a-460a-a82f-ce2d97ad9d1a`)
+
+Both return `VS402612`, project-scoped and team-scoped alike, because their stored WIQL calls `@currentIteration` with a team that no longer exists. Adding a team route segment does not fix them. Use `sprint` instead.
+
+### Sprint options
+
+| Option                 | Description                                                                      | Default |
+| ---------------------- | -------------------------------------------------------------------------------- | ------- |
+| `--team <name>`        | Team name; overrides `config.team`. Also accepted before the subcommand.          | config  |
+| `--mine`               | Only items assigned to me (WIQL `@Me`)                                            | -       |
+| `--assigned-to <name>` | Only items assigned to this display name or unique name                           | -       |
+| `--totals`             | Print the Task-only CompletedWork / RemainingWork sums                            | -       |
+| `--order`              | Sort by Backlog stack rank instead of id, and show the Order column               | -       |
+| `-f, --format <fmt>`   | `ai` (box table), `md` (markdown table), `json` (array of row objects)             | `ai`    |
+
+`--totals` sums Tasks only. A User Story and its child Task both sit in the sprint and both carry a Remaining value, so summing every type would count the same work twice. Bug, Incident and Feature rows are excluded from the sum for the same reason; they are still listed.
+
+`--order` sorts by `Microsoft.VSTS.Common.StackRank`, falling back to `Microsoft.VSTS.Common.BacklogPriority`. Only backlog-level types carry a rank, so Tasks usually have none. Unranked rows sort last by ascending id, which is deterministic across runs.
+
+`-f json` emits one object per row with the keys `id`, `type`, `title`, `state`, `assignedTo`, `completedWork`, `remainingWork`, `order`, `changedDate`. `completedWork` and `remainingWork` are always numbers; a missing field reads as `0`. `order` is `null` when the item is unranked. Adding `--totals` wraps the array as `{ iteration, items, totals }`.
 
 ## CLI Usage
 
@@ -89,6 +174,8 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 | `--dashboard`  | Extract queries from a dashboard               |
 | `--list`       | List all cached work items                     |
 | `--create`     | Create new work items (interactive or from template) |
+| `iterations`   | List the team's sprints (alias `sprints`)      |
+| `sprint`       | List the work items of one sprint              |
 
 ### Options
 

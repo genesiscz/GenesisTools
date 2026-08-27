@@ -4,16 +4,16 @@ import { extractTeamFromUrl } from "@app/azure-devops/url-parser";
 describe("extractTeamFromUrl", () => {
     test("reads the team from a backlog URL and decodes it", () => {
         expect(
-            extractTeamFromUrl("https://dev.azure.com/contoso/Widgets/_backlogs/backlog/Delivery%20Team%20C/Stories")
-        ).toBe("Delivery Team C");
+            extractTeamFromUrl("https://dev.azure.com/contoso/Widgets/_backlogs/backlog/Payments%20Team/Stories")
+        ).toBe("Payments Team");
     });
 
     test("reads the team from a sprint taskboard URL", () => {
         expect(
             extractTeamFromUrl(
-                "https://dev.azure.com/contoso/Widgets/_sprints/taskboard/Delivery%20Team%20C/Widgets/Sprint%201"
+                "https://dev.azure.com/contoso/Widgets/_sprints/taskboard/Payments%20Team/Widgets/Sprint%201"
             )
-        ).toBe("Delivery Team C");
+        ).toBe("Payments Team");
     });
 
     test("reads the team from a /_boards/board/t/ URL", () => {
@@ -45,7 +45,7 @@ describe("extractTeamFromUrl", () => {
     test("returns null for a query URL", () => {
         expect(
             extractTeamFromUrl(
-                "https://dev.azure.com/contoso/Widgets/_queries/query/dbfe2de1-abb1-48ca-80ce-cefd42e11917"
+                "https://dev.azure.com/contoso/Widgets/_queries/query/00000000-0000-0000-0000-000000000000"
             )
         ).toBeNull();
     });

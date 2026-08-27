@@ -66,7 +66,7 @@ describe("mapSprintRow", () => {
     });
 
     test("reads effort, identity and rank fields", () => {
-        const mapped = mapSprintRow(296936, {
+        const mapped = mapSprintRow(10007, {
             "System.WorkItemType": "Task",
             "System.Title": "Build the thing",
             "System.State": "In Progress",
@@ -77,7 +77,7 @@ describe("mapSprintRow", () => {
             "Microsoft.VSTS.Common.StackRank": 1999962089,
         });
         expect(mapped).toMatchObject({
-            id: 296936,
+            id: 10007,
             type: "Task",
             state: "In Progress",
             assignedTo: "Alice Example",
@@ -104,17 +104,17 @@ describe("mapSprintRow", () => {
 describe("sortByBacklogOrder", () => {
     test("ranked rows come first in ascending rank, unranked last by id", () => {
         const rows = [
-            row({ id: 303543, type: "Incident" }),
-            row({ id: 285745, type: "User Story", order: 1999999373 }),
-            row({ id: 246829, type: "User Story", order: 1999962089 }),
-            row({ id: 292767, type: "Incident" }),
-            row({ id: 297040, type: "User Story", order: 1999981901 }),
-            row({ id: 302921, type: "User Story" }),
-            row({ id: 279041, type: "User Story", order: 1999986965 }),
-            row({ id: 277429, type: "User Story", order: 1999985333 }),
+            row({ id: 10010, type: "Incident" }),
+            row({ id: 10004, type: "User Story", order: 1999999373 }),
+            row({ id: 10001, type: "User Story", order: 1999962089 }),
+            row({ id: 10006, type: "Incident" }),
+            row({ id: 10008, type: "User Story", order: 1999981901 }),
+            row({ id: 10009, type: "User Story" }),
+            row({ id: 10003, type: "User Story", order: 1999986965 }),
+            row({ id: 10002, type: "User Story", order: 1999985333 }),
         ];
         expect(sortByBacklogOrder(rows).map((r) => r.id)).toEqual([
-            246829, 297040, 277429, 279041, 285745, 292767, 302921, 303543,
+            10001, 10008, 10002, 10003, 10004, 10006, 10009, 10010,
         ]);
     });
 

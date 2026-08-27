@@ -21,16 +21,16 @@ Commands:
   import   Import time logs from JSON file
 
 Examples:
-  tools azure-devops timelog add --workitem 268935 --hours 2 --type "Development"
-  tools azure-devops timelog add --workitem 268935 --hours 1 --minutes 30 --type "Code Review" --comment "PR review"
-  tools azure-devops timelog add --workitem 268935 --interactive
-  tools azure-devops timelog list --workitem 268935
+  tools azure-devops timelog add --workitem 12345 --hours 2 --type "Development"
+  tools azure-devops timelog add --workitem 12345 --hours 1 --minutes 30 --type "Code Review" --comment "PR review"
+  tools azure-devops timelog add --workitem 12345 --interactive
+  tools azure-devops timelog list --workitem 12345
   tools azure-devops timelog list --day 2026-01-30
   tools azure-devops timelog list --since 2026-01-01 --upto 2026-01-31 --user "Martin"
   tools azure-devops timelog list --day 2026-01-30 --format table
   tools azure-devops timelog delete <timeLogId> --yes
   tools azure-devops timelog delete <timeLogId> --dry-run
-  tools azure-devops timelog delete --workitem 268935   (interactive picker)
+  tools azure-devops timelog delete --workitem 12345   (interactive picker)
   tools azure-devops timelog delete <timeLogId> --no-effort --yes
   tools azure-devops timelog types
   tools azure-devops timelog import entries.json

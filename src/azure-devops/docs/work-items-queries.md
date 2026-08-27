@@ -1,6 +1,6 @@
-# Work Items Queries Reference (CEZ/col-fe)
+# Work Items Queries Reference
 
-> Tested against: `cez-azuredevops` / `MŮJ ČEZ` project
+> Tested against: `contoso` / `Widgets` project
 
 ---
 
@@ -19,10 +19,10 @@ CREATE TABLE workitems (
     [System.WorkItemType]           VARCHAR(100),           -- Bug, Task, Feature, User Story, Epic, etc.
 
     -- Classification
-    [System.TeamProject]            VARCHAR(300),           -- Project name (e.g., "MŮJ ČEZ")
-    [System.AreaPath]               TREEPATH,               -- Area hierarchy (e.g., "MŮJ ČEZ\Backend")
+    [System.TeamProject]            VARCHAR(300),           -- Project name (e.g., "Widgets")
+    [System.AreaPath]               TREEPATH,               -- Area hierarchy (e.g., "Widgets\Backend")
     [System.AreaId]                 INTEGER,                -- Area node ID
-    [System.IterationPath]          TREEPATH,               -- Sprint path (e.g., "MŮJ ČEZ\Sprint 5")
+    [System.IterationPath]          TREEPATH,               -- Sprint path (e.g., "Widgets\Sprint 5")
     [System.IterationId]            INTEGER,                -- Iteration node ID
 
     -- State & Workflow
@@ -108,10 +108,10 @@ CREATE TABLE workItemLinks (
 -- 'Microsoft.VSTS.Common.Affects-Reverse'  -- Affected By
 ```
 
-### CEZ Custom Fields
+### Organisation-specific custom fields
 
 ```sql
--- Custom fields specific to CEZ/col-fe project
+-- Custom fields specific to this organisation's process template
 -- Reference names use Custom.* prefix
 
 -- Boolean flags
@@ -131,10 +131,10 @@ CREATE TABLE workItemLinks (
 [Custom.aececa28-281f-42f2-95f5-d3898b867d7f]   VARCHAR(256),   -- Bezpečnostně významná změna
 ```
 
-### Work Item Types (CEZ)
+### Work Item Types (organisation-specific)
 
 ```sql
--- Available work item types in cez-azuredevops/MŮJ ČEZ
+-- Available work item types in contoso/Widgets
 
 -- Agile Process
 'Bug'               -- Defect tracking
@@ -145,10 +145,10 @@ CREATE TABLE workItemLinks (
 'Issue'             -- Impediment tracking
 
 -- Custom Types
-'BN'                -- Business Need (CEZ custom)
-'JDZ Task'          -- JDZ-specific task (CEZ custom)
-'Incident'          -- Incident tracking (CEZ custom)
-'Deployment'        -- Deployment tracking (CEZ custom)
+'BN'                -- Business Need (organisation custom)
+'Domain Task'       -- Domain-specific task (organisation custom)
+'Incident'          -- Incident tracking (organisation custom)
+'Deployment'        -- Deployment tracking (organisation custom)
 
 -- Testing
 'Test Plan'         -- Test plan container
@@ -279,17 +279,17 @@ WHERE [System.Description] CONTAINS WORDS 'authentication error'
 -- ✅ VERIFIED (Note: returns 20k+ items for root)
 SELECT [System.Id], [System.Title], [System.AreaPath]
 FROM workitems
-WHERE [System.AreaPath] UNDER 'MŮJ ČEZ\Backend'
+WHERE [System.AreaPath] UNDER 'Widgets\Backend'
 
 -- Items NOT under specific area
 SELECT [System.Id], [System.Title]
 FROM workitems
-WHERE NOT [System.AreaPath] UNDER 'MŮJ ČEZ\Archive'
+WHERE NOT [System.AreaPath] UNDER 'Widgets\Archive'
 
 -- Exact iteration path match
 SELECT [System.Id], [System.Title]
 FROM workitems
-WHERE [System.IterationPath] = 'MŮJ ČEZ\Sprint 5'
+WHERE [System.IterationPath] = 'Widgets\Sprint 5'
 ```
 
 ### Historical Queries (ASOF)
@@ -345,10 +345,10 @@ SELECT [System.Id], [System.Title], [System.WorkItemType]
 FROM workitems
 WHERE [System.WorkItemType] IN ('Bug', 'Task', 'User Story')
 
--- CEZ custom types
+-- organisation custom types
 SELECT [System.Id], [System.Title]
 FROM workitems
-WHERE [System.WorkItemType] = 'JDZ Task'
+WHERE [System.WorkItemType] = 'Domain Task'
 ```
 
 ### Priority/Severity Queries
@@ -528,7 +528,7 @@ az boards query --wiql "SELECT [System.Id], [System.Title] FROM workitems WHERE 
 az boards query --wiql "..." -o table
 
 # Query specific project (overrides default)
-az boards query --wiql "..." --project "MŮJ ČEZ"
+az boards query --wiql "..." --project "Widgets"
 
 # Query with JMESPath filtering
 az boards query --wiql "..." --query "[].fields.{ID: 'System.Id', Title: 'System.Title'}"

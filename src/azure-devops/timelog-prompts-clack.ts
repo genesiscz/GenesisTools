@@ -32,7 +32,7 @@ export async function runInteractiveAddClack(
     } else {
         const workItemInput = await p.text({
             message: "Work Item ID:",
-            placeholder: "268935",
+            placeholder: "12345",
             validate: (value) => {
                 if (!value) {
                     return "Work item ID is required";

@@ -92,7 +92,7 @@ describe("updateWorkItemEffort", () => {
             "Microsoft.VSTS.Scheduling.CompletedWork": 4,
         });
         const journalPath = join(root, "case-add.jsonl");
-        const result = await updateWorkItemEffort(api, 296936, 120, {
+        const result = await updateWorkItemEffort(api, 10007, 120, {
             timeLogIds: ["abc-1"],
             journalPath,
         });
@@ -109,7 +109,7 @@ describe("updateWorkItemEffort", () => {
         const records = readEffortJournal(journalPath);
         expect(records).toHaveLength(1);
         expect(records[0]).toMatchObject({
-            workItemId: 296936,
+            workItemId: 10007,
             timeLogIds: ["abc-1"],
             minutes: 120,
             remainingBefore: 10,
@@ -145,7 +145,7 @@ describe("updateWorkItemEffort", () => {
             "Microsoft.VSTS.Scheduling.RemainingWork": 0,
             "Microsoft.VSTS.Scheduling.CompletedWork": 8,
         });
-        const result = await updateWorkItemEffort(api, 303818, -480, {
+        const result = await updateWorkItemEffort(api, 10012, -480, {
             journal: false,
             values: { remaining: 3, completed: 0 },
         });
@@ -176,7 +176,7 @@ describe("updateWorkItemEffort", () => {
             throw new Error("TF401320: InvalidNotEmpty");
         };
         const journalPath = join(root, "case-locked.jsonl");
-        const result = await updateWorkItemEffort(api, 297506, 60, { journalPath, timeLogIds: ["locked"] });
+        const result = await updateWorkItemEffort(api, 10011, 60, { journalPath, timeLogIds: ["locked"] });
         expect(result).toBeNull();
         expect(readEffortJournal(journalPath)).toEqual([]);
     });

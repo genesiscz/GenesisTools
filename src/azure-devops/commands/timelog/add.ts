@@ -46,11 +46,11 @@ Optional:
 Note: If using only minutes, specify --hours 0 --minutes <n> to confirm intent.
 
 Examples:
-  tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-  tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
-  tools azure-devops timelog add -w 268935 -h 0 -m 30 -t "Test" -d 2026-02-03
+  tools azure-devops timelog add -w 12345 -h 2 -t "Development"
+  tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
+  tools azure-devops timelog add -w 12345 -h 0 -m 30 -t "Test" -d 2026-02-03
   tools azure-devops timelog add -i
-  tools azure-devops timelog add -w 268935 -i
+  tools azure-devops timelog add -w 12345 -i
 `);
 }
 
@@ -99,12 +99,12 @@ Missing required options for non-interactive mode.
 Required: --workitem, --hours, --type
 
 Examples:
-  tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-  tools azure-devops timelog add -w 268935 -h 1 -m 30 -t "Code Review" -c "PR review"
+  tools azure-devops timelog add -w 12345 -h 2 -t "Development"
+  tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
 
 Or use interactive mode:
   tools azure-devops timelog add -i
-  tools azure-devops timelog add -w 268935 -i
+  tools azure-devops timelog add -w 12345 -i
 `);
                     process.exit(1);
                 }

@@ -16,6 +16,8 @@ tools azure-devops workitem <id|ids>             # Fetch work item(s)
 tools azure-devops query <id|url|name>           # Fetch query results (supports name matching)
 tools azure-devops query <id> --download-workitems  # Download all to files
 tools azure-devops dashboard <id|url>            # Get dashboard queries
+tools azure-devops iterations                    # List the team's sprints (alias: sprints)
+tools azure-devops sprint [nameOrPath]           # Work items of one sprint (default: current)
 tools azure-devops list                          # List cached items
 tools azure-devops workitem-create               # Create work item
 tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
@@ -46,6 +48,46 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 | `--attachments-suffix <suffix>` | Only attachments ending with this (e.g. .har) |
 | `--output-dir <path>` | Custom directory for downloaded attachments |
 | `--images` | Download inline images from description/comments |
+
+### Sprint backlog
+
+`sprint` reproduces the ADO Backlog tab from the CLI, so a board screenshot is no longer needed.
+
+```bash
+tools azure-devops iterations                                  # sprints + which one contains today
+tools azure-devops sprint --mine --totals                      # current sprint, my items, effort sums
+tools azure-devops sprint "17. Sprint 20.08." --mine --order    # one sprint, Backlog stack-rank order
+tools azure-devops sprint --mine -f json                        # machine-readable rows
+```
+
+Columns: `ID | Type | Title | State | AssignedTo | CompletedWork | RemainingWork`, plus `Order` with `--order` and `ChangedDate` in `md` / `json`.
+
+| Option | Description |
+|--------|-------------|
+| `--team <name>` | Team name; overrides `config.team`. Also valid before the subcommand. |
+| `--mine` | Only items assigned to me (WIQL `@Me`) |
+| `--assigned-to <name>` | Only items assigned to this display name or unique name |
+| `--totals` | Task-only CompletedWork / RemainingWork sums |
+| `--order` | Sort by Backlog stack rank and show the Order column |
+
+Rules that matter when reading the output:
+
+- **Task** rows carry spendable effort. **User Story** and **Feature** rows are context only. **Bug** and **Incident** rows need their children checked first.
+- `--totals` sums Tasks only, so a User Story and its child Task are never counted twice.
+- The iteration argument resolves as exact path, then exact name, then case-insensitive substring. An ambiguous substring exits 1 and lists every candidate. Omit it for the sprint containing today.
+
+**Never use `@CurrentIteration`.** The macro needs a team context and fails with `VS402612: The macro '@CurrentIteration' is not supported without a team context`. `sprint` resolves the iteration from the team settings endpoint and sends an explicit `[System.IterationPath] = '<path>'` predicate instead. The two saved queries that look right, `FE Tasky aktualniho sprintu` (`dbfe2de1-abb1-48ca-80ce-cefd42e11917`) and `MF - Not Closed` (`7a4cbaea-0c7a-460a-a82f-ce2d97ad9d1a`), return `VS402612` from the CLI both project-scoped and team-scoped, because their stored WIQL names a team that no longer exists. Do not retry them.
+
+**Never scan the local work item cache instead.** `.claude/azure/tasks/**` accumulates every work item ever fetched and its `RemainingWork` is never zeroed, so filtering it produces sprints full of items closed months earlier.
+
+Team setup, once per project:
+
+```bash
+tools azure-devops configure \
+  "https://dev.azure.com/MyOrg/MyProject/_backlogs/backlog/Delivery%20Team%20C/Stories"
+```
+
+The board URL carries the team, and `configure` stores it as `team` in `.claude/azure/config.json`. Without it, pass `--team "Delivery Team C"` per run.
 
 ### Output Paths
 
@@ -187,6 +229,9 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | User Request | Action |
 |--------------|--------|
 | "Get workitem 261575" | `tools azure-devops workitem 261575` |
+| "What is in the current sprint" | `tools azure-devops sprint --mine --totals` |
+| "List the sprints" | `tools azure-devops iterations` |
+| "Show sprint 17 in backlog order" | `tools azure-devops sprint "17. Sprint" --mine --order` |
 | "Show query results for X" | `tools azure-devops query X` |
 | "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
 | "Fetch Otevřené bugy" | `tools azure-devops query "Otevřené bugy"` |

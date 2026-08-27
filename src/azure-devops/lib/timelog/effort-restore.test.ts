@@ -7,7 +7,7 @@ const id = "56489ac9-aaaa-bbbb-cccc-ddddeeeeffff";
 function journal(overrides: Partial<EffortJournalRecord> = {}): EffortJournalRecord {
     return {
         ts: "2026-08-19T13:03:11.482Z",
-        workItemId: 296936,
+        workItemId: 10007,
         timeLogIds: [id],
         minutes: 120,
         remainingBefore: 10,
@@ -21,7 +21,7 @@ function journal(overrides: Partial<EffortJournalRecord> = {}): EffortJournalRec
 describe("planEffortRestore", () => {
     test("exact journal restore after a 2h add", () => {
         const plan = planEffortRestore({
-            workItemId: 296936,
+            workItemId: 10007,
             minutes: 120,
             timeLogId: id,
             currentRemaining: 8,
@@ -38,13 +38,13 @@ describe("planEffortRestore", () => {
 
     test("exact journal restore survives a Remaining clamp", () => {
         const plan = planEffortRestore({
-            workItemId: 303818,
+            workItemId: 10012,
             minutes: 390,
             timeLogId: id,
             currentRemaining: 0,
             currentCompleted: 6.5,
             journal: journal({
-                workItemId: 303818,
+                workItemId: 10012,
                 minutes: 390,
                 remainingBefore: 3,
                 completedBefore: 0,
@@ -59,7 +59,7 @@ describe("planEffortRestore", () => {
 
     test("no journal uses arithmetic and warns", () => {
         const plan = planEffortRestore({
-            workItemId: 296936,
+            workItemId: 10007,
             minutes: 480,
             timeLogId: id,
             currentRemaining: 0,
@@ -96,7 +96,7 @@ describe("planEffortRestore", () => {
 
     test("drifted fields fall back to arithmetic", () => {
         const plan = planEffortRestore({
-            workItemId: 296936,
+            workItemId: 10007,
             minutes: 120,
             timeLogId: id,
             currentRemaining: 7,

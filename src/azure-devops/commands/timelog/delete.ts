@@ -46,7 +46,7 @@ export function registerDeleteSubcommand(parent: Command): void {
                         out.error("Provide a timeLogId or --workitem for interactive selection");
                         out.error("\nExamples:");
                         out.error("  tools azure-devops timelog delete <timeLogId> --yes");
-                        out.error("  tools azure-devops timelog delete --workitem 268935");
+                        out.error("  tools azure-devops timelog delete --workitem 12345");
                         out.error("  tools azure-devops timelog delete <timeLogId> --dry-run");
                         process.exit(1);
                     }
