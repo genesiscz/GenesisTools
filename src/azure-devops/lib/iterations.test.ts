@@ -276,6 +276,53 @@ describe("describeIterationSource", () => {
  * walks `$depth` levels, so sprints nested deeper were absent from every
  * result with nothing saying so.
  */
+describe("flattenIterationNodes edge shapes", () => {
+    let edgeId = 100;
+    const node = (name: string, extra: Partial<IterationClassificationNode> = {}): IterationClassificationNode => ({
+        id: edgeId++,
+        identifier: name,
+        name,
+        path: `\\Widgets\\Iteration\\${name}`,
+        ...extra,
+    });
+
+    /**
+     * PR #334 review t1. Both shapes come back from the real API: a container
+     * node carries no dates, and a leaf reached at the depth limit can arrive
+     * with `children: []` rather than the key being absent.
+     */
+    test("a node with no attributes is a container, not an iteration", () => {
+        expect(flattenIterationNodes(node("Widgets", { children: [node("FY26")] }))).toEqual([]);
+    });
+
+    test("an explicitly empty children array terminates the walk", () => {
+        const root = node("Widgets", {
+            children: [node("Q3 Sprint 5", { attributes: { startDate: "2026-08-20" }, children: [] })],
+        });
+
+        expect(flattenIterationNodes(root)).toHaveLength(1);
+        expect(flattenIterationNodes(root)[0]?.name).toBe("Q3 Sprint 5");
+    });
+
+    test("a dated node with no finishDate keeps a null rather than dropping the field", () => {
+        const root = node("Q3 Sprint 5", { attributes: { startDate: "2026-08-20" } });
+
+        expect(flattenIterationNodes(root)[0]?.attributes).toEqual({
+            startDate: "2026-08-20",
+            finishDate: null,
+        });
+    });
+
+    test("a dated container yields itself and its dated children", () => {
+        const root = node("FY26", {
+            attributes: { startDate: "2026-07-01", finishDate: "2027-06-30" },
+            children: [node("Q3 Sprint 5", { attributes: { startDate: "2026-08-20", finishDate: "2026-09-02" } })],
+        });
+
+        expect(flattenIterationNodes(root).map((i) => i.name)).toEqual(["FY26", "Q3 Sprint 5"]);
+    });
+});
+
 describe("findTruncatedNodes", () => {
     let nextId = 1;
     const node = (name: string, extra: Partial<IterationClassificationNode> = {}): IterationClassificationNode => ({
