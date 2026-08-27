@@ -95,6 +95,19 @@ OPEN:    <anything unfinished, skipped, or suspicious>
 
 Never report a green state you did not observe. "Stopped at a checkpoint" is a successful outcome, not a failure.
 
-## Backends other than Codex
+## BACKEND: grok
 
-`BACKEND` exists so this agent can drive other workers later. Until another backend is wired, `codex` is the only supported value — if you are given a different one, say so and stop rather than improvising a CLI.
+Grok has no daemon, no bus auto-registration, and no approval channel — the drive model is a **resume loop**: each turn is one blocking headless `grok` invocation, and steering happens between turns. Invoke the `genesis-tools:handoff-to` skill and follow its **§ Grok mechanics** for the full verified command set (isolation wrapper, safety flags, stream schema); if the Skill tool cannot load it, Read `plugins/genesis-tools/skills/handoff-to/SKILL.md` in the GenesisTools repo. The section mapping:
+
+| Codex step above | Grok equivalent |
+|---|---|
+| §3 spawn | `tools grok run --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
+| §4 watch | the `run`/`steer` output already carries the worker's report and tool calls; `tools grok read --name <NAME> [--turn N]` re-prints any turn |
+| §5 steer | `tools grok steer --name <NAME> --prompt '<correction>'`; between turns only — to abort a running turn, kill the grok process (the session survives and the next steer resumes it) |
+| §6 approvals | none exist. `WRITE_POLICY: deny` → `--readonly` (sticky across steers); `ask` → refuse the spawn and report that grok cannot do supervised writes (the orchestrator must pick `deny` or `allow`, or route to Codex); `allow` → default Auto-mode cwd jail (full trust is not exposed — ask for a disposable worktree instead) |
+| §7 verify | unchanged: run `VERIFY_CMD` yourself, read `git diff` |
+| §8 teardown | nothing to stop; report the same `VERDICT:` block |
+
+## Backends other than Codex and Grok
+
+`BACKEND` exists so this agent can drive other workers later. `codex` and `grok` are the only supported values — if you are given a different one, say so and stop rather than improvising a CLI.
