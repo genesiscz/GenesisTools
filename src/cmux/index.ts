@@ -14,7 +14,9 @@
  *   tools cmux send-self <text> [--no-enter]
  */
 
+import { registerDoctorCommand } from "@app/cmux/commands/doctor";
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
+import { registerRescueCommand } from "@app/cmux/commands/rescue";
 import { registerSendSelfCommand } from "@app/cmux/commands/send-self";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
@@ -34,6 +36,8 @@ program
 
 registerProfilesCommand(program);
 registerSendSelfCommand(program);
+registerDoctorCommand(program);
+registerRescueCommand(program);
 
 enhanceHelp(program);
 

@@ -8,6 +8,8 @@ export interface CmuxRunResult {
     code: number;
     stdout: string;
     stderr: string;
+    /** True when the process was killed by the caller-supplied timeoutMs. */
+    timedOut?: boolean;
 }
 
 const CMUX_FALLBACK_DIRS = [".local/bin", ".bun/bin", ".cargo/bin"];
@@ -44,19 +46,44 @@ function resolveCmuxPath(): string {
     throw new Error(`cmux is not installed (or not found in ${searched})`);
 }
 
-export async function runCmux(args: string[], opts: { json?: boolean } = {}): Promise<CmuxRunResult> {
+export async function runCmux(args: string[], opts: { json?: boolean; timeoutMs?: number } = {}): Promise<CmuxRunResult> {
     const finalArgs = opts.json ? ["--json", ...args] : args;
     const cmuxPath = resolveCmuxPath();
     logger.debug({ args: finalArgs, cmuxPath }, "[cmux] spawn");
     const proc = Bun.spawn([cmuxPath, ...finalArgs], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (opts.timeoutMs) {
+        timer = setTimeout(() => {
+            timedOut = true;
+            proc.kill();
+        }, opts.timeoutMs);
+    }
+
     const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
         proc.exited,
     ]);
+
+    if (timer) {
+        clearTimeout(timer);
+    }
+
+    if (timedOut) {
+        return {
+            code: exitCode ?? -1,
+            stdout,
+            stderr: stderr || `cmux ${args[0]} timed out after ${opts.timeoutMs} ms`,
+            timedOut: true,
+        };
+    }
+
     if (exitCode === null) {
         throw new Error(`cmux terminated by signal before exiting`);
     }
+
     return { code: exitCode, stdout, stderr };
 }
 

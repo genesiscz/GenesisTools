@@ -1,0 +1,311 @@
+import { renderProfileCommandDetail } from "@app/cmux/lib/format";
+import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
+import { scanForInteractivePrompts } from "@app/cmux/lib/restore";
+import { ProfileStore } from "@app/cmux/lib/store";
+import type { Profile } from "@app/cmux/lib/types";
+import * as p from "@clack/prompts";
+import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
+import { paneList, workspaceList } from "@genesiscz/utils/cmux/lib/socket";
+import { logger, out } from "@genesiscz/utils/logger";
+import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import type { Command } from "commander";
+import pc from "picocolors";
+
+/**
+ * Guided recovery from a cmux UI-thread livelock: offline capture → confirmed
+ * kill → CLEAN-ENV relaunch → wait for the app's own session reopen → replay each
+ * pane's launch command into the reopened surfaces. The app restores the layout
+ * itself, so no duplicate workspace is created.
+ *
+ * Interaction policy (t9): the only automation is typing each command + Enter.
+ * Whatever appears afterwards (account-headroom gate, resume-mode dialog, session
+ * picker) is reported, never answered.
+ */
+
+interface RescueFlags {
+    yes?: boolean;
+    dryRun?: boolean;
+}
+
+export function registerRescueCommand(parent: Command): void {
+    parent
+        .command("rescue [name]")
+        .description(
+            "Recover from a livelocked cmux: offline profile save, confirmed kill, clean-env relaunch, replay of each pane's command into the reopened surfaces"
+        )
+        .option("-y, --yes", "Do not ask for confirmation before killing cmux")
+        .option("--dry-run", "Print the full plan (steps + per-pane commands and drift) without touching anything")
+        .action(async (name: string | undefined, flags: RescueFlags) => {
+            await runRescue(name ?? "rescue", flags);
+        });
+}
+
+interface ReplayEntry {
+    workspaceIndex: number;
+    workspaceTitle: string;
+    paneRef: string;
+    tabIndex: number;
+    title: string;
+    command?: string;
+}
+
+function collectReplayEntries(profile: Profile): ReplayEntry[] {
+    const entries: ReplayEntry[] = [];
+    let workspaceIndex = 0;
+
+    for (const window of profile.windows) {
+        for (const ws of window.workspaces) {
+            for (const pane of ws.panes) {
+                pane.surfaces.forEach((surface, tabIndex) => {
+                    entries.push({
+                        workspaceIndex,
+                        workspaceTitle: ws.title,
+                        paneRef: pane.ref,
+                        tabIndex,
+                        title: surface.title,
+                        command: surface.type === "terminal" ? surface.command : undefined,
+                    });
+                });
+            }
+            workspaceIndex += 1;
+        }
+    }
+
+    return entries;
+}
+
+async function runRescue(name: string, flags: RescueFlags): Promise<void> {
+    p.intro(pc.bgRed(pc.white(" cmux rescue ")));
+
+    const health = await probeCmuxHealth({ full: true, identifyTimeoutMs: 5000 });
+    p.log.info(
+        `cmux state: ${pc.bold(health.state)}${health.appPid ? ` (pid ${health.appPid}, ${health.appCpu}% CPU)` : ""}`
+    );
+
+    if (health.state === "healthy") {
+        p.log.warn("cmux looks healthy — rescue will still kill and relaunch it if you continue.");
+    }
+
+    p.log.step("Capturing offline profile (autosave + process table)…");
+    const profile = await captureOfflineProfile({ name, note: `rescue capture (cmux was ${health.state})` });
+    const store = new ProfileStore();
+    const profilePath = store.write(name, profile, { force: true });
+    p.log.info(`Profile saved: ${pc.dim(profilePath)}`);
+
+    const detail = renderProfileCommandDetail(profile);
+    if (detail.length > 0) {
+        p.note(detail.join("\n"), "Commands that will be replayed (with drift)");
+    }
+
+    const steps = [
+        `  1. kill -TERM ${health.appPid ?? "<cmux pid>"} (escalate to -KILL after 5 s)`,
+        "  2. relaunch with a CLEAN env: env -i HOME USER PATH /usr/bin/open -a cmux",
+        "  3. wait for the socket to be healthy and the app to reopen its own workspaces",
+        "  4. type each pane's command + Enter into the reopened surfaces (order-matched, title-checked)",
+        "  5. report panes stopped at interactive prompts — rescue never answers them",
+    ];
+    p.note(steps.join("\n"), "Plan");
+
+    if (flags.dryRun) {
+        p.outro(pc.dim("Dry run — nothing changed."));
+        return;
+    }
+
+    if (!flags.yes) {
+        if (!isInteractive()) {
+            out.error(
+                `Pass --yes to confirm the kill in non-interactive mode. ${suggestCommand(`tools cmux rescue ${name} --yes`)}`
+            );
+            process.exitCode = 1;
+            return;
+        }
+        const proceed = await withCancel(
+            p.confirm({ message: "Kill cmux and run the rescue now?", initialValue: false })
+        );
+        if (!proceed) {
+            p.cancel("Aborted — the offline profile stays saved.");
+            return;
+        }
+    }
+
+    if (health.appPid) {
+        await killApp(health.appPid);
+    } else {
+        p.log.warn("No running cmux app found — skipping the kill step.");
+    }
+
+    p.log.step("Relaunching cmux with a clean environment…");
+    await cleanRelaunch();
+
+    const ready = await waitForHealthy(60_000);
+    if (!ready) {
+        throw new Error("cmux did not become healthy within 60 s after relaunch — check the app manually.");
+    }
+
+    // Give the app a moment to finish reopening its autosaved workspaces.
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    const entries = collectReplayEntries(profile);
+    const workspaceRefs = await replayIntoReopenedSurfaces(profile, entries);
+
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    const waiting = await scanForInteractivePrompts(workspaceRefs).catch(() => []);
+    if (waiting.length > 0) {
+        const lines = waiting.map((w) => `  ${pc.yellow("⚠")} ${w.workspaceRef} ${w.surfaceRef} — ${w.prompt}`);
+        lines.push(pc.dim("  Rescue does not auto-confirm these; answer each pane yourself."));
+        p.note(lines.join("\n"), "Panes waiting for you");
+    } else {
+        p.log.info("No panes are waiting at an interactive prompt.");
+    }
+
+    p.outro(pc.green("Rescue complete."));
+}
+
+async function killApp(pid: number): Promise<void> {
+    p.log.step(`Sending SIGTERM to cmux (pid ${pid})…`);
+    try {
+        process.kill(pid, "SIGTERM");
+    } catch (error) {
+        logger.warn({ error, pid }, "[rescue] SIGTERM failed");
+    }
+
+    for (let i = 0; i < 10; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!isAlive(pid)) {
+            p.log.info("cmux terminated on SIGTERM.");
+            return;
+        }
+    }
+
+    p.log.warn("Still alive after 5 s — sending SIGKILL.");
+    try {
+        process.kill(pid, "SIGKILL");
+    } catch (error) {
+        logger.warn({ error, pid }, "[rescue] SIGKILL failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+function isAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * `open` forwards its ENTIRE environment to the launched app, and every pane's
+ * login shell inherits it. Launched from an agent session that would propagate
+ * CLAUDECODE/CLAUDE_CODE_* markers and silently disable transcript saving in
+ * every resumed claude — so the relaunch runs with a minimal clean environment.
+ */
+async function cleanRelaunch(): Promise<void> {
+    const env: Record<string, string> = {
+        HOME: process.env.HOME ?? "",
+        USER: process.env.USER ?? "",
+        LOGNAME: process.env.LOGNAME ?? process.env.USER ?? "",
+        PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+    };
+    const proc = Bun.spawn(["/usr/bin/open", "-a", "cmux"], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+    const code = await proc.exited;
+    if (code !== 0) {
+        const stderr = await new Response(proc.stderr).text();
+        throw new Error(`Relaunch failed (open exit ${code}): ${stderr.trim()}`);
+    }
+}
+
+async function waitForHealthy(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const health = await probeCmuxHealth({ pingTimeoutMs: 1000, identifyTimeoutMs: 2500 });
+        if (health.state === "healthy") {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+interface LiveSurfaceEntry {
+    ref: string;
+    title?: string;
+    index: number;
+}
+
+interface ListPaneSurfacesResponse {
+    surfaces: LiveSurfaceEntry[];
+}
+
+/**
+ * Type each captured command into the matching reopened surface. Surfaces are
+ * matched positionally per workspace (the reopen recreates the autosave order —
+ * the same order the offline profile was built from) and cross-checked by title;
+ * a count mismatch aborts instead of typing into the wrong pane.
+ */
+async function replayIntoReopenedSurfaces(profile: Profile, entries: ReplayEntry[]): Promise<string[]> {
+    const live = await workspaceList();
+    const workspaceRefs: string[] = [];
+    const profileWorkspaces = profile.windows.flatMap((w) => w.workspaces);
+
+    for (let wsIndex = 0; wsIndex < profileWorkspaces.length; wsIndex += 1) {
+        const saved = profileWorkspaces[wsIndex];
+        const liveWs = live.workspaces.find((ws) => ws.title === saved.title) ?? live.workspaces[wsIndex];
+        if (!liveWs) {
+            p.log.warn(`No reopened workspace matches "${saved.title}" — skipped.`);
+            continue;
+        }
+
+        workspaceRefs.push(liveWs.ref);
+        const wsEntries = entries.filter((e) => e.workspaceIndex === wsIndex);
+
+        const liveSurfaces: LiveSurfaceEntry[] = [];
+        const layout = await paneList(liveWs.ref);
+        for (const pane of layout.panes) {
+            const response = await runCmuxJSON<ListPaneSurfacesResponse>([
+                "list-pane-surfaces",
+                "--workspace",
+                liveWs.ref,
+                "--pane",
+                pane.ref,
+            ]);
+            liveSurfaces.push(...[...response.surfaces].sort((a, b) => a.index - b.index));
+        }
+
+        if (liveSurfaces.length !== wsEntries.length) {
+            p.log.error(
+                `Workspace "${saved.title}": ${liveSurfaces.length} reopened surface(s) vs ${wsEntries.length} saved — refusing to type into a mismatched layout.`
+            );
+            continue;
+        }
+
+        let sent = 0;
+        for (let i = 0; i < wsEntries.length; i += 1) {
+            const entry = wsEntries[i];
+            const target = liveSurfaces[i];
+            if (!entry.command) {
+                continue;
+            }
+
+            const titleMatches = !target.title || !entry.title || target.title === entry.title;
+            if (!titleMatches) {
+                logger.debug(
+                    { saved: entry.title, live: target.title, surface: target.ref },
+                    "[rescue] title mismatch — replaying by position anyway"
+                );
+            }
+
+            await runCmuxOk(["send", "--workspace", liveWs.ref, "--surface", target.ref, `${entry.command}\n`]);
+            sent += 1;
+            await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+
+        p.log.info(`Workspace "${saved.title}": replayed ${sent} command(s) into ${wsEntries.length} surface(s).`);
+    }
+
+    return workspaceRefs;
+}

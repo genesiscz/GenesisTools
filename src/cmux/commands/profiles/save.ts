@@ -1,8 +1,10 @@
+import { captureOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 import { captureProfile, getCmuxVersion, type SnapshotOptions } from "@app/cmux/lib/snapshot";
 import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { ProfileScope, Window } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
@@ -17,6 +19,7 @@ interface SaveFlags {
     history?: boolean;
     note?: string;
     force?: boolean;
+    offline?: boolean;
 }
 
 export function registerSaveCommand(parent: Command): void {
@@ -37,6 +40,10 @@ export function registerSaveCommand(parent: Command): void {
         )
         .option("--note <text>", "Free-form note stored on the profile")
         .option("-f, --force", "Overwrite an existing profile of the same name")
+        .option(
+            "--offline",
+            "Capture WITHOUT the cmux socket: layout from the app's autosave file, commands from the process table. The automatic fallback when cmux's UI thread is starved. No screen contents; scope is always everything in the autosave."
+        )
         .action(async (name: string | undefined, flags: SaveFlags) => {
             await runSave(name, flags);
         });
@@ -45,11 +52,30 @@ export function registerSaveCommand(parent: Command): void {
 async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<void> {
     const interactive = isInteractive();
     let forceWrite = !!flags.force;
+    let offline = !!flags.offline;
 
-    const scope = await resolveScope(flags, interactive);
+    if (offline && (flags.workspace || flags.window || flags.scope)) {
+        throw new Error("--offline captures everything in the autosave; it cannot combine with --scope/--workspace/--window");
+    }
+
+    const scope = offline ? "all" : await resolveScope(flags, interactive);
     rejectIncompatibleScopeFlags(scope, flags);
-    const { captureCwd, captureScreen, captureHistory } = await resolveCaptureFlags(flags, interactive);
+    const { captureCwd, captureScreen, captureHistory } = offline
+        ? { captureCwd: true, captureScreen: false, captureHistory: true }
+        : await resolveCaptureFlags(flags, interactive);
     const name = await resolveName(rawName, scope, interactive);
+
+    if (!offline) {
+        // Fail fast + degrade: a livelocked UI thread would starve every capture call.
+        const health = await probeCmuxHealth({ identifyTimeoutMs: 3500 });
+        if (health.state !== "healthy") {
+            offline = true;
+            out.log.warn(
+                `cmux is ${health.state} — falling back to OFFLINE capture (autosave + process table). ` +
+                    "Screen contents are not captured this way. Run `tools cmux doctor` for triage."
+            );
+        }
+    }
 
     const store = new ProfileStore();
     if (store.exists(name) && !forceWrite) {
@@ -90,11 +116,13 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     const startedAt = Date.now();
 
     try {
-        const profile = await captureProfile(options, {
-            onWorkspaceStart: ({ title, index, total }) => {
-                spinner.message(`Capturing workspace ${index}/${total}: ${title}`);
-            },
-        });
+        const profile = offline
+            ? await captureOfflineProfile({ name, note: flags.note })
+            : await captureProfile(options, {
+                  onWorkspaceStart: ({ title, index, total }) => {
+                      spinner.message(`Capturing workspace ${index}/${total}: ${title}`);
+                  },
+              });
 
         const path = store.write(name, profile, { force: forceWrite });
         spinner.stop(`Captured ${countWorkspaces(profile.windows)} workspace(s) in ${Date.now() - startedAt} ms`);

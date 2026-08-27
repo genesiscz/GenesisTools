@@ -1,8 +1,10 @@
-import { buildPlan, type RestoreOptions, restoreProfile } from "@app/cmux/lib/restore";
+import { renderProfileCommandDetail } from "@app/cmux/lib/format";
+import { buildPlan, type RestoreOptions, restoreProfile, scanForInteractivePrompts } from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import type { Command } from "commander";
@@ -11,6 +13,7 @@ import pc from "picocolors";
 interface RestoreFlags {
     prefix?: string;
     replay?: boolean;
+    enter?: boolean;
     yes?: boolean;
     dryRun?: boolean;
 }
@@ -21,11 +24,35 @@ export function registerRestoreCommand(parent: Command): void {
         .description("Recreate cmux workspaces from a saved profile (always non-destructive)")
         .option("--prefix <str>", "Workspace name prefix to apply on restore (default '<name>-')")
         .option("--no-replay", "Skip queueing the captured shell command — only cd into cwd")
+        .option("--enter", "Press Enter after typing each replayed command, so it executes immediately")
         .option("-y, --yes", "Do not ask for confirmation")
         .option("--dry-run", "Print the plan without modifying cmux")
         .action(async (name: string, flags: RestoreFlags) => {
             await runRestore(name, flags);
         });
+}
+
+/**
+ * After an --enter run, list panes stopped at an interactive prompt (account
+ * headroom gate, resume-mode dialog, session picker). Restore never answers
+ * them — confirming is deliberately left to the user.
+ */
+async function reportWaitingPrompts(workspaceRefs: string[]): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+
+    try {
+        const waiting = await scanForInteractivePrompts(workspaceRefs);
+        if (waiting.length === 0) {
+            p.log.info("No panes are waiting at an interactive prompt.");
+            return;
+        }
+
+        const lines = waiting.map((w) => `  ${pc.yellow("⚠")} ${w.workspaceRef} ${w.surfaceRef} — ${w.prompt}`);
+        lines.push(pc.dim("  Restore does not auto-confirm these; answer each pane yourself."));
+        p.note(lines.join("\n"), "Panes waiting for you");
+    } catch (error) {
+        logger.debug({ error }, "[cmux restore] waiting-prompt scan failed");
+    }
 }
 
 async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
@@ -45,9 +72,14 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
     const opts: RestoreOptions = {
         prefix: flags.prefix !== undefined ? flags.prefix : `${name}-`,
         replay: flags.replay !== false,
+        enter: !!flags.enter && flags.replay !== false,
         yes: !!flags.yes,
         dryRun: !!flags.dryRun,
     };
+
+    if (flags.enter && flags.replay === false) {
+        out.log.warn("--enter has no effect with --no-replay; commands are not typed at all.");
+    }
 
     const plan = buildPlan(profile, opts);
 
@@ -56,6 +88,11 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         return `  ${pc.cyan(ws.targetTitle)} ${pc.dim(`(${ws.paneCount} pane(s), ${ws.surfaceCount} surface(s))`)}`;
     });
     p.note(planLines.join("\n") || "(empty profile)", `Restore plan for ${pc.cyan(name)}`);
+
+    const detail = renderProfileCommandDetail(profile);
+    if (detail.length > 0) {
+        p.note(detail.join("\n"), "Panes · commands · drift");
+    }
 
     if (opts.dryRun) {
         p.outro(pc.dim("Dry run — nothing changed."));
@@ -79,6 +116,8 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         }
     }
 
+    await ensureCmuxResponsive("profiles restore");
+
     const spinner = p.spinner();
     spinner.start("Recreating workspaces…");
     const startedAt = Date.now();
@@ -101,6 +140,11 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
             })
             .join("\n");
         p.note(summary, "Result");
+
+        if (opts.enter) {
+            await reportWaitingPrompts(outcome.workspaces.map((w) => w.ref));
+        }
+
         p.outro(pc.green("Done."));
     } catch (error) {
         spinner.stop("Restore failed.");

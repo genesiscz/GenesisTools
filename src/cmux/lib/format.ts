@@ -152,3 +152,55 @@ function renderTable(rows: string[][]): string {
         )
         .join("\n");
 }
+
+/**
+ * Per-pane detail for restore/rescue plans: title, cwd, the command that will be
+ * replayed, and — when the command was enriched at save time — a diff against the
+ * captured original plus every drift note. Drifts are never hidden: the user must
+ * see what will be typed before it happens.
+ */
+export function renderProfileCommandDetail(profile: Profile): string[] {
+    const lines: string[] = [];
+
+    for (const window of profile.windows) {
+        for (const ws of window.workspaces) {
+            if (profile.windows.length > 1 || window.workspaces.length > 1) {
+                lines.push(pc.bold(`${ws.title}`));
+            }
+
+            for (const pane of ws.panes) {
+                pane.surfaces.forEach((surface, tabIndex) => {
+                    const tab = pane.surfaces.length > 1 ? ` tab ${tabIndex}` : "";
+                    lines.push(`  ${pc.cyan(`${pane.ref}${tab}`)}  ${surface.title || pc.dim("(untitled)")}`);
+
+                    if (surface.type === "browser") {
+                        lines.push(`      ${pc.dim(surface.url ?? "(browser)")}`);
+                        return;
+                    }
+
+                    if (surface.cwd) {
+                        lines.push(`      ${pc.dim(`cwd ${surface.cwd}`)}`);
+                    }
+
+                    if (!surface.command) {
+                        lines.push(`      ${pc.dim("(no command)")}`);
+                        return;
+                    }
+
+                    if (surface.command_original && surface.command_original !== surface.command) {
+                        lines.push(`      ${pc.red(`- ${surface.command_original}`)}`);
+                        lines.push(`      ${pc.green(`+ ${surface.command}`)}`);
+                    } else {
+                        lines.push(`      ${surface.command} ${pc.dim(`(${surface.command_source ?? "?"})`)}`);
+                    }
+
+                    for (const note of surface.drift ?? []) {
+                        lines.push(`      ${pc.yellow(`⚠ drift: ${note}`)}`);
+                    }
+                });
+            }
+        }
+    }
+
+    return lines;
+}

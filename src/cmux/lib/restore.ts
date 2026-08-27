@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
@@ -12,6 +14,8 @@ const EDGE_TOLERANCE_PX = 2;
 export interface RestoreOptions {
     prefix: string;
     replay: boolean;
+    /** Also press Enter after typing the replayed command, so it executes immediately. */
+    enter: boolean;
     yes: boolean;
     dryRun: boolean;
 }
@@ -246,6 +250,46 @@ async function populatePane(
         surfaceRefs.push(created.surface_ref);
     }
 
+    // cmux inserts each new tab immediately after the anchor, which reverses the tail
+    // order for multi-tab panes. Put every surface back at its saved index, then land
+    // the pane's selection on the saved active tab.
+    if (expectedCount > 1) {
+        for (let i = 0; i < surfaceRefs.length; i += 1) {
+            await runCmuxOk([
+                "reorder-surface",
+                "--workspace",
+                workspaceRef,
+                "--surface",
+                surfaceRefs[i],
+                "--index",
+                String(i),
+                "--focus",
+                "false",
+            ]).catch((error) => {
+                logger.debug({ error, surfaceRef: surfaceRefs[i] }, "[restore] reorder-surface failed");
+            });
+        }
+    }
+
+    // cmux leaves the last-created tab selected, so the saved selection must be
+    // restored explicitly even when it is the first tab.
+    const selectedIndex = savedPane.selected_surface_index;
+    if (surfaceRefs.length > 1 && selectedIndex >= 0 && selectedIndex < surfaceRefs.length) {
+        await runCmuxOk([
+            "reorder-surface",
+            "--workspace",
+            workspaceRef,
+            "--surface",
+            surfaceRefs[selectedIndex],
+            "--index",
+            String(selectedIndex),
+            "--focus",
+            "true",
+        ]).catch((error) => {
+            logger.debug({ error, selectedIndex }, "[restore] selecting saved tab failed");
+        });
+    }
+
     // Rename + replay
     for (let i = 0; i < expectedCount; i += 1) {
         const savedSurface = savedPane.surfaces[i];
@@ -272,6 +316,65 @@ function shellQuote(path: string): string {
     return `'${path.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * Interactive prompts a replayed command can stop at. Restore NEVER answers these
+ * (Martin's rule: type the command + Enter, nothing more) — it only reports which
+ * panes are waiting so the user confirms each one deliberately.
+ */
+const INTERACTIVE_PROMPT_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+    { pattern: /Launch anyway\?/, label: "account-headroom gate (weekly limit spent — Launch anyway?)" },
+    { pattern: /Resume full session as-is/, label: "resume-mode dialog (summary vs full session)" },
+    { pattern: /NAME\s+BRANCH\s+AGE/, label: "session picker (verify the highlighted session before Enter!)" },
+    { pattern: /Select session to resume/, label: "session picker (verify the highlighted session before Enter!)" },
+];
+
+export function detectInteractivePrompt(screenText: string): string | undefined {
+    for (const { pattern, label } of INTERACTIVE_PROMPT_PATTERNS) {
+        if (pattern.test(screenText)) {
+            return label;
+        }
+    }
+
+    return undefined;
+}
+
+export interface WaitingPane {
+    workspaceRef: string;
+    surfaceRef: string;
+    title: string;
+    prompt: string;
+}
+
+/** Scan the restored workspaces for panes stopped at an interactive prompt. Read-only. */
+export async function scanForInteractivePrompts(workspaceRefs: string[]): Promise<WaitingPane[]> {
+    const waiting: WaitingPane[] = [];
+
+    for (const workspaceRef of workspaceRefs) {
+        const layout = await paneList(workspaceRef);
+        for (const pane of layout.panes) {
+            for (const surfaceRef of pane.surface_refs) {
+                const result = await runCmuxOk([
+                    "read-screen",
+                    "--workspace",
+                    workspaceRef,
+                    "--surface",
+                    surfaceRef,
+                ]).catch(() => undefined);
+                if (!result) {
+                    continue;
+                }
+
+                const prompt = detectInteractivePrompt(result.stdout);
+                if (prompt) {
+                    waiting.push({ workspaceRef, surfaceRef, title: "", prompt });
+                }
+            }
+        }
+    }
+
+    return waiting;
+}
+
 async function replayTerminal(
     surface: Surface & { type: "terminal" },
     workspaceRef: string,
@@ -296,8 +399,11 @@ async function replayTerminal(
     //   1. cd's to the saved cwd (silently — failures don't abort)
     //   2. clears the screen AND scrollback (\033[2J\033[3J\033[H), erasing both the
     //      shell's startup banner and the typed-input echo of this very command
-    //   3. base64-decodes the saved screen contents to stdout, faithfully reproducing
-    //      what the pane looked like when the profile was saved
+    //   3. cats the saved screen contents from a temp file, faithfully reproducing
+    //      what the pane looked like when the profile was saved. The content goes
+    //      through a file, NOT inline base64 — a full pane screen inlined into one
+    //      typed line exceeds the pty input limit and the shell echoes the mangled
+    //      command as garbage instead of executing it.
     // Then, after the trailing newline, the saved last-typed command is sent (without
     // a newline) so it sits queued at the fresh prompt for the user to confirm — this
     // is what re-launches `claude --resume <id>`, `vim file`, etc.
@@ -306,13 +412,17 @@ async function replayTerminal(
         parts.push(`cd -- ${shellQuote(surface.cwd)} 2>/dev/null`);
     }
     if (surface.screen?.text) {
-        const b64 = Buffer.from(surface.screen.text, "utf8").toString("base64");
+        const screenFile = join(
+            tmpdir(),
+            `cmux-restore-screen-${process.pid}-${surfaceRef.replace(/[^A-Za-z0-9]/g, "-")}.txt`
+        );
+        await Bun.write(screenFile, surface.screen.text);
         parts.push("printf '\\033[2J\\033[3J\\033[H'");
-        parts.push(`printf %s '${b64}' | base64 -d`);
+        parts.push(`cat -- ${shellQuote(screenFile)}`);
     }
     let payload = parts.length > 0 ? `${parts.join("; ")}\n` : "";
     if (surface.command && surface.command_source && surface.command_source !== "none") {
-        payload += surface.command;
+        payload += opts.enter ? `${surface.command}\n` : surface.command;
     }
     if (!payload) {
         return;

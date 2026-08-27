@@ -1,4 +1,5 @@
 import { type CmuxRunResult, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -319,6 +320,13 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
 
     const prof = profiler.scope("cmux");
     try {
+        // Fail fast on a starved UI thread: with a livelocked cmux every state command
+        // below would hang for its full per-request timeout. Injected runners (tests)
+        // skip the probe.
+        if (!deps.runJson) {
+            await prof.measureAsync("preflight", () => ensureCmuxResponsive("cmux live snapshot"));
+        }
+
         let windows: CmuxLiveWindow[] | undefined;
         let workspaceLists: WorkspaceListRpc[];
 

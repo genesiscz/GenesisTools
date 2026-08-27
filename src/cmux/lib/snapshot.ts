@@ -1,3 +1,10 @@
+import { panelsById, readAutosaveSession } from "@app/cmux/lib/autosave";
+import {
+    collectTtyLaunchCommands,
+    deriveReplayCommand,
+    loadSurfaceSessions,
+    type SurfaceSessionInfo,
+} from "@app/cmux/lib/command-capture";
 import { captureSurfaceState, cwdFromTitle } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
@@ -16,12 +23,43 @@ import { logger } from "@genesiscz/utils/logger";
 
 interface SurfaceListEntry {
     ref: string;
+    /** Surface UUID (== CMUX_SURFACE_ID == autosave panel id); present with --id-format both. */
+    id?: string;
     type: "terminal" | "browser";
     title?: string;
     /** Position within the parent pane (0..N-1). Field name is `index` in the CLI's list-pane-surfaces output. */
     index: number;
     /** True when this surface is the active tab of its pane. CLI calls this `selected`. */
     selected?: boolean;
+}
+
+/**
+ * Joined side-channels for command capture: the process table (foreground command
+ * per tty), cmux's autosave (surface uuid → tty), and the claude session journals
+ * (surface uuid → session id + account). All readable without the cmux socket.
+ */
+interface CommandCaptureContext {
+    ttyCommands: Map<string, string>;
+    panelTty: Map<string, string>;
+    surfaceSessions: Map<string, SurfaceSessionInfo>;
+}
+
+export async function buildCommandCaptureContext(): Promise<CommandCaptureContext> {
+    const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
+
+    const panelTty = new Map<string, string>();
+    try {
+        const session = readAutosaveSession();
+        for (const [id, panel] of panelsById(session)) {
+            if (panel.ttyName) {
+                panelTty.set(id, panel.ttyName);
+            }
+        }
+    } catch (error) {
+        logger.debug({ error }, "[snapshot] autosave unavailable — foreground command capture degraded");
+    }
+
+    return { ttyCommands, panelTty, surfaceSessions };
 }
 
 interface ListPaneSurfacesResponse {
@@ -57,6 +95,7 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
     const allWorkspaces = await collectAllWorkspaces(allWindows);
 
     const ctx = await getIdentifyContext();
+    const capture = options.captureHistory ? await buildCommandCaptureContext() : undefined;
     const targetWorkspaces = filterWorkspaces(allWorkspaces, options, ctx.focusedWorkspaceRef);
     const targetWindowRefs = new Set(targetWorkspaces.map((ws) => ws.window_ref));
     const targetWindows = allWindows.filter((w) => targetWindowRefs.has(w.ref));
@@ -82,7 +121,7 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
             });
 
             const captured = await withFocusedWorkspace(ws.ref, async () => {
-                const panes = await capturePanes(ws.ref, options, ctx.callerSurfaceRef);
+                const panes = await capturePanes(ws.ref, options, ctx.callerSurfaceRef, capture);
                 const fresh = await paneList(ws.ref);
                 return { panes, container: fresh.container_frame };
             });
@@ -199,13 +238,16 @@ function cellSizeOf(panes: PaneListPane[], field: "cell_width_px" | "cell_height
 async function capturePanes(
     workspaceRef: string,
     options: SnapshotOptions,
-    callerSurfaceRef: string | undefined
+    callerSurfaceRef: string | undefined,
+    capture: CommandCaptureContext | undefined
 ): Promise<Pane[]> {
     const layout = await paneList(workspaceRef);
     const panes: Pane[] = [];
 
     for (const paneInfo of layout.panes) {
         const surfacesInfo = await runCmuxJSON<ListPaneSurfacesResponse>([
+            "--id-format",
+            "both",
             "list-pane-surfaces",
             "--workspace",
             workspaceRef,
@@ -220,7 +262,7 @@ async function capturePanes(
             if (surfaceEntry.selected) {
                 selectedIndex = surfaces.length;
             }
-            surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options, callerSurfaceRef));
+            surfaces.push(await captureSurface(surfaceEntry, workspaceRef, options, callerSurfaceRef, capture));
         }
 
         // A pane cmux has not rendered reports no cell geometry, only pixels. The saved
@@ -262,7 +304,8 @@ async function captureSurface(
     entry: SurfaceListEntry,
     workspaceRef: string,
     options: SnapshotOptions,
-    callerSurfaceRef: string | undefined
+    callerSurfaceRef: string | undefined,
+    capture: CommandCaptureContext | undefined
 ): Promise<Surface> {
     const title = entry.title ?? "";
     if (entry.type === "browser") {
@@ -284,13 +327,28 @@ async function captureSurface(
         history: options.captureHistory,
     });
 
+    // The foreground process on the pane's tty beats scrollback parsing: a pane
+    // running a fullscreen TUI (claude, grok, vim) shows no shell prompt to parse,
+    // but its launch command is right there in the process table.
+    const tty = capture && entry.id ? capture.panelTty.get(entry.id) : undefined;
+    const foreground = tty ? capture?.ttyCommands.get(tty) : undefined;
+    const original = foreground ?? captured.command.value;
+    const session = capture && entry.id ? capture.surfaceSessions.get(entry.id) : undefined;
+
+    if (!original) {
+        return { type: "terminal", title, cwd, screen: captured.screen };
+    }
+
+    const derived = deriveReplayCommand({ original, sessionId: session?.sessionId, account: session?.account });
     return {
         type: "terminal",
         title,
         cwd,
         screen: captured.screen,
-        command: captured.command.value,
-        command_source: captured.command.value ? captured.command.source : undefined,
+        command: derived.command,
+        command_source: foreground ? "foreground" : captured.command.source,
+        command_original: derived.command !== original ? original : undefined,
+        drift: derived.drift.length > 0 ? derived.drift : undefined,
     };
 }
 
