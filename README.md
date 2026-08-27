@@ -25,7 +25,7 @@
 -   [🧭 How the CLI works](#-how-the-cli-works)
 -   [🎯 Claude Code plugin](#-claude-code-plugin)
     -   [Commands](#commands-4)
-    -   [Skills](#skills-24)
+    -   [Skills](#skills-25)
     -   [Agents and hooks](#agents-and-hooks)
     -   [The genesis-tools MCP server](#the-genesis-tools-mcp-server)
     -   [Second plugin: genesis-tools-server](#second-plugin-genesis-tools-server)
@@ -157,14 +157,14 @@ you. Set `TOOLS_SKIP_AUTOINSTALL=1` to suppress that.
 ## 🎯 Claude Code plugin
 
 The repo ships two Claude Code plugins through the marketplace file at
-`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (currently version 1.0.43),
-contains **4 commands**, **24 skills**, **2 subagents**, **4 hook registrations**, and a stdio
+`.claude-plugin/marketplace.json`. The main one, `genesis-tools` (currently version 1.0.48),
+contains **4 commands**, **25 skills**, **2 subagents**, **4 hook registrations**, and a stdio
 **MCP server**.
 
 Commands are invoked explicitly as `/gt:<name>`, which comes from each command file's own
 `name:` frontmatter. Skills load themselves when the conversation matches their trigger
 description, and they resolve by plugin and directory (`genesis-tools:<skill>`), so the `gt:`
-prefix that 14 of the 24 skill files still carry in their frontmatter has no effect on how they
+prefix that 14 of the 25 skill files still carry in their frontmatter has no effect on how they
 are addressed.
 
 ### Installation for Claude Code
@@ -194,7 +194,7 @@ them in parallel, writes a per-PR plan, and presents one consolidated report.
 `/gt:automate` and `/gt:timelog` are deliberately commands rather than skills. Their guidance
 is large, and as skills they would load into sessions that never needed them.
 
-### Skills (24)
+### Skills (25)
 
 | Skill | What it does |
 |-------|--------------|
@@ -205,8 +205,7 @@ is large, and as skills they would load into sessions that never needed them.
 | `debugging-master` | Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation (Node/TS, PHP, browser). |
 | `git-rebaser` | Cascade rebase for a parent branch plus the children stacked on it, using `git rebase --onto`. |
 | `github` | Read or search GitHub, and analyze GitHub Actions runs, failures, and billing. |
-| `handoff-to` | Offload work to another model or agent and pick which one (Codex/GPT, sonnet, opus, fable). |
-| `handoff-to-codex` | Hand a review or implementation to Codex and drive the session: spawn, steer, approve, verify. |
+| `handoff-to` | Offload work to another model or agent and pick which one (Codex/GPT, grok, Claude on another account, sonnet, opus, fable); per-backend mechanics in its `references/`. |
 | `improve-agents-md` | Empirically evaluate and trim `CLAUDE.md` / `AGENTS.md` by testing which rules a clean model already follows. |
 | `living-docs` | Self-maintaining docs system: bootstrap, validate, refine minimal doc chunks. |
 | `macos-control` | Drive native macOS apps through the Accessibility API, and record short screen captures reviewed frame by frame. |

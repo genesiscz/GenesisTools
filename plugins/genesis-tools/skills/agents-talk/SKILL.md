@@ -171,8 +171,8 @@ tools agents request --from reviewer --to lead --body 'Approve the auth change?'
 not manually log that identity in from the orchestrator — the model receives with its seeded
 `tools agents login --agent-name codex_<name> --once --session <id>` command.
 
-Write policies, steering, approvals, and the driver-subagent pattern live in **`gt:handoff-to-codex`**. Load that
-skill rather than hand-rolling a spawn from here.
+Write policies, steering, approvals, and the driver-subagent pattern live in **`gt:handoff-to`**, whose
+`references/codex.md` carries the Codex mechanics. Load that skill rather than hand-rolling a spawn from here.
 
 ## What you receive on the `login` stream
 

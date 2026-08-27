@@ -34,6 +34,14 @@ common_excludes=(
     --exclude-dir=.git
     --exclude-dir=dist
     --exclude-dir=build
+    # Git worktrees live INSIDE this repo. Without these the scan walks every
+    # other branch's full checkout, which makes it unusably slow locally and
+    # reports violations that belong to a different branch entirely. CI has no
+    # worktrees, so this only ever bit developers running the guard by hand.
+    --exclude-dir=.worktrees
+    --exclude-dir=worktrees
+    # A log file is not source; story.log.backup was matching on captured output.
+    --exclude-dir=logs
     --exclude=*.md
     --exclude=pid-safety-guard.sh
 )

@@ -18,6 +18,9 @@
 # variable, log the source, and can be pointed at an account.
 set -euo pipefail
 
+# A missing grep would make every `if … ; then` below read as "no matches" and pass silently.
+source "$(dirname "${BASH_SOURCE[0]}")/require-grep.sh"
+
 fail=0
 
 # Roots default to the repo's own trees. Passing them in is what lets the guard's
@@ -37,9 +40,9 @@ fi
 #    while they performed exactly the same hidden env read. That prefix was really
 #    there to skip prose that NAMES the pattern, so prose is now skipped directly:
 #    comment lines and backticked mentions are dropped from the results.
-argless=$(rg -n --glob '!node_modules' --glob '!**/*.md' --glob '!scripts/ci/ai-credentials-guard.sh' --glob '!scripts/ci/ai-credentials-guard.test.ts' \
-        '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
-        "${roots[@]}" | rg -v ':[[:space:]]*(//|\*|#)' | rg -v '`create' || true)
+argless=$(git grep -nP -e '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
+        -- "${roots[@]}" ':(exclude)**/*.md' ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
+        | grep -Ev ':[[:space:]]*(//|\*|#)' | grep -Fv '`create' || true)
 if [ -n "$argless" ]; then
     echo "$argless"
     echo "::error:: argless provider factory — the SDK would read the API key from its own env var, unauditably. Pass an explicit apiKey from resolveCredential()/resolveProviderApiKey()."
@@ -50,9 +53,9 @@ fi
 #    read their own environment variables, which is the pickup this phase made
 #    explicit.
 singleton_re='^\s*import\s+\{[^}]*\b(openai|groq|anthropic|google)\b[^}]*\}\s+from\s+["'"'"']@ai-sdk/'
-if rg -n --glob '!node_modules' --glob '!**/*.md' \
-        --glob '!src/utils/ai/providers/**' --glob '!scripts/ci/ai-credentials-guard.sh' --glob '!scripts/ci/ai-credentials-guard.test.ts' \
-        "$singleton_re" "${roots[@]}" ; then
+if git grep -nP -e "$singleton_re" \
+        -- "${roots[@]}" ':(exclude)**/*.md' ':(exclude)src/utils/ai/providers/**' \
+        ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' ; then
     echo "::error:: bare @ai-sdk singleton imported outside src/utils/ai/providers/ — use a provider plugin (registry.ts) so the credential is resolved through one auditable path."
     fail=1
 fi
@@ -64,11 +67,10 @@ fi
 #        shape before the v4 one can convert it.
 #      - `AIConfig.ts`, the deprecated v3 facade, deleted once its last consumer
 #        moves to AiConfigStore (Phase 8).
-if rg -n --glob '!node_modules' --glob '!**/*.md' \
-        --glob '!src/utils/ai/config/**' --glob '!scripts/ci/ai-credentials-guard.sh' --glob '!scripts/ci/ai-credentials-guard.test.ts' \
-        --glob '!src/utils/config/migrations/2026-04-07-migrateAI.ts' \
-        --glob '!src/utils/ai/AIConfig.ts' \
-        'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' "${roots[@]}" ; then
+if git grep -nP -e 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
+        -- "${roots[@]}" ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
+        ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
+        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' ; then
     echo "::error:: new Storage(\"ai\") outside src/utils/ai/config/ — go through AiConfigStore, which owns the lock order (config first, vault second) and the migration chain."
     fail=1
 fi

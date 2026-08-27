@@ -22,6 +22,7 @@ import {
     inspectPidFile,
     serializePidRecord,
 } from "@genesiscz/utils/process/pidfile";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { Conn } from "./cdp.ts";
 import type { CaptureChannel, RecordedEvent } from "./channels.ts";
 import { ensureCaptureDir, metaPath, recorderPidPath } from "./paths.ts";
@@ -340,14 +341,12 @@ export function sweepDeadTakeoverTemps(pidPath: string): void {
             continue;
         }
 
-        let alive = false;
-        try {
-            process.kill(creator, 0);
-            alive = true;
-        } catch (err) {
-            // EPERM = alive but not ours; ESRCH = dead.
-            alive = errCode(err) === "EPERM";
-        }
+        // isProcessAlive owns this exact ESRCH-vs-EPERM distinction (EPERM means
+        // alive but not ours, so the creator is still mid-takeover). Hand-rolling
+        // the probe here is what the pid-safety guard rejects, and the shared
+        // helper also guards a non-finite or non-positive pid, which a filename
+        // can absolutely produce.
+        const alive = isProcessAlive(creator);
 
         if (alive) {
             continue;

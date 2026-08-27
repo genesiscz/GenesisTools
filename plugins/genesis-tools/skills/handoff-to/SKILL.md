@@ -1,17 +1,22 @@
 ---
 name: handoff-to
-description: Offload work to another model or agent, and pick which one (Codex/gpt-5.x, grok, sonnet, opus, fable). Triggers on "give this to codex", "give this to grok", "run grok on this", "offload this", "hand this off", "second opinion from GPT", "second opinion from grok", "parallelize this across models", "which model should do X" — and use it proactively whenever a bounded, well-specified task should go to a worker while this session reviews.
+description: Offload work to another model or agent, and pick which one (Codex/gpt-5.x, grok, sonnet, opus, fable). Triggers on "give this to codex", "let codex implement this", "run codex on this", "codex subagent", "tools codex", "give this to grok", "run grok on this", "offload this", "hand this off", "second opinion from GPT", "second opinion from grok", "parallelize this across models", "which model should do X" — and use it proactively whenever a bounded, well-specified task should go to a worker while this session reviews.
 ---
 
 # handoff-to — pick the worker, then dispatch
 
-This skill only answers two questions: **who does it**, and **is it ready to leave**. The mechanics of driving each worker live elsewhere:
+This file answers two questions: **who does it**, and **is it ready to leave**. The per-backend mechanics live in reference files, so you load only the one you need.
 
 | Worker | Dispatch via |
 |---|---|
-| Codex / gpt-5.x | `gt:handoff-to-codex` — **mandatory**: invoke that skill; never hand-roll `tools codex` or `codex exec` from here |
-| Grok / grok-4.x | § Grok mechanics below — never hand-roll a bare `grok -p` (isolation and safety flags are non-obvious) |
-| sonnet / opus / fable | `Agent` tool with `model:`, or `Workflow` for fan-out |
+| Codex / gpt-5.x | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
+| Grok / grok-4.x | Read `references/grok.md` — never hand-roll a bare `grok -p` (isolation and safety flags are non-obvious) |
+| sonnet / opus / fable, in this session | `Agent` tool with `model:`, or `Workflow` for fan-out — **the default for Claude work** |
+| Claude on a **different account**, or a headless `claude -p` run | Read `references/claude.md` — `tools claude exec -a <account>`, never interactive `tools claude run` |
+
+The reference files sit next to this one, at `${CLAUDE_PLUGIN_ROOT}/skills/handoff-to/references/`. Claude Code substitutes that placeholder at load time; it is not a shell variable. If you see it unsubstituted, build the path from the "Base directory for this skill" line printed when this skill loaded. If both fail, Read `plugins/genesis-tools/skills/handoff-to/references/<backend>.md` in the GenesisTools repo.
+
+⚠️ **Picking Claude does not automatically mean `references/claude.md`.** A subagent via the `Agent` tool is cheaper and keeps the harness. Load that reference only when the point is the *account* (spreading usage, running under a subscription this session is not on) or the *separate process* (a long headless run that must not eat this session's context).
 
 ## Model rankings
 
@@ -35,8 +40,9 @@ How to apply:
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
 - Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as an extra independent perspective.
 - Never Haiku for work that ships (thin wrapper/relay agents are fine).
-- gpt-5.5 is only reachable through the Codex CLI; grok-4.6 only through the `grok` CLI (metered `XAI_API_KEY`). Claude models run via the `Agent`/`Workflow` `model` parameter.
-- Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals (§ Grok mechanics, Safety dial), so route work needing supervised writes in a live checkout to Codex instead.
+- gpt-5.5 is only reachable through the Codex CLI; grok-4.6 only through the `grok` CLI (metered `XAI_API_KEY`). Claude models run via the `Agent`/`Workflow` `model` parameter, or on a separate account through `tools claude exec` (`references/claude.md`).
+- **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.
+- Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals, so route work needing supervised writes in a live checkout to Codex instead.
 
 ## Task routing
 
@@ -45,7 +51,7 @@ How to apply:
 | Design decisions, naming, interface shape | Stay here — decide first, then hand the decision down |
 | Spec'd mechanical implementation, boilerplate, big renames | Codex |
 | Test writing against a fixed contract | Codex |
-| Second-opinion code review | Codex, read-only |
+| Second-opinion code review | Codex, read-only — but read the § Read-only tax first |
 | Ambiguous / underspecified work | Stay here until spec'd, THEN offload |
 | Cross-file refactor requiring judgment calls | Stay here, or opus/fable subagent |
 | Long-running bounded sweep while this session reviews | Codex, parallel drivers with `isolation: "worktree"` |
@@ -54,99 +60,35 @@ Rule of thumb: **taste stays here, precision ships out.**
 
 ## Readiness gate (applies to every route)
 
-Do not dispatch until all four hold. If any fails, the task is not ready to offload — finish specifying it first.
+Do not dispatch until all five hold. If any fails, the task is not ready to offload — finish specifying it first.
 
 1. The prompt is **self-contained**: the worker has none of this conversation's context.
-2. There is a **verification command** the worker can run itself, with the expected observable output stated.
+2. There is a **verification command** the worker can run itself, with the expected observable output stated — **and the worker's sandbox can actually run it** (see § Read-only tax).
 3. **Negative constraints are explicit** — "do NOT create new files", "do NOT commit", "do NOT touch `src/x/`", size limits. Workers obey these reliably when spelled out, and not otherwise.
-4. **Checkpoints are named** — the points at which the worker must stop and report instead of pressing on (see `gt:handoff-to-codex` § Checkpoint contract).
+4. **Checkpoints are named** — the points at which the worker must stop and report instead of pressing on.
+5. **The deliverable matches the sandbox**: a read-only worker cannot write a report file, so inline output must be the deliverable, or a writable path must be granted explicitly.
 
-## Driver-model choice (when the route is Codex)
+## 🛑 Read-only tax — decide this before you dispatch
 
-The driver is the Claude subagent that owns the Codex session (`genesis-tools:agent-driver`).
+"Read-only" does not mean "everything except editing your code". On both backends it also blocks the worker from **writing its own report** and from **running tests**. Observed on a real Codex review handoff (2026-08-27): the worker could not write the report file it was asked for, and two attempts to run Jest died on a read-only temp dir. It executed zero test assertions and still produced a confident "Test quality" section.
+
+So when you route a review:
+
+- Say in the brief that **inline output is the deliverable**, or grant a writable path (Codex only: `--writable-root`).
+- Expect **no executed verification** unless you granted writable temp and cache dirs.
+- **Any claim a read-only reviewer makes about test or runtime behavior is inference, not observation.** Ask it for the command and the real output. If there is none, say so when you relay the finding.
+
+The per-backend escape hatches differ, and both are in the reference files. Codex has `--writable-root`; grok has none, so the answer there is a disposable worktree.
+
+## Driver-model choice (when the route is Codex or Grok)
+
+The driver is the Claude subagent that owns the worker session (`genesis-tools:agent-driver`).
 
 - **sonnet** — default. The driver relays, watches, and approves inside declared bounds.
 - **opus** — when there is no committed plan, when architecture or interface shape is at stake, or when approvals will require real judgment about scope.
 
+⚠️ **Never block indefinitely on the driver's `VERDICT:`.** It has been observed ending a session without sending one, and relaying stale state after the work had finished. Poll the session yourself (`tools codex status` / `tools codex read`, or `tools grok sessions` / `tools grok read`) and treat that as the authority over the driver's prose. Details in the reference files.
+
 ## Never trust the self-report
 
 Whatever the worker says it did, re-run the verification command yourself and read the diff before integrating.
-
----
-
-# Grok mechanics (grok-4.6 via `tools grok`)
-
-The harness is **`tools grok`** (`src/grok/`) — the grok counterpart of `tools codex`. It drives xAI's `grok` CLI as a headless worker: you architect and verify, the worker implements. Unlike Codex there is **no daemon, no bus auto-registration, and no approval channel**. The drive model is a **resume loop**: each turn is one blocking invocation; steering happens *between* turns. Every fact below was verified against grok CLI 1.0.3 on 2026-08-26.
-
-## Drive loop
-
-```bash
-tools grok run   --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly]
-tools grok steer --name <task> --prompt '<correction + the negative constraints restated>'
-tools grok read  --name <task> [--turn N]
-tools grok sessions
-```
-
-- **`run` and `steer` block for the whole turn (minutes).** Run them with Bash `run_in_background: true` and wait for the completion notification. A foreground call is killed at the Bash timeout cap mid-turn.
-- Write the brief to a file (session scratchpad) and pass `--prompt-file`. Inside single quotes a backtick and `$(...)` stay literal, so those are safe; what breaks is an **apostrophe** in the brief, which closes the quote and leaves the shell parsing the rest as arguments. A file has no quoting rules at all.
-- On completion the harness prints the worker's report (stdout) and its tool calls (stderr), and **exits 1 when the turn died mid-flight** (the raw grok CLI exits 0 even then). Turn transcripts live at `~/.genesis-tools/grok/sessions/<task>.turn<N>.jsonl` (+ `.err`); `tools grok read` re-prints them.
-- `--name` is the session handle: `run` refuses an existing name, so pick a fresh one per handoff and use `steer` for every later turn.
-- To abort a running turn, kill it by its **session uuid**, which is on the child's command line as `--session-id` (first turn) or `--resume` (every later turn) and is unique to that session:
-
-  ```bash
-  uuid=$(tools json ~/.genesis-tools/grok/sessions/<task>.meta.json | rg -o '[0-9a-f-]{36}')
-  pgrep -fl "$uuid"          # ALWAYS look first — confirm it is the one process you mean
-  pkill -f "$uuid"
-  ```
-
-  🛑 Do **not** `pkill -f "grok .*--cwd <path>"`. A cwd pattern matches every session running in that project, and `grok` is a common enough word to catch your own shell and editor. The harness then returns a died-mid-flight result, and the session survives, so the next `steer` resumes it.
-- Auth is `XAI_API_KEY` from the environment. If a turn reports a login problem, stop and report — never run `grok login` for the user.
-
-## What the harness bakes in (do not hand-roll bare `grok`)
-
-- **Isolation.** Workers run with `GROK_HOME=~/.genesis-tools/grok/worker-home` plus the `GROK_CLAUDE_*_ENABLED=0` toggles. Without them the worker loads the user's `~/.claude/CLAUDE.md`, permission settings, and ~200 personal skills — and *acts* on them (verified: an un-isolated worker ran the user's personal `tools say` ritual mid-task). Project-local configuration in the worker's own `--cwd` still loads — `CLAUDE.md`, and any `.grok/` config the repo carries (MCP servers, hooks, permission rules). `GROK_HOME` redirects *user* state only, never the target repo's. That is usually what you want; when it is not, point `--cwd` at a scratch dir or a worktree without that config.
-- **Session bookkeeping.** The session uuid and cwd live in `~/.genesis-tools/grok/sessions/<task>.meta.json`; grok keys sessions by cwd, and `steer` resumes with the identical cwd automatically. ⚠️ That path is global on purpose, so `tools grok sessions` lists every worker. `--worker-home` moves the worker's own state, **not** the session records — two runs sharing a `--name` share one record whatever their home, and `run` now refuses the second.
-- **Sticky `--readonly`.** The raw grok CLI forgets `--tools` on every `--resume` (verified: a read-only session edited a file on its first unflagged resume). The harness re-arms the allowlist on each steer; `--writable` on a steer switches back deliberately.
-- **Direct binary spawn.** No shell in the path, so the user's zsh `grok` wrapper function (proxy env injection) cannot interfere.
-
-## Safety dial
-
-| Intent | How | Verified behavior |
-|---|---|---|
-| read-only (review, second opinion) | `--readonly` | Worker gets only `read_file,list_dir,grep` — it physically lacks edit and terminal tools; edit attempts are denied and files stay untouched |
-| implementation (default) | no flag | Headless default is **Auto mode — a project jail**: edits and commands inside `--cwd` run without approval; any write outside the project is blocked with a denial message the worker sees and reports |
-| full trust | not exposed | On purpose. For risky work, give the worker a disposable worktree and keep the default jail |
-
-🛑 Never reach past the harness for safety flags — two raw-grok flags LOOK like safety dials and are not (both verified): `--permission-mode plan` does not restrict a headless run (the worker edited a file under it), and `--disallowed-tools` silently refuses to remove `run_terminal_command` (the worker appended via the shell instead).
-
-There are no mid-turn approvals. The Auto-mode jail plus the checkpoint contract below are the only brakes.
-
-🛑 **A dispatch the user did not ask for is `--readonly`.** The skill triggers proactively, and the default mode edits and runs commands inside `--cwd` with no confirmation. So when *you* decided to hand the task off, pass `--readonly`, or give the worker a disposable worktree (`git worktree add`) that is not the user's live checkout. A writable run against a real working tree needs the user to have asked for the handoff, or to have said yes to it. Being inside the project jail is not consent: the jail only stops writes *outside* `--cwd`, and everything the user cares about is inside it.
-
-## Checkpoints
-
-The readiness gate above applies unchanged. Because there are no approvals, slice the task so each turn ends at a checkpoint. Include in the brief, filled in:
-
-```markdown
-## Stop and report — do not continue past these
-- This turn: <single milestone> ONLY. Report what changed + the verify output, then STOP; the next instruction arrives as a new turn.
-- Do NOT create new files, do NOT commit or push, do NOT touch <paths>.
-- If the verify command fails twice in a row: STOP and report both outputs. Do not keep patching.
-```
-
-Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message.
-
-## Verify, then integrate
-
-Never trust the self-report (see above). Run the verification command yourself, read `git diff` in the worker's cwd, only then integrate. There is no daemon to tear down — when the last turn ends, the handoff is over.
-
-## Driver mode (Grok)
-
-For a long grok handoff, spawn a `genesis-tools:agent-driver` subagent with `BACKEND: grok` in its prompt (sonnet by default) so the resume loop and its logs stay out of this session. The driver runs the run/steer/read/verify loop itself and reports a `VERDICT:` — see that agent's grok section.
-
-The `tools agents` bus is optional here: the transcript already lands in the turn logs. Add bus reporting (per `gt:agents-talk`) only when the worker is part of a multi-agent swarm — and then know its limits, verified in a live 5-agent chain probe (2026-08-26):
-
-- **Pass `--session <id>` explicitly** in every `tools agents` command you put in a grok brief. That is what was tested; do not rely on session auto-detection inside a worker.
-- A grok worker **receives** bus mail fine: a blocking `tools agents login --agent-name <name> --once --session <id>` inside its turn delivered the message.
-- Its **sends are unreliable**: in both observed turns the *second* `tools agents` command of the turn was cancelled by grok's own permission layer ("User cancelled the execution for tool `run_terminal_command`"), while the first succeeded. The cause was not isolated — treat it as an observation, not a rule. What matters: the worker **reported the cancelled send as successful anyway**. Budget ONE bus send per turn, split extra reports across steered turns, and confirm every hop by reading the feed from the lead side — never from the worker's claim. A steered retry of a cancelled send succeeded unchanged.
-- **The worker's bus identity is not yours to choose.** A codex worker auto-registers as `codex_<name from --spawn>`; a grok worker has no auto-registration and uses whatever `--agent-name` its brief tells it to log in with. Naming a different identity in `--from` fails with "not registered". Write the brief's identity to match the spawn name exactly.

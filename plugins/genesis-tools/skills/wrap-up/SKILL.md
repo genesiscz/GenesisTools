@@ -358,5 +358,5 @@ Read the handoff → read plan preamble lines → read the YOU-ARE-HERE task's l
 - Pairs with `gt:plan-it`: its plans have greppable `## Task N:` headings, per-task VERIFY, and a `## Deviations` section — a handoff maps onto them 1:1. Works with any plan that has task headings, though.
 - The executor should load the `fable-style` skill if available; the handoff governs *where you are*, fable-style governs *how you work*.
 - `*.handoff.md` files are chronological/append-only by repo convention — this mode's STATE/TASKS rewrite-in-place blocks are the explicitly declared exception; LOG keeps the append-only audit trail.
-- Handing the work to a non-Claude worker instead of a subagent? That is `gt:handoff-to` (routing) and `gt:handoff-to-codex` (mechanics), not this skill.
+- Handing the work to a non-Claude worker instead of a subagent? That is `gt:handoff-to` (routing, plus per-backend mechanics in its `references/`), not this skill.
 - **Replaces the retired `gt:handoff`.** That skill is gone, not renamed: its wrap-up half is SESSION mode above, its plan-handoff half is PLAN mode. If you were reaching for `gt:handoff`, you want this skill — unless you meant offloading work to another model, which is `gt:handoff-to`.

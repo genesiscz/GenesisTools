@@ -43,7 +43,12 @@ if [ -n "$range_base" ]; then
 fi
 
 if [ -n "$changed" ]; then
-    printf '%s\n' "$changed" | xargs bunx biome check
+    # --no-errors-on-unmatched: the extension filter above lets through paths
+    # biome's own config ignores (e.g. .claude-plugin/*.json), and biome exits 1
+    # on "No files were processed" — so a push touching only ignored files could
+    # never land. Verified 2026-08-27 that the flag still fails on real lint
+    # errors (a file with 2 findings exits 1 with the flag set).
+    printf '%s\n' "$changed" | xargs bunx biome check --no-errors-on-unmatched
 else
     echo "  (no lintable files in push range)"
 fi

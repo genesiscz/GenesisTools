@@ -10,6 +10,9 @@
 # the extension + relative-path + any-local-name variants.
 set -euo pipefail
 
+# A missing grep would make every `if … ; then` below read as "no matches" and pass silently.
+source "$(dirname "${BASH_SOURCE[0]}")/require-grep.sh"
+
 fail=0
 
 # 1. No DEFAULT import of the logger module anywhere (the named
@@ -18,10 +21,9 @@ fail=0
 #    relative `../logger` / `./logger(.ts)`, and `import X, { … } from …`.
 #    Does NOT match `import { … }` (named) or `import type` or `import * as`.
 default_re='^\s*import\s+[A-Za-z_$][A-Za-z0-9_$]*\s*(,\s*\{[^}]*\})?\s+from\s+["'"'"']((@app|@genesiscz)/utils/logger(\.ts)?|(\.{1,2}/)+([^"'"'"']*/)?logger(\.ts)?)["'"'"']'
-if rg -n --glob '!node_modules' --glob '!**/*.md' \
-        --glob '!scripts/codemod/**' --glob '!scripts/ci/logging-guard.sh' \
-        --glob '!src/utils/logger.ts' --glob '!src/utils/logger.test.ts' \
-        "$default_re" . ; then
+if git grep -nP -e "$default_re" -- . \
+        ':(exclude)**/*.md' ':(exclude)scripts/codemod/**' ':(exclude)scripts/ci/logging-guard.sh' \
+        ':(exclude)src/utils/logger.ts' ':(exclude)src/utils/logger.test.ts' ; then
     echo "::error:: default import of the logger module reintroduced — use \`import { logger } from \"@genesiscz/utils/logger\"\` (named). Includes the @genesiscz/utils/logger.ts, legacy @app/utils/logger, and relative ../logger variants; the root ./tools dispatcher counts."
     fail=1
 fi
@@ -34,13 +36,13 @@ fi
 #    The plan's `[^)]*` form false-positived ~10 idiomatic DIAGNOSTIC lines
 #    (`logger.debug(\`…${SafeJSON.stringify(ctx)}\`)`, context-object logging)
 #    that the overhaul never intended to ban; failing CI on those is wrong.
-if rg -n 'logger\.(info|warn|error|debug|trace)\(\s*(SafeJSON|JSON)\.stringify\(' src ; then
+if git grep -nP -e 'logger\.(info|warn|error|debug|trace)\(\s*(SafeJSON|JSON)\.stringify\(' -- src ; then
     echo "::error:: logger used to emit a serialized result payload — that is stdout's job: use out.result()/out.print(). logger.* is diagnostics only (file + gated stderr)."
     fail=1
 fi
 
 # 3. The transitional shims must stay gone.
-if rg -n '^export default |^export const consoleLog\b' src/utils/logger.ts ; then
+if git grep -nP -e '^export default |^export const consoleLog\b' -- src/utils/logger.ts ; then
     echo "::error:: transitional \`export default logger\` / \`export const consoleLog\` reintroduced in src/utils/logger.ts — removed in Task 21, the named \`logger\` (+ \`out\`) is the only API."
     fail=1
 fi
