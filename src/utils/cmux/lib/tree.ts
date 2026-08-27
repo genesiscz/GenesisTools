@@ -28,9 +28,20 @@ export function buildCmuxHierarchy(snapshot: CmuxLiveSnapshot): CmuxHierarchyWin
         : [{ id: "window:current", ref: undefined, index: 0, key: true, workspaceCount: snapshot.workspaces.length }];
 
     const windows: CmuxHierarchyWindow[] = windowMetas.map((meta) => {
-        const workspaces = snapshot.workspaces.filter(
-            (ws) => !snapshot.windows?.length || ws.windowRef === meta.ref || (!ws.windowRef && meta.key)
-        );
+        const workspaces = snapshot.workspaces.filter((ws) => {
+            if (!snapshot.windows?.length) {
+                return true;
+            }
+
+            // Compare refs only when BOTH sides have one: with several windows
+            // carrying no ref, `ws.windowRef === meta.ref` was undefined ===
+            // undefined, which put every unreferenced workspace in every window.
+            if (ws.windowRef && meta.ref) {
+                return ws.windowRef === meta.ref;
+            }
+
+            return !ws.windowRef && meta.key;
+        });
 
         return {
             id: meta.id,

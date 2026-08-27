@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -51,4 +51,16 @@ test("a record with no cmux surface is not a target", () => {
     const path = journal([entry({ surfaceId: null, surfaceRef: null, tmuxPane: "%5" })]);
 
     expect(lookupSessionCmuxRefs(SESSION, path)).toBeNull();
+});
+
+test("a journal larger than the read cap still resolves the newest entry", () => {
+    // The reader caps at 512 KB of tail. Newest-wins means older bytes cannot
+    // change the answer, so the cap must not change it either.
+    const filler = Array.from({ length: 4000 }, (_, i) =>
+        entry({ sessionId: `old-${i}-2222-3333-4444-555555555555`, at: Date.now() - 60_000, note: "x".repeat(200) })
+    );
+    const path = journal([...filler, entry({ surfaceId: "surf-newest" })]);
+
+    expect(statSync(path).size).toBeGreaterThan(512 * 1024);
+    expect(lookupSessionCmuxRefs(SESSION.slice(0, 8), path)?.surfaceId).toBe("surf-newest");
 });

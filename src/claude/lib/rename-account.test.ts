@@ -7,7 +7,7 @@ import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { env } from "@genesiscz/utils/env";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import type { WarmupConfig } from "./config";
-import { renameClaudeAccount, resolveRenameTo, rewriteWarmupNames } from "./rename-account";
+import { rekeyNamedRecord, renameClaudeAccount, resolveRenameTo, rewriteWarmupNames } from "./rename-account";
 import { UsageHistoryDb } from "./usage/history-db";
 
 describe("resolveRenameTo", () => {
@@ -24,6 +24,14 @@ describe("resolveRenameTo", () => {
     test("a positional new name is enough in non-interactive mode", () => {
         expect(resolveRenameTo({ interactive: false, positional: "work@shop" })).toEqual({
             name: "work@shop",
+        });
+    });
+
+    test("--to wins over the positional name", () => {
+        // Nothing pinned the precedence, so flipping `toFlag ?? positional`
+        // would have stayed green.
+        expect(resolveRenameTo({ interactive: false, toFlag: "flag-name", positional: "positional-name" })).toEqual({
+            name: "flag-name",
         });
     });
 
@@ -131,5 +139,53 @@ describe("renameClaudeAccount", () => {
         expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(0);
         expect(warmup.weekly.accounts).toEqual(["work-max", "work@shop"]);
         expect(cacheDropped).toBe(true);
+    });
+});
+
+describe("rekeyNamedRecord", () => {
+    test("moves the key and leaves every other entry alone", () => {
+        // The poll gate and invalid-grant cooldown are the two steps whose real
+        // implementations rewrite JSON files; the rename test stubs both with
+        // no-ops, so this covers the shared key-move directly.
+        const gate = { work: { at: 1 }, personal: { at: 2 } };
+
+        expect(rekeyNamedRecord(gate, "work", "work@shop")).toEqual({ "work@shop": { at: 1 }, personal: { at: 2 } });
+    });
+
+    test("a missing old key is a no-op, not an undefined entry", () => {
+        expect(rekeyNamedRecord({ personal: { at: 2 } }, "ghost", "new")).toEqual({ personal: { at: 2 } });
+    });
+});
+
+describe("renameClaudeAccount partial failure", () => {
+    test("a failing secondary step is reported, not swallowed or fatal", async () => {
+        // Before this, one throw left the account renamed in AIConfig while the
+        // other stores still held oldName — a state no retry can repair.
+        const moved = await renameClaudeAccount("work", "work@shop", {
+            renameAiAccount: async () => {},
+            renameHistory: () => 3,
+            rewriteWarmup: async () => {
+                throw new Error("warmup file is locked");
+            },
+            rekeyPollGate: async () => {},
+            rekeyInvalidGrant: async () => {},
+            invalidateUsageCache: async () => {},
+        });
+
+        expect(moved.historyRows).toBe(3);
+        expect(moved.failed).toEqual([{ step: "warmup", error: "warmup file is locked" }]);
+    });
+
+    test("a clean rename reports no failures", async () => {
+        const moved = await renameClaudeAccount("work", "work@shop", {
+            renameAiAccount: async () => {},
+            renameHistory: () => 1,
+            rewriteWarmup: async () => {},
+            rekeyPollGate: async () => {},
+            rekeyInvalidGrant: async () => {},
+            invalidateUsageCache: async () => {},
+        });
+
+        expect(moved.failed).toEqual([]);
     });
 });

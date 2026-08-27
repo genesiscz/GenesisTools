@@ -288,8 +288,15 @@ function bucketRowLines(limit: NormalizedLimit, layout: RowLayout): number {
 export function estimateAccountHeight(account: AccountUsage, prominentBuckets: string[], width: number): number {
     // Header + marginBottom are always present.
     if (!account.usage) {
-        // Error line or "No usage data" line.
-        return 3;
+        // The no-usage branch renders header + marginBottom, plus AT MOST one
+        // more line: the stale text when it does not fit in the header, or the
+        // "No usage data" line when the plan is alive. A dead plan whose stale
+        // text fits inline renders neither, and the flat 3 made OverviewView
+        // reserve a row that is not there, skewing the two-column decision.
+        const staleText = staleHeaderText(account);
+        const staleOwnLine = staleText !== null && !staleFitsHeader(account, width);
+
+        return staleOwnLine || !isPlanDead(account) ? 3 : 2;
     }
 
     const layout = layoutFor(width);

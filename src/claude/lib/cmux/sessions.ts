@@ -58,6 +58,35 @@ export async function listCandidates(opts: ListCandidatesOptions): Promise<Resto
     return Promise.all(recent.map((record) => toCandidate(record, pins)));
 }
 
+/** One session as a RestoreCandidate, by full id or a prefix of at least 8 chars. */
+export async function findCandidate(
+    sessionId: string,
+    opts: { readOnly?: boolean } = {}
+): Promise<RestoreCandidate | null> {
+    const needle = sessionId.trim().toLowerCase();
+
+    if (needle.length < 8) {
+        return null;
+    }
+
+    const listing = await getSessionListing({ excludeSubagents: true });
+    // Filter to usable records FIRST. `find` returned the earliest prefix match,
+    // so an exact id could lose to a longer one listed before it, and a first
+    // match with no cwd aborted the lookup even when a complete record followed.
+    const usable = listing.sessions.filter((s) => {
+        const id = (s.sessionId ?? "").toLowerCase();
+        return Boolean(s.sessionId && s.cwd) && (id === needle || id.startsWith(needle));
+    });
+    const record = usable.find((s) => (s.sessionId ?? "").toLowerCase() === needle) ?? usable[0];
+
+    if (!record?.sessionId || !record.cwd) {
+        return null;
+    }
+
+    const pins = await loadPins({ readOnly: opts.readOnly ?? true });
+    return toCandidate(record, pins);
+}
+
 async function toCandidate(
     record: SessionMetadataRecord,
     pins: Awaited<ReturnType<typeof loadPins>>

@@ -930,7 +930,15 @@ export function registerConfigCommand(program: Command): void {
                 target = resolved.name;
             }
 
-            if (aiConfig.getAccount(target) && target !== oldName) {
+            if (target === oldName) {
+                // The prompt defaults to oldName, so accepting it lands here.
+                // renameAiAccount does not reject it and would report a rename
+                // that never happened.
+                p.log.info(`"${oldName}" already has that name; nothing to do.`);
+                return;
+            }
+
+            if (aiConfig.getAccount(target)) {
                 p.log.error(`Account "${target}" already exists.`);
                 process.exit(1);
             }
@@ -940,6 +948,19 @@ export function registerConfigCommand(program: Command): void {
             p.log.success(
                 `Renamed "${oldName}" → "${target}" (${moved.historyRows} history row${moved.historyRows === 1 ? "" : "s"} moved).`
             );
+
+            if (moved.failed.length > 0) {
+                p.log.warn(
+                    `The account is renamed, but ${moved.failed.length} secondary store${moved.failed.length === 1 ? "" : "s"} still hold "${oldName}":`
+                );
+
+                for (const failure of moved.failed) {
+                    out.println(pc.yellow(`  ${failure.step}: ${failure.error}`));
+                }
+
+                out.println(pc.dim("  Re-running rename will not fix these — AIConfig no longer knows the old name."));
+                process.exitCode = 1;
+            }
             out.println(pc.dim("Sessions already running keep reporting the old name until they exit."));
         });
 

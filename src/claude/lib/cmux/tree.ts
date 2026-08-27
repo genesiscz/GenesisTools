@@ -1,6 +1,10 @@
 import { TITLE_SHORT_ID_RE } from "@app/claude/lib/cmux/focus";
 import { loadAllSessionCmuxRefs, type SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
-import { type CmuxLivePane, type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import {
+    type CmuxLivePane,
+    type CmuxLiveSnapshot,
+    fetchCmuxLiveSnapshot,
+} from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { buildCmuxHierarchy } from "@genesiscz/utils/cmux/lib/tree";
 import { profiler } from "@genesiscz/utils/profile";
 
@@ -63,12 +67,25 @@ interface TreeDeps {
 /** surfaceId AND surfaceRef both key the session, whichever form the RPC reports. */
 function surfaceSessionIndex(refs: Map<string, SessionCmuxRefs>): Map<string, string> {
     const index = new Map<string, string>();
+    // Resuming a new session in a tab that hosted an older one leaves both
+    // holding the same surface. Map iteration follows journal insertion order,
+    // not recency, so without this the tree labelled the tab with the OLDER id.
+    const seenAt = new Map<string, number>();
 
     for (const [sessionId, entry] of refs) {
+        const at = entry.at ?? 0;
+
         for (const key of [entry.surfaceId, entry.surfaceRef]) {
-            if (key) {
-                index.set(key, sessionId);
+            if (!key) {
+                continue;
             }
+
+            if (index.has(key) && (seenAt.get(key) ?? 0) >= at) {
+                continue;
+            }
+
+            index.set(key, sessionId);
+            seenAt.set(key, at);
         }
     }
 

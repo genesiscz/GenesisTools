@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import type { SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
+import type { ContentBlock } from "@genesiscz/utils/claude/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     assignSessionIds,
@@ -242,7 +244,9 @@ describe("humanTextOf", () => {
         // Every tool return is recorded as a type:"user" record. Treating those as
         // prompts made the who table show "Bash completed with no output".
         expect(
-            humanTextOf([{ type: "tool_result", tool_use_id: "t1", content: "Bash completed with no output" }] as never)
+            humanTextOf([
+                { type: "tool_result", tool_use_id: "t1", content: "Bash completed with no output" },
+            ] as ContentBlock[])
         ).toBe("");
     });
 
@@ -251,7 +255,7 @@ describe("humanTextOf", () => {
             humanTextOf([
                 { type: "tool_result", tool_use_id: "t1", content: "stdout noise" },
                 { type: "text", text: "now explain it" },
-            ] as never)
+            ] as ContentBlock[])
         ).toBe("now explain it");
     });
 
@@ -323,8 +327,24 @@ describe("latestRefsBySession", () => {
 });
 
 describe("buildSessionHints", () => {
-    const refs = new Map([
-        ["s1", { sessionId: "s1", surfaceRef: "surface:1", surfaceId: "UUID-1", cwd: "/a", at: 1 } as never],
+    // Typed on purpose: `as never` hid a field rename in SessionCmuxRefs, which
+    // is exactly the drift this fixture should catch.
+    const refs = new Map<string, SessionCmuxRefs>([
+        [
+            "s1",
+            {
+                sessionId: "s1",
+                workspaceId: null,
+                surfaceId: "UUID-1",
+                workspaceRef: null,
+                paneRef: null,
+                surfaceRef: "surface:1",
+                windowRef: null,
+                tmuxPane: null,
+                cwd: "/a",
+                at: 1,
+            },
+        ],
     ]);
 
     test("prefers the stable surface UUID over the renumberable ref", () => {
@@ -428,7 +448,9 @@ describe("countSessionInstances", () => {
 
         expect(counts.get("sess-a")).toBe(2);
         expect(counts.get("sess-b")).toBe(1);
-        expect(counts.has("null")).toBe(false);
+        // countSessionInstances never creates a "null" string key, so asserting
+        // its absence passed even when null ids WERE counted. Size is the real test.
+        expect(counts.size).toBe(2);
     });
 });
 

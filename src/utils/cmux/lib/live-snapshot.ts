@@ -354,9 +354,7 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
         }));
 
         const paneGroups = await prof.measureAsync("list-panes+surfaces", () =>
-            Promise.all(
-                rawWorkspaces.map(({ workspace }) => fetchWorkspacePanes(workspace, runJson, run, previews))
-            )
+            Promise.all(rawWorkspaces.map(({ workspace }) => fetchWorkspacePanes(workspace, runJson, run, previews)))
         );
         const panes = paneGroups.flat();
         prof.summary(`snapshot previews=${previews}`);

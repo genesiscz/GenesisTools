@@ -48,7 +48,7 @@ export async function ensureWorkspaceByName(name: string, cwd?: string): Promise
     return created.workspace_ref;
 }
 
-async function pickAnchorSurface(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
+export async function pickAnchorSurface(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
     const layout = await paneList(workspaceRef);
     const panes = layout.panes;
 

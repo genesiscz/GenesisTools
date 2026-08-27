@@ -1,5 +1,6 @@
 import { type Command, Option } from "commander";
 import { focusCommand } from "./focus";
+import { openSessionCommand } from "./open-session";
 import { pinsCommand } from "./pins";
 import { restoreCommand } from "./restore";
 import { sendCommand } from "./send";
@@ -78,4 +79,16 @@ export function registerCmuxCommand(program: Command): void {
         .description("Live window → workspace → pane → surface hierarchy, with known session ids")
         .option("--json", "Emit the tree as JSON instead of an indented listing")
         .action(treeCommand);
+
+    cmux.command("open-session <session>")
+        .description(
+            "Resume a session at a chosen cmux level: window→workspace, workspace→pane, pane→tab, surface→type into it"
+        )
+        .option("--window <ref>", "New workspace in this window, resume there")
+        .option("--workspace <ref>", "New pane (split) in this workspace, resume there")
+        .option("--pane <ref>", "New surface (tab) in this pane (needs --workspace)")
+        .option("--surface <ref>", "Type the resume command into this surface (needs --workspace)")
+        .option("--no-enter", "Queue the command at the prompt instead of running it")
+        .option("--json", "Emit the outcome as JSON")
+        .action(openSessionCommand);
 }

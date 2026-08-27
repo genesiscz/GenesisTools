@@ -57,6 +57,57 @@ async function deliver(target: FocusTarget, surfaceId: string, text: string, ent
  * Resolution is staged (hook journal → tab titles → pane captures); recorded
  * refs that went stale (cmux restarted) fail fast and fall back to the matcher.
  */
+/**
+ * The no-wrong-pane guard, shared by the first pass and the stale-ref fallback.
+ * Returns true when the caller must stop.
+ *
+ * A soft match only proves "a pane in that repo" or "a pane that mentions this
+ * id", so with several candidates `--first` would type into whichever sorted
+ * highest. Typing into the wrong agent session is worse than not typing at all.
+ */
+function refuseAmbiguous(
+    result: Awaited<ReturnType<typeof findSessionTargets>>,
+    queryTrim: string,
+    opts: SendOptions
+): boolean {
+    if (SOFT_SOURCES.has(result.source) && result.targets.length > 1) {
+        process.exitCode = 1;
+
+        if (opts.json) {
+            out.result(
+                SafeJSON.stringify(
+                    { query: queryTrim, sent: false, ambiguous: true, source: result.source, matches: result.targets },
+                    null,
+                    2
+                )
+            );
+            return true;
+        }
+
+        out.error(
+            pc.red(`"${queryTrim}" only matched weakly (${result.source}), and ${result.targets.length} panes qualify.`)
+        );
+        out.printlnErr(pc.dim("  Send a prompt in that session once so the hook can record its pane, then retry."));
+        return true;
+    }
+
+    if (!isUnambiguous(result.targets) && !opts.first) {
+        process.exitCode = 1;
+
+        if (opts.json) {
+            out.result(
+                SafeJSON.stringify({ query: queryTrim, sent: false, ambiguous: true, matches: result.targets }, null, 2)
+            );
+            return true;
+        }
+
+        out.error(pc.red(`Several panes match "${queryTrim}" — pass --first to take the best one.`));
+        return true;
+    }
+
+    return false;
+}
+
 export async function sendCommand(
     query: string,
     text: string,
@@ -95,42 +146,7 @@ export async function sendCommand(
         return;
     }
 
-    // A soft match only proves "a pane in that repo" or "a pane that mentions
-    // this id", so with several candidates `--first` would type into whichever
-    // sorted highest. Typing into the wrong agent session is worse than not
-    // typing at all.
-    if (SOFT_SOURCES.has(result.source) && result.targets.length > 1) {
-        process.exitCode = 1;
-
-        if (opts.json) {
-            out.result(
-                SafeJSON.stringify(
-                    { query: queryTrim, sent: false, ambiguous: true, source: result.source, matches: result.targets },
-                    null,
-                    2
-                )
-            );
-            return;
-        }
-
-        out.error(
-            pc.red(`"${queryTrim}" only matched weakly (${result.source}), and ${result.targets.length} panes qualify.`)
-        );
-        out.printlnErr(pc.dim("  Send a prompt in that session once so the hook can record its pane, then retry."));
-        return;
-    }
-
-    if (!isUnambiguous(result.targets) && !opts.first) {
-        process.exitCode = 1;
-
-        if (opts.json) {
-            out.result(
-                SafeJSON.stringify({ query: queryTrim, sent: false, ambiguous: true, matches: result.targets }, null, 2)
-            );
-            return;
-        }
-
-        out.error(pc.red(`Several panes match "${queryTrim}" — pass --first to take the best one.`));
+    if (refuseAmbiguous(result, queryTrim, opts)) {
         return;
     }
 
@@ -167,6 +183,14 @@ export async function sendCommand(
     }
 
     result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, skipRecorded: true, deps });
+
+    // The stale-ref fallback re-runs the matcher, so it can land on several
+    // panes just like the first pass. Without this it typed into targets[0]
+    // with no --first, which is the exact case the guard exists to prevent.
+    if (refuseAmbiguous(result, queryTrim, opts)) {
+        return;
+    }
+
     const fallback = result.targets[0];
     const fallbackSurface = fallback ? deliverySurfaceId(fallback, result.snapshot?.panes ?? []) : undefined;
 

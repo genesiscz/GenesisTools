@@ -528,8 +528,16 @@ async function readCmuxContext(runner: (cmd: string[]) => Promise<string>): Prom
     }
 }
 
+/** `claude who` is interactive; a wedged lsof or cmux must not hang it forever. */
+const CAPTURE_TIMEOUT_MS = 5000;
+
 async function runCapture(cmd: string[]): Promise<string> {
-    const proc = Bun.spawn({ cmd, stdio: ["ignore", "pipe", "pipe"] });
+    const proc = Bun.spawn({
+        cmd,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: CAPTURE_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+    });
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const exitCode = await proc.exited;
 

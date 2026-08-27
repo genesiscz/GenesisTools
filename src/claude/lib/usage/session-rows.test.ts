@@ -417,7 +417,10 @@ describe("listSessionRows", () => {
         listing.sessions = [record({ filePath: path, sessionId: "PINNED-ID", mtime: NOW - 5 * MIN })];
         tails.set(path, [OPUS_LINE]);
         pins.set("PINNED-ID", { account: "uzivatel-a" });
-        cmuxRefs.set("pinned-id", { surfaceId: "surface-uuid", at: NOW });
+        // Seeded with the journal's OWN casing, not pre-lowercased. The account
+        // map lowercases its key and the cmux map did not, so a mixed-case id
+        // resolved the account and silently dropped the location.
+        cmuxRefs.set("PINNED-ID", { surfaceId: "surface-uuid", at: NOW });
 
         const rows = await listSessionRows({ hours: 6, now: NOW });
         expect(rows[0]?.account).toBe("uzivatel-a");

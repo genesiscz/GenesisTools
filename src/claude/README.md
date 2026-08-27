@@ -84,7 +84,25 @@ tools claude cmux --dry-run             # print the plan, touch nothing
 tools claude cmux snapshot before-reboot
 tools claude cmux restore before-reboot
 tools claude cmux list                  # saved snapshots
+tools claude cmux tree                  # live window → workspace → pane → surface map, with session ids
+tools claude cmux open-session <id> --workspace workspace:1   # resume as a new pane there
+tools claude cmux send <id> "run the tests"   # type into the session's own pane
+tools claude cmux send <id> "/compact" --no-enter --dry-run
 ```
+
+`tree` (`--json` for machines) enumerates every cmux window and annotates each surface with
+the Claude Code session it hosts, from the refs journal plus the `· 8hex` tab-title marker.
+`open-session` resumes one session at a chosen level: `--window` makes a new workspace,
+`--workspace` a new pane, `--workspace --pane` a new tab, `--workspace --surface` types the
+resume command into that surface (`--no-enter` queues it). The command comes from the same
+builder restore uses, so the pinned account and auth mode survive.
+
+`send` types text into the pane a session already occupies, resolving `<id>` in stages:
+the refs journal first, then an exact id, an id prefix, the tab title, the workspace, and
+finally the working directory. A weak match with more than one candidate is refused rather
+than guessed at, because typing into the wrong agent session is worse than not typing;
+`--first` overrides that for the non-weak cases. `--no-enter` leaves the text in the prompt
+without submitting it, and `--dry-run` prints the pane it would type into and stops.
 
 Each pane runs `cd <session cwd> && tools claude start <account> -- --resume <id>`. The
 `--resume` sits after `--` so claude gets the id verbatim; before it, `tools claude start`

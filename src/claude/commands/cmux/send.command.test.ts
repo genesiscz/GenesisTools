@@ -238,6 +238,39 @@ test("stale recorded refs fall back to the matcher", async () => {
     expect(events).toContain("send --workspace workspace:11 --surface surface:41 -- hi");
 });
 
+test("a stale recorded ref falling back to two panes is still refused", async () => {
+    // The fallback re-runs the matcher, so it can land on several panes exactly
+    // like the first pass. It used to take targets[0] with no --first, which is
+    // the wrong-agent case the ambiguity guard exists to prevent.
+    setSnapshot([
+        pane({
+            id: "pane:7",
+            cwd: "/repo",
+            selectedSurfaceRef: "surface:1",
+            surfaces: [surface({ id: "surface:1", selected: true })],
+        }),
+        pane({
+            id: "pane:8",
+            cwd: "/repo",
+            selectedSurfaceRef: "surface:2",
+            surfaces: [surface({ id: "surface:2", selected: true })],
+        }),
+    ]);
+    const staleDeps = {
+        ...deps,
+        lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }),
+        lookupRefs: () => recordedRefs({ workspaceId: "dead-ws", surfaceId: "dead-surf" }),
+    };
+
+    await sendCommand(SESSION_A, "hi", { json: true, enter: false, enterDelay: "0" }, staleDeps);
+
+    const result = SafeJSON.parse(await capturedResult());
+    expect(result.sent).toBe(false);
+    expect(result.ambiguous).toBe(true);
+    // The dead recorded surface is attempted once; nothing lands on a live pane.
+    expect(events.some((event) => event.startsWith("send --workspace workspace:11"))).toBe(false);
+});
+
 test("refuses to type into an ambiguous working-directory match", async () => {
     setSnapshot([
         pane({

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -34,18 +34,55 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
  * Terminal/tmux launches) are kept — callers that need a cmux target filter.
  */
-export function loadAllSessionCmuxRefs(refsPath: string = CMUX_REFS_PATH): Map<string, SessionCmuxRefs> {
-    const refs = new Map<string, SessionCmuxRefs>();
+/**
+ * The journal is append-only and only the NEWEST record per session wins, so
+ * older bytes can never change the answer. Reading the whole file grew the cost
+ * of every `claude who` / usage listing without changing the result, so the read
+ * is capped at the tail and a truncated first line is dropped.
+ */
+const MAX_JOURNAL_READ_BYTES = 512 * 1024;
 
+function readJournalTail(refsPath: string): string | null {
     if (!existsSync(refsPath)) {
-        return refs;
+        return null;
     }
 
-    let raw: string;
-
     try {
-        raw = readFileSync(refsPath, "utf8");
+        const size = statSync(refsPath).size;
+
+        if (size <= MAX_JOURNAL_READ_BYTES) {
+            return readFileSync(refsPath, "utf8");
+        }
+
+        const fd = openSync(refsPath, "r");
+
+        try {
+            const buffer = Buffer.alloc(MAX_JOURNAL_READ_BYTES);
+            const read = readSync(fd, buffer, 0, MAX_JOURNAL_READ_BYTES, size - MAX_JOURNAL_READ_BYTES);
+            const text = buffer.subarray(0, read).toString("utf8");
+            // The window almost certainly starts mid-line; that fragment is not
+            // valid JSON and would only inflate the parse-failure count.
+            const firstBreak = text.indexOf("\n");
+
+            return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
+        } finally {
+            closeSync(fd);
+        }
     } catch {
+        return null;
+    }
+}
+
+/**
+ * Newest recorded cmux location per session, one pass over the journal.
+ * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
+ * Terminal/tmux launches) are kept — callers that need a cmux target filter.
+ */
+export function loadAllSessionCmuxRefs(refsPath: string = CMUX_REFS_PATH): Map<string, SessionCmuxRefs> {
+    const refs = new Map<string, SessionCmuxRefs>();
+    const raw = readJournalTail(refsPath);
+
+    if (raw === null) {
         return refs;
     }
 
@@ -82,44 +119,22 @@ export function loadAllSessionCmuxRefs(refsPath: string = CMUX_REFS_PATH): Map<s
 /**
  * Latest recorded cmux location for a session. `query` is a full session id or
  * a prefix of at least 8 characters, matching how `focus`/`send` accept ids.
+ *
+ * Built on loadAllSessionCmuxRefs on purpose: the two used to carry their own
+ * copy of the file guard, the read, the line loop, the parse, the sessionId
+ * check and the newest-wins rule, which is six chances for the two to drift.
  */
 export function lookupSessionCmuxRefs(query: string, refsPath: string = CMUX_REFS_PATH): SessionCmuxRefs | null {
     const needle = query.trim().toLowerCase();
 
-    if (needle.length < 8 || !existsSync(refsPath)) {
-        return null;
-    }
-
-    let raw: string;
-
-    try {
-        raw = readFileSync(refsPath, "utf8");
-    } catch {
+    if (needle.length < 8) {
         return null;
     }
 
     let latest: SessionCmuxRefs | null = null;
 
-    for (const line of raw.split("\n")) {
-        if (!line.trim()) {
-            continue;
-        }
-
-        let entry: SessionCmuxRefs;
-
-        try {
-            entry = SafeJSON.parse(line, { jsonl: true }) as SessionCmuxRefs;
-        } catch {
-            continue;
-        }
-
-        if (typeof entry.sessionId !== "string") {
-            continue;
-        }
-
-        const id = entry.sessionId.toLowerCase();
-
-        if (!id.startsWith(needle) && id !== needle) {
+    for (const [id, entry] of loadAllSessionCmuxRefs(refsPath)) {
+        if (id !== needle && !id.startsWith(needle)) {
             continue;
         }
 
@@ -128,13 +143,9 @@ export function lookupSessionCmuxRefs(query: string, refsPath: string = CMUX_REF
         }
     }
 
-    if (!latest || (latest.at ?? 0) < Date.now() - MAX_AGE_MS) {
-        return null;
-    }
-
     // A record with no cmux surface (plain Terminal / tmux session) cannot
     // produce a cmux target; callers fall through to the text matcher.
-    if (!latest.surfaceId && !latest.surfaceRef) {
+    if (!latest || (!latest.surfaceId && !latest.surfaceRef)) {
         return null;
     }
 

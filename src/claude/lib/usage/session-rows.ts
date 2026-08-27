@@ -391,7 +391,10 @@ export async function listSessionRowsWithTimings(
         const cmux = new Map<string, SessionCmuxLocation>();
 
         for (const [sessionId, entry] of loadAllSessionCmuxRefs()) {
-            cmux.set(sessionId, {
+            // buildRow looks this up with sessionId.toLowerCase(); storing the raw
+            // journal id meant any uppercase character silently dropped the cmux
+            // location while the account join still resolved.
+            cmux.set(sessionId.toLowerCase(), {
                 workspaceId: entry.workspaceId ?? null,
                 workspaceRef: entry.workspaceRef ?? null,
                 paneRef: entry.paneRef ?? null,

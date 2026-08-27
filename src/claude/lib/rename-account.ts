@@ -1,3 +1,4 @@
+import { logger } from "@genesiscz/utils/logger";
 import type { WarmupConfig } from "./config";
 import { UsageHistoryDb } from "./usage/history-db";
 
@@ -45,7 +46,11 @@ export interface RenameClaudeAccountDeps {
     invalidateUsageCache?: () => Promise<void>;
 }
 
-export type RenameClaudeAccountResult = { historyRows: number };
+const log = logger.child({ component: "claude:rename-account" });
+
+export type RenameStep = "warmup" | "pollGate" | "invalidGrant" | "usageCache";
+export type RenameStepFailure = { step: RenameStep; error: string };
+export type RenameClaudeAccountResult = { historyRows: number; failed: RenameStepFailure[] };
 
 async function defaultRenameAiAccount(oldName: string, newName: string): Promise<void> {
     const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
@@ -113,12 +118,31 @@ export async function renameClaudeAccount(
     const rekeyInvalidGrant = deps.rekeyInvalidGrant ?? defaultRekeyInvalidGrant;
     const invalidateUsageCache = deps.invalidateUsageCache ?? defaultInvalidateUsageCache;
 
+    // AIConfig first: it is the identity of record, and the only step whose
+    // failure means "nothing happened".
     await renameAiAccount(oldName, newName);
     const historyRows = renameHistory(oldName, newName);
-    await rewriteWarmup(oldName, newName);
-    await rekeyPollGate(oldName, newName);
-    await rekeyInvalidGrant(oldName, newName);
-    await invalidateUsageCache();
 
-    return { historyRows };
+    // Every later store is secondary. Running them sequentially with no handler
+    // meant one throw left the account renamed in AIConfig while warmup lists,
+    // the poll gate and the cooldown still held oldName — a state no retry can
+    // repair, because a second rename exits with `Account "<oldName>" not found`.
+    const failed: RenameStepFailure[] = [];
+    const steps: Array<[RenameStep, () => Promise<void>]> = [
+        ["warmup", () => rewriteWarmup(oldName, newName)],
+        ["pollGate", () => rekeyPollGate(oldName, newName)],
+        ["invalidGrant", () => rekeyInvalidGrant(oldName, newName)],
+        ["usageCache", () => invalidateUsageCache()],
+    ];
+
+    for (const [step, run] of steps) {
+        try {
+            await run();
+        } catch (error) {
+            log.warn({ error, step, oldName, newName }, "secondary rename step failed");
+            failed.push({ step, error: error instanceof Error ? error.message : String(error) });
+        }
+    }
+
+    return { historyRows, failed };
 }
