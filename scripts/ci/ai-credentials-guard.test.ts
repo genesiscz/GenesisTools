@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -98,6 +98,29 @@ describe("unscannable roots", () => {
 
         expect(code).toBe(1);
         expect(output).not.toContain("ai-credentials-guard: OK");
+    });
+
+    test("a root that cannot be entered is diagnosed as that, not as a credential violation", async () => {
+        // `if ! cd "$root" 2>&1` merged bash's "Permission denied" into scan's
+        // STDOUT, and rule 1 reads scan through a command substitution — so the
+        // permission message was captured as a match and reported as an argless
+        // provider factory. `exit 1` inside that substitution also only killed
+        // the subshell, so the guard carried on scanning after the failure.
+        const dir = mkdtempSync(join(tmpdir(), "creds-guard-perm-"));
+        const locked = join(dir, "locked");
+        mkdirSync(locked);
+        chmodSync(locked, 0o000);
+
+        try {
+            const { code, output } = await runGuardOnRoot(locked);
+
+            expect(code).toBe(1);
+            expect(output).not.toContain("ai-credentials-guard: OK");
+            expect(output).toContain("cannot be entered");
+            expect(output).not.toContain("argless provider factory");
+        } finally {
+            chmodSync(locked, 0o755);
+        }
     });
 
     test("a root that is a file, not a directory, also fails", async () => {

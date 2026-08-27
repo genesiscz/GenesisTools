@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -61,6 +61,25 @@ describe("GrokSessionStore", () => {
             // The second claim must lose rather than overwrite the first record.
             expect(() => store.createMeta({ ...makeMeta(), sessionId: "other" })).toThrow("already exists");
             expect(store.readMeta("reviewer")?.sessionId).toBe(makeMeta().sessionId);
+        });
+    });
+
+    test("a create that fails after the claim releases the name", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-store-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new GrokSessionStore();
+            // Serializing this throws AFTER the O_EXCL open has claimed the name,
+            // which is the window the cleanup exists for. Without it the file
+            // stays behind at zero bytes and the name is dead for good.
+            const circular: GrokSessionMeta & { self?: unknown } = makeMeta();
+            circular.self = circular;
+
+            expect(() => store.createMeta(circular)).toThrow();
+            expect(existsSync(sessionMetaPath("reviewer"))).toBe(false);
+
+            store.createMeta(makeMeta());
+            expect(store.readMeta("reviewer")).toEqual(makeMeta());
         });
     });
 

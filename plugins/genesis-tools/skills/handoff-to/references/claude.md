@@ -17,8 +17,13 @@ There are two ways to hand work to a Claude model, and they are not interchangea
 ## The command
 
 ```bash
-tools claude exec -a <account> -- claude -p "$(cat /tmp/claude-<task>-brief.md)" --model sonnet
+tools claude exec -a <account> -- \
+  claude -p "$(cat /tmp/claude-<task>-brief.md)" \
+    --model sonnet \
+    --output-format json
 ```
+
+Use `--output-format json` (or `stream-json`) rather than the default text whenever a driver, not a human, reads the result. See § Structured output.
 
 `tools claude exec [-a <account>] [--no-verify] [--] <command> [args...]` runs any command with that account's long-lived token pinned into its environment. It is the supported path for `claude -p` in hooks, CI, and handoffs, precisely so the run never depends on whichever account the keychain happens to hold.
 
@@ -47,11 +52,11 @@ Eligible means provider `anthropic-sub` **and** a stored long-lived token (`exec
 - **A read-only probe runs before the spawn** (a GET, no billing). Only a definitive `invalid` (401/403) blocks. `limited` still launches, because it is the right identity with no headroom, and `unreachable` still launches so a network blip cannot ground a CI job. Skip it with `--no-verify` only when you already know the token is good.
 - **`tools claude doctor`** finds running pinned sessions that are silently billing the keychain account instead of their pin. Worth running if a handoff's usage lands somewhere unexpected.
 
-## 🛑 Never use interactive `tools claude run` for a handoff
+## Use headless `-p`, not interactive `tools claude run`
 
-`tools claude run` launches an interactive Claude Code. Claude Code 2.1.202 was observed swapping `CLAUDE_CODE_OAUTH_TOKEN` for keychain credentials *after startup*, so an interactive session silently starts billing a different account mid-run. Headless `-p` mode is unaffected, which is why the handoff path is `exec` plus `claude -p` and not `run`.
+`tools claude run` launches an interactive Claude Code. It is the right tool when a human is driving and the wrong tool for an unattended worker, for reasons that hold independently of anything else: it expects a TTY, it returns prose rather than parseable output, and it gives you no way to steer a running turn.
 
-`run` is the right tool when a human is driving. It is the wrong tool for an unattended worker.
+⚠️ There is also a dated billing observation: Claude Code **2.1.202** was seen swapping `CLAUDE_CODE_OAUTH_TOKEN` for keychain credentials *after startup*, so an interactive session began billing a different account mid-run, while headless `-p` was unaffected. That has **not** been re-tested on the current build (2.1.238 as of 2026-08-27). Treat it as a reason to prefer `-p`, not as a current fact about `run`. If you need to know, `tools claude doctor` scans running pinned sessions for exactly this silent-fallback failure.
 
 ## Model and effort
 
@@ -79,11 +84,34 @@ The readiness gate in `gt:handoff-to` applies unchanged. A `claude -p` run is **
 
 Write the brief to a file and read it in with `"$(cat …)"` rather than inlining prose, for the same quoting reasons as the other backends.
 
+## Structured output — do not parse prose
+
+Bare `claude -p` returns plain text, which is fine for a human and bad for a driver. Ask for JSON instead:
+
+```bash
+tools claude exec -a <account> -- claude -p "<brief>" --output-format json            # one result object
+tools claude exec -a <account> -- claude -p "<brief>" --output-format stream-json     # NDJSON, realtime
+```
+
+`--output-format` accepts `text` (default), `json`, and `stream-json`. Add `--include-partial-messages` for token-level deltas on the streaming form, and `--json-schema '<schema>'` to constrain the final answer to a shape you can validate instead of eyeballing.
+
+For a **steerable** session, pair it with streaming input:
+
+```bash
+claude -p --input-format stream-json --output-format stream-json --replay-user-messages
+```
+
+`--input-format stream-json` takes realtime streaming input, so you can send further messages into a running turn rather than only resuming between turns. `--replay-user-messages` echoes your own messages back on stdout so you can acknowledge them. This is the closest Claude equivalent to the Codex app-server loop.
+
 ## Sandboxing
 
 `exec` pins credentials; it does **not** sandbox. The child is a normal process with your filesystem access, and `claude -p` decides its own tool use subject to that repo's permission rules. There is no `--write deny` equivalent here.
 
-So for anything you did not explicitly ask for, isolate by *location*, not by flag: run it in `git worktree add` scratch checkout, or a temp directory. Never point an unattended writable `-p` run at the user's live working tree on your own initiative.
+That does not make a read-only Claude handoff impossible, it makes it *your* job:
+
+- State the constraint plainly in the brief ("do NOT write, edit, commit, or run anything that mutates state; your written answer is the deliverable"). Workers honor negative constraints reliably when they are spelled out.
+- Verify it rather than trusting it: `git -C <cwd> status --short` must be empty when the turn ends.
+- For anything the user did not explicitly ask for, isolate by *location*: a `git worktree add` scratch checkout or a temp directory. Never point an unattended writable `-p` run at the user's live working tree on your own initiative.
 
 ## Verify, then integrate
 

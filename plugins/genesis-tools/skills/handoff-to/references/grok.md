@@ -76,6 +76,15 @@ The readiness gate in `gt:handoff-to` applies unchanged. Because there are no ap
 
 Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message.
 
+## The raw CLI has more than the harness exposes
+
+`tools grok` drives the blocking text loop above, which is what most handoffs need. The `grok` CLI underneath has two capabilities the harness does not surface yet, worth knowing before you conclude something is impossible:
+
+- **Structured output.** `--output-format` accepts `json`, `streaming-json` (NDJSON of the agent's native ACP session updates), and `streaming-messages-json` (NDJSON in the Anthropic Messages wire format). `--json-schema '<schema>'` constrains the final answer to a validated shape. `grok agent` runs headless without the interactive UI.
+- **A leader process.** `grok leader list | info | kill` manages running leader processes over a socket at `~/.grok/leader.sock` (`--leader-socket` overrides it). This is the closest grok analog to the Codex app-server daemon.
+
+Neither is wired into `tools grok` today, so reaching for them means going around the harness and losing the isolation and sticky-`--readonly` guarantees above. Do not do that casually. Flag it as a harness gap instead.
+
 ## Verify, then integrate
 
 Never trust the self-report. Run the verification command yourself, read `git diff` in the worker's cwd, only then integrate. There is no daemon to tear down — when the last turn ends, the handoff is over.

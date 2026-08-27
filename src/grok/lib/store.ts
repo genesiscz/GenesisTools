@@ -155,7 +155,14 @@ export class GrokSessionStore {
     }
 
     listNames(): string[] {
-        const dir = this.ensureSessionsDir();
+        // Reads, never creates. `sessions` is a diagnostic, and this used to
+        // mkdir the store just because someone looked at it (PR #330 review).
+        const dir = sessionsDir();
+
+        if (!existsSync(dir)) {
+            return [];
+        }
+
         return readdirSync(dir)
             .filter((file) => file.endsWith(".meta.json"))
             .map((file) => file.slice(0, -".meta.json".length))

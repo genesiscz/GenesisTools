@@ -29,12 +29,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/require-grep.sh"
 fail=0
 
 # Roots default to the repo's own trees. Passing them in is what lets the guard's
-# own test point it at a fixture directory of known violations.
+# own test point it at a fixture directory of known violations, and it is also
+# what selects `scan`'s external mode below. `scan` cannot read `$#` itself,
+# because inside a function that is the function's own argument count.
 roots=("$@")
-external_roots=1
-if [ ${#roots[@]} -eq 0 ]; then
+external_roots=$#
+if [ "$external_roots" -eq 0 ]; then
     roots=(src apps scripts)
-    external_roots=0
 fi
 
 # A root that cannot be entered must stop the guard, not be skipped.
@@ -44,6 +45,16 @@ fi
 for root in "${roots[@]}"; do
     if [ ! -d "$root" ]; then
         echo "::error:: scan root '${root}' is not a directory, so this guard would report a clean result without scanning it."
+        exit 1
+    fi
+
+    # `scan` cd's into an external root, and it has to be checked HERE. Rule 1
+    # reads `scan` through a command substitution, so its `exit 1` only kills
+    # that subshell and the guard carried on; worse, the cd's `2>&1` put bash's
+    # "Permission denied" on scan's stdout, where the substitution captured it
+    # and reported a permission problem as an argless provider factory.
+    if [ ! -x "$root" ]; then
+        echo "::error:: scan root '${root}' cannot be entered, so this guard would report a clean result without scanning it."
         exit 1
     fi
 done
@@ -71,8 +82,10 @@ scan() {
     matched=1
 
     for root in "${roots[@]}"; do
-        if [ "$external_roots" -eq 1 ]; then
-            if ! cd "$root" 2>&1; then
+        if [ "$external_roots" -gt 0 ]; then
+            # No `2>&1` here: merging bash's diagnosis into stdout puts it
+            # inside rule 1's command substitution, where it reads as a match.
+            if ! cd "$root"; then
                 echo "::error:: could not enter scan root '${root}'."
                 exit 1
             fi

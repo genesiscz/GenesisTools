@@ -113,7 +113,15 @@ export function resolveGrokBinary(): string {
     return binary;
 }
 
-function promptArgs(options: { prompt?: string; promptFile?: string }): string[] {
+/**
+ * The prompt half of a turn's argv.
+ *
+ * `--prompt-file` is made absolute against the CALLER's cwd, which is where the
+ * user typed the path. It has to become absolute here because grok chdirs to
+ * `--cwd` before reading it, so a bare relative path would resolve against the
+ * session's directory instead of the shell the command was run from.
+ */
+export function promptArgs(options: { prompt?: string; promptFile?: string }): string[] {
     if (options.promptFile) {
         return ["--prompt-file", resolve(options.promptFile)];
     }
@@ -228,6 +236,14 @@ async function runTurn(
 
 export async function runSession(options: RunSessionOptions): Promise<TurnResult> {
     const store = new GrokSessionStore();
+    // Everything that can fail deterministically has to fail BEFORE the claim.
+    // `createMeta` is an O_EXCL reservation of the name, so a throw after it
+    // leaves valid metadata for a session that never started: the next `run`
+    // is rejected as already existing, and `steer` names a session id whose
+    // first turn was never launched (PR #330 review).
+    const promptArguments = promptArgs(options);
+    resolveGrokBinary();
+
     const meta: GrokSessionMeta = {
         name: options.name,
         sessionId: crypto.randomUUID(),
@@ -240,7 +256,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     };
     store.createMeta(meta);
 
-    return runTurn(store, meta, 1, buildRunArgs(meta, promptArgs(options)));
+    return runTurn(store, meta, 1, buildRunArgs(meta, promptArguments));
 }
 
 export async function steerSession(options: SteerSessionOptions): Promise<TurnResult> {

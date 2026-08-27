@@ -130,13 +130,21 @@ A second Claude account driven headlessly. Like grok it is a resume loop with no
 | §3 spawn | `tools claude exec -a <ACCOUNT> -- claude -p "$(cat <BRIEF_FILE>)" --session-id <uuid> --model <model>` — background Bash, wait for completion |
 | §4 watch | nothing to tail; the turn's stdout IS the report |
 | §5 steer | `tools claude exec -a <ACCOUNT> -- claude -p '<correction>' --resume <uuid>`; between turns only |
-| §6 approvals | none exist. `WRITE_POLICY: deny` → refuse the spawn and report that this backend cannot do a read-only run (route to Codex `--write deny`, or grok `--readonly`); `ask` → refuse likewise; `allow` → only in a scratch dir or `git worktree add` checkout, never the user's live tree |
+| §6 approvals | none exist, and there is no sandbox flag. Enforce `WRITE_POLICY` through the brief and the location you launch in, not through a flag — see below |
 | §7 verify | unchanged: run `VERIFY_CMD` yourself, read `git diff` |
 | §8 teardown | nothing to stop; report the same `VERDICT:` block |
 
 🛑 **`ACCOUNT` is mandatory and the orchestrator must name it.** Omitting `-a` in a non-TTY silently auto-picks by usage headroom, so the work bills an account nobody chose. If your spawn prompt has no account, ask for one before spawning; do not guess.
 
-🛑 **Never launch this backend with interactive `tools claude run`.** It has been observed swapping the pinned token for keychain credentials after startup, which bills the wrong account mid-run. Headless `-p` is the only supported handoff path.
+**Enforcing `WRITE_POLICY` without a flag.** This backend has no sandbox, so the policy is yours to hold. It is a real policy, not a suggestion:
+
+- `deny` — state in the brief that the worker must not write, edit, or run anything that mutates state, and that its deliverable is its written answer. Then check the diff: `git -C <CWD> status --short` must be empty when the turn ends. If it is not, that is a policy breach to report, not to quietly accept.
+- `ask` — slice the work so each turn stops before the mutating step, and steer the next turn once you have approved it. You are the approval channel here.
+- `allow` — fine in a scratch dir or a `git worktree add` checkout. Point it at the user's live tree only when the orchestrator explicitly said so.
+
+Workers follow negative constraints reliably when they are spelled out. Spell them out, then verify with the diff rather than trusting the report.
+
+⚠️ **Use headless `-p`, not interactive `tools claude run`.** `run` expects a TTY, returns prose rather than parseable output, and gives you no way to steer, so it is the wrong shape for a driven worker regardless of anything else. Separately, `run` was observed on Claude Code 2.1.202 swapping the pinned token for keychain credentials after startup and billing the wrong account; that has **not** been re-tested on the current build (2.1.238), so treat it as a dated observation rather than a live fact.
 
 ## Backends other than Codex, Grok and Claude
 
