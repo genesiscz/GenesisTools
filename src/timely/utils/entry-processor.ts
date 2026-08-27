@@ -63,7 +63,6 @@ function isWorkRelated(entry: ProcessedEntry): boolean {
         text.includes("sentry") ||
         text.includes("kibana") ||
         text.includes("elastic") ||
-        text.includes("cprdigital") ||
         text.includes("incident") ||
         text.includes("user story") ||
         text.includes("azure devops") ||
@@ -122,10 +121,7 @@ function isWorkRelated(entry: ProcessedEntry): boolean {
         text.includes("glm") ||
         text.includes("t3 chat") ||
         text.includes("reservine") ||
-        text.includes("tenantscontroller") ||
-        text.includes("generatetimeslots") ||
-        text.includes("x (4m)") ||
-        text.includes("veronika & lucie")
+        text.includes("x (4m)")
     ) {
         return false;
     }

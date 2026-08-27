@@ -66,7 +66,7 @@ describe.serial("stash e2e", () => {
     });
 
     test("new-file save --mode staged → apply → unapply removes the file (no empty husk)", async () => {
-        // Mirrors the CEZ burn-auth-callback-record workflow: `git add` a brand-new file
+        // Mirrors the Contoso burn-auth-callback-record workflow: `git add` a brand-new file
         // (RecordDemoBadge.tsx-style), `tools stash save --mode staged`, apply elsewhere, then
         // unapply should DELETE the file in the target, not leave an empty husk.
         process.chdir(projectA);

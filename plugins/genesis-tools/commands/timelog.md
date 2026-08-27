@@ -350,7 +350,7 @@ Reports go in `.claude/timelog/YYYY-MM.md`. Structure:
 
 | Date | Duration | Key Meetings |
 |------|----------|-------------|
-| 2. 2. | 5h 54m | GO/NO GO (52m), Teams: Hansík, Figurny... |
+| 2. 2. | 5h 54m | GO/NO GO (52m), Teams: two teammates... |
 
 ---
 

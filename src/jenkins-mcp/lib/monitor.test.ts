@@ -499,7 +499,7 @@ describe("runMonitor", () => {
         expect(stageEvents.filter((e) => e.id === "3").map((e) => e.status)).toEqual(["SUCCESS"]);
     });
 
-    it("emits fee-web context on parallel stage events and notifications", async () => {
+    it("emits web-app context on parallel stage events and notifications", async () => {
         const lines: string[] = [];
         const out = (l: string) => lines.push(l.trim());
         const sent: Array<{ title: string; subtitle: string; body: string }> = [];
@@ -510,11 +510,11 @@ describe("runMonitor", () => {
             close: () => {},
         };
 
-        // Minimal Blue Ocean graph: Build affected apps → PARALLEL fee-web → STAGE fee-web → Tests → Build
+        // Minimal Blue Ocean graph: Build affected apps → PARALLEL web-app → STAGE web-app → Tests → Build
         const blueNodes = [
             { id: "75", displayName: "Build affected apps", type: "STAGE", firstParent: null },
-            { id: "82", displayName: "fee-web", type: "PARALLEL", firstParent: "75" },
-            { id: "91", displayName: "fee-web", type: "STAGE", firstParent: "82" },
+            { id: "82", displayName: "web-app", type: "PARALLEL", firstParent: "75" },
+            { id: "91", displayName: "web-app", type: "STAGE", firstParent: "82" },
             { id: "110", displayName: "Tests", type: "STAGE", firstParent: "91" },
             { id: "166", displayName: "Build", type: "STAGE", firstParent: "110" },
             { id: "12", displayName: "Clone", type: "STAGE", firstParent: null },
@@ -581,25 +581,25 @@ describe("runMonitor", () => {
 
         const tests = stageEvents.filter((e) => e.id === "110");
         expect(tests.length).toBeGreaterThanOrEqual(1);
-        expect(tests.every((e) => e.context === "fee-web")).toBe(true);
-        expect(tests.every((e) => e.label === "fee-web · Tests")).toBe(true);
-        expect(tests[0].path).toEqual(["Build affected apps", "fee-web", "Tests"]);
+        expect(tests.every((e) => e.context === "web-app")).toBe(true);
+        expect(tests.every((e) => e.label === "web-app · Tests")).toBe(true);
+        expect(tests[0].path).toEqual(["Build affected apps", "web-app", "Tests"]);
 
-        const buildSuccess = stageEvents.find((e) => e.id === "166" && e.label === "fee-web · Build");
-        expect(buildSuccess?.context).toBe("fee-web");
-        expect(buildSuccess?.path).toEqual(["Build affected apps", "fee-web", "Tests", "Build"]);
+        const buildSuccess = stageEvents.find((e) => e.id === "166" && e.label === "web-app · Build");
+        expect(buildSuccess?.context).toBe("web-app");
+        expect(buildSuccess?.path).toEqual(["Build affected apps", "web-app", "Tests", "Build"]);
 
         // Notifications carry context in title, subtitle, AND body.
-        const testsNotif = sent.find((n) => n.subtitle === "fee-web · Tests");
+        const testsNotif = sent.find((n) => n.subtitle === "web-app · Tests");
         expect(testsNotif).toBeDefined();
-        expect(testsNotif?.title).toBe("develop #1 · fee-web");
-        expect(testsNotif?.body).toContain("fee-web · Tests");
+        expect(testsNotif?.title).toBe("develop #1 · web-app");
+        expect(testsNotif?.body).toContain("web-app · Tests");
         expect(testsNotif?.body).toContain("SUCCESS");
 
-        const buildNotif = sent.find((n) => n.subtitle === "fee-web · Build");
+        const buildNotif = sent.find((n) => n.subtitle === "web-app · Build");
         expect(buildNotif).toBeDefined();
-        expect(buildNotif?.title).toBe("develop #1 · fee-web");
-        expect(buildNotif?.body).toContain("fee-web · Build");
+        expect(buildNotif?.title).toBe("develop #1 · web-app");
+        expect(buildNotif?.body).toContain("web-app · Build");
 
         // Never notify with bare stage name alone as subtitle.
         expect(sent.every((n) => n.subtitle !== "Tests" && n.subtitle !== "Build")).toBe(true);

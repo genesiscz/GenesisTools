@@ -89,16 +89,16 @@ describe("stageNotifyBody", () => {
         expect(body).toContain("running");
     });
 
-    it("leads with enriched label so fee-web context is in the body", () => {
+    it("leads with enriched label so web-app context is in the body", () => {
         const body = stageNotifyBody({
             id: "499",
             name: "SonarQube",
-            label: "fee-web · SonarQube",
-            context: "fee-web",
+            label: "web-app · SonarQube",
+            context: "web-app",
             status: "FAILED",
             durationMillis: 5_700,
         });
-        expect(body.startsWith("fee-web · SonarQube")).toBe(true);
+        expect(body.startsWith("web-app · SonarQube")).toBe(true);
         expect(body).toContain("FAILED");
     });
 });

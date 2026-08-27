@@ -77,7 +77,7 @@ export function stageNotifyStatus(node: Stage | FlowNode): string {
 }
 
 /**
- * Notification body: always lead with the display label (e.g. "fee-web · SonarQube")
+ * Notification body: always lead with the display label (e.g. "web-app · SonarQube")
  * so parallel-branch context is visible even when the OS truncates/hides subtitle.
  */
 export function stageNotifyBody(node: Stage | FlowNode): string {

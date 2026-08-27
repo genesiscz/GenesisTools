@@ -101,7 +101,7 @@ Report with: tools agents message --from codex_<name> --to lead --body '<text>'
 Check for replies with: tools agents login --agent-name codex_<name> --once
 ```
 
-The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-502/-Users-Martin-Tresors-Projects-CEZ-col-fe/<uuid>/scratchpad/report.md` and Codex echoed it back as `…/-Users-Martin-Tresors-Projects/CEZ-col-fe/<uuid>/…`, substituting a `/` for a `-` mid-path. Harmless that time because the orchestrator used its own path; a human copy-pasting it lands nowhere.
+The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-502/-Users-Martin-Tresors-Projects-Contoso-example-app/<uuid>/scratchpad/report.md` and Codex echoed it back as `…/-Users-Martin-Tresors-Projects/Contoso-example-app/<uuid>/…`, substituting a `/` for a `-` mid-path. Harmless that time because the orchestrator used its own path; a human copy-pasting it lands nowhere.
 
 ## 4. Watch and steer
 

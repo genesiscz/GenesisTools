@@ -31,12 +31,12 @@ export interface Stage {
     stageFlowNodes?: FlowNode[];
     /**
      * Ancestor chain including self (consecutive duplicates collapsed), from
-     * Blue Ocean `firstParent` — e.g. ["Build affected apps", "fee-web", "Tests"].
+     * Blue Ocean `firstParent` — e.g. ["Build affected apps", "web-app", "Tests"].
      */
     path?: string[];
-    /** Parallel-branch / parent scope, e.g. "fee-web". */
+    /** Parallel-branch / parent scope, e.g. "web-app". */
     context?: string;
-    /** Display name for events/notifications: "fee-web · Tests" (falls back to name). */
+    /** Display name for events/notifications: "web-app · Tests" (falls back to name). */
     label?: string;
 }
 
@@ -197,7 +197,7 @@ export async function getStages(
 
     const snap = normalizeSnapshot(res.data as PipelineSnapshot);
 
-    // Default on: Blue Ocean supplies parallel-branch parent path (fee-web · Tests).
+    // Default on: Blue Ocean supplies parallel-branch parent path (web-app · Tests).
     // Pass context: false to skip the extra request (tests / offline).
     if (opts.context === false) {
         return snap;

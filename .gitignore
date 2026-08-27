@@ -228,3 +228,5 @@ vercel-skills
 .claude/
 .handoff
 README.json-to-ts.md
+.claude/plans/
+.claude/old/

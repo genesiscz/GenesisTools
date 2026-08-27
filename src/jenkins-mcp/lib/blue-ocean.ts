@@ -19,11 +19,11 @@ export interface StageContext {
     /** Full ancestor chain including self, consecutive duplicate names collapsed. */
     path: string[];
     /**
-     * Parallel-branch / parent scope, e.g. "fee-web" or "Repo QA".
+     * Parallel-branch / parent scope, e.g. "web-app" or "Repo QA".
      * Undefined for top-level sequential stages (Clone, …).
      */
     context?: string;
-    /** Notification-friendly name: "fee-web · Tests" or plain "Clone". */
+    /** Notification-friendly name: "web-app · Tests" or plain "Clone". */
     label: string;
 }
 
@@ -96,7 +96,7 @@ export async function fetchBlueOceanNodes(
     return null;
 }
 
-/** Collapse consecutive duplicate names: [apps, fee-web, fee-web, Tests] → [apps, fee-web, Tests]. */
+/** Collapse consecutive duplicate names: [apps, web-app, web-app, Tests] → [apps, web-app, Tests]. */
 export function dedupeConsecutive(names: string[]): string[] {
     const out: string[] = [];
 
@@ -112,7 +112,7 @@ export function dedupeConsecutive(names: string[]): string[] {
 /**
  * Build path/context/label for one Blue Ocean node by walking `firstParent`.
  *
- * Context prefers the nearest PARALLEL ancestor (the matrix branch: fee-web,
+ * Context prefers the nearest PARALLEL ancestor (the matrix branch: web-app,
  * web-site, …). If none, falls back to the immediate parent stage (Repo QA · Type check).
  */
 export function contextFromBlueOcean(nodeId: string, byId: Map<string, BlueOceanNode>): StageContext | null {
@@ -150,7 +150,7 @@ export function contextFromBlueOcean(nodeId: string, byId: Map<string, BlueOcean
         context = ancestors[ancestors.length - 1].displayName;
     }
 
-    // Branch shell named the same as its PARALLEL wrapper ("fee-web") — keep label plain.
+    // Branch shell named the same as its PARALLEL wrapper ("web-app") — keep label plain.
     if (context === self.displayName) {
         context = undefined;
     }

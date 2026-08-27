@@ -26,9 +26,9 @@ describe("blueOceanNodesUrls", () => {
 
 describe("dedupeConsecutive", () => {
     it("collapses PARALLEL+STAGE duplicate names", () => {
-        expect(dedupeConsecutive(["Build affected apps", "fee-web", "fee-web", "Tests"])).toEqual([
+        expect(dedupeConsecutive(["Build affected apps", "web-app", "web-app", "Tests"])).toEqual([
             "Build affected apps",
-            "fee-web",
+            "web-app",
             "Tests",
         ]);
     });
@@ -40,8 +40,8 @@ describe("contextFromBlueOcean", () => {
         { id: "58", displayName: "Repo QA", type: "STAGE", firstParent: "12" },
         { id: "62", displayName: "Type check", type: "PARALLEL", firstParent: "58" },
         { id: "75", displayName: "Build affected apps", type: "STAGE", firstParent: null },
-        { id: "82", displayName: "fee-web", type: "PARALLEL", firstParent: "75" },
-        { id: "91", displayName: "fee-web", type: "STAGE", firstParent: "82" },
+        { id: "82", displayName: "web-app", type: "PARALLEL", firstParent: "75" },
+        { id: "91", displayName: "web-app", type: "STAGE", firstParent: "82" },
         { id: "110", displayName: "Tests", type: "STAGE", firstParent: "91" },
         { id: "166", displayName: "Build", type: "STAGE", firstParent: "110" },
         { id: "499", displayName: "SonarQube", type: "STAGE", firstParent: "480" },
@@ -50,24 +50,24 @@ describe("contextFromBlueOcean", () => {
     ];
     const byId = new Map(nodes.map((n) => [n.id, n]));
 
-    it("labels Tests with fee-web context", () => {
+    it("labels Tests with web-app context", () => {
         const ctx = contextFromBlueOcean("110", byId)!;
-        expect(ctx.context).toBe("fee-web");
-        expect(ctx.label).toBe("fee-web · Tests");
-        expect(ctx.path).toEqual(["Build affected apps", "fee-web", "Tests"]);
+        expect(ctx.context).toBe("web-app");
+        expect(ctx.label).toBe("web-app · Tests");
+        expect(ctx.path).toEqual(["Build affected apps", "web-app", "Tests"]);
     });
 
-    it("labels nested Build under fee-web", () => {
+    it("labels nested Build under web-app", () => {
         const ctx = contextFromBlueOcean("166", byId)!;
-        expect(ctx.context).toBe("fee-web");
-        expect(ctx.label).toBe("fee-web · Build");
+        expect(ctx.context).toBe("web-app");
+        expect(ctx.label).toBe("web-app · Build");
     });
 
-    it("labels SonarQube with fee-web (not deploy)", () => {
+    it("labels SonarQube with web-app (not deploy)", () => {
         const ctx = contextFromBlueOcean("499", byId)!;
-        expect(ctx.context).toBe("fee-web");
-        expect(ctx.label).toBe("fee-web · SonarQube");
-        expect(ctx.path).toContain("fee-web");
+        expect(ctx.context).toBe("web-app");
+        expect(ctx.label).toBe("web-app · SonarQube");
+        expect(ctx.path).toContain("web-app");
         expect(ctx.path[ctx.path.length - 1]).toBe("SonarQube");
     });
 
@@ -84,9 +84,9 @@ describe("contextFromBlueOcean", () => {
         expect(ctx.path).toEqual(["Clone"]);
     });
 
-    it("keeps fee-web shell label plain (no fee-web · fee-web)", () => {
+    it("keeps web-app shell label plain (no web-app · web-app)", () => {
         const ctx = contextFromBlueOcean("91", byId)!;
-        expect(ctx.label).toBe("fee-web");
+        expect(ctx.label).toBe("web-app");
     });
 });
 

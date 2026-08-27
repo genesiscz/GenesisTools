@@ -57,7 +57,7 @@ tools clarity ui
 - Auth and URL config is stored under `~/.genesis-tools/clarity/`.
 - Time-source enrichment reuses `tools timely` and `tools azure-devops` so those must be configured first.
 - The UI lives under `src/clarity/ui/` and expects the project's cwd via the `CLARITY_PROJECT_CWD` env var (set automatically by `tools clarity ui`).
-- Czech-locale weeks (Monday-start, `dd.MM` dates) are supported end-to-end; Clarity project codes from CEZ are the primary target.
+- Czech-locale weeks (Monday-start, `dd.MM` dates) are supported end-to-end; Clarity project codes from Contoso are the primary target.
 
 ---
 

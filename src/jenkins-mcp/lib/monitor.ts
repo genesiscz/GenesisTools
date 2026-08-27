@@ -61,7 +61,7 @@ export type MonitorEvent =
     | { event: "run"; ts: string; status: RunStatus }
     | { event: "end"; ts: string; result: RunStatus; durationMillis: number; via?: "wfapi" | "api-json" };
 
-/** Prefer enriched label ("fee-web · Tests") over bare stage name. */
+/** Prefer enriched label ("web-app · Tests") over bare stage name. */
 function stageLabel(stage: Stage): string {
     return stage.label ?? stage.name;
 }
@@ -350,7 +350,7 @@ function notifyTransition(
 function stageNotifyFields(stage: Stage): { titleSuffix?: string; subtitle: string; body: string } {
     const label = stageLabel(stage);
     return {
-        // title: "develop #7180 · fee-web" — app scope in the most visible line
+        // title: "develop #7180 · web-app" — app scope in the most visible line
         titleSuffix: stage.context,
         subtitle: label,
         body: stageNotifyBody(stage),
