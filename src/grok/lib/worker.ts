@@ -99,7 +99,11 @@ export function buildSteerArgs(session: { sessionId: string }, readOnly: boolean
 }
 
 export function resolveGrokBinary(): string {
-    const binary = Bun.which("grok");
+    // `Bun.which("grok")` searches the PATH the PROCESS STARTED WITH, not the
+    // current one, so a PATH set after startup is invisible to it. Passing the
+    // live value is what makes a wrapper that prepends a directory — or a test
+    // that points at a stub binary — actually take effect.
+    const binary = Bun.which("grok", { PATH: env.get("PATH") });
     if (!binary) {
         // Says only what it checked. It used to read as though authentication
         // had been verified too, so an unauthenticated grok produced a turn that

@@ -376,6 +376,53 @@ async function runRg(args: string[]): Promise<RgResult> {
     return { exitCode, stdout, stderr };
 }
 
+/**
+ * ripgrep is an ACCELERATOR here, never a requirement. It only picks which files
+ * to open; every byte of classification below is pure TypeScript. Treating it as
+ * a requirement made the whole extractor throw `Executable not found in $PATH:
+ * "rg"` on any machine without it — ubuntu-latest has no ripgrep, which is the
+ * same blind spot that let two CI guards enforce nothing for weeks.
+ */
+let ripgrepPresent: boolean | undefined;
+
+function hasRipgrep(): boolean {
+    if (ripgrepPresent === undefined) {
+        ripgrepPresent = Bun.which("rg") !== null;
+
+        if (!ripgrepPresent) {
+            logger.info("extractShellQuirks: ripgrep not on PATH — falling back to the in-process scan");
+        }
+    }
+
+    return ripgrepPresent;
+}
+
+async function listJsonlFiles(root: string): Promise<string[]> {
+    const found: string[] = [];
+
+    for await (const file of new Bun.Glob("**/*.jsonl").scan({ cwd: root, absolute: true, onlyFiles: true })) {
+        found.push(file);
+    }
+
+    // rg walks in directory order; sorting makes the fallback's file order stable
+    // instead of filesystem-dependent.
+    return found.sort();
+}
+
+/** The `rg -l --regexp RG_PREFILTER` prefilter, done in process. */
+async function filterByPrefilter(files: string[]): Promise<string[]> {
+    const prefilter = new RegExp(RG_PREFILTER);
+    const matched: string[] = [];
+
+    for (const file of files) {
+        if (prefilter.test(await Bun.file(file).text())) {
+            matched.push(file);
+        }
+    }
+
+    return matched;
+}
+
 function splitFileList(stdout: string): string[] {
     return stdout
         .split("\n")
@@ -404,6 +451,10 @@ function resolveScanRoot(projectsDir: string, project?: string): string {
 }
 
 async function listCandidateFiles(root: string): Promise<string[]> {
+    if (!hasRipgrep()) {
+        return filterByPrefilter(await listJsonlFiles(root));
+    }
+
     const result = await runRg(["-l", "--glob", "*.jsonl", "--regexp", RG_PREFILTER, root]);
 
     // rg exit 1 = no matches, which is an answer, not a failure.
@@ -412,6 +463,21 @@ async function listCandidateFiles(root: string): Promise<string[]> {
     }
 
     return splitFileList(result.stdout);
+}
+
+/** Every jsonl under the root — the unfiltered form of the scan above. */
+async function listAllSessionFiles(root: string): Promise<string[]> {
+    if (!hasRipgrep()) {
+        return listJsonlFiles(root);
+    }
+
+    const listed = await runRg(["--files", "--glob", "*.jsonl", root]);
+
+    if (listed.exitCode !== 0 && listed.exitCode !== 1) {
+        throw new Error(`rg --files failed (exit ${listed.exitCode}): ${listed.stderr.slice(0, 500)}`);
+    }
+
+    return splitFileList(listed.stdout);
 }
 
 // =============================================================================
@@ -812,19 +878,8 @@ export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}
 
     const scanRoot = resolveScanRoot(projectsDir, options.project);
 
-    let candidates: string[];
-    if (useRg) {
-        candidates = await listCandidateFiles(scanRoot);
-    } else {
-        // Fallback: every jsonl under the resolved root via rg --files
-        const listed = await runRg(["--files", "--glob", "*.jsonl", scanRoot]);
-
-        if (listed.exitCode !== 0 && listed.exitCode !== 1) {
-            throw new Error(`rg --files failed (exit ${listed.exitCode}): ${listed.stderr.slice(0, 500)}`);
-        }
-
-        candidates = splitFileList(listed.stdout);
-    }
+    // Without the prefilter every jsonl under the resolved root is a candidate.
+    let candidates = useRg ? await listCandidateFiles(scanRoot) : await listAllSessionFiles(scanRoot);
 
     if (!includeSubagents) {
         candidates = candidates.filter((f) => !isSubagentPath(f));

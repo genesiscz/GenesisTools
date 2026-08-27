@@ -23,6 +23,35 @@ function getTrimmedEnv(name: string): string | undefined {
 }
 
 /**
+ * A POSIX locale name reduced to the BCP-47 tag `Intl` accepts, or undefined.
+ *
+ * `LANG=C.UTF-8` is the default on GitHub Actions runners and most containers,
+ * and it reduces to "C", which is NOT a language tag: every
+ * `new Intl.DateTimeFormat("C")` built from it throws `RangeError: invalid
+ * language tag: C`. That took out every date this repo renders under that
+ * environment, from `tools ms-teams export` down. "C" and "POSIX" both mean "no
+ * localisation", so they are treated as "no preference" and the Intl default
+ * answers instead.
+ */
+export function toLanguageTag(envLocale: string): string | undefined {
+    const tag = envLocale.split(".")[0].replace(/_/g, "-");
+
+    if (tag === "C" || tag === "POSIX") {
+        return undefined;
+    }
+
+    try {
+        // A validity probe, not an error path: anything Intl refuses to
+        // canonicalise here would throw again inside every formatter below.
+        Intl.getCanonicalLocales(tag);
+    } catch {
+        return undefined;
+    }
+
+    return tag;
+}
+
+/**
  * Detect system locale.
  * macOS: `defaults read NSGlobalDomain AppleLocale` (e.g. "cs_CZ" -> "cs-CZ")
  * Fallback: $LC_TIME / $LANG / $LC_ALL -> Intl default
@@ -62,9 +91,10 @@ export function getSystemLocale(): string {
     }
 
     const envLocale = getTrimmedEnv("LC_TIME") ?? getTrimmedEnv("LANG") ?? getTrimmedEnv("LC_ALL");
+    const envTag = envLocale ? toLanguageTag(envLocale) : undefined;
 
-    if (envLocale) {
-        cachedLocale = envLocale.split(".")[0].replace(/_/g, "-");
+    if (envTag) {
+        cachedLocale = envTag;
         return cachedLocale;
     }
 

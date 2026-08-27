@@ -28,6 +28,7 @@ import { env } from "@genesiscz/utils/env";
  *   RUN_CLAUDE_DATA=1 bun test           # tests that discover ~/.claude session data (0 files on CI)
  *   RUN_LOCAL_MODELS=1 bun test          # tests that require locally-installed ONNX models (e.g. sherpa-onnx)
  *   RUN_AUDIO_DEVICE=1 bun test          # tests that need a real audio output device (playback)
+ *   RUN_SPOTIFY_DATA=1 bun test          # tests that read the machine's imported Spotify history
  *
  * Env-var names intentionally reuse the conventions already in the repo
  * (RUN_NETWORK_TESTS, RUN_LIVE, …) so existing CI/local muscle memory holds.
@@ -119,6 +120,13 @@ export const optIn = {
      * credits and hits provider rate limits. Set RUN_REAL_APIS=1 to include.
      */
     realApis: flag("RUN_REAL_APIS"),
+    /**
+     * Tests that read the machine's own Spotify listening history (~/.config/me-spotify
+     * plus the imported play DB). CI has no such history, so the CLI they drive prints
+     * nothing on stdout and the row-count assertions parse an empty body.
+     * Set RUN_SPOTIFY_DATA=1 to include them.
+     */
+    spotifyData: flag("RUN_SPOTIFY_DATA"),
 } as const;
 
 /**
@@ -193,6 +201,11 @@ export const skip = {
      * Gates tests that hit live paid AI APIs with real keys (cost + rate limits).
      */
     realApis: !optIn.realApis,
+    /**
+     * Skip unless RUN_SPOTIFY_DATA is set.
+     * Gates tests that need the machine's own imported Spotify history — none on CI.
+     */
+    spotifyData: !optIn.spotifyData,
 } as const;
 
 /** Compose gates: skip if ANY condition is true. */
@@ -245,4 +258,5 @@ export const GATE_ENV_VARS: Record<keyof typeof optIn, string> = {
     localModels: "RUN_LOCAL_MODELS",
     audioDevice: "RUN_AUDIO_DEVICE",
     realApis: "RUN_REAL_APIS",
+    spotifyData: "RUN_SPOTIFY_DATA",
 };

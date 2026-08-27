@@ -274,4 +274,28 @@ describe("extractShellQuirks", () => {
         expect(md).toContain("stderr-suppressed");
         expect(md).toContain("## Facets");
     });
+
+    /**
+     * Every other test here passes `useRgPrefilter: false`, so the prefilter branch
+     * was never entered. ripgrep only chooses which files to open, and a machine
+     * without it (ubuntu-latest, for one) has to reach the same finding — so this
+     * runs the DEFAULT path, which is the rg prefilter where rg exists and the
+     * in-process scan where it does not.
+     */
+    test("the default prefilter finds the same incident with or without ripgrep", async () => {
+        const path = writeSession(
+            bashPair({
+                toolUseId: "toolu_prefilter",
+                command: "ls /tmp/nosuch*",
+                result: "zsh:1: no matches found: /tmp/nosuch*",
+            })
+        );
+
+        const result = await extractShellQuirks({
+            projectsDir: join(path, ".."),
+            includeRuleCodification: false,
+        });
+
+        expect(result.findings.filter((f) => f.filePath === path)).toHaveLength(1);
+    });
 });

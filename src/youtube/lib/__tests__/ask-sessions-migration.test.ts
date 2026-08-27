@@ -102,6 +102,12 @@ function seedWithFullIndex(): void {
 }
 
 describe("ask-sessions-unique-title-per-user migration", () => {
+    /**
+     * 30s, not the default 5s. This is the first test in the file to open a
+     * YoutubeDatabase, so it pays the whole migration chain cold; ~0.3s here,
+     * 6.3s on a CI runner under the 16-way parallel run, which tripped the
+     * default and read as a migration failure rather than a slow disk.
+     */
     it("replaces a previously shipped FULL index with the partial one", () => {
         seedWithFullIndex();
         const db = new YoutubeDatabase(path);
@@ -125,7 +131,7 @@ describe("ask-sessions-unique-title-per-user migration", () => {
         } finally {
             db.close();
         }
-    });
+    }, 30_000);
 
     it("merges pre-existing duplicates into the lowest id, keeping their messages", () => {
         seedDuplicates();

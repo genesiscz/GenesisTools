@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { dirname, resolve } from "node:path";
 import { numberOption } from "@app/spotify/lib/context";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 
 describe("numberOption", () => {
     test("returns the fallback when the option is absent or empty", () => {
@@ -71,7 +72,13 @@ describe("--top help says where it does and does not limit", () => {
         expect(text).toContain("--json returns every row");
     });
 
-    test("--json really does return more than --top asked for", async () => {
+    /**
+     * This one drives the real analytics query, so it needs a real play history on the
+     * machine — `rows.length > 5` cannot come from anywhere else. With no history the
+     * command writes nothing to stdout and the parse fails on an empty body, which is
+     * what it did on every CI run. The `--help` test above needs no data and stays on.
+     */
+    test.skipIf(skip.spotifyData)("--json really does return more than --top asked for", async () => {
         const p = Bun.spawn(
             ["bun", resolve(dirname(import.meta.dir), "index.ts"), "analytics", "top", "songs", "--top", "5", "--json"],
             { env: { ...process.env, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" }

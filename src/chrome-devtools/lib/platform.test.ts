@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import {
     artifactPath,
     parseCimProcesses,
@@ -15,7 +16,10 @@ describe("tmpRoot / artifactPath", () => {
     test("POSIX keeps the /tmp contract; win32 uses the OS temp dir", () => {
         expect(tmpRoot("darwin")).toBe("/tmp");
         expect(tmpRoot("linux")).toBe("/tmp");
-        expect(tmpRoot("win32")).not.toBe("/tmp");
+        // Asserted against `tmpdir()` itself rather than as "not /tmp": on a Linux
+        // HOST the OS temp dir IS /tmp, so the negative form was really testing
+        // where the test happened to run.
+        expect(tmpRoot("win32")).toBe(tmpdir());
         expect(artifactPath("cdp.har", "linux")).toBe("/tmp/cdp.har");
     });
 });

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createBoxTable, formatDotStatus, formatTable, truncateDisplay } from "./table";
 
 describe("formatTable", () => {
@@ -59,15 +61,34 @@ describe("createBoxTable", () => {
      * NO_COLOR, so `tools spotify doctor > report.txt` wrote escape sequences into the file
      * while every other command in the same tool redirected cleanly.
      *
-     * These tests run under bun test, where stdout is not a TTY, so picocolors is already
-     * disabled: any escape sequence surviving here came from something that ignores it.
+     * Colour is turned off through a child process with NO_COLOR=1, which is the only
+     * deterministic way to reach that state: picocolors decides once at import time, and
+     * "bun test means no TTY means no colour" is FALSE on CI — picocolors also enables
+     * colour whenever $CI is set, so this assertion used to pass locally and fail on
+     * every GitHub Actions run. Any escape sequence surviving NO_COLOR came from
+     * something that consults neither it nor the TTY check.
      */
     it("emits no escape sequences when the output is not a terminal", () => {
-        const table = createBoxTable(["NAME", "STATUS"]);
-        table.push(["alice", "ok"]);
+        const script =
+            `const { createBoxTable } = await import(${SafeJSON.stringify(join(import.meta.dir, "table.ts"))});\n` +
+            `const table = createBoxTable(["NAME", "STATUS"]);\n` +
+            `table.push(["alice", "ok"]);\n` +
+            `process.stdout.write(table.toString());\n`;
 
+        const proc = Bun.spawnSync(["bun", "-e", script], {
+            env: { ...process.env, NO_COLOR: "1" },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const rendered = proc.stdout.toString();
+
+        expect(proc.stderr.toString()).toBe("");
+        expect(proc.exitCode).toBe(0);
+        // The negative control for the subprocess itself: an empty stdout would pass the
+        // escape-sequence assertion without having rendered anything.
+        expect(rendered).toContain("alice");
         // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ESC is the point
-        expect(table.toString()).not.toMatch(/\x1b\[/);
+        expect(rendered).not.toMatch(/\x1b\[/);
     });
 
     // The negative control: the borders must still be THERE, just uncoloured. A fix that

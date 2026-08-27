@@ -90,38 +90,47 @@ describe("audio converter", () => {
         expect(float32.length).toBe(numSamples);
     });
 
-    test("does not hang when ffmpeg writes a large amount of stderr progress output", async () => {
-        const dir = mkdtempSync(join(tmpdir(), "audio-converter-drain-"));
-        const input = join(dir, "input.wav");
-        const output = join(dir, "output.mp3");
+    /**
+     * The only test here that runs ffmpeg for real — it has to, since the subject is
+     * whether ffmpeg's stderr gets drained. CI runners have no ffmpeg, where the spawn
+     * threw ENOENT and the failure read as a hang regression rather than a missing
+     * binary. Skipped rather than mocked: a mock cannot deadlock a pipe.
+     */
+    test.skipIf(!Bun.which("ffmpeg"))(
+        "does not hang when ffmpeg writes a large amount of stderr progress output",
+        async () => {
+            const dir = mkdtempSync(join(tmpdir(), "audio-converter-drain-"));
+            const input = join(dir, "input.wav");
+            const output = join(dir, "output.mp3");
 
-        const sampleRate = 16000;
-        // 60s of audio (not 1s) so ffmpeg emits enough progress lines on stderr to
-        // actually exercise the draining path — a 1s clip barely produces any.
-        const numSamples = sampleRate * 60;
-        const dataSize = numSamples * 2;
-        const headerSize = 44;
-        const wav = Buffer.alloc(headerSize + dataSize);
-        wav.write("RIFF", 0);
-        wav.writeUInt32LE(36 + dataSize, 4);
-        wav.write("WAVE", 8);
-        wav.write("fmt ", 12);
-        wav.writeUInt32LE(16, 16);
-        wav.writeUInt16LE(1, 20);
-        wav.writeUInt16LE(1, 22);
-        wav.writeUInt32LE(sampleRate, 24);
-        wav.writeUInt32LE(sampleRate * 2, 28);
-        wav.writeUInt16LE(2, 32);
-        wav.writeUInt16LE(16, 34);
-        wav.write("data", 36);
-        wav.writeUInt32LE(dataSize, 40);
-        writeFileSync(input, wav);
+            const sampleRate = 16000;
+            // 60s of audio (not 1s) so ffmpeg emits enough progress lines on stderr to
+            // actually exercise the draining path — a 1s clip barely produces any.
+            const numSamples = sampleRate * 60;
+            const dataSize = numSamples * 2;
+            const headerSize = 44;
+            const wav = Buffer.alloc(headerSize + dataSize);
+            wav.write("RIFF", 0);
+            wav.writeUInt32LE(36 + dataSize, 4);
+            wav.write("WAVE", 8);
+            wav.write("fmt ", 12);
+            wav.writeUInt32LE(16, 16);
+            wav.writeUInt16LE(1, 20);
+            wav.writeUInt16LE(1, 22);
+            wav.writeUInt32LE(sampleRate, 24);
+            wav.writeUInt32LE(sampleRate * 2, 28);
+            wav.writeUInt16LE(2, 32);
+            wav.writeUInt16LE(16, 34);
+            wav.write("data", 36);
+            wav.writeUInt32LE(dataSize, 40);
+            writeFileSync(input, wav);
 
-        const start = Date.now();
-        await convertFileToMonoMp3(input, output);
-        expect(Date.now() - start).toBeLessThan(15000);
-        rmSync(dir, { recursive: true, force: true });
-    });
+            const start = Date.now();
+            await convertFileToMonoMp3(input, output);
+            expect(Date.now() - start).toBeLessThan(15000);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    );
 
     test("convertToWhisperWav rejects garbage input", async () => {
         const garbage = Buffer.from("not a real audio file");

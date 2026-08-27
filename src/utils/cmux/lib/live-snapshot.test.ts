@@ -2,8 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { fetchCmuxLiveSnapshot } from "./live-snapshot";
 
 describe("fetchCmuxLiveSnapshot", () => {
+    /**
+     * Concurrency is measured as OVERLAP, not as a stopwatch. The wall-clock form
+     * asserted `elapsed < 110` against three 50ms calls, so the budget sat between
+     * the parallel case (~50ms) and the sequential one (~150ms) — and a loaded CI
+     * runner took 134ms on a genuinely parallel run, landing inside the sequential
+     * band. Peak in-flight is the property the test is actually about, and a
+     * sequential implementation reports 1 however fast the machine is.
+     */
     test("fetches all workspaces in parallel, not sequentially", async () => {
-        const delays = [50, 50, 50];
+        let inFlight = 0;
+        let peakInFlight = 0;
 
         const runJson = async <T>(args: string[]): Promise<T> => {
             if (args[0] === "list-workspaces") {
@@ -11,8 +20,10 @@ describe("fetchCmuxLiveSnapshot", () => {
             }
 
             if (args[0] === "list-panes") {
-                const idx = Number(args[args.indexOf("--workspace") + 1].split("-")[1]);
-                await new Promise((r) => setTimeout(r, delays[idx] ?? 10));
+                inFlight++;
+                peakInFlight = Math.max(peakInFlight, inFlight);
+                await new Promise((r) => setTimeout(r, 20));
+                inFlight--;
                 return { panes: [] } as T;
             }
 
@@ -20,13 +31,10 @@ describe("fetchCmuxLiveSnapshot", () => {
         };
 
         const run = async () => ({ code: 0, stdout: "", stderr: "" });
-
-        const start = Date.now();
         const snapshot = await fetchCmuxLiveSnapshot({ runJson, run });
-        const elapsed = Date.now() - start;
 
         expect(snapshot.available).toBe(true);
-        expect(elapsed).toBeLessThan(110);
+        expect(peakInFlight).toBe(3);
     });
 
     test("allWindows lists every window and keeps each workspace with its own", async () => {

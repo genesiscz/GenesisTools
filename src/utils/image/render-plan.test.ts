@@ -9,6 +9,9 @@ import { loadAnnotationPlanValue, renderAnnotationPlan } from "./render-plan";
 
 const BASE = { r: 18, g: 52, b: 86 };
 
+/** Inside the first grid label's chip, outside its glyphs — see the grid tests below. */
+const CHIP_PROBE = { x: 74, y: 4 };
+
 function makeBase(): Buffer {
     const canvas = createCanvas(400, 300);
     const ctx = canvas.getContext("2d");
@@ -172,15 +175,18 @@ describe("renderAnnotationPlan", () => {
         expect(b).toBeGreaterThan(110);
         expect(g).toBeLessThan(60);
 
-        // label bg near (73,3)
-        const [lr, lg, lb] = px(ctx, 75, 7);
+        // The label chip starts at (73,3) and the glyphs at (75,5), so (74,4) is the
+        // one pixel that is chip background for ANY font: the old probe at (75,7) sat
+        // under the first glyph, and whether the glyph covered it depended on which
+        // sans-serif the host resolved — dark on macOS, part-lit on Linux.
+        const [lr, lg, lb] = px(ctx, CHIP_PROBE.x, CHIP_PROBE.y);
         expect(lr + lg + lb).toBeLessThan(90);
     });
 
     test("grid labels:false draws lines only", async () => {
         const result = await render([{ kind: "grid", step: 100, originOffset: { x: 730, y: 415 }, labels: false }]);
         const { ctx } = await decode(result.png);
-        const [lr, lg, lb] = px(ctx, 75, 7);
+        const [lr, lg, lb] = px(ctx, CHIP_PROBE.x, CHIP_PROBE.y);
         expect([lr, lg, lb]).toEqual([BASE.r, BASE.g, BASE.b]);
     });
 
