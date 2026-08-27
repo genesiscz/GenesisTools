@@ -9,9 +9,9 @@ import {
 
 describe("blueOceanNodesUrls", () => {
     it("prefers multibranch branch URL then full pipeline fallback", () => {
-        const urls = blueOceanNodesUrls("job/Digi22/job/col/job/FE/job/col-fe-multibranch-build/job/develop", "7180");
+        const urls = blueOceanNodesUrls("job/Acme/job/web/job/FE/job/web-app-multibranch-build/job/develop", "7180");
         expect(urls).toHaveLength(2);
-        expect(urls[0]).toContain("/pipelines/Digi22/pipelines/col/pipelines/FE/pipelines/col-fe-multibranch-build/");
+        expect(urls[0]).toContain("/pipelines/Acme/pipelines/web/pipelines/FE/pipelines/web-app-multibranch-build/");
         expect(urls[0]).toContain("/branches/develop/runs/7180/nodes/");
         expect(urls[1]).toContain("/pipelines/develop/runs/7180/nodes/");
         expect(urls[1]).not.toContain("/branches/");

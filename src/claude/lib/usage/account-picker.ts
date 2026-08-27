@@ -198,11 +198,11 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         // Org-level 403 means the subscription is gone. This wins over
         // stale-replayed usage: shared-cache backfills the last good payload,
         // so a dead account otherwise keeps rendering its old headroom and
-        // ranks at the TOP of the tier order (the lukas.pribik96 bug).
+        // ranks at the TOP of the tier order (the lukas.account-a bug).
         //
         // The plan check catches the quieter half of the same problem: a lapsed
         // account can keep serving perfectly healthy usage buckets while every
-        // inference call answers 403 (pribik.turena, 2026-08-06 — 800 usage
+        // inference call answers 403 (lukas.account-b, 2026-08-06 — 800 usage
         // successes that day, and not one turn it could have run).
         const planDead = !planAllowsClaudeCode(account);
 

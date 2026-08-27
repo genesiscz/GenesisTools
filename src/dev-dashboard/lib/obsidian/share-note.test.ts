@@ -10,15 +10,15 @@ describe("toVaultRelativePath", () => {
     const root = "/vault";
 
     test("keeps a vault-relative .md path", () => {
-        expect(toVaultRelativePath("ČEZ/Design/Note.md", root)).toBe("ČEZ/Design/Note.md");
+        expect(toVaultRelativePath("Widgets/Design/Note.md", root)).toBe("Widgets/Design/Note.md");
     });
 
     test("appends .md when omitted", () => {
-        expect(toVaultRelativePath("ČEZ/Design/Note", root)).toBe("ČEZ/Design/Note.md");
+        expect(toVaultRelativePath("Widgets/Design/Note", root)).toBe("Widgets/Design/Note.md");
     });
 
     test("converts an absolute path inside the vault", () => {
-        expect(toVaultRelativePath("/vault/ČEZ/Design/Note.md", root)).toBe("ČEZ/Design/Note.md");
+        expect(toVaultRelativePath("/vault/Widgets/Design/Note.md", root)).toBe("Widgets/Design/Note.md");
     });
 
     test("rejects a path that leaves the vault", () => {
@@ -37,14 +37,14 @@ describe("shareNote", () => {
     beforeEach(async () => {
         dir = mkdtempSync(join(tmpdir(), "share-note-"));
         vault = join(dir, "vault");
-        mkdirSync(join(vault, "ČEZ", "Design"), { recursive: true });
-        writeFileSync(join(vault, "ČEZ", "Design", "Note.md"), "# hi\n");
+        mkdirSync(join(vault, "Widgets", "Design"), { recursive: true });
+        writeFileSync(join(vault, "Widgets", "Design", "Note.md"), "# hi\n");
         env.testing.set("GENESIS_TOOLS_HOME", dir);
         resetDevDashboardStorage();
         await getDevDashboardStorage().setConfig({
             port: 3042,
             obsidianVault: vault,
-            allowedHosts: ["mac.foltyn.dev"],
+            allowedHosts: ["mac.example.com"],
             publishedNotes: [],
             cmuxPollIntervalMs: 2000,
         });
@@ -57,18 +57,18 @@ describe("shareNote", () => {
     });
 
     test("publishes through the same registry as the UI and returns the public URL", async () => {
-        const first = await shareNote("ČEZ/Design/Note.md");
+        const first = await shareNote("Widgets/Design/Note.md");
 
-        expect(first.vaultPath).toBe("ČEZ/Design/Note.md");
-        expect(first.url).toBe(`https://mac.foltyn.dev/share/${first.slug}`);
+        expect(first.vaultPath).toBe("Widgets/Design/Note.md");
+        expect(first.url).toBe(`https://mac.example.com/share/${first.slug}`);
         expect(first.slug.length).toBeGreaterThan(8);
 
-        const second = await shareNote(join(vault, "ČEZ", "Design", "Note.md"));
+        const second = await shareNote(join(vault, "Widgets", "Design", "Note.md"));
         expect(second.slug).toBe(first.slug);
         expect(second.url).toBe(first.url);
     });
 
     test("fails when the note is missing", async () => {
-        await expect(shareNote("ČEZ/Design/Missing.md")).rejects.toThrow();
+        await expect(shareNote("Widgets/Design/Missing.md")).rejects.toThrow();
     });
 });

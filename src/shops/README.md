@@ -4,8 +4,6 @@ Personal grocery + drogerie + pharmacy price intelligence across Czech eshops.
 
 ## Sources of truth
 
-- Spec: `GenesisBrain/GenesisTools/shops/Spec.md`
-- Research: `GenesisBrain/GenesisTools/shops/Research.handoff.md`
 - Reference clone: `_Playgrounds/hlidac-shopu/` (read-only)
 
 ## Quick start
@@ -25,8 +23,8 @@ Personal grocery + drogerie + pharmacy price intelligence across Czech eshops.
 
 - Database: `~/.genesis-tools/shops/index.db`
 - Cache: `~/.genesis-tools/shops/cache/`
-- For full schema reference (tables, indexes, FTS), see
-  `GenesisBrain/GenesisTools/shops/Spec.md` § "Full schema" (around line 870).
+- For full schema reference (tables, indexes, FTS), read the migrations in
+  `src/shops/db/`.
 
 ## MCP server (Plan 08)
 

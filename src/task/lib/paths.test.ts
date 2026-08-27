@@ -54,8 +54,8 @@ describe("task paths", () => {
     });
 
     it("derives session name only from canonical jsonl files", () => {
-        expect(sessionNameFromJsonlFilename("col-fe.jsonl")).toBe("col-fe");
-        expect(sessionNameFromJsonlFilename("col-fe.ui.jsonl")).toBeNull();
+        expect(sessionNameFromJsonlFilename("web-app.jsonl")).toBe("web-app");
+        expect(sessionNameFromJsonlFilename("web-app.ui.jsonl")).toBeNull();
         expect(sessionNameFromJsonlFilename("readme.txt")).toBeNull();
     });
 });

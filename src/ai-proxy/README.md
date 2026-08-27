@@ -141,7 +141,7 @@ Speaks OpenAI (`/v1/chat/completions`) to proxy clients and forwards the Claude 
   "providerSlug": "claude-sub",
   "enabled": true,
   "anthropicSub": {
-    "accountName": "foltyn"
+    "accountName": "martin"
   }
 }
 ```

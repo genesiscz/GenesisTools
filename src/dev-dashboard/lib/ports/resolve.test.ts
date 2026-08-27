@@ -3,7 +3,7 @@ import { mergeLsofCwdFields, parsePsPidLstartCommand, shortCommandFromArgv } fro
 
 describe("parsePsPidLstartCommand", () => {
     test("parses pid + lstart + command", () => {
-        const line = "21109 Wed Jul 15 01:36:55 2026 Cursor Helper (Plugin): extension-host (user) col-be [4-31]";
+        const line = "21109 Wed Jul 15 01:36:55 2026 Cursor Helper (Plugin): extension-host (user) web-api [4-31]";
         const parsed = parsePsPidLstartCommand(line);
         expect(parsed?.pid).toBe(21109);
         expect(parsed?.command).toContain("extension-host");

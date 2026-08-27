@@ -10,6 +10,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { Storage } from "@genesiscz/utils/storage";
 import { getDatesInMonth } from "./date";
 
+/**
+ * Repository name that marks an entry as project development, and the project's
+ * own name. Change both to your own: the classifier looks for these strings in
+ * the entry title, note and description, all lower-cased.
+ */
+const PROJECT_REPO = "web-app";
+const PROJECT_NAME = "widgets";
+
 export interface ProcessedEntry {
     title: string;
     note: string;
@@ -39,7 +47,7 @@ function isWorkRelated(entry: ProcessedEntry): boolean {
 
     // Include work-related entries
     if (
-        text.includes("col-fe") ||
+        text.includes(PROJECT_REPO) ||
         text.includes("teams") ||
         text.includes("microsoft teams") ||
         text.includes("standup") ||
@@ -59,7 +67,7 @@ function isWorkRelated(entry: ProcessedEntry): boolean {
         text.includes("incident") ||
         text.includes("user story") ||
         text.includes("azure devops") ||
-        text.includes("můj čez") ||
+        text.includes(PROJECT_NAME) ||
         text.includes("error") ||
         text.includes("typeerror") ||
         text.includes("camundaerror") ||
@@ -212,9 +220,9 @@ function groupEntries(entries: ProcessedEntry[], detailMode: boolean = false): G
                 groupKey = "Marketingové PN";
             } else if (
                 (text.includes("cursor") || text.includes("vscode") || text.includes("warp")) &&
-                text.includes("col-fe")
+                text.includes(PROJECT_REPO)
             ) {
-                groupKey = "Vývoj col-fe";
+                groupKey = `Vývoj ${PROJECT_REPO}`;
             } else if (text.includes("teams") || text.includes("meeting") || text.includes("schůzka")) {
                 groupKey = "Teams schůzky";
             } else if (text.includes("gitlab") || text.includes("git")) {
@@ -507,7 +515,7 @@ async function processDay(
                         } else if (note.length < 100) {
                             descriptions.push(note);
                         }
-                    } else if (entry.title.includes("Cursor") && entry.description.includes("col-fe")) {
+                    } else if (entry.title.includes("Cursor") && entry.description.includes(PROJECT_REPO)) {
                         descriptions.push("vývoj ve VS Code");
                     }
                 }

@@ -29,7 +29,7 @@ export interface FableStageModels {
 }
 
 export interface FableConfig {
-    /** Git-versioned pack repo (spec, traces, skills, manifests). Lives in the GenesisBrain vault. */
+    /** Git-versioned pack repo (spec, traces, skills, manifests). Lives outside this repo. */
     packPath: string;
     /** Legacy read-only raw transcript mirror (machine-local). */
     sessionsMirrorPath: string;

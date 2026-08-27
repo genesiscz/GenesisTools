@@ -101,7 +101,7 @@ describe("AIConfig", () => {
 
 describe("mergeAccountEntry", () => {
     const stored: AIAccountEntry = {
-        name: "lukas.pribik96",
+        name: "lukas.account-a",
         provider: "anthropic-sub",
         tokens: {
             accessToken: "sk-ant-oat01-old",
@@ -116,7 +116,7 @@ describe("mergeAccountEntry", () => {
 
     it("keeps the long-lived token when a re-login only supplies the OAuth pair", () => {
         const merged = mergeAccountEntry(stored, {
-            name: "lukas.pribik96",
+            name: "lukas.account-a",
             provider: "anthropic-sub",
             tokens: { accessToken: "sk-ant-oat01-new", refreshToken: "sk-ant-ort01-new", expiresAt: 2000 },
             apps: ["claude", "ask"],
@@ -131,7 +131,7 @@ describe("mergeAccountEntry", () => {
 
     it("does not let an explicitly undefined label erase the stored one", () => {
         const merged = mergeAccountEntry(stored, {
-            name: "lukas.pribik96",
+            name: "lukas.account-a",
             provider: "anthropic-sub",
             tokens: { accessToken: "sk-ant-oat01-new" },
             label: undefined,
@@ -142,7 +142,7 @@ describe("mergeAccountEntry", () => {
 
     it("replaces wholesale when the provider changes", () => {
         const merged = mergeAccountEntry(stored, {
-            name: "lukas.pribik96",
+            name: "lukas.account-a",
             provider: "openai-sub",
             tokens: { accessToken: "openai-token" },
         });

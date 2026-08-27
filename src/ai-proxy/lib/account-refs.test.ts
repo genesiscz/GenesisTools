@@ -51,9 +51,9 @@ describe("account-refs", () => {
             legacyAccountNameOf({
                 ...grokAccount,
                 grok: undefined,
-                anthropicSub: { accountName: "foltyn" },
+                anthropicSub: { accountName: "martin" },
             })
-        ).toBe("foltyn");
+        ).toBe("martin");
         expect(legacyAccountNameOf({ ...grokAccount, grok: {} })).toBeUndefined();
     });
 

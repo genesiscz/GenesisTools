@@ -13,7 +13,7 @@
  * Mask styles (per kind, overridable):
  * - "stars": full mask preserving length (`hunter2` -> `*******`)
  * - "partial": keep head+tail for correlation (`opaq[***]alue`); emails keep
- *   their domain (`******@cez.cz`); short values fall back to stars
+ *   their domain (`******@example.com`); short values fall back to stars
  * - "label": `[REDACTED:<kind>]`
  * - "keep": leave the value untouched
  */

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Phase-2 boundary moves for the flat @genesiscz/utils design
- * (.claude/plans/2026-07-18-FlatGenesisczPackages.md, steps 4+6).
+ * (the flat-packages plan, steps 4+6).
  *
  * - telegram: notifications channel dynamic-imports telegram-bot's api/
  *   formatting (the guard missed them — `await import()`, not static).

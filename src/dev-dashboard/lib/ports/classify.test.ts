@@ -39,7 +39,7 @@ describe("deriveVisibility", () => {
             deriveVisibility({
                 port: 56639,
                 command: "Cursor",
-                fullCommand: "Cursor Helper (Plugin): extension-host (user) col-be [4-31]",
+                fullCommand: "Cursor Helper (Plugin): extension-host (user) web-api [4-31]",
             })
         ).toBe("junk");
     });
@@ -204,9 +204,9 @@ describe("deriveTitle", () => {
             deriveTitle({
                 port: 99,
                 command: "Cursor",
-                fullCommand: "Cursor Helper (Plugin): extension-host (user) col-be [4-31]",
+                fullCommand: "Cursor Helper (Plugin): extension-host (user) web-api [4-31]",
             })
-        ).toBe("Cursor · col-be [4-31]");
+        ).toBe("Cursor · web-api [4-31]");
     });
 
     test("registry name for matched youtube server", () => {

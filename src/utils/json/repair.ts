@@ -1,9 +1,8 @@
 /**
  * Best-effort repair of broken (typically LLM-emitted) JSON.
  *
- * Wraps `jsonrepair` (josdejong, ISC) — chosen per the research note
- * GenesisBrain/Dev/Json/JsonRepair.research.md (2026-07-24): broadest fix
- * coverage (quotes, commas, brackets, truncation, markdown fences, NDJSON) and
+ * Wraps `jsonrepair` (josdejong, ISC) — chosen after a 2026-07-24 comparison for
+ * its breadth of fix (quotes, commas, brackets, truncation, markdown fences, NDJSON) and
  * the de-facto standard wrapper in LLM tooling. Returns the repaired value
  * only — no fix metadata by design.
  */

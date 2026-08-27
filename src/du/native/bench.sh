@@ -2,7 +2,7 @@
 # Fixed benchmark harness for the clonesize native core.
 #
 # Every feature added to clonesize.c must be measured with THIS script, before
-# and after, and the numbers appended to .claude/docs/benchmarks-du.md. The point
+# and after, and the numbers appended to docs/benchmarks-du.md. The point
 # is a like-for-like comparison across commits: same targets, same modes, same
 # hyperfine settings.
 #

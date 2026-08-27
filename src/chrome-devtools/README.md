@@ -132,5 +132,5 @@ browser): `.claude/work/research/2026-08-26-CdpNativeHarExport.md`.
 ## Benchmark
 
 The `attach` auto-record default was validated on the real browser before shipping; numbers
-live in a dated section of `.claude/plans/2026-08-26-ChromeDevtoolsTool.md`. Re-measure with
+live in a dated section of the tool's design notes, which are not published. Re-measure with
 interleaved runs (≥5 per arm) if the recorder ever looks hot in `status`.

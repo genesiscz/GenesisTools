@@ -4,7 +4,7 @@ CLI for **bi-directional messaging across a swarm of LLM agents** (main agent �
 
 For the *protocol-level* documentation aimed at the agents themselves (when to call which command, mode choices, etc.), see [`plugins/genesis-tools/skills/agents-talk/SKILL.md`](../../plugins/genesis-tools/skills/agents-talk/SKILL.md) (`/gt:agents-talk`).
 
-The design background and research live in `.claude/plans/2026-06-29-AgentsTalk-design.md`. That
+The design background and research live in the tool's design notes, which are not published. That
 directory is gitignored, so the file is local to the machine it was written on and is not part of
 a clone. The design decisions it records that still matter are summarised under
 [Why a CLI, not an MCP server?](#why-a-cli-not-an-mcp-server) below.
@@ -85,4 +85,4 @@ tools agents discover --session demo
 
 ## Why a CLI, not an MCP server?
 
-Per the research at `.claude/plans/2026-06-29-AgentsTalk-design.md`: MCP cannot push, only respond to tool calls. By using a CLI whose `login` writes JSONL to stdout, we let the agent's harness `Monitor` tool deliver lines as notifications — sidestepping the entire blocking-MCP-tool / lost-result class of bugs. Send is also a tool call (any `tools agents message`), but receive is a streaming process. This composes with every host that can spawn background processes and read stdout, not just hosts with an MCP client.
+Per the design research: MCP cannot push, only respond to tool calls. By using a CLI whose `login` writes JSONL to stdout, we let the agent's harness `Monitor` tool deliver lines as notifications — sidestepping the entire blocking-MCP-tool / lost-result class of bugs. Send is also a tool call (any `tools agents message`), but receive is a streaming process. This composes with every host that can spawn background processes and read stdout, not just hosts with an MCP client.

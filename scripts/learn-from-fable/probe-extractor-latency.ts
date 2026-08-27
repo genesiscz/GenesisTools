@@ -29,7 +29,7 @@ const PROBES: Probe[] = [
     { label: "grok-4.5 low-effort", model: "martin/grok/grok-4.5", reasoningEffort: "low" },
     { label: "grok-4-fast", model: "martin/grok/grok-4-fast" },
     { label: "grok-4.3", model: "martin/grok/grok-4.3" },
-    { label: "sonnet-5", model: "foltyn/claude-sub/claude-sonnet-5" },
+    { label: "sonnet-5", model: "martin/claude-sub/claude-sonnet-5" },
 ];
 
 const p = profiler.scope("probe");

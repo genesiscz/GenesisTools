@@ -15,7 +15,7 @@ import type { Episode } from "../../src/learn-from-fable/lib/stages/types";
 import { defaultEpisodesPath } from "./probe-episodes";
 
 const size = Number(process.argv[2] ?? 3);
-const model = process.argv[3] ?? "foltyn/claude-sub/claude-sonnet-5";
+const model = process.argv[3] ?? "martin/claude-sub/claude-sonnet-5";
 const path = process.argv[4] ?? defaultEpisodesPath();
 
 const episodes: Episode[] = readFileSync(path, "utf-8")

@@ -97,7 +97,7 @@ describe("paceFor", () => {
     });
 
     test("undefined with no history", () => {
-        expect(paceFor(db, { accountName: "foltyn", bucket: "five_hour", utilizationPct: 50 })).toBeUndefined();
+        expect(paceFor(db, { accountName: "martin", bucket: "five_hour", utilizationPct: 50 })).toBeUndefined();
     });
 
     test("reports the active basis when active samples dominate", () => {
@@ -107,11 +107,11 @@ describe("paceFor", () => {
             [20, 30],
             [10, 40],
         ] as const) {
-            db.recordSnapshot("foltyn", "five_hour", value, recentTimestamp(minutesAgo));
+            db.recordSnapshot("martin", "five_hour", value, recentTimestamp(minutesAgo));
         }
 
         const result = paceFor(db, {
-            accountName: "foltyn",
+            accountName: "martin",
             bucket: "five_hour",
             utilizationPct: 40,
             scope: "per-account",
@@ -133,7 +133,7 @@ describe("paceFor", () => {
 
         expect(
             paceFor(db, {
-                accountName: "foltyn",
+                accountName: "martin",
                 bucket: "five_hour",
                 utilizationPct: 50,
                 scope: "per-account",
@@ -152,7 +152,7 @@ describe("paceFor", () => {
         }
 
         const result = paceFor(db, {
-            accountName: "foltyn",
+            accountName: "martin",
             bucket: "five_hour",
             utilizationPct: 50,
             scope: "pooled",
@@ -172,7 +172,7 @@ describe("paceFor", () => {
         }
 
         expect(
-            paceFor(db, { accountName: "foltyn", bucket: "five_hour", utilizationPct: 50, scope: "pooled" })
+            paceFor(db, { accountName: "martin", bucket: "five_hour", utilizationPct: 50, scope: "pooled" })
         ).toBeUndefined();
     });
 
@@ -183,9 +183,9 @@ describe("paceFor", () => {
             [20, 30],
             [10, 40],
         ] as const) {
-            db.recordSnapshot("foltyn", "five_hour", value, recentTimestamp(minutesAgo));
+            db.recordSnapshot("martin", "five_hour", value, recentTimestamp(minutesAgo));
         }
 
-        expect(atYourPace(db, { accountName: "foltyn", bucket: "five_hour", utilizationPct: 40 })).toMatch(/^≈/);
+        expect(atYourPace(db, { accountName: "martin", bucket: "five_hour", utilizationPct: 40 })).toMatch(/^≈/);
     });
 });

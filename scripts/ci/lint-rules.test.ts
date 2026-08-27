@@ -47,11 +47,11 @@ describe("no-hardcoded-tmp", () => {
 
 describe("no-hardcoded-user-paths", () => {
     test("flags an absolute /Users path", () => {
-        expect(rules('const p = "/Users/martin/Projects/x";')).toContain("no-hardcoded-user-paths");
+        expect(rules('const p = "/Users/Martin/Projects/x";')).toContain("no-hardcoded-user-paths");
     });
 
     test("reports it as a warning, matching the original severity", () => {
-        const [finding] = checkSource("src/example.ts", 'const p = "/Users/martin/x";');
+        const [finding] = checkSource("src/example.ts", 'const p = "/Users/Martin/x";');
         expect(finding.severity).toBe("warn");
     });
 

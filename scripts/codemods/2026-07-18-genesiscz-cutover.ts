@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * The @genesiscz/utils cutover (plan: .claude/plans/2026-07-18-FlatGenesisczPackages.md).
+ * The @genesiscz/utils cutover (the flat-packages plan).
  *
  * Move 1 `history-cache`: relocates the pure claude history cache into utils so
  * src/utils/agent-runtime.ts loses its last @app/<tool> import.

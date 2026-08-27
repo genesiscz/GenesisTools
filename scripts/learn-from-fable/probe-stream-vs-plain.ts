@@ -11,7 +11,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
 const MODELS = process.argv.slice(2);
-const models = MODELS.length ? MODELS : ["foltyn/claude-sub/claude-sonnet-5", "martin/grok/grok-4.5"];
+const models = MODELS.length ? MODELS : ["martin/claude-sub/claude-sonnet-5", "martin/grok/grok-4.5"];
 
 // ~8k chars of filler + a task with an unambiguous, checkable answer.
 const filler = Array.from({ length: 120 }, (_, i) => `line ${i}: the quick brown fox jumps over the lazy dog`).join(

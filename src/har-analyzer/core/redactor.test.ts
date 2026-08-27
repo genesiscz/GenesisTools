@@ -75,13 +75,13 @@ describe("redactHar", () => {
         expect(changes.some((c) => c.kind === "username")).toBe(true);
     });
 
-    test("redacts urlencoded form body (WSO2/CAS login shape)", () => {
+    test("redacts urlencoded form body (SSO gateway login shape)", () => {
         const har = makeHar([
             makeEntry({
                 request: {
                     postData: {
                         mimeType: "application/x-www-form-urlencoded",
-                        text: "username=martin%40cez.cz&password=Sup3r%2Bt4jn3&sessionDataKey=abc-123&keepMe=on",
+                        text: "username=martin%40example.com&password=Sup3r%2Bt4jn3&sessionDataKey=abc-123&keepMe=on",
                     },
                 },
             }),
@@ -90,7 +90,7 @@ describe("redactHar", () => {
         const text = redactedText(redactHar(har).har);
 
         expect(text).not.toContain("Sup3r");
-        expect(text).not.toContain("martin%40cez.cz");
+        expect(text).not.toContain("martin%40example.com");
         expect(text).not.toContain("abc-123");
         expect(text).toContain("keepMe=on");
     });
@@ -170,14 +170,14 @@ describe("redactHar", () => {
     });
 
     test("redacts sensitive query params in url, queryString array and redirectURL", () => {
-        const url = `https://auth.test/authorize?client_id=col&login_hint=martin%40cez.cz&id_token_hint=${FAKE_JWT}`;
+        const url = `https://auth.test/authorize?client_id=webapp&login_hint=martin%40example.com&id_token_hint=${FAKE_JWT}`;
         const har = makeHar([
             makeEntry({
                 request: {
                     url,
                     queryString: [
-                        { name: "client_id", value: "col" },
-                        { name: "login_hint", value: "martin@cez.cz" },
+                        { name: "client_id", value: "webapp" },
+                        { name: "login_hint", value: "martin@example.com" },
                     ],
                 },
                 response: {
@@ -189,9 +189,9 @@ describe("redactHar", () => {
 
         const text = redactedText(redactHar(har).har);
         expect(text).not.toContain(FAKE_JWT);
-        expect(text).not.toContain("martin%40cez.cz");
-        expect(text).not.toContain("martin@cez.cz");
-        expect(text).toContain("client_id=col");
+        expect(text).not.toContain("martin%40example.com");
+        expect(text).not.toContain("martin@example.com");
+        expect(text).toContain("client_id=webapp");
     });
 
     test("redacts JWTs in log.pages titles (OAuth logout URLs)", () => {
@@ -235,7 +235,7 @@ describe("redactHar", () => {
                     content: {
                         size: 100,
                         mimeType: "text/html",
-                        text: '<a href="mailto:podpora@cez.cz">podpora@cez.cz</a> <img src="logo@2x.png">',
+                        text: '<a href="mailto:support@example.com">support@example.com</a> <img src="logo@2x.png">',
                     },
                 },
             }),
@@ -247,7 +247,7 @@ describe("redactHar", () => {
         const body = result.log.entries[0].request.postData?.text ?? "";
         expect(body).toContain('"token_type":"Bearer"');
         expect(body).toContain("USER_NOT_FOUND");
-        expect(text).toContain("podpora@cez.cz");
+        expect(text).toContain("support@example.com");
         expect(text).toContain("logo@2x.png");
         expect(changes).toHaveLength(0);
     });

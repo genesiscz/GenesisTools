@@ -1,7 +1,7 @@
 # Network and wire-level forensics: index
 
-Split by topic so only the needed part is read. Source: the 2026-05-26 vault braindump
-(`GenesisBrain/Braindump/2026-05-26-ChromeDevTools.md`); these copies are canonical for agents.
+Split by topic so only the needed part is read. Source: a 2026-05-26 research braindump;
+these copies are canonical for agents.
 
 | Symptom | File | Section |
 |---|---|---|

@@ -5,3 +5,9 @@ tools text eol=lf
 # Windows-native files keep CRLF
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+
+# Keep the agent working directory and internal notes out of `git archive`
+# tarballs and GitHub release artifacts.
+.claude/ export-ignore
+.handoff export-ignore
+README.json-to-ts.md export-ignore

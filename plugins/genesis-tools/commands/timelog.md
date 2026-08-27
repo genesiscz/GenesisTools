@@ -69,7 +69,7 @@ This returns a `{ events, unlinked }` object:
   "cost": 0,
   "entries": [
     { "title": "Cursor", "note": "timelog.ts", "duration": { "formatted": "02:24" },
-      "sub_entries": [{ "note": "col-fe — JenkinsfileBuildFeeWeb.groovy", "duration": "00:45" }] },
+      "sub_entries": [{ "note": "web-app — Jenkinsfile.groovy", "duration": "00:45" }] },
     { "title": "Teams", "note": "Meeting", "duration": { "formatted": "01:44" } }
   ]
 }
@@ -158,7 +158,7 @@ This workflow:
 - Generates a name automatically from date range (e.g., `2026-02-01.2026-02-08`)
 - Entries can be removed or modified before import
 - Import `--dry-run` validates and writes backfilled titles to the file
-- Run from the repo with `.claude/azure/config.json` (e.g. `col-fe/`)
+- Run from the repo with `.claude/azure/config.json` (e.g. `web-app/`)
 
 ### Step 8: Execute Approved Entries (Alternative for Single Entries)
 

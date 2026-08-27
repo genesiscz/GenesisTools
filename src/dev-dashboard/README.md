@@ -59,7 +59,7 @@ When tunneled (host, allowed identities, and tunnel name are read from local con
 Publish the same way the Obsidian reader **publish** / **copy** buttons do:
 
 ```bash
-tools dev-dashboard share "ČEZ/Design/2026-08-20-UnconnectedFigmaComponents.md"
+tools dev-dashboard share "Widgets/Design/2026-08-20-UnconnectedComponents.md"
 # prints https://<your-host>/share/<slug> and copies it
 tools dev-dashboard share /absolute/path/in/vault/Note.md --no-clipboard
 ```

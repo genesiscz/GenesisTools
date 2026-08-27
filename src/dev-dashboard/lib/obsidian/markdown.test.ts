@@ -78,10 +78,10 @@ describe("renderMarkdown", () => {
     });
 
     test("does NOT process wikilinks inside fenced code blocks", () => {
-        const md = "```\n[[ČEZ]] should stay literal\n```";
+        const md = "```\n[[Widgets]] should stay literal\n```";
         const { html } = renderMarkdown(md, noop);
 
-        expect(html).toContain("[[ČEZ]]");
+        expect(html).toContain("[[Widgets]]");
         expect(html).not.toContain("dd-wikilink");
     });
 

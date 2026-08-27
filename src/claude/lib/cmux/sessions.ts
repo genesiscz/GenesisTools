@@ -162,9 +162,9 @@ export function cleanPromptText(raw: string | null | undefined): string | null {
  *
  * Two shapes matter, and both are worktrees:
  *  - NESTED (`GenesisTools/.worktrees/fix`) — the tail below the project root.
- *  - SIBLING (`col-fe-col-297040-burn-auth`) — a directory next to the repo. Claude
- *    Code still files it under the project `col-fe`, so without this the row reads as
- *    the plain repo and several worktrees look identical. The redundant `col-fe-`
+ *  - SIBLING (`web-app-297040-auth`) — a directory next to the repo. Claude
+ *    Code still files it under the project `web-app`, so without this the row reads as
+ *    the plain repo and several worktrees look identical. The redundant `web-app-`
  *    prefix is dropped, leaving the part that tells them apart.
  *
  * Returns null when the session ran in the project root, where there is nothing to add.

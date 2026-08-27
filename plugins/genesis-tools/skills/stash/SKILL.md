@@ -5,7 +5,7 @@ description: Save/apply/unapply named code overlays across projects with `tools 
 
 # `tools stash` — Cross-Project Code Overlay Manager
 
-> **Scope:** describes v1.1 behavior (unified update + unapply walk; curate-after-apply workflow). For v1, see `.claude/plans/2026-06-24-StashTool-spec.md`.
+> **Scope:** describes v1.1 behavior (unified update + unapply walk; curate-after-apply workflow).
 
 ## The mental model
 
@@ -90,31 +90,31 @@ The walk prints full diffs to stderr. **Never** pipe through `| head`, `| tail`,
 
 ### Scenario 1 — Personal debug overlay across sibling clones
 
-You're investigating a flaky test in `col-fe` and want to add `console.log` instrumentation that you'll also apply to `col-fe2` (a sibling clone) where the same bug reproduces.
+You're investigating a flaky test in `web-app` and want to add `console.log` instrumentation that you'll also apply to `web-app-2` (a sibling clone) where the same bug reproduces.
 
 ```bash
-# In col-fe — author the markers AS you write the debug code:
+# In web-app — author the markers AS you write the debug code:
 # (or write the code first, mark it after — order doesn't matter)
 
 # src/screens/Login.tsx
-# // #region @stash:burn-auth-debug
+# // #region @stash:auth-debug
 # console.log('callback hit at', new Date().toISOString());
 # console.log('queue size:', getQueueSize());
-# // #endregion @stash:burn-auth-debug
+# // #endregion @stash:auth-debug
 
-cd ~/Projects/col-fe
-tools stash save burn-auth-debug --mode regions --regions burn-auth-debug
+cd ~/Projects/web-app
+tools stash save auth-debug --mode regions --regions auth-debug
 # captures only the marked spans; the rest of your in-progress work is left alone.
 
-cd ~/Projects/col-fe2
-tools stash apply burn-auth-debug
+cd ~/Projects/web-app-2
+tools stash apply auth-debug
 # both repos now have the same instrumentation; you can re-run the test in both.
 
 # When done:
-tools stash unapply burn-auth-debug   # in col-fe2 (removes instrumentation)
-cd ../col-fe
-tools stash unapply burn-auth-debug   # in col-fe
-tools stash drop burn-auth-debug      # if you don't expect to need it again
+tools stash unapply auth-debug   # in web-app-2 (removes instrumentation)
+cd ../web-app
+tools stash unapply auth-debug   # in web-app
+tools stash drop auth-debug      # if you don't expect to need it again
 ```
 
 ### Scenario 2 — Curate-after-apply (the headline workflow)

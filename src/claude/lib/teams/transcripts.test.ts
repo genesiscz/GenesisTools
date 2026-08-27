@@ -172,14 +172,14 @@ describe("indexTeamTranscripts in-process sidechains", () => {
 
     test("indexes <lead>/subagents/agent-*.jsonl via meta.json even without agentName fields", () => {
         const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
-        writeSidechain(dir, "pageobjects-fable", "While the retry downloads, verifying the MePAS locators.");
+        writeSidechain(dir, "pageobjects-fable", "While the retry downloads, verifying the login-page locators.");
 
         const found = indexTeamTranscripts(dir, TEAM).get("pageobjects-fable");
         expect(found).toBeDefined();
         expect(found?.sidechain).toBe(true);
         expect(found?.sessionId).toBe(leadId);
         expect(found?.hasLeadAssignment).toBe(true);
-        expect(found?.lastMessage?.text).toContain("MePAS locators");
+        expect(found?.lastMessage?.text).toContain("login-page locators");
         expect(found?.path).toContain(`${leadId}/subagents/`);
     });
 
@@ -187,7 +187,7 @@ describe("indexTeamTranscripts in-process sidechains", () => {
         const dir = mkdtempSync(join(tmpdir(), "teams-sidechain-"));
         const standaloneId = "b9799f97-ead9-4d25-ada1-51635a3e924f";
         writeTranscript(dir, standaloneId, "pageobjects-fable");
-        const side = writeSidechain(dir, "pageobjects-fable", "MePAS selectors confirmed correct.");
+        const side = writeSidechain(dir, "pageobjects-fable", "login-page selectors confirmed correct.");
         expect(side).toContain("subagents");
 
         // Back-to-back writes can land on the same mtime, and the standalone
@@ -199,7 +199,7 @@ describe("indexTeamTranscripts in-process sidechains", () => {
         const found = indexTeamTranscripts(dir, TEAM).get("pageobjects-fable");
         expect(found?.sidechain).toBe(true);
         expect(found?.sessionId).toBe(leadId);
-        expect(found?.lastMessage?.text).toContain("MePAS selectors");
+        expect(found?.lastMessage?.text).toContain("login-page selectors");
     });
 
     test("does not treat the filename agent-a… as the --resume id", () => {

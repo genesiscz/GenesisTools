@@ -1,7 +1,7 @@
 # Chrome DevTools arm: CPU leak, duplicate processes, what we found
 
 Date: 2026-08-25 to 2026-08-26
-Host: Martin's Mac (macOS 26.3.1, Bun 1.3.13)
+Host: the author's Mac (macOS 26.3.1, Bun 1.3.13)
 Skill: `~/.agents/skills/chrome-devtools/` (since ported to `tools chrome-devtools`)
 
 **2026-08-26 14:30 — this document is now history, kept as the "why".** The skill became
@@ -30,7 +30,7 @@ A third recorder was the same class of leftover, not this skill:
 
 | PID | Command |
 |---|---|
-| **96932** | `bun scripts/per-target-record.ts --target 186BBA31073525576BED85533107F2C5 --label run5-tabA --port 9222` (GenesisBrain login experiment, same dead port, ~78% CPU, no TCP) |
+| **96932** | `bun scripts/per-target-record.ts --target 186BBA31073525576BED85533107F2C5 --label run5-tabA --port 9222` (an unrelated login experiment, same dead port, ~78% CPU, no TCP) |
 
 The user then said: let it arm, but it should not be five processes at high CPU when nothing is happening. Find the leak.
 
@@ -42,7 +42,7 @@ Taken 2026-08-25 ~20:22 local (CEST).
 
 ```
 PID     PPID  USER    %CPU  RSS     ELAPSED   STAT  COMMAND
-49862   1     Martin  50-87 113312  04:29     R     bun chrome-devtools.ts arm --port 9222
+49862   1     martin   50-87 113312  04:29     R     bun chrome-devtools.ts arm --port 9222
 ```
 
 - **PPID 1** (`launchd`). Orphan. Parent was the `attach` CLI, which `unref()`'d the child and exited.
@@ -50,7 +50,7 @@ PID     PPID  USER    %CPU  RSS     ELAPSED   STAT  COMMAND
 - **STAT = R** (runnable), not S (sleeping).
 - CPU time **3m 15s** over 4h 32m. Live `%CPU` bounced 45-87 on five samples 0.4s apart.
 - RSS 113 MB, sample peak 211 MB.
-- cwd: `/Users/Martin/Tresors/Projects/CEZ/col-fe`
+- cwd: `~/projects/web-app`
 - stdin/stdout/stderr: `/dev/null` (spawned with all three ignored).
 - No children.
 - `ps -M`: one hot thread (user 1:34, sys 0:23), rest idle.
@@ -78,7 +78,7 @@ Port **9222 was not listening**. Chrome was on **9223**. The arm had lost its br
 ```
 
 First events: GitLab MR diffs (`gitlab.apps.corp/.../merge_requests/5908`).
-Later events: `localhost:3000` col-web chunks, GitLab Sentry envelopes, `muj.cez.cz/col`, Bing UET `bat.bing.com`.
+Later events: `localhost:3000` app chunks, GitLab Sentry envelopes, `app.example.com/app`, Bing UET `bat.bing.com`.
 
 Last 200 KB method mix (252 events):
 
@@ -168,7 +168,7 @@ That matches "5 processes like that with high CPU when nothing is happening." Th
 
 **True, and this is the CPU while the browser is still up.**
 
-`Network.enable` on every http(s) page **and iframe** means GitLab GraphQL, GitLab Sentry envelopes, `bat.bing.com`, `localhost:3000` HMR, muj.cez.cz analytics, CAS iframes, all of it.
+`Network.enable` on every http(s) page **and iframe** means GitLab GraphQL, GitLab Sentry envelopes, `bat.bing.com`, `localhost:3000` HMR, app.example.com analytics, SSO gateway iframes, all of it.
 
 `Conn.onmessage` did `JSON.parse(String(ev.data))` on **every** CDP packet, then the arm listener returned early for methods it did not record. The parse already happened. `Network.dataReceived` and `Network.webSocketFrame*` are high-rate and large. Filtering after parse does not save CPU.
 
@@ -197,8 +197,8 @@ Pairs of `chrome-devtools-mcp` + `.../telemetry/watchdog/main.js --parent-pid=..
 ### Kibana `--scan` (five bun processes, 55-99% CPU)
 
 ```
-col-tools kibana logs --env wso2-prod --query 'GET /commonauth' --scan ...
-col-tools kibana logs --env wso2-prod --query 'oauthErrorCode' --scan ...
+log-cli kibana logs --env sso-prod --query 'GET /commonauth' --scan ...
+log-cli kibana logs --env sso-prod --query 'oauthErrorCode' --scan ...
 ```
 
 PIDs like 10493 (69 min CPU in 86 min elapsed), 12031, 12167, 12232, 67303 (already running more than a day). These are **not** CDP arms. They are stuck Elasticsearch scans from another investigation. If the machine is still hot after arms are gone, look here.
@@ -260,7 +260,7 @@ raw.includes('"method":"Network.dataReceived"')
 
 That hits `webSocketFrameReceived`, `Sent`, `Error`. Command responses (`{"id":1,"result":...}`) are kept. `watch --channels ws` does **not** pass `dropRaw`, so frame capture still works there.
 
-We still `Network.enable` on pages and iframes (SSO/CAS login lives in iframes). We just do not parse the high-rate packets.
+We still `Network.enable` on pages and iframes (SSO login lives in iframes). We just do not parse the high-rate packets.
 
 ### 7.3 One log fd
 

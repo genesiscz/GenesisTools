@@ -35,7 +35,7 @@ const measure: MeasureReport = {
         clonedFiles: 3402,
         sharedBytes: 1e10,
         crossTreePartners: ["~/.bun/install/cache"],
-        notes: ["col-fe: du 14 GB → real 3.58 GB (cross-tree)"],
+        notes: ["web-app: du 14 GB → real 3.58 GB (cross-tree)"],
     },
     freeSpace: { total: 1e12, free: 5e11, available: 4.9e11 },
     errors: [{ path: "/projects/locked", errno: "EPERM" }],

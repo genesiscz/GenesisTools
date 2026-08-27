@@ -33,8 +33,8 @@ describe("cloudflared arg builders", () => {
     });
 
     it("parses the tunnel id out of `tunnel create` stdout", () => {
-        const out = "Created tunnel devdashboard with id 6ff42ae2-765d-4adf-8112-31c55c1551ef";
-        expect(parseTunnelId(out)).toBe("6ff42ae2-765d-4adf-8112-31c55c1551ef");
+        const out = "Created tunnel devdashboard with id 00000000-1111-2222-3333-444444444444";
+        expect(parseTunnelId(out)).toBe("00000000-1111-2222-3333-444444444444");
     });
 
     it("returns null when no id is present", () => {
@@ -45,16 +45,16 @@ describe("cloudflared arg builders", () => {
 describe("buildConfigYaml", () => {
     it("maps a public hostname to the local port with a 404 fallthrough", () => {
         const yaml = buildConfigYaml({
-            tunnelId: "6ff42ae2-765d-4adf-8112-31c55c1551ef",
-            credentialsFile: "/Users/martin/.cloudflared/6ff42ae2-765d-4adf-8112-31c55c1551ef.json",
+            tunnelId: "00000000-1111-2222-3333-444444444444",
+            credentialsFile: "/Users/Martin/.cloudflared/00000000-1111-2222-3333-444444444444.json",
             hostname: "mac.example.com",
             localPort: 3042,
         });
 
         expect(yaml).toBe(
             [
-                "tunnel: 6ff42ae2-765d-4adf-8112-31c55c1551ef",
-                "credentials-file: /Users/martin/.cloudflared/6ff42ae2-765d-4adf-8112-31c55c1551ef.json",
+                "tunnel: 00000000-1111-2222-3333-444444444444",
+                "credentials-file: /Users/Martin/.cloudflared/00000000-1111-2222-3333-444444444444.json",
                 "ingress:",
                 "  - hostname: mac.example.com",
                 "    service: http://127.0.0.1:3042",

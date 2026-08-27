@@ -721,7 +721,7 @@ tools du bench                               # the benchmark harness
 On APFS, `bun install` uses `clonefile(2)`, so twenty worktrees can share one physical copy of
 `node_modules`. Plain `du` counts those bytes twenty times. This tool counts them once.
 
-> 🛑 Before changing anything under `src/du/`, read `.claude/docs/benchmarks-du.md` and append
+> 🛑 Before changing anything under `src/du/`, read `docs/benchmarks-du.md` and append
 > a dated section for the change. The native core is syscall-bound and sits in the hot loop of
 > multi-million-file scans, so an unmeasured feature is a silent regression.
 
@@ -940,8 +940,8 @@ The conventions that keep a tool consistent with the rest:
     when there is no TTY.
 -   Helpers that other tools could use belong in `src/utils/`, not in the tool folder.
 
-Templates for both prompt libraries live in `.claude/docs/tool-template.md`. Before writing
-web UI, read `.claude/docs/design-system.md`.
+Templates for both prompt libraries live in `docs/tool-template.md`. Before writing
+web UI, read `docs/design-system.md`.
 
 ### Guardrails in CI
 

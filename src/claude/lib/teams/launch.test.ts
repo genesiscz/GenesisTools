@@ -166,8 +166,8 @@ describe("isLiveSidechain", () => {
 
 describe("buildToolsCcTeammateCommand", () => {
     test("wraps tools cc run with account and flags", () => {
-        const cmd = buildToolsCcTeammateCommand("foltyn", fakeTeam(), fakeMate());
-        expect(cmd).toContain("tools cc run 'foltyn' --");
+        const cmd = buildToolsCcTeammateCommand("martin", fakeTeam(), fakeMate());
+        expect(cmd).toContain("tools cc run 'martin' --");
         expect(cmd).toContain("--agent-name");
         expect(cmd).toContain("bm-research-product");
         expect(cmd).toContain("cd '/Users/Martin/Tresors/Projects/GenesisPlayground'");

@@ -2,7 +2,7 @@
 /**
  * UI palette guardrail — fails CI if app UI code uses raw Tailwind palette
  * instead of theme tokens. Enforces the contract in
- * `.claude/docs/design-system.md` so clarity/shops/reas can't drift "flat"
+ * `docs/design-system.md` so clarity/shops/reas can't drift "flat"
  * again. Run: `bun scripts/check-ui-palette.ts` (or `bun run check:ui-palette`).
  *
  * - HARD FAIL: zinc / neutral / white-opacity surfaces & text (the flatness
@@ -44,7 +44,7 @@ if (warnHits.length > 0) {
 
 if (hardHits.length > 0) {
     console.error(
-        `✖ ${hardHits.length} raw zinc/neutral/white-opacity utilities found — use theme tokens (bg-card, border-border, text-muted-foreground, …). See .claude/docs/design-system.md. Tag a deliberate semantic carve-out with an \`allow-palette\` comment.`
+        `✖ ${hardHits.length} raw zinc/neutral/white-opacity utilities found — use theme tokens (bg-card, border-border, text-muted-foreground, …). See docs/design-system.md. Tag a deliberate semantic carve-out with an \`allow-palette\` comment.`
     );
     console.error(hardHits.join("\n"));
     process.exit(1);

@@ -1,6 +1,6 @@
 import type { Client } from "@modelcontextprotocol/client";
 
-// Copied from .claude/skills/chrome-extension-dev/scripts/devtools-frame-grid.ts
+// Copied from the chrome-extension-dev skill's devtools-frame-grid.ts
 // at 2026-07-17T19:10:00Z, commit 376aa1d59e451bcca57bee553220a1eae08e4b00.
 // Moved into the package so src/youtube doesn't import from a dotfile
 // directory outside the repo's shipped source tree.

@@ -37,15 +37,15 @@ describe("fingerprintKey", () => {
 
 describe("findDuplicateAccounts", () => {
     test("flags two labels that share one account", () => {
-        // The real 2026-08-26 incident: uzivatel-a's token billed foltyn.
+        // The real 2026-08-26 incident: uzivatel-a's token billed martin.
         const groups = findDuplicateAccounts([
             { account: "uzivatel-a", fingerprint: fp("1787772000", "1788296400", "0.94"), error: null },
-            { account: "foltyn", fingerprint: fp("1787772000", "1788296400", "0.95"), error: null },
+            { account: "martin", fingerprint: fp("1787772000", "1788296400", "0.95"), error: null },
             { account: "olivia", fingerprint: fp("1787760000", "1788100000"), error: null },
         ]);
 
         expect(groups).toHaveLength(1);
-        expect(groups[0].accounts).toEqual(["foltyn", "uzivatel-a"]);
+        expect(groups[0].accounts).toEqual(["martin", "uzivatel-a"]);
     });
 
     test("distinct anchors are not duplicates", () => {
@@ -53,7 +53,7 @@ describe("findDuplicateAccounts", () => {
         expect(
             findDuplicateAccounts([
                 { account: "uzivatel-a", fingerprint: fp("1787767800", "1787875200"), error: null },
-                { account: "foltyn", fingerprint: fp("1787772000", "1788296400"), error: null },
+                { account: "martin", fingerprint: fp("1787772000", "1788296400"), error: null },
             ])
         ).toEqual([]);
     });

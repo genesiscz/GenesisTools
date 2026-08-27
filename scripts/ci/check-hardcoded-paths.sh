@@ -6,7 +6,7 @@
 #
 # Lessons learned: PR #179 t2/t3/t4/t13 caught 4 hardcoded /tmp paths that
 # would crash on Windows. The dev-dashboard's obsidianVault default was
-# hardcoded to /Users/Martin/... for months.
+# hardcoded to one developer's home directory for months.
 #
 # Run from repo root. Returns exit 1 on any violation outside the allowlist.
 

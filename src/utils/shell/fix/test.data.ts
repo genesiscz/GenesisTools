@@ -86,9 +86,9 @@ export const testCases: TestCase[] = [
     // ═══════════════════════════════════════════════════════════════════
     {
         name: "flattened \\ continuation — terminal replaced newline with spaces",
-        input: "cd col-mobile && \\                                              APP_ENV=test yarn expo run:ios",
-        expected: "cd col-mobile && APP_ENV=test yarn expo run:ios",
-        expectedPretty: "cd col-mobile && APP_ENV=test yarn expo run:ios",
+        input: "cd mobile-app && \\                                              APP_ENV=test yarn expo run:ios",
+        expected: "cd mobile-app && APP_ENV=test yarn expo run:ios",
+        expectedPretty: "cd mobile-app && APP_ENV=test yarn expo run:ios",
         tags: ["flattened", "basic"],
     },
     {
@@ -100,10 +100,10 @@ export const testCases: TestCase[] = [
     },
     {
         name: "flattened continuation mixed with real newlines",
-        input: "cd col-mobile && \\                                              APP_ENV=test ENVFILE=.env yarn expo run:ios \\\n    2>&1 | tee /tmp/new-ios.log && \\\n    cd ..",
-        expected: "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
+        input: "cd mobile-app && \\                                              APP_ENV=test ENVFILE=.env yarn expo run:ios \\\n    2>&1 | tee /tmp/new-ios.log && \\\n    cd ..",
+        expected: "cd mobile-app && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
         expectedPretty:
-            "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
+            "cd mobile-app && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
         tags: ["flattened", "mixed"],
     },
     {
@@ -142,11 +142,11 @@ export const testCases: TestCase[] = [
     },
     {
         name: "path split mid-UUID",
-        input: "tail -5\n  /private/tmp/claude-502/-Users-Martin-Projects/2\n  b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef.output\n  2>/dev/null",
+        input: "tail -5\n  /private/tmp/claude-502/-Users-martin-Projects/2\n  b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef.output\n  2>/dev/null",
         expected:
-            "tail -5 /private/tmp/claude-502/-Users-Martin-Projects/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef.output 2>/dev/null",
+            "tail -5 /private/tmp/claude-502/-Users-martin-Projects/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef.output 2>/dev/null",
         expectedPretty:
-            "tail -5 /private/tmp/claude-502/-Users-Martin-Projects/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef.output 2>/dev/null",
+            "tail -5 /private/tmp/claude-502/-Users-martin-Projects/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef.output 2>/dev/null",
         tags: ["terminal-wrap", "uuid", "redirect"],
     },
     {
@@ -522,10 +522,10 @@ export const testCases: TestCase[] = [
     },
     {
         name: "cd && command && cd back — compound",
-        input: "cd col-mobile && \\\n    APP_ENV=test ENVFILE=.env yarn expo run:ios \\\n    2>&1 | tee /tmp/new-ios.log && \\\n    cd ..",
-        expected: "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
+        input: "cd mobile-app && \\\n    APP_ENV=test ENVFILE=.env yarn expo run:ios \\\n    2>&1 | tee /tmp/new-ios.log && \\\n    cd ..",
+        expected: "cd mobile-app && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
         expectedPretty:
-            "cd col-mobile && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
+            "cd mobile-app && APP_ENV=test ENVFILE=.env yarn expo run:ios 2>&1 | tee /tmp/new-ios.log && cd ..",
         tags: ["real-world", "compound", "redirect"],
     },
     {
@@ -548,11 +548,11 @@ export const testCases: TestCase[] = [
     },
     {
         name: "tail + long UUID path split across 3 lines",
-        input: "tail -5                                                       \n  /private/tmp/claude-502/-Users-Martin-Tresors-Projects-CEZ-col-fe/2\n  b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef220406de2f.output \n  2>/dev/null",
+        input: "tail -5                                                       \n  /private/tmp/claude-502/-Users-martin-projects-widgets-web-app/2\n  b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef220406de2f.output \n  2>/dev/null",
         expected:
-            "tail -5 /private/tmp/claude-502/-Users-Martin-Tresors-Projects-CEZ-col-fe/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef220406de2f.output 2>/dev/null",
+            "tail -5 /private/tmp/claude-502/-Users-martin-projects-widgets-web-app/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef220406de2f.output 2>/dev/null",
         expectedPretty:
-            "tail -5 /private/tmp/claude-502/-Users-Martin-Tresors-Projects-CEZ-col-fe/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef220406de2f.output 2>/dev/null",
+            "tail -5 /private/tmp/claude-502/-Users-martin-projects-widgets-web-app/2b54e169-f26a-4e53-8c7b-5b58c4089d30/tasks/a4660ef220406de2f.output 2>/dev/null",
         tags: ["real-world", "terminal-wrap", "uuid", "redirect"],
     },
 

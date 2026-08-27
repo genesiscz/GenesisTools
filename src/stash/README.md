@@ -2,7 +2,7 @@
 
 Global cross-project code-overlay manager. `git stash` × JetBrains Shelf × `quilt` — with a multi-step decision walk for surgical removal, foldable `@stash:` markers in source, and the same overlay applicable across sibling clones or unrelated projects.
 
-> **Scope of this README:** describes the tool's behavior at and after v1.1 (the curate-after-apply unification). For the original v1 design, see `.claude/plans/2026-06-24-StashTool-spec.md`; for v1.1's deltas + plan, see `.claude/plans/2026-06-25-StashTool-spec.md` and `2026-06-25-StashTool-plan.md`.
+> **Scope of this README:** describes the tool's behavior at and after v1.1 (the curate-after-apply unification).
 
 ---
 
@@ -258,11 +258,8 @@ tools stash save combined --mode regions --regions A B
 
 ## Design
 
-- Original v1 spec: `.claude/plans/2026-06-24-StashTool-spec.md` (region marker format, state machine, sibling-clone detection).
-- v1.1 spec: `.claude/plans/2026-06-25-StashTool-spec.md` (unified walk, curate workflow, deferred backlog).
-- v1.1 implementation plan: `.claude/plans/2026-06-25-StashTool-plan.md`.
 
 ## See also
 
-- Skill (agent-facing usage guide): `.claude/skills/stash/SKILL.md`
+- Skill (agent-facing usage guide): `plugins/genesis-tools/skills/stash/SKILL.md`
 - Source: `src/stash/`

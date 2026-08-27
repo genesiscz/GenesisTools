@@ -14,7 +14,7 @@ const measure: MeasureReport = {
         clonedFiles: 3402,
         sharedBytes: 9e9,
         crossTreePartners: ["~/.bun/install/cache"],
-        notes: ["col-fe: du 14 GB → real 3.58 GB"],
+        notes: ["web-app: du 14 GB → real 3.58 GB"],
     },
     freeSpace: { total: 1e12, free: 5e11, available: 4.9e11 },
     errors: [],

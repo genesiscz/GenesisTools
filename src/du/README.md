@@ -89,7 +89,7 @@ Reading a cloud placeholder file can trigger a download. On a metered or slow co
 
 ## 🛑 Before changing anything under `src/du/`
 
-Read `.claude/docs/benchmarks-du.md` and append a new dated section for every feature you add.
+Read `docs/benchmarks-du.md` and append a new dated section for every feature you add.
 
 The native core (`src/du/native/clonesize.c`) is syscall-bound and runs in the hot loop of multi-million-file scans, so an unmeasured feature is a silent regression. Measure with `src/du/native/bench.sh <label>`, record **system CPU time** as the primary metric (wall time on this machine swings with load average, so note `uptime`), and diff the `--json` byte totals.
 

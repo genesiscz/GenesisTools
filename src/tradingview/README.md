@@ -121,8 +121,8 @@ Grab `sessionid` / `sessionid_sign` from your browser's TradingView cookies
 
 ## Protocol notes
 
-See `.claude/plans/2026-06-09-TradingViewTool.md` for the full reverse-engineered
+See the tool's design notes (not published) for the full reverse-engineered
 protocol reference (frame framing, heartbeat, quote session lifecycle, alert
 REST endpoints, and the push-feed event shapes).
 
-Indicator/chart protocol details: `.claude/plans/2026-06-09-TradingViewIndicators.md`.
+Indicator and chart protocol details live in the same notes.

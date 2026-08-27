@@ -171,7 +171,7 @@ describe("findFocusTargets", () => {
                     pane({
                         id: "pane:2",
                         workspaceId: "workspace:1",
-                        preview: `I looked it up: the session is ${SESSION_A}, on the foltyn account.`,
+                        preview: `I looked it up: the session is ${SESSION_A}, on the martin account.`,
                     }),
                     pane({ id: "pane:33", workspaceId: "workspace:11", preview: resumeScreen(SESSION_A) }),
                 ],
@@ -532,7 +532,7 @@ describe("aliasesForSession", () => {
                     customTitle: null,
                     summary: null,
                     firstPrompt:
-                        "pls can you see file:///Users/Martin/Tresors/Projects/GenesisBrain/GenesisPlayground/clauderoo-cwd-slowdown.html and tell me if its bullshit or wtf is happening?",
+                        "pls can you see file:///Users/Martin/projects/notes/clauderoo-cwd-slowdown.html and tell me if its bullshit or wtf is happening?",
                 },
             ])
         ).toEqual(["clauderoo-cwd-slowdown", "clauderoo cwd slowdown"]);
@@ -641,7 +641,7 @@ describe("excludeSurfaceId (caller's own tab, not its whole pane)", () => {
         surfaceCount: 2,
         surfaces: [
             surface({ id: "surface:57", title: restoredTitle(SESSION_A, "col-logouts-redirect-loop") }),
-            surface({ id: "surface:193", title: "Foltyn account usage verification", selected: true }),
+            surface({ id: "surface:193", title: "martin account usage verification", selected: true }),
         ],
     });
 

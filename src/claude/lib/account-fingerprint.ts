@@ -7,7 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
  *
  * The failure this exists to catch shipped silently on 2026-08-26: a
  * `login-long` capture for "uzivatel-a" completed in a browser logged into
- * foltyn, so eleven sessions launched as uzivatel-a all billed foltyn. Nothing
+ * martin, so eleven sessions launched as uzivatel-a all billed martin. Nothing
  * in the config, the process env, or the statusline could see it — every layer
  * repeats the label it was given. Only the server knows.
  *

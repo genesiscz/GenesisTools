@@ -6,7 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 
 /**
  * cmux exposes no PID/tty for surfaces, but it does set tab titles from OSC-7 cwd escapes.
- * Idle shells get titles like "…/Tresors/Projects/ReservineBack" — the leading "…" stands
+ * Idle shells get titles like "…/projects/NorthwindBack" — the leading "…" stands
  * for $HOME. TUIs (claude, vim) overwrite the title with their own text, so we only treat
  * a title as a cwd when it starts with "/" or "…/".
  */

@@ -3,9 +3,9 @@ import { parseSessionKey, sessionKey } from "./session-key";
 
 describe("parseSessionKey", () => {
     it("parses dash-format collision-suffixed names", () => {
-        expect(parseSessionKey("task:col-fe-2026-05-26_03-59-30")).toEqual({
+        expect(parseSessionKey("task:web-app-2026-05-26_03-59-30")).toEqual({
             source: "task",
-            name: "col-fe-2026-05-26_03-59-30",
+            name: "web-app-2026-05-26_03-59-30",
         });
     });
 
@@ -17,10 +17,10 @@ describe("parseSessionKey", () => {
     });
 
     it("round-trips via sessionKey", () => {
-        const key = sessionKey("task", "col-fe-2026-05-26_03-59-30");
+        const key = sessionKey("task", "web-app-2026-05-26_03-59-30");
         expect(parseSessionKey(key)).toEqual({
             source: "task",
-            name: "col-fe-2026-05-26_03-59-30",
+            name: "web-app-2026-05-26_03-59-30",
         });
     });
 

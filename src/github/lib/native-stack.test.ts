@@ -73,7 +73,7 @@ describe("formatNativeStackRecovery", () => {
     test("emits unstack then PATCH, and forbids close-and-reopen", () => {
         const lines = formatNativeStackRecovery({
             owner: "genesiscz",
-            repo: "GenesisBrain",
+            repo: "Notes",
             parentNumber: 6,
             childNumber: 7,
             newBase: "master",
@@ -81,8 +81,8 @@ describe("formatNativeStackRecovery", () => {
         });
         expect(lines.some((l) => l.includes("still OPEN"))).toBe(true);
         expect(lines.some((l) => l.includes("Do not close and reopen"))).toBe(true);
-        expect(lines).toContain("gh api -X POST repos/genesiscz/GenesisBrain/stacks/8/unstack");
-        expect(lines).toContain("gh api -X PATCH repos/genesiscz/GenesisBrain/pulls/7 -f base='master'");
+        expect(lines).toContain("gh api -X POST repos/genesiscz/Notes/stacks/8/unstack");
+        expect(lines).toContain("gh api -X PATCH repos/genesiscz/Notes/pulls/7 -f base='master'");
         expect(lines.join("\n")).toContain(NATIVE_STACK_BASE_ERROR);
     });
 

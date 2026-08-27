@@ -19,8 +19,8 @@
 
 **Project Aliases:**
 ```bash
-tcolfe         # col-fe project
-treservine     # Reservine project
+twebapp        # web-app project
+tnorthwind     # Northwind project
 tgenesis       # GenesisTools project
 ta             # tmux attach
 tl             # tmux ls
@@ -120,8 +120,8 @@ Ctrl+b z           # zoom when needed
 ```bash
 Ctrl+b s           # session tree (native list)
 # or use aliases:
-tcolfe             # switch to col-fe
-treservine         # switch to Reservine
+twebapp            # switch to web-app
+tnorthwind         # switch to Northwind
 ```
 
 ### Copy from Terminal

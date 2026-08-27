@@ -4,7 +4,7 @@
 #
 # Usage: ./run-microbenches.sh <label> [--skip-projects]
 #   label         appended to each JSON record so we can filter (e.g. "phase-0-baseline")
-#   --skip-projects  don't run on ~/Tresors/Projects/ (the 117GB tree)
+#   --skip-projects  don't run on the big-tree dataset (a ~117GB tree here)
 
 set -euo pipefail
 
@@ -18,12 +18,13 @@ REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 RESULTS="$REPO/scripts/benchmarks/clones/microbench-results.jsonl"
 mkdir -p "$(dirname "$RESULTS")"
 
+# Point these at your own trees; a dataset whose root is missing is skipped.
 DATASETS=(
-    "small:$HOME/Tresors/Projects/GenesisTools"
-    "med:$HOME/Tresors/Projects/CEZ/col-fe"
+    "small:${BENCH_SMALL_ROOT:-$REPO}"
+    "med:${BENCH_MED_ROOT:-$HOME/projects/web-app}"
 )
 if [[ "$SKIP_PROJECTS" -eq 0 ]]; then
-    DATASETS+=("big:$HOME/Tresors/Projects")
+    DATASETS+=("big:${BENCH_BIG_ROOT:-$HOME/projects}")
 fi
 
 run_bench() {

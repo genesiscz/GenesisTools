@@ -28,7 +28,7 @@
  * found by KIND rather than by guessing at its parents, so the context
  * enumeration disappears along with its cost.
  *
- * Full measurements and the decision record: GenesisBrain/Dev/Biome/Performance.md
+ * Full measurements and the decision record live in the author's notes, out of repo.
  */
 
 import { findInFiles, Lang, parse, type SgNode } from "@ast-grep/napi";

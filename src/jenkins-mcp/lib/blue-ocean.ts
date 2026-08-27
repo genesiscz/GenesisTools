@@ -113,7 +113,7 @@ export function dedupeConsecutive(names: string[]): string[] {
  * Build path/context/label for one Blue Ocean node by walking `firstParent`.
  *
  * Context prefers the nearest PARALLEL ancestor (the matrix branch: fee-web,
- * col-web, …). If none, falls back to the immediate parent stage (Repo QA · Type check).
+ * web-site, …). If none, falls back to the immediate parent stage (Repo QA · Type check).
  */
 export function contextFromBlueOcean(nodeId: string, byId: Map<string, BlueOceanNode>): StageContext | null {
     const self = byId.get(nodeId);

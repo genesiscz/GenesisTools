@@ -22,7 +22,7 @@ describe("paths.client", () => {
 
     it("finds longest common path prefix across collapsed home paths", () => {
         const paths = [
-            "/Users/Martin/Tresors/Projects/CEZ/col-fe/col-mobile",
+            "/Users/Martin/Tresors/Projects/widgets/web-app/mobile-app",
             "/Users/Martin/Tresors/Projects/GenesisTools",
             "/Users/Martin/Tresors/Projects/Other/app",
         ];
@@ -45,21 +45,23 @@ describe("paths.client", () => {
     it("shortens paths using a shared prefix", () => {
         const prefix = "~/Tresors/Projects";
 
-        expect(shortenPathWithPrefix("~/Tresors/Projects/CEZ/col-fe/col-mobile", prefix)).toBe("CEZ/col-fe/col-mobile");
+        expect(shortenPathWithPrefix("~/Tresors/Projects/widgets/web-app/mobile-app", prefix)).toBe(
+            "widgets/web-app/mobile-app"
+        );
         expect(shortenPathWithPrefix("~/Tresors/Projects/GenesisTools", prefix)).toBe("GenesisTools");
         expect(shortenPathWithPrefix("~/Tresors/Projects", prefix)).toBe(".");
     });
 
     it("keeps worktree folders visible when siblings share a repo", () => {
         const paths = [
-            "~/Tresors/Projects/CEZ/col-fe/.claude/worktrees/wt-a",
-            "~/Tresors/Projects/CEZ/col-fe/.claude/worktrees/wt-b",
+            "~/Tresors/Projects/widgets/web-app/.claude/worktrees/wt-a",
+            "~/Tresors/Projects/widgets/web-app/.claude/worktrees/wt-b",
         ];
         const prefix = resolveDirPathDisplayPrefix(paths);
 
         expect(prefix).toBe("~/Tresors/Projects");
-        expect(shortenPathWithPrefix(paths[0], prefix)).toBe("CEZ/col-fe/.claude/worktrees/wt-a");
-        expect(shortenPathWithPrefix(paths[1], prefix)).toBe("CEZ/col-fe/.claude/worktrees/wt-b");
+        expect(shortenPathWithPrefix(paths[0], prefix)).toBe("widgets/web-app/.claude/worktrees/wt-a");
+        expect(shortenPathWithPrefix(paths[1], prefix)).toBe("widgets/web-app/.claude/worktrees/wt-b");
     });
 
     it("supports .worktrees/ sibling paths", () => {

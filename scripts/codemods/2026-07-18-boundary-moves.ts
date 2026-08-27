@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Boundary-violation moves for the flat @genesiscz/utils design
- * (.claude/plans/2026-07-18-FlatGenesisczPackages.md, step 3).
+ * (the flat-packages plan, step 3).
  *
  * Principle (user-set): move ONLY the files src/utils actually imports —
  * never a whole tool dir. Moved files mirror their tool path under

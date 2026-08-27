@@ -184,7 +184,7 @@ function resolveSameRepoWorktreePrefix(repoRoot: string, normalized: readonly st
 /**
  * Prefix for dashboard cwd display. When paths sit under `.claude/worktrees/`
  * or `.worktrees/`, avoid absorbing the worktree folder into the shared prefix
- * so siblings stay distinguishable (e.g. `CEZ/col-fe/.claude/worktrees/wt-a`).
+ * so siblings stay distinguishable (e.g. `widgets/web-app/.claude/worktrees/wt-a`).
  */
 export function resolveDirPathDisplayPrefix(paths: readonly string[]): string {
     const normalized = normalizePathsForDisplay(paths);

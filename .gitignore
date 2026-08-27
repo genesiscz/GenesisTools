@@ -184,10 +184,6 @@ decide/
 ccusage
 
 vercel-skills
-.claude/settings.local.json
-.claude/worktrees/
-.claude/reviews/
-.claude/scheduled_tasks.lock
 .worktrees/
 
 # Audio/video files (never commit — voice memos, test artifacts, yt-dlp downloads)
@@ -209,17 +205,9 @@ vercel-skills
 # HAR network captures
 *.har
 
-.claude/worktrees/
-.claude/work/
-
 .playwright-mcp/
 
 .agents/skills/hf-cli/
-
-.claude/skills/hf-cli
-.claude/plans/
-.claude/workflows/
-.claude/scheduled_tasks.lock
 
 .tanstack/
 .superpowers/
@@ -230,7 +218,13 @@ vercel-skills
 # repowise workspace artifacts
 .repowise/
 .repowise-workspace.yaml
-.claude/plans/sweep-p6/
 
 # skillopt scratch
 .skillopt-sleep/
+
+# Agent working directory — plans, audits, reviews, session scratch. These are
+# internal notes, not contributor documentation, and they carry customer and
+# employer names. Contributor docs live in docs/ instead.
+.claude/
+.handoff
+README.json-to-ts.md

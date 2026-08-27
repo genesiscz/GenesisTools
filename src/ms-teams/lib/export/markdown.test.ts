@@ -11,7 +11,7 @@ function threadWith(message: Partial<ExportedMessage> & Pick<ExportedMessage, "t
         id: "m1",
         sequenceId: 1,
         time: "2026-08-13T18:04:41.000Z",
-        from: { mri: "8:orgid:me", displayName: "martin.foltyn@tekies.eu", email: null },
+        from: { mri: "8:orgid:me", displayName: "martin@example.com", email: null },
         isFromMe: true,
         messageType: "RichText/Html",
         replyToId: null,

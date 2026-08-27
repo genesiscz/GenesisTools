@@ -3,8 +3,8 @@ import { cleanLaunchCommand, deriveReplayCommand } from "@app/cmux/lib/command-c
 
 describe("cleanLaunchCommand", () => {
     test("strips the bun wrapper down to `tools`", () => {
-        expect(cleanLaunchCommand("bun /Users/x/Projects/GenesisTools/tools cc run foltyn --resume burn")).toBe(
-            "tools cc run foltyn --resume burn"
+        expect(cleanLaunchCommand("bun /Users/Martin/Projects/GenesisTools/tools cc run martin --resume burn")).toBe(
+            "tools cc run martin --resume burn"
         );
         expect(cleanLaunchCommand("/Users/x/.bun/bin/bun run /repo/tools cc run a")).toBe("tools cc run a");
     });

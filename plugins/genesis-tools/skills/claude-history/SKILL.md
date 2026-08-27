@@ -183,9 +183,9 @@ tools claude history summarize abc123 --mode short-memory --provider anthropic -
 Mine Claude session JSONLs for Bash tool calls that tripped on zsh 5.9 expansion quirks (`no matches found`, unquoted `?` in URLs, bare `===` equals-expansion, `*(N)` / nobareglobqual, for-loop aborts). Each finding includes the command, result excerpt, and **exact jsonl path + line** so another agent can jump straight there.
 
 ```bash
-# Full report → file (Obsidian path example)
+# Full report → file (notes-vault path example)
 tools claude history extract-shell-quirks --all \
-  -o ~/Tresors/Projects/GenesisBrain/Claude/Bugs/ZshBugs.extracted.md
+  -o ~/notes/claude/bugs/ZshBugs.extracted.md
 
 # Machine JSON
 tools claude history extract-shell-quirks --all --json --max 50

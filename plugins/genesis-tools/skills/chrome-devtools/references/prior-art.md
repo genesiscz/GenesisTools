@@ -34,10 +34,10 @@ Go there when the work is the YouTube extension itself. `tools chrome-devtools o
 The generalized pieces live here now: `mcp` verb (programmatic chrome-devtools-mcp client
 against any port), `grid` verb (pixel-coordinate screenshots), `open --extension`.
 
-## 3. Vault: extension audit harness
+## 3. Extension audit harness
 
-`GenesisBrain/GenesisTools/Youtube/ext-audit-harness/` keeps 13 page scripts from the
-2026-07-27 session that found 8 bugs: `audit.js` (CSSOM missing-Tailwind-class detector),
+An out-of-repo `ext-audit-harness/` keeps 13 page scripts from the 2026-07-27 session
+that found 8 bugs: `audit.js` (CSSOM missing-Tailwind-class detector),
 `realclick.js` (full pointer sequence; a bare `.click()` does NOT switch Radix tabs),
 `loginfill.js` (sets values through the native `HTMLInputElement.prototype.value` setter so
 React's onChange fires), and others.
@@ -51,10 +51,8 @@ values give false negatives).
 
 Folded into this skill as `net-panel-symptoms.md`, `net-capture-settings.md`,
 `net-export-recipes.md`, indexed by `net-forensics-index.md`. Route via the trigger table
-in SKILL.md. Still vault-only:
-
-- `GenesisBrain/Dev/ChromeDevTools/AutoReloadDuringDev.md`, `BackgroundHotSwap.md`
-- `GenesisBrain/Claude/Bugs/PlayWright-MCP-ParallelAndChromeConflict.research.md`
+in SKILL.md. Still out of repo: notes on auto-reload during development, background
+hot-swap, and the playwright-mcp parallel/Chrome conflict.
 
 ## 5. Upstream chrome-har
 

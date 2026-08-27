@@ -34,11 +34,11 @@ The summary looks like:
 ```
 === 2026-04-19 (2 memories) ===
   Suggestions:
-    proj  4344283  ČEZ          score  2.88  27 similar past entries · top word similarity 0.00
-    proj  5190862  Reservine    score  0.05   1 similar past entries · top word similarity 0.00
+    proj  4100001  Widgets      score  2.88  27 similar past entries · top word similarity 0.00
+    proj  5100002  Northwind    score  0.05   1 similar past entries · top word similarity 0.00
   Memories (id  from-to  min  app  note | sub_notes):
-    2079040832  21:03-22:07    65m  cmux       col-fe | tools claude usage; col-fe2
-    2079063024  22:23-22:29     6m  cmux       col-fe
+    2079040832  21:03-22:07    65m  cmux       web-app | tools claude usage; web-app-2
+    2079063024  22:23-22:29     6m  cmux       web-app
 ```
 
 The plan JSON file contains the same data with full ISO timestamps and is the artifact `--apply` consumes.
@@ -49,7 +49,7 @@ Look at the summary the tool printed for:
 - App names + notes + sub_notes (often contain repo names, branch names, file paths — strong project signal)
 - Time ranges (split a day by morning/afternoon/evening blocks)
 - `suggestions[]` (heuristic prior — high score = strong historical pattern, but **don't blindly trust** if the memories clearly say something else)
-- Any prior conversation context the user gave you (e.g. "I worked on Reservine in the morning")
+- Any prior conversation context the user gave you (e.g. "I worked on Northwind in the morning")
 
 State your splits in chat — group memory IDs into time-block buckets per intended project. Be explicit so the user can correct you before you Edit.
 
@@ -62,13 +62,13 @@ Multiple events per day are fine — each gets its own project + note + memory_i
 ```json
 "events": [
   {
-    "project_id": 5190862,
-    "note": "Reservine — col-fe migration",
+    "project_id": 5100002,
+    "note": "Northwind — web-app migration",
     "memory_ids": [2084994045, 2085026565]
   },
   {
-    "project_id": 4344283,
-    "note": "ČEZ — Timely tooling",
+    "project_id": 4100001,
+    "note": "Widgets — Timely tooling",
     "memory_ids": [2085118879, 2085658439]
   }
 ]
@@ -95,8 +95,8 @@ tools timely create --apply /tmp/timely-plan.json --dry-run
 This re-validates and prints each event's `CreateEventInput` payload (with `timestamps[]` filtered to that event's `memory_ids`). Show the user a tight summary:
 
 ```
-2026-04-21#0 [proj 4250000] DRY 03:21 (5 memories)  Reservine — col-fe migration
-2026-04-21#1 [proj 4344283] DRY 04:15 (8 memories)  ČEZ — Timely tooling
+2026-04-21#0 [proj 4100003] DRY 03:21 (5 memories)  Northwind — web-app migration
+2026-04-21#1 [proj 4100001] DRY 04:15 (8 memories)  Widgets — Timely tooling
 ```
 
 ### Step 6 — Apply
@@ -130,7 +130,7 @@ If the user wants to do it themselves:
 
 ```bash
 tools timely create --day 2026-04-24 -i                  # clack interactive flow
-tools timely create --day 2026-04-24 -p 4344283 -n "..."  # one-shot, all-day, one project
+tools timely create --day 2026-04-24 -p 4100001 -n "..."  # one-shot, all-day, one project
 tools timely create --day 2026-04-24 --dry-run           # preview the all-day single-project payload
 ```
 
@@ -157,7 +157,7 @@ Always run `tools timely events --day <date>` before posting to avoid double-log
 |---|---|
 | "Log yesterday in Timely" | `tools timely create --plan --day <yesterday> --out /tmp/p.json`, then read + fill |
 | "Fill in this week" | `tools timely create --plan --from <Mon> --to <Fri> --out /tmp/p.json` |
-| "Split Friday — morning was Reservine, afternoon ČEZ" | Plan for Friday, place morning memory_ids in one event, afternoon in another |
+| "Split Friday — morning was Northwind, afternoon Widgets" | Plan for Friday, place morning memory_ids in one event, afternoon in another |
 | "Skip the lunch memories" | Leave their IDs out of every event; validation warns and proceeds |
 | "Re-run with the same plan" | Re-run `--apply <path> --yes` |
 

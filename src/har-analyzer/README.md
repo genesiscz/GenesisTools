@@ -60,7 +60,7 @@ Mask styles keep the file analyzable instead of blanking everything:
 | Style | Effect | Default for |
 |-------|--------|-------------|
 | `stars` | Full mask, length preserved (`hunter2` -> `*******`) | password, secret, username |
-| `partial` | Head+tail kept for correlation (`opaq[***]alue`); emails keep their domain (`******@cez.cz`); values under 16 chars fall back to stars | token, session, cookie, jwt, email |
+| `partial` | Head+tail kept for correlation (`opaq[***]alue`); emails keep their domain (`******@example.com`); values under 16 chars fall back to stars | token, session, cookie, jwt, email |
 | `label` | `[REDACTED:<kind>]` | (opt-in) |
 | `keep` | Leave untouched | (opt-in) |
 

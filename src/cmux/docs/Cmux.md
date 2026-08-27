@@ -186,7 +186,7 @@ A `workspace.list` entry contains:
   "title": "reservine",
   "selected": false,           // is this the focused workspace?
   "pinned": false,
-  "current_directory": "/Users/Martin/Tresors/Projects/ReservineBack",
+  "current_directory": "/Users/Martin/projects/NorthwindBack",
   "description": null,
   "listening_ports": [],
   "remote": { /* SSH state */ }

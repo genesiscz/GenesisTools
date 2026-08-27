@@ -1,8 +1,7 @@
 # Auth / SSO failure playbook
 
-Worked case: CEZ COL, 2026-07-28. Same browser, same root cause, two symptoms:
-UAT looped forever, PROD ended on a generic error page. Full reports:
-`GenesisBrain/ČEZ/col-294936-col-295714-CantLogInOrLogOut/2026-07-28-Mepas*.md`.
+Worked case: a corporate SSO portal, 2026-07-28. Same browser, same root cause, two
+symptoms: UAT looped forever, PROD ended on a generic error page.
 
 ## Shape of an OIDC federation chain
 

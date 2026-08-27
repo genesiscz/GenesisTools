@@ -65,7 +65,6 @@ Single file, `Sources/main.swift` (~1400 lines): AX helpers → search/targeting
 ## Docs
 
 - Skill for agents: `plugins/genesis-tools/skills/macos-control/SKILL.md`
-- Session handoff/history: `.claude/plans/2026-07-18-AxToolHandoff.handoff.md`
 
 
 ## Measurement commands (for automated checks)

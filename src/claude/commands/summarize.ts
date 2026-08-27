@@ -40,7 +40,7 @@ export function registerSummarizeCommand(program: Command): void {
         .option("--custom-prompt <text>", "Custom prompt text (for custom mode)")
         .option("--memory-dir <path>", "Output dir for memorization topic files")
         .option("--apple-notes", "Save to Apple Notes (interactive folder picker)")
-        .option("--project <path>", "Project path (e.g. ../CEZ/col-fe/)")
+        .option("--project <path>", "Project path (e.g. ../widgets/web-app/)")
         .action(async (sessionId: string | undefined, cmdOpts: SummarizeCommandOptions) => {
             const { runSummarizeCommand } = await import("./summarize-impl");
             await runSummarizeCommand(sessionId, cmdOpts);
