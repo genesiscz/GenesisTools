@@ -589,4 +589,8 @@ async function main(): Promise<void> {
     }
 }
 
-main();
+// Guarded for the same reason as src/transcribe/index.ts: timer.test.ts imports
+// this module, and an unguarded call runs the CLI during test collection.
+if (import.meta.main) {
+    main();
+}

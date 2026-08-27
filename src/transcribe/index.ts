@@ -443,10 +443,17 @@ async function main(): Promise<void> {
     }
 }
 
-try {
-    await main();
-} catch (err) {
-    out.error(err instanceof Error ? err.message : String(err));
-    await out.flush();
-    process.exit(1);
+// Guarded: this file is imported by transcribe.test.ts for its pure formatters.
+// Without the guard the import RAN the CLI, which reached an interactive prompt
+// and blocked forever — `bun run test` never finished, and CI reported a
+// 4-minute timeout rather than a pass. Matches src/time-machine/index.ts, which
+// has the same test-imports-entrypoint shape.
+if (import.meta.main) {
+    try {
+        await main();
+    } catch (err) {
+        out.error(err instanceof Error ? err.message : String(err));
+        await out.flush();
+        process.exit(1);
+    }
 }
