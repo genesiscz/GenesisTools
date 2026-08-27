@@ -32,6 +32,16 @@ export interface SessionRow {
     totalTokens: number;
     cacheReadTokens: number;
     cacheCreateTokens: number;
+    /**
+     * Context-window size: last real turn's input + cache tokens (output excluded — it
+     * never sits in the window). After a compaction with no turn yet, this is the exact
+     * `compactMetadata.postTokens` from the compact_boundary record instead.
+     */
+    contextTokens: number;
+    /** True when a compact_boundary follows the last real model turn (contextTokens = postTokens). */
+    compacted: boolean;
+    /** Timestamp of the last real typed user message (not tool results, not compact summaries). */
+    lastUserAt: number | null;
     filePath: string;
 }
 
@@ -39,9 +49,13 @@ interface TailUsage {
     totalTokens: number;
     cacheReadTokens: number;
     cacheCreateTokens: number;
+    inputTokens: number;
     model: string | null;
     prevModel: string | null;
     lastCacheAt: number | null;
+    lastUserAt: number | null;
+    /** `compactMetadata.postTokens` when compaction happened after the last real turn. */
+    compactedPostTokens: number | null;
 }
 
 export interface ListSessionRowsOptions {
@@ -98,9 +112,12 @@ function emptyTailUsage(): TailUsage {
         totalTokens: 0,
         cacheReadTokens: 0,
         cacheCreateTokens: 0,
+        inputTokens: 0,
         model: null,
         prevModel: null,
         lastCacheAt: null,
+        lastUserAt: null,
+        compactedPostTokens: null,
     };
 }
 
@@ -126,13 +143,49 @@ function cacheAtFromLine(obj: { type?: unknown; timestamp?: unknown; isSidechain
     return parsed;
 }
 
+/**
+ * A real typed user message: main-thread, not a tool result, not the injected
+ * compaction summary, not a meta record. Content is a string, or an array with a
+ * text part (tool results are arrays of tool_result parts only).
+ */
+function userAtFromLine(obj: {
+    type?: unknown;
+    timestamp?: unknown;
+    isSidechain?: unknown;
+    isMeta?: unknown;
+    isCompactSummary?: unknown;
+    message?: { content?: unknown };
+}): number | null {
+    if (obj.type !== "user" || obj.isSidechain === true || obj.isMeta === true || obj.isCompactSummary === true) {
+        return null;
+    }
+
+    const content = obj.message?.content;
+    const isTyped =
+        typeof content === "string" ||
+        (Array.isArray(content) && content.some((part) => (part as { type?: unknown })?.type === "text"));
+
+    if (!isTyped || typeof obj.timestamp !== "string") {
+        return null;
+    }
+
+    const parsed = Date.parse(obj.timestamp);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 function parseTailLines(lines: string[], filePath: string): TailUsage {
     const usage = emptyTailUsage();
     let lastModel: string | null = null;
     let prevModel: string | null = null;
     let foundUsage = false;
+    let foundPrev = false;
 
     for (let i = lines.length - 1; i >= 0; i--) {
+        // Everything is found — the rest of the tail can only be older.
+        if (foundPrev && usage.lastUserAt !== null && usage.lastCacheAt !== null) {
+            break;
+        }
+
         try {
             const obj = SafeJSON.parse(lines[i], { strict: true });
 
@@ -140,7 +193,29 @@ function parseTailLines(lines: string[], filePath: string): TailUsage {
                 usage.lastCacheAt = cacheAtFromLine(obj);
             }
 
+            if (usage.lastUserAt === null) {
+                usage.lastUserAt = userAtFromLine(obj);
+            }
+
+            // A compaction after the last real turn states the exact post-compact
+            // context in compactMetadata.postTokens — no assistant usage carries it yet.
+            if (!foundUsage && usage.compactedPostTokens === null && obj.type === "system") {
+                if (obj.subtype === "compact_boundary") {
+                    const post = obj.compactMetadata?.postTokens;
+                    usage.compactedPostTokens = typeof post === "number" ? post : 0;
+                }
+
+                continue;
+            }
+
             if (obj.type !== "assistant" || !obj.message?.usage) {
+                continue;
+            }
+
+            // Claude Code writes local notices (API errors, "No response.") as assistant
+            // records with model "<synthetic>". They are not model turns: no real usage,
+            // and surfacing the model string as-is is the "<synthetic>" bug.
+            if (obj.message.model === "<synthetic>") {
                 continue;
             }
 
@@ -149,13 +224,16 @@ function parseTailLines(lines: string[], filePath: string): TailUsage {
                 usage.totalTokens = (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
                 usage.cacheReadTokens = u.cache_read_input_tokens ?? 0;
                 usage.cacheCreateTokens = u.cache_creation_input_tokens ?? 0;
+                usage.inputTokens = u.input_tokens ?? 0;
                 lastModel = obj.message.model ? simplifyModel(obj.message.model) : null;
                 foundUsage = true;
                 continue;
             }
 
-            prevModel = obj.message.model ? simplifyModel(obj.message.model) : null;
-            break;
+            if (!foundPrev) {
+                prevModel = obj.message.model ? simplifyModel(obj.message.model) : null;
+                foundPrev = true;
+            }
         } catch (err) {
             logger.debug({ err, filePath }, "skip malformed session tail line");
         }
@@ -180,8 +258,9 @@ async function extractTailUsage(filePath: string): Promise<TailUsage> {
 
             const haveClock = parsed.lastCacheAt != null;
             const haveUsage = parsed.model != null;
+            const haveUser = parsed.lastUserAt != null;
 
-            if ((haveClock && haveUsage) || size <= 0 || bytes >= size || bytes >= TAIL_MAX_BYTES) {
+            if ((haveClock && haveUsage && haveUser) || size <= 0 || bytes >= size || bytes >= TAIL_MAX_BYTES) {
                 return parsed;
             }
 
@@ -219,6 +298,9 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number):
         totalTokens: usage.totalTokens,
         cacheReadTokens: usage.cacheReadTokens,
         cacheCreateTokens: usage.cacheCreateTokens,
+        contextTokens: usage.compactedPostTokens ?? usage.inputTokens + usage.cacheReadTokens + usage.cacheCreateTokens,
+        compacted: usage.compactedPostTokens !== null,
+        lastUserAt: usage.lastUserAt,
         filePath: record.filePath,
     };
 }
@@ -270,7 +352,13 @@ export async function listSessionRowsWithTimings(
     const rank: Record<CacheStatus, number> = { HOT: 0, COOLING: 1, CRITICAL: 2, COLD: 3 };
     const rows = records
         .map((r, i) => buildRow(r, usages[i], now))
-        .sort((a, b) => rank[a.cacheStatus] - rank[b.cacheStatus] || b.lastCacheAt - a.lastCacheAt);
+        .sort(
+            (a, b) =>
+                rank[a.cacheStatus] - rank[b.cacheStatus] ||
+                b.lastCacheAt - a.lastCacheAt ||
+                // Deterministic tie-break so equal-clock rows never shuffle between polls.
+                a.sessionId.localeCompare(b.sessionId)
+        );
 
     return {
         rows,
