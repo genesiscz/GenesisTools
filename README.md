@@ -504,14 +504,14 @@ Everything is a subcommand. The old flag-style interface (`--workitem 12345`,
 
 ```bash
 tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-tools azure-devops workitem 261575 --task-folders --images
+tools azure-devops workitem 12345 --task-folders --images
 tools azure-devops workitem 12345,12346,12347
 tools azure-devops query "Open Bugs" --download-workitems --category react19
 tools azure-devops workitem-create
 tools azure-devops list
 tools azure-devops dashboard <url-or-id>
-tools azure-devops timelog add -w 268935 -h 2 -t "Development"
-tools azure-devops history show 261575 --assigned-to "Martin"
+tools azure-devops timelog add -w 12345 -h 2 -t "Development"
+tools azure-devops history show 12345 --assigned-to "Jane"
 ```
 
 Aliases exist for the long names: `config`, `wi`, `create`, `ls`.
