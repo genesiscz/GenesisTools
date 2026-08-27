@@ -1,6 +1,6 @@
-import { out } from "@genesiscz/utils/logger";
 import { claudeTranscriptEnvelope } from "@genesiscz/utils/ai/transcripts/claude";
 import { DEFAULT_TURN_LIMIT } from "@genesiscz/utils/ai/transcripts/types";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export function registerTranscriptCommand(program: Command): void {
