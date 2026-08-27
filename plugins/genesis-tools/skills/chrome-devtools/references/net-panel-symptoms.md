@@ -170,7 +170,7 @@ Source: https://chromium.org/Home/chromium-security/corb-for-developers/
 
 ### 2.6 Navigation aborts an in-flight fetch: the OAuth token-endpoint pattern
 
-This is the canonical cause for Martin's CEZ OAuth issue:
+This is the canonical cause of a vanished OAuth token POST:
 
 1. Page A makes a `POST /token` with `Content-Type: application/x-www-form-urlencoded`.
 2. Before the response body arrives (or before you click the entry in DevTools), the server issues a `302` redirect or JS sets `window.location` to complete the OAuth callback.

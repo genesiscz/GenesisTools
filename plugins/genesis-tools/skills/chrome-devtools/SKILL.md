@@ -73,7 +73,8 @@ the literal examples.
 
 Health at any time: `tools chrome-devtools status` (CPU, memory, buffer sizes) ·
 `doctor` (read-only findings + fix commands) · `cleanup` (applies them, interactively in a
-terminal). The 2026-08-25 incident that forced these rules is `references/arm-cpu-leak.md`.
+terminal). These rules exist because an unbounded recorder once pinned a core for hours
+and left duplicate processes behind; the recorder is bounded and pid-verified now.
 The tool runs on macOS, Linux and Windows; on Windows the capture root is
 `%TEMP%\GenesisTools\ChromeDevtools` and `status` shows cpu-time without a live %CPU.
 
@@ -129,7 +130,7 @@ fingerprint.
 
 ## When the trace is not enough — network and wire forensics
 
-Read the file named, jumping to the section given. `references/net-forensics-index.md` is
+Read the file named, jumping to the section given. The table below is
 the full symptom index.
 
 | You see | Read |
@@ -141,6 +142,10 @@ the full symptom index.
 | Live panel and exported HAR disagree | `net-panel-symptoms.md` 1.5 |
 | Need more capture: settings, columns, experiments, starting a raw log | `net-capture-settings.md` 3.1-3.7 |
 | Brave Shields / fingerprinting may be altering requests | `net-capture-settings.md` 3.9 |
+| `(unknown)` Type with an odd Size or Initiator | `net-panel-symptoms.md` 1.3-1.4 |
+| What HAR cannot capture at all (below HTTP) | `net-export-recipes.md` 4 |
+| Grep a net-export log for one URL's whole lifecycle | `net-export-recipes.md` 5.2-5.3 |
+| Find the numeric net error behind a `(canceled)` | `net-export-recipes.md` 5.4 |
 | Need what panel AND HAR cannot see: socket bytes, DNS, TLS, preflight verdict, the numeric net error behind a cancel | `net-export-recipes.md` 4, 5.2-5.4 |
 | OAuth token endpoint, end to end | `net-export-recipes.md` 5.6 |
 | When did this start / how often did the user loop | `recipes.md` "Browsing history" — 🛑 `strftime('%s')` returns TEXT, so an epoch `BETWEEN` is silently always false (0 rows, no error) |
@@ -149,6 +154,11 @@ Two facts that change conclusions, so carry them always: Chrome does not stream 
 to DevTools until you view them and a navigation destroys the in-memory copy (a missing
 body is usually THIS, not the server); and a HAR is a DevTools-level artifact, so
 everything below HTTP exists only in a net-export log.
+
+Two facts to carry into every investigation:
+
+- Chrome withholds body bytes from DevTools until viewed; a navigation destroys the copy.
+- Anything below HTTP is invisible to both the panel and HAR — only net-export has it.
 
 ## HAR files
 
@@ -171,8 +181,15 @@ transcripts).
 
 ## Extension debugging
 
-The YouTube extension has its own harness: `tools youtube extension devtools launch --port
-9333` plus ready-made page scripts in the vault (`references/prior-art.md` section 3).
+The YouTube extension has its own harness (`src/youtube/lib/devtools/`), which adds
+watch-and-reload on top of what this tool does:
+
+```bash
+tools youtube extension dev                            # rebuild + chrome.runtime.reload on change
+tools youtube extension devtools launch --port 9333    # browser WITH the extension loaded
+```
+
+Use `tools chrome-devtools open --extension <dist>` for plain extension loading.
 Plain extension loading: `tools chrome-devtools open --extension <dist-dir>`.
 
 ## Writing it up
