@@ -58,6 +58,32 @@ export async function listCandidates(opts: ListCandidatesOptions): Promise<Resto
     return Promise.all(recent.map((record) => toCandidate(record, pins)));
 }
 
+/**
+ * The one record a needle names, or null.
+ *
+ * Usable records are filtered FIRST: `find` returned the earliest prefix match,
+ * so an exact id could lose to a longer one listed before it, and a first match
+ * with no cwd aborted the lookup even when a complete record followed.
+ *
+ * An exact id always wins. A prefix counts only when it fits exactly ONE
+ * session — listing order is no identity guarantee, so taking the first match
+ * would let a caller restore a different worktree than the one it named
+ * (PR #336 review t9).
+ */
+export function pickBySessionId<T extends { sessionId?: string | null; cwd?: string | null }>(
+    sessions: T[],
+    needle: string
+): T | null {
+    const usable = sessions.filter((s) => {
+        const id = (s.sessionId ?? "").toLowerCase();
+
+        return Boolean(s.sessionId && s.cwd) && (id === needle || id.startsWith(needle));
+    });
+    const exact = usable.find((s) => (s.sessionId ?? "").toLowerCase() === needle);
+
+    return exact ?? (usable.length === 1 ? usable[0] : null);
+}
+
 /** One session as a RestoreCandidate, by full id or a prefix of at least 8 chars. */
 export async function findCandidate(
     sessionId: string,
@@ -70,14 +96,7 @@ export async function findCandidate(
     }
 
     const listing = await getSessionListing({ excludeSubagents: true });
-    // Filter to usable records FIRST. `find` returned the earliest prefix match,
-    // so an exact id could lose to a longer one listed before it, and a first
-    // match with no cwd aborted the lookup even when a complete record followed.
-    const usable = listing.sessions.filter((s) => {
-        const id = (s.sessionId ?? "").toLowerCase();
-        return Boolean(s.sessionId && s.cwd) && (id === needle || id.startsWith(needle));
-    });
-    const record = usable.find((s) => (s.sessionId ?? "").toLowerCase() === needle) ?? usable[0];
+    const record = pickBySessionId(listing.sessions, needle);
 
     if (!record?.sessionId || !record.cwd) {
         return null;

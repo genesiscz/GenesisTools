@@ -239,4 +239,38 @@ describe("sizeMarkdownImages leaves code alone", () => {
         expect(out).toContain("![doc](doc.png)");
         expect(out).toContain('<img src="real.png"');
     });
+
+    /**
+     * Regression test: PR #336 review t11. The first fix split on ``` or a
+     * single backtick, so every other valid code delimiter still leaked.
+     */
+    test("leaves image syntax inside a tilde fence untouched", () => {
+        const md = ["~~~md", "![cat](c.png)", "~~~"].join("\n");
+
+        expect(sizeMarkdownImages(md)).toBe(md);
+    });
+
+    test("leaves image syntax inside a four-backtick fence untouched", () => {
+        const md = ["````md", "```", "![cat](c.png)", "```", "````"].join("\n");
+
+        expect(sizeMarkdownImages(md)).toBe(md);
+    });
+
+    test("an unclosed fence protects everything after it", () => {
+        const md = ["```md", "![cat](c.png)"].join("\n");
+
+        expect(sizeMarkdownImages(md)).toBe(md);
+    });
+
+    test("leaves image syntax inside a double-backtick span untouched", () => {
+        const md = "Write ``![cat](c.png)`` to embed it.";
+
+        expect(sizeMarkdownImages(md)).toBe(md);
+    });
+
+    test("a lone backtick is literal text, not an open span", () => {
+        const out = sizeMarkdownImages("a ` b ![real](real.png)");
+
+        expect(out).toContain('<img src="real.png"');
+    });
 });

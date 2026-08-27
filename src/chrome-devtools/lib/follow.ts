@@ -9,6 +9,7 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
+import { makeMatcher } from "./cdp.ts";
 import { RENDER_NEEDS_CAPTURE, type RecordedEvent, type RenderChannel, renderEventLines } from "./channels.ts";
 import { captureDir } from "./paths.ts";
 import { readRecorderMeta } from "./recorder.ts";
@@ -16,24 +17,8 @@ import { listSegments } from "./segments.ts";
 
 const { log } = logger.scoped("chrome-devtools:follow");
 
-/** URL matcher: substring, or /regex/flags. Ported from the old watch verb. */
-export function makeMatcher(m?: string): (url: string) => boolean {
-    if (!m) {
-        return () => true;
-    }
-
-    if (m.startsWith("/") && m.lastIndexOf("/") > 0) {
-        const i = m.lastIndexOf("/");
-        // g/y make test() stateful via lastIndex — a repeated matcher would
-        // silently skip every other hit. They add nothing to a boolean test.
-        const flags = m.slice(i + 1).replace(/[gy]/g, "");
-        const re = new RegExp(m.slice(1, i), flags);
-
-        return (u: string) => re.test(u);
-    }
-
-    return (u: string) => u.includes(m);
-}
+/** The URL matcher lives in cdp.ts; re-exported so `follow`'s own callers keep their import. */
+export { makeMatcher };
 
 /** Render channels the recorder is not capturing, with the restart command that would add them. */
 export function missingCaptureChannels(

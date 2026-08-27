@@ -19,7 +19,7 @@ nav <url> [--new]             navigate a tab (--new opens one instead of reusing
 shot [png] [--full]           screenshot the tab
 grid [png] --step 60          screenshot with pixel-coordinate grid (for clicking into pages)
 trace --match X               quick one-tab docs+redirect chain to a file
-targets [--match X] [--json]  tab list, one line each (id, title, url); --json = raw /json/list
+targets [--match X] [--json]  tab list, one line each (id, title, url); --json = the same list, as JSON
 open --fresh | restart        launch/relaunch a browser WITH the debugging flag
 mcp <tool> '<json>'           call real chrome-devtools-mcp tools on any port
 ```

@@ -365,10 +365,6 @@ export async function targets(port = 9222, opts: { signal?: AbortSignal } = {}):
 }
 
 /**
- * `/substr/flags` is a regex, anything else is a plain substring. The --match
- * help text promised regex support from day one; only substring was wired up.
- */
-/**
  * Why an eval threw: did the script navigate the page, or did the call fail?
  *
  * Only two Chrome protocol errors mean "your script did its job and tore its own
@@ -382,11 +378,25 @@ export function classifyEvalError(message: string): "navigated" | "failed" {
     return /context was destroyed|Inspected target navigated/i.test(message) ? "navigated" : "failed";
 }
 
-export function makeMatcher(pattern: string): (value: string) => boolean {
+/**
+ * `/substr/flags` is a regex, anything else is a plain substring, and no pattern
+ * matches everything. The --match help text promised regex support from day one;
+ * only substring was wired up.
+ *
+ * This is the ONE matcher for the tool: `follow` re-exports it rather than
+ * keeping a second copy whose edge cases could drift (PR #336 review t5).
+ */
+export function makeMatcher(pattern?: string): (value: string) => boolean {
+    if (!pattern) {
+        return () => true;
+    }
+
     const re = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
 
     if (re) {
-        const compiled = new RegExp(re[1], re[2].replace(/g/g, ""));
+        // g and y make test() stateful via lastIndex, so a reused matcher would
+        // silently skip every other hit. They add nothing to a boolean test.
+        const compiled = new RegExp(re[1], re[2].replace(/[gy]/g, ""));
 
         return (value) => compiled.test(value);
     }

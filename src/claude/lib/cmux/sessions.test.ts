@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cleanPromptText, subdirOf } from "@app/claude/lib/cmux/sessions";
+import { cleanPromptText, pickBySessionId, subdirOf } from "@app/claude/lib/cmux/sessions";
 
 describe("cleanPromptText", () => {
     test("keeps ordinary prompt text unchanged", () => {
@@ -68,5 +68,32 @@ describe("subdirOf", () => {
 
     test("a package inside the repo keeps its full path tail", () => {
         expect(subdirOf("/Users/me/Projects/app/packages/web", "app")).toBe("packages/web");
+    });
+});
+
+/**
+ * Regression test: PR #336 review t9. A prefix that fits several sessions used
+ * to return the first LISTED one, so a caller could act on a different worktree
+ * than the id it typed.
+ */
+describe("pickBySessionId", () => {
+    const a = { sessionId: "abcd1234-aaaa", cwd: "/w/a" };
+    const b = { sessionId: "abcd1234-bbbb", cwd: "/w/b" };
+    const noCwd = { sessionId: "abcd1234-aaaa", cwd: undefined };
+
+    test("an exact id wins even when a longer id is listed first", () => {
+        expect(pickBySessionId([b, { sessionId: "abcd1234", cwd: "/w/exact" }], "abcd1234")?.cwd).toBe("/w/exact");
+    });
+
+    test("a prefix that fits exactly one session resolves", () => {
+        expect(pickBySessionId([a, b], "abcd1234-a")?.cwd).toBe("/w/a");
+    });
+
+    test("an ambiguous prefix resolves to nothing rather than guessing", () => {
+        expect(pickBySessionId([a, b], "abcd1234")).toBeNull();
+    });
+
+    test("a record with no cwd cannot shadow a complete one listed after it", () => {
+        expect(pickBySessionId([noCwd, a], "abcd1234-a")?.cwd).toBe("/w/a");
     });
 });

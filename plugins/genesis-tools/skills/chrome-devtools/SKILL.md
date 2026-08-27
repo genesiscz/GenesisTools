@@ -122,7 +122,7 @@ The tool runs on macOS, Linux and Windows; on Windows the capture root is
 Page verbs take `--match <substr|/regex/>` to pick a tab by URL or title, and ERROR within
 a second when nothing matches, listing the closest open tabs; they never grab a random tab.
 No tab to reuse? `nav <url> --new` opens one. `targets --match <substr>` filters the tab
-list instead of printing one 40 KB JSON blob (`--json` still gives raw `/json/list`).
+list instead of printing one 40 KB JSON blob (`--json` gives the same list as JSON).
 
 ## The method that actually finds these bugs
 

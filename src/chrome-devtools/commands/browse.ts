@@ -161,10 +161,12 @@ export function registerBrowse(program: Command): void {
         });
 
     withPort(program.command("targets"))
-        .description("list the endpoint's tabs — one line per target (id, title, url). --json for raw /json/list.")
+        .description(
+            "list the endpoint's tabs — one line per target (id, title, url). --json for the same list as JSON."
+        )
         .option("--match <substr>", "only targets whose url or title contains this substring, or /regex/")
         .option("--all", "include non-page targets (workers, iframes, extension pages)")
-        .option("--json", "raw /json/list JSON, as Chromium returns it")
+        .option("--json", "the listed targets as JSON — /json/list entries, after --all and --match")
         .action(async (opts: { port?: string; match?: string; all?: boolean; json?: boolean }) => {
             const port = await resolvePort(opts);
             const all = await targets(port);
