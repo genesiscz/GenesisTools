@@ -1,7 +1,7 @@
 import { buildLaunchCommand, paneTitle } from "@app/claude/lib/cmux/command";
 import { findCandidate } from "@app/claude/lib/cmux/sessions";
 import type { PlannedSession } from "@app/claude/lib/cmux/types";
-import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import {
     createWorkspaceWithName,
@@ -91,8 +91,16 @@ export async function openSessionAt(
     }
 
     const payload = `${command}${(opts.enter ?? true) ? "\n" : ""}`;
-    await prof.measureAsync("send", () =>
-        runCmuxOk(["send", ...surfaceTargetArgs(placed.surfaceRef, placed.workspaceRef), payload])
+    await prof.measureAsync("raise-then-send", () =>
+        raiseThenSend(
+            {
+                workspaceRef: placed.workspaceRef,
+                surfaceRef: placed.surfaceRef,
+                payload,
+                windowRef: target.kind === "window" ? target.windowRef : undefined,
+            },
+            livePlacementIO()
+        )
     );
     prof.summary("open-session");
 
@@ -102,5 +110,88 @@ export async function openSessionAt(
         workspaceRef: placed.workspaceRef,
         surfaceRef: placed.surfaceRef,
         target: target.kind,
+    };
+}
+
+interface IdentifyResponse {
+    bundle_identifier?: string;
+    caller?: { window_ref?: string };
+}
+
+/** cmux needs this pause after select-workspace before the new PTY accepts keys. */
+export const PLACEMENT_SETTLE_MS = 400;
+
+export interface PlacementIO {
+    selectWorkspace: (workspaceRef: string) => Promise<void>;
+    send: (workspaceRef: string, surfaceRef: string, payload: string) => Promise<void>;
+    focusWindow: (windowRef: string) => Promise<void>;
+    identifyWindow?: (workspaceRef: string) => Promise<string | undefined>;
+    activateApp?: () => Promise<void>;
+    sleep: (ms: number) => Promise<void>;
+}
+
+/**
+ * Select the new workspace so its surface actually renders, wait for the PTY,
+ * type the resume command, then raise the window.
+ *
+ * Send-before-select is a silent no-op on a workspace that has never been shown
+ * (`in_window=false` until the first select — Cmux.md sending-input).
+ */
+export async function raiseThenSend(
+    args: { workspaceRef: string; surfaceRef: string; payload: string; windowRef?: string },
+    io: PlacementIO
+): Promise<void> {
+    await io.selectWorkspace(args.workspaceRef);
+    await io.sleep(PLACEMENT_SETTLE_MS);
+    await io.send(args.workspaceRef, args.surfaceRef, args.payload);
+
+    const window = args.windowRef ?? (await io.identifyWindow?.(args.workspaceRef));
+    if (window) {
+        await io.focusWindow(window);
+    }
+    await io.activateApp?.();
+}
+
+function livePlacementIO(): PlacementIO {
+    return {
+        selectWorkspace: async (workspaceRef) => {
+            await runCmuxOk(["select-workspace", "--workspace", workspaceRef]);
+        },
+        send: async (workspaceRef, surfaceRef, payload) => {
+            await runCmuxOk(["send", ...surfaceTargetArgs(surfaceRef, workspaceRef), payload]);
+        },
+        focusWindow: async (windowRef) => {
+            try {
+                await runCmuxOk(["focus-window", "--window", windowRef]);
+            } catch (err) {
+                log.debug({ err, windowRef }, "could not focus window after open");
+            }
+        },
+        identifyWindow: async (workspaceRef) => {
+            try {
+                const identify = await runCmuxJSON<IdentifyResponse>(["identify", "--workspace", workspaceRef]);
+                return identify.caller?.window_ref;
+            } catch (err) {
+                log.debug({ err, workspaceRef }, "could not resolve window after open");
+                return undefined;
+            }
+        },
+        activateApp: async () => {
+            if (process.platform !== "darwin") {
+                return;
+            }
+            try {
+                const identify = await runCmuxJSON<IdentifyResponse>(["identify"]);
+                const bundleId = identify.bundle_identifier;
+                if (!bundleId) {
+                    return;
+                }
+                const proc = Bun.spawn(["open", "-b", bundleId], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+                await proc.exited;
+            } catch (err) {
+                log.debug({ err }, "could not raise the cmux app after open");
+            }
+        },
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     };
 }
