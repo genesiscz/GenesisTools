@@ -1,8 +1,10 @@
 import { existsSync, statSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { logger } from "@genesiscz/utils/logger";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
-import { artifactServePlugin, scanArtifacts } from "./catalog";
+import { artifactServePlugin, cachedScan } from "./catalog";
+import { createMountCache } from "./mount-cache";
 import { type DashboardEntry, loadRegistry } from "./registry";
 import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate } from "./templates";
 import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, REPO_ROOT } from "./vite";
@@ -37,10 +39,11 @@ function ageLabel(iso: string): string {
 }
 
 function renderLibraryHtml(entries: DashboardEntry[], templateDir: string): string {
+    const now = Date.now();
     const rows = entries
         .filter((e) => existsSync(e.dir))
         .map((e) => {
-            const listing = scanArtifacts(e.dir);
+            const listing = cachedScan(e.dir, now);
             const counts = [
                 listing.tsx.length ? `${listing.tsx.length} tsx` : "",
                 listing.html.length ? `${listing.html.length} html` : "",
@@ -70,49 +73,57 @@ function renderLibraryHtml(entries: DashboardEntry[], templateDir: string): stri
     });
 }
 
+/** Start ONE artifact folder's Vite middleware server, mounted at `/a/<name>/`. */
+function startMount(
+    entry: DashboardEntry,
+    httpServer: ReturnType<typeof createHttpServer>,
+    options: LibraryOptions
+): Promise<ViteDevServer> {
+    logger.info({ name: entry.name, dir: entry.dir }, "[artifact] library: starting mount");
+    const urlBase = `/a/${encodeURIComponent(entry.name)}`;
+
+    return createViteServer({
+        configFile: false,
+        envFile: false,
+        root: entry.dir,
+        appType: "mpa",
+        base: `${urlBase}/`,
+        cacheDir: cacheDirFor(entry.dir),
+        logLevel: "warn",
+        plugins: [...basePlugins(), artifactServePlugin({ dir: entry.dir, templateDir: options.templateDir, urlBase })],
+        resolve: baseResolve(),
+        optimizeDeps: baseOptimizeDeps(),
+        server: {
+            middlewareMode: true,
+            hmr: { server: httpServer, path: `${urlBase}/__hmr` },
+            fs: { allow: [entry.dir, REPO_ROOT] },
+        },
+    });
+}
+
 export async function startLibrary(options: LibraryOptions): Promise<LibraryHandle> {
-    const subServers = new Map<string, Promise<ViteDevServer>>();
+    // The mount factory needs the http server for HMR, and the http server needs
+    // the mounts to serve a request; `start` only runs from inside a request.
+    let httpServer: ReturnType<typeof createHttpServer> | null = null;
+    // Handing the resolved entry to the cache's start callback. Written just
+    // before the get() that consumes it and dropped straight after, so nothing
+    // survives the request that put it there.
+    const pendingEntries = new Map<string, DashboardEntry>();
 
-    const subFor = (entry: DashboardEntry, httpServer: ReturnType<typeof createHttpServer>): Promise<ViteDevServer> => {
-        const existing = subServers.get(entry.name);
+    const mounts = createMountCache<ViteDevServer>({
+        start: (key: string): Promise<ViteDevServer> => {
+            const entry = pendingEntries.get(key);
 
-        if (existing) {
-            return existing;
-        }
+            if (!entry || !httpServer) {
+                return Promise.reject(new Error(`No registered artifact folder named "${key.split("\u0000")[0]}".`));
+            }
 
-        logger.info({ name: entry.name, dir: entry.dir }, "[artifact] library: starting mount");
-        const urlBase = `/a/${encodeURIComponent(entry.name)}`;
-        const created = createViteServer({
-            configFile: false,
-            envFile: false,
-            root: entry.dir,
-            appType: "mpa",
-            base: `${urlBase}/`,
-            cacheDir: cacheDirFor(entry.dir),
-            logLevel: "warn",
-            plugins: [
-                ...basePlugins(),
-                artifactServePlugin({ dir: entry.dir, templateDir: options.templateDir, urlBase }),
-            ],
-            resolve: baseResolve(),
-            optimizeDeps: baseOptimizeDeps(),
-            server: {
-                middlewareMode: true,
-                hmr: { server: httpServer, path: `${urlBase}/__hmr` },
-                fs: { allow: [entry.dir, REPO_ROOT] },
-            },
-        });
-        subServers.set(entry.name, created);
-        // A failed mount must not stay cached: the next request retries.
-        created.catch((err: unknown) => {
-            logger.warn({ err, name: entry.name }, "[artifact] library mount failed");
-            subServers.delete(entry.name);
-        });
+            return startMount(entry, httpServer, options);
+        },
+        close: (server: ViteDevServer) => server.close(),
+    });
 
-        return created;
-    };
-
-    const httpServer = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
+    httpServer = createHttpServer((req: IncomingMessage, res: ServerResponse) => {
         const handle = async (): Promise<void> => {
             const urlPath = (req.url ?? "/").split("?")[0];
 
@@ -144,7 +155,19 @@ export async function startLibrary(options: LibraryOptions): Promise<LibraryHand
                     return;
                 }
 
-                const sub = await subFor(entry, httpServer);
+                // The mount key carries the directory, not just the name: a folder
+                // re-registered under the same name but a NEW path must get a new
+                // Vite server, not the one already rooted at the old path.
+                const key = `${entry.name}\u0000${entry.dir}`;
+                pendingEntries.set(key, entry);
+                let sub: ViteDevServer;
+
+                try {
+                    sub = await mounts.get(key);
+                } finally {
+                    pendingEntries.delete(key);
+                }
+
                 sub.middlewares(req, res, () => {
                     res.statusCode = 404;
                     res.end("Not found");
@@ -165,23 +188,21 @@ export async function startLibrary(options: LibraryOptions): Promise<LibraryHand
         });
     });
 
+    const listening = httpServer;
     await new Promise<void>((resolveListen, reject) => {
-        httpServer.once("error", reject);
-        httpServer.listen(options.port, options.host, () => resolveListen());
+        listening.once("error", reject);
+        listening.listen(options.port, options.host, () => resolveListen());
     });
 
-    return {
-        port: options.port,
-        close: async () => {
-            for (const pending of subServers.values()) {
-                try {
-                    await (await pending).close();
-                } catch (err) {
-                    logger.debug({ err }, "[artifact] library mount close failed");
-                }
-            }
+    const address = listening.address();
 
-            await new Promise<void>((r) => httpServer.close(() => r()));
+    return {
+        // The ASSIGNED port, not the requested one: `--port 0` means "any free
+        // port", and callers print this and record it for `tools artifact stop`.
+        port: typeof address === "object" && address ? (address as AddressInfo).port : options.port,
+        close: async () => {
+            await mounts.closeAll();
+            await new Promise<void>((r) => listening.close(() => r()));
         },
     };
 }

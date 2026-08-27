@@ -4,9 +4,10 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
@@ -15,7 +16,7 @@ import { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } from ".
 import { filterKitDts, kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
 import { startLibrary } from "./lib/library";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
-import { findRunning, listRunning, recordRunning, removeRunning } from "./lib/running";
+import { findRunning, isSignalable, listRunning, recordRunning, removeRunning } from "./lib/running";
 import { serveArtifacts } from "./lib/serve";
 import { describeShippedTemplates, resolveTemplateDir } from "./lib/templates";
 import { RUNTIME_DIR } from "./lib/vite";
@@ -126,7 +127,7 @@ program
                 const child = Bun.spawn([process.execPath, ...argvRest, "--no-open"], {
                     stdout: Bun.file(logPath),
                     stderr: Bun.file(logPath),
-                    env: process.env,
+                    env: env.getProcessEnv(),
                 });
                 child.unref();
                 out.log.success(`Detached server pid ${child.pid} (requested port ${opts.port}).`);
@@ -162,8 +163,16 @@ program
                 startedAt: new Date().toISOString(),
             });
 
+            // Vite holds file watchers, the HTTP listener and HMR sockets; closing
+            // it first lets them unwind instead of being torn down by exit().
             const cleanup = (): void => {
-                void removeRunning(process.pid).finally(() => process.exit(0));
+                void server
+                    .close()
+                    .catch((err: unknown) => {
+                        logger.debug({ err }, "[artifact] serve: closing the dev server failed on shutdown");
+                    })
+                    .then(() => removeRunning(process.pid))
+                    .finally(() => process.exit(0));
             };
             process.on("SIGINT", cleanup);
             process.on("SIGTERM", cleanup);
@@ -235,6 +244,20 @@ program
             return;
         }
 
+        if (!isSignalable(server)) {
+            // The pid outlived the server and the OS reissued it. Signalling now
+            // would kill a stranger's process, so drop the stale record instead.
+            await removeRunning(server.pid);
+            out.log.warn(
+                `${pc.bold(server.name)} is no longer running under pid ${server.pid}; dropped the stale record without signalling.`
+            );
+
+            return;
+        }
+
+        // isSignalable() above required classifyPid to return "live", matching the
+        // command line recorded when the server registered itself.
+        // pid-verified: identity confirmed against the command recorded at write time.
         process.kill(server.pid, "SIGTERM");
         await removeRunning(server.pid);
         out.log.success(`Stopped ${pc.bold(server.name)} (pid ${server.pid}, port ${server.port})`);
@@ -301,18 +324,25 @@ library
     .option("--no-open", "do not open the browser")
     .action(async (opts: { port: string; host: string; template?: string; open: boolean }) => {
         const port = Number.parseInt(opts.port, 10);
-        await startLibrary({ port, host: opts.host, templateDir: resolveTemplateDir(opts.template) });
-        const url = `http://${opts.host}:${port}/`;
+        const library = await startLibrary({ port, host: opts.host, templateDir: resolveTemplateDir(opts.template) });
+        const url = `http://${opts.host}:${library.port}/`;
         await recordRunning({
             pid: process.pid,
-            port,
+            port: library.port,
             dir: "(library)",
             name: "library",
             startedAt: new Date().toISOString(),
         });
 
+        // Same reason as `serve`: the mounts hold Vite watchers and HMR sockets.
         const cleanup = (): void => {
-            void removeRunning(process.pid).finally(() => process.exit(0));
+            void library
+                .close()
+                .catch((err: unknown) => {
+                    logger.debug({ err }, "[artifact] library: closing the server failed on shutdown");
+                })
+                .then(() => removeRunning(process.pid))
+                .finally(() => process.exit(0));
         };
         process.on("SIGINT", cleanup);
         process.on("SIGTERM", cleanup);
@@ -376,11 +406,19 @@ program
     .option("-o, --out <file>", "output path (default: <dir>/dist/<entry>)")
     .option("--max-embed <mb>", "per-file cap for embedded sibling data files", "5")
     .option("--embed <scope>", "referenced (only files the entry names) or tree (every sibling data file)")
+    .option("-t, --template <name>", "theme for a markdown entry's page chrome")
     .option("--watch", "stay running and rebuild on every source change")
     .action(
         async (
             target: string | undefined,
-            opts: { entry?: string; out?: string; maxEmbed: string; embed?: string; watch?: boolean }
+            opts: {
+                entry?: string;
+                out?: string;
+                maxEmbed: string;
+                embed?: string;
+                template?: string;
+                watch?: boolean;
+            }
         ) => {
             if (opts.embed && opts.embed !== "referenced" && opts.embed !== "tree") {
                 out.log.error(`--embed must be "referenced" or "tree" (got "${opts.embed}").`);
@@ -395,6 +433,7 @@ program
                 dir: resolved.dir,
                 entry,
                 out: opts.out,
+                templateDir: resolveTemplateDir(opts.template),
                 embedLimitMb: Number.parseFloat(opts.maxEmbed),
                 embedScope:
                     (opts.embed as "referenced" | "tree" | undefined) ??

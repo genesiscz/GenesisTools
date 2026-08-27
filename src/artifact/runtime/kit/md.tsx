@@ -1,48 +1,24 @@
-import { Marked, type Token, type Tokens } from "marked";
+import type { Token } from "marked";
 import { memo, useEffect, useMemo, useState } from "react";
+import {
+    renderMarkdownInline as renderMarkdownInlineShared,
+    renderMarkdown as renderMarkdownShared,
+    safeMarked,
+} from "../../lib/markdown";
 
-/** Safe marked instance: raw HTML in the source is escaped, never injected. */
-const marked = new Marked({ gfm: true, breaks: false });
-
-function escapeHtml(html: string): string {
-    return html.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-const SAFE_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
-
-function isSafeHref(href: string): boolean {
-    try {
-        return SAFE_LINK_PROTOCOLS.has(new URL(href, "https://relative.invalid/").protocol);
-    } catch {
-        return false;
-    }
-}
-
-marked.use({
-    renderer: {
-        html({ text }: Tokens.HTML | Tokens.Tag) {
-            return escapeHtml(text);
-        },
-        link(token: Tokens.Link) {
-            const label = this.parser.parseInline(token.tokens);
-
-            if (!isSafeHref(token.href)) {
-                return label;
-            }
-
-            const title = token.title ? ` title="${escapeHtml(token.title).replace(/"/g, "&quot;")}"` : "";
-
-            return `<a href="${escapeHtml(token.href).replace(/"/g, "&quot;")}"${title} target="_blank" rel="noreferrer">${label}</a>`;
-        },
-    },
-});
-
+/**
+ * Thin wrappers, not a re-export. `tools artifact kit` builds its API reference
+ * from the declarations emitted for THIS folder only, and a bare `export { … }`
+ * emits an import of `../../lib/markdown` that the generated text cannot
+ * resolve, hiding both signatures. Declaring them here keeps that output
+ * self-contained. The implementation stays shared with the server and builder.
+ */
 export function renderMarkdown(source: string): string {
-    return marked.parse(source, { async: false });
+    return renderMarkdownShared(source);
 }
 
 export function renderMarkdownInline(source: string): string {
-    return marked.parseInline(source, { async: false });
+    return renderMarkdownInlineShared(source);
 }
 
 /** Typography wrapper for rendered markdown (shared by Md, MdViewer, and kit bodies). */
@@ -74,7 +50,7 @@ export const Md = memo(function Md({ children, className }: MdProps) {
     return (
         <div
             className={`${MD_BODY_CLASS} ${className ?? ""}`}
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping marked renderer above
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
             dangerouslySetInnerHTML={{ __html: html }}
         />
     );
@@ -87,7 +63,7 @@ export const MdInline = memo(function MdInline({ children, className }: MdProps)
     return (
         <span
             className={`[&_code]:rounded [&_code]:border [&_code]:border-line [&_code]:bg-panel [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_a]:text-accent [&_a:hover]:underline ${className ?? ""}`}
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping marked renderer above
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
             dangerouslySetInnerHTML={{ __html: html }}
         />
     );
@@ -116,7 +92,7 @@ function tokenText(tokens: Token[]): string {
 
 /** Split a markdown document into sections at h1/h2 boundaries. */
 function splitSections(source: string): MdSection[] {
-    const tokens = marked.lexer(source);
+    const tokens = safeMarked.lexer(source);
     const sections: MdSection[] = [];
     let current: Token[] = [];
     let heading = "";
@@ -126,7 +102,7 @@ function splitSections(source: string): MdSection[] {
             return;
         }
 
-        const html = marked.parser(current);
+        const html = safeMarked.parser(current);
         sections.push({
             id: `${sections.length}-${slugify(heading || "intro")}`,
             heading: heading || "(intro)",
@@ -217,7 +193,9 @@ export function MdViewer({ src, source, title, chrome = true, filterPlaceholder 
         );
     }
 
-    if (!text) {
+    // `text === ""` is a REAL empty document (source="" or an empty file), not a
+    // pending load — a falsy test used to leave it spinning on "Loading undefined…".
+    if (text === null || text === undefined) {
         return (
             <div className="animate-pulse rounded-card border border-line bg-panel/60 p-4 text-dim">Loading {src}…</div>
         );
@@ -235,6 +213,7 @@ export function MdViewer({ src, source, title, chrome = true, filterPlaceholder 
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={filterPlaceholder ?? "filter sections…"}
+                    aria-label={filterPlaceholder ?? "filter sections"}
                     className="w-72 max-w-full rounded-card border border-line bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                 />
                 <span className="text-xs text-dim">
@@ -267,7 +246,7 @@ export function MdViewer({ src, source, title, chrome = true, filterPlaceholder 
                         <section key={s.id} id={s.id} className="scroll-mt-4">
                             <div
                                 className={MD_BODY_CLASS}
-                                // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping marked renderer above
+                                // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
                                 dangerouslySetInnerHTML={{ __html: s.html }}
                             />
                         </section>

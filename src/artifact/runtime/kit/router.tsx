@@ -19,8 +19,10 @@ import {
  * The base comes from `window.__ARTIFACT_BASE__` (injected by the tsx shell);
  * without it, everything up to and including the `*.tsx`/`*.jsx`/`*.html`
  * segment of the current pathname is used. In a BUILT single file opened from
- * `file://` there is no server, so the router degrades to hash routing there —
- * same components, no code change in the artifact.
+ * `file://` there is no server, so the router degrades to hash routing there:
+ * a `file://` origin cannot call `history.pushState` (the browser rejects it as
+ * a cross-origin operation), and there is nothing to serve a deep path anyway.
+ * Same components, no code change in the artifact.
  *
  *   <Router routes={[
  *       { path: "/", element: <Home /> },
@@ -55,7 +57,12 @@ function isFileMode(): boolean {
     return window.location.protocol === "file:";
 }
 
-function detectBase(): string {
+/**
+ * URL prefix the artifact is mounted under: injected by the tsx shell, or read
+ * off the pathname up to and including the `*.tsx`/`*.jsx`/`*.html` segment.
+ * Exported for tests; components use the Router context.
+ */
+export function detectBase(): string {
     if (typeof window.__ARTIFACT_BASE__ === "string") {
         return window.__ARTIFACT_BASE__.replace(/\/$/, "");
     }
@@ -69,7 +76,8 @@ function normalizePath(to: string): string {
     return to.startsWith("/") ? to : `/${to}`;
 }
 
-function currentPath(base: string): string {
+/** Route path for the current location, base prefix stripped (hash-based on `file://`). */
+export function currentPath(base: string): string {
     if (isFileMode()) {
         const hash = window.location.hash.replace(/^#/, "");
 

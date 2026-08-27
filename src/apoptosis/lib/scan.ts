@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { canonicalDir } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
 import { loadCoverageSet } from "./coverage";
 import { findRepoRoot, getChurnCounts } from "./git";
@@ -24,16 +24,10 @@ export interface ScanOptions {
     now: number;
 }
 
-/** Normalize a dir to its realpath so file keys agree with git's toplevel
- *  (which always returns the realpath, e.g. /private/var on macOS). Exported so
- *  the `status`/`rescue` commands key marks the same way `runScan` does. */
-export function canonicalDir(dir: string): string {
-    try {
-        return realpathSync(dir);
-    } catch {
-        return dir;
-    }
-}
+/** Re-exported so the `status`/`rescue` commands key marks the same way `runScan`
+ *  does: the realpath, which is what git's toplevel always reports (/private/var
+ *  on macOS). */
+export { canonicalDir };
 
 export async function runScan(opts: ScanOptions): Promise<ScanReport> {
     const dir = canonicalDir(opts.dir);

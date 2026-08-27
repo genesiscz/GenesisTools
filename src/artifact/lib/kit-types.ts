@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { REPO_ROOT, RUNTIME_DIR } from "./vite";
@@ -14,6 +14,16 @@ import { REPO_ROOT, RUNTIME_DIR } from "./vite";
  */
 
 const KIT_DIR = join(RUNTIME_DIR, "kit");
+/**
+ * rootDir for the declaration emit. It must contain every file the program
+ * reaches, not just the kit: TypeScript emits a .d.ts for each source it
+ * compiles, and one whose path escapes rootDir cannot be placed under outDir,
+ * so it lands NEXT TO THE SOURCE instead. That is how stray .d.ts files got
+ * into this tree before. A kit module importing `../../lib/markdown` is normal,
+ * so the root is the whole tool directory.
+ */
+const EMIT_ROOT_DIR = resolve(RUNTIME_DIR, "..");
+const KIT_EMIT_SUBDIR = relative(EMIT_ROOT_DIR, KIT_DIR);
 const KIT_FILES = [
     "primitives.tsx",
     "data.tsx",
@@ -56,11 +66,14 @@ export async function kitApiDts(): Promise<string> {
                     skipLibCheck: true,
                     declaration: true,
                     emitDeclarationOnly: true,
-                    rootDir: KIT_DIR,
+                    rootDir: EMIT_ROOT_DIR,
                     outDir: emitDir,
                     types: [],
                 },
-                include: [join(KIT_DIR, "**/*")],
+                // Exactly the kit's public modules. A directory glob would also
+                // pull in the kit's own *.test.tsx and DOM harness, which need
+                // bun:test types this emit deliberately does not load.
+                files: KIT_FILES.map((f) => join(KIT_DIR, f)),
             },
             { strict: true },
             4
@@ -85,7 +98,7 @@ export async function kitApiDts(): Promise<string> {
             continue;
         }
 
-        const dts = join(emitDir, file.replace(/\.tsx?$/, ".d.ts"));
+        const dts = join(emitDir, KIT_EMIT_SUBDIR, file.replace(/\.tsx?$/, ".d.ts"));
         parts.push(`\n// ─── ${file} ───\n${readFileSync(dts, "utf8").trim()}`);
     }
 

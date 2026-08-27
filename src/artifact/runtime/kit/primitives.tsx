@@ -181,7 +181,9 @@ export function Collapse({ summary, meta, open = false, children }: CollapseProp
         <details className="group border-t border-line" open={open}>
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded px-1 py-2 font-medium text-ink hover:bg-panel/60 [&::-webkit-details-marker]:hidden">
                 <span className="inline-flex items-center gap-1.5">
-                    <span className="text-dim transition-transform group-open:rotate-90">▸</span>
+                    <span aria-hidden="true" className="text-dim transition-transform group-open:rotate-90">
+                        ▸
+                    </span>
                     {summary}
                 </span>
                 {meta ? <span className="whitespace-nowrap font-mono text-xs text-dim">{meta}</span> : null}

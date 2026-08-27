@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useMemo, useState } from "react";
 import { MdInline } from "./md";
 import {
     Badge,
@@ -30,16 +30,84 @@ export interface TabsProps {
     scroll?: boolean;
 }
 
+/**
+ * Tab id as it is written into the URL hash. Ids are arbitrary strings, and the
+ * browser percent-encodes spaces and other reserved characters on assignment,
+ * so both directions must agree or a reload lands on the fallback tab.
+ */
+export function tabHash(id: string): string {
+    return `#${encodeURIComponent(id)}`;
+}
+
+/** Tab id carried by a location hash ("#my%20tab" → "my tab"); "" when absent or malformed. */
+export function tabIdFromHash(hash: string): string {
+    const raw = hash.replace(/^#/, "");
+
+    try {
+        return decodeURIComponent(raw);
+    } catch {
+        // A hand-typed "#100%" is not a tab id; fall back to the raw text.
+        return raw;
+    }
+}
+
+/**
+ * DOM ids tying a tab button to its panel. Tab ids are arbitrary strings, so
+ * they are encoded rather than interpolated raw: a space or a "#" would make an
+ * invalid id and break the aria-controls / aria-labelledby pairing.
+ */
+function tabButtonId(id: string): string {
+    return `akit-tab-${encodeURIComponent(id)}`;
+}
+
+function tabPanelId(id: string): string {
+    return `akit-tabpanel-${encodeURIComponent(id)}`;
+}
+
 /** Tab bar + panels. The active tab syncs to the URL hash, so tabs are linkable. */
 export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps) {
-    const fromHash = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    const fromHash = typeof window !== "undefined" ? tabIdFromHash(window.location.hash) : "";
     const start = tabs.some((t) => t.id === fromHash) ? fromHash : (initial ?? tabs[0]?.id);
     const [active, setActive] = useState(start);
     const current = tabs.find((t) => t.id === active) ?? tabs[0];
+    const currentIndex = tabs.findIndex((t) => t.id === current?.id);
+
+    const select = (index: number): void => {
+        const next = tabs[(index + tabs.length) % tabs.length];
+
+        if (!next) {
+            return;
+        }
+
+        setActive(next.id);
+        history.replaceState(null, "", tabHash(next.id));
+        // The roving tabIndex only helps if focus actually moves with the
+        // selection; getElementById (not a selector) because ids are encoded.
+        document.getElementById(tabButtonId(next.id))?.focus();
+    };
+
+    /** The ARIA tabs keyboard model: arrows wrap, Home/End jump, focus follows. */
+    const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+        const moves: Record<string, number> = {
+            ArrowRight: currentIndex + 1,
+            ArrowLeft: currentIndex - 1,
+            Home: 0,
+            End: tabs.length - 1,
+        };
+        const target = moves[event.key];
+
+        if (target === undefined) {
+            return;
+        }
+
+        event.preventDefault();
+        select(target);
+    };
 
     return (
         <div>
             <div
+                role="tablist"
                 className={`mb-6 flex gap-1 border-b border-line ${
                     scroll ? "flex-nowrap overflow-x-auto [scrollbar-width:thin]" : "flex-wrap"
                 } ${sticky ? "sticky top-0 z-20 bg-canvas/95 pt-1 backdrop-blur-sm" : ""}`}
@@ -48,10 +116,18 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
                     <button
                         key={t.id}
                         type="button"
+                        role="tab"
+                        id={tabButtonId(t.id)}
+                        aria-selected={t.id === current?.id}
+                        aria-controls={tabPanelId(t.id)}
+                        // Roving tabIndex: the tablist is ONE tab stop, and the
+                        // arrow keys move within it.
+                        tabIndex={t.id === current?.id ? 0 : -1}
                         onClick={() => {
                             setActive(t.id);
-                            history.replaceState(null, "", `#${t.id}`);
+                            history.replaceState(null, "", tabHash(t.id));
                         }}
+                        onKeyDown={onTabKeyDown}
                         className={`${scroll ? "shrink-0 " : ""}${
                             t.id === current?.id
                                 ? "inline-flex items-center gap-1.5 rounded-t-card border border-b-0 border-line bg-panel px-4 py-2 text-sm font-medium text-ink"
@@ -67,7 +143,11 @@ export function Tabs({ tabs, initial, sticky = true, scroll = false }: TabsProps
                     </button>
                 ))}
             </div>
-            {current?.content}
+            {current ? (
+                <div role="tabpanel" id={tabPanelId(current.id)} aria-labelledby={tabButtonId(current.id)}>
+                    {current.content}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -177,6 +257,7 @@ export function DataTable({ columns, rows, filter = false, caption, rowTone, mar
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder="filter rows…"
+                        aria-label={caption ? `filter rows: ${caption}` : "filter rows"}
                         className="w-60 max-w-full rounded-card border border-line bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                     />
                     <span className="text-xs text-dim">

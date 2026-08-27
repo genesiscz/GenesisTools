@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { canonicalDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -31,13 +32,6 @@ export function loadRegistry(): DashboardEntry[] {
 
 function saveRegistry(entries: DashboardEntry[]): void {
     atomicWriteFileSync(registryPath(), `${SafeJSON.stringify({ entries }, null, 4)}\n`);
-}
-
-/** Canonicalize a directory path (resolves symlinks, so the same dir never registers twice). */
-export function canonicalDir(dir: string): string {
-    const abs = resolve(dir);
-
-    return existsSync(abs) ? realpathSync(abs) : abs;
 }
 
 export interface AddResult {

@@ -90,51 +90,120 @@ export interface DayChartProps {
     yLabel?: string;
     markers?: ChartMarker[];
     height?: number;
+    /** Accessible name for the chart image (screen readers). Defaults to `yLabel` or "chart". */
+    ariaLabel?: string;
 }
 
-/** Bar/line chart over labeled points. Tooltip on hover; legend when 2+ series. */
-export function DayChart({ labels, series, log = false, yLabel, markers, height = 300 }: DayChartProps) {
-    const data = labels.map((label, i) => {
+/**
+ * Internal per-series row key. `label` is display text only: two series may
+ * carry the same label, and keying rows by it would make the second series
+ * overwrite the first one's values in every row.
+ */
+export function seriesKey(index: number): string {
+    return `s${index}`;
+}
+
+/** Only finite numbers reach the scale math; Infinity/NaN break the domain and the tick loop. */
+function finiteOrNull(value: number | null | undefined): number | null {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Stack a bar belongs to; unstacked bars and lines get null. */
+function stackIdOf(s: ChartSeries): string | null {
+    if (s.kind === "line" || !s.stack) {
+        return null;
+    }
+
+    return s.stack === true ? "stack" : s.stack;
+}
+
+/** One row per label, keyed by `seriesKey(i)`; non-finite and log-invalid points become null. */
+export function chartRows(
+    labels: string[],
+    series: ChartSeries[],
+    log: boolean
+): Array<Record<string, string | number | null>> {
+    return labels.map((label, i) => {
         const row: Record<string, string | number | null> = { x: label };
 
-        for (const s of series) {
-            const v = s.values[i] ?? null;
-            row[s.label] = log && (v === null || v <= 0) ? null : v;
+        for (const [index, s] of series.entries()) {
+            const v = finiteOrNull(s.values[i]);
+            row[seriesKey(index)] = log && (v === null || v <= 0) ? null : v;
         }
 
         return row;
     });
+}
+
+/**
+ * Y-axis maximum: the tallest single point, where each NAMED stack totals on
+ * its own. Summing every stacked bar regardless of `stackId` would double the
+ * axis whenever a chart carries two independent stacks.
+ */
+export function chartStackMax(labels: string[], series: ChartSeries[]): number {
+    const perPoint = labels.map((_, i) => {
+        const totals = new Map<string, number>();
+        let loose = 0;
+
+        for (const s of series) {
+            const v = finiteOrNull(s.values[i]);
+
+            if (v === null) {
+                continue;
+            }
+
+            const stack = stackIdOf(s);
+
+            if (stack === null) {
+                loose = Math.max(loose, v);
+
+                continue;
+            }
+
+            totals.set(stack, (totals.get(stack) ?? 0) + Math.max(0, v));
+        }
+
+        return Math.max(loose, ...totals.values());
+    });
+
+    return Math.max(1, ...perPoint);
+}
+
+/**
+ * 1-3-10 decade ticks. The LAST tick is always at or above `max`, because the
+ * axis domain ends on it and `allowDataOverflow` would otherwise clip every
+ * point above the top tick (max 3.1 used to produce a [1, 3] domain).
+ */
+export function logTicksFor(max: number): number[] {
+    const ticks: number[] = [];
+
+    for (let t = 1; ticks.length < 2 || (ticks[ticks.length - 1] ?? 1) < max; t *= 10) {
+        ticks.push(t, t * 3);
+    }
+
+    while (ticks.length > 2 && (ticks[ticks.length - 2] ?? 0) >= max) {
+        ticks.pop();
+    }
+
+    return ticks;
+}
+
+/** Bar/line chart over labeled points. Tooltip on hover; legend when 2+ series. */
+export function DayChart({ labels, series, log = false, yLabel, markers, height = 300, ariaLabel }: DayChartProps) {
+    const data = chartRows(labels, series, log);
 
     // Recharts' "auto" domain is unreliable here (under-shoots log scales, inflates
     // stacked bars) — compute the y max from the data and hand it explicit bounds.
-    const stackMax = Math.max(
-        1,
-        ...labels.map((_, i) =>
-            series
-                .filter((s) => s.kind !== "line" && s.stack)
-                .reduce((acc, s) => acc + Math.max(0, s.values[i] ?? 0), 0)
-        ),
-        ...series.filter((s) => s.kind === "line" || !s.stack).flatMap((s) => s.values.filter((v) => v !== null))
-    );
+    const stackMax = chartStackMax(labels, series);
     const niceMax = niceCeil(stackMax);
-    const logTicks: number[] = [];
-
-    if (log) {
-        for (let t = 1; t <= stackMax * 3; t *= 10) {
-            logTicks.push(t);
-
-            if (t * 3 <= stackMax * 3) {
-                logTicks.push(t * 3);
-            }
-        }
-
-        while (logTicks.length > 1 && (logTicks[logTicks.length - 2] ?? 0) >= stackMax) {
-            logTicks.pop();
-        }
-    }
+    const logTicks = log ? logTicksFor(stackMax) : [];
 
     return (
-        <div className="rounded-card border border-line bg-panel/40 p-4">
+        <div
+            className="rounded-card border border-line bg-panel/40 p-4"
+            role="img"
+            aria-label={ariaLabel ?? (yLabel ? `${yLabel} chart` : "chart")}
+        >
             <ResponsiveContainer width="100%" height={height}>
                 <ComposedChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 4 }}>
                     <CartesianGrid stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
@@ -174,8 +243,9 @@ export function DayChart({ labels, series, log = false, yLabel, markers, height 
                     {series.map((s, i) =>
                         s.kind === "line" ? (
                             <Line
-                                key={s.label}
-                                dataKey={s.label}
+                                key={seriesKey(i)}
+                                dataKey={seriesKey(i)}
+                                name={s.label}
                                 stroke={seriesColor(s, i)}
                                 strokeWidth={2}
                                 strokeDasharray={s.dashed ? "5 4" : undefined}
@@ -185,22 +255,23 @@ export function DayChart({ labels, series, log = false, yLabel, markers, height 
                             />
                         ) : (
                             <Bar
-                                key={s.label}
-                                dataKey={s.label}
+                                key={seriesKey(i)}
+                                dataKey={seriesKey(i)}
+                                name={s.label}
                                 fill={seriesColor(s, i)}
                                 fillOpacity={0.85}
                                 stroke="var(--bg)"
                                 strokeWidth={1}
-                                stackId={s.stack === true ? "stack" : s.stack || undefined}
+                                stackId={stackIdOf(s) ?? undefined}
                                 isAnimationActive={false}
                                 radius={s.stack ? undefined : [3, 3, 0, 0]}
                                 maxBarSize={28}
                             />
                         )
                     )}
-                    {(markers ?? []).map((m) => (
+                    {(markers ?? []).map((m, i) => (
                         <ReferenceLine
-                            key={m.at}
+                            key={`${m.at}-${i}`}
                             x={m.at}
                             stroke={TONE_COLOR[m.tone ?? "err"]}
                             strokeDasharray="4 3"
@@ -234,12 +305,18 @@ export interface DonutChartProps {
     height?: number;
     /** Center label (e.g. the total). */
     center?: ReactNode;
+    /** Accessible name for the chart image (screen readers). */
+    ariaLabel?: string;
 }
 
 /** Donut breakdown with a side legend. Slice colors follow tones, in fixed order. */
-export function DonutChart({ slices, height = 240, center }: DonutChartProps) {
+export function DonutChart({ slices, height = 240, center, ariaLabel }: DonutChartProps) {
     return (
-        <div className="relative rounded-card border border-line bg-panel/40 p-4">
+        <div
+            className="relative rounded-card border border-line bg-panel/40 p-4"
+            role="img"
+            aria-label={ariaLabel ?? "breakdown chart"}
+        >
             <ResponsiveContainer width="100%" height={height}>
                 <PieChart>
                     <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: "var(--text)" }} />
@@ -260,7 +337,7 @@ export function DonutChart({ slices, height = 240, center }: DonutChartProps) {
                         isAnimationActive={false}
                     >
                         {slices.map((s, i) => (
-                            <Cell key={s.label} fill={seriesColor(s, i)} />
+                            <Cell key={seriesKey(i)} fill={seriesColor(s, i)} />
                         ))}
                     </Pie>
                 </PieChart>

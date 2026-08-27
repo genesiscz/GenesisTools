@@ -1,8 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { canonicalDir, isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { build as viteBuild } from "vite";
+import { renderMarkdown } from "./markdown";
+import { escapeHtml, loadTemplate, loadThemeCss, renderTemplate, resolveTemplateDir } from "./templates";
 import { basePlugins, baseResolve, cacheDirFor, RUNTIME_DIR } from "./vite";
 
 const EMBED_EXTENSIONS = new Set([".md", ".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".geojson"]);
@@ -23,6 +26,8 @@ export interface BuildOptions {
      * building one file inside a vault must not inline the vault).
      */
     embedScope?: "tree" | "referenced";
+    /** Theme for the generated chrome of a markdown build. Default: the shipped default. */
+    templateDir?: string;
 }
 
 export interface BuildResult {
@@ -36,6 +41,15 @@ export interface BuildResult {
 
 function isTsxEntry(entry: string): boolean {
     return entry.endsWith(".tsx") || entry.endsWith(".jsx");
+}
+
+function isMdEntry(entry: string): boolean {
+    return entry.endsWith(".md");
+}
+
+/** Output file name for an entry: everything that is not already HTML becomes `<name>.html`. */
+function outBaseFor(entry: string): string {
+    return entry.endsWith(".html") ? basename(entry) : `${basename(entry).replace(/\.(tsx|jsx|md)$/, "")}.html`;
 }
 
 /**
@@ -52,7 +66,7 @@ export function embedScopeFor(source: {
     return source.fileTargetEntry || source.entryFlag || source.registryEntry ? "referenced" : "tree";
 }
 
-/** Pick the entry: explicit (.html/.tsx/.jsx) > index.html > the only .html in the dir root. */
+/** Pick the entry: explicit (.html/.tsx/.jsx/.md) > index.html > the only .html in the dir root. */
 export function resolveEntry(dir: string, explicit: string | undefined): string {
     if (explicit) {
         const full = resolve(dir, explicit);
@@ -61,8 +75,8 @@ export function resolveEntry(dir: string, explicit: string | undefined): string 
             throw new Error(`Entry not found: ${full}`);
         }
 
-        if (!explicit.endsWith(".html") && !isTsxEntry(explicit)) {
-            throw new Error(`build needs an .html or .tsx/.jsx entry (got "${explicit}").`);
+        if (!explicit.endsWith(".html") && !isTsxEntry(explicit) && !isMdEntry(explicit)) {
+            throw new Error(`build needs an .html, .tsx/.jsx or .md entry (got "${explicit}").`);
         }
 
         return relative(dir, full).split(sep).join("/");
@@ -85,13 +99,19 @@ export function resolveEntry(dir: string, explicit: string | undefined): string 
     throw new Error(`Multiple .html files in ${dir} — pass --entry. Candidates: ${htmlFiles.join(", ")}`);
 }
 
-/** True when the HTML references local scripts or stylesheets that need bundling. */
+/**
+ * True when the HTML references local files that must be pulled into the page.
+ * Media counts, not just scripts and stylesheets: a page whose only local
+ * reference is `<img src="./logo.png">` is not self-contained either, and it
+ * used to be emitted verbatim with the sibling URL intact.
+ */
 export function hasLocalAssetRefs(html: string): boolean {
-    const external = /^(?:https?:)?\/\/|^data:|^#/;
+    const external = /^(?:https?:)?\/\/|^data:|^#|^mailto:|^tel:/;
     const scriptSrc = /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
     const linkHref = /<link\b[^>]*\brel\s*=\s*["']stylesheet["'][^>]*\bhref\s*=\s*["']([^"']+)["']/gi;
+    const mediaSrc = /<(?:img|source|video|audio|embed|track)\b[^>]*\b(?:src|poster)\s*=\s*["']([^"']+)["']/gi;
 
-    for (const match of [...html.matchAll(scriptSrc), ...html.matchAll(linkHref)]) {
+    for (const match of [...html.matchAll(scriptSrc), ...html.matchAll(linkHref), ...html.matchAll(mediaSrc)]) {
         if (!external.test(match[1])) {
             return true;
         }
@@ -145,6 +165,7 @@ interface EmbedScan {
 /** Collect sibling text-data files (md/json/csv/…) for the file:// fetch shim. */
 export function collectEmbeddableFiles(dir: string, limitBytes: number, excludeAbs: Set<string>): EmbedScan {
     const scan: EmbedScan = { files: {}, embedded: [], skipped: [] };
+    const visitedDirs = new Set<string>([canonicalDir(dir)]);
 
     const walk = (current: string): void => {
         for (const name of readdirSync(current)) {
@@ -153,9 +174,35 @@ export function collectEmbeddableFiles(dir: string, limitBytes: number, excludeA
             }
 
             const full = join(current, name);
-            const stat = statSync(full);
+            const link = lstatSync(full);
+
+            // A symlink is followed only when its target still exists and stays
+            // inside `dir`: building an artifact must never inline a file from
+            // outside the folder the user pointed at.
+            if (link.isSymbolicLink() && (!existsSync(full) || !isInsideDir(dir, full))) {
+                logger.debug({ dir, full }, "[artifact] skipping a symlink that leaves the built folder");
+
+                continue;
+            }
+
+            const stat = link.isSymbolicLink() ? statSync(full) : link;
 
             if (stat.isDirectory()) {
+                // A symlinked directory can alias an ancestor ("loop -> ."), which
+                // would make this walk recurse forever. Each real directory is
+                // descended into once.
+                if (link.isSymbolicLink()) {
+                    const real = canonicalDir(full);
+
+                    if (visitedDirs.has(real)) {
+                        logger.debug({ dir, full }, "[artifact] skipping a symlink that re-enters a visited folder");
+
+                        continue;
+                    }
+
+                    visitedDirs.add(real);
+                }
+
                 if (!SKIP_DIRS.has(name)) {
                     walk(full);
                 }
@@ -221,7 +268,9 @@ export function collectReferencedFiles(
     for (const ref of refs) {
         const abs = resolve(entryDirAbs, ref);
 
-        if (!abs.startsWith(dir + sep) || !existsSync(abs) || excludeAbs.has(abs)) {
+        // isInsideDir, not a string prefix: a referenced `./data.json` may be a
+        // symlink whose target sits outside the folder being built.
+        if (!existsSync(abs) || !isInsideDir(dir, abs) || excludeAbs.has(abs)) {
             continue;
         }
 
@@ -393,6 +442,20 @@ createRoot(document.getElementById("root") as HTMLElement).render(React.createEl
     return inlineAssets(builtHtml, (rel) => readFileSync(join(outDir, rel), "utf8"));
 }
 
+/**
+ * Render a markdown entry into the template's page chrome, theme CSS inlined.
+ * No bundler runs: the output is already one self-contained HTML file.
+ */
+function buildMdEntry(dir: string, entryAbs: string, templateDir: string): string {
+    const rendered = renderMarkdown(readFileSync(entryAbs, "utf8"));
+
+    return renderTemplate(loadTemplate(templateDir, "page.html"), {
+        TITLE: escapeHtml(relative(dir, entryAbs).split(sep).join("/")),
+        CONTENT: rendered,
+        THEME: loadThemeCss(templateDir),
+    });
+}
+
 export async function buildSingleFile(options: BuildOptions): Promise<BuildResult> {
     const dir = resolve(options.dir);
     const entryRel = options.entry;
@@ -403,15 +466,16 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
     if (isTsxEntry(entryRel)) {
         bundled = true;
         html = await buildTsxEntry(dir, entryRel, entryAbs);
+    } else if (isMdEntry(entryRel)) {
+        bundled = true;
+        html = buildMdEntry(dir, entryAbs, options.templateDir ?? resolveTemplateDir(undefined));
     } else {
         const source = readFileSync(entryAbs, "utf8");
         bundled = hasLocalAssetRefs(source);
         html = bundled ? await buildHtmlEntry(dir, entryRel, entryAbs) : source;
     }
 
-    const outBase = isTsxEntry(entryRel)
-        ? `${basename(entryRel).replace(/\.(tsx|jsx)$/, "")}.html`
-        : basename(entryRel);
+    const outBase = outBaseFor(entryRel);
     const outPath = resolve(options.out ?? join(dir, "dist", outBase));
 
     if (outPath === entryAbs) {
@@ -457,12 +521,7 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
  * alike — the whole pipeline re-runs, which keeps the logic in one place.
  */
 export function resolveOutPath(options: BuildOptions): string {
-    const dir = resolve(options.dir);
-    const outBase = isTsxEntry(options.entry)
-        ? `${basename(options.entry).replace(/\.(tsx|jsx)$/, "")}.html`
-        : basename(options.entry);
-
-    return resolve(options.out ?? join(dir, "dist", outBase));
+    return resolve(options.out ?? join(resolve(options.dir), "dist", outBaseFor(options.entry)));
 }
 
 export function watchAndRebuild(options: BuildOptions, onBuild: (result: BuildResult) => void): () => void {

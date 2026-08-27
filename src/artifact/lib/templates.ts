@@ -1,6 +1,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
+import { escapeHtml } from "@genesiscz/utils/string";
 import { RUNTIME_DIR } from "./vite";
+
+// Re-exported so the page-rendering modules keep one import site for their
+// template helpers; the implementation is the shared one.
+export { escapeHtml };
 
 export type TemplateFile = "catalog.html" | "page.html" | "tsx.html";
 
@@ -78,14 +84,24 @@ export function describeShippedTemplates(): TemplateInfo[] {
     });
 }
 
-/** Fill {{KEY}} placeholders. Unknown placeholders are left intact. */
+/**
+ * Fill {{KEY}} placeholders. An unknown placeholder is left intact rather than
+ * blanked, so a custom template still renders; it is logged, because the usual
+ * cause is a typo ({{TITEL}}) that would otherwise show up as literal text in
+ * the page with nothing explaining why.
+ */
 export function renderTemplate(template: string, vars: Record<string, string>): string {
-    return template.replace(/\{\{([A-Z_]+)\}\}/g, (full, key: string) => vars[key] ?? full);
-}
+    return template.replace(/\{\{([A-Z_]+)\}\}/g, (full, key: string) => {
+        const value = vars[key];
 
-/** HTML-escape text for element/attribute interpolation. */
-export function escapeHtml(text: string): string {
-    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+        if (value === undefined) {
+            logger.debug({ key, known: Object.keys(vars) }, "[artifact] template placeholder has no value");
+
+            return full;
+        }
+
+        return value;
+    });
 }
 
 /** Percent-encode each path segment (spaces, #, ?) while keeping the slashes. */

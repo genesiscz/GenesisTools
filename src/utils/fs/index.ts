@@ -1,3 +1,4 @@
+export * from "./canonical";
 export * from "./change-detector";
 export * from "./disk-usage";
 export * from "./lock";
