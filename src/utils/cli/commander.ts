@@ -174,11 +174,41 @@ export function argvRequestsReadme(args: string[]): boolean {
  * the console level from argv verbosity (or the per-tool floor), applies the
  * `{ tool }` base binding, then parses. argv is never mutated/spliced.
  */
+/** Bun's own default test matchers, so this recognises an entry the way the runner does. */
+const TEST_ENTRY = /[._](test|spec)\.[jt]sx?$/;
+
+/**
+ * Is the ENTRY of this process a test file?
+ *
+ * Deliberately not `NODE_ENV`: bun sets it to "test" and every child inherits
+ * it, so the tests that legitimately spawn `bun src/<tool>/index.ts` as a
+ * subprocess would all be refused. `Bun.main` is per test FILE under `bun test`
+ * and points at the spawned script inside a child, which is exactly the
+ * distinction wanted here. Both verified on bun 1.3.13.
+ */
+function launchedByTestRunner(): boolean {
+    return TEST_ENTRY.test(Bun.main);
+}
+
 export async function runTool(
     program: Command,
     opts: RunToolOpts = {},
     argv: string[] = process.argv
 ): Promise<RunToolResult> {
+    // A tool's index.ts ends with `await runTool(...)` at module top level, so
+    // importing that module to reach one helper LAUNCHES the CLI. On 2026-08-27
+    // that reached a clack prompt and the whole suite stopped terminating for a
+    // day. `if (import.meta.main)` in the entrypoint is the real fix, but ~90
+    // entrypoints do not have it and nothing forces them to, so refuse here as
+    // well: this turns an infinite hang into a named error naming the file.
+    // Supplying an explicit argv opts out, which is how a test exercises runTool
+    // itself instead of accidentally launching a CLI through it.
+    if (argv === process.argv && launchedByTestRunner()) {
+        throw new Error(
+            `runTool() ran while ${Bun.main} is the process entry, so this CLI was imported by a test rather than executed. Wrap the call in \`if (import.meta.main) { … }\`, or move the imported helper into src/<tool>/lib/.`
+        );
+    }
+
     const tool = opts.tool ?? program.name() ?? basename(argv[1] ?? "tool");
 
     if (!opts.ignoreParams?.includes("verbose")) {

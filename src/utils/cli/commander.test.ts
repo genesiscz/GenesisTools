@@ -83,6 +83,30 @@ describe("runTool", () => {
         expect(help).toContain("--readme");
     });
 
+    it("refuses to launch the CLI when the process entry is a test file", async () => {
+        // Bun.main is this test file, so a runTool() with no argv means an
+        // entrypoint ran the CLI because a test imported it. That is the shape
+        // that stopped the whole suite from terminating on 2026-08-27.
+        const prog = new Command();
+        prog.name("hung").exitOverride();
+        prog.action(() => {});
+
+        expect(runTool(prog, { tool: "hung" })).rejects.toThrow(/imported by a test/);
+    });
+
+    it("still runs when a test passes its own argv (the negative control)", async () => {
+        const prog = new Command();
+        prog.name("explicit").exitOverride();
+        let ran = false;
+        prog.action(() => {
+            ran = true;
+        });
+
+        const res = await runTool(prog, { tool: "explicit" }, ["bun", "explicit"]);
+        expect(ran).toBe(true);
+        expect(res.tool).toBe("explicit");
+    });
+
     it("does not register --trace unless opts.trace; tool's own -v dedupes (no crash)", async () => {
         const prog = new Command();
         prog.name("d2").exitOverride().option("-v, --verbose", "tool's own");
