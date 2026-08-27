@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { formatOutput, formatTimestamp, toSRT, toVTT } from "@genesiscz/utils/ai/transcription-format";
 import type { TranscriptionResult } from "@genesiscz/utils/ai/types";
-import { formatOutput, formatTimestamp, toSRT, toVTT } from "./index";
 
 describe("formatTimestamp", () => {
     it("formats zero with comma separator", () => {

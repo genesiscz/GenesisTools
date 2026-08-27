@@ -1,0 +1,170 @@
+/**
+ * The bisect orchestration seam, kept out of the CLI entrypoint on purpose.
+ *
+ * `time-machine.test.ts` drives this end to end against a real throwaway repo.
+ * Importing it from `../index` would have worked, but only by accident: that
+ * module ends by launching the CLI, so a test reaching through it evaluates the
+ * whole commander program. That is the shape that stopped the suite from
+ * terminating on 2026-08-27 (see scripts/ci/entrypoint-import-guard.ts).
+ */
+import { logger, out } from "@genesiscz/utils/logger";
+import { findFirstBad } from "./bisect";
+import {
+    type CommitInfo,
+    checkoutInWorktree,
+    createTempWorktree,
+    getCommitDiff,
+    getCommitInfo,
+    listCommits,
+    resolveRef,
+    runCommandInDir,
+} from "./git";
+
+export interface TimeMachineOptions {
+    depth: number;
+    good?: string | null;
+    cwd: string;
+}
+
+export interface TimeMachineReport {
+    /** Outcome of the run. */
+    status: "no-commits" | "already-green" | "found" | "predates-range" | "not-in-history";
+    /** The first failing commit, when status === "found". */
+    firstBad?: CommitInfo;
+    /** The last green commit (parent of firstBad), when known. */
+    lastGood?: CommitInfo | null;
+    /** Full `git show` diff of firstBad, when status === "found". */
+    diff?: string;
+    /** Number of commits considered in the search window. */
+    candidates: number;
+    /** Number of command runs spent probing history (excludes the HEAD probe). */
+    probes: number;
+}
+
+/**
+ * Drive the bisect end-to-end against a real git repo. Returns a structured
+ * report; the caller decides how to render it. This is the orchestration seam
+ * the integration test exercises — keep it free of process.exit (it does emit
+ * progress via out.log, but callers/tests should assert on the returned
+ * report, not on exit behavior).
+ */
+export async function runTimeMachine(command: string[], options: TimeMachineOptions): Promise<TimeMachineReport> {
+    const { depth, good, cwd } = options;
+
+    // 1. Probe the CURRENT working tree. If the command already passes there is
+    //    nothing to blame — short-circuit before touching history. Inherit
+    //    stdio so the user sees exactly why it fails before we start bisecting
+    //    (captured output was otherwise discarded, wasting memory on chatty
+    //    commands like test runners).
+    out.log.step(`Running command in current tree: ${command.join(" ")}`);
+    const headRun = await runCommandInDir({ command, cwd, captureOutput: false });
+    logger.debug({ exitCode: headRun.exitCode }, "time-machine: head probe");
+
+    if (headRun.exitCode === 0) {
+        return { status: "already-green", candidates: 0, probes: 0 };
+    }
+
+    out.log.warn(`Command fails at HEAD (exit ${headRun.exitCode}). Walking back through history…`);
+
+    // 2. Resolve the optional --good lower bound.
+    let goodSha: string | null = null;
+    if (good) {
+        goodSha = await resolveRef(good, cwd);
+        if (!goodSha) {
+            throw new Error(`--good ref "${good}" could not be resolved to a commit.`);
+        }
+
+        out.log.info(`Seeded known-good lower bound: ${good} (${goodSha.slice(0, 7)})`);
+    }
+
+    // 3. Guard against an unborn HEAD (freshly `git init`ed repo with zero
+    //    commits) — `git log HEAD` throws on an unresolvable ref, so resolve
+    //    it first and short-circuit to the "no-commits" report instead of
+    //    letting the error propagate. Otherwise list candidate commits:
+    //    listCommits returns NEWEST → OLDEST; the bisect core needs
+    //    OLDEST → NEWEST (index 0 = oldest = lower bound), so we reverse.
+    if (!(await resolveRef("HEAD", cwd))) {
+        return { status: "no-commits", candidates: 0, probes: 0 };
+    }
+
+    const newestFirst = await listCommits({ cwd, startRef: "HEAD", depth, goodRef: goodSha });
+    const commits = [...newestFirst].reverse(); // oldest → newest
+
+    if (commits.length === 0) {
+        return { status: "no-commits", candidates: 0, probes: 0 };
+    }
+
+    out.log.info(`Searching ${commits.length} commit(s) for the one that introduced the failure…`);
+
+    // 4. One reusable throwaway worktree for all probes (pay `worktree add`
+    //    once). ALWAYS cleaned up, even if a probe throws.
+    const headSha = newestFirst[0]?.sha ?? commits[commits.length - 1].sha;
+    const worktree = await createTempWorktree({ repoCwd: cwd, sha: headSha });
+
+    try {
+        const result = await findFirstBad(commits, async (index) => {
+            const commit = commits[index];
+            await checkoutInWorktree(commit.sha, worktree.path);
+            const run = await runCommandInDir({ command, cwd: worktree.path, captureOutput: true });
+            const verdict = run.exitCode === 0 ? "pass" : "fail";
+            out.log.step(`  ${commit.shortSha} ${commit.subject} → ${verdict} (exit ${run.exitCode})`);
+            return verdict;
+        });
+
+        const probes = result.probes;
+
+        if (result.firstBad === null) {
+            // Every commit in the window passed even though HEAD failed in step
+            // 1 — the failure comes from UNCOMMITTED working-tree changes or the
+            // environment, not from any committed snapshot. Nothing to blame.
+            return { status: "not-in-history", candidates: commits.length, probes };
+        }
+
+        if (result.lastGood === null) {
+            const diff = await getCommitDiff(result.firstBad.sha, cwd);
+
+            // When --good seeded a trusted lower bound, the oldest searched
+            // commit failing is the EXPECTED success path: the seeded good ref
+            // is the last green parent (it lives just below the window, excluded
+            // by the good..HEAD range). Report a confirmed "found".
+            if (goodSha) {
+                const goodInfo = await getCommitInfo(goodSha, cwd);
+                return {
+                    status: "found",
+                    firstBad: result.firstBad,
+                    lastGood: goodInfo,
+                    diff,
+                    candidates: commits.length,
+                    probes,
+                };
+            }
+
+            // No --good: even the OLDEST commit in the window fails, so the
+            // failure predates the searched range. Widen --depth or seed --good.
+            return {
+                status: "predates-range",
+                firstBad: result.firstBad,
+                lastGood: null,
+                diff,
+                candidates: commits.length,
+                probes,
+            };
+        }
+
+        const diff = await getCommitDiff(result.firstBad.sha, cwd);
+        return {
+            status: "found",
+            firstBad: result.firstBad,
+            lastGood: result.lastGood,
+            diff,
+            candidates: commits.length,
+            probes,
+        };
+    } finally {
+        try {
+            await worktree.cleanup();
+        } catch (err) {
+            logger.warn({ err }, "time-machine: failed to clean up temporary worktree");
+        }
+    }
+}

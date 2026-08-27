@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runTimeMachine } from "./index";
 import { type BisectPredicate, type CommitStatus, findFirstBad } from "./lib/bisect";
+import { runTimeMachine } from "./lib/run";
 
 describe("findFirstBad (pure algorithm)", () => {
     const fromStatuses = (statuses: CommitStatus[]): BisectPredicate => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { formatCountdown, generateId, isProcessAlive } from "./index";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { formatCountdown, generateId } from "./lib/format";
 
 describe("formatCountdown", () => {
     it("returns 00:00 for zero", () => {
