@@ -17,6 +17,7 @@ import {
     PLUGIN_REF,
     planMarketplaceAction,
 } from "./marketplace";
+import { recoverFromFailedPull } from "./recovery";
 
 /** Bun.spawn throws SYNCHRONOUSLY when the executable is missing, so a bare await never sees it. */
 async function runClaude(args: string[]): Promise<number> {
@@ -94,8 +95,17 @@ const program = new Command()
             stdio: ["inherit", "inherit", "inherit"],
         });
         if ((await pull.exited) !== 0) {
-            out.error(pc.red("  Failed to git pull"));
-            process.exit(1);
+            out.println(pc.yellow("\n  git pull failed — trying to recover without losing local work..."));
+
+            if (!(await recoverFromFailedPull(genesisPath))) {
+                out.error(pc.red("\n  Could not update automatically."));
+                out.println(pc.dim("  Recover by hand (this discards local changes, so stash first):"));
+                out.println(pc.dim(`    cd ${genesisPath}`));
+                out.println(pc.dim("    git stash push --include-untracked -m 'pre-update'"));
+                out.println(pc.dim("    git fetch origin && git reset --hard origin/master"));
+                out.println(pc.dim("  If that still fails, re-clone the repository."));
+                process.exit(1);
+            }
         }
 
         // 2. Install dependencies (clean retry if first attempt fails)
