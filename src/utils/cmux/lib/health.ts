@@ -49,7 +49,9 @@ export function classifyCmuxHealth(input: {
     return input.appRunning ? "socket-dead" : "not-running";
 }
 
-const APP_BINARY_SUFFIX = "cmux.app/Contents/MacOS/cmux";
+/** The app binary `ps` reports for a running cmux. Exported: the rescue kill path
+ * re-checks a pid against this before signalling it. */
+export const APP_BINARY_SUFFIX = "cmux.app/Contents/MacOS/cmux";
 
 async function findCmuxApp(): Promise<{ pid: number; cpu: number } | undefined> {
     try {

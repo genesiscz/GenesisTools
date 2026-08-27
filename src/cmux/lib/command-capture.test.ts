@@ -50,6 +50,19 @@ describe("deriveReplayCommand", () => {
         expect(result.drift.some((d) => d.includes("account"))).toBe(false);
     });
 
+    test("`tools claude run` keeps its explicit account, same as `tools cc run`", () => {
+        // The launcher test accepted both spellings while the account parser only
+        // matched `tools cc run`, so `tools claude run personal` silently replayed
+        // under the journal account and the drift line claimed there had been none.
+        const result = deriveReplayCommand({
+            original: "tools claude run personal --resume burn",
+            sessionId,
+            account: "work",
+        });
+        expect(result.command).toBe(`tools cc run personal -- --resume ${sessionId}`);
+        expect(result.drift.some((d) => d.includes("account"))).toBe(false);
+    });
+
     test("flags a bare --resume picker being replaced", () => {
         const result = deriveReplayCommand({ original: "tools cc run work --resume", sessionId, account: "work" });
         expect(result.command).toBe(`tools cc run work -- --resume ${sessionId}`);

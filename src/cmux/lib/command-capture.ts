@@ -186,7 +186,10 @@ export function deriveReplayCommand(input: {
     }
 
     const drift: string[] = [];
-    const accountInOriginal = original.match(/^tools cc run\s+(?!-)(\S+)/)?.[1];
+    // Both launcher spellings, or `tools claude run personal` would lose the
+    // explicit account and replay under the journal's one (or none) while the
+    // drift line claimed the original had no account.
+    const accountInOriginal = original.match(/^tools (?:cc|claude) run\s+(?!-)(\S+)/)?.[1];
     const account = accountInOriginal ?? input.account;
 
     if (!accountInOriginal && input.account) {

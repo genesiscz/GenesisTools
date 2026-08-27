@@ -31,6 +31,9 @@ mock.module("@clack/prompts", () => ({
 
 mock.module("@genesiscz/utils/cmux/lib/health", () => ({
     probeCmuxHealth: async () => ({ state: "starved", appPid: 4242, appCpu: 99 }),
+    // Mocking a module replaces ALL of its exports; the rescue lib reads this one
+    // to re-check a pid's identity before signalling, so it has to be here too.
+    APP_BINARY_SUFFIX: "cmux.app/Contents/MacOS/cmux",
 }));
 
 mock.module("@app/cmux/lib/offline-snapshot", () => ({
@@ -56,16 +59,22 @@ mock.module("@app/cmux/lib/store", () => ({
 const { runRescue } = await import("./rescue");
 
 let killed: number[] = [];
+let relaunched = 0;
 
 const explodingDeps = {
     killApp: async (pid: number) => {
         killed.push(pid);
         throw new Error("the kill path must not be reached on this run");
     },
+    relaunch: async () => {
+        relaunched += 1;
+        throw new Error("the relaunch path must not be reached on this run");
+    },
 };
 
 beforeEach(() => {
     killed = [];
+    relaunched = 0;
     interactive = true;
     confirmAnswer = true;
 });
@@ -101,4 +110,39 @@ test("NEGATIVE CONTROL — a confirmed run does reach the kill", async () => {
 
     await expect(runRescue("rescue", {}, explodingDeps)).rejects.toThrow("the kill path must not be reached");
     expect(killed).toEqual([4242]);
+});
+
+test("a cmux that survives the kill stops the rescue before the relaunch", async () => {
+    // `open -a cmux` would activate the still-livelocked app, the health wait
+    // would pass against that old instance, and replay would type every captured
+    // command into the frozen surfaces.
+    const survivingDeps = {
+        killApp: async (pid: number) => {
+            killed.push(pid);
+
+            return { signals: ["SIGTERM", "SIGKILL"] as NodeJS.Signals[], exited: false };
+        },
+        relaunch: explodingDeps.relaunch,
+    };
+
+    await expect(runRescue("rescue", {}, survivingDeps)).rejects.toThrow("did not terminate");
+    expect(killed).toEqual([4242]);
+    expect(relaunched).toBe(0);
+});
+
+test("NEGATIVE CONTROL — a cmux that DID exit reaches the relaunch", async () => {
+    // Without this, a guard that blocked the normal path would satisfy the test
+    // above while breaking every real rescue.
+    const exitedDeps = {
+        killApp: async (pid: number) => {
+            killed.push(pid);
+
+            return { signals: ["SIGTERM"] as NodeJS.Signals[], exited: true };
+        },
+        relaunch: explodingDeps.relaunch,
+    };
+
+    await expect(runRescue("rescue", {}, exitedDeps)).rejects.toThrow("the relaunch path must not be reached");
+    expect(killed).toEqual([4242]);
+    expect(relaunched).toBe(1);
 });

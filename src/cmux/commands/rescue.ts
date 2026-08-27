@@ -39,9 +39,11 @@ interface RescueFlags {
 export interface RescueDeps {
     /** Injected so a test can spy on the irreversible call and make it throw. */
     killApp: typeof killApp;
+    /** Same reason: `open -a cmux` must never fire from a test run. */
+    relaunch: () => Promise<void>;
 }
 
-const defaultDeps: RescueDeps = { killApp };
+const defaultDeps: RescueDeps = { killApp, relaunch: cleanRelaunch };
 
 export function registerRescueCommand(parent: Command): void {
     parent
@@ -132,12 +134,22 @@ export async function runRescue(name: string, flags: RescueFlags, deps: RescueDe
         p.log.info(
             `Sent ${outcome.signals.join(" then ") || "no signal"}; cmux ${outcome.exited ? "exited" : "may still be alive"}.`
         );
+
+        // Relaunching now would `open -a cmux` onto the STILL-RUNNING app, the
+        // health wait below would pass against that old instance, and replay
+        // would type every captured command into the livelocked surfaces. The
+        // profile is already on disk, so stopping here costs nothing.
+        if (!outcome.exited) {
+            throw new Error(
+                `cmux (pid ${health.appPid}) did not terminate — refusing to relaunch or replay into it. Quit the app yourself, then re-run the rescue. The profile is saved at ${profilePath}.`
+            );
+        }
     } else {
         p.log.warn("No running cmux app found — skipping the kill step.");
     }
 
     p.log.step("Relaunching cmux with a clean environment…");
-    await cleanRelaunch();
+    await deps.relaunch();
 
     const ready = await waitForHealthy(60_000);
     if (!ready) {
