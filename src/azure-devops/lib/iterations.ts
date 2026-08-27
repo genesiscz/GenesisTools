@@ -44,11 +44,6 @@ export function toIterationPath(nodePath: string): string {
 }
 
 /**
- * Flatten the iteration classification tree into the shape `getTeamIterations()`
- * returns. Nodes without a start date are structural containers (the project root,
- * a release folder) rather than sprints, so they are dropped.
- */
-/**
  * Container nodes the API said have children but did not return any.
  *
  * `classificationnodes` only walks `$depth` levels down. A project that nests
@@ -76,6 +71,11 @@ export function findTruncatedNodes(root: IterationClassificationNode): string[] 
     return truncated;
 }
 
+/**
+ * Flatten the iteration classification tree into the shape `getTeamIterations()`
+ * returns. Nodes without a start date are structural containers (the project root,
+ * a release folder) rather than sprints, so they are dropped.
+ */
 export function flattenIterationNodes(root: IterationClassificationNode): TeamIteration[] {
     const flat: TeamIteration[] = [];
 

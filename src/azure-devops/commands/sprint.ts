@@ -295,7 +295,7 @@ interface SprintRenderArgs {
     sourceLabel: string;
 }
 
-function renderSprintMd({ rows, iteration, withOrder }: SprintRenderArgs): string {
+function renderSprintMd({ rows, iteration, withOrder, sourceLabel }: SprintRenderArgs): string {
     const header = ["ID", "Type", "Title", "State", "AssignedTo", "CompletedWork", "RemainingWork"];
 
     if (withOrder) {
