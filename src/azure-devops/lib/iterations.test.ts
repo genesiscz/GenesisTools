@@ -9,6 +9,7 @@ import {
     resolveIteration,
     toIterationPath,
 } from "@app/azure-devops/lib/iterations";
+import { withTimeZone } from "@genesiscz/utils/test/timezone";
 
 function iteration(name: string, start: string, finish: string, project = "Widgets"): TeamIteration {
     return {
@@ -53,16 +54,11 @@ describe("iterationContainsDate", () => {
  * would silently drop the whole final day.
  */
 describe("iterationContainsDate across the local midnight boundary", () => {
-    const withTz = (tz: string, run: () => void): void => {
-        const original = process.env.TZ;
-        process.env.TZ = tz;
-
-        try {
-            run();
-        } finally {
-            process.env.TZ = original;
-        }
-    };
+    // `withTimeZone`, not a local helper: restoring by assigning the captured
+    // `process.env.TZ` back is a no-op when TZ was never set (the normal state on
+    // macOS), which left this file's America/Los_Angeles latched into the worker
+    // and broke unrelated date tests further down the run.
+    const withTz = withTimeZone;
 
     const sprint = ITERATIONS[1]; // 2026-08-20 .. 2026-09-02
 

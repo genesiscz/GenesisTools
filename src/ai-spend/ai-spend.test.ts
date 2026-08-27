@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { aggregate } from "./lib/aggregate";
 import { loadPricing } from "./lib/config";
 import { findTranscriptFiles, readEvents } from "./lib/discover";
@@ -238,18 +239,18 @@ describe("aggregate", () => {
     });
 
     it("UTC day keys are TZ-independent", () => {
-        const prev = process.env.TZ;
-        process.env.TZ = "Pacific/Kiritimati"; // UTC+14
-        try {
+        // `withTimeZone`, not `process.env.TZ = prev`: when TZ was never set, that
+        // restore is a delete, which does NOT return the process to the system zone
+        // and latches the zone against every later change. bun runs many files per
+        // process, so this file used to leave UTC+14 behind for the rest of them.
+        withTimeZone("Pacific/Kiritimati", () => {
             const r = aggregate({
                 events: [ev({ messageId: "tz", timestamp: "2026-06-01T23:30:00.000Z", inputTokens: 1 })],
                 pricing: DEFAULT_PRICING,
                 now,
             });
             expect(r.days[0].day).toBe("2026-06-01");
-        } finally {
-            process.env.TZ = prev;
-        }
+        });
     });
 });
 

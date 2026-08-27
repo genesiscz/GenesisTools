@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
-import { buildRunArgs, buildSteerArgs, buildTurnEnv, steerSession } from "./worker";
+import { buildRunArgs, buildSteerArgs, buildTurnEnv, resolveGrokBinary, steerSession } from "./worker";
 
 /**
  * Regression test: PR #330 review t2 — the worker's isolation contract was
@@ -92,6 +92,31 @@ describe("read-only tool restriction", () => {
  * the turn reservation, so a `steer --writable` that lost the race still left
  * `readOnly: false` in metadata and the next unflagged steer ran writable.
  */
+describe("resolveGrokBinary", () => {
+    /**
+     * `Bun.which("grok")` searches the PATH the PROCESS STARTED with. On a machine
+     * that already has grok installed, the unfixed resolver returns THAT binary and
+     * still reaches every downstream assertion, so nothing below noticed. Asserting
+     * the exact path is what separates the two: only a resolver reading the live
+     * PATH can answer with the stub.
+     */
+    test("answers with a binary added to PATH after startup", async () => {
+        const binDir = mkdtempSync(join(tmpdir(), "gt-grok-which-"));
+        const stub = join(binDir, "grok");
+        writeFileSync(stub, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+        await env.testing.withOverrides({ PATH: `${binDir}:${process.env.PATH}` }, () => {
+            expect(resolveGrokBinary()).toBe(stub);
+        });
+    });
+
+    test("says what it checked when nothing named grok is reachable", async () => {
+        await env.testing.withOverrides({ PATH: mkdtempSync(join(tmpdir(), "gt-grok-empty-")) }, () => {
+            expect(() => resolveGrokBinary()).toThrow(/grok CLI not found on PATH/);
+        });
+    });
+});
+
 describe("safety mode is only persisted by the turn that wins the reservation", () => {
     test("a steer that loses the reservation leaves readOnly untouched", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-grok-race-"));
@@ -100,11 +125,10 @@ describe("safety mode is only persisted by the turn that wins the reservation", 
         // steerSession resolves the binary before it reserves the turn, so the
         // race is only reachable with something named `grok` on PATH.
         writeFileSync(join(binDir, "grok"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-        const originalPath = process.env.PATH;
-        process.env.PATH = `${binDir}:${originalPath}`;
 
-        try {
-            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: home, PATH: `${binDir}:${process.env.PATH}` },
+            async () => {
                 const store = new GrokSessionStore();
                 store.createMeta({
                     name: "reviewer",
@@ -124,9 +148,7 @@ describe("safety mode is only persisted by the turn that wins the reservation", 
                 );
 
                 expect(store.readMeta("reviewer")?.readOnly).toBe(true);
-            });
-        } finally {
-            process.env.PATH = originalPath;
-        }
+            }
+        );
     });
 });

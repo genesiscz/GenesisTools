@@ -409,13 +409,38 @@ async function listJsonlFiles(root: string): Promise<string[]> {
     return found.sort();
 }
 
+/**
+ * `rg -l` stops reading a file at its first hit and never holds one in memory.
+ * Streaming line by line keeps both properties: a session transcript is a single
+ * jsonl line per message and can run to tens of megabytes, and every pattern in
+ * RG_PREFILTER matches within one line, so per-line testing sees what a whole-file
+ * test would.
+ */
+async function matchesPrefilter(file: string, prefilter: RegExp): Promise<boolean> {
+    const stream = createReadStream(file, { encoding: "utf8" });
+    const rl = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+
+    try {
+        for await (const line of rl) {
+            if (prefilter.test(line)) {
+                return true;
+            }
+        }
+    } finally {
+        rl.close();
+        stream.destroy();
+    }
+
+    return false;
+}
+
 /** The `rg -l --regexp RG_PREFILTER` prefilter, done in process. */
 async function filterByPrefilter(files: string[]): Promise<string[]> {
     const prefilter = new RegExp(RG_PREFILTER);
     const matched: string[] = [];
 
     for (const file of files) {
-        if (prefilter.test(await Bun.file(file).text())) {
+        if (await matchesPrefilter(file, prefilter)) {
             matched.push(file);
         }
     }

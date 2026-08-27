@@ -4,23 +4,9 @@
  */
 
 import { execSync } from "node:child_process";
+import { env } from "@genesiscz/utils/env";
 
 let cachedLocale: string | undefined;
-
-/**
- * @genesiscz/utils must stay free of @app/* imports (boundary guard rule 1), so this
- * can't route through @app/utils/env's trimmed getter — reimplemented locally
- * with the same trim/empty-string semantics.
- */
-function getTrimmedEnv(name: string): string | undefined {
-    const raw = process.env[name];
-    if (raw === undefined) {
-        return undefined;
-    }
-
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : undefined;
-}
 
 /**
  * A POSIX locale name reduced to the BCP-47 tag `Intl` accepts, or undefined.
@@ -90,7 +76,8 @@ export function getSystemLocale(): string {
         }
     }
 
-    const envLocale = getTrimmedEnv("LC_TIME") ?? getTrimmedEnv("LANG") ?? getTrimmedEnv("LC_ALL");
+    // LC_TIME → LANG → LC_ALL, trimmed, from the one accessor that owns that order.
+    const envLocale = env.locale.getPreferred();
     const envTag = envLocale ? toLanguageTag(envLocale) : undefined;
 
     if (envTag) {

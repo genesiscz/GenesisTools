@@ -92,7 +92,21 @@ describe("pidfile", () => {
 
         writeFileSync(path, SafeJSON.stringify({ ...record, startedAt: (record?.startedAt ?? 0) - 900 }));
 
-        expect(inspectPidFile(path).status).toBe("live");
+        const { status } = inspectPidFile(path);
+
+        // The claim under test: `ps -o etime=` resolves to whole seconds, so a
+        // sub-second difference must never be read as a recycled pid.
+        expect(status).not.toBe("foreign");
+
+        // "live" is the strong verdict, and it needs `ps` to have answered — it is
+        // the only source of both the recorded command and the start time, and the
+        // code degrades to "unverified" on purpose when it says nothing. That is
+        // not hypothetical: in the 16-way parallel suite on a loaded machine the
+        // spawn failed once in five full runs and this read "unverified". An empty
+        // recorded command is that same failure, caught at write time.
+        if (record?.command) {
+            expect(status).toBe("live");
+        }
     });
 
     test("a departed owner classifies as dead", () => {

@@ -35,7 +35,13 @@ describe("DateParser", () => {
         const range = parseDateRange({ since: "2024-01-01", until: "2024-01-31" });
         expect(range.since).toBeInstanceOf(Date);
         expect(range.until).toBeInstanceOf(Date);
-        expect(range.since!.getMonth()).toBe(0);
+        // `getUTCMonth`, not `getMonth`. `parseDate` takes the ISO fast path for a
+        // date-only string, and `new Date("2024-01-01")` is UTC midnight by spec —
+        // so the LOCAL month is January only in zones at or east of UTC. Under
+        // TZ=America/Los_Angeles this read 11 (2023-12-31), and the suite really
+        // did run in that zone whenever it shared a process with a test that set it.
+        expect(range.since!.getUTCMonth()).toBe(0);
+        expect(range.since!.toISOString()).toBe("2024-01-01T00:00:00.000Z");
     });
 
     it("parseDateRange handles natural language", () => {

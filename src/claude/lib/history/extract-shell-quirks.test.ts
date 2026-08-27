@@ -298,4 +298,37 @@ describe("extractShellQuirks", () => {
 
         expect(result.findings.filter((f) => f.filePath === path)).toHaveLength(1);
     });
+
+    /**
+     * The test above runs whichever branch the HOST provides, so on a machine with
+     * ripgrep the fallback is never entered. This one removes ripgrep from the
+     * question entirely by running the extractor in a child process with an empty
+     * PATH, and makes the child report what it saw — `rg=none` is the proof that the
+     * finding below came from the in-process scan and not from rg.
+     */
+    test("finds the same incident with ripgrep removed from PATH", async () => {
+        const path = writeSession(
+            bashPair({
+                toolUseId: "toolu_norg",
+                command: "ls /tmp/nosuch*",
+                result: "zsh:1: no matches found: /tmp/nosuch*",
+            })
+        );
+
+        const child = [
+            `const { extractShellQuirks } = await import(${SafeJSON.stringify(join(import.meta.dir, "extract-shell-quirks.ts"))});`,
+            `const result = await extractShellQuirks({ projectsDir: ${SafeJSON.stringify(join(path, ".."))}, includeRuleCodification: false });`,
+            `const mine = result.findings.filter((f) => f.filePath === ${SafeJSON.stringify(path)});`,
+            'process.stdout.write(`rg=${Bun.which("rg") ?? "none"} findings=${mine.length}`);',
+        ].join("\n");
+
+        const proc = Bun.spawnSync([process.execPath, "-e", child], {
+            env: { ...process.env, PATH: "" },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+
+        expect(proc.exitCode).toBe(0);
+        expect(proc.stdout.toString()).toBe("rg=none findings=1");
+    });
 });

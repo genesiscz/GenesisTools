@@ -1,6 +1,24 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { ensureDynamicLanguages } from "./ast-languages";
 import { chunkFile } from "./chunker";
+
+/**
+ * Register the dynamic tree-sitter grammars ONCE, here, instead of leaving the
+ * cost inside whichever test reaches a non-built-in language first.
+ *
+ * ast-grep's registration is single-shot, so the first `chunkFile` on a .py file
+ * loads the native module for EVERY installed grammar — 12 of them. That is 60ms
+ * on an idle machine, but it was landing inside "extracts Python function and
+ * class definitions", and in the 16-way parallel suite that test was measured at
+ * 9836ms against the 5000ms per-test limit while the file runs in 83ms alone.
+ * The work is real and one-time; charging it to one arbitrary test is what made
+ * it look like a failure. The hook carries its own generous budget because the
+ * cost is native module loading under whatever contention the run has.
+ */
+beforeAll(async () => {
+    await ensureDynamicLanguages();
+}, 120_000);
 
 describe("chunkFile", () => {
     describe("AST strategy", () => {
