@@ -140,6 +140,45 @@ describe("saveAdoConfig", () => {
         expect(saved.timelog).toBeUndefined();
     });
 
+    /**
+     * Regression test: PR #333 review t13. readExistingConfig parsed with
+     * { strict: true }, but NO_TEAM_MESSAGE tells users to add `"team"` to this
+     * file by hand — so a `//` comment or a trailing comma made the parse throw,
+     * the catch returned {}, and the whole config was overwritten. That destroys
+     * timelog.functionsKey, which is the exact loss the merge was added to stop.
+     */
+    test("a hand-edited config with a comment and a trailing comma is still preserved", () => {
+        const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
+        writeFileSync(
+            join(dir, "config.json"),
+            `{
+    // added by hand, per the message the tool prints
+    "org": "contoso",
+    "project": "Widgets",
+    "projectId": "00000000-0000-0000-0000-000000000001",
+    "apiResource": "499b84ac-0000-0000-0000-000000000000",
+    "team": "Payments Team",
+    "timelog": { "functionsUrl": "https://example.invalid/api", "functionsKey": "kept-secret" },
+}
+`
+        );
+
+        const path = saveAdoConfig(
+            {
+                org: "contoso",
+                project: "Widgets",
+                projectId: "00000000-0000-0000-0000-000000000001",
+                apiResource: "499b84ac-0000-0000-0000-000000000000",
+            },
+            dir
+        );
+
+        const saved = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as AzureConfigWithTimeLog;
+
+        expect(saved.team).toBe("Payments Team");
+        expect(saved.timelog?.functionsKey).toBe("kept-secret");
+    });
+
     test("writes a fresh config when none exists", () => {
         const dir = mkdtempSync(join(tmpdir(), "ado-config-"));
 

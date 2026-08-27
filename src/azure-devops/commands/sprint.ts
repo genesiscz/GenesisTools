@@ -248,7 +248,14 @@ function toJsonItems(rows: SprintRow[]): Array<Record<string, unknown>> {
     }));
 }
 
-function renderSprintMd(rows: SprintRow[], iteration: TeamIteration, withOrder: boolean): string {
+/** Both renderers take the same three, and `withOrder` is unreadable positionally. */
+interface SprintRenderArgs {
+    rows: SprintRow[];
+    iteration: TeamIteration;
+    withOrder: boolean;
+}
+
+function renderSprintMd({ rows, iteration, withOrder }: SprintRenderArgs): string {
     const header = ["ID", "Type", "Title", "State", "AssignedTo", "CompletedWork", "RemainingWork"];
 
     if (withOrder) {
@@ -287,7 +294,7 @@ function renderSprintMd(rows: SprintRow[], iteration: TeamIteration, withOrder: 
     ].join("\n");
 }
 
-function renderSprintTable(rows: SprintRow[], iteration: TeamIteration, withOrder: boolean): void {
+function renderSprintTable({ rows, iteration, withOrder }: SprintRenderArgs): void {
     renderCliHeader(iteration.name, iteration.path);
 
     const headers = ["ID", "TYPE", "TITLE", "STATE", "ASSIGNED", "DONE", "LEFT"];
@@ -332,7 +339,7 @@ async function handleSprint(nameOrPath: string | undefined, options: SprintOptio
     const api = new Api(config);
     const iteration = await resolveSprintIteration(api, team, nameOrPath);
     const fetched = await fetchSprintRows(api, iteration, assignedTo);
-    const withOrder = options.order === true;
+    const withOrder = options.order ?? false;
     const rows = withOrder ? sortByBacklogOrder(fetched) : sortById(fetched);
     const totals = sumTaskEffort(rows);
 
@@ -362,7 +369,7 @@ async function handleSprint(nameOrPath: string | undefined, options: SprintOptio
     ];
 
     if (options.format === "md") {
-        const md = renderSprintMd(rows, iteration, withOrder);
+        const md = renderSprintMd({ rows, iteration, withOrder });
         const withTotals = options.totals
             ? `${md}\n\n## Totals\n\n${totalsLines.map((line) => `- ${line}`).join("\n")}`
             : md;
@@ -370,7 +377,7 @@ async function handleSprint(nameOrPath: string | undefined, options: SprintOptio
         return;
     }
 
-    renderSprintTable(rows, iteration, withOrder);
+    renderSprintTable({ rows, iteration, withOrder });
 
     if (options.totals) {
         renderCliSection("Totals");

@@ -73,7 +73,13 @@ function readExistingConfig(configPath: string): Partial<AzureConfigWithTimeLog>
     }
 
     try {
-        return SafeJSON.parse(readFileSync(configPath, "utf8"), { strict: true }) as Partial<AzureConfigWithTimeLog>;
+        // Lenient on purpose. NO_TEAM_MESSAGE tells users to add "team" to this
+        // file by hand, so it really does grow `//` comments and trailing commas.
+        // Under { strict: true } those threw, the catch below returned {}, and the
+        // whole config — including timelog.functionsKey — was overwritten
+        // (PR #333 review t13). SafeJSON is a comment-json wrapper; leniency here
+        // is the point of using it.
+        return SafeJSON.parse(readFileSync(configPath, "utf8")) as Partial<AzureConfigWithTimeLog>;
     } catch (err) {
         // A corrupt file must not take the new configuration down with it, but
         // it also must not be silent: whatever was in there is about to be
