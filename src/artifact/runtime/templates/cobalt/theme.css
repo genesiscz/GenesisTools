@@ -1,0 +1,17 @@
+/* cobalt — paper and cobalt, client-facing light. Blue used structurally only. */
+:root {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #dbe0e8;
+    --text: #101725;
+    --dim: #5b6675;
+    --accent: #1d4ed8;
+    --ok: #1a6b47;
+    --warn: #8a5510;
+    --err: #a52a2a;
+    --info: #1d4ed8;
+    --radius: 8px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}

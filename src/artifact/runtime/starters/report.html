@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+    :root {
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --panel: #10141d;
+        --border: #1e2635;
+        --text: #d7dde8;
+        --dim: #8b95a8;
+        --accent: #7aa2f7;
+        --ok: #9ece6a;
+        --warn: #e0af68;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.65 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        padding: clamp(1.5rem, 4vw, 3.5rem) 1.25rem 4rem;
+    }
+    main { max-width: 56rem; margin: 0 auto; }
+    .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+    h1 { font-size: clamp(1.4rem, 3vw, 1.9rem); letter-spacing: -0.015em; margin: 0 0 0.25rem; color: #eef2f8; }
+    .sub { color: var(--dim); margin: 0 0 2rem; max-width: 60ch; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin: 0 0 2rem; }
+    .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 0.9rem 1rem; }
+    .stat b { display: block; font-size: 1.5rem; font-family: "JetBrains Mono", monospace; letter-spacing: -0.02em; }
+    .stat span { color: var(--dim); font-size: 0.78rem; }
+    section { margin-top: 2rem; }
+    section h2 { font-size: 1.05rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.5rem 0.7rem; text-align: left; }
+    th { color: var(--dim); font-weight: 600; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.1em; }
+    td.num { font-family: "JetBrains Mono", monospace; text-align: right; }
+</style>
+</head>
+<body>
+<main>
+    <h1>{{TITLE}}</h1>
+    <p class="sub">Replace this with one or two sentences on what this report covers and why it exists.</p>
+
+    <div class="stats" id="stats"></div>
+
+    <section>
+        <h2>Details</h2>
+        <table>
+            <thead><tr><th>Item</th><th>Status</th><th>Value</th></tr></thead>
+            <tbody id="rows"></tbody>
+        </table>
+    </section>
+</main>
+<script type="module">
+    // Data lives in ./data.json next to this file. Served: fetched live.
+    // Built with `tools artifact build`: embedded automatically, file:// works.
+    // Sample shape — replace data.json with your real numbers.
+    const fallback = {
+        stats: [
+            { label: "sample stat", value: "42" },
+            { label: "another", value: "7/9" },
+        ],
+        rows: [
+            { item: "sample row", status: "ok", value: "1.21" },
+        ],
+    };
+
+    async function loadData() {
+        try {
+            const res = await fetch("./data.json");
+            if (!res.ok) { return fallback; }
+            return await res.json();
+        } catch { return fallback; }
+    }
+
+    const data = await loadData();
+    document.getElementById("stats").innerHTML = data.stats
+        .map((s) => `<div class="stat"><b>${s.value}</b><span>${s.label}</span></div>`)
+        .join("");
+    document.getElementById("rows").innerHTML = data.rows
+        .map((r) => `<tr><td>${r.item}</td><td>${r.status}</td><td class="num">${r.value}</td></tr>`)
+        .join("");
+</script>
+</body>
+</html>

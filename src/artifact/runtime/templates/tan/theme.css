@@ -1,0 +1,17 @@
+/* tan — black and tan, the presentation. High contrast, sharp corners. */
+:root {
+    color-scheme: dark;
+    --bg: #0a0a09;
+    --panel: #141311;
+    --border: #2b2924;
+    --text: #f2efe8;
+    --dim: #9a938a;
+    --accent: #d9a066;
+    --ok: #8fc99a;
+    --warn: #d9a066;
+    --err: #e2807a;
+    --info: #a3b6c9;
+    --radius: 0px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}

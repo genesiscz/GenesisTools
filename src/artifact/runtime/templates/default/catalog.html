@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>{{THEME}}</style>
+<style>
+        * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.6 var(--font-code);
+        padding: clamp(1.5rem, 4vw, 3.5rem) 1.25rem 4rem;
+    }
+    main { max-width: 52rem; margin: 0 auto; }
+    header h1 {
+        font-size: clamp(1.05rem, 2.5vw, 1.35rem);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0 0 0.2rem;
+    }
+    header .dir {
+        color: var(--dim);
+        font-size: 0.78rem;
+        word-break: break-all;
+    }
+    section { margin-top: 2.25rem; }
+    section h2 {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--dim);
+        margin: 0 0 0.6rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid var(--border);
+    }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li a {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.5rem 0.7rem;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        color: var(--text);
+        text-decoration: none;
+        transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    li a:hover {
+        background: var(--panel);
+        border-color: var(--border);
+        transform: translateY(-1px);
+    }
+    li a:active { transform: scale(0.99); }
+    li a .name { color: var(--accent); }
+    li a .kind { color: var(--dim); font-size: 0.72rem; flex-shrink: 0; }
+    .empty { color: var(--dim); padding: 0.4rem 0.7rem; }
+    @media (prefers-reduced-motion: reduce) {
+        li a { transition: none; }
+        li a:hover { transform: none; }
+    }
+</style>
+</head>
+<body>
+<main>
+<header>
+    <h1>{{TITLE}}</h1>
+    <div class="dir">{{DIR}}</div>
+</header>
+{{SECTIONS}}
+</main>
+</body>
+</html>

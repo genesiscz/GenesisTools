@@ -1,0 +1,18 @@
+/* graphite — the instrument. Cold near-black, one cool mint accent.
+   Contrast checked: text/bg > 14:1, dim/panel > 5.4:1, tones/panel > 5.7:1. */
+:root {
+    color-scheme: dark;
+    --bg: #0d0f13;
+    --panel: #151920;
+    --border: #252b36;
+    --text: #e2e6ec;
+    --dim: #8a93a4;
+    --accent: #4dd0b1;
+    --ok: #5ed6a4;
+    --warn: #e8b45c;
+    --err: #f0737e;
+    --info: #6cb6f0;
+    --radius: 10px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}

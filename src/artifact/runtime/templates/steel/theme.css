@@ -1,0 +1,17 @@
+/* steel — cold luxury, near-zero chroma. Color is spent ONLY on status. */
+:root {
+    color-scheme: dark;
+    --bg: #111214;
+    --panel: #191b1e;
+    --border: #2a2d31;
+    --text: #e8e9eb;
+    --dim: #8e9195;
+    --accent: #f4f6f8;
+    --ok: #8fd3b6;
+    --warn: #dbb877;
+    --err: #e58a90;
+    --info: #9db9d6;
+    --radius: 6px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}

@@ -128,6 +128,19 @@ export function matchGenesisTool(...toolNeedles: string[]): PortProcessMatcher {
 // ---------------------------------------------------------------------------
 
 export const DASHBOARDS = {
+    artifact: {
+        key: "artifact",
+        name: "Artifact Server",
+        description: "On-the-fly dashboards from any folder of loose HTML/TSX/MD artifacts.",
+        port: 3076,
+        strictPort: false,
+        launch: "tools artifact serve",
+        portOverride: { flag: "--port" },
+        tech: "vite",
+        auth: "none",
+        note: "Serves arbitrary registered folders; registry at ~/.genesis-tools/artifact/registry.json.",
+        matchProcess: matchGenesisTool("src/artifact", "artifact serve"),
+    },
     "claude-history": {
         key: "claude-history",
         name: "Claude History Browser",

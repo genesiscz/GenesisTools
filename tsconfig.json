@@ -44,6 +44,7 @@
 
         // Path aliases
         "paths": {
+            "@artifact/kit": ["./src/artifact/runtime/kit/index.ts"],
             "@genesiscz/utils": ["./src/utils/index.ts"],
             "@genesiscz/utils/*": ["./src/utils/*"],
             "@app/*": ["./src/*"],

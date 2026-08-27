@@ -1,0 +1,17 @@
+/* forest — the field handbook. Deep green ground, bone text, amber accent. */
+:root {
+    color-scheme: dark;
+    --bg: #0e1a14;
+    --panel: #142219;
+    --border: #22372a;
+    --text: #e6ece6;
+    --dim: #8ea394;
+    --accent: #e0a44a;
+    --ok: #6fce8f;
+    --warn: #e0a44a;
+    --err: #ec7a6a;
+    --info: #7fbcc9;
+    --radius: 12px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}

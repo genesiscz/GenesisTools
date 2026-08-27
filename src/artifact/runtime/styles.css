@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/* The kit lives OUTSIDE the served root, so Tailwind's automatic source
+   detection (rooted at the artifact folder) never sees its classes — scan it
+   explicitly or every kit-only utility silently drops from the build. */
+@source "./kit";
+
+/* Fallback tokens (graphite) — the active template's theme.css, imported by the
+   tsx entry AFTER this file, overrides these on :root. */
+:root {
+    color-scheme: dark;
+    --bg: #0d0f13;
+    --panel: #151920;
+    --border: #252b36;
+    --text: #e2e6ec;
+    --dim: #8a93a4;
+    --accent: #4dd0b1;
+    --ok: #5ed6a4;
+    --warn: #e8b45c;
+    --err: #f0737e;
+    --info: #6cb6f0;
+    --radius: 10px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Bridge template tokens into Tailwind utilities. `inline` makes utilities emit
+   var(--bg) etc., so swapping the template retints every kit component live. */
+@theme inline {
+    --color-canvas: var(--bg);
+    --color-panel: var(--panel);
+    --color-line: var(--border);
+    --color-ink: var(--text);
+    --color-dim: var(--dim);
+    --color-accent: var(--accent);
+    --color-ok: var(--ok);
+    --color-warn: var(--warn);
+    --color-err: var(--err);
+    --color-info: var(--info);
+    --font-sans: var(--font-body);
+    --font-mono: var(--font-code);
+    --radius-card: var(--radius);
+}

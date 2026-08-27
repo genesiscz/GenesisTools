@@ -1,0 +1,17 @@
+/* bone — the editorial reader. Cool off-white paper, ink black, oxide-red accent. */
+:root {
+    color-scheme: light;
+    --bg: #f3f4f2;
+    --panel: #fbfcfa;
+    --border: #d9dbd6;
+    --text: #17191c;
+    --dim: #63676d;
+    --accent: #a8331f;
+    --ok: #1f6b45;
+    --warn: #8a5a10;
+    --err: #a8331f;
+    --info: #1f4f8f;
+    --radius: 4px;
+    --font-body: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
