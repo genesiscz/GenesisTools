@@ -82,13 +82,18 @@ export function createMountCache<T>({ start, close, max = DEFAULT_MAX_MOUNTS }: 
             const pending = [...mounts.values()];
             mounts.clear();
 
-            for (const entry of pending) {
-                try {
-                    await close(await entry);
-                } catch (err) {
-                    logger.debug({ err }, "[artifact] library mount close failed");
-                }
-            }
+            // No mount's shutdown depends on another's, and this runs on the
+            // process's way out, so one slow close must not queue up behind the
+            // rest. Each keeps its own catch: a failure is logged, not fatal.
+            await Promise.allSettled(
+                pending.map(async (entry) => {
+                    try {
+                        await close(await entry);
+                    } catch (err) {
+                        logger.debug({ err }, "[artifact] library mount close failed");
+                    }
+                })
+            );
         },
     };
 }

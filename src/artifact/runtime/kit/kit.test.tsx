@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { DataTable, Tabs, tabHash, tabIdFromHash } from "./data";
+import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { MdViewer } from "./md";
-import { Collapse } from "./primitives";
+import { CodeBlock, Collapse } from "./primitives";
 import { matchRoute } from "./router";
 import { mountDom } from "./test-dom";
 
@@ -170,6 +170,45 @@ describe("DataTable accessibility", () => {
     });
 });
 
+describe("DataTable unsearchable-column scan", () => {
+    /** Rows whose cells report every read, so a scan that should not run is observable. */
+    function countingRows(reads: { n: number }): Array<Record<string, DataTableCell>> {
+        const make = (value: string): Record<string, DataTableCell> => ({
+            get name(): DataTableCell {
+                reads.n += 1;
+
+                return value;
+            },
+        });
+
+        return [make("alpha"), make("beta"), make("gamma")];
+    }
+
+    test("a non-filterable table never scans its cells for unsearchable columns", async () => {
+        const reads = { n: 0 };
+        const dom = await mountDom(<DataTable columns={[{ key: "name", label: "Name" }]} rows={countingRows(reads)} />);
+        // Three reads render the three body cells. The unsearchable scan would add its own.
+        expect(reads.n).toBe(3);
+
+        await dom.unmount();
+    });
+
+    test("the scan runs once the filter box actually has a query", async () => {
+        const reads = { n: 0 };
+        const dom = await mountDom(
+            <DataTable filter columns={[{ key: "name", label: "Name" }]} rows={countingRows(reads)} />
+        );
+        const before = reads.n;
+        const input = dom.container.querySelector("input");
+        await dom.type(input, "al");
+
+        expect(reads.n).toBeGreaterThan(before);
+        expect(dom.html()).toContain("1/3");
+
+        await dom.unmount();
+    });
+});
+
 describe("MdViewer", () => {
     test("an EMPTY markdown source renders as empty content, not a stuck loader", async () => {
         const dom = await mountDom(<MdViewer source="" />);
@@ -187,6 +226,52 @@ describe("MdViewer", () => {
         expect(dom.html()).not.toContain("Loading");
 
         await dom.unmount();
+    });
+});
+
+describe("CodeBlock", () => {
+    test("plain and line-marked bodies share ONE pre element and its classes", async () => {
+        const plain = await mountDom(<CodeBlock copy={false}>{"one\ntwo"}</CodeBlock>);
+        const plainPre = plain.container.querySelectorAll("pre");
+
+        expect(plainPre).toHaveLength(1);
+        expect(plainPre[0].querySelectorAll("span")).toHaveLength(0);
+        expect(plainPre[0].textContent).toBe("one\ntwo");
+        const className = plainPre[0].getAttribute("class");
+
+        await plain.unmount();
+
+        const marked = await mountDom(
+            <CodeBlock copy={false} badLines={[2]} highlightLines={[1]}>
+                {"one\ntwo"}
+            </CodeBlock>
+        );
+        const markedPre = marked.container.querySelectorAll("pre");
+
+        expect(markedPre).toHaveLength(1);
+        expect(markedPre[0].getAttribute("class")).toBe(className);
+        const lines = [...markedPre[0].querySelectorAll("span")].map((el) => el.getAttribute("class"));
+        expect(lines).toEqual(["block bg-accent/10", "block bg-err/15 text-err"]);
+
+        await marked.unmount();
+    });
+
+    test("wrap adds the wrapping class in both modes", async () => {
+        const plain = await mountDom(
+            <CodeBlock copy={false} wrap>
+                {"x"}
+            </CodeBlock>
+        );
+        expect(plain.container.querySelector("pre")?.getAttribute("class")).toContain("whitespace-pre-wrap");
+        await plain.unmount();
+
+        const marked = await mountDom(
+            <CodeBlock copy={false} wrap badLines={[1]}>
+                {"x"}
+            </CodeBlock>
+        );
+        expect(marked.container.querySelector("pre")?.getAttribute("class")).toContain("whitespace-pre-wrap");
+        await marked.unmount();
     });
 });
 

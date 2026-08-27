@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { classifyPid, type PidIdentity, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { runningPath } from "./storage";
@@ -34,18 +34,20 @@ interface RunningFile {
  * treated as alive: dropping those would silently forget servers across an upgrade.
  */
 function isOurs(server: Pick<RunningServer, "pid" | "command">): boolean {
-    const identity = classifyPid(server.pid, server.command);
+    return keepsRecord(classifyPid(server.pid, server.command));
+}
 
+function keepsRecord(identity: PidIdentity): boolean {
     if (identity.status === "foreign") {
-        logger.debug({ pid: server.pid, command: identity.command }, "[artifact] pid was recycled; not our server");
+        logger.debug({ pid: identity.pid, command: identity.command }, "[artifact] pid was recycled; not our server");
     }
 
     return identity.status !== "dead" && identity.status !== "foreign";
 }
 
 /** True only for a pid that is safe to SIGTERM: alive, and verifiably ours. */
-export function isSignalable(server: Pick<RunningServer, "pid" | "command">): boolean {
-    return classifyPid(server.pid, server.command).status === "live";
+export function isSignalable(identity: PidIdentity): boolean {
+    return identity.status === "live";
 }
 
 function lockPath(): string {
@@ -69,16 +71,29 @@ function writeAll(servers: RunningServer[]): void {
     atomicWriteFileSync(runningPath(), `${SafeJSON.stringify({ servers }, null, 4)}\n`);
 }
 
-/** Live servers only; dead pids are pruned from the file as a side effect. */
+/**
+ * Live servers only. Filters in memory and writes NOTHING.
+ *
+ * It used to prune dead pids by rewriting the file, and outside the lock that
+ * recordRunning and removeRunning both take — so `tools artifact ps` mutated
+ * durable state and could clobber the record of a serve that was starting
+ * concurrently. It was redundant as well as racy: recordRunning already drops
+ * dead entries under the lock on every write.
+ */
 export function listRunning(): RunningServer[] {
-    const all = readAll();
-    const alive = all.filter(isOurs);
+    return liveRecords().map((match) => match.server);
+}
 
-    if (alive.length !== all.length) {
-        writeAll(alive);
-    }
+export interface RunningMatch {
+    server: RunningServer;
+    /** The identity established while filtering — never classify the same pid twice. */
+    identity: PidIdentity;
+}
 
-    return alive;
+function liveRecords(): RunningMatch[] {
+    return readAll()
+        .map((server) => ({ server, identity: classifyPid(server.pid, server.command) }))
+        .filter((match) => keepsRecord(match.identity));
 }
 
 export async function recordRunning(server: RunningServer): Promise<void> {
@@ -103,11 +118,67 @@ export async function removeRunning(pid: number): Promise<void> {
     });
 }
 
-/** Match by registry name, directory, or port. */
-export function findRunning(target: string): RunningServer | undefined {
+/**
+ * Match by registry name, directory, or port. Returns the pid identity the scan
+ * already computed, so a caller deciding whether to signal does not re-probe.
+ */
+export function findRunning(target: string): RunningMatch | undefined {
     const port = Number.parseInt(target, 10);
 
-    return listRunning().find(
-        (s) => s.name === target || s.dir === target || (Number.isInteger(port) && s.port === port)
+    return liveRecords().find(
+        ({ server: s }) => s.name === target || s.dir === target || (Number.isInteger(port) && s.port === port)
     );
+}
+
+export interface HoldServerOptions {
+    /** The port the server actually bound. */
+    port: number;
+    /** Served folder, or a label like "(library)" for servers that serve many. */
+    dir: string;
+    /** Registry name, used by `tools artifact stop <name>`. */
+    name: string;
+    /** Shut the underlying server down. Called once, on SIGINT or SIGTERM. */
+    close: () => Promise<void>;
+    /** Opened with `open` on darwin when set. */
+    openUrl?: string;
+}
+
+/**
+ * Own the lifetime of a foreground server, the one way for every start path.
+ *
+ * Records it so `ps`/`stop` can find it, closes it on SIGINT/SIGTERM before the
+ * process leaves (Vite holds file watchers, the HTTP listener and HMR sockets,
+ * and closing first lets them unwind instead of being torn down by exit()),
+ * drops the record, then blocks forever. NEVER resolves: the process leaves
+ * through the signal path.
+ *
+ * `serve --detach` needs nothing extra — it re-spawns itself without `--detach`,
+ * so the detached child comes back through this same function.
+ */
+export async function holdServer(options: HoldServerOptions): Promise<never> {
+    await recordRunning({
+        pid: process.pid,
+        port: options.port,
+        dir: options.dir,
+        name: options.name,
+        startedAt: new Date().toISOString(),
+    });
+
+    const cleanup = (): void => {
+        void options
+            .close()
+            .catch((err: unknown) => {
+                logger.debug({ err, name: options.name }, "[artifact] closing the server failed on shutdown");
+            })
+            .then(() => removeRunning(process.pid))
+            .finally(() => process.exit(0));
+    };
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
+
+    if (options.openUrl && process.platform === "darwin") {
+        Bun.spawn(["open", options.openUrl], { stdout: "ignore", stderr: "ignore" });
+    }
+
+    return new Promise<never>(() => {});
 }

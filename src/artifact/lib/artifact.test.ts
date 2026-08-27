@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -16,10 +25,19 @@ import {
     resolveEntry,
     resolveOutPath,
 } from "./build";
-import { cachedScan, renderCatalogHtml, resolveCleanUrl, safeResolve, scanArtifacts } from "./catalog";
+import {
+    artifactPathSet,
+    cachedScan,
+    cleanHref,
+    renderCatalogHtml,
+    resolveCleanUrl,
+    safeResolve,
+    scanArtifacts,
+} from "./catalog";
 import { renderMarkdown } from "./markdown";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
-import { listRunning, recordRunning, removeRunning } from "./running";
+import { findRunning, holdServer, isSignalable, listRunning, recordRunning, removeRunning } from "./running";
+import { runningPath } from "./storage";
 import { renderTemplate, resolveTemplateDir } from "./templates";
 
 setupStorageSandbox();
@@ -85,6 +103,98 @@ describe("running tracker", () => {
 
         await removeRunning(process.pid);
         expect(listRunning()).toHaveLength(0);
+    });
+
+    /**
+     * Regression test: listRunning() pruned dead pids by WRITING the file, and
+     * did it outside the lock that recordRunning/removeRunning both take. So
+     * `tools artifact ps` — a list command — mutated durable state, and could
+     * clobber a concurrently-starting serve's record. CLAUDE.md: a path named
+     * list/show/status may read and report, nothing else.
+     */
+    test("listRunning does not write the file", async () => {
+        await recordRunning({ pid: process.pid, port: 3998, dir, name: "live", startedAt: new Date().toISOString() });
+        await recordRunning({ pid: 999999998, port: 3997, dir, name: "dead", startedAt: new Date().toISOString() });
+
+        const path = runningPath();
+        const before = readFileSync(path, "utf8");
+        const beforeMtime = statSync(path).mtimeMs;
+
+        expect(listRunning().map((s) => s.name)).toEqual(["live"]);
+
+        expect(readFileSync(path, "utf8")).toBe(before);
+        expect(statSync(path).mtimeMs).toBe(beforeMtime);
+        // The dead record is filtered from the RESULT but still on disk; the
+        // write paths are what prune it.
+        expect(before).toContain("dead");
+
+        await removeRunning(process.pid);
+    });
+
+    /**
+     * serve and `library up` each inlined this block. A start path that forgets
+     * one line of it leaves a server invisible to `ps`/`stop`, or leaks Vite
+     * watchers on the way out, so there is exactly one copy of it now.
+     */
+    test("holdServer records the server, installs both signal handlers, and never resolves", async () => {
+        const sigint = process.listenerCount("SIGINT");
+        const sigterm = process.listenerCount("SIGTERM");
+        let settled = false;
+        // holdServer blocks forever by contract; the record it writes first is
+        // what this asserts on.
+        void holdServer({ port: 3995, dir, name: "held", close: () => Promise.resolve() }).then(() => {
+            settled = true;
+        });
+        await Bun.sleep(50);
+
+        expect(listRunning().map((s) => s.name)).toContain("held");
+        expect(process.listenerCount("SIGINT")).toBe(sigint + 1);
+        expect(process.listenerCount("SIGTERM")).toBe(sigterm + 1);
+        expect(settled).toBe(false);
+
+        // The handlers call process.exit; leaving them on the test process would
+        // turn a stray signal into a silent exit(0).
+        for (const signal of ["SIGINT", "SIGTERM"] as const) {
+            const added = process.listeners(signal).at(-1);
+
+            if (added) {
+                process.off(signal, added as () => void);
+            }
+        }
+
+        await removeRunning(process.pid);
+    });
+
+    /**
+     * `stop` used to call findRunning (which classifies every recorded pid) and
+     * then isSignalable on the match, classifying the SAME pid a second time.
+     * findRunning now hands its identity back so the decision is free.
+     */
+    test("findRunning returns the identity it already computed, probing each pid once", async () => {
+        await recordRunning({ pid: process.pid, port: 3996, dir, name: "solo", startedAt: new Date().toISOString() });
+
+        const probed: number[] = [];
+        const realKill = process.kill.bind(process);
+        process.kill = ((pid: number, signal?: string | number) => {
+            if (signal === 0) {
+                probed.push(pid);
+            }
+
+            return realKill(pid, signal);
+        }) as typeof process.kill;
+
+        try {
+            const match = findRunning("solo");
+
+            expect(match?.server.name).toBe("solo");
+            expect(match?.identity.status).toBe("live");
+            expect(isSignalable(match?.identity ?? { status: "dead", pid: 0 })).toBe(true);
+            expect(probed).toEqual([process.pid]);
+        } finally {
+            process.kill = realKill;
+        }
+
+        await removeRunning(process.pid);
     });
 });
 
@@ -218,6 +328,8 @@ describe("catalog enumeration containment", () => {
     });
 });
 
+const MB_BUDGET = { limitBytes: 1024 * 1024, totalBytes: 1024 * 1024 };
+
 describe("markdown rendering is not a script injection", () => {
     test("raw HTML in a source file is escaped, never emitted as markup", () => {
         const html = renderMarkdown('# hi\n\n<img src=x onerror="alert(1)">\n');
@@ -232,6 +344,38 @@ describe("markdown rendering is not a script injection", () => {
         expect(bad).not.toContain("<a ");
         expect(bad).toContain("click");
         expect(renderMarkdown("[ok](https://example.com)")).toContain('href="https://example.com"');
+    });
+
+    test("an image href is protocol-filtered the same way a link href is", () => {
+        for (const scheme of ["javascript:alert(1)", "vbscript:msgbox", "data:text/html;base64,PHN2Zz4="]) {
+            const html = renderMarkdown(`![x](${scheme})`);
+            expect(html).not.toContain("<img");
+            expect(html).not.toContain(scheme);
+            expect(html).toContain("x");
+        }
+
+        const ok = renderMarkdown('![alt text](https://example.com/a.png "the title")');
+        expect(ok).toContain('src="https://example.com/a.png"');
+        expect(ok).toContain('alt="alt text"');
+        expect(ok).toContain('title="the title"');
+    });
+
+    test("an external link carries rel=noreferrer noopener", () => {
+        expect(renderMarkdown("[ok](https://example.com)")).toContain('rel="noreferrer noopener"');
+    });
+});
+
+describe("cleanHref ownership", () => {
+    const listing = { tsx: ["a/report.tsx", "solo.tsx"], html: ["a/report.html"], md: ["a/report.md", "notes.md"] };
+
+    test("the highest-precedence artifact owns the clean URL, the rest keep a raw path", () => {
+        const paths = artifactPathSet(listing);
+
+        expect(cleanHref("a/report.tsx", paths)).toBe("/a/report");
+        expect(cleanHref("a/report.html", paths)).toBe("/a/report.html");
+        expect(cleanHref("a/report.md", paths)).toBe("/__md/a/report.md");
+        expect(cleanHref("solo.tsx", paths)).toBe("/solo");
+        expect(cleanHref("notes.md", paths)).toBe("/notes");
     });
 });
 
@@ -342,12 +486,53 @@ describe("build helpers", () => {
     });
 
     test("collectEmbeddableFiles embeds text data, skips node_modules and oversize", () => {
-        const scan = collectEmbeddableFiles(dir, 1024 * 1024, new Set());
+        const scan = collectEmbeddableFiles(dir, MB_BUDGET, new Set());
         expect(scan.embedded).toEqual(["data.json", "notes.md"]);
 
-        const tiny = collectEmbeddableFiles(dir, 3, new Set());
+        const tiny = collectEmbeddableFiles(dir, { limitBytes: 3, totalBytes: 1024 * 1024 }, new Set());
         expect(tiny.embedded).toEqual([]);
         expect(tiny.skipped.map((s) => s.rel).sort()).toEqual(["data.json", "notes.md"]);
+        expect(tiny.skipped.map((s) => s.reason)).toEqual(["too-large", "too-large"]);
+    });
+
+    /**
+     * The per-file cap bounds nothing on its own: a tree of files each just
+     * under it embeds their SUM, which then travels through the shim JSON and
+     * the output string.
+     */
+    test("a tree scan stops at the TOTAL embed budget, not just the per-file cap", () => {
+        const own = realpathSync(mkdtempSync(join(tmpdir(), "artifact-budget-")));
+        for (const name of ["a.md", "b.md", "c.md"]) {
+            writeFileSync(join(own, name), "x".repeat(1000));
+        }
+
+        const scan = collectEmbeddableFiles(own, { limitBytes: 1024 * 1024, totalBytes: 2500 }, new Set());
+
+        expect(scan.embedded).toHaveLength(2);
+        expect(scan.totalBytes).toBe(2000);
+        expect(scan.skipped).toHaveLength(1);
+        expect(scan.skipped[0].reason).toBe("budget");
+
+        rmSync(own, { recursive: true, force: true });
+    });
+
+    test("the referenced scan honours the same total budget", () => {
+        const own = realpathSync(mkdtempSync(join(tmpdir(), "artifact-budget-ref-")));
+        writeFileSync(join(own, "one.json"), `{"pad":"${"x".repeat(1000)}"}`);
+        writeFileSync(join(own, "two.json"), `{"pad":"${"x".repeat(1000)}"}`);
+        writeFileSync(join(own, "single.tsx"), `const a = "./one.json"; const b = "./two.json";`);
+
+        const scan = collectReferencedFiles(
+            own,
+            "single.tsx",
+            { limitBytes: 1024 * 1024, totalBytes: 1100 },
+            new Set()
+        );
+
+        expect(scan.embedded).toHaveLength(1);
+        expect(scan.skipped.map((s) => s.reason)).toEqual(["budget"]);
+
+        rmSync(own, { recursive: true, force: true });
     });
 
     test("referenced embed scope inlines only what the entry names (vault safety)", () => {
@@ -359,7 +544,7 @@ describe("build helpers", () => {
         writeFileSync(join(own, "single.tsx"), `export default () => { fetch("./data.json"); return null; };\n`);
         writeFileSync(join(own, "single.data.extra.json"), `{"b":2}`);
 
-        const scan = collectReferencedFiles(own, "single.tsx", 1024 * 1024, new Set());
+        const scan = collectReferencedFiles(own, "single.tsx", MB_BUDGET, new Set());
         // notes.md exists in the dir but is NOT referenced — it must stay out.
         expect(scan.embedded).toEqual(["data.json", "single.data.extra.json"]);
         rmSync(own, { recursive: true, force: true });
@@ -377,7 +562,7 @@ describe("build helpers", () => {
         );
 
         try {
-            const scan = collectReferencedFiles(own, "single.tsx", 1024 * 1024, new Set());
+            const scan = collectReferencedFiles(own, "single.tsx", MB_BUDGET, new Set());
             expect(scan.embedded).toEqual(["ok.json"]);
             expect(SafeJSON.stringify(scan.files)).not.toContain("secret");
         } finally {
@@ -394,7 +579,7 @@ describe("build helpers", () => {
         symlinkSync(outside, join(own, "elsewhere"));
 
         try {
-            const scan = collectEmbeddableFiles(own, 1024 * 1024, new Set());
+            const scan = collectEmbeddableFiles(own, MB_BUDGET, new Set());
             expect(scan.embedded).toEqual(["mine.md"]);
             expect(SafeJSON.stringify(scan.files)).not.toContain("private");
         } finally {
@@ -411,7 +596,7 @@ describe("build helpers", () => {
         symlinkSync(own, join(own, "loop"));
 
         try {
-            expect(collectEmbeddableFiles(own, 1024 * 1024, new Set()).embedded).toEqual(["mine.md"]);
+            expect(collectEmbeddableFiles(own, MB_BUDGET, new Set()).embedded).toEqual(["mine.md"]);
         } finally {
             rmSync(own, { recursive: true, force: true });
         }

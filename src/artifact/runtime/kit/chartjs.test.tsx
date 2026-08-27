@@ -5,6 +5,8 @@ interface ChartCall {
     type: string;
     updates: number;
     destroyed: boolean;
+    /** Options the chart was CONSTRUCTED with, before any update(). */
+    initialOptions: Record<string, unknown>;
 }
 
 const calls: ChartCall[] = [];
@@ -19,7 +21,12 @@ class FakeChart {
         this.config = { type: config.type, data: config.data, options: config.options };
         this.data = config.data;
         this.options = config.options;
-        this.record = { type: config.type, updates: 0, destroyed: false };
+        this.record = {
+            type: config.type,
+            updates: 0,
+            destroyed: false,
+            initialOptions: { ...(config.options as Record<string, unknown>) },
+        };
         calls.push(this.record);
     }
 
@@ -83,6 +90,55 @@ describe("ChartJs", () => {
         expect(calls[0].destroyed).toBe(true);
         // The rebuild already carries the new config; no redundant update() follows.
         expect(calls[1].updates).toBe(0);
+
+        await dom.unmount();
+    });
+
+    test("theme tokens are resolved onto the chart's OWN options, not Chart.defaults", async () => {
+        calls.length = 0;
+        const dom = await mountDom(<ChartJs config={barConfig([1])} />);
+        dom.window.document.documentElement.style.setProperty("--dim", "rgb(1, 1, 1)");
+        dom.window.document.documentElement.style.setProperty("--border", "rgb(2, 2, 2)");
+        // A type change forces a fresh chart, which re-reads the tokens.
+        await dom.render(<ChartJs config={{ ...barConfig([1]), type: "line" } as ChartConfiguration} />);
+
+        expect(calls[1].initialOptions).toMatchObject({ color: "rgb(1, 1, 1)", borderColor: "rgb(2, 2, 2)" });
+        // The global is what the old implementation wrote to; nothing may touch it.
+        expect(FakeChart.defaults).toEqual({});
+
+        await dom.unmount();
+    });
+
+    test("a later chart under DIFFERENT tokens gets the new colors, not the first chart's", async () => {
+        // The regression this replaces: a once-per-process seed froze whichever
+        // theme rendered first, so every later chart inherited it.
+        calls.length = 0;
+        const dom = await mountDom(<ChartJs config={barConfig([1])} />);
+        dom.window.document.documentElement.style.setProperty("--dim", "rgb(10, 10, 10)");
+        await dom.render(<ChartJs config={{ ...barConfig([1]), type: "line" } as ChartConfiguration} />);
+        dom.window.document.documentElement.style.setProperty("--dim", "rgb(20, 20, 20)");
+        await dom.render(<ChartJs config={{ ...barConfig([1]), type: "pie" } as ChartConfiguration} />);
+
+        expect(calls[1].initialOptions.color).toBe("rgb(10, 10, 10)");
+        expect(calls[2].initialOptions.color).toBe("rgb(20, 20, 20)");
+
+        await dom.unmount();
+    });
+
+    test("caller options win over the theme, and an update does not strip the theme", async () => {
+        calls.length = 0;
+        const dom = await mountDom(<ChartJs config={barConfig([1])} />);
+        dom.window.document.documentElement.style.setProperty("--dim", "rgb(3, 3, 3)");
+
+        const explicit = { ...barConfig([1]), type: "line", options: { color: "hotpink" } } as ChartConfiguration;
+        await dom.render(<ChartJs config={explicit} />);
+        expect(calls[1].initialOptions.color).toBe("hotpink");
+
+        // A data-only change goes through the update path, which must re-apply
+        // the theme rather than replacing options with the caller's alone.
+        const next = { ...barConfig([1, 2]), type: "line" } as ChartConfiguration;
+        await dom.render(<ChartJs config={next} />);
+        expect(calls[1].updates).toBe(1);
 
         await dom.unmount();
     });

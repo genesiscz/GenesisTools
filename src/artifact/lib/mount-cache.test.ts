@@ -110,4 +110,56 @@ describe("createMountCache", () => {
         expect(closed.sort()).toEqual(["a", "b"]);
         expect(cache.keys()).toEqual([]);
     });
+
+    test("closeAll shuts the mounts down CONCURRENTLY", async () => {
+        // Each close waits until both have started. One after the other, the
+        // first one never sees the second and closeAll never settles.
+        let release = (): void => undefined;
+        const bothStarted = new Promise<void>((r) => {
+            release = r;
+        });
+        const inFlight = new Set<string>();
+
+        const cache = createMountCache<string>({
+            start: (key) => Promise.resolve(key),
+            close: async (value) => {
+                inFlight.add(value);
+
+                if (inFlight.size === 2) {
+                    release();
+                }
+
+                await bothStarted;
+            },
+        });
+        await Promise.all([cache.get("a"), cache.get("b")]);
+
+        const done = await Promise.race([
+            cache.closeAll().then(() => "closed"),
+            new Promise((r) => setTimeout(() => r("timed out"), 500)),
+        ]);
+
+        expect(done).toBe("closed");
+        expect(inFlight).toEqual(new Set(["a", "b"]));
+    });
+
+    test("closeAll still closes the rest when one mount close throws", async () => {
+        const closed: string[] = [];
+        const cache = createMountCache<string>({
+            start: (key) => Promise.resolve(key),
+            close: async (value) => {
+                if (value === "bad") {
+                    throw new Error("close failed");
+                }
+
+                closed.push(value);
+            },
+        });
+        await Promise.all([cache.get("a"), cache.get("bad"), cache.get("b")]);
+
+        await cache.closeAll();
+
+        expect(closed.sort()).toEqual(["a", "b"]);
+        expect(cache.keys()).toEqual([]);
+    });
 });

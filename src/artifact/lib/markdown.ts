@@ -5,10 +5,16 @@ import { Marked, type Tokens } from "marked";
  * did not necessarily write (a downloaded report, a vault note synced from
  * elsewhere), and `serve --host` publishes them beyond loopback, so raw HTML in
  * a source file must never reach a viewer's origin as markup. Raw HTML is
- * escaped and link hrefs are restricted to http/https/mailto.
+ * escaped; link AND image hrefs are restricted to http/https/mailto.
  *
  * Kept free of node and React imports on purpose: the dev server, the builder
  * and the browser kit all render markdown, and they must agree.
+ *
+ * This is deliberately a SECOND renderer next to `src/utils/ui/components/markdown.tsx`,
+ * which carries the same hardening. That one is a React component, so importing
+ * it here would pull React into the node-side server and builder and into the
+ * kit declaration emit (which runs with `types: []`). The two must be hardened
+ * in lockstep: any escaping or protocol rule added there belongs here too.
  */
 export const safeMarked = new Marked({ gfm: true, breaks: false });
 
@@ -54,7 +60,20 @@ safeMarked.use({
 
             const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
 
-            return `<a href="${escapeHtml(token.href)}"${title} target="_blank" rel="noreferrer">${label}</a>`;
+            return `<a href="${escapeHtml(token.href)}"${title} target="_blank" rel="noreferrer noopener">${label}</a>`;
+        },
+        image(token: Tokens.Image) {
+            // Marked's default image renderer emits the href verbatim, so
+            // `![x](javascript:…)` / `data:text/html…` would survive. Same
+            // protocol allowlist as links; a rejected image degrades to its
+            // escaped alt text.
+            if (!isSafeHref(token.href)) {
+                return escapeHtml(token.text);
+            }
+
+            const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+
+            return `<img src="${escapeHtml(token.href)}" alt="${escapeHtml(token.text)}"${title}>`;
         },
     },
 });

@@ -204,6 +204,9 @@ function cellText(cell: DataTableCell): string | null {
     return isCellObject(cell) ? cell.text : null;
 }
 
+/** Stable empty result for the unsearchable-column scan, so the memo has an identity to keep. */
+const NO_COLUMNS: DataTableColumn[] = [];
+
 export interface DataTableProps {
     columns: DataTableColumn[];
     rows: Array<Record<string, DataTableCell>>;
@@ -222,9 +225,17 @@ export interface DataTableProps {
 export function DataTable({ columns, rows, filter = false, caption, rowTone, markdown = false }: DataTableProps) {
     const [query, setQuery] = useState("");
     const q = query.trim().toLowerCase();
+    // Only the filter box's hint reads this, and only while a query is typed.
+    // Scanning every cell of every row for a table that cannot be filtered (the
+    // default) is pure waste, and inline `rows`/`columns` literals mean the memo
+    // rarely hits.
+    const scanUnsearchable = filter && q.length > 0;
     const unsearchable = useMemo(
-        () => columns.filter((c) => rows.some((row) => cellText(row[c.key]) === null && row[c.key] !== undefined)),
-        [columns, rows]
+        () =>
+            scanUnsearchable
+                ? columns.filter((c) => rows.some((row) => cellText(row[c.key]) === null && row[c.key] !== undefined))
+                : NO_COLUMNS,
+        [columns, rows, scanUnsearchable]
     );
     const visible = useMemo(() => {
         if (!q) {

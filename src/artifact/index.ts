@@ -7,7 +7,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
@@ -16,7 +16,7 @@ import { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } from ".
 import { filterKitDts, kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
 import { startLibrary } from "./lib/library";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
-import { findRunning, isSignalable, listRunning, recordRunning, removeRunning } from "./lib/running";
+import { findRunning, holdServer, isSignalable, listRunning, removeRunning } from "./lib/running";
 import { serveArtifacts } from "./lib/serve";
 import { describeShippedTemplates, resolveTemplateDir } from "./lib/templates";
 import { RUNTIME_DIR } from "./lib/vite";
@@ -155,28 +155,6 @@ program
             });
             const url = server.resolvedUrls?.local[0] ?? `http://${opts.host}:${opts.port}/`;
             const actualPort = Number.parseInt(new URL(url).port, 10) || Number.parseInt(opts.port, 10);
-            await recordRunning({
-                pid: process.pid,
-                port: actualPort,
-                dir: resolved.dir,
-                name,
-                startedAt: new Date().toISOString(),
-            });
-
-            // Vite holds file watchers, the HTTP listener and HMR sockets; closing
-            // it first lets them unwind instead of being torn down by exit().
-            const cleanup = (): void => {
-                void server
-                    .close()
-                    .catch((err: unknown) => {
-                        logger.debug({ err }, "[artifact] serve: closing the dev server failed on shutdown");
-                    })
-                    .then(() => removeRunning(process.pid))
-                    .finally(() => process.exit(0));
-            };
-            process.on("SIGINT", cleanup);
-            process.on("SIGTERM", cleanup);
-
             const openUrl = resolved.entry ? url.replace(/\/$/, "") + entryRoute(resolved.entry) : url;
             out.log.success(`Serving ${pc.bold(resolved.entry ? join(resolved.dir, resolved.entry) : resolved.dir)}`);
             out.log.info(
@@ -192,11 +170,13 @@ program
                 out.log.info(pc.dim(`clean URLs: ${cleanUrls.map((r) => url.replace(/\/$/, "") + r).join("  ")}`));
             }
 
-            if (opts.open && process.platform === "darwin") {
-                Bun.spawn(["open", openUrl], { stdout: "ignore", stderr: "ignore" });
-            }
-
-            await new Promise(() => {});
+            await holdServer({
+                port: actualPort,
+                dir: resolved.dir,
+                name,
+                close: () => server.close(),
+                openUrl: opts.open ? openUrl : undefined,
+            });
         }
     );
 
@@ -235,16 +215,18 @@ program
     .description("Stop a running artifact server by name, directory, or port")
     .argument("<target>", "name, directory, or port")
     .action(async (target: string) => {
-        const server = findRunning(target);
+        const match = findRunning(target);
 
-        if (!server) {
+        if (!match) {
             out.log.error(`No running server matches "${target}". See: tools artifact ps`);
             process.exitCode = 1;
 
             return;
         }
 
-        if (!isSignalable(server)) {
+        const { server, identity } = match;
+
+        if (!isSignalable(identity)) {
             // The pid outlived the server and the OS reissued it. Signalling now
             // would kill a stranger's process, so drop the stale record instead.
             await removeRunning(server.pid);
@@ -255,8 +237,9 @@ program
             return;
         }
 
-        // isSignalable() above required classifyPid to return "live", matching the
-        // command line recorded when the server registered itself.
+        // isSignalable() above required the identity findRunning already
+        // computed to be "live": alive, and matching the command line recorded
+        // when the server registered itself.
         // pid-verified: identity confirmed against the command recorded at write time.
         process.kill(server.pid, "SIGTERM");
         await removeRunning(server.pid);
@@ -326,34 +309,16 @@ library
         const port = Number.parseInt(opts.port, 10);
         const library = await startLibrary({ port, host: opts.host, templateDir: resolveTemplateDir(opts.template) });
         const url = `http://${opts.host}:${library.port}/`;
-        await recordRunning({
-            pid: process.pid,
-            port: library.port,
-            dir: "(library)",
-            name: "library",
-            startedAt: new Date().toISOString(),
-        });
-
-        // Same reason as `serve`: the mounts hold Vite watchers and HMR sockets.
-        const cleanup = (): void => {
-            void library
-                .close()
-                .catch((err: unknown) => {
-                    logger.debug({ err }, "[artifact] library: closing the server failed on shutdown");
-                })
-                .then(() => removeRunning(process.pid))
-                .finally(() => process.exit(0));
-        };
-        process.on("SIGINT", cleanup);
-        process.on("SIGTERM", cleanup);
 
         out.log.success(`Artifact library up: ${pc.cyan(url)} ${pc.dim("(every registered folder, one server)")}`);
 
-        if (opts.open && process.platform === "darwin") {
-            Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
-        }
-
-        await new Promise(() => {});
+        await holdServer({
+            port: library.port,
+            dir: "(library)",
+            name: "library",
+            close: () => library.close(),
+            openUrl: opts.open ? url : undefined,
+        });
     });
 
 program
@@ -405,6 +370,7 @@ program
     .option("-e, --entry <file>", "entry file, relative to the folder")
     .option("-o, --out <file>", "output path (default: <dir>/dist/<entry>)")
     .option("--max-embed <mb>", "per-file cap for embedded sibling data files", "5")
+    .option("--max-embed-total <mb>", "cap on the embedded sibling data files taken together", "32")
     .option("--embed <scope>", "referenced (only files the entry names) or tree (every sibling data file)")
     .option("-t, --template <name>", "theme for a markdown entry's page chrome")
     .option("--watch", "stay running and rebuild on every source change")
@@ -415,6 +381,7 @@ program
                 entry?: string;
                 out?: string;
                 maxEmbed: string;
+                maxEmbedTotal: string;
                 embed?: string;
                 template?: string;
                 watch?: boolean;
@@ -435,6 +402,7 @@ program
                 out: opts.out,
                 templateDir: resolveTemplateDir(opts.template),
                 embedLimitMb: Number.parseFloat(opts.maxEmbed),
+                embedTotalMb: Number.parseFloat(opts.maxEmbedTotal),
                 embedScope:
                     (opts.embed as "referenced" | "tree" | undefined) ??
                     embedScopeFor({
@@ -451,7 +419,8 @@ program
                 );
 
                 for (const skip of result.skippedEmbeds) {
-                    out.log.warn(`NOT embedded (over --max-embed): ${skip.rel} (${formatBytes(skip.sizeBytes)})`);
+                    const cause = skip.reason === "budget" ? "--max-embed-total reached" : "over --max-embed";
+                    out.log.warn(`NOT embedded (${cause}): ${skip.rel} (${formatBytes(skip.sizeBytes)})`);
                 }
             };
 

@@ -116,15 +116,23 @@ function stripCleanExt(rel: string): string {
     return rel.replace(/\.(tsx|jsx|html|md)$/, "");
 }
 
+/** Every artifact path of a listing, for the O(1) ownership lookup `cleanHref` needs. */
+export function artifactPathSet(listing: ArtifactListing): Set<string> {
+    return new Set([...listing.tsx, ...listing.html, ...listing.md]);
+}
+
 /**
  * Clean route for an artifact: `/Analysis/remake/postdeploy` instead of
  * `/__tsx/Analysis/remake/postdeploy.tsx`. When two artifacts share a basename
  * the higher-precedence one owns the clean URL and the other keeps its raw path.
+ *
+ * Takes the path SET rather than the listing: the caller renders one link per
+ * file, so rebuilding and re-scanning the flattened list here made the catalog
+ * quadratic in the number of artifacts.
  */
-export function cleanHref(rel: string, listing: ArtifactListing): string {
+export function cleanHref(rel: string, paths: Set<string>): string {
     const base = stripCleanExt(rel);
-    const all = [...listing.tsx, ...listing.html, ...listing.md];
-    const owner = CLEAN_EXTENSIONS.map((ext) => `${base}${ext}`).find((cand) => all.includes(cand));
+    const owner = CLEAN_EXTENSIONS.map((ext) => `${base}${ext}`).find((cand) => paths.has(cand));
 
     if (owner === rel) {
         return `/${base}`;
@@ -134,6 +142,7 @@ export function cleanHref(rel: string, listing: ArtifactListing): string {
 }
 
 export function renderCatalogHtml(dir: string, listing: ArtifactListing, templateDir: string, hrefPrefix = ""): string {
+    const paths = artifactPathSet(listing);
     const section = (label: string, kind: string, files: string[]): string => {
         if (files.length === 0) {
             return "";
@@ -142,7 +151,7 @@ export function renderCatalogHtml(dir: string, listing: ArtifactListing, templat
         const items = files
             .map(
                 (rel) =>
-                    `<li><a href="${escapeHtml(`${hrefPrefix}${encodeHrefPath(cleanHref(rel, listing))}`)}"><span class="name">${escapeHtml(rel)}</span>` +
+                    `<li><a href="${escapeHtml(`${hrefPrefix}${encodeHrefPath(cleanHref(rel, paths))}`)}"><span class="name">${escapeHtml(rel)}</span>` +
                     `<span class="kind">${kind}</span></a></li>`
             )
             .join("\n");

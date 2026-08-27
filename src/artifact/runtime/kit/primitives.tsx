@@ -291,32 +291,26 @@ export function CodeBlock({ children, label, wrap = false, copy = true, highligh
                     {copied ? "copied" : "copy"}
                 </button>
             ) : null}
-            {marked ? (
-                <pre
-                    className={`overflow-x-auto bg-canvas/80 p-3 font-mono text-[0.82rem] leading-relaxed text-ink/90 ${wrap ? "whitespace-pre-wrap" : ""}`}
-                >
-                    {children.split("\n").map((line, i) => {
-                        const no = i + 1;
-                        const cls = badLines?.includes(no)
-                            ? "block bg-err/15 text-err"
-                            : highlightLines?.includes(no)
-                              ? "block bg-accent/10"
-                              : "block";
+            <pre
+                className={`overflow-x-auto bg-canvas/80 p-3 font-mono text-[0.82rem] leading-relaxed text-ink/90 ${wrap ? "whitespace-pre-wrap" : ""}`}
+            >
+                {marked
+                    ? children.split("\n").map((line, i) => {
+                          const no = i + 1;
+                          const cls = badLines?.includes(no)
+                              ? "block bg-err/15 text-err"
+                              : highlightLines?.includes(no)
+                                ? "block bg-accent/10"
+                                : "block";
 
-                        return (
-                            <span key={no} className={cls}>
-                                {line || " "}
-                            </span>
-                        );
-                    })}
-                </pre>
-            ) : (
-                <pre
-                    className={`overflow-x-auto bg-canvas/80 p-3 font-mono text-[0.82rem] leading-relaxed text-ink/90 ${wrap ? "whitespace-pre-wrap" : ""}`}
-                >
-                    {children}
-                </pre>
-            )}
+                          return (
+                              <span key={no} className={cls}>
+                                  {line || " "}
+                              </span>
+                          );
+                      })
+                    : children}
+            </pre>
         </div>
     );
 }

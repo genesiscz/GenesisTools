@@ -11,6 +11,12 @@ import { basePlugins, baseResolve, cacheDirFor, RUNTIME_DIR } from "./vite";
 const EMBED_EXTENSIONS = new Set([".md", ".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".geojson"]);
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git"]);
 const DEFAULT_EMBED_LIMIT_MB = 5;
+/**
+ * Cap across ALL embedded files of one build. The per-file cap alone bounds
+ * nothing: a tree build of fifty files just under it embeds a quarter of a
+ * gigabyte, which then travels through the shim JSON and the output string.
+ */
+const DEFAULT_EMBED_TOTAL_MB = 32;
 
 export interface BuildOptions {
     dir: string;
@@ -20,6 +26,8 @@ export interface BuildOptions {
     out?: string;
     /** Per-file embed cap in MB for the fetch shim. */
     embedLimitMb?: number;
+    /** Cap in MB on the embedded files TAKEN TOGETHER. */
+    embedTotalMb?: number;
     /**
      * "tree" embeds every sibling text-data file (folder-shaped artifacts);
      * "referenced" embeds only files the ENTRY names (single-file artifacts —
@@ -36,7 +44,7 @@ export interface BuildResult {
     /** Whether a Vite bundling pass ran (false = the entry had no local script/css refs). */
     bundled: boolean;
     embedded: string[];
-    skippedEmbeds: Array<{ rel: string; sizeBytes: number }>;
+    skippedEmbeds: SkippedEmbed[];
 }
 
 function isTsxEntry(entry: string): boolean {
@@ -156,15 +164,59 @@ export function inlineAssets(html: string, readAsset: (rel: string) => string): 
     return out;
 }
 
+/** Why a data file did not make it into the fetch shim. */
+export type SkipReason = "too-large" | "budget";
+
+export interface SkippedEmbed {
+    rel: string;
+    sizeBytes: number;
+    reason: SkipReason;
+}
+
+export interface EmbedBudget {
+    /** Largest single file that may be embedded. */
+    limitBytes: number;
+    /** Largest total the embedded files may reach together. */
+    totalBytes: number;
+}
+
 interface EmbedScan {
     files: Record<string, string>;
     embedded: string[];
-    skipped: Array<{ rel: string; sizeBytes: number }>;
+    skipped: SkippedEmbed[];
+    /** Bytes already committed to `files`, measured against `EmbedBudget.totalBytes`. */
+    totalBytes: number;
+}
+
+function emptyScan(): EmbedScan {
+    return { files: {}, embedded: [], skipped: [], totalBytes: 0 };
+}
+
+/**
+ * Charge one file against both caps. Returns false and records WHY when it does
+ * not fit, so the caller can report an accurate reason instead of guessing.
+ */
+function admits(scan: EmbedScan, budget: EmbedBudget, rel: string, sizeBytes: number): boolean {
+    if (sizeBytes > budget.limitBytes) {
+        scan.skipped.push({ rel, sizeBytes, reason: "too-large" });
+
+        return false;
+    }
+
+    if (scan.totalBytes + sizeBytes > budget.totalBytes) {
+        scan.skipped.push({ rel, sizeBytes, reason: "budget" });
+
+        return false;
+    }
+
+    scan.totalBytes += sizeBytes;
+
+    return true;
 }
 
 /** Collect sibling text-data files (md/json/csv/…) for the file:// fetch shim. */
-export function collectEmbeddableFiles(dir: string, limitBytes: number, excludeAbs: Set<string>): EmbedScan {
-    const scan: EmbedScan = { files: {}, embedded: [], skipped: [] };
+export function collectEmbeddableFiles(dir: string, budget: EmbedBudget, excludeAbs: Set<string>): EmbedScan {
+    const scan = emptyScan();
     const visitedDirs = new Set<string>([canonicalDir(dir)]);
 
     const walk = (current: string): void => {
@@ -218,9 +270,7 @@ export function collectEmbeddableFiles(dir: string, limitBytes: number, excludeA
 
             const rel = relative(dir, full).split(sep).join("/");
 
-            if (stat.size > limitBytes) {
-                scan.skipped.push({ rel, sizeBytes: stat.size });
-
+            if (!admits(scan, budget, rel, stat.size)) {
                 continue;
             }
 
@@ -243,10 +293,10 @@ export function collectEmbeddableFiles(dir: string, limitBytes: number, excludeA
 export function collectReferencedFiles(
     dir: string,
     entryRel: string,
-    limitBytes: number,
+    budget: EmbedBudget,
     excludeAbs: Set<string>
 ): EmbedScan {
-    const scan: EmbedScan = { files: {}, embedded: [], skipped: [] };
+    const scan = emptyScan();
     const entryAbs = join(dir, entryRel);
     const source = readFileSync(entryAbs, "utf8");
     const refs = new Set<string>();
@@ -277,9 +327,7 @@ export function collectReferencedFiles(
         const rel = relative(dir, abs).split(sep).join("/");
         const size = statSync(abs).size;
 
-        if (size > limitBytes) {
-            scan.skipped.push({ rel, sizeBytes: size });
-
+        if (!admits(scan, budget, rel, size)) {
             continue;
         }
 
@@ -482,12 +530,23 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
         throw new Error("Output path equals the entry file — refusing to overwrite the source.");
     }
 
-    const limitBytes = (options.embedLimitMb ?? DEFAULT_EMBED_LIMIT_MB) * 1024 * 1024;
+    const budget: EmbedBudget = {
+        limitBytes: (options.embedLimitMb ?? DEFAULT_EMBED_LIMIT_MB) * 1024 * 1024,
+        totalBytes: (options.embedTotalMb ?? DEFAULT_EMBED_TOTAL_MB) * 1024 * 1024,
+    };
     const exclude = new Set([entryAbs, outPath]);
     const scan =
         options.embedScope === "referenced"
-            ? collectReferencedFiles(dir, entryRel, limitBytes, exclude)
-            : collectEmbeddableFiles(dir, limitBytes, exclude);
+            ? collectReferencedFiles(dir, entryRel, budget, exclude)
+            : collectEmbeddableFiles(dir, budget, exclude);
+    const overBudget = scan.skipped.filter((skip) => skip.reason === "budget");
+
+    if (overBudget.length > 0) {
+        logger.warn(
+            { dir, totalBytes: scan.totalBytes, budgetBytes: budget.totalBytes, dropped: overBudget.length },
+            "[artifact] embed budget reached; the remaining data files were left out"
+        );
+    }
 
     if (scan.embedded.length > 0) {
         html = injectShim(html, fetchShimScript(scan.files, entryRel));
@@ -495,24 +554,22 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
 
     mkdirSync(dirname(outPath), { recursive: true });
     await Bun.write(outPath, html);
+    const bytes = Buffer.byteLength(html);
     logger.info(
-        {
-            outPath,
-            bytes: Buffer.byteLength(html),
-            bundled,
-            embedded: scan.embedded.length,
-            skipped: scan.skipped.length,
-        },
+        { outPath, bytes, bundled, embedded: scan.embedded.length, skipped: scan.skipped.length },
         "[artifact] build finished"
     );
 
-    return {
-        outPath,
-        bytes: Buffer.byteLength(html),
-        bundled,
-        embedded: scan.embedded,
-        skippedEmbeds: scan.skipped,
-    };
+    return { outPath, bytes, bundled, embedded: scan.embedded, skippedEmbeds: scan.skipped };
+}
+
+/**
+ * The absolute path `buildSingleFile` will write for these options, worked out
+ * WITHOUT building. The watcher needs it up front so it can ignore its own
+ * output; both paths go through `outBaseFor` so they cannot disagree.
+ */
+export function resolveOutPath(options: BuildOptions): string {
+    return resolve(options.out ?? join(resolve(options.dir), "dist", outBaseFor(options.entry)));
 }
 
 /**
@@ -520,10 +577,6 @@ export async function buildSingleFile(options: BuildOptions): Promise<BuildResul
  * (debounced). Rebuilds cover the entry, its imports, and embedded data files
  * alike — the whole pipeline re-runs, which keeps the logic in one place.
  */
-export function resolveOutPath(options: BuildOptions): string {
-    return resolve(options.out ?? join(resolve(options.dir), "dist", outBaseFor(options.entry)));
-}
-
 export function watchAndRebuild(options: BuildOptions, onBuild: (result: BuildResult) => void): () => void {
     const dir = resolve(options.dir);
     const outAbs = resolveOutPath(options);
