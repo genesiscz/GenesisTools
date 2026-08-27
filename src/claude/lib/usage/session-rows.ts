@@ -298,8 +298,7 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number):
         totalTokens: usage.totalTokens,
         cacheReadTokens: usage.cacheReadTokens,
         cacheCreateTokens: usage.cacheCreateTokens,
-        contextTokens:
-            usage.compactedPostTokens ?? usage.inputTokens + usage.cacheReadTokens + usage.cacheCreateTokens,
+        contextTokens: usage.compactedPostTokens ?? usage.inputTokens + usage.cacheReadTokens + usage.cacheCreateTokens,
         compacted: usage.compactedPostTokens !== null,
         lastUserAt: usage.lastUserAt,
         filePath: record.filePath,
