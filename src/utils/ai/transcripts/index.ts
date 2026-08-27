@@ -3,6 +3,13 @@ export {
     claudeTranscriptEnvelope,
 } from "./claude";
 export { cleanPromptText, cleanTranscriptText } from "./clean-text";
+export { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
+export { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
+export { transcriptEnvelope } from "./load";
+export type { ResolvedTranscript, TranscriptRoots, TranscriptSource } from "./resolve";
+export { defaultTranscriptRoots, resolveTranscript } from "./resolve";
+export type { FollowTranscriptOptions } from "./tail";
+export { followTranscript } from "./tail";
 export type {
     SliceOptions,
     TranscriptEnvelope,

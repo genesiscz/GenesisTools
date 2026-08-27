@@ -24,6 +24,7 @@ import pc from "picocolors";
 import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
+import { registerSessionsCommands } from "./commands/sessions";
 
 // Without this, `referrersOf` in this process cannot see the accounts the
 // ai-proxy config bills, so `account rm` would delete an account (and its vault
@@ -570,6 +571,7 @@ modelsCmd
     });
 
 registerConfigCommands(program);
+registerSessionsCommands(program);
 
 async function main(): Promise<void> {
     try {
