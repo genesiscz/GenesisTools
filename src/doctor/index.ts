@@ -144,4 +144,10 @@ async function main(): Promise<void> {
     await runTool(program, { tool: "doctor" });
 }
 
-main();
+// Guarded because src/doctor/ui/tui/views/__tests__/drawer-content-packing.test.ts
+// imports this module. Unawaited, main() did not hang the suite — but it did run
+// the whole CLI in the background during the test, where a process.exit or a
+// stdin read would have been anyone's guess to debug.
+if (import.meta.main) {
+    main();
+}

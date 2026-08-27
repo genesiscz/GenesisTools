@@ -178,3 +178,11 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
+
+      # Catches the shape that made the full suite stop terminating: a test
+      # importing an entrypoint that runs the CLI on import. Cheap, and it fires
+      # before the timeout does, so the failure names the cause.
+      - name: Entrypoint import guard
+        if: runner.os == 'Linux'
+        timeout-minutes: 1
+        run: bun scripts/ci/entrypoint-import-guard.ts
