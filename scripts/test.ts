@@ -246,8 +246,22 @@ async function runBunTest(testArgs: string[]): Promise<number> {
     return await proc.exited;
 }
 
+/**
+ * The one line CI greps to tell "the suite finished" from "the suite was killed".
+ *
+ * bun prints its own `Ran N tests across M files.` once per PROCESS, and a full
+ * run is TWO processes (the parallel bulk, then the serial load-sensitive
+ * phase). That line being present therefore proves only that one of them got
+ * there — a stalled serial phase would still show a completed parallel one.
+ * This marker is written after every phase has exited, and nowhere else.
+ */
+function finish(code: number): never {
+    process.stderr.write(`[test] suite complete (exit ${code})\n`);
+    process.exit(code);
+}
+
 if (hasExplicitPaths) {
-    process.exit(await runBunTest(args));
+    finish(await runBunTest(args));
 }
 
 const parallelExit = await runBunTest([
@@ -258,4 +272,4 @@ const parallelExit = await runBunTest([
 process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
 const serialExit = await runBunTest([...args.filter((arg) => arg !== "--parallel"), ...LOAD_SENSITIVE_FILES]);
 
-process.exit(parallelExit !== 0 ? parallelExit : serialExit);
+finish(parallelExit !== 0 ? parallelExit : serialExit);
