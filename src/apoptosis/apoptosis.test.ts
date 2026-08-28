@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { loadCoverageSet } from "./lib/coverage";
-import { churnCountForFile } from "./lib/git";
+import { churnCountForFile, churnCutoff, getChurnCounts } from "./lib/git";
 import { buildInboundImportCounts } from "./lib/imports";
 import { evaluateLifecycle } from "./lib/lifecycle";
 import { renderJson, renderKillScript, renderPrBody } from "./lib/render";
@@ -275,7 +275,12 @@ describe("churnCountForFile", () => {
         git(dir, "add", ".");
         git(dir, "commit", "-qm", "c2");
 
-        const alive = await churnCountForFile(join(dir, "alive.ts"), 365, dir);
+        const alive = await churnCountForFile({
+            file: join(dir, "alive.ts"),
+            churnDays: 365,
+            repoRoot: dir,
+            now: Date.now(),
+        });
         expect(alive).toBe(2);
     });
 
@@ -286,8 +291,79 @@ describe("churnCountForFile", () => {
         git(dir, "commit", "-qm", "c1");
         writeFileSync(join(dir, "untracked.ts"), "x");
 
-        const untracked = await churnCountForFile(join(dir, "untracked.ts"), 365, dir);
+        const untracked = await churnCountForFile({
+            file: join(dir, "untracked.ts"),
+            churnDays: 365,
+            repoRoot: dir,
+            now: Date.now(),
+        });
         expect(untracked).toBe(0);
+    });
+});
+
+/**
+ * Regression test: the churn window used `--since=<n> days ago`, which git
+ * resolves against the SYSTEM clock, while every other date in a scan comes from
+ * the injected `now`. The two agreed until the calendar moved past a fixture's
+ * commit date, and then a test that had passed for 90 days started failing with
+ * no code change (observed 2026-08-28). These pin the window to `now`.
+ */
+describe("churn window is a function of the injected now, not the wall clock", () => {
+    let dir: string;
+    afterEach(() => {
+        if (dir) {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("derives an absolute cutoff from now", () => {
+        expect(churnCutoff(90, Date.parse("2026-06-02T00:00:00.000Z"))).toBe("2026-03-04T00:00:00.000Z");
+    });
+
+    it("counts a commit inside a window that ended years ago", async () => {
+        dir = initRepo();
+        writeFileSync(join(dir, "old.ts"), "export const x = 1;");
+        git(dir, "add", "old.ts");
+        commitAt(dir, "2020-03-01T12:00:00");
+
+        const counts = await getChurnCounts({
+            churnDays: 90,
+            repoRoot: dir,
+            now: Date.parse("2020-03-10T00:00:00.000Z"),
+        });
+
+        expect(counts.get(join(dir, "old.ts"))).toBe(1);
+    });
+
+    it("still excludes a commit that falls outside that window", async () => {
+        dir = initRepo();
+        writeFileSync(join(dir, "old.ts"), "export const x = 1;");
+        git(dir, "add", "old.ts");
+        commitAt(dir, "2020-03-01T12:00:00");
+
+        const counts = await getChurnCounts({
+            churnDays: 90,
+            repoRoot: dir,
+            now: Date.parse("2021-01-01T00:00:00.000Z"),
+        });
+
+        expect(counts.get(join(dir, "old.ts"))).toBeUndefined();
+    });
+
+    it("churnCountForFile honours the same cutoff", async () => {
+        dir = initRepo();
+        writeFileSync(join(dir, "old.ts"), "export const x = 1;");
+        git(dir, "add", "old.ts");
+        commitAt(dir, "2020-03-01T12:00:00");
+
+        const inside = await churnCountForFile({
+            file: join(dir, "old.ts"),
+            churnDays: 90,
+            repoRoot: dir,
+            now: Date.parse("2020-03-10T00:00:00.000Z"),
+        });
+
+        expect(inside).toBe(1);
     });
 });
 

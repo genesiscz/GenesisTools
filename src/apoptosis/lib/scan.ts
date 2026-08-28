@@ -36,7 +36,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanReport> {
     logger.debug(`apoptosis: scanning ${files.length} files under ${dir}`);
 
     const repoRoot = (await findRepoRoot(dir)) ?? dir;
-    const churnCounts = await getChurnCounts(opts.churnDays, repoRoot);
+    const churnCounts = await getChurnCounts({ churnDays: opts.churnDays, repoRoot, now: opts.now });
     const aliasConfig = loadAliasConfig(dir) ?? undefined;
     const inbound = buildInboundImportCounts(files, aliasConfig);
     const coverage = loadCoverageSet(opts.coveragePath);
