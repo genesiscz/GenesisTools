@@ -23,7 +23,13 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
     let stopped = false;
 
     const emit = async (): Promise<void> => {
+        if (stopped) {
+            return;
+        }
         const envelope = await transcriptEnvelope(resolved, opts.slice);
+        if (stopped) {
+            return;
+        }
         const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}`;
         if (key === lastKey) {
             return;
@@ -43,7 +49,7 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         running = true;
         chain = chain
             .then(async () => {
-                while (dirty) {
+                while (dirty && !stopped) {
                     dirty = false;
                     await emit();
                 }

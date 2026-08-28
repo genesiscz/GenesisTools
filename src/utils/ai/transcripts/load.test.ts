@@ -45,6 +45,38 @@ describe("transcriptEnvelope", () => {
         expect(envelope.byteSize).toBeGreaterThan(0);
     });
 
+    test("skips malformed JSONL in the loader, not only in converters", async () => {
+        const root = fixtureRoot();
+        const file = join(root, "updates.jsonl");
+        writeFileSync(
+            file,
+            [
+                "not json",
+                '{"params":',
+                SafeJSON.stringify({
+                    timestamp: 1_700_000_000,
+                    params: {
+                        update: {
+                            sessionUpdate: "agent_message_chunk",
+                            content: { type: "text", text: "ok" },
+                        },
+                    },
+                }),
+                SafeJSON.stringify({
+                    timestamp: 1_700_000_001,
+                    params: { update: { sessionUpdate: "turn_completed" } },
+                }),
+            ].join("\n")
+        );
+        const envelope = await transcriptEnvelope({
+            provider: "grok",
+            source: "native",
+            sessionId: "sess",
+            filePath: file,
+        });
+        expect(envelope.turns[0]?.text).toBe("ok");
+    });
+
     test("loads codex GT events and native rollout lines", async () => {
         const root = fixtureRoot();
         mkdirSync(root, { recursive: true });

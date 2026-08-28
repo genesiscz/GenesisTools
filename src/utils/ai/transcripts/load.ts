@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
-import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { claudeMessagesToTurns } from "./claude";
 import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
+import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
 import { type SliceOptions, sliceTurns, type TranscriptEnvelope, type TranscriptTurn } from "./types";
 
@@ -11,7 +11,14 @@ function readRecords(path: string): unknown[] {
     if (!existsSync(path)) {
         return [];
     }
-    return parseJsonl(readFileSync(path));
+    const records: unknown[] = [];
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+        const parsed = parseTranscriptLine(line);
+        if (parsed) {
+            records.push(parsed);
+        }
+    }
+    return records;
 }
 
 function looksLikeCodexGt(records: unknown[]): boolean {
