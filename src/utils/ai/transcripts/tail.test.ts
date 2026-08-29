@@ -140,24 +140,116 @@ describe("followTranscript", () => {
             }
         };
 
-        await waitFor(() => envelopes.length >= 1);
-        expect(envelopes[0]?.turns[0]?.text).toBe("");
-        expect(envelopes[0]?.turns[0]?.tools[0]?.result).toBe("ok");
+        // try/finally, because an assertion below throwing would otherwise leave
+        // followTranscript holding its FileTailer and 300ms interval for the rest
+        // of the suite — it only resolves after abort (PR #341 review t10).
+        try {
+            await waitFor(() => envelopes.length >= 1);
+            expect(envelopes[0]?.turns[0]?.text).toBe("");
+            expect(envelopes[0]?.turns[0]?.tools[0]?.result).toBe("ok");
 
-        // Shrink first, so the watcher resets its offset, then regrow to the
-        // identical size with different tool output. The empty state emits
-        // nothing of its own, so this waits out a poll interval rather than
-        // watching for an envelope that never arrives.
-        writeFileSync(file, "");
-        await Bun.sleep(500);
-        writeFileSync(file, after);
+            // Shrink first, so the watcher resets its offset, then regrow to the
+            // identical size with different tool output. The empty state emits
+            // nothing of its own, so this waits out a poll interval rather than
+            // watching for an envelope that never arrives.
+            writeFileSync(file, "");
+            await Bun.sleep(500);
+            writeFileSync(file, after);
 
-        await waitFor(() => envelopes.some((e) => e.turns[0]?.tools[0]?.result === "no"));
-        ac.abort();
-        await done;
+            await waitFor(() => envelopes.some((e) => e.turns[0]?.tools[0]?.result === "no"));
 
-        const final = envelopes.at(-1);
-        expect(final?.byteSize).toBe(envelopes[0]?.byteSize);
-        expect(final?.turns[0]?.tools[0]?.result).toBe("no");
+            const final = envelopes.at(-1);
+            expect(final?.byteSize).toBe(envelopes[0]?.byteSize);
+            expect(final?.turns[0]?.tools[0]?.result).toBe("no");
+        } finally {
+            ac.abort();
+            await done;
+        }
+    });
+
+    test("a control character moving between two tool fields is not a duplicate", async () => {
+        // PR #341 review t8. The fingerprint used to join tool fields with an
+        // unescaped \u0003, which is not injective: inputPreview="a\u0003b" with
+        // result="c" and inputPreview="a" with result="b\u0003c" flatten to the
+        // same string. Those characters are legal in JSONL when escaped, and
+        // moving one between equal-length fields keeps byteSize, turn count and
+        // offset identical — so the changed envelope was discarded.
+        const dir = mkdtempSync(join(tmpdir(), "gt-tail-delim-"));
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, "updates.jsonl");
+
+        const log = (input: string, result: string): string =>
+            `${SafeJSON.stringify({
+                timestamp: 1_700_000_000,
+                params: {
+                    update: {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "t1",
+                        title: "Bash",
+                        rawInput: { command: input },
+                    },
+                },
+            })}\n${SafeJSON.stringify({
+                timestamp: 1_700_000_001,
+                params: {
+                    update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "t1",
+                        content: { type: "text", text: result },
+                    },
+                },
+            })}\n${SafeJSON.stringify({
+                timestamp: 1_700_000_002,
+                params: { update: { sessionUpdate: "turn_completed" } },
+            })}\n`;
+
+        const before = log("a\u0003b", "c");
+        const after = log("a", "b\u0003c");
+        // The collision's precondition: the same bytes on disk, the same
+        // delimiter-joined flattening, a different envelope.
+        expect(after.length).toBe(before.length);
+
+        writeFileSync(file, before);
+
+        const resolved: ResolvedTranscript = {
+            provider: "grok",
+            source: "native",
+            sessionId: "tail-delim",
+            filePath: file,
+        };
+        const envelopes: TranscriptEnvelope[] = [];
+        const ac = new AbortController();
+        const done = followTranscript(resolved, {
+            signal: ac.signal,
+            onEnvelope: (envelope) => {
+                envelopes.push(envelope);
+            },
+        });
+
+        const waitFor = async (predicate: () => boolean): Promise<void> => {
+            const started = Date.now();
+            while (!predicate() && Date.now() - started < 3000) {
+                await Bun.sleep(50);
+            }
+        };
+
+        try {
+            await waitFor(() => envelopes.length >= 1);
+            expect(envelopes[0]?.turns[0]?.tools[0]?.result).toBe("c");
+
+            writeFileSync(file, "");
+            await Bun.sleep(500);
+            writeFileSync(file, after);
+
+            await waitFor(() => envelopes.some((e) => e.turns[0]?.tools[0]?.result === "b\u0003c"));
+
+            const final = envelopes.at(-1);
+            expect(final?.byteSize).toBe(envelopes[0]?.byteSize);
+            expect(final?.turns[0]?.tools[0]?.result).toBe("b\u0003c");
+            expect(final?.turns[0]?.tools[0]?.inputPreview).toBe("a");
+        } finally {
+            ac.abort();
+            await done;
+        }
     });
 });

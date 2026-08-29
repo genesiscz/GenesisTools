@@ -1,4 +1,5 @@
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { transcriptEnvelope } from "./load";
 import { type ResolvedTranscript, rescanWorkerTurns } from "./resolve";
@@ -45,26 +46,20 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         if (stopped) {
             return;
         }
-        // Size, count and offset are all unchanged by an in-place head rewrite,
-        // which FileTailer detects on purpose — so fingerprint the content too,
-        // or the tailer's rewrite support is discarded here (round 4, t4).
+        // A truncate-and-regrow rewrite can restore the same size, turn count and
+        // offset, so those three cannot tell the new content from the old — the
+        // envelope has to be fingerprinted as well or the reparse is suppressed
+        // as a duplicate (round 4 t4; the "same-size in-place rewrite" wording
+        // this comment used to carry was wrong, since FileWatcher is size-based
+        // and never re-reads such a file at all — PR #341 review t11).
         //
-        // Every emitted field participates, tools included. Fingerprinting only
-        // role/at/text meant a same-size rewrite that changed nothing but a tool
-        // result or its error flag produced an identical key and was dropped as
-        // a duplicate — the same stale-envelope bug one level down (t7).
-        const fingerprint = envelope.turns
-            .map((t) => {
-                const tools = t.tools
-                    .map(
-                        (tool) =>
-                            `${tool.id}\u0003${tool.name}\u0003${tool.inputPreview}\u0003${tool.result ?? ""}\u0003${tool.isError}`
-                    )
-                    .join("\u0004");
-
-                return `${t.role}\u0001${t.at ?? ""}\u0001${t.text}\u0001${tools}`;
-            })
-            .join("\u0002");
+        // SafeJSON rather than delimiter-joined fields (review t8): joining
+        // arbitrary inputPreview/result values with an unescaped separator is not
+        // injective, so moving a control character between two equal-length
+        // fields produced an identical fingerprint for a genuinely different
+        // envelope. JSON escapes them, so the encoding is unambiguous — and it
+        // covers every turn field, tools included, without listing them here.
+        const fingerprint = SafeJSON.stringify(envelope.turns);
         const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}:${fingerprint.length}:${simpleHash(fingerprint)}`;
         if (key === lastKey) {
             return;
