@@ -48,7 +48,23 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         // Size, count and offset are all unchanged by an in-place head rewrite,
         // which FileTailer detects on purpose — so fingerprint the content too,
         // or the tailer's rewrite support is discarded here (round 4, t4).
-        const fingerprint = envelope.turns.map((t) => `${t.role}\u0001${t.at ?? ""}\u0001${t.text}`).join("\u0002");
+        //
+        // Every emitted field participates, tools included. Fingerprinting only
+        // role/at/text meant a same-size rewrite that changed nothing but a tool
+        // result or its error flag produced an identical key and was dropped as
+        // a duplicate — the same stale-envelope bug one level down (t7).
+        const fingerprint = envelope.turns
+            .map((t) => {
+                const tools = t.tools
+                    .map(
+                        (tool) =>
+                            `${tool.id}\u0003${tool.name}\u0003${tool.inputPreview}\u0003${tool.result ?? ""}\u0003${tool.isError}`
+                    )
+                    .join("\u0004");
+
+                return `${t.role}\u0001${t.at ?? ""}\u0001${t.text}\u0001${tools}`;
+            })
+            .join("\u0002");
         const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}:${fingerprint.length}:${simpleHash(fingerprint)}`;
         if (key === lastKey) {
             return;

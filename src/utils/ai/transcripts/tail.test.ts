@@ -69,4 +69,95 @@ describe("followTranscript", () => {
         expect(envelopes.length).toBeGreaterThanOrEqual(2);
         expect(envelopes.at(-1)?.turns[0]?.text).toContain("two");
     });
+    test("a rewrite back to the same size, changing only a tool result, is not deduplicated", async () => {
+        // PR #341 review t7. The dedupe key fingerprinted role/at/text only. A
+        // turn whose text is empty because all its content is TOOL output then
+        // produced a byte-identical key no matter what the tool did, so the
+        // consumer kept showing the stale result.
+        //
+        // Reached through truncate-then-regrow, which is the path that can
+        // actually deliver two emits at the same byteSize: the watcher resets
+        // its offset on a shrink, so the regrown file is re-read in full.
+        const dir = mkdtempSync(join(tmpdir(), "gt-tail-tool-"));
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, "updates.jsonl");
+
+        // "ok" and "no" are the same length, so byteSize, turn count and
+        // nextOffset are all identical across the rewrite and the content
+        // fingerprint is the only thing left to tell the two apart.
+        const log = (result: string): string =>
+            `${SafeJSON.stringify({
+                timestamp: 1_700_000_000,
+                params: {
+                    update: {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "t1",
+                        title: "Bash",
+                        rawInput: { command: "ls" },
+                    },
+                },
+            })}\n${SafeJSON.stringify({
+                timestamp: 1_700_000_001,
+                params: {
+                    update: {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "t1",
+                        content: { type: "text", text: result },
+                    },
+                },
+            })}\n${SafeJSON.stringify({
+                timestamp: 1_700_000_002,
+                params: { update: { sessionUpdate: "turn_completed" } },
+            })}\n`;
+
+        const before = log("ok");
+        const after = log("no");
+        // The premise of the whole test: identical length, and a turn whose
+        // only difference lives in `tools`.
+        expect(after.length).toBe(before.length);
+
+        writeFileSync(file, before);
+
+        const resolved: ResolvedTranscript = {
+            provider: "grok",
+            source: "native",
+            sessionId: "tail-tool",
+            filePath: file,
+        };
+        const envelopes: TranscriptEnvelope[] = [];
+        const ac = new AbortController();
+        const done = followTranscript(resolved, {
+            signal: ac.signal,
+            onEnvelope: (envelope) => {
+                envelopes.push(envelope);
+            },
+        });
+
+        const waitFor = async (predicate: () => boolean): Promise<void> => {
+            const started = Date.now();
+            while (!predicate() && Date.now() - started < 3000) {
+                await Bun.sleep(50);
+            }
+        };
+
+        await waitFor(() => envelopes.length >= 1);
+        expect(envelopes[0]?.turns[0]?.text).toBe("");
+        expect(envelopes[0]?.turns[0]?.tools[0]?.result).toBe("ok");
+
+        // Shrink first, so the watcher resets its offset, then regrow to the
+        // identical size with different tool output. The empty state emits
+        // nothing of its own, so this waits out a poll interval rather than
+        // watching for an envelope that never arrives.
+        writeFileSync(file, "");
+        await Bun.sleep(500);
+        writeFileSync(file, after);
+
+        await waitFor(() => envelopes.some((e) => e.turns[0]?.tools[0]?.result === "no"));
+        ac.abort();
+        await done;
+
+        const final = envelopes.at(-1);
+        expect(final?.byteSize).toBe(envelopes[0]?.byteSize);
+        expect(final?.turns[0]?.tools[0]?.result).toBe("no");
+    });
 });

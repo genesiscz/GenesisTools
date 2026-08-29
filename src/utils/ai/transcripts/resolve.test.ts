@@ -142,6 +142,46 @@ describe("rescanWorkerTurns", () => {
         });
     });
 
+    test("another worker whose name extends this one is not picked up", () => {
+        // PR #341 review t6: the filter was startsWith(`${name}.turn`), so for
+        // the worker "task" a DIFFERENT worker's "task.turnover.turn2.jsonl"
+        // passed, turnNumber() read it as turn 2, and follow mode switched to
+        // that session's transcript.
+        const dir = mkdtempSync(join(tmpdir(), "grok-worker-"));
+        writeFileSync(join(dir, "task.turn1.jsonl"), "{}\n");
+        writeFileSync(join(dir, "task.turnover.turn2.jsonl"), "{}\n");
+        writeFileSync(join(dir, "task.turn2.jsonl.bak"), "{}\n");
+
+        const resolved = {
+            provider: "grok" as const,
+            source: "worker" as const,
+            sessionId: "task",
+            filePath: join(dir, "task.turn1.jsonl"),
+        };
+
+        expect(rescanWorkerTurns(resolved)).toEqual({ filePath: join(dir, "task.turn1.jsonl") });
+    });
+
+    test("the worker named by the extended prefix still finds its own turns", () => {
+        // The negative control: "task.turnover" is a legitimate worker name and
+        // must keep resolving, or the tightened filter has broken real sessions.
+        const dir = mkdtempSync(join(tmpdir(), "grok-worker-"));
+        writeFileSync(join(dir, "task.turnover.turn1.jsonl"), "{}\n");
+        writeFileSync(join(dir, "task.turnover.turn2.jsonl"), "{}\n");
+
+        expect(
+            rescanWorkerTurns({
+                provider: "grok",
+                source: "worker",
+                sessionId: "task.turnover",
+                filePath: join(dir, "task.turnover.turn1.jsonl"),
+            })
+        ).toEqual({
+            filePath: join(dir, "task.turnover.turn2.jsonl"),
+            extraFiles: [join(dir, "task.turnover.turn1.jsonl")],
+        });
+    });
+
     test("a native session has no turn sequence to rescan", () => {
         expect(
             rescanWorkerTurns({

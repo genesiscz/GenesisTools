@@ -78,6 +78,22 @@ function turnNumber(file: string): number {
     return match ? Number(match[1]) : 0;
 }
 
+/**
+ * A worker turn file is EXACTLY `<name>.turn<N>.jsonl`.
+ *
+ * `startsWith(`${name}.turn`)` was not that test. For a worker named "task" it
+ * also accepted "task.turnover.turn2.jsonl", which belongs to a DIFFERENT
+ * worker, and `turnNumber()` then read it as turn 2 — so follow mode could
+ * switch to another session's transcript (PR #341 review t6). Checking the
+ * remainder rather than interpolating `name` into a pattern also means the
+ * name never needs regex-escaping.
+ */
+function isTurnFileFor(name: string, file: string): boolean {
+    const prefix = `${name}.turn`;
+
+    return file.startsWith(prefix) && /^\d+\.jsonl$/.test(file.slice(prefix.length));
+}
+
 export function defaultTranscriptRoots(): Required<TranscriptRoots> {
     return {
         // nativeSessionRoots owns the root policy for every provider; hard-coding
@@ -172,7 +188,7 @@ function findGrokWorker(query: string, workerDir: string): RankedHit[] {
             continue;
         }
         const turns = entries
-            .filter((file) => file.startsWith(`${name}.turn`) && file.endsWith(".jsonl"))
+            .filter((file) => isTurnFileFor(name, file))
             .sort((a, b) => turnNumber(a) - turnNumber(b))
             .map((file) => join(workerDir, file));
         if (turns.length === 0) {
@@ -215,7 +231,7 @@ export function rescanWorkerTurns(resolved: ResolvedTranscript): { filePath: str
 
     const name = match[1];
     const turns = listDir(dir)
-        .filter((file) => file.startsWith(`${name}.turn`) && file.endsWith(".jsonl"))
+        .filter((file) => isTurnFileFor(name, file))
         .sort((a, b) => turnNumber(a) - turnNumber(b))
         .map((file) => join(dir, file));
 
