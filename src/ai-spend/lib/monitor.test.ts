@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { claudeDriver, codexDriver, grokDriver } from "./drivers";
-import { isolateAgentHomeEnv } from "./drivers/test-env";
+import { isolateAgentHomeEnv, toolsHomeFixture } from "./drivers/test-env";
 import { buildMonitorReport, findRecentTranscripts, localDayString, type MonitorReport, mondayOfWeek } from "./monitor";
 import { DEFAULT_PRICING } from "./pricing";
 import type { PricingTable } from "./types";
@@ -415,7 +415,10 @@ describe("multi-agent monitor report", () => {
     });
 
     test("grok's roots follow GROK_HOME even when the fixture home has its own tree", () => {
-        expect(grokDriver.roots(home)).toEqual([join(home, ".grok", "sessions")]);
+        expect(grokDriver.roots(home)).toEqual([
+            join(home, ".grok", "sessions"),
+            join(toolsHomeFixture(), ".genesis-tools", "grok", "worker-home", "sessions"),
+        ]);
         expect(codexDriver.roots(home)).toEqual([
             join(home, ".codex", "sessions"),
             join(home, ".codex", "archived_sessions"),

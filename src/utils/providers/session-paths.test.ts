@@ -18,10 +18,35 @@ describe("nativeSessionRoots", () => {
     });
 
     test("grok is ~/.grok/sessions and GROK_HOME moves it", async () => {
-        expect(nativeSessionRoots("grok", "/home/u")).toEqual(["/home/u/.grok/sessions"]);
-        await env.testing.withOverrides({ GROK_HOME: "/elsewhere/grok" }, () => {
-            expect(nativeSessionRoots("grok", "/home/u")).toEqual(["/elsewhere/grok/sessions"]);
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: "/gt" }, () => {
+            expect(nativeSessionRoots("grok", "/home/u")).toEqual([
+                "/home/u/.grok/sessions",
+                "/gt/.genesis-tools/grok/worker-home/sessions",
+            ]);
         });
+        await env.testing.withOverrides({ GROK_HOME: "/elsewhere/grok", GENESIS_TOOLS_HOME: "/gt" }, () => {
+            expect(nativeSessionRoots("grok", "/home/u")).toEqual([
+                "/elsewhere/grok/sessions",
+                "/gt/.genesis-tools/grok/worker-home/sessions",
+            ]);
+        });
+    });
+
+    test("the headless worker home is listed, so `tools grok run` sessions are readable", async () => {
+        // The worker pins GROK_HOME to an isolated directory that never reaches
+        // the user's shell, so this root is the only way a reader finds them.
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: "/gt" }, () => {
+            expect(nativeSessionRoots("grok", "/home/u")).toContain("/gt/.genesis-tools/grok/worker-home/sessions");
+        });
+    });
+
+    test("no duplicate root when GROK_HOME already points at the worker home", async () => {
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_HOME: "/gt", GROK_HOME: "/gt/.genesis-tools/grok/worker-home" },
+            () => {
+                expect(nativeSessionRoots("grok", "/home/u")).toEqual(["/gt/.genesis-tools/grok/worker-home/sessions"]);
+            }
+        );
     });
 
     test("codex follows CODEX_HOME, comma-separated, sessions + archived_sessions", async () => {

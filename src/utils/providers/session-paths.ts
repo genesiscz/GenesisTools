@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
 
 export type NativeSessionProvider = "claude" | "grok" | "codex";
 
@@ -8,6 +9,14 @@ export type NativeSessionProvider = "claude" | "grok" | "codex";
  * On-disk CLI session stores. Claude: `~/.claude/projects`. Grok:
  * `~/.grok/sessions`. Codex: `~/.codex/sessions` plus `archived_sessions`.
  * `CLAUDE_CONFIG_DIR`, `GROK_HOME`, and `CODEX_HOME` (comma list) override.
+ *
+ * Grok also gets the headless worker home. `tools grok run` pins GROK_HOME to an
+ * isolated directory — a security control, because a shared home hands the
+ * worker the user's personal rules, skills and hooks (src/grok/lib/worker.ts,
+ * asserted by worker.isolation.test.ts). That home is never exported to the
+ * user's shell, so without listing it here a worker's sessions are invisible to
+ * every reader, which is the wrong trade: isolate what the worker READS, not
+ * what we can find afterwards.
  */
 export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()): string[] {
     if (kind === "claude") {
@@ -43,7 +52,14 @@ export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()
     }
 
     const grokHome = env.grok.getHomeOverride() ?? join(home, ".grok");
-    return [join(grokHome, "sessions")];
+    const roots = [join(grokHome, "sessions")];
+    const workerRoot = join(defaultWorkerHome(), "sessions");
+
+    if (!roots.includes(workerRoot)) {
+        roots.push(workerRoot);
+    }
+
+    return roots;
 }
 
 export function isNativeTranscript(kind: NativeSessionProvider, fileName: string): boolean {

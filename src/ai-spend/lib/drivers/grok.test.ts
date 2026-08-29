@@ -7,7 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_PRICING } from "../pricing";
 import { billedCost, collectEvents } from "./driver-test-helpers";
 import { grokDriver } from "./grok";
-import { isolateAgentHomeEnv } from "./test-env";
+import { isolateAgentHomeEnv, toolsHomeFixture } from "./test-env";
 
 // An ambient GROK_HOME would relocate the root asserted below.
 isolateAgentHomeEnv();
@@ -223,10 +223,14 @@ describe("grok driver", () => {
         expect(grokDriver.isTranscript("updates.jsonl")).toBe(true);
         expect(grokDriver.isTranscript("events.jsonl")).toBe(false);
         expect(grokDriver.isTranscript("chat_history.jsonl")).toBe(false);
-        expect(grokDriver.roots("/home/u")).toEqual(["/home/u/.grok/sessions"]);
+
+        // The headless worker home is a root too: `tools grok run` turns bill the
+        // same XAI_API_KEY, so leaving it out under-reported real spend.
+        const workerRoot = join(toolsHomeFixture(), ".genesis-tools", "grok", "worker-home", "sessions");
+        expect(grokDriver.roots("/home/u")).toEqual(["/home/u/.grok/sessions", workerRoot]);
 
         await env.testing.withOverrides({ GROK_HOME: "/elsewhere/grok" }, () => {
-            expect(grokDriver.roots("/home/u")).toEqual(["/elsewhere/grok/sessions"]);
+            expect(grokDriver.roots("/home/u")).toEqual(["/elsewhere/grok/sessions", workerRoot]);
         });
     });
 
