@@ -152,7 +152,13 @@ export async function raiseThenSend(
     await io.activateApp?.();
 }
 
-function livePlacementIO(): PlacementIO {
+/**
+ * The real cmux-backed IO. Exported so a test can assert the ARGV it builds:
+ * the injected `PlacementIO` in `open-session.test.ts` proves the ordering of
+ * raiseThenSend, but it cannot see the flags, and the flags are where a stale
+ * `--workspace` beside a surface UUID reintroduces "Surface is not a terminal".
+ */
+export function livePlacementIO(): PlacementIO {
     return {
         selectWorkspace: async (workspaceRef) => {
             await runCmuxOk(["select-workspace", "--workspace", workspaceRef]);
