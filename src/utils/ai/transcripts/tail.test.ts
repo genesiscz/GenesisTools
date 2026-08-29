@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -39,36 +39,44 @@ describe("followTranscript", () => {
             },
         });
 
-        const started = Date.now();
-        while (envelopes.length < 1 && Date.now() - started < 2000) {
-            await Bun.sleep(50);
-        }
-        expect(envelopes[0]?.turns[0]?.text).toBe("one");
+        // Same try/finally and fixture cleanup as the two tests below: this one
+        // predates them, and leaving the file half-and-half is what a reviewer
+        // would flag next (PR #341 review t3, coderabbit t10).
+        try {
+            const started = Date.now();
+            while (envelopes.length < 1 && Date.now() - started < 2000) {
+                await Bun.sleep(50);
+            }
+            expect(envelopes[0]?.turns[0]?.text).toBe("one");
 
-        writeFileSync(
-            file,
-            `${readFileSync(file, "utf8")}${SafeJSON.stringify({
-                timestamp: 1_700_000_010,
-                params: {
-                    update: {
-                        sessionUpdate: "agent_message_chunk",
-                        content: { type: "text", text: " two" },
+            writeFileSync(
+                file,
+                `${readFileSync(file, "utf8")}${SafeJSON.stringify({
+                    timestamp: 1_700_000_010,
+                    params: {
+                        update: {
+                            sessionUpdate: "agent_message_chunk",
+                            content: { type: "text", text: " two" },
+                        },
                     },
-                },
-            })}\n${SafeJSON.stringify({
-                timestamp: 1_700_000_011,
-                params: { update: { sessionUpdate: "turn_completed" } },
-            })}\n`
-        );
+                })}\n${SafeJSON.stringify({
+                    timestamp: 1_700_000_011,
+                    params: { update: { sessionUpdate: "turn_completed" } },
+                })}\n`
+            );
 
-        while (envelopes.length < 2 && Date.now() - started < 4000) {
-            await Bun.sleep(50);
+            while (envelopes.length < 2 && Date.now() - started < 4000) {
+                await Bun.sleep(50);
+            }
+            expect(envelopes.length).toBeGreaterThanOrEqual(2);
+            expect(envelopes.at(-1)?.turns[0]?.text).toContain("two");
+        } finally {
+            ac.abort();
+            await done;
+            rmSync(dir, { recursive: true, force: true });
         }
-        ac.abort();
-        await done;
-        expect(envelopes.length).toBeGreaterThanOrEqual(2);
-        expect(envelopes.at(-1)?.turns[0]?.text).toContain("two");
     });
+
     test("a rewrite back to the same size, changing only a tool result, is not deduplicated", async () => {
         // PR #341 review t7. The dedupe key fingerprinted role/at/text only. A
         // turn whose text is empty because all its content is TOOL output then
@@ -164,6 +172,7 @@ describe("followTranscript", () => {
         } finally {
             ac.abort();
             await done;
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 
@@ -250,6 +259,7 @@ describe("followTranscript", () => {
         } finally {
             ac.abort();
             await done;
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 });

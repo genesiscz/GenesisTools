@@ -16,17 +16,6 @@ export interface FollowTranscriptOptions {
  * emits a complete JSON object. Re-parse (not incremental records) so tool_call
  * / tool_result pairing stays correct across Claude, Grok ACP, and Codex.
  */
-/** FNV-1a, enough to notice that a same-size rewrite changed the content. */
-function simpleHash(value: string): string {
-    let hash = 2166136261;
-
-    for (let i = 0; i < value.length; i++) {
-        hash ^= value.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-    }
-
-    return (hash >>> 0).toString(36);
-}
 
 /** How often follow mode looks for a newer worker turn file. */
 const WORKER_RESCAN_MS = 1000;
@@ -60,7 +49,12 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         // envelope. JSON escapes them, so the encoding is unambiguous — and it
         // covers every turn field, tools included, without listing them here.
         const fingerprint = SafeJSON.stringify(envelope.turns);
-        const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}:${fingerprint.length}:${simpleHash(fingerprint)}`;
+        // The full fingerprint, not a hash of it (PR #341 review t2). Only ONE
+        // previous key is retained, so keeping the whole string costs a single
+        // envelope's worth of memory and removes the collision class that a
+        // bounded hash would otherwise reintroduce — which is the exact property
+        // the SafeJSON encoding above exists to provide.
+        const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}:${fingerprint}`;
         if (key === lastKey) {
             return;
         }
