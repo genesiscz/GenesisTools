@@ -1,17 +1,20 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-paths";
 import { env } from "@genesiscz/utils/env";
 import { sessionsDir as grokWorkerDir } from "@genesiscz/utils/grok/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
 import type { TranscriptProvider } from "./types";
 
 export type TranscriptSource = "native" | "worker";
 
 export interface TranscriptRoots {
     claudeProjects?: string;
+    /** Every Claude root, so auto-resolution is not limited to the first. */
+    claudeProjectsAll?: string[];
     grokHome?: string;
     grokWorker?: string;
     codexHome?: string;
@@ -77,7 +80,11 @@ function turnNumber(file: string): number {
 
 export function defaultTranscriptRoots(): Required<TranscriptRoots> {
     return {
-        claudeProjects: PROJECTS_DIR,
+        // nativeSessionRoots owns the root policy for every provider; hard-coding
+        // PROJECTS_DIR here missed ~/.config/claude/projects and $CLAUDE_CONFIG_DIR
+        // (PR #341 review round 4, t3).
+        claudeProjects: nativeSessionRoots("claude")[0] ?? PROJECTS_DIR,
+        claudeProjectsAll: nativeSessionRoots("claude"),
         grokHome: env.grok.getHome(),
         grokWorker: grokWorkerDir(),
         codexHome: env.codex.getHomeOverride() ?? join(homedir(), ".codex"),
@@ -185,6 +192,42 @@ function findGrokWorker(query: string, workerDir: string): RankedHit[] {
     return hits;
 }
 
+/**
+ * Re-read a worker session's turn files, for follow mode.
+ *
+ * A worker session is a SEQUENCE of `<name>.turn<N>.jsonl`, and the next steer
+ * writes a new one. `followTranscript` tails a single path, so without this it
+ * silently stopped updating at the turn that existed when it started
+ * (PR #341 review round 4, t2).
+ */
+export function rescanWorkerTurns(resolved: ResolvedTranscript): { filePath: string; extraFiles?: string[] } | null {
+    if (resolved.source !== "worker") {
+        return null;
+    }
+
+    const dir = dirname(resolved.filePath);
+    const base = basename(resolved.filePath);
+    const match = /^(.*)\.turn\d+\.jsonl$/.exec(base);
+
+    if (!match) {
+        return null;
+    }
+
+    const name = match[1];
+    const turns = listDir(dir)
+        .filter((file) => file.startsWith(`${name}.turn`) && file.endsWith(".jsonl"))
+        .sort((a, b) => turnNumber(a) - turnNumber(b))
+        .map((file) => join(dir, file));
+
+    if (turns.length === 0) {
+        return null;
+    }
+
+    const filePath = turns[turns.length - 1];
+    const extraFiles = turns.slice(0, -1);
+    return { filePath, extraFiles: extraFiles.length > 0 ? extraFiles : undefined };
+}
+
 function splitCodexHomes(codexHome: string): string[] {
     const override = env.codex.getHomeOverride();
     if (override && codexHome === override) {
@@ -289,9 +332,14 @@ export async function resolveTranscript(
     provider?: TranscriptProvider
 ): Promise<ResolvedTranscript> {
     const resolved = { ...defaultTranscriptRoots(), ...roots };
+    // An explicitly injected root is the whole answer; only the default set
+    // fans out across every Claude root that nativeSessionRoots knows.
+    const claudeRoots = roots.claudeProjects ? [roots.claudeProjects] : resolved.claudeProjectsAll;
     const hits: RankedHit[] = [];
     if (!provider || provider === "claude") {
-        hits.push(...findClaude(query, resolved.claudeProjects));
+        for (const root of claudeRoots) {
+            hits.push(...findClaude(query, root));
+        }
     }
     if (!provider || provider === "grok") {
         hits.push(...findGrokNative(query, resolved.grokHome));

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { resolveTranscript } from "./resolve";
+import { rescanWorkerTurns, resolveTranscript } from "./resolve";
 
 function fixtureRoot(): string {
     return mkdtempSync(join(tmpdir(), "gt-transcript-"));
@@ -115,5 +115,41 @@ describe("resolveTranscript", () => {
                 codexWorker: join(root, "empty-codex-w"),
             })
         ).rejects.toThrow(/No session file/);
+    });
+});
+
+describe("rescanWorkerTurns", () => {
+    test("finds a turn file written after the session resolved", () => {
+        // PR #341 review round 4, t2: follow tailed one fixed path, so the next
+        // steer's turn file was never discovered.
+        const dir = mkdtempSync(join(tmpdir(), "grok-worker-"));
+        writeFileSync(join(dir, "task.turn1.jsonl"), "{}\n");
+
+        const resolved = {
+            provider: "grok" as const,
+            source: "worker" as const,
+            sessionId: "task",
+            filePath: join(dir, "task.turn1.jsonl"),
+        };
+
+        expect(rescanWorkerTurns(resolved)).toEqual({ filePath: join(dir, "task.turn1.jsonl") });
+
+        writeFileSync(join(dir, "task.turn2.jsonl"), "{}\n");
+
+        expect(rescanWorkerTurns(resolved)).toEqual({
+            filePath: join(dir, "task.turn2.jsonl"),
+            extraFiles: [join(dir, "task.turn1.jsonl")],
+        });
+    });
+
+    test("a native session has no turn sequence to rescan", () => {
+        expect(
+            rescanWorkerTurns({
+                provider: "grok",
+                source: "native",
+                sessionId: "s",
+                filePath: "/tmp/whatever/updates.jsonl",
+            })
+        ).toBeNull();
     });
 });

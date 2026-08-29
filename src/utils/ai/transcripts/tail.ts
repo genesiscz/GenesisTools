@@ -1,7 +1,7 @@
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { logger } from "@genesiscz/utils/logger";
 import { transcriptEnvelope } from "./load";
-import type { ResolvedTranscript } from "./resolve";
+import { type ResolvedTranscript, rescanWorkerTurns } from "./resolve";
 import type { SliceOptions, TranscriptEnvelope } from "./types";
 
 export interface FollowTranscriptOptions {
@@ -15,6 +15,21 @@ export interface FollowTranscriptOptions {
  * emits a complete JSON object. Re-parse (not incremental records) so tool_call
  * / tool_result pairing stays correct across Claude, Grok ACP, and Codex.
  */
+/** FNV-1a, enough to notice that a same-size rewrite changed the content. */
+function simpleHash(value: string): string {
+    let hash = 2166136261;
+
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+
+    return (hash >>> 0).toString(36);
+}
+
+/** How often follow mode looks for a newer worker turn file. */
+const WORKER_RESCAN_MS = 1000;
+
 export async function followTranscript(resolved: ResolvedTranscript, opts: FollowTranscriptOptions): Promise<void> {
     let lastKey = "";
     let chain = Promise.resolve();
@@ -30,7 +45,11 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         if (stopped) {
             return;
         }
-        const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}`;
+        // Size, count and offset are all unchanged by an in-place head rewrite,
+        // which FileTailer detects on purpose — so fingerprint the content too,
+        // or the tailer's rewrite support is discarded here (round 4, t4).
+        const fingerprint = envelope.turns.map((t) => `${t.role}\u0001${t.at ?? ""}\u0001${t.text}`).join("\u0002");
+        const key = `${envelope.byteSize}:${envelope.turns.length}:${envelope.nextOffset}:${fingerprint.length}:${simpleHash(fingerprint)}`;
         if (key === lastKey) {
             return;
         }
@@ -67,16 +86,43 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
 
     await emit();
 
-    const tailer = new FileTailer(resolved.filePath, {
+    let tailer = new FileTailer(resolved.filePath, {
         onLine: () => {
             schedule();
         },
     });
     tailer.start();
 
+    // A worker session is a sequence of turn files and the next steer writes a
+    // new one, which a tailer pinned to one path never sees (round 4, t2).
+    const rescan = setInterval(() => {
+        if (stopped) {
+            return;
+        }
+
+        const next = rescanWorkerTurns(resolved);
+
+        if (!next || next.filePath === resolved.filePath) {
+            return;
+        }
+
+        logger.debug({ from: resolved.filePath, to: next.filePath }, "following a newer worker turn");
+        resolved.filePath = next.filePath;
+        resolved.extraFiles = next.extraFiles;
+        tailer.stop();
+        tailer = new FileTailer(resolved.filePath, {
+            onLine: () => {
+                schedule();
+            },
+        });
+        tailer.start();
+        schedule();
+    }, WORKER_RESCAN_MS);
+
     await new Promise<void>((resolve) => {
         const stop = (): void => {
             stopped = true;
+            clearInterval(rescan);
             tailer.stop();
             resolve();
         };

@@ -1,7 +1,7 @@
 import { parseTurnLog } from "@genesiscz/utils/grok/stream";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseTranscriptLine } from "./parse-line";
-import { clipResult, type TranscriptTurn } from "./types";
+import { clipResult, isoFromRecordTimestamp, type TranscriptTurn } from "./types";
 
 interface GrokUpdate {
     sessionUpdate?: string;
@@ -66,10 +66,7 @@ export function grokNativeLinesToTurns(lines: readonly (string | unknown)[]): Tr
         const params = isRecord(parsed.params) ? parsed.params : {};
         const update = isRecord(params.update) ? (params.update as GrokUpdate) : {};
         const kind = update.sessionUpdate;
-        const at =
-            typeof parsed.timestamp === "number"
-                ? new Date(parsed.timestamp * (parsed.timestamp < 1e12 ? 1000 : 1)).toISOString()
-                : null;
+        const at = isoFromRecordTimestamp(parsed.timestamp);
 
         if (kind === "agent_message_chunk" || kind === "agent_message") {
             current ??= { id: `grok-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };

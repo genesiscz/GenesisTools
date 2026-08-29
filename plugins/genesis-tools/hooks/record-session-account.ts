@@ -65,60 +65,63 @@ function modelFromCommand(command: string): string | null {
 }
 
 /**
- * The model the nearest `claude` ancestor was launched with. A hook is a grandchild of
- * claude (claude → sh → this), so the launch flags are only reachable by walking up the
- * parent chain. Costs one `ps` per hop and gives up quietly.
+ * The ancestor command lines, nearest first, stopping at the first `claude`.
+ * A hook is a grandchild of claude (claude → sh → this), so the launch flags are
+ * only reachable by walking up the parent chain. One `ps` per hop, gives up quietly.
+ *
+ * Walked ONCE and cached: model detection and keychain detection each used to
+ * do their own walk, so a SessionStart could spawn `ps` up to 2 * MAX_PS_HOPS
+ * times before returning, which the user waits for (PR #341 review round 4, t5).
  */
-function modelFromAncestors(): string | null {
+let ancestorCommandsCache: string[] | null = null;
+
+function ancestorCommands(): string[] {
+    if (ancestorCommandsCache !== null) {
+        return ancestorCommandsCache;
+    }
+
+    const commands: string[] = [];
     let pid = process.ppid;
 
     for (let hop = 0; hop < MAX_PS_HOPS && pid > 1; hop++) {
         const result = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], { encoding: "utf8" });
 
         if (result.status !== 0 || !result.stdout) {
-            return null;
+            break;
         }
 
         const match = /^\s*(\d+)\s+(.*)$/.exec(result.stdout.trim());
 
         if (!match) {
-            return null;
+            break;
         }
 
+        commands.push(match[2]);
+
         if (/(^|\/|\s)claude(\s|$)/.test(match[2])) {
-            return modelFromCommand(match[2]);
+            break;
         }
 
         pid = Number(match[1]);
+    }
+
+    ancestorCommandsCache = commands;
+    return commands;
+}
+
+/** The model the nearest `claude` ancestor was launched with. */
+function modelFromAncestors(): string | null {
+    for (const command of ancestorCommands()) {
+        if (/(^|\/|\s)claude(\s|$)/.test(command)) {
+            return modelFromCommand(command);
+        }
     }
 
     return null;
 }
 
 function ancestorHasKeychainFlag(): boolean {
-    let pid = process.ppid;
-
-    for (let hop = 0; hop < MAX_PS_HOPS && pid > 1; hop++) {
-        const result = spawnSync("ps", ["-o", "ppid=,command=", "-p", String(pid)], { encoding: "utf8" });
-
-        if (result.status !== 0 || !result.stdout) {
-            return false;
-        }
-
-        const match = /^\s*(\d+)\s+(.*)$/.exec(result.stdout.trim());
-
-        if (!match) {
-            return false;
-        }
-
-        if (/\s--keychain(\s|$)/.test(match[2]) && /claude/.test(match[2])) {
-            return true;
-        }
-
-        pid = Number(match[1]);
-    }
-
-    return false;
+    return ancestorCommands().some((command) => /\s--keychain(\s|$)/.test(command) && /claude/.test(command));
 }
 
 function resolveAuth(env: NodeJS.ProcessEnv): Pick<SessionPin, "auth" | "authSource"> {

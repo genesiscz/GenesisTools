@@ -87,3 +87,25 @@ describe("grokWorkerTextToTurns", () => {
         expect(turns[0]?.tools[0]?.inputPreview).toBe("pwd");
     });
 });
+
+describe("grok transcript timestamps", () => {
+    test("an out-of-range timestamp yields a null clock instead of throwing the file away", () => {
+        // PR #341 review round 4, t1: an unguarded toISOString() threw RangeError
+        // and abandoned every remaining line of the file.
+        const lines = [
+            SafeJSON.stringify({
+                timestamp: 9e15,
+                params: {
+                    update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "still parsed" } },
+                },
+            }),
+            SafeJSON.stringify({ timestamp: 1_700_000_003, params: { update: { sessionUpdate: "turn_completed" } } }),
+        ];
+
+        const turns = grokNativeLinesToTurns(lines);
+
+        expect(turns).toHaveLength(1);
+        expect(turns[0].at).toBeNull();
+        expect(turns[0].text).toContain("still parsed");
+    });
+});
