@@ -1,3 +1,4 @@
+import { getGenesisToolsStorage } from "@genesiscz/utils/GenesisTools";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 
@@ -33,7 +34,8 @@ const LINUX_BINARIES: Partial<Record<BrowserName, string>> = {
 };
 
 export class Browser {
-    private static storage = new Storage("genesis-tools");
+    private static storage = getGenesisToolsStorage();
+    private static legacyStorage = new Storage("genesis-tools");
 
     static readonly SUPPORTED: readonly BrowserName[] = [
         "brave",
@@ -45,19 +47,30 @@ export class Browser {
     ] as const;
 
     static async getPreferred(): Promise<BrowserName | undefined> {
-        return Browser.storage.getConfigValue<BrowserName>("browser");
+        const fromStore = await Browser.storage.getConfigValue<BrowserName>("browser");
+
+        if (fromStore) {
+            return fromStore;
+        }
+
+        return Browser.legacyStorage.getConfigValue<BrowserName>("browser");
     }
 
     static async setPreferred(browser: BrowserName | undefined): Promise<void> {
         if (browser === undefined) {
-            const config = await Browser.storage.getConfig<Record<string, unknown>>();
-            if (config && "browser" in config) {
+            await Browser.storage.atomicConfigUpdate<Record<string, unknown>>((config) => {
                 delete config.browser;
-                await Browser.storage.setConfig(config);
-            }
+            });
+            // getPreferred() falls back to the legacy store, so clearing only the
+            // current one leaves the old value in force and the system default
+            // unreachable (PR #343 review t20).
+            await Browser.legacyStorage.atomicConfigUpdate<Record<string, unknown>>((config) => {
+                delete config.browser;
+            });
         } else {
             await Browser.storage.setConfigValue("browser", browser);
         }
+
         logger.debug(`Browser preference set to: ${browser ?? "system default"}`);
     }
 

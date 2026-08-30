@@ -14,6 +14,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
+import { assertTestSafePath } from "./real-home-guard";
 
 /**
  * TTL string format: "<number> <unit>" or "<number><unit>"
@@ -42,6 +43,8 @@ function removeTempFile(tmp: string): void {
  * to the temp file before it becomes visible under the real name.
  */
 export function atomicWriteFileSync(filePath: string, data: string, options?: { mode?: number }): void {
+    assertTestSafePath(filePath, "write");
+
     const dir = dirname(filePath);
 
     if (!existsSync(dir)) {
@@ -145,6 +148,8 @@ export class Storage {
      * Creates: baseDir, cacheDir
      */
     async ensureDirs(): Promise<void> {
+        assertTestSafePath(this.baseDir, "create directories under");
+
         if (!existsSync(this.baseDir)) {
             mkdirSync(this.baseDir, { recursive: true });
             logger.debug(`Created directory: ${this.baseDir}`);
@@ -261,6 +266,8 @@ export class Storage {
      * Clear the config (delete config.json)
      */
     async clearConfig(): Promise<void> {
+        assertTestSafePath(this.configPath, "delete");
+
         try {
             if (existsSync(this.configPath)) {
                 unlinkSync(this.configPath);
@@ -408,6 +415,8 @@ export class Storage {
      */
     async deleteCacheFile(relativePath: string): Promise<void> {
         const filePath = this.getCacheFilePath(relativePath);
+        assertTestSafePath(filePath, "delete");
+
         try {
             if (existsSync(filePath)) {
                 unlinkSync(filePath);
@@ -422,6 +431,8 @@ export class Storage {
      * Clear all cache files
      */
     async clearCache(): Promise<void> {
+        assertTestSafePath(this.cacheDir, "recursively delete");
+
         try {
             const removeDir = (dir: string) => {
                 if (!existsSync(dir)) {
