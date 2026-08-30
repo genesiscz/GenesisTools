@@ -3,7 +3,7 @@ import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { applyPollGateOutcomes, blockedEntry, loadPollGate, type PollGate, pruneGate } from "./poll-gate";
-import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile } from "./subscription";
+import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile, revalidateStalePlan } from "./subscription";
 
 export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";
 
@@ -144,6 +144,8 @@ export interface AccountUsage {
     subscriptionPlan?: string;
     /** `subscription_status` from the OAuth profile ("active", "canceled", …). */
     subscriptionStatus?: string;
+    /** A live probe contradicted the plan fields above — see usage/subscription.ts. */
+    planContradictedAt?: number;
     /** Refresh-grant expiry (Unix ms) — past this the account needs a browser re-login. */
     refreshExpiresAt?: number;
     usage?: UsageResponse;
@@ -238,6 +240,7 @@ function identityOf(account: AIAccountEntry) {
         subscriptionCreatedAt: account.subscriptionCreatedAt,
         subscriptionPlan: account.subscriptionPlan,
         subscriptionStatus: account.subscriptionStatus,
+        planContradictedAt: account.planContradictedAt,
         refreshExpiresAt: account.tokens.refreshExpiresAt,
     };
 }
@@ -272,6 +275,16 @@ async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> {
 
     const blocked = blockedEntry(gate, account.name, now);
     const anchorDue = isAnchorDue(account, now);
+
+    // A dead-plan reading can only be refreshed by a profile read, and a profile
+    // read needs a live OAuth grant — so an account whose refresh token died keeps
+    // claiming "plan expired" through a renewal, forever. The long-lived token can
+    // still prove the org is alive, which retires the contradicted reading. Gated
+    // on `anchorDue` so this costs one probe per recheck window, not one per poll.
+    if (anchorDue && !planAllowsClaudeCode(account)) {
+        await revalidateStalePlan(config, account, now);
+    }
+
     const planDead = !planAllowsClaudeCode(account);
 
     if (blocked) {

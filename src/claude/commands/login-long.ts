@@ -1,3 +1,4 @@
+import { orgMismatch, probeTokenOrg } from "@app/claude/lib/account-fingerprint";
 import { applyLongLivedToken } from "@app/claude/lib/long-lived-token";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
@@ -59,6 +60,179 @@ async function mintLongLivedToken(accountName: string): Promise<{ token: string;
     }
 
     return { token: tokens.accessToken, expiresAt: tokens.expiresAt };
+}
+
+/**
+ * The org id to compare an incoming token against.
+ *
+ * Falls back to the SECONDARY grant's org, which is a real stored fingerprint
+ * (PR #343 review t3 round 10). `orgMismatch` returns false whenever `storedOrg`
+ * is falsy, so an account identified only by `secondary.organizationUuid` got no
+ * comparison at all and a token from another org walked through the verified
+ * path — the same hole `accountIsIdentified` closed on the unreachable path.
+ */
+export function storedOrgFor(account?: {
+    organizationUuid?: string;
+    secondary?: { organizationUuid?: string };
+}): string | undefined {
+    return account?.organizationUuid || account?.secondary?.organizationUuid;
+}
+
+/**
+ * Is this entry already pinned to a specific Anthropic account?
+ *
+ * EVERY persisted fingerprint counts, not just the top-level org (PR #343 review
+ * t1 round 9). All of them are optional, so a migrated or partially populated
+ * account can be unmistakably identified while `organizationUuid` is empty —
+ * and reading only that field let an unverified token attach to it.
+ */
+export function accountIsIdentified(account?: {
+    organizationUuid?: string;
+    accountUuid?: string;
+    secondary?: { organizationUuid?: string; accountUuid?: string };
+}): boolean {
+    return Boolean(
+        account?.organizationUuid ||
+            account?.accountUuid ||
+            account?.secondary?.organizationUuid ||
+            account?.secondary?.accountUuid
+    );
+}
+
+/**
+ * What to do when the identity probe could not reach the API.
+ *
+ * Pure, exported and tested, because this is the security decision and the rest
+ * of `confirmTokenIdentity` is prompt wiring. It used to be "save", always —
+ * so a timeout, a 429 or any unexpected response reopened the cross-account
+ * attribution bug the probe exists to close (PR #343 review t1 round 8).
+ *
+ *  - unidentified  -> nothing to contradict, an unverified first login is fine
+ *  - identified, tty -> ask, defaulting to no
+ *  - identified, no tty -> refuse; there is nobody to take the risk knowingly
+ */
+export function unverifiedSaveDecision(opts: { identified: boolean; interactive: boolean }): "save" | "ask" | "refuse" {
+    if (!opts.identified) {
+        return "save";
+    }
+
+    return opts.interactive ? "ask" : "refuse";
+}
+
+/**
+ * Prove the token belongs to THIS entry before it is written.
+ *
+ * `verifyLongLivedToken` only proves a token is valid, never whose it is. Pasting
+ * account A's setup-token onto entry B therefore saved silently, and every session
+ * launched as B billed A from then on — invisible, because nothing ever failed.
+ *
+ * Returns the org id to persist (so the first login backfills the fingerprint),
+ * or `null` when the user aborted.
+ */
+async function confirmTokenIdentity(
+    aiConfig: AIConfig,
+    accountName: string,
+    token: string
+): Promise<{ organizationUuid?: string } | null> {
+    const spinner = p.spinner();
+    spinner.start("Checking which account this token belongs to...");
+    const print = await probeTokenOrg(token);
+    const account = aiConfig.getAccount(accountName);
+    const storedOrg = storedOrgFor(account);
+    const identified = accountIsIdentified(account);
+
+    /**
+     * One gate for every path that could not establish WHOSE the token is.
+     *
+     * Fail CLOSED when there is an identity to violate (review t1 round 8): a
+     * timeout, a 429 or any unexpected response used to save regardless. When
+     * the entry carries no fingerprint there is nothing to contradict, so an
+     * unverified first login is still allowed.
+     *
+     * Originally this covered only `unreachable`, which left `org-dead` able to
+     * overwrite an identified account with no comparison at all, because
+     * `orgMismatch` treats a missing incoming org as no mismatch (review t1
+     * round 12). Every verdict that yields no org id routes here now, so a new
+     * verdict cannot quietly reopen the hole a third time.
+     */
+    const saveWithoutProvenOwner = async (reason: string): Promise<{ organizationUuid?: string } | null> => {
+        const decision = unverifiedSaveDecision({ identified, interactive: isInteractive() });
+
+        if (decision === "save") {
+            spinner.stop(pc.yellow(`${reason} — saving unverified.`));
+            return {};
+        }
+
+        spinner.stop(
+            pc.red(
+                `${reason}, and "${accountName}" already carries an account fingerprint` +
+                    `${storedOrg ? ` (org ${storedOrg})` : ""}.`
+            )
+        );
+
+        if (decision === "refuse") {
+            out.printlnErr(
+                "Refusing to overwrite an identified account with an unverified token. Retry when the API can name the token's organization."
+            );
+            process.exit(1);
+        }
+
+        const overwriteUnverified = await p.confirm({
+            message: `Save unverified anyway? If this token belongs to another account, every session launched as "${accountName}" will bill that account.`,
+            initialValue: false,
+        });
+
+        if (p.isCancel(overwriteUnverified) || !overwriteUnverified) {
+            p.cancel("Cancelled — nothing written.");
+            return null;
+        }
+
+        return {};
+    };
+
+    if (print.verdict === "unreachable") {
+        return saveWithoutProvenOwner("Could not reach the API to identify the token");
+    }
+
+    if (print.verdict === "invalid") {
+        spinner.stop(pc.red("Token rejected by the API — nothing saved."));
+        process.exit(1);
+    }
+
+    // Reached only for `ok` and `org-dead`. `ok` always carries an org now, but
+    // `org-dead` need not — and without one there is nothing to compare, so the
+    // same gate applies rather than falling through to a no-op orgMismatch.
+    if (!print.organizationUuid) {
+        return saveWithoutProvenOwner("The API did not name this token's organization");
+    }
+
+    if (print.verdict === "org-dead") {
+        spinner.stop(pc.yellow("This token's organization no longer permits OAuth (expired subscription)."));
+    } else {
+        spinner.stop(`Token belongs to org ${pc.dim(print.organizationUuid)}.`);
+    }
+
+    if (!orgMismatch({ storedOrg, incomingOrg: print.organizationUuid })) {
+        return { organizationUuid: print.organizationUuid };
+    }
+
+    out.println(
+        pc.yellow(
+            `⚠ This token belongs to a DIFFERENT account than "${accountName}".\n` +
+                `  "${accountName}" is org ${storedOrg}\n` +
+                `  the pasted token is org ${print.organizationUuid}\n` +
+                `  Saving it would make every session launched as "${accountName}" bill the other account.`
+        )
+    );
+
+    const proceed = await p.confirm({ message: "Save anyway?", initialValue: false });
+
+    if (p.isCancel(proceed) || !proceed) {
+        p.cancel("Cancelled — nothing written.");
+        return null;
+    }
+
+    return { organizationUuid: print.organizationUuid };
 }
 
 export function registerLoginLongCommand(program: Command): void {
@@ -172,6 +346,15 @@ export function registerLoginLongCommand(program: Command): void {
                     process.exit(0);
                 }
 
+                // The browser decided who authorized, not this CLI. A stale session
+                // there mints a token for the wrong person, so the same check the
+                // paste path runs applies here too.
+                const mintedIdentity = await confirmTokenIdentity(aiConfig, accountName, minted.token);
+
+                if (!mintedIdentity) {
+                    process.exit(0);
+                }
+
                 // Mutate the entry in place under the config lock: spreading the
                 // in-memory `account.tokens` would write back a stale access /
                 // refresh token and clobber whatever the poll daemon rotated
@@ -181,6 +364,7 @@ export function registerLoginLongCommand(program: Command): void {
                         accountName,
                         token: minted.token,
                         expiresAt: minted.expiresAt,
+                        organizationUuid: mintedIdentity.organizationUuid,
                     })
                 );
 
@@ -254,9 +438,22 @@ export function registerLoginLongCommand(program: Command): void {
                 spinner.stop("Token verified.");
             }
 
+            // Valid is not the same as MINE. Prove the owner before writing.
+            const identity = await confirmTokenIdentity(aiConfig, accountName, trimmed);
+
+            if (!identity) {
+                process.exit(0);
+            }
+
             // No expiresAt: a pasted token's lifetime is unknowable, and passing
             // undefined clears any expiry a previously minted token left behind.
-            await aiConfig.mutate((data) => applyLongLivedToken(data, { accountName, token: trimmed }));
+            await aiConfig.mutate((data) =>
+                applyLongLivedToken(data, {
+                    accountName,
+                    token: trimmed,
+                    organizationUuid: identity.organizationUuid,
+                })
+            );
 
             p.log.success(
                 `Long-lived token saved to "${accountName}" (${maskToken(trimmed)}). ` +

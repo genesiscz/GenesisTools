@@ -1052,9 +1052,13 @@ export function registerConfigCommand(program: Command): void {
             // account's tokens with this identity's.
             const existing = aiConfig.getAccount(accountName);
 
+            // The account's OWN uuid first. Reading only `secondary.accountUuid`
+            // made this guard dead code for every account that never did a
+            // secondary login — which was all of them, so a stale browser session
+            // could overwrite any entry with the wrong identity and nothing said so.
             if (
                 identityMismatch({
-                    storedUuid: existing?.secondary?.accountUuid,
+                    storedUuid: existing?.accountUuid ?? existing?.secondary?.accountUuid,
                     incomingUuid: profile?.account.uuid,
                 })
             ) {
@@ -1096,6 +1100,11 @@ export function registerConfigCommand(program: Command): void {
                     subscriptionPlan: profile.organization.organization_type,
                     subscriptionStatus: profile.organization.subscription_status,
                     subscriptionCheckedAt: Date.now(),
+                    // The fingerprint. An OAuth login is the ONLY place the account
+                    // uuid can be read, and storing the org uuid here is what lets a
+                    // later `login-long` prove a pasted setup token is this account's.
+                    accountUuid: profile.account.uuid,
+                    organizationUuid: profile.organization.uuid,
                 });
             }
 

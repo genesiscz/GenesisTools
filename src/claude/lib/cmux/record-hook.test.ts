@@ -23,7 +23,20 @@ async function runHook(payload: string, env: Record<string, string> = {}): Promi
         stdin: new TextEncoder().encode(payload),
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, GENESIS_TOOLS_HOME: home, TOOLS_CLAUDE_ACCOUNT: "", CMUX_WORKSPACE_ID: "", ...env },
+        // Every variable resolveAuth reads is neutralised, not just the two that
+        // used to be: a developer whose own shell was launched by `tools claude
+        // start` has CLAUDE_CODE_OAUTH_TOKEN and TOOLS_CLAUDE_AUTH set, and they
+        // would leak in and silently flip the default-bare / default-named
+        // expectations to "oauth-env" (PR #343 review t6).
+        env: {
+            ...process.env,
+            GENESIS_TOOLS_HOME: home,
+            TOOLS_CLAUDE_ACCOUNT: "",
+            TOOLS_CLAUDE_AUTH: "",
+            CLAUDE_CODE_OAUTH_TOKEN: "",
+            CMUX_WORKSPACE_ID: "",
+            ...env,
+        },
     });
 
     return await proc.exited;
@@ -108,6 +121,19 @@ describe("record-session-account hook", () => {
         });
 
         expect((await readPins())[0]).toEqual(expect.objectContaining({ auth: "token", authSource: "launch-env" }));
+    });
+
+    test("a bare OAuth token in the env is a token launch attributed to the env", async () => {
+        // The one resolveAuth branch the suite did not reach (review t6). It only
+        // fires when TOOLS_CLAUDE_AUTH is absent, so a launch that predates
+        // `tools claude start` setting it is still recorded correctly.
+        await runHook('{"session_id":"abc","cwd":"/tmp"}', {
+            CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-from-the-environment",
+        });
+
+        expect((await readPins())[0]).toEqual(
+            expect.objectContaining({ account: null, auth: "token", authSource: "oauth-env" })
+        );
     });
 
     test("appends, so a resumed session re-pins without losing history", async () => {

@@ -6,6 +6,7 @@ import {
     formatRenewsAt,
     formatRenewsAtFull,
     nextRenewalDate,
+    planAllowsClaudeCode,
 } from "./subscription";
 
 // Local time on purpose: nextRenewalDate builds candidates with the local-time
@@ -98,5 +99,41 @@ describe("formatRenewsAt / formatRenewsAtFull", () => {
         const full = formatRenewsAtFull(new Date(2026, 0, 28, 9, 44).toISOString(), NOW);
         expect(full).toContain("renews 28.07.2026 09:44");
         expect(full).toContain("(in 3d");
+    });
+});
+
+describe("planAllowsClaudeCode: a contradicted reading", () => {
+    // pribik.turena, 2026-08-29. Its refresh grant was dead, so the profile
+    // re-read that would have noticed the renewal could never run and the stale
+    // "claude_free (canceled)" sustained itself indefinitely.
+    test("a live probe overrides a stored dead plan", () => {
+        expect(
+            planAllowsClaudeCode({
+                subscriptionPlan: "claude_free",
+                subscriptionStatus: "canceled",
+                planContradictedAt: 2000,
+            })
+        ).toBe(true);
+    });
+
+    test("a profile read NEWER than the contradiction wins again", () => {
+        // The account really did lapse after the probe saw it alive. The fresh
+        // reading is authoritative; a stale contradiction must not outrank it.
+        expect(
+            planAllowsClaudeCode({
+                subscriptionPlan: "claude_free",
+                subscriptionStatus: "canceled",
+                planContradictedAt: 2000,
+                subscriptionCheckedAt: 3000,
+            })
+        ).toBe(false);
+    });
+
+    test("no contradiction leaves a dead plan dead", () => {
+        expect(planAllowsClaudeCode({ subscriptionPlan: "claude_free", subscriptionStatus: "canceled" })).toBe(false);
+    });
+
+    test("a contradiction does not disturb a healthy account", () => {
+        expect(planAllowsClaudeCode({ subscriptionPlan: "claude_max", subscriptionStatus: "active" })).toBe(true);
     });
 });

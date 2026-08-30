@@ -1,3 +1,4 @@
+import { probeTokenOrg } from "@app/claude/lib/account-fingerprint";
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { fetchOAuthProfile } from "@genesiscz/utils/claude/auth";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
@@ -54,7 +55,20 @@ const UNUSABLE_PLANS = new Set(["claude_free"]);
  * checked, profile unreachable) count as usable: a launch gate must never
  * block on missing data.
  */
-export function planAllowsClaudeCode(entry: { subscriptionPlan?: string; subscriptionStatus?: string }): boolean {
+export function planAllowsClaudeCode(entry: {
+    subscriptionPlan?: string;
+    subscriptionStatus?: string;
+    subscriptionCheckedAt?: number;
+    planContradictedAt?: number;
+}): boolean {
+    // Evidence beats a stale reading. A live probe that saw the org still
+    // permitting OAuth contradicts a stored "free/canceled", and an account whose
+    // OAuth grant is dead can NEVER refresh that reading — so without this the
+    // stale verdict is self-sustaining and survives a renewal forever.
+    if (entry.planContradictedAt && entry.planContradictedAt > (entry.subscriptionCheckedAt ?? 0)) {
+        return true;
+    }
+
     if (entry.subscriptionPlan && UNUSABLE_PLANS.has(entry.subscriptionPlan)) {
         return false;
     }
@@ -114,6 +128,11 @@ export async function refreshSubscriptionProfile(
         subscriptionPlan: profile.organization.organization_type,
         subscriptionStatus: profile.organization.subscription_status,
         subscriptionCheckedAt: now,
+        // Backfill the identity fingerprint on every profile read. Without this an
+        // account keeps no org uuid until its next full re-login, and `login-long`
+        // has nothing to compare a pasted setup token against.
+        accountUuid: profile.account.uuid || account.accountUuid,
+        organizationUuid: profile.organization.uuid || account.organizationUuid,
     };
 
     try {
@@ -133,6 +152,72 @@ export async function refreshSubscriptionProfile(
     Object.assign(account, patch);
     clearAnchorFailure(account.name);
     return true;
+}
+
+/**
+ * Retire a dead-plan reading that the evidence contradicts.
+ *
+ * The trap this closes: a stored "claude_free (canceled)" is only ever refreshed
+ * by a profile read, and a profile read needs a live OAuth grant. So an account
+ * whose refresh token died keeps asserting "plan expired" FOREVER — straight
+ * through a renewal — because the one mechanism that could correct it is the very
+ * thing that is broken. Observed on `pribik.turena` 2026-08-29: renewed hours
+ * earlier, still rendered as an expired free account.
+ *
+ * The long-lived setup token is the way out. It cannot read the profile (inference
+ * scope only), but `probeTokenOrg` proves whether the ORG still permits OAuth,
+ * and a live org cannot be the dead free org the stored fields describe. That is
+ * not enough to NAME the new plan, so the reading is not overwritten with a guess:
+ * `planContradictedAt` records that evidence was seen against it, and
+ * `planAllowsClaudeCode` stops trusting it from then on.
+ *
+ * Never throws — a failed probe leaves the stored reading exactly as it was.
+ */
+export async function revalidateStalePlan(
+    config: AIConfig,
+    account: AIAccountEntry,
+    now: number = Date.now()
+): Promise<"alive" | "dead" | "unknown"> {
+    const token = account.tokens.longLivedToken;
+
+    if (!token) {
+        return "unknown";
+    }
+
+    const print = await probeTokenOrg(token);
+
+    if (print.verdict === "org-dead") {
+        logger.debug(`[subscription:${account.name}] long-lived probe confirms the org is dead`);
+        return "dead";
+    }
+
+    if (print.verdict !== "ok") {
+        logger.debug(`[subscription:${account.name}] long-lived probe inconclusive (${print.verdict})`);
+        return "unknown";
+    }
+
+    const patch = {
+        planContradictedAt: now,
+        organizationUuid: print.organizationUuid ?? account.organizationUuid,
+    };
+
+    try {
+        await config.updateAccount(account.name, patch);
+    } catch (err) {
+        logger.warn(
+            `[subscription:${account.name}] could not record the plan contradiction: ${err instanceof Error ? err.message : err}`
+        );
+        return "unknown";
+    }
+
+    Object.assign(account, patch);
+    clearAnchorFailure(account.name);
+    logger.info(
+        `[subscription:${account.name}] org ${print.organizationUuid ?? "unknown"} is ALIVE — the stored ` +
+            `"${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"})" reading is ` +
+            `contradicted; re-login to read the real plan (tools claude login ${account.name})`
+    );
+    return "alive";
 }
 
 /**

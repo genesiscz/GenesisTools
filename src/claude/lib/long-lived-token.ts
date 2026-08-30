@@ -18,6 +18,16 @@ export interface ApplyLongLivedTokenInput {
      * behind by a previously minted token instead of mislabelling the new one.
      */
     expiresAt?: number;
+    /**
+     * The org the identity probe proved the token belongs to, written in the
+     * SAME mutation as the token itself (PR #343 review round 11).
+     *
+     * It used to be a second `updateAccount()` call. A crash or a failed write
+     * between the two left the new token live under the old fingerprint, which
+     * is precisely the cross-account state this flow exists to prevent — and it
+     * would then look verified. One locked mutation, or neither.
+     */
+    organizationUuid?: string;
 }
 
 export function applyLongLivedToken(data: AIConfigData, input: ApplyLongLivedTokenInput): void {
@@ -33,5 +43,9 @@ export function applyLongLivedToken(data: AIConfigData, input: ApplyLongLivedTok
         delete entry.tokens.longLivedTokenExpiresAt;
     } else {
         entry.tokens.longLivedTokenExpiresAt = input.expiresAt;
+    }
+
+    if (input.organizationUuid) {
+        entry.organizationUuid = input.organizationUuid;
     }
 }

@@ -105,7 +105,9 @@ const SERVER_INSTRUCTIONS =
     "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do; " +
     "uncheck_task keeps prior proof) → " +
     'finish_handoff when all resolved. Pass include:["events"] on handoff_get for a bare {events, info} ' +
-    "activity trace (editId-free). Poster edits anytime from its own session via handoff_action " +
+    "activity trace (editId-free; each event carries `outcome` — a refused action is journaled with " +
+    "outcome.applied false and the reason, so the trace never reads as though it happened). " +
+    "Poster edits anytime from its own session via handoff_action " +
     "(add_tasks/modify_task/modify_handoff/cancel_handoff); from other sessions pass the editId. Progress is " +
     'live on the dev-dashboard /qa "Agent tasks" tab (SSE via /api/qa/stream type=handoff).\n\n' +
     "BOARDS (dev-dashboard annotation boards):\n" +

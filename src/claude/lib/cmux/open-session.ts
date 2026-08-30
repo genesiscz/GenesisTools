@@ -193,7 +193,13 @@ export function livePlacementIO(): PlacementIO {
                     return;
                 }
                 const proc = Bun.spawn(["open", "-b", bundleId], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-                await proc.exited;
+                const code = await proc.exited;
+
+                // A nonzero exit resolves rather than throwing, so without this
+                // a failed raise was silent (PR #343 review t14).
+                if (code !== 0) {
+                    log.debug({ code, bundleId }, "could not raise the cmux app after open");
+                }
             } catch (err) {
                 log.debug({ err }, "could not raise the cmux app after open");
             }

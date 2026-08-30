@@ -16,6 +16,7 @@ import { env } from "@genesiscz/utils/env";
 
 const resolveCalls: string[] = [];
 const profileCalls: string[] = [];
+const revalidateCalls: string[] = [];
 let usageFetches = 0;
 
 mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
@@ -27,16 +28,30 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
 
 mock.module("@app/claude/lib/usage/subscription", () => ({
     isAnchorDue: (account: { name: string }) => anchorDueFor.has(account.name),
-    planAllowsClaudeCode: (entry: { subscriptionPlan?: string }) => entry.subscriptionPlan !== "claude_free",
+    planAllowsClaudeCode: (entry: { subscriptionPlan?: string; planContradictedAt?: number }) =>
+        Boolean(entry.planContradictedAt) || entry.subscriptionPlan !== "claude_free",
     refreshSubscriptionProfile: async (_config: unknown, account: { name: string }) => {
         profileCalls.push(account.name);
         return true;
+    },
+    revalidateStalePlan: async (_config: unknown, account: AIAccountEntry) => {
+        revalidateCalls.push(account.name);
+
+        if (!orgAliveFor.has(account.name)) {
+            return "dead";
+        }
+
+        // Mirrors the real function: the stored reading is NOT erased, the
+        // contradiction is recorded on the entry the caller still holds.
+        account.planContradictedAt = 1;
+        return "alive";
     },
     SUBSCRIPTION_RECHECK_MS: 6 * 60 * 60 * 1000,
 }));
 
 let accounts: AIAccountEntry[] = [];
 const anchorDueFor = new Set<string>();
+const orgAliveFor = new Set<string>();
 
 mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     AIConfig: {
@@ -77,9 +92,11 @@ afterEach(() => {
 
     resolveCalls.length = 0;
     profileCalls.length = 0;
+    revalidateCalls.length = 0;
     usageFetches = 0;
     accounts = [];
     anchorDueFor.clear();
+    orgAliveFor.clear();
     globalThis.fetch = originalFetch;
 
     if (originalHome === undefined) {
@@ -160,6 +177,51 @@ describe("poll suppression never spends a refresh token", () => {
         expect(resolveCalls).toEqual([]);
         expect(usage.error).toContain("claude_free");
         expect(usage.error).not.toContain("invalid_grant");
+    });
+
+    // pribik.turena, 2026-08-29: renewed hours earlier, still rendered "plan
+    // expired". Its refresh grant was dead, so the profile re-read that would have
+    // noticed the renewal could never run — the stale reading was self-sustaining.
+    // The long-lived token proves the org is alive, which retires the reading and
+    // lets the REAL blocker (re-login needed) surface instead.
+    it("a dead-plan account whose org probe proves it alive reports the grant, not the plan", async () => {
+        useTempHome();
+        accounts = [
+            account("turena", {
+                subscriptionPlan: "claude_free",
+                subscriptionStatus: "canceled",
+            } as Partial<AIAccountEntry>),
+        ];
+        anchorDueFor.add("turena");
+        orgAliveFor.add("turena");
+
+        const now = Date.now();
+        await savePollGate(
+            recordFailure(
+                recordFailure({}, "turena", "Token expired (invalid_grant)", now),
+                "turena",
+                "Token expired (invalid_grant)",
+                now
+            )
+        );
+
+        const [usage] = await fetchAllAccountsUsage();
+
+        expect(revalidateCalls).toEqual(["turena"]);
+        expect(usage.error).toContain("invalid_grant");
+        expect(usage.error).not.toContain("claude_free");
+    });
+
+    // The probe costs a network call, so it must not fire for accounts that have
+    // no dead reading to retire.
+    it("a healthy account is never org-probed", async () => {
+        useTempHome();
+        accounts = [account("healthy")];
+        anchorDueFor.add("healthy");
+
+        await fetchAllAccountsUsage();
+
+        expect(revalidateCalls).toEqual([]);
     });
 
     it("a suppressed account does not record a failure in the gate", async () => {
