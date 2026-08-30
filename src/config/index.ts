@@ -6,8 +6,11 @@ import { out } from "@genesiscz/utils/logger";
 import { clearRejectedPackages, listRejectedPackages, removeRejectedPackage } from "@genesiscz/utils/packages";
 import chalk from "chalk";
 import { Command } from "commander";
+import { registerProfilingCommand } from "./commands/profiling";
 
 const program = new Command().name("config").description("Manage GenesisTools configuration");
+
+registerProfilingCommand(program);
 
 program
     .command("packages")
