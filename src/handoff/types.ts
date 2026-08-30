@@ -149,8 +149,15 @@ export type HandoffEvent =
 
 export type HandoffEventName = HandoffEvent["ev"];
 
-/** Event as returned to HTTP/MCP — `editId` never leaves the read path (G3). */
-export type HandoffPublicEvent = Omit<HandoffEvent, "editId">;
+/**
+ * Event as returned to HTTP/MCP — `editId` never leaves the read path (G3).
+ *
+ * `outcome` carries what the fold decided. The log records every ATTEMPT, so a
+ * rejected claim is journaled exactly like an accepted one; without the outcome
+ * the trace reads as though it happened. That is how grok's refused claims on
+ * 2026-08-29 looked applied while no task was ever checked.
+ */
+export type HandoffPublicEvent = Omit<HandoffEvent, "editId"> & { outcome?: FoldOutcome };
 
 /** Fully folded current state of one handoff (read-model row, deserialized). */
 export interface Handoff {

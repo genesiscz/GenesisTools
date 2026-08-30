@@ -261,6 +261,18 @@ export function listHandoffRows(db: Database, opts: { statuses?: string[]; proje
     return (db.query(sql).all(...params) as HandoffRow[]).map(rowToHandoff);
 }
 
+/** The fold's verdict for one event, rebuilt from its stored columns. */
+function toOutcome(row: { ok: number; error: string | null; extra: string | null }): FoldOutcome {
+    const extra = row.extra !== null ? (SafeJSON.parse(row.extra, { strict: true }) as Partial<FoldOutcome>) : {};
+    const outcome: FoldOutcome = { applied: row.ok === 1, ...extra };
+
+    if (row.error !== null) {
+        outcome.error = row.error;
+    }
+
+    return outcome;
+}
+
 export function getEventOutcome(db: Database, uid: string): FoldOutcome | null {
     const row = db.query("SELECT ok, error, extra FROM handoff_event_results WHERE uid = ?").get(uid) as {
         ok: number;
@@ -272,14 +284,33 @@ export function getEventOutcome(db: Database, uid: string): FoldOutcome | null {
         return null;
     }
 
-    const extra = row.extra !== null ? (SafeJSON.parse(row.extra, { strict: true }) as Partial<FoldOutcome>) : {};
-    const outcome: FoldOutcome = { applied: row.ok === 1, ...extra };
+    return toOutcome(row);
+}
 
-    if (row.error !== null) {
-        outcome.error = row.error;
+interface EventRow {
+    payload: string;
+    ok: number | null;
+    error: string | null;
+    extra: string | null;
+}
+
+/**
+ * The log stores every attempt, so a rejected event sits beside an accepted one.
+ * The fold's verdict lives in handoff_event_results, and joining it here is what
+ * keeps the activity trace from claiming that a refused action happened.
+ */
+const EVENT_SELECT = `SELECT e.payload, r.ok, r.error, r.extra
+                 FROM handoff_events e
+                 LEFT JOIN handoff_event_results r ON r.uid = e.uid`;
+
+function rowToPublicEvent(row: EventRow): HandoffPublicEvent {
+    const event = SafeJSON.parse(row.payload, { strict: true }) as HandoffPublicEvent;
+
+    if (row.ok === null) {
+        return event;
     }
 
-    return outcome;
+    return { ...event, outcome: toOutcome({ ok: row.ok, error: row.error, extra: row.extra }) };
 }
 
 export function listHandoffEvents({
@@ -301,37 +332,37 @@ export function listHandoffEvents({
         db.query("SELECT COUNT(*) AS n FROM handoff_events WHERE handoff_id = ?").get(handoffId) as { n: number }
     ).n;
 
-    let rows: { payload: string }[];
+    let rows: EventRow[];
 
     if (before !== undefined && beforeUid !== undefined) {
         // Composite (ts, uid) cursor: a same-ms group split across a page boundary
         // keeps its remainder instead of being permanently skipped.
         rows = db
             .query(
-                `SELECT payload FROM handoff_events
-                 WHERE handoff_id = ? AND (ts < ? OR (ts = ? AND uid < ?))
-                 ORDER BY ts DESC, uid DESC LIMIT ?`
+                `${EVENT_SELECT}
+                 WHERE e.handoff_id = ? AND (e.ts < ? OR (e.ts = ? AND e.uid < ?))
+                 ORDER BY e.ts DESC, e.uid DESC LIMIT ?`
             )
-            .all(handoffId, before, before, beforeUid, clamped) as { payload: string }[];
+            .all(handoffId, before, before, beforeUid, clamped) as EventRow[];
     } else if (before !== undefined) {
         rows = db
             .query(
-                `SELECT payload FROM handoff_events
-                 WHERE handoff_id = ? AND ts < ?
-                 ORDER BY ts DESC, uid DESC LIMIT ?`
+                `${EVENT_SELECT}
+                 WHERE e.handoff_id = ? AND e.ts < ?
+                 ORDER BY e.ts DESC, e.uid DESC LIMIT ?`
             )
-            .all(handoffId, before, clamped) as { payload: string }[];
+            .all(handoffId, before, clamped) as EventRow[];
     } else {
         rows = db
             .query(
-                `SELECT payload FROM handoff_events
-                 WHERE handoff_id = ?
-                 ORDER BY ts DESC, uid DESC LIMIT ?`
+                `${EVENT_SELECT}
+                 WHERE e.handoff_id = ?
+                 ORDER BY e.ts DESC, e.uid DESC LIMIT ?`
             )
-            .all(handoffId, clamped) as { payload: string }[];
+            .all(handoffId, clamped) as EventRow[];
     }
 
-    const events = rows.map((row) => SafeJSON.parse(row.payload, { strict: true }) as HandoffPublicEvent);
+    const events = rows.map(rowToPublicEvent);
     return { events, total };
 }
 

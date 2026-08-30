@@ -1,6 +1,6 @@
 export type QaTag = "question" | "action" | "directive";
 export type QaSource = "question" | "mcp" | "skill" | "cli";
-export type QaAgent = "claude-code" | "codex" | "unknown";
+export type QaAgent = "claude-code" | "codex" | "grok" | "unknown";
 export interface QaRef {
     type: "commit" | "file" | "url" | "plan";
     value: string;

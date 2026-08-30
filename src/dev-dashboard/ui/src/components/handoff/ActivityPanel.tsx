@@ -80,6 +80,12 @@ function describeEvent(event: HandoffPublicEvent): string {
 }
 
 function eventDetail(event: HandoffPublicEvent): string | null {
+    // Why it was refused is the only useful detail on a rejected event; its own
+    // payload describes work that never landed.
+    if (event.outcome?.applied === false) {
+        return event.outcome.error ?? "rejected by the fold";
+    }
+
     switch (event.ev) {
         case "check_task":
             return str(field(field(event, "proof"), "answer")) ?? null;
@@ -128,7 +134,10 @@ function eventDetail(event: HandoffPublicEvent): string | null {
 
 function EventEntry({ event, index }: { event: HandoffPublicEvent; index: number }) {
     const [expanded, setExpanded] = useState(false);
-    const color = VERB_COLOR[event.ev] ?? "var(--dd-text-muted)";
+    // The log records attempts, so a refused action is journaled like any other.
+    // Struck through and labelled, it can no longer read as work that happened.
+    const rejected = event.outcome?.applied === false;
+    const color = rejected ? "var(--dd-danger, #f87171)" : (VERB_COLOR[event.ev] ?? "var(--dd-text-muted)");
     const detail = eventDetail(event);
 
     return (
@@ -140,7 +149,20 @@ function EventEntry({ event, index }: { event: HandoffPublicEvent; index: number
                 <span className="shrink-0 rounded-full border border-[var(--dd-border)] px-1.5 py-px font-mono text-[10px] text-[var(--dd-text-secondary)]">
                     {actorChipLabel(event.by)}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-[var(--dd-text-primary)]">{describeEvent(event)}</span>
+                <span
+                    className={`min-w-0 flex-1 truncate ${rejected ? "text-[var(--dd-text-muted)] line-through" : "text-[var(--dd-text-primary)]"}`}
+                >
+                    {describeEvent(event)}
+                </span>
+                {rejected ? (
+                    <span
+                        className="shrink-0 rounded border px-1 py-px font-mono text-[10px]"
+                        style={{ borderColor: color, color }}
+                        title={event.outcome?.error ?? "rejected"}
+                    >
+                        failed
+                    </span>
+                ) : null}
                 <span className="shrink-0 font-mono text-[10px] text-[var(--dd-text-muted)]">
                     {relativeTime(event.ts)}
                 </span>

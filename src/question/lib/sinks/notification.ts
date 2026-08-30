@@ -1,12 +1,16 @@
 import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import type { QaEntry } from "../types";
+import { worktreeLabel } from "../worktree-label";
 import { registerSink, type Sink } from "./registry-exports";
 
 export async function formatNotification(e: QaEntry): Promise<{ title: string; message: string; open: string }> {
+    const wt = worktreeLabel(e);
     return {
         // Same header shape as `tools question log`/`tail`: project · branch [tag].
-        title: `${e.project} · ${e.branch ?? "-"} [${e.tag}]`,
+        // The worktree goes last: a banner truncates the title, and project plus
+        // branch are what must survive that truncation.
+        title: `${e.project} · ${e.branch ?? "-"} [${e.tag}]${wt ? ` (worktree ${wt})` : ""}`,
         message: `❯ ${e.question}\n\n${e.answerMd}`,
         open: await buildQaDeepLink(e.id),
     };

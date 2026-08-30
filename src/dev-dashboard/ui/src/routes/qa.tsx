@@ -2,6 +2,7 @@ import { isQaAnswerTruncated, QA_ANSWER_PREVIEW_LINES } from "@app/dev-dashboard
 import { renderQaAnswerHtml, renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
+import { worktreeLabel } from "@app/question/lib/worktree-label";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { highlightMatchesInHtml } from "@genesiscz/utils/ui/helpers/highlight-matches.client";
 import { useScrollProgress } from "@genesiscz/utils/ui/hooks/useScrollProgress.client";
@@ -270,6 +271,7 @@ const QaCard = memo(function QaCard({
     }, []);
 
     const openSave = (): void => setSaveDialogOpen(true);
+    const worktree = worktreeLabel(entry);
 
     const card = (
         <div
@@ -298,6 +300,7 @@ const QaCard = memo(function QaCard({
                 <span className="text-[var(--dd-text-secondary)]">{entry.project}</span>
                 <span>·</span>
                 <span>{entry.branch ?? "-"}</span>
+                {worktree ? <span>(worktree {worktree})</span> : null}
                 <span className={`rounded-full border px-2 py-[1px] ${tagClass(entry.tag)}`}>{entry.tag}</span>
                 {truncated ? (
                     <button

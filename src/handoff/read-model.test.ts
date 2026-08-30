@@ -222,6 +222,48 @@ describe("log layout", () => {
 });
 
 describe("handoff_events read-model (G1/G3)", () => {
+    test("a rejected action is marked failed in the trace, not shown as if it happened", () => {
+        // The exact 2026-08-29 shape: an agent with no sessionId tries to claim
+        // and check a task. Both are refused, both are journaled, and the trace
+        // has to say so — otherwise it reads as though the work was recorded.
+        const env = freshEnv();
+        const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
+        const anonymous = byFor(null);
+
+        const res = executeHandoffActions(
+            {
+                id: posted.handoff.id,
+                actions: [{ action: "claim" }, { action: "check_task", taskId: "t1", proof: { answer: "did it" } }],
+            },
+            env.depsFor(anonymous)
+        );
+        expect(res.results.every((r) => r.ok === false)).toBe(true);
+
+        const db = openHandoffModel(env.dbPath);
+
+        try {
+            catchUpHandoffs(db, env.base);
+            const { events } = listHandoffEvents({ db, handoffId: posted.handoff.id });
+
+            const claim = events.find((e) => e.ev === "claim");
+            expect(claim?.outcome?.applied).toBe(false);
+            expect(claim?.outcome?.error).toContain("no sessionId");
+
+            const check = events.find((e) => e.ev === "check_task");
+            expect(check?.outcome?.applied).toBe(false);
+
+            // The accepted event carries the same field, saying it landed.
+            expect(events.find((e) => e.ev === "post")?.outcome?.applied).toBe(true);
+
+            // And the state agrees with the trace: nothing was claimed or checked.
+            const handoff = getHandoffById(db, posted.handoff.id);
+            expect(handoff?.claimedBy).toHaveLength(0);
+            expect(handoff?.tasks[0].checked).toBe(false);
+        } finally {
+            db.close();
+        }
+    });
+
     test("events land on ingest, uid-idempotent, payloads never contain editId", () => {
         const env = freshEnv();
         const posted = postHandoff({ title: "T", tasks: [{ text: "one" }] }, env.depsFor(A));
