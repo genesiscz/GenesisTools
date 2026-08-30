@@ -19,6 +19,8 @@ export interface SearchFilters {
     exact?: boolean;
     regex?: boolean;
     file?: string;
+    /** Extra --files patterns; merged with `file` at match time. */
+    files?: string[];
     tool?: string;
     project?: string;
     since?: Date;

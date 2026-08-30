@@ -8,6 +8,7 @@ import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { discoverSessionFiles, discoverSessionFilesInDir } from "@genesiscz/utils/claude/discovery";
 import {
     invalidateToday as _invalidateToday,
@@ -36,9 +37,11 @@ import {
     upsertSessionMetadata,
 } from "@genesiscz/utils/claude/history-cache";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
+import { isSubagentFile } from "@genesiscz/utils/claude/session.utils";
 import { Executor } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { glob } from "glob";
 import type {
@@ -76,6 +79,15 @@ function getMetadataVersion(): string {
 }
 
 const METADATA_VERSION = getMetadataVersion();
+const SEARCH_PARSE_CONCURRENCY = 16;
+
+function hist() {
+    return profiler.scope("claude-history");
+}
+
+function profileAll(): boolean {
+    return profiler.detail === "all";
+}
 
 // Re-export for backward compatibility (constants now live in @app/utils/claude/projects)
 export { CLAUDE_DIR, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
@@ -85,25 +97,31 @@ export { CLAUDE_DIR, PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 // =============================================================================
 
 export async function findConversationFiles(filters: SearchFilters): Promise<string[]> {
+    const p = hist();
     const isAll = !filters.project || filters.project === "all";
     const sw = new Stopwatch();
 
-    const files = await discoverSessionFiles({
-        project: isAll ? undefined : filters.project,
-        allProjects: isAll,
-        subagentsOnly: filters.agentsOnly,
-        excludeSubagents: filters.excludeAgents,
-    });
+    const files = await p.measureAsync("discover", () =>
+        discoverSessionFiles({
+            project: isAll ? undefined : filters.project,
+            allProjects: isAll,
+            subagentsOnly: filters.agentsOnly,
+            excludeSubagents: filters.excludeAgents,
+        })
+    );
     const discoverMs = sw.elapsedMs;
 
     // Sort by modification time (most recent first)
-    const fileStats = await Promise.all(
-        files.map(async (f) => {
-            const fileStat = await stat(f);
-            return { path: f, mtime: fileStat.mtime };
-        })
-    );
-    fileStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+    const fileStats = await p.measureAsync("stat-sort", async () => {
+        const stats = await Promise.all(
+            files.map(async (f) => {
+                const fileStat = await stat(f);
+                return { path: f, mtime: fileStat.mtime };
+            })
+        );
+        stats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+        return stats;
+    });
 
     logger.info(
         {
@@ -128,31 +146,78 @@ export { extractProjectName } from "@genesiscz/utils/claude/projects";
 // =============================================================================
 
 export async function parseJsonlFile(filePath: string): Promise<ConversationMessage[]> {
-    const messages: ConversationMessage[] = [];
+    const run = async (): Promise<ConversationMessage[]> => {
+        const messages: ConversationMessage[] = [];
 
-    const fileStream = createReadStream(filePath);
-    const rl = createInterface({
-        input: fileStream,
-        crlfDelay: Number.POSITIVE_INFINITY,
-    });
+        const fileStream = createReadStream(filePath);
+        const rl = createInterface({
+            input: fileStream,
+            crlfDelay: Number.POSITIVE_INFINITY,
+        });
 
-    for await (const line of rl) {
-        if (line.trim()) {
-            try {
-                const parsed = SafeJSON.parse(line, { strict: true }) as ConversationMessage;
-                messages.push(parsed);
-            } catch {
-                // Skip invalid JSON lines
+        for await (const line of rl) {
+            if (line.trim()) {
+                try {
+                    const parsed = SafeJSON.parse(line, { strict: true }) as ConversationMessage;
+                    messages.push(parsed);
+                } catch {
+                    // Skip invalid JSON lines
+                }
             }
         }
+
+        return messages;
+    };
+
+    if (profileAll()) {
+        return hist().measureAsync("parseJsonl", run);
     }
 
-    return messages;
+    return run();
 }
 
 // =============================================================================
 // Text Extraction & Matching
 // =============================================================================
+
+const TOOL_INPUT_FIELD_CAP = 2000;
+const TOOL_INPUT_TOTAL_CAP = 8000;
+
+/** Flatten string values from a tool_use.input object (paths, command, content, …). */
+export function extractToolInputText(input: Record<string, unknown>): string {
+    const parts: string[] = [];
+    let total = 0;
+
+    const visit = (value: unknown): void => {
+        if (total >= TOOL_INPUT_TOTAL_CAP) {
+            return;
+        }
+
+        if (typeof value === "string") {
+            const slice = value.length > TOOL_INPUT_FIELD_CAP ? value.slice(0, TOOL_INPUT_FIELD_CAP) : value;
+            parts.push(slice);
+            total += slice.length;
+            return;
+        }
+
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                visit(item);
+            }
+
+            return;
+        }
+
+        if (value && typeof value === "object") {
+            for (const nested of Object.values(value as Record<string, unknown>)) {
+                visit(nested);
+            }
+        }
+    };
+
+    visit(input);
+    return parts.join(" ");
+}
 
 export function extractTextFromMessage(message: ConversationMessage, excludeThinking: boolean): string {
     const texts: string[] = [];
@@ -178,6 +243,9 @@ export function extractTextFromMessage(message: ConversationMessage, excludeThin
                     texts.push((block as TextBlock).text);
                 } else if (block.type === "thinking" && !excludeThinking) {
                     texts.push((block as ThinkingBlock).thinking);
+                } else if (block.type === "tool_use") {
+                    texts.push(block.name);
+                    texts.push(extractToolInputText(block.input));
                 }
             }
         }
@@ -212,7 +280,7 @@ export function extractFilePaths(message: ConversationMessage): string[] {
     for (const tool of toolUses) {
         if (tool.input && typeof tool.input === "object") {
             // Common file path field names
-            const fileFields = ["file_path", "path", "filePath"];
+            const fileFields = ["file_path", "path", "filePath", "notebook_path"];
             for (const field of fileFields) {
                 if (field in tool.input && typeof tool.input[field] === "string") {
                     paths.push(tool.input[field] as string);
@@ -222,6 +290,43 @@ export function extractFilePaths(message: ConversationMessage): string[] {
     }
 
     return paths;
+}
+
+export function filePatterns(filters: SearchFilters): string[] {
+    const patterns: string[] = [];
+
+    if (filters.file) {
+        patterns.push(filters.file);
+    }
+
+    if (filters.files) {
+        for (const pattern of filters.files) {
+            if (pattern) {
+                patterns.push(pattern);
+            }
+        }
+    }
+
+    return patterns;
+}
+
+function matchFilePattern(haystackLower: string, pattern: string): boolean {
+    const filePattern = pattern.toLowerCase();
+
+    if (filePattern.includes("*")) {
+        const regexPattern = filePattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+        if (!isSafeRegex(regexPattern)) {
+            return false;
+        }
+
+        try {
+            return new RegExp(regexPattern, "i").test(haystackLower);
+        } catch {
+            return false;
+        }
+    }
+
+    return haystackLower.includes(filePattern);
 }
 
 /**
@@ -672,27 +777,14 @@ function matchesFilters(message: ConversationMessage, filters: SearchFilters, al
         }
     }
 
-    // File filter
-    if (filters.file) {
-        const filePaths = extractFilePaths(message);
-        const filePattern = filters.file.toLowerCase();
-        const hasMatchingFile = filePaths.some((p) => {
-            const lowerPath = p.toLowerCase();
-            if (filePattern.includes("*")) {
-                // Simple glob matching - escape regex metacharacters first, then convert * to .*
-                const regexPattern = filePattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-                if (!isSafeRegex(regexPattern)) {
-                    return false;
-                }
-                try {
-                    const regex = new RegExp(regexPattern, "i");
-                    return regex.test(lowerPath);
-                } catch {
-                    return false;
-                }
-            }
-            return lowerPath.includes(filePattern);
-        });
+    const patterns = filePatterns(filters);
+    if (patterns.length > 0) {
+        const paths = extractFilePaths(message);
+        const inputText = extractToolUses(message)
+            .map((tool) => extractToolInputText(tool.input))
+            .join(" ");
+        const haystack = `${paths.join("\n")}\n${inputText}`.toLowerCase();
+        const hasMatchingFile = patterns.some((pattern) => matchFilePattern(haystack, pattern));
         if (!hasMatchingFile) {
             return false;
         }
@@ -751,6 +843,15 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
             continue;
         }
 
+        // --since / --until were checked by the full matcher but NOT here, so
+        // `--summary-only --since ...` returned sessions outside the range, as
+        // did callers like resume that route through this cache (PR #343 review
+        // t3 round 12). Same predicate the listing fast path uses, rather than a
+        // third hand-rolled copy of the comparison.
+        if (firstTimestamp && !listingPassesDate(firstTimestamp, filters)) {
+            continue;
+        }
+
         const allSearchText = [s.customTitle, s.summary, s.firstPrompt, s.allUserText].filter(Boolean).join(" ");
         if (filters.query && !matchesQuery(allSearchText, filters.query, !!filters.exact, !!filters.regex)) {
             continue;
@@ -786,7 +887,552 @@ function searchSessionMetadataCache(filters: SearchFilters): SearchResult[] {
     return filters.limit ? results.slice(0, filters.limit) : results;
 }
 
+export function partitionSessionFiles(files: string[]): { mains: string[]; agents: string[] } {
+    const mains: string[] = [];
+    const agents: string[] = [];
+
+    for (const filePath of files) {
+        if (isSubagentFile(filePath)) {
+            agents.push(filePath);
+        } else {
+            mains.push(filePath);
+        }
+    }
+
+    return { mains, agents };
+}
+
+async function matchConversationFile(filePath: string, filters: SearchFilters): Promise<SearchResult | null> {
+    const messages = await parseJsonlFile(filePath);
+    if (messages.length === 0) {
+        return null;
+    }
+
+    const project = extractProjectName(filePath);
+    const isSubagent = isSubagentFile(filePath);
+    let summary: string | undefined;
+    let customTitle: string | undefined;
+    let gitBranch: string | undefined;
+    let sessionId: string | undefined;
+    let firstTimestamp: Date | undefined;
+    let firstUserMessage: string | undefined;
+
+    for (const msg of messages) {
+        if (msg.type === "summary") {
+            summary = (msg as SummaryMessage).summary;
+        }
+
+        if (msg.type === "custom-title") {
+            customTitle = (msg as CustomTitleMessage).customTitle;
+        }
+
+        if ("gitBranch" in msg && msg.gitBranch) {
+            gitBranch = msg.gitBranch as string;
+        }
+
+        if ("sessionId" in msg && msg.sessionId) {
+            sessionId = msg.sessionId as string;
+        }
+
+        if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
+            firstTimestamp = new Date(msg.timestamp as string);
+        }
+
+        if (msg.type === "user" && !firstUserMessage) {
+            firstUserMessage = extractTextFromMessage(msg, true);
+        }
+    }
+
+    if (filters.excludeCurrentSession && sessionId === filters.excludeCurrentSession) {
+        return null;
+    }
+
+    if (filters.conversationDate && firstTimestamp && firstTimestamp < filters.conversationDate) {
+        return null;
+    }
+
+    if (filters.conversationDateUntil && firstTimestamp && firstTimestamp > filters.conversationDateUntil) {
+        return null;
+    }
+
+    if (filters.summaryOnly) {
+        const titleText = customTitle || summary || "";
+        if (filters.query && !matchesQuery(titleText, filters.query, !!filters.exact, !!filters.regex)) {
+            return null;
+        }
+
+        return {
+            filePath,
+            project,
+            sessionId: sessionId || basename(filePath, ".jsonl"),
+            timestamp: firstTimestamp || new Date(),
+            summary,
+            customTitle,
+            gitBranch,
+            matchedMessages: [],
+            isSubagent,
+            relevanceScore: filters.query
+                ? calculateRelevanceScore(
+                      filters.query,
+                      summary,
+                      customTitle,
+                      firstUserMessage,
+                      titleText,
+                      firstTimestamp || new Date()
+                  )
+                : 0,
+        };
+    }
+
+    if (filters.commitMessage) {
+        let foundCommitMsg = false;
+        for (const msg of messages) {
+            if (msg.type === "assistant") {
+                const assistantMsg = msg as AssistantMessage;
+                for (const block of assistantMsg.message.content) {
+                    if (block.type === "tool_use" && block.name === "Bash") {
+                        const input = block.input as Record<string, unknown>;
+                        const cmd = (input.command as string) || "";
+                        if (
+                            cmd.includes("git commit") &&
+                            cmd.toLowerCase().includes(filters.commitMessage.toLowerCase())
+                        ) {
+                            foundCommitMsg = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (foundCommitMsg) {
+                break;
+            }
+        }
+
+        if (!foundCommitMsg) {
+            return null;
+        }
+
+        return {
+            filePath,
+            project,
+            sessionId: sessionId || basename(filePath, ".jsonl"),
+            timestamp: firstTimestamp || new Date(),
+            summary,
+            customTitle,
+            gitBranch,
+            matchedMessages: messages.filter((m) => m.type === "user" || m.type === "assistant"),
+            isSubagent,
+            commitHashes: extractCommitHashes(messages),
+        };
+    }
+
+    const matchedMessages: ConversationMessage[] = [];
+    const matchedIndices: number[] = [];
+    let allText = "";
+
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        const text = extractTextFromMessage(msg, !!filters.excludeThinking);
+        allText += ` ${text}`;
+
+        if (matchesFilters(msg, filters, text)) {
+            matchedMessages.push(msg);
+            matchedIndices.push(i);
+        }
+    }
+
+    if (matchedMessages.length === 0 && filters.query) {
+        return null;
+    }
+
+    if (matchedMessages.length === 0 && (filePatterns(filters).length > 0 || filters.tool)) {
+        return null;
+    }
+
+    let contextMessages: ConversationMessage[] | undefined;
+    if (filters.context && filters.context > 0 && matchedIndices.length > 0) {
+        const contextSet = new Set<number>();
+        for (const idx of matchedIndices) {
+            for (
+                let i = Math.max(0, idx - filters.context);
+                i <= Math.min(messages.length - 1, idx + filters.context);
+                i++
+            ) {
+                contextSet.add(i);
+            }
+        }
+
+        const sortedIndices = [...contextSet].sort((a, b) => a - b);
+        contextMessages = sortedIndices.map((i) => messages[i]);
+    }
+
+    const relevanceScore = filters.query
+        ? calculateRelevanceScore(
+              filters.query,
+              summary,
+              customTitle,
+              firstUserMessage,
+              allText,
+              firstTimestamp || new Date()
+          )
+        : 0;
+
+    return {
+        filePath,
+        project,
+        sessionId: sessionId || basename(filePath, ".jsonl"),
+        timestamp: firstTimestamp || new Date(),
+        summary,
+        customTitle,
+        gitBranch,
+        matchedMessages,
+        contextMessages,
+        isSubagent,
+        relevanceScore,
+    };
+}
+
+export async function searchConversationFiles(
+    files: string[],
+    filters: SearchFilters,
+    opts: { stopAfter?: number } = {}
+): Promise<SearchResult[]> {
+    if (files.length === 0) {
+        return [];
+    }
+
+    const stopAfter = opts.stopAfter ?? Number.POSITIVE_INFINITY;
+    if (stopAfter <= 0) {
+        return [];
+    }
+
+    const results: SearchResult[] = [];
+    const concurrency = Math.min(SEARCH_PARSE_CONCURRENCY, files.length);
+
+    for (let i = 0; i < files.length && results.length < stopAfter; i += concurrency) {
+        const batch = files.slice(i, i + concurrency);
+        const byPath = await concurrentMap({
+            items: batch,
+            concurrency: batch.length,
+            fn: (filePath) => matchConversationFile(filePath, filters),
+            onError: (filePath, error) => {
+                logger.debug({ error, filePath }, "searchConversationFiles: file failed");
+            },
+        });
+
+        for (const filePath of batch) {
+            const hit = byPath.get(filePath);
+            if (hit) {
+                results.push(hit);
+                if (results.length >= stopAfter) {
+                    break;
+                }
+            }
+        }
+    }
+
+    return results;
+}
+
+function rgPrefilterNeedle(filters: SearchFilters): string | undefined {
+    if (filters.regex && filters.query) {
+        return filters.query;
+    }
+
+    if (filters.query) {
+        const words = filters.query.split(/\s+/).filter((word) => word.length >= 3);
+        if (words.length === 0) {
+            return undefined;
+        }
+
+        return [...words].sort((a, b) => b.length - a.length)[0];
+    }
+
+    const patterns = filePatterns(filters);
+    if (patterns.length === 1) {
+        const stripped = patterns[0].replace(/\*/g, "");
+        return stripped.length >= 3 ? stripped : undefined;
+    }
+
+    if (filters.tool && filters.tool.length >= 3) {
+        return filters.tool;
+    }
+
+    return undefined;
+}
+
+type SearchFileRow = { path: string; mtime: number; matchCount: number };
+
+function toSearchFileRows(paths: string[]): SearchFileRow[] {
+    return paths.map((path) => ({ path, mtime: 0, matchCount: 0 }));
+}
+
+async function resolveSearchFiles(
+    filters: SearchFilters
+): Promise<{ files: SearchFileRow[]; source: "rg" | "discover" | "rg-fallback" }> {
+    const needle = rgPrefilterNeedle(filters);
+    if (needle) {
+        const regex = !!filters.regex && needle === filters.query;
+
+        // PR #343 review t18/t25: `-w` makes the prefilter STRICTER than
+        // matchesQuery, which accepts substrings — so a file containing only
+        // "authenticate" never reached the matcher for the query "auth". Both
+        // scans are otherwise identical (-F, -i, same glob, same tree), so the
+        // widened one is a strict superset and running the boundary scan as well
+        // just doubled the transcript-tree walk for nothing (review t21).
+        const rgOptions = {
+            project: filters.project,
+            regex,
+            count: !!filters.sortByRelevance,
+            noWordBoundary: !regex,
+        };
+        const { files, failed, counts } = await rgSearchFilesDetailed(needle, rgOptions);
+
+        if (!failed) {
+            const stats = await Promise.all(
+                files.map(async (path) => {
+                    try {
+                        const fileStat = await stat(path);
+                        return {
+                            path,
+                            mtime: fileStat.mtimeMs,
+                            matchCount: counts?.get(path) ?? 0,
+                        };
+                    } catch (error) {
+                        logger.debug({ error, path }, "resolveSearchFiles: stat failed");
+                        return null;
+                    }
+                })
+            );
+            const existing = stats.filter((row): row is SearchFileRow => row !== null);
+            existing.sort((a, b) => b.mtime - a.mtime);
+            return { files: existing, source: "rg" };
+        }
+
+        logger.warn("rg prefilter failed; falling back to full discovery");
+        const discovered = await findConversationFiles(filters);
+        return { files: toSearchFileRows(discovered), source: "rg-fallback" };
+    }
+
+    const discovered = await findConversationFiles(filters);
+    return { files: toSearchFileRows(discovered), source: "discover" };
+}
+
+/**
+ * The listing path reads cached metadata and applies only `since`/`until`. Any
+ * filter it cannot evaluate must keep the search on the full-parse path, which
+ * is where `matchConversationFile` applies them.
+ *
+ * PR #343 review t17: without the last three checks, `--exclude-current`,
+ * `--exclude-session`, `--conv-date` and `--conv-date-until` silently returned
+ * UNFILTERED results whenever no query was given.
+ */
+export function canUseMetadataListing(filters: SearchFilters): boolean {
+    return (
+        !filters.query &&
+        filePatterns(filters).length === 0 &&
+        !filters.tool &&
+        !filters.commitMessage &&
+        !filters.commitHash &&
+        !filters.context &&
+        !filters.excludeCurrentSession &&
+        !filters.conversationDate &&
+        !filters.conversationDateUntil
+    );
+}
+
+function listingRecordToResult(record: SessionMetadataRecord): SearchResult {
+    return {
+        filePath: record.filePath,
+        project: record.project || "",
+        sessionId: record.sessionId || basename(record.filePath, ".jsonl"),
+        timestamp: record.firstTimestamp ? new Date(record.firstTimestamp) : new Date(record.mtime),
+        summary: record.summary ?? undefined,
+        customTitle: record.customTitle ?? undefined,
+        gitBranch: record.gitBranch ?? undefined,
+        matchedMessages: [],
+        isSubagent: record.isSubagent,
+    };
+}
+
+export function listingStalePaths(opts: {
+    cachedPaths: string[];
+    diskFiles: Set<string>;
+    projectDir?: string;
+    excludeSubagents?: boolean;
+    subagentsOnly?: boolean;
+}): string[] {
+    if (opts.excludeSubagents || opts.subagentsOnly) {
+        return [];
+    }
+
+    const cachedPathsInScope = opts.projectDir
+        ? opts.cachedPaths.filter((p) => p.startsWith(opts.projectDir + sep) || p === opts.projectDir)
+        : opts.cachedPaths;
+
+    return cachedPathsInScope.filter((p) => !opts.diskFiles.has(p));
+}
+
+export function listingIndexSlice<T extends { mtime: number }>(entries: T[], limit?: number): T[] {
+    const sorted = [...entries].sort((a, b) => b.mtime - a.mtime);
+    if (limit == null) {
+        return sorted;
+    }
+
+    return sorted.slice(0, Math.max(20, limit * 4));
+}
+
+export function listingWavePlan(filters: SearchFilters): {
+    excludeSubagents: boolean;
+    needAgentFill: boolean;
+    subagentsOnly: boolean;
+} {
+    if (filters.agentsOnly) {
+        return { excludeSubagents: false, needAgentFill: false, subagentsOnly: true };
+    }
+
+    if (filters.excludeAgents) {
+        return { excludeSubagents: true, needAgentFill: false, subagentsOnly: false };
+    }
+
+    return { excludeSubagents: true, needAgentFill: true, subagentsOnly: false };
+}
+
+export function listingPassesDate(timestamp: Date, filters: SearchFilters): boolean {
+    if (filters.since && timestamp < filters.since) {
+        return false;
+    }
+
+    if (filters.until && timestamp > filters.until) {
+        return false;
+    }
+
+    return true;
+}
+
+export function relevanceParseCap(fileCount: number, limit?: number): number {
+    const floor = Math.max(8, (limit ?? 20) * 2);
+    return Math.min(fileCount, floor);
+}
+
+const RELEVANCE_MATCH_COUNT_CAP = 20;
+
+export function selectRelevanceParseFiles(
+    files: { path: string; mtime: number; matchCount?: number }[],
+    limit?: number
+): string[] {
+    const cap = relevanceParseCap(files.length, limit);
+    const cappedCount = (file: { matchCount?: number }): number =>
+        Math.min(file.matchCount ?? 0, RELEVANCE_MATCH_COUNT_CAP);
+
+    return [...files]
+        .sort((a, b) => {
+            const countDelta = cappedCount(b) - cappedCount(a);
+            if (countDelta !== 0) {
+                return countDelta;
+            }
+
+            return b.mtime - a.mtime;
+        })
+        .slice(0, cap)
+        .map((file) => file.path);
+}
+
+/**
+ * Does relevance actually ORDER this search? The flag alone does not decide it:
+ * the query is optional, and `mergeSearchWaves` ranks by relevance only when
+ * both are present. Exported and shared so the agent-wave cap and the merge
+ * cannot answer this differently again (PR #343 review t2 round 7).
+ */
+export function ranksByRelevance(filters: { sortByRelevance?: boolean; query?: string }): boolean {
+    return Boolean(filters.sortByRelevance && filters.query);
+}
+
+export function agentWaveStopAfter(opts: {
+    limit?: number;
+    mainHitCount: number;
+    /**
+     * The EFFECTIVE ranking mode, which is `sortByRelevance && query` — the same
+     * predicate `mergeSearchWaves` is given. The flag alone is not enough: the
+     * query is optional, so `history --sort-relevance` with no query merges in
+     * time order, and reading the bare flag here dropped the remaining-slot
+     * optimisation for a listing that never ranks globally (review t2 round 7).
+     */
+    sortByRelevance?: boolean;
+}): number | undefined {
+    if (opts.limit == null) {
+        return undefined;
+    }
+
+    // Relevance is ranked GLOBALLY across both waves, so the agent candidates
+    // must still be parsed when the mains already fill --limit; otherwise the
+    // merge ranks a set that was truncated before it ever saw them, and a
+    // stronger subagent can never outrank a weak main (PR #343 review t20).
+    //
+    // The remaining-slot optimisation predates that: it was correct while the
+    // merge sorted each wave separately and concatenated, because then the
+    // agents really were dropped. `sortByRelevance` was already a parameter
+    // here but went unread, so the two fixes silently cancelled out.
+    // mergeSearchWaves applies the limit after ranking, and the agent wave is
+    // capped upstream, so this parses the capped candidate set, not the world.
+    if (opts.sortByRelevance) {
+        return undefined;
+    }
+
+    return Math.max(0, opts.limit - opts.mainHitCount);
+}
+
+export function agentFillListingOptions(project: string | undefined, remaining?: number): SessionListingOptions {
+    return {
+        project,
+        excludeSubagents: false,
+        subagentsOnly: true,
+        limit: remaining,
+    };
+}
+
+export function shouldLoadAgentListing(
+    plan: { excludeSubagents: boolean; needAgentFill: boolean },
+    mainCount: number,
+    limit?: number
+): boolean {
+    if (!plan.needAgentFill) {
+        return false;
+    }
+
+    if (limit == null) {
+        return true;
+    }
+
+    return mainCount < limit;
+}
+
+export function mergeSearchWaves(
+    mains: SearchResult[],
+    agents: SearchResult[],
+    opts: { limit?: number; sortByRelevance?: boolean } = {}
+): SearchResult[] {
+    const byRelevance = (a: SearchResult, b: SearchResult) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0);
+    const byTime = (a: SearchResult, b: SearchResult) => b.timestamp.getTime() - a.timestamp.getTime();
+    const sortFn = opts.sortByRelevance ? byRelevance : byTime;
+    // Relevance is a global ranking, so the waves merge BEFORE sorting — sorting
+    // each and concatenating kept a weak main ahead of a stronger subagent, and
+    // --limit then dropped the best match (PR #343 review t21). Time ordering
+    // keeps the main-first shape on purpose: mains are the primary sessions.
+    const merged = opts.sortByRelevance
+        ? [...mains, ...agents].sort(sortFn)
+        : [...mains].sort(sortFn).concat([...agents].sort(sortFn));
+
+    if (opts.limit && merged.length > opts.limit) {
+        return merged.slice(0, opts.limit);
+    }
+
+    return merged;
+}
+
 export async function searchConversations(filters: SearchFilters): Promise<SearchResult[]> {
+    const p = hist();
     const sw = new Stopwatch();
     logger.info(
         {
@@ -804,252 +1450,131 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
     // Fast path: summary-only searches use SQLite cache (no JSONL parsing)
     if (filters.summaryOnly && !filters.commitHash && !filters.commitMessage) {
         logger.info("searchConversations: fast path = summary-only SQLite cache");
-        const r = await searchSessionMetadataCache(filters);
+        const r = p.measure("search.summary-cache", () => searchSessionMetadataCache(filters));
         logger.info(
             { fastPath: "summary-only", matched: r.length, elapsedMs: Math.round(sw.elapsedMs) },
             "searchConversations: done"
         );
+        p.summary("searchConversations");
         return r;
     }
 
     // Fast path: commit hash search uses git log + cache + raw text scanning
     if (filters.commitHash) {
         logger.info("searchConversations: fast path = commit-hash");
-        const r = await searchCommitHashFast(filters.commitHash, filters);
+        const hash = filters.commitHash;
+        const r = await p.measureAsync("search.commit-hash", () => searchCommitHashFast(hash, filters));
         logger.info(
             { fastPath: "commit-hash", matched: r.length, elapsedMs: Math.round(sw.elapsedMs) },
             "searchConversations: done"
         );
+        p.summary("searchConversations");
         return r;
     }
 
-    let results: SearchResult[] = [];
-    const files = await findConversationFiles(filters);
-    const total = files.length;
-    let processed = 0;
-    logger.info(
-        { fastPath: "none (full JSONL parse)", fileCount: total, findFilesMs: Math.round(sw.elapsedMs) },
-        "searchConversations: scanning files — no fast path, parsing every conversation"
-    );
-    let lastProgressLogMs = sw.elapsedMs;
+    if (canUseMetadataListing(filters)) {
+        logger.info("searchConversations: fast path = session listing cache");
+        const plan = listingWavePlan(filters);
+        const project = !filters.project || filters.project === "all" ? undefined : filters.project;
+        const listing = await p.measureAsync("search.listing", () =>
+            getSessionListing({
+                project,
+                excludeSubagents: plan.excludeSubagents,
+                subagentsOnly: plan.subagentsOnly,
+                limit: filters.limit,
+            })
+        );
+        let records = listing.sessions;
+        if (filters.agentsOnly) {
+            records = records.filter((s) => s.isSubagent);
+        } else if (filters.excludeAgents) {
+            records = records.filter((s) => !s.isSubagent);
+        }
 
-    for (const filePath of files) {
-        processed++;
-        filters.onProgress?.(processed, total, basename(filePath, ".jsonl"));
+        const mapped = records.map(listingRecordToResult).filter((s) => listingPassesDate(s.timestamp, filters));
+        const mains = mapped.filter((s) => !s.isSubagent);
+        let agents = mapped.filter((s) => s.isSubagent);
 
-        if (processed % 500 === 0 || sw.elapsedMs - lastProgressLogMs >= 5000) {
-            lastProgressLogMs = sw.elapsedMs;
-            logger.info(
-                { processed, total, matched: results.length, elapsedMs: Math.round(sw.elapsedMs) },
-                "searchConversations: progress"
+        if (shouldLoadAgentListing(plan, mains.length, filters.limit)) {
+            const remaining = filters.limit == null ? undefined : Math.max(0, filters.limit - mains.length);
+            const agentListing = await p.measureAsync("search.listing-agents", () =>
+                getSessionListing(agentFillListingOptions(project, remaining))
             );
+            // The mains are filtered by listingPassesDate; without the same
+            // predicate here, old or future subagents filled the remaining slots
+            // in spite of --since/--until (PR #343 review t4).
+            agents = agentListing.sessions
+                .filter((s) => s.isSubagent)
+                .map(listingRecordToResult)
+                .filter((result) => listingPassesDate(result.timestamp, filters));
         }
 
-        const messages = await parseJsonlFile(filePath);
-        if (messages.length === 0) {
-            continue;
-        }
-
-        const project = extractProjectName(filePath);
-        const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
-
-        // Extract metadata
-        let summary: string | undefined;
-        let customTitle: string | undefined;
-        let gitBranch: string | undefined;
-        let sessionId: string | undefined;
-        let firstTimestamp: Date | undefined;
-        let firstUserMessage: string | undefined;
-
-        for (const msg of messages) {
-            if (msg.type === "summary") {
-                summary = (msg as SummaryMessage).summary;
-            }
-            if (msg.type === "custom-title") {
-                customTitle = (msg as CustomTitleMessage).customTitle;
-            }
-            if ("gitBranch" in msg && msg.gitBranch) {
-                gitBranch = msg.gitBranch as string;
-            }
-            if ("sessionId" in msg && msg.sessionId) {
-                sessionId = msg.sessionId as string;
-            }
-            if ("timestamp" in msg && msg.timestamp && !firstTimestamp) {
-                firstTimestamp = new Date(msg.timestamp as string);
-            }
-            // Get first user message for relevance scoring
-            if (msg.type === "user" && !firstUserMessage) {
-                firstUserMessage = extractTextFromMessage(msg, true);
-            }
-        }
-
-        // Skip current session if requested
-        if (filters.excludeCurrentSession && sessionId === filters.excludeCurrentSession) {
-            continue;
-        }
-
-        // Conversation date filter (based on first message, not individual messages)
-        if (filters.conversationDate && firstTimestamp) {
-            if (firstTimestamp < filters.conversationDate) {
-                continue;
-            }
-        }
-        if (filters.conversationDateUntil && firstTimestamp) {
-            if (firstTimestamp > filters.conversationDateUntil) {
-                continue;
-            }
-        }
-
-        // Summary-only search mode
-        if (filters.summaryOnly) {
-            const titleText = customTitle || summary || "";
-            if (filters.query && !matchesQuery(titleText, filters.query, !!filters.exact, !!filters.regex)) {
-                continue;
-            }
-            // For summary-only, we match if the title/summary matches
-            results.push({
-                filePath,
-                project,
-                sessionId: sessionId || basename(filePath, ".jsonl"),
-                timestamp: firstTimestamp || new Date(),
-                summary,
-                customTitle,
-                gitBranch,
-                matchedMessages: [],
-                isSubagent,
-                relevanceScore: filters.query
-                    ? calculateRelevanceScore(
-                          filters.query,
-                          summary,
-                          customTitle,
-                          firstUserMessage,
-                          titleText,
-                          firstTimestamp || new Date()
-                      )
-                    : 0,
-            });
-            continue;
-        }
-
-        // Commit message search
-        if (filters.commitMessage) {
-            let foundCommitMsg = false;
-            for (const msg of messages) {
-                if (msg.type === "assistant") {
-                    const assistantMsg = msg as AssistantMessage;
-                    for (const block of assistantMsg.message.content) {
-                        if (block.type === "tool_use" && block.name === "Bash") {
-                            const input = block.input as Record<string, unknown>;
-                            const cmd = (input.command as string) || "";
-                            if (
-                                cmd.includes("git commit") &&
-                                cmd.toLowerCase().includes(filters.commitMessage.toLowerCase())
-                            ) {
-                                foundCommitMsg = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (foundCommitMsg) {
-                    break;
-                }
-            }
-            if (!foundCommitMsg) {
-                continue;
-            }
-
-            results.push({
-                filePath,
-                project,
-                sessionId: sessionId || basename(filePath, ".jsonl"),
-                timestamp: firstTimestamp || new Date(),
-                summary,
-                customTitle,
-                gitBranch,
-                matchedMessages: messages.filter((m) => m.type === "user" || m.type === "assistant"),
-                isSubagent,
-                commitHashes: extractCommitHashes(messages),
-            });
-            continue;
-        }
-
-        // Standard search: find matching messages
-        const matchedMessages: ConversationMessage[] = [];
-        const matchedIndices: number[] = [];
-        let allText = "";
-
-        for (let i = 0; i < messages.length; i++) {
-            const msg = messages[i];
-            const text = extractTextFromMessage(msg, !!filters.excludeThinking);
-            allText += ` ${text}`;
-
-            if (matchesFilters(msg, filters, text)) {
-                matchedMessages.push(msg);
-                matchedIndices.push(i);
-            }
-        }
-
-        if (matchedMessages.length > 0 || !filters.query) {
-            // Get context messages if requested
-            let contextMessages: ConversationMessage[] | undefined;
-            if (filters.context && filters.context > 0 && matchedIndices.length > 0) {
-                const contextSet = new Set<number>();
-                for (const idx of matchedIndices) {
-                    for (
-                        let i = Math.max(0, idx - filters.context);
-                        i <= Math.min(messages.length - 1, idx + filters.context);
-                        i++
-                    ) {
-                        contextSet.add(i);
-                    }
-                }
-                const sortedIndices = [...contextSet].sort((a, b) => a - b);
-                contextMessages = sortedIndices.map((i) => messages[i]);
-            }
-
-            // Calculate relevance score
-            const relevanceScore = filters.query
-                ? calculateRelevanceScore(
-                      filters.query,
-                      summary,
-                      customTitle,
-                      firstUserMessage,
-                      allText,
-                      firstTimestamp || new Date()
-                  )
-                : 0;
-
-            results.push({
-                filePath,
-                project,
-                sessionId: sessionId || basename(filePath, ".jsonl"),
-                timestamp: firstTimestamp || new Date(),
-                summary,
-                customTitle,
-                gitBranch,
-                matchedMessages,
-                contextMessages,
-                isSubagent,
-                relevanceScore,
-            });
-        }
+        const results = mergeSearchWaves(mains, agents, {
+            limit: filters.limit,
+            sortByRelevance: false,
+        });
+        logger.info(
+            {
+                fastPath: "listing-cache",
+                indexed: listing.indexed,
+                mains: mains.length,
+                agents: agents.length,
+                matched: results.length,
+                elapsedMs: Math.round(sw.elapsedMs),
+            },
+            "searchConversations: done"
+        );
+        p.summary("searchConversations");
+        return results;
     }
 
-    // Sort by relevance if requested, otherwise by date (already sorted by file mtime)
-    if (filters.sortByRelevance && filters.query) {
-        results.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
-    }
+    const resolved = await p.measureAsync("search.resolve-files", () => resolveSearchFiles(filters));
+    const byPath = new Map(resolved.files.map((row) => [row.path, row]));
+    const { mains, agents } = partitionSessionFiles(resolved.files.map((row) => row.path));
+    let wave1 = filters.agentsOnly ? [] : mains;
+    let wave2 = filters.excludeAgents ? [] : agents;
 
-    // Apply limit after sorting
-    if (filters.limit && results.length > filters.limit) {
-        results = results.slice(0, filters.limit);
+    if (filters.sortByRelevance) {
+        const rowFor = (path: string): SearchFileRow => byPath.get(path) ?? { path, mtime: 0, matchCount: 0 };
+        wave1 = selectRelevanceParseFiles(wave1.map(rowFor), filters.limit);
+        wave2 = selectRelevanceParseFiles(wave2.map(rowFor), filters.limit);
     }
 
     logger.info(
         {
-            fastPath: "none (full JSONL parse)",
-            fileCount: total,
+            fastPath: resolved.source,
+            fileCount: resolved.files.length,
+            mains: wave1.length,
+            agents: wave2.length,
+            findFilesMs: Math.round(sw.elapsedMs),
+        },
+        "searchConversations: parsing candidate files"
+    );
+
+    const stopMains = filters.sortByRelevance || filters.limit == null ? undefined : filters.limit;
+    const mainHits = await p.measureAsync("search.wave-mains", () =>
+        searchConversationFiles(wave1, filters, { stopAfter: stopMains })
+    );
+    const relevanceOrdered = ranksByRelevance(filters);
+    const remaining = agentWaveStopAfter({
+        limit: filters.limit,
+        mainHitCount: mainHits.length,
+        sortByRelevance: relevanceOrdered,
+    });
+    const agentHits = await p.measureAsync("search.wave-agents", () =>
+        searchConversationFiles(wave2, filters, { stopAfter: remaining })
+    );
+    const results = mergeSearchWaves(mainHits, agentHits, {
+        limit: filters.limit,
+        sortByRelevance: relevanceOrdered,
+    });
+
+    logger.info(
+        {
+            fastPath: resolved.source,
+            fileCount: resolved.files.length,
+            mainsMatched: mainHits.length,
+            agentsMatched: agentHits.length,
             matched: results.length,
             elapsedMs: Math.round(sw.elapsedMs),
             sortByRelevance: !!filters.sortByRelevance,
@@ -1057,6 +1582,7 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
         "searchConversations: done"
     );
 
+    p.summary("searchConversations");
     return results;
 }
 
@@ -1064,8 +1590,9 @@ export async function searchConversations(filters: SearchFilters): Promise<Searc
  * List conversation summaries (quick overview without full search)
  */
 export async function listConversationSummaries(filters: SearchFilters): Promise<SearchResult[]> {
+    const p = hist();
     const results: SearchResult[] = [];
-    const files = await findConversationFiles(filters);
+    const files = await p.measureAsync("list-summaries.find-files", () => findConversationFiles(filters));
 
     for (const filePath of files) {
         const messages = await parseJsonlFile(filePath);
@@ -1139,6 +1666,7 @@ export async function listConversationSummaries(filters: SearchFilters): Promise
         }
     }
 
+    p.summary("listConversationSummaries");
     return results;
 }
 
@@ -1289,6 +1817,8 @@ export interface SessionListingOptions {
     project?: string;
     /** Exclude subagent sessions (default: true) */
     excludeSubagents?: boolean;
+    /** Discover subagent files only */
+    subagentsOnly?: boolean;
     /** Max results (default: unlimited) */
     limit?: number;
     /** Progress callback: (processed, total, currentFile) */
@@ -1317,7 +1847,8 @@ export interface SessionListingResult {
 }
 
 export async function getSessionListing(options: SessionListingOptions = {}): Promise<SessionListingResult> {
-    const { excludeSubagents = true, limit } = options;
+    const p = hist();
+    const { excludeSubagents = true, subagentsOnly = false, limit } = options;
 
     // Auto-reindex when extraction logic changes
     const cachedVersion = getCacheMeta("metadata_version");
@@ -1337,9 +1868,19 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     // back to resolveProjectFilter(), so "no project" would silently mean "the current
     // directory's project" — the opposite of this option's documented default, and the
     // reason `--all-projects` returned only the local project's sessions.
-    const files = projectDir
-        ? discoverSessionFilesInDir(projectDir, { excludeSubagents })
-        : await discoverSessionFiles({ excludeSubagents, allProjects: true });
+    const files = await p.measureAsync("listing.discover", async () => {
+        if (subagentsOnly) {
+            return discoverSessionFiles({
+                project: options.project,
+                allProjects: !options.project,
+                subagentsOnly: true,
+            });
+        }
+
+        return projectDir
+            ? discoverSessionFilesInDir(projectDir, { excludeSubagents })
+            : await discoverSessionFiles({ excludeSubagents, allProjects: true });
+    });
 
     // 2. Incrementally index: only parse new/changed files.
     // Stat every file in parallel. Sequential `await stat` was the sessions
@@ -1347,26 +1888,29 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
     const total = files.length;
     let processed = 0;
     let indexed = 0;
-    const stats = await Promise.all(
-        files.map(async (filePath) => {
-            try {
-                const fileStat = await stat(filePath);
-                return { filePath, mtime: Math.floor(fileStat.mtimeMs) };
-            } catch {
-                return null;
-            }
-        })
+    const stats = await p.measureAsync("listing.stat", () =>
+        Promise.all(
+            files.map(async (filePath) => {
+                try {
+                    const fileStat = await stat(filePath);
+                    return { filePath, mtime: Math.floor(fileStat.mtimeMs) };
+                } catch {
+                    return null;
+                }
+            })
+        )
     );
 
     // One SELECT for the whole table instead of one query per file — the
     // per-file lookup was ~26ms of the listing across 1.3k files.
     const cachedByPath = new Map(getAllSessionMetadata().map((r) => [r.filePath, r]));
+    const indexEntries = listingIndexSlice(
+        stats.filter((entry): entry is { filePath: string; mtime: number } => entry !== null),
+        limit
+    );
 
-    for (const entry of stats) {
-        if (!entry) {
-            continue;
-        }
-
+    const indexEnd = p.start("listing.index");
+    for (const entry of indexEntries) {
         processed++;
         const { filePath, mtime } = entry;
         const cached = cachedByPath.get(filePath);
@@ -1387,13 +1931,17 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         }
     }
 
+    indexEnd();
+
     // Clean up stale entries for deleted files (scoped to current listing)
     const diskFiles = new Set(files);
-    const cachedPaths = [...cachedByPath.keys()];
-    const cachedPathsInScope = projectDir
-        ? cachedPaths.filter((p) => p.startsWith(projectDir + sep) || p === projectDir)
-        : cachedPaths;
-    const stalePaths = cachedPathsInScope.filter((p) => !diskFiles.has(p));
+    const stalePaths = listingStalePaths({
+        cachedPaths: [...cachedByPath.keys()],
+        diskFiles,
+        projectDir,
+        excludeSubagents,
+        subagentsOnly,
+    });
     if (stalePaths.length > 0) {
         removeSessionMetadataBatch(stalePaths);
     }
@@ -1410,6 +1958,8 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         const tb = b.firstTimestamp ? new Date(b.firstTimestamp).getTime() : 0;
         return tb - ta;
     });
+
+    p.summary("getSessionListing");
 
     return {
         sessions: limit ? sessions.slice(0, limit) : sessions,
@@ -1646,6 +2196,19 @@ export async function extractSessionMetadataFromFile(
     filePath: string,
     mtime: number
 ): Promise<SessionMetadataRecord | null> {
+    if (profileAll()) {
+        return hist().measureAsync("extractSessionMetadata", () =>
+            extractSessionMetadataFromFileUnprofiled(filePath, mtime)
+        );
+    }
+
+    return extractSessionMetadataFromFileUnprofiled(filePath, mtime);
+}
+
+async function extractSessionMetadataFromFileUnprofiled(
+    filePath: string,
+    mtime: number
+): Promise<SessionMetadataRecord | null> {
     const project = extractProjectName(filePath);
     const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
 
@@ -1699,48 +2262,109 @@ export async function extractSessionMetadataFromFile(
 // Ripgrep Full-Content Search
 // =============================================================================
 
+/** Word-shaped needles use rg -w so JSON keys like sessionId are not file hits. */
+export function rgNeedleUsesWordBoundary(query: string): boolean {
+    return /^[A-Za-z0-9_]+$/.test(query);
+}
+
 /**
  * Use ripgrep to find JSONL files containing a query string.
  * Returns file paths of matching sessions — extremely fast.
  */
 export async function rgSearchFiles(
     query: string,
-    options: { project?: string; limit?: number } = {}
+    options: { project?: string; limit?: number; dir?: string } = {}
 ): Promise<string[]> {
-    const searchDir = options.project ? resolveProjectDir(options.project) || PROJECTS_DIR : PROJECTS_DIR;
+    return hist().measureAsync("rgSearchFiles", () => rgSearchFilesUnprofiled(query, options));
+}
+
+function parseRgCountLine(line: string): { path: string; count: number } | null {
+    const idx = line.lastIndexOf(":");
+    if (idx <= 0) {
+        return null;
+    }
+
+    const count = Number(line.slice(idx + 1));
+    if (!Number.isFinite(count)) {
+        return null;
+    }
+
+    return { path: line.slice(0, idx), count };
+}
+
+async function rgSearchFilesDetailed(
+    query: string,
+    options: {
+        project?: string;
+        limit?: number;
+        regex?: boolean;
+        dir?: string;
+        count?: boolean;
+        noWordBoundary?: boolean;
+    } = {}
+): Promise<{ files: string[]; failed: boolean; counts?: Map<string, number> }> {
+    const searchDir = options.dir
+        ? options.dir
+        : options.project
+          ? resolveProjectDir(options.project) || PROJECTS_DIR
+          : PROJECTS_DIR;
     const rg = new Executor({ prefix: "rg" });
+    const args = options.count
+        ? ["-c", "--glob", "*.jsonl", "-i", "--max-count", String(RELEVANCE_MATCH_COUNT_CAP)]
+        : ["-l", "--glob", "*.jsonl", "-i", "--max-count", "1"];
+
+    if (!options.regex) {
+        args.push("-F");
+        if (rgNeedleUsesWordBoundary(query) && !options.noWordBoundary) {
+            args.push("-w");
+        }
+    }
+
+    args.push("--", query, searchDir);
 
     try {
-        const { stdout, stderr, exitCode } = await rg.exec([
-            "-l",
-            "--glob",
-            "*.jsonl",
-            "-i",
-            "-F",
-            "--max-count",
-            "1",
-            "--",
-            query,
-            searchDir,
-        ]);
+        const { stdout, stderr, exitCode } = await rg.exec(args);
 
-        // rg exit 1 = no matches (OK), 2+ = actual error
         if (exitCode > 1) {
             logger.warn(`rgSearchFiles failed (exit ${exitCode}): ${stderr}`);
-            return [];
+            return { files: [], failed: true };
         }
 
-        let files = stdout.split("\n").filter(Boolean);
+        const lines = stdout.split("\n").filter(Boolean);
+        if (options.count) {
+            const counts = new Map<string, number>();
+            const files: string[] = [];
+            for (const line of lines) {
+                const parsed = parseRgCountLine(line);
+                if (!parsed) {
+                    continue;
+                }
 
+                files.push(parsed.path);
+                counts.set(parsed.path, parsed.count);
+            }
+
+            return { files, failed: false, counts };
+        }
+
+        let files = lines;
         if (options.limit && files.length > options.limit) {
             files = files.slice(0, options.limit);
         }
 
-        return files;
+        return { files, failed: false };
     } catch (error) {
         logger.warn(`rgSearchFiles error: ${error}`);
-        return [];
+        return { files: [], failed: true };
     }
+}
+
+async function rgSearchFilesUnprofiled(
+    query: string,
+    options: { project?: string; limit?: number; dir?: string } = {}
+): Promise<string[]> {
+    const { files } = await rgSearchFilesDetailed(query, options);
+    return files;
 }
 
 /**
@@ -1913,7 +2537,8 @@ export interface ConversationStats {
 }
 
 export async function getConversationStats(): Promise<ConversationStats> {
-    const files = await findConversationFiles({});
+    const p = hist();
+    const files = await p.measureAsync("stats-uncached.find-files", () => findConversationFiles({}));
 
     const stats: ConversationStats = {
         totalConversations: 0,
@@ -2020,6 +2645,8 @@ export async function getConversationStats(): Promise<ConversationStats> {
             }
         }
     }
+
+    p.summary("getConversationStats");
 
     return stats;
 }
@@ -2224,6 +2851,14 @@ function mergeTokenUsage(a: TokenUsage | undefined, b: TokenUsage): TokenUsage {
  * Process a file and update cache incrementally
  */
 export async function processFileForCache(filePath: string): Promise<FileStats | null> {
+    if (profileAll()) {
+        return hist().measureAsync("processFileForCache", () => processFileForCacheUnprofiled(filePath));
+    }
+
+    return processFileForCacheUnprofiled(filePath);
+}
+
+async function processFileForCacheUnprofiled(filePath: string): Promise<FileStats | null> {
     try {
         const fileStat = await stat(filePath);
         const mtime = Math.floor(fileStat.mtimeMs);
@@ -2322,6 +2957,7 @@ export async function getConversationStatsWithCache(
         onProgress?: (processed: number, total: number, currentDate?: string) => void;
     } = {}
 ): Promise<ConversationStats> {
+    const p = hist();
     const { forceRefresh = false, dateRange, onProgress } = options;
 
     // If forcing refresh, invalidate today's cache
@@ -2330,7 +2966,7 @@ export async function getConversationStatsWithCache(
     }
 
     // Get all conversation files
-    const files = await findConversationFiles({});
+    const files = await p.measureAsync("stats.find-files", () => findConversationFiles({}));
     const totalFiles = files.length;
 
     // Get cached dates to know what we already have
@@ -2342,6 +2978,7 @@ export async function getConversationStatsWithCache(
 
     // Process files that need updating
     let processed = 0;
+    const processEnd = p.start("stats.process-files");
     for (const filePath of files) {
         const fileStats = await processFileForCache(filePath);
         processed++;
@@ -2350,6 +2987,8 @@ export async function getConversationStatsWithCache(
             onProgress(processed, totalFiles, fileStats.firstDate || undefined);
         }
     }
+
+    processEnd();
 
     // Update last full update timestamp
     setCacheMeta("last_full_update", new Date().toISOString());
@@ -2388,7 +3027,9 @@ export async function getConversationStatsWithCache(
     });
 
     // Get conversation lengths for histogram
-    const conversationLengths = await getConversationLengths();
+    const conversationLengths = await p.measureAsync("stats.lengths", () => getConversationLengths());
+
+    p.summary("getConversationStatsWithCache");
 
     return {
         totalConversations: aggregated.totalConversations,

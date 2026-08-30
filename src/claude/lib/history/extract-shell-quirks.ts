@@ -15,6 +15,7 @@ import { createInterface } from "node:readline";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
 // =============================================================================
@@ -894,6 +895,7 @@ function makeFinding(
 // =============================================================================
 
 export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}): Promise<ExtractShellQuirksResult> {
+    const p = profiler.scope("claude-history");
     const started = Date.now();
     const projectsDir = options.projectsDir ?? PROJECTS_DIR;
     const excerptChars = options.excerptChars ?? 1200;
@@ -904,7 +906,9 @@ export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}
     const scanRoot = resolveScanRoot(projectsDir, options.project);
 
     // Without the prefilter every jsonl under the resolved root is a candidate.
-    let candidates = useRg ? await listCandidateFiles(scanRoot) : await listAllSessionFiles(scanRoot);
+    let candidates = await p.measureAsync("quirks.candidates", () =>
+        useRg ? listCandidateFiles(scanRoot) : listAllSessionFiles(scanRoot)
+    );
 
     if (!includeSubagents) {
         candidates = candidates.filter((f) => !isSubagentPath(f));
@@ -916,6 +920,7 @@ export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}
     let filesWithHits = 0;
     let processed = 0;
 
+    const scanEnd = p.start("quirks.scan");
     for (const file of candidates) {
         processed++;
         options.onProgress?.(processed, candidates.length, file);
@@ -933,6 +938,8 @@ export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}
             break;
         }
     }
+
+    scanEnd();
 
     // Collapse retry storms: the same failing command re-run N times in one session
     // is one lesson, not N — repeatCount keeps the true occurrence total.
@@ -975,6 +982,8 @@ export async function extractShellQuirks(options: ExtractShellQuirksOptions = {}
     for (let i = 0; i < limited.length; i++) {
         limited[i]!.id = `F${String(i + 1).padStart(3, "0")}`;
     }
+
+    p.summary("extractShellQuirks");
 
     return {
         findings: limited,
