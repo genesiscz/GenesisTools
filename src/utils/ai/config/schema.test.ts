@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type AccountEntry, aiConfigSchema, CONFIG_VERSION, emptyConfig, isTaskName, TASK_NAMES } from "./schema";
 import { envKeyNames, hasStoredCredential, isBilled, showsInUsageDashboard } from "./selectors";
 
@@ -121,5 +122,115 @@ describe("selectors", () => {
         expect(hasStoredCredential(base)).toBe(true);
         expect(hasStoredCredential({ ...base, credentials: {} })).toBe(false);
         expect(hasStoredCredential({ ...base, credentials: { authFile: "~/.grok/auth.json" } })).toBe(true);
+    });
+});
+
+describe("forward compatibility: an unknown account field must survive", () => {
+    /**
+     * The regression test for 2026-08-29. A daemon running code from ten days
+     * earlier rewrote the config through its own schema and erased
+     * `organizationUuid`, `accountUuid` and `planContradictedAt` from 10 of 11
+     * accounts, because zod strips unknown keys and `AiConfigStore` parses on the
+     * WRITE path as well as the read path. The login fingerprint went silently
+     * inert as a result.
+     *
+     * "A field this binary predates" is simulated with a name no schema will ever
+     * define, so the test keeps meaning after every future field is added.
+     */
+    const FUTURE_FIELD = "fieldFromANewerBinary";
+
+    test("parse preserves a field this schema does not define", () => {
+        const parsed = aiConfigSchema.parse({
+            version: CONFIG_VERSION,
+            accounts: [{ ...validAccount, [FUTURE_FIELD]: "keep-me" }],
+        });
+
+        expect((parsed.accounts[0] as Record<string, unknown>)[FUTURE_FIELD]).toBe("keep-me");
+    });
+
+    test("a full read-parse -> write-parse round trip does not drop it", () => {
+        // Mirrors AiConfigStore: parse on load, parse again before serialising.
+        const onDisk = {
+            version: CONFIG_VERSION,
+            accounts: [{ ...validAccount, [FUTURE_FIELD]: "keep-me", organizationUuid: "org-uuid" }],
+        };
+        const serialised = SafeJSON.stringify(aiConfigSchema.parse(onDisk));
+        const roundTripped = aiConfigSchema.parse(SafeJSON.parse(serialised));
+        const account = roundTripped.accounts[0] as Record<string, unknown>;
+
+        expect(account[FUTURE_FIELD]).toBe("keep-me");
+        expect(account.organizationUuid).toBe("org-uuid");
+    });
+
+    test("the fields the incident destroyed round-trip explicitly", () => {
+        const parsed = aiConfigSchema.parse({
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    ...validAccount,
+                    organizationUuid: "a874534e-57b4-46ae-8806-d0f0abc392d0",
+                    accountUuid: "71367a38-f74c-42b7-a26e-57f21dc180d6",
+                    planContradictedAt: 1788019653144,
+                },
+            ],
+        });
+
+        expect(parsed.accounts[0].organizationUuid).toBe("a874534e-57b4-46ae-8806-d0f0abc392d0");
+        expect(parsed.accounts[0].accountUuid).toBe("71367a38-f74c-42b7-a26e-57f21dc180d6");
+        expect(parsed.accounts[0].planContradictedAt).toBe(1788019653144);
+    });
+
+    test("being loose does not weaken validation of the fields it DOES define", () => {
+        // A bad id must still be rejected: passthrough is about unknown keys only.
+        expect(() =>
+            aiConfigSchema.parse({
+                version: CONFIG_VERSION,
+                accounts: [{ ...validAccount, id: "not-an-acc-id", [FUTURE_FIELD]: "x" }],
+            })
+        ).toThrow();
+    });
+
+    test("nested account objects preserve unknown fields too", () => {
+        // PR #343 review t19: only the account ENTRY was loose, so `credentials`,
+        // `credentials.secondary` and `billing` still stripped. That is where the
+        // 2026-08-29 incident actually happened — organizationUuid and
+        // accountUuid are `secondary` fields — so the nested schemas need the
+        // same protection.
+        const onDisk = {
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    ...validAccount,
+                    billing: { ...validAccount.billing, [FUTURE_FIELD]: "billing-keep" },
+                    credentials: {
+                        ...validAccount.credentials,
+                        [FUTURE_FIELD]: "creds-keep",
+                        secondary: { accountUuid: "acc-uuid", [FUTURE_FIELD]: "secondary-keep" },
+                    },
+                },
+            ],
+        };
+
+        // Round-tripped, because the write path parses too — that is what erased data.
+        const serialised = SafeJSON.stringify(aiConfigSchema.parse(onDisk));
+        const account = aiConfigSchema.parse(SafeJSON.parse(serialised)).accounts[0];
+        const billing = account.billing as Record<string, unknown>;
+        const credentials = account.credentials as Record<string, unknown>;
+        const secondary = credentials.secondary as Record<string, unknown>;
+
+        expect(billing[FUTURE_FIELD]).toBe("billing-keep");
+        expect(credentials[FUTURE_FIELD]).toBe("creds-keep");
+        expect(secondary[FUTURE_FIELD]).toBe("secondary-keep");
+        expect(secondary.accountUuid).toBe("acc-uuid");
+    });
+
+    test("loose nested objects still reject a defined field of the wrong type", () => {
+        // The negative control: passthrough must not turn into "anything goes".
+        expect(() =>
+            aiConfigSchema.parse({
+                version: CONFIG_VERSION,
+                accounts: [{ ...validAccount, billing: { mode: "not-a-billing-mode" } }],
+            })
+        ).toThrow();
     });
 });

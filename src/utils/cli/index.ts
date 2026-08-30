@@ -1,7 +1,15 @@
 export type { RunToolOpts, RunToolResult } from "./commander";
 export { getVerbosity, isVerbose, runTool } from "./commander";
 export type { ExecResult, ExecutorOptions } from "./executor";
-export { buildCommand, Executor, enhanceHelp, isInteractive, suggestCommand } from "./executor";
+export {
+    buildCommand,
+    Executor,
+    enhanceHelp,
+    formatMissingEnumHelp,
+    isInteractive,
+    suggestCommand,
+    suggestEnumFlag,
+} from "./executor";
 export { isQuietOutput } from "./output-mode";
 export { parseNonNegativeInt } from "./parse";
 export { printLn, writeStdout } from "./stdout";

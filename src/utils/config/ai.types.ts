@@ -33,8 +33,14 @@ export interface AIAccountTokens {
  * injected into the macOS keychain by `tools claude start --keychain` so
  * Claude Code runs fully logged-in, without fighting the primary token
  * chain that usage polling refreshes (refresh tokens are single-use).
+ *
+ * A type alias rather than an interface on purpose: the v4 `secondary` schema is
+ * loose, so its inferred type carries an index signature, and TypeScript grants
+ * an implicit index signature to an alias but never to an interface (an
+ * interface can be augmented later, so it cannot be proven closed). The v3→v4
+ * migration assigns this straight across (review t19).
  */
-export interface AISecondaryLogin {
+export type AISecondaryLogin = {
     accessToken: string;
     refreshToken: string;
     expiresAt?: number; // Unix ms
@@ -44,7 +50,7 @@ export interface AISecondaryLogin {
     accountUuid?: string; // Anthropic account uuid — the keychain sync-back match key
     emailAddress?: string;
     organizationUuid?: string;
-}
+};
 
 export interface AIAccountEntry {
     name: string;
@@ -56,6 +62,16 @@ export interface AIAccountEntry {
     /** Stripe billing-cycle anchor from the OAuth profile; drives the renewal date. */
     subscriptionCreatedAt?: string;
     /**
+     * Identity fingerprint, written on every successful login. A long-lived setup
+     * token cannot read the profile, so this is the only thing that can prove a
+     * pasted token belongs to THIS entry rather than a sibling account. Compared
+     * against the live `anthropic-organization-id` header — see
+     * `claude/lib/account-fingerprint.ts`.
+     */
+    organizationUuid?: string;
+    /** `account.uuid` from the OAuth profile. Only an OAuth login can supply it. */
+    accountUuid?: string;
+    /**
      * `organization.organization_type` from the OAuth profile: "claude_max",
      * "claude_pro", "claude_free", … A free org cannot run Claude Code at all
      * (inference answers `oauth_not_allowed_for_organization`), which the usage
@@ -66,6 +82,16 @@ export interface AIAccountEntry {
     subscriptionStatus?: string;
     /** When the plan fields were last read from the profile (Unix ms). */
     subscriptionCheckedAt?: number;
+    /**
+     * When a live probe CONTRADICTED the stored plan reading: the org still
+     * permits OAuth, so it cannot be the dead free org the plan fields describe.
+     *
+     * Recorded rather than erasing those fields, because the write-back path
+     * deliberately ignores `undefined` (a partial update must never wipe stored
+     * data), and because "we saw evidence against this" is the honest statement
+     * — the probe proves the org is alive but cannot name the new plan.
+     */
+    planContradictedAt?: number;
 }
 
 // ── Task types (from types.ts) ──

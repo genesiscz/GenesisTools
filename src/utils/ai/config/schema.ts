@@ -39,14 +39,22 @@ export const secureRefSchema = z.object({
 export const maybeSecretSchema = z.union([z.string(), secureRefSchema]);
 export type MaybeSecretValue = z.infer<typeof maybeSecretSchema>;
 
-export const accountBillingSchema = z.object({
+/**
+ * Loose for the same reason as `accountEntrySchema` below, which see: an older
+ * process rewrites this file through `aiConfigSchema.parse()` and strips every
+ * key its schema predates. The three nested account schemas need it just as much
+ * as the entry does — `organizationUuid` and `accountUuid`, two of the fields the
+ * 2026-08-29 incident erased, live under `credentials.secondary`, so making only
+ * the top level loose left the actual scene of that bug strict (review t19).
+ */
+export const accountBillingSchema = z.looseObject({
     mode: z.enum(["subscription", "metered", "free"]),
     plan: z.string().optional(),
     /** Billing-cycle anchor from the provider profile; drives renewal display. */
     anchor: z.string().optional(),
 });
 
-export const secondaryLoginSchema = z.object({
+export const secondaryLoginSchema = z.looseObject({
     accountUuid: z.string().optional(),
     accessToken: maybeSecretSchema.optional(),
     refreshToken: maybeSecretSchema.optional(),
@@ -58,7 +66,7 @@ export const secondaryLoginSchema = z.object({
     organizationUuid: z.string().optional(),
 });
 
-export const accountCredentialsSchema = z.object({
+export const accountCredentialsSchema = z.looseObject({
     apiKey: maybeSecretSchema.optional(),
     accessToken: maybeSecretSchema.optional(),
     refreshToken: maybeSecretSchema.optional(),
@@ -82,7 +90,30 @@ export const accountCredentialsSchema = z.object({
  */
 export const useEnvApiKeySchema = z.union([z.boolean(), z.string(), z.array(z.string())]);
 
-export const accountEntrySchema = z.object({
+/**
+ * LOOSE ON PURPOSE — an unknown key here must SURVIVE, not be silently deleted.
+ *
+ * zod strips unknown keys by default, and `AiConfigStore` parses the document on
+ * the WRITE path too (`aiConfigSchema.parse(config)` before serialising). Put
+ * together, any process running older code rewrites the file without every field
+ * its schema predates. That is not hypothetical: on 2026-08-29 a daemon running
+ * since Aug 19 erased `organizationUuid`, `accountUuid` and `planContradictedAt`
+ * from 10 of 11 accounts within minutes of them being written, which left the
+ * login fingerprint silently inert — `orgMismatch` has nothing to compare
+ * against, so `login-long` would have accepted a wrong-account token again.
+ *
+ * The same class of bug already has armor one layer down: `_schemaVersion` exists
+ * so a pre-v4 binary cannot rewrite this file in the v3 shape. This is that
+ * protection at the field level, and it is why the account entry must stay loose
+ * even though every other schema here is strict. A rolling upgrade, a
+ * long-running daemon and a worktree on an older branch are all normal, and none
+ * of them may cost the user data.
+ *
+ * Trade-off accepted: a genuine typo in a hand-edited config is now preserved
+ * instead of dropped. Silently keeping a stray key is recoverable; silently
+ * deleting a real credential field is not.
+ */
+export const accountEntrySchema = z.looseObject({
     /** Immutable. Refs and vault paths are built from this, so renaming is safe. */
     id: z.string().regex(/^acc_[a-z0-9][a-z0-9_-]*$/),
     /** Human handle shown in CLIs; renameable without rewriting refs. */
@@ -104,12 +135,31 @@ export const accountEntrySchema = z.object({
     /** Escape hatch for selector exceptions; empty in the common case. */
     overrides: z.record(z.string(), z.unknown()).optional(),
     subscriptionCreatedAt: z.string().optional(),
+    /**
+     * Identity fingerprint, written on every successful login. A long-lived setup
+     * token cannot read the profile, so `organizationUuid` is the only thing that
+     * can prove a pasted token belongs to THIS entry rather than a sibling
+     * account — see `claude/lib/account-fingerprint.ts`.
+     */
+    organizationUuid: z.string().optional(),
+    /** `account.uuid` from the OAuth profile. Only an OAuth login can supply it. */
+    accountUuid: z.string().optional(),
     /** `organization_type` from the OAuth profile; a free org cannot run Claude Code. */
     subscriptionPlan: z.string().optional(),
     /** `subscription_status` from the OAuth profile ("active", "canceled", …). */
     subscriptionStatus: z.string().optional(),
     /** When the two fields above were last read (Unix ms). */
     subscriptionCheckedAt: z.number().optional(),
+    /**
+     * When a live probe CONTRADICTED the stored plan reading: the org still
+     * permits OAuth, so it cannot be the dead free org the plan fields describe.
+     *
+     * Recorded rather than erasing those fields, because the write-back path
+     * deliberately ignores `undefined` (a partial update must never wipe stored
+     * data), and because "we saw evidence against this" is the honest statement
+     * — the probe proves the org is alive but cannot name the new plan.
+     */
+    planContradictedAt: z.number().optional(),
 });
 
 export const accountRefSchema = z.string().regex(/^@account\/acc_[a-z0-9][a-z0-9_-]*$/);

@@ -92,6 +92,14 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
         entry.subscriptionCreatedAt = account.subscriptionCreatedAt;
     }
 
+    if (account.organizationUuid) {
+        entry.organizationUuid = account.organizationUuid;
+    }
+
+    if (account.accountUuid) {
+        entry.accountUuid = account.accountUuid;
+    }
+
     if (account.subscriptionPlan) {
         entry.subscriptionPlan = account.subscriptionPlan;
     }
@@ -102,6 +110,10 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
 
     if (account.subscriptionCheckedAt) {
         entry.subscriptionCheckedAt = account.subscriptionCheckedAt;
+    }
+
+    if (account.planContradictedAt) {
+        entry.planContradictedAt = account.planContradictedAt;
     }
 
     // v3 kept this on the account; v4 does too, with app-default references as a

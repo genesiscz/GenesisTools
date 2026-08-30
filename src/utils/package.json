@@ -15,6 +15,11 @@
             "types": "./DashboardApp/index.ts",
             "default": "./DashboardApp/index.ts"
         },
+        "./GenesisTools": {
+            "bun": "./GenesisTools/index.ts",
+            "types": "./GenesisTools/index.ts",
+            "default": "./GenesisTools/index.ts"
+        },
         "./Stopwatch": {
             "bun": "./Stopwatch.ts",
             "types": "./Stopwatch.ts",

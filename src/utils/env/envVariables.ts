@@ -243,6 +243,12 @@ export const env = {
         getTerminalKeys: () => ["LANG", "LC_ALL", "LC_CTYPE"] as const,
     },
 
+    profiling: {
+        getProfile: () => getTrimmed("PROFILE"),
+        getToStderr: () => getTrimmed("PROFILE_TO_STDERR"),
+        getToFile: () => getTrimmed("PROFILE_TO_FILE"),
+    },
+
     log: {
         isTrace: () => isFlag("LOG_TRACE"),
         isDebug: () => isFlag("LOG_DEBUG"),

@@ -8,7 +8,12 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { enhanceHelp } from "@genesiscz/utils/cli";
-import { setSuggestCommandProgram, suggestCommand } from "@genesiscz/utils/cli/executor";
+import {
+    formatMissingEnumHelp,
+    setSuggestCommandProgram,
+    suggestCommand,
+    suggestEnumFlag,
+} from "@genesiscz/utils/cli/executor";
 import { Command } from "commander";
 
 const LONG =
@@ -237,5 +242,44 @@ describe("suggestCommand", () => {
         expect(suggestWithArgv(["--verbose", "fetch"], { replaceCommand: ["search"] })).toBe(
             "tools x --verbose fetch search"
         );
+    });
+});
+
+describe("formatMissingEnumHelp", () => {
+    test("names every possible value and prints the suggestion on the next line", () => {
+        expect(
+            formatMissingEnumHelp({
+                flag: "--detail",
+                values: ["phases", "all"],
+                suggestion: "tools config profiling --detail phases",
+            })
+        ).toBe("--detail requires a value. Possible: phases, all\ntools config profiling --detail phases");
+    });
+});
+
+describe("suggestEnumFlag", () => {
+    afterEach(() => {
+        setSuggestCommandProgram(undefined);
+    });
+
+    test("replaces a bare flag with flag plus the first possible value", () => {
+        const program = new Command("tools x");
+        program.command("profiling").option("--scopes [list]", "names");
+        setSuggestCommandProgram(program);
+
+        const saved = process.argv;
+        process.argv = ["bun", "script", "profiling", "--scopes"];
+
+        try {
+            expect(
+                suggestEnumFlag("tools x profiling", "--scopes", ["claude-history", "du"], {
+                    subcommand: ["profiling"],
+                })
+            ).toBe(
+                "--scopes requires a value. Possible: claude-history, du\ntools x profiling --scopes claude-history"
+            );
+        } finally {
+            process.argv = saved;
+        }
     });
 });

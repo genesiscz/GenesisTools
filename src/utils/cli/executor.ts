@@ -332,6 +332,49 @@ export function suggestCommand(
     return `${toolName} ${quoted.join(" ")}`;
 }
 
+/**
+ * Help text for a flag that takes a closed set of values and was passed empty,
+ * or passed something outside the set. Callers print this and return with
+ * exitCode 1 (non-TTY). TTY callers prompt instead.
+ *
+ * `given` matters: the same path handles an invalid value, and "requires a
+ * value" contradicts the input the user actually typed (PR #343 review t32).
+ */
+export function formatMissingEnumHelp(opts: {
+    flag: string;
+    values: readonly string[];
+    suggestion: string;
+    given?: string;
+}): string {
+    const lead =
+        opts.given === undefined || opts.given === ""
+            ? `${opts.flag} requires a value.`
+            : `${opts.flag} does not accept "${opts.given}".`;
+    return `${lead} Possible: ${opts.values.join(", ")}\n${opts.suggestion}`;
+}
+
+/**
+ * `formatMissingEnumHelp` plus a `suggestCommand` line that fills the first possible value.
+ */
+export function suggestEnumFlag(
+    toolName: string,
+    flag: string,
+    values: readonly string[],
+    modifications?: { subcommand?: string[]; given?: string }
+): string {
+    const example = values[0] ?? "<value>";
+    return formatMissingEnumHelp({
+        flag,
+        values,
+        given: modifications?.given,
+        suggestion: suggestCommand(toolName, {
+            remove: [flag],
+            add: [flag, example],
+            subcommand: modifications?.subcommand,
+        }),
+    });
+}
+
 export interface ExecResult {
     success: boolean;
     stdout: string;
