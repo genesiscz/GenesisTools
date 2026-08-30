@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { agentSessionIds } from "@genesiscz/utils/agent-host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -27,10 +28,13 @@ const RECORDED_COMMANDS = new Set([
  * Best-effort identity of the terminal/session running this command — lets
  * record-plan flag commands spliced in by OTHER concurrent sessions.
  * Same-session subagents share these envs and stay indistinguishable.
+ * Every agent host contributes its id, so two concurrent grok or codex sessions
+ * are told apart the same way two Claude Code sessions are.
  */
 export function recordSource(): string {
-    const e = process.env;
-    const parts = [e.CLAUDE_CODE_SESSION_ID, e.ITERM_SESSION_ID, e.TERM_SESSION_ID, e.TMUX_PANE].filter(Boolean);
+    const e = env.getProcessEnv();
+    const agentIds = agentSessionIds(e).map((s) => s.id);
+    const parts = [...agentIds, e.ITERM_SESSION_ID, e.TERM_SESSION_ID, e.TMUX_PANE].filter(Boolean);
     return parts.length ? parts.join(":") : "unknown";
 }
 

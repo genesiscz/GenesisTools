@@ -48,13 +48,100 @@ describe("resolveSession", () => {
             {
                 GENESIS_TOOLS_HOME: home,
                 GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: undefined,
                 CLAUDE_CODE_SESSION_ID: undefined,
+                CODEX_THREAD_ID: undefined,
                 GROK_SESSION_ID: "from-grok",
             },
             () => {
                 const resolved = resolveSession(undefined);
                 expect(resolved.session).toBe("from-grok");
+                expect(resolved.source).toBe("host-new");
+            }
+        );
+    });
+
+    test("falls back to CODEX_THREAD_ID when the others are unset", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-sess-"));
+
+        await env.testing.withOverrides(
+            {
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: undefined,
+                CLAUDE_CODE_SESSION_ID: undefined,
+                CODEX_THREAD_ID: "from-codex",
+                GROK_SESSION_ID: undefined,
+            },
+            () => {
+                const resolved = resolveSession(undefined);
+                expect(resolved.session).toBe("from-codex");
+                expect(resolved.source).toBe("host-new");
+            }
+        );
+    });
+
+    test("GT_RENDEZVOUS_SESSION beats the worker's own host id", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-sess-"));
+
+        await env.testing.withOverrides(
+            {
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: "parent-swarm",
+                CLAUDE_CODE_SESSION_ID: undefined,
+                CODEX_THREAD_ID: "from-codex",
+                GROK_SESSION_ID: undefined,
+            },
+            () => {
+                const resolved = resolveSession(undefined);
+                expect(resolved.session).toBe("parent-swarm");
                 expect(resolved.source).toBe("env");
+            }
+        );
+    });
+
+    test("a worker joins the parent's live swarm instead of starting its own", async () => {
+        // A codex worker spawned from Claude Code inherits CLAUDE_CODE_SESSION_ID
+        // and adds CODEX_THREAD_ID. Only the parent's swarm exists on disk, so
+        // that is the one to join — binding to the thread id would orphan it.
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-sess-"));
+        mkdirSync(join(home, ".genesis-tools", "agents", "parent-session"), { recursive: true });
+
+        await env.testing.withOverrides(
+            {
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: undefined,
+                CLAUDE_CODE_SESSION_ID: "parent-session",
+                CODEX_THREAD_ID: "own-thread",
+                GROK_SESSION_ID: undefined,
+            },
+            () => {
+                const resolved = resolveSession(undefined);
+                expect(resolved.session).toBe("parent-session");
+                expect(resolved.source).toBe("host-swarm");
+            }
+        );
+    });
+
+    test("an existing swarm wins even when it is not the first host id", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-sess-"));
+        mkdirSync(join(home, ".genesis-tools", "agents", "own-thread"), { recursive: true });
+
+        await env.testing.withOverrides(
+            {
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: undefined,
+                CLAUDE_CODE_SESSION_ID: "stale-parent",
+                CODEX_THREAD_ID: "own-thread",
+                GROK_SESSION_ID: undefined,
+            },
+            () => {
+                const resolved = resolveSession(undefined);
+                expect(resolved.session).toBe("own-thread");
+                expect(resolved.source).toBe("host-swarm");
             }
         );
     });
@@ -69,7 +156,9 @@ describe("resolveSession", () => {
             {
                 GENESIS_TOOLS_HOME: home,
                 GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: undefined,
                 CLAUDE_CODE_SESSION_ID: undefined,
+                CODEX_THREAD_ID: undefined,
                 GROK_SESSION_ID: undefined,
             },
             () => {

@@ -1,8 +1,41 @@
 import { hostname } from "node:os";
+import { resolveAgentHost } from "@genesiscz/utils/agent-host";
+import { env } from "@genesiscz/utils/env";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import type { GitContext, TodoContext } from "./types";
 
 export { findProjectRoot };
+
+/**
+ * The session a todo belongs to.
+ *
+ * Callers used to have to interpolate `$CLAUDE_CODE_SESSION_ID` themselves, which
+ * expands to nothing under grok or codex. `current` (or an omitted flag, where
+ * the command defaults it) asks the host instead.
+ */
+export function resolveSessionOption(value: string | undefined): string | undefined {
+    if (value && value !== "current") {
+        return value;
+    }
+
+    if (value === undefined) {
+        return undefined;
+    }
+
+    const sessionId = resolveAgentHost(env.getProcessEnv()).sessionId;
+    if (!sessionId) {
+        // Returning undefined here would drop the filter and list every todo in
+        // the project — the opposite of what `--session current` asked for.
+        throw new Error("No current agent session to resolve. Pass an explicit session id instead of 'current'.");
+    }
+
+    return sessionId;
+}
+
+/** The session id to stamp on new records: the explicit flag, else the host's. */
+export function defaultSessionId(value: string | undefined): string | undefined {
+    return resolveSessionOption(value) ?? resolveAgentHost(env.getProcessEnv()).sessionId ?? undefined;
+}
 
 async function git(args: string[], cwd: string): Promise<string | null> {
     try {

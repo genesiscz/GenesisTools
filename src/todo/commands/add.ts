@@ -1,4 +1,4 @@
-import { findProjectRoot } from "@app/todo/lib/context";
+import { defaultSessionId, findProjectRoot } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLinks } from "@app/todo/lib/links";
 import { parseReminderTime } from "@app/todo/lib/reminders";
@@ -43,7 +43,7 @@ export function createAddCommand(): Command {
         .option("-r, --reminder <time>", "Reminder time (repeatable)", collect, [])
         .option("--at <datetime>", "Event time for calendar sync (ISO datetime or relative like '3h')")
         .option("-l, --link <link>", "Link (repeatable): pr:123, issue:456, ado:789, URL", collect, [])
-        .option("-s, --session-id <id>", "Session ID for tracking")
+        .option("-s, --session-id <id>", "Session ID for tracking (default: the current agent session)")
         .option("-a, --attach <path>", "File path to attach (repeatable)", collect, [])
         .option("--md <path>", "Markdown file to inline as content")
         .option("--project <path>", "Override project root")
@@ -145,7 +145,7 @@ export function createAddCommand(): Command {
                 links,
                 reminders: reminders.length > 0 ? reminders : undefined,
                 at,
-                sessionId: opts.sessionId,
+                sessionId: defaultSessionId(opts.sessionId),
                 attachFiles: attachFiles.length > 0 ? attachFiles : undefined,
                 mdFile: opts.md,
             });

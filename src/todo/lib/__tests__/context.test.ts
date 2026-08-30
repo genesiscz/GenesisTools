@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { captureContext, findProjectRoot } from "../context";
+import { env } from "@genesiscz/utils/env";
+import { captureContext, defaultSessionId, findProjectRoot, resolveSessionOption } from "../context";
 
 describe("findProjectRoot", () => {
     it("finds .git directory walking up from a nested path", () => {
@@ -63,5 +64,36 @@ describe("captureContext", () => {
         if (ctx.git?.remote) {
             expect(ctx.git.remote).toMatch(/github\.com|gitlab|bitbucket|origin/);
         }
+    });
+});
+
+describe("resolveSessionOption", () => {
+    it("passes an explicit id through and leaves an omitted option alone", () => {
+        expect(resolveSessionOption("abc123")).toBe("abc123");
+        expect(resolveSessionOption(undefined)).toBeUndefined();
+    });
+
+    it("resolves 'current' from the host session", async () => {
+        await env.testing.withOverrides({ CLAUDE_CODE_SESSION_ID: "sess-1", CLAUDECODE: "1" }, () => {
+            expect(resolveSessionOption("current")).toBe("sess-1");
+        });
+    });
+
+    it("throws when 'current' cannot resolve, instead of widening the query", async () => {
+        // PR #343 review t31: returning undefined dropped the filter, so
+        // `--session current` listed every todo in the project.
+        await env.testing.withOverrides(
+            {
+                CLAUDE_CODE_SESSION_ID: undefined,
+                CLAUDECODE: undefined,
+                CODEX_THREAD_ID: undefined,
+                CODEX_CI: undefined,
+                GROK_SESSION_ID: undefined,
+            },
+            () => {
+                expect(() => resolveSessionOption("current")).toThrow(/No current agent session/);
+                expect(defaultSessionId(undefined)).toBeUndefined();
+            }
+        );
     });
 });

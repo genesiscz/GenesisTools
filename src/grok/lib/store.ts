@@ -22,6 +22,8 @@ export interface GrokSessionMeta {
     readOnly: boolean;
     turns: number;
     createdAt: string;
+    /** The agents-bus swarm of the session that started this worker, if any. */
+    rendezvousSession?: string;
     lastTurn?: GrokTurnRecord;
 }
 

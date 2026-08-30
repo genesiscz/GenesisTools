@@ -95,11 +95,16 @@ async function resolveSessionIds(
 
     // 3. --current flag
     if (opts.current) {
-        const envId = getAgentRuntimeContext().sessionId;
+        // Deliberately Claude-only: the id is looked up in ~/.claude/projects, so a
+        // grok or codex session id would resolve to nothing and report it as a
+        // missing transcript instead of the wrong host.
+        const ctx = getAgentRuntimeContext();
+        const envId = ctx.agent === "claude-code" ? ctx.sessionId : null;
         if (!envId) {
+            const detected = ctx.agent === "unknown" ? "no agent session" : ctx.agent;
             throw new Error(
-                "CLAUDE_CODE_SESSION_ID environment variable is not set. " +
-                    "Use --current only when running inside a Claude Code session."
+                `--current needs a Claude Code session (detected: ${detected}). ` +
+                    "Pass the session id as an argument, or use --session <id>."
             );
         }
         const session = await ClaudeSession.fromSessionId(envId, encodedProject);

@@ -34,9 +34,10 @@ There is no separate `register` command — `login` auto-registers on first use 
 Resolves in order:
 
 1. `--session <id>` explicit
-2. `$GENESIS_AGENTS_SESSION`, then `$CLAUDE_CODE_SESSION_ID`, then `$GROK_SESSION_ID`
-3. Single session active (feed touched) in the last 60s
-4. Otherwise: friendly error asking for `--session` or one of those env vars
+2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok run` — the parent saying which swarm to join)
+3. The host session id: `$CLAUDE_CODE_SESSION_ID`, `$CODEX_THREAD_ID`, `$GROK_SESSION_ID`. When several are set (a worker inherits its parent's), the one whose swarm ALREADY EXISTS wins, so a worker joins its parent instead of starting an orphan swarm. If none exists, the first present id creates one.
+4. Single session active (feed touched) in the last 60 seconds
+5. Otherwise: a friendly error asking for `--session` or one of those env vars
 
 The **main** agent's login stream is the swarm inbox: it receives every `message` except its own sends, so a parent `monitor` on `tools agents login --agent-main` sees peer-to-peer hops. Non-main agents still only see mail addressed to them (plus broadcasts).
 

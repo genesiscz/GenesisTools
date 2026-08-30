@@ -1,4 +1,4 @@
-import { findProjectRoot } from "@app/todo/lib/context";
+import { findProjectRoot, resolveSessionOption } from "@app/todo/lib/context";
 import { formatTodo } from "@app/todo/lib/format";
 import { parseLink } from "@app/todo/lib/links";
 import { parseReminderTime } from "@app/todo/lib/reminders";
@@ -34,7 +34,7 @@ export function createEditCommand(): Command {
         .option("--add-reminder <time>", "Add a reminder", collect, [])
         .option("--at <datetime>", "Set event time for calendar sync")
         .option("--add-link <link>", "Add a link", collect, [])
-        .option("--session-id <id>", "Set session ID")
+        .option("--session-id <id>", "Set session ID, or 'current' for this agent session")
         .addOption(new Option("--sync-to <target>", "Auto-sync reminders").choices(["calendar", "reminders", "both"]))
         .addOption(new Option("-f, --format <format>", "Output format").choices(["ai", "json", "md", "table"]))
         .option("--colors", "Force colorized output even in non-TTY")
@@ -63,7 +63,7 @@ export function createEditCommand(): Command {
             }
 
             if (opts.sessionId) {
-                patch.sessionId = opts.sessionId;
+                patch.sessionId = resolveSessionOption(opts.sessionId);
             }
 
             if (opts.at) {

@@ -1,5 +1,6 @@
 import { closeSync, openSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent-host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -88,13 +89,19 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         throw new Error(`Codex session "${options.name}" is already active (pid ${existing.daemonPid})`);
     }
 
+    // Any host session works as the parent swarm, not just Claude Code — grok and
+    // codex publish their own ids and used to be turned away here.
+    // Assigned first, host second: a nested worker that preferred its own host
+    // id would put its children in a swarm its parent is not in.
     const rendezvousSession =
         options.rendezvousSession ??
-        env.ai.getByEnvKey("CLAUDE_CODE_SESSION_ID") ??
-        env.getTrimmed("GT_RENDEZVOUS_SESSION");
+        assignedSessionId(env.getProcessEnv()) ??
+        resolveAgentHost(env.getProcessEnv()).sessionId;
     const agentsEnabled = options.agents ?? true;
     if (agentsEnabled && !rendezvousSession) {
-        throw new Error("A parent agents session is required. Run from Claude Code or pass --session <id>.");
+        throw new Error(
+            "A parent agents session is required. Run from a Claude Code, Codex or grok session, or pass --session <id>."
+        );
     }
 
     const codexVersion = await detectCodexVersion();

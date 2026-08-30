@@ -9,6 +9,7 @@
 import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { glob } from "glob";
 import { PROJECTS_DIR, resolveProjectFilter } from "./projects";
 import { isSubagentFile } from "./session.utils";
@@ -31,6 +32,12 @@ export interface DiscoveryOptions {
  * Uses glob for flexible matching. For known project dirs, prefer `discoverSessionFilesInDir`.
  */
 export async function discoverSessionFiles(options: DiscoveryOptions = {}): Promise<string[]> {
+    return profiler
+        .scope("claude-history")
+        .measureAsync("discoverSessionFiles", () => discoverSessionFilesUnprofiled(options));
+}
+
+async function discoverSessionFilesUnprofiled(options: DiscoveryOptions = {}): Promise<string[]> {
     const { allProjects = false, subagentsOnly = false } = options;
     const patterns: string[] = [];
 

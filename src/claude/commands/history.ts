@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { extractShellQuirks, renderShellQuirksMarkdown } from "@app/claude/lib/history/extract-shell-quirks";
+import { HISTORY_TABLE_HEADERS, historyTablePlainRow } from "@app/claude/lib/history/format-table";
 import {
     type AssistantMessage,
     type ConversationMessage,
@@ -17,19 +18,35 @@ import {
 } from "@app/claude/lib/history/search";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
-import { formatSessionAge } from "@genesiscz/utils/claude/session-display";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
+import { profiler } from "@genesiscz/utils/profile";
 import * as p from "@genesiscz/utils/prompts/p";
-import { truncateText } from "@genesiscz/utils/string";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import { spawn } from "bun";
 import chalk from "chalk";
 import type { Command } from "commander";
 import pc from "picocolors";
+
+/**
+ * The current Claude Code session id, or an error naming the host we actually
+ * found. --exclude-current matches against Claude transcripts, so accepting a
+ * grok or codex id would quietly exclude nothing at all.
+ */
+function claudeSessionIdOrThrow(): string {
+    const ctx = getAgentRuntimeContext();
+    if (ctx.agent === "claude-code" && ctx.sessionId) {
+        return ctx.sessionId;
+    }
+
+    const detected = ctx.agent === "unknown" ? "no agent session" : ctx.agent;
+    throw new Error(
+        `--exclude-current needs a Claude Code session (detected: ${detected}). Use --exclude-session <id> instead.`
+    );
+}
 
 // =============================================================================
 // Output Formatting
@@ -147,18 +164,18 @@ function formatResultsAsTable(results: SearchResult[], filters: SearchFilters): 
     const queryDesc = filters.query ? `matching "${filters.query}"` : "recent sessions";
     renderCliHeader("History", queryDesc);
 
-    const table = createBoxTable(["ID", "TITLE", "BRANCH", "DATE", "STATUS"]);
+    const table = createBoxTable([...HISTORY_TABLE_HEADERS]);
 
     for (const result of results) {
-        const title = result.customTitle || result.summary || "(unnamed)";
-        const shortId = result.sessionId.slice(0, 8);
+        const [shortId, project, title, branch, age, status] = historyTablePlainRow(result);
 
         table.push([
             pc.white(pc.bold(shortId)),
-            pc.white(truncateText(title, 36)),
-            result.gitBranch ? pc.magenta(truncateText(result.gitBranch, 18)) : pc.dim("—"),
-            formatSessionAge(result.timestamp.toISOString()),
-            result.isSubagent ? formatDotStatus("dim", "agent") : formatDotStatus("ok", "main"),
+            project === "—" ? pc.dim("—") : pc.blue(project),
+            pc.white(title),
+            branch === "—" ? pc.dim("—") : pc.magenta(branch),
+            age,
+            status === "agent" ? formatDotStatus("dim", "agent") : formatDotStatus("ok", "main"),
         ]);
     }
 
@@ -245,7 +262,18 @@ export function registerHistoryCommand(program: Command): void {
         .option("-i, --interactive", "Interactive mode with prompts")
         .option("-p, --project <name>", "Filter by project name")
         .option("--all", "Search all projects (ignore cwd)")
-        .option("-f, --file <pattern>", "Filter by file path pattern")
+        .option(
+            "-f, --file <pattern>",
+            "Match tool-call file paths and tool inputs (repeatable)",
+            (value: string, previous: string[]) => [...previous, value],
+            [] as string[]
+        )
+        .option(
+            "--files <pattern>",
+            "Same as --file (repeatable)",
+            (value: string, previous: string[]) => [...previous, value],
+            [] as string[]
+        )
         .option("-t, --tool <name>", "Filter by tool name (Edit, Write, Bash, etc.)")
         .option("--since <date>", "Filter by date (e.g., '7 days ago', 'yesterday')")
         .option("--until <date>", "Filter until date")
@@ -257,7 +285,10 @@ export function registerHistoryCommand(program: Command): void {
         .option("--exclude-agents", "Exclude subagent conversations")
         .option("--exclude-thinking", "Exclude thinking blocks from search")
         .option("--format <type>", "Output format: ai (default), json", "ai")
-        .option("--summary-only", "Search only conversation titles/summaries (faster)")
+        .option(
+            "--summary-only",
+            "Search the metadata cache only: titles, summaries and the first 5000 chars of user text (faster)"
+        )
         .option("--exclude-current", "Exclude current session (uses $CLAUDE_CODE_SESSION_ID)")
         .option("--exclude-session <id>", "Exclude specific session ID from results")
         .option("--sort-relevance", "Sort results by relevance score instead of date")
@@ -279,20 +310,22 @@ export function registerHistoryCommand(program: Command): void {
                         if (project) {
                             // For encoded dirs like "-Users-Martin-Projects-Foo", show just the leaf
                             const displayName = project.startsWith("-") ? basename(process.cwd()) : project;
-                            out.println(
+                            out.printlnErr(
                                 chalk.dim(`Auto-detected project: ${displayName} (use --all to search all projects)`)
                             );
                         }
                     }
 
+                    // Claude-only, like --current in summarize: the id is matched against
+                    // Claude transcripts, so another host's id would silently exclude nothing.
                     const currentSessionId =
-                        options.excludeSession ||
-                        (options.excludeCurrent ? (getAgentRuntimeContext().sessionId ?? undefined) : undefined);
+                        options.excludeSession || (options.excludeCurrent ? claudeSessionIdOrThrow() : undefined);
 
+                    const fileArgs = [...(options.file ?? []), ...(options.files ?? [])];
                     filters = {
                         query,
                         project: options.all ? undefined : project,
-                        file: options.file,
+                        files: fileArgs.length > 0 ? fileArgs : undefined,
                         tool: options.tool,
                         since: options.since ? parseDate(options.since) : undefined,
                         until: options.until ? parseDate(options.until) : undefined,
@@ -313,9 +346,14 @@ export function registerHistoryCommand(program: Command): void {
                     };
                 }
 
+                const p = profiler.scope("claude-history");
                 const results = options.listSummaries
-                    ? await listConversationSummaries(filters)
-                    : await searchConversations(filters);
+                    ? await p.measureAsync("history.list-summaries", () => listConversationSummaries(filters))
+                    : await p.measureAsync("history.search", () => searchConversations(filters));
+                // No p.summary() here: both callees already summarise the same
+                // cached `claude-history` scope at each return, so a second call
+                // printed and persisted every row twice (PR #343 review t3 round
+                // 13). Summary ownership stays in the library, with the timers.
 
                 if (results.length === 0) {
                     out.println(chalk.yellow("No conversations found matching your criteria."));
@@ -417,19 +455,21 @@ export function registerHistoryCommand(program: Command): void {
                 out.printlnErr(pc.dim("Scanning Claude session JSONLs for zsh/bash shell quirks…"));
 
                 const maxFindings = options.max ? parseInt(options.max, 10) : undefined;
-                const result = await extractShellQuirks({
-                    project: scanAll ? undefined : project,
-                    includeSubagents: !options.excludeAgents,
-                    includeRuleCodification: options.ruleCodification !== false,
-                    dedupe: options.dedupe !== false,
-                    limit: maxFindings && maxFindings > 0 ? maxFindings : undefined,
-                    excerptChars: parseInt(options.excerpt, 10) || 1200,
-                    onProgress: (done, total, file) => {
-                        if (done === total || done % 25 === 0) {
-                            out.printlnErr(pc.dim(`  ${done}/${total}  ${basename(file)}`));
-                        }
-                    },
-                });
+                const result = await profiler.scope("claude-history").measureAsync("history.extract-shell-quirks", () =>
+                    extractShellQuirks({
+                        project: scanAll ? undefined : project,
+                        includeSubagents: !options.excludeAgents,
+                        includeRuleCodification: options.ruleCodification !== false,
+                        dedupe: options.dedupe !== false,
+                        limit: maxFindings && maxFindings > 0 ? maxFindings : undefined,
+                        excerptChars: parseInt(options.excerpt, 10) || 1200,
+                        onProgress: (done, total, file) => {
+                            if (done === total || done % 25 === 0) {
+                                out.printlnErr(pc.dim(`  ${done}/${total}  ${basename(file)}`));
+                            }
+                        },
+                    })
+                );
 
                 out.printlnErr(
                     pc.green(

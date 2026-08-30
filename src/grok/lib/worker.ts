@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent-host";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { defaultWorkerHome, turnErrPath, turnLogPath } from "./paths";
@@ -62,9 +63,17 @@ export interface TurnResult {
  */
 export function buildTurnEnv(
     baseEnv: Record<string, string | undefined>,
-    workerHome: string
+    workerHome: string,
+    rendezvousSession?: string | null
 ): Record<string, string | undefined> {
-    return { ...baseEnv, GROK_HOME: workerHome, ...ISOLATION_ENV };
+    return {
+        ...baseEnv,
+        GROK_HOME: workerHome,
+        // The swarm the worker must join. Without it the worker would fall back
+        // to a host session id and could start a swarm its parent is not in.
+        ...(rendezvousSession ? { GT_RENDEZVOUS_SESSION: rendezvousSession } : {}),
+        ...ISOLATION_ENV,
+    };
 }
 
 /** Arguments for the first turn of a session. */
@@ -213,7 +222,7 @@ async function runTurn(
         const proc = Bun.spawn({
             cmd: [binary, ...args],
             cwd: meta.cwd,
-            env: buildTurnEnv(env.getProcessEnv(), meta.workerHome),
+            env: buildTurnEnv(env.getProcessEnv(), meta.workerHome, meta.rendezvousSession),
             stdin: "ignore",
             stdout: logFd,
             stderr: errFd,
@@ -257,6 +266,10 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         readOnly: options.readOnly,
         turns: 0,
         createdAt: new Date().toISOString(),
+        // Pinned once: every later steer must land in the same swarm, even if
+        // the steering command is issued from a different session.
+        rendezvousSession:
+            assignedSessionId(env.getProcessEnv()) ?? resolveAgentHost(env.getProcessEnv()).sessionId ?? undefined,
     };
     store.createMeta(meta);
 

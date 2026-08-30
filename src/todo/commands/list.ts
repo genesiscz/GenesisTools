@@ -1,4 +1,4 @@
-import { findProjectRoot } from "@app/todo/lib/context";
+import { findProjectRoot, resolveSessionOption } from "@app/todo/lib/context";
 import { formatTodoList } from "@app/todo/lib/format";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo, TodoFilters, TodoPriority, TodoStatus } from "@app/todo/lib/types";
@@ -24,7 +24,7 @@ export function createListCommand(): Command {
         .option("--status <statuses>", "Filter by status (comma-separated)")
         .option("--priority <priorities>", "Filter by priority (comma-separated)")
         .option("--tag <tags>", "Filter by tags (comma-separated)")
-        .option("--session <id>", "Filter by session ID")
+        .option("--session <id>", "Filter by session ID, or 'current' for this agent session")
         .addOption(new Option("-f, --format <format>", "Output format").choices(["ai", "json", "md", "table"]))
         .option("--colors", "Force colorized output even in non-TTY")
         .action(async (opts) => {
@@ -44,8 +44,9 @@ export function createListCommand(): Command {
                 filters.tags = parseVariadic(opts.tag);
             }
 
-            if (opts.session) {
-                filters.sessionId = opts.session;
+            const sessionFilter = resolveSessionOption(opts.session);
+            if (sessionFilter) {
+                filters.sessionId = sessionFilter;
             }
 
             let todos: Todo[];

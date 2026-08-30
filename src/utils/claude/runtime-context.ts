@@ -1,5 +1,5 @@
 export interface AgentRuntimeContext {
-    agent: "claude-code" | "codex" | "unknown";
+    agent: "claude-code" | "codex" | "grok" | "unknown";
     sessionId: string | null;
     isInAgent: boolean;
     aiAgent: string | null;

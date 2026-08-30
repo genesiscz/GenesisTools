@@ -1,11 +1,11 @@
+import { realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { resolveAgentHost } from "@genesiscz/utils/agent-host";
 import { getSessionMetadataBySessionId } from "@genesiscz/utils/claude/history-cache";
-import { detectCurrentProject } from "@genesiscz/utils/claude/projects";
-import { type AgentRuntimeContext, resolveClaudeContext } from "@genesiscz/utils/claude/runtime-context";
-import { isCodex, resolveCodexContext } from "@genesiscz/utils/codex/runtime-context";
+import type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
 import { env as appEnv } from "@genesiscz/utils/env";
-import { getMainRepoRootSync } from "@genesiscz/utils/git/worktree";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
 
 export type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
 
@@ -19,25 +19,72 @@ function gitSync(args: string[], cwd: string): string | null {
     return out.length > 0 ? out : null;
 }
 
+/**
+ * Absolute, CANONICAL path of the shared `.git`. Every worktree of one repo
+ * returns the same value.
+ *
+ * realpath, not just resolve (PR #343 review t1 round 13). `resolveAncestorCwd`
+ * canonicalises its paths on purpose, because the kernel reports
+ * `/private/tmp/...` where `process.cwd()` keeps `/tmp/...`. Comparing a lexical
+ * common-dir against a canonical one made the SAME repository reached through a
+ * symlink produce two unequal strings, which rejected the live ancestor cwd and
+ * reinstated the stale-cwd bug this resolution exists to fix.
+ */
+export function gitCommonRoot(cwd: string): string | null {
+    const common = gitSync(["rev-parse", "--git-common-dir"], cwd);
+
+    if (!common) {
+        return null;
+    }
+
+    const absolute = resolve(cwd, common);
+
+    try {
+        return realpathSync(absolute);
+    } catch {
+        // Not yet on disk (a pruned worktree, a race): the lexical form is still
+        // a usable comparison key, and both sides go through this same fallback.
+        return absolute;
+    }
+}
+
+/**
+ * The directory the SESSION is in, which is not always ours.
+ *
+ * `process.cwd()` is fixed at spawn. An MCP server starts with the session and
+ * keeps that first directory forever, so after the session moves (EnterWorktree)
+ * every git fact read here comes from the wrong checkout. On 2026-08-29 a Q→A
+ * was filed against `ci/aws-secrets-injection` while the session sat in a
+ * worktree on `feat/notification-templates-#202`.
+ *
+ * The host process does chdir, so the nearest ancestor with a different cwd is
+ * the live answer. It is accepted only when it shares our `.git`, so a terminal
+ * emulator sitting in `~` can never be mistaken for the session.
+ */
+function resolveSessionCwd(): string {
+    const own = process.cwd();
+    const candidate = resolveAncestorCwd({ ownCwd: own });
+    if (!candidate) {
+        return own;
+    }
+
+    const ownRepo = gitCommonRoot(own);
+    if (!ownRepo || ownRepo !== gitCommonRoot(candidate)) {
+        logger.debug({ own, candidate }, "agent-runtime: ancestor cwd is a different repo, keeping process.cwd()");
+        return own;
+    }
+
+    logger.debug({ own, candidate }, "agent-runtime: adopting the host process cwd");
+    return candidate;
+}
+
 export function getAgentRuntimeContext(
     overrides: Partial<AgentRuntimeContext> = {},
     processEnv: NodeJS.ProcessEnv = appEnv.getProcessEnv()
 ): AgentRuntimeContext {
-    const cwd = overrides.cwd ?? process.cwd();
-    const repoRoot = (() => {
-        try {
-            return getMainRepoRootSync(cwd);
-        } catch {
-            return cwd;
-        }
-    })();
+    const cwd = overrides.cwd ?? resolveSessionCwd();
 
-    let agentPartial: Partial<AgentRuntimeContext> = { agent: "unknown", sessionId: null, isInAgent: false };
-    if (processEnv.CLAUDE_CODE_SESSION_ID || processEnv.CLAUDECODE) {
-        agentPartial = resolveClaudeContext(processEnv);
-    } else if (isCodex(processEnv)) {
-        agentPartial = resolveCodexContext(processEnv);
-    }
+    const agentPartial = resolveAgentHost(processEnv);
 
     // Canonical worktree test: in the main repo `--git-dir` and
     // `--git-common-dir` resolve to the same path; in a linked worktree the
@@ -48,17 +95,22 @@ export function getAgentRuntimeContext(
     const gitDir = gitSync(["rev-parse", "--git-dir"], cwd);
     const gitCommonDir = gitSync(["rev-parse", "--git-common-dir"], cwd);
     const isWorktree = gitDir != null && gitCommonDir != null && resolve(cwd, gitDir) !== resolve(cwd, gitCommonDir);
+    const topLevel = gitSync(["rev-parse", "--show-toplevel"], cwd);
+    // A linked worktree's main repo is the parent of the shared `.git`; anywhere
+    // else it is the checkout root. Taking `cwd` verbatim named the project after
+    // whatever subdirectory the session happened to be in.
+    const repoRoot = isWorktree && gitCommonDir ? resolve(cwd, gitCommonDir, "..") : (topLevel ?? cwd);
     const base: AgentRuntimeContext = {
         agent: "unknown",
         sessionId: null,
         isInAgent: false,
         aiAgent: processEnv.AI_AGENT ?? null,
         sessionTitle: null,
-        project: detectCurrentProject() ?? basename(repoRoot),
+        project: basename(repoRoot),
         repoRoot,
         cwd,
         isWorktree,
-        worktreePath: isWorktree ? gitSync(["rev-parse", "--show-toplevel"], cwd) : null,
+        worktreePath: isWorktree ? topLevel : null,
         branch: gitSync(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
         commitSha: gitSync(["rev-parse", "--short", "HEAD"], cwd),
         commitMessage: gitSync(["log", "-1", "--format=%s"], cwd),
