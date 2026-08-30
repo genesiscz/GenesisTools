@@ -211,6 +211,40 @@ program.parse();
 
 ### 3. Common Patterns to Follow
 
+**Enumerated flags (closed value set):**
+
+A flag with a known list of values (`--detail phases|all`, `--provider macOS|xai|openai`) must not die as Commander's generic "argument missing". Use an optional value so a bare `--flag` reaches your action, then:
+
+```typescript
+import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { out } from "@genesiscz/utils/logger";
+import * as p from "@clack/prompts";
+
+const DETAILS = ["phases", "all"] as const;
+
+program.option("--detail [mode]", "phases or all; omit the value for help");
+
+// in the action:
+if (opts.detail === true || opts.detail === "") {
+    if (isInteractive()) {
+        const picked = await p.select({
+            message: "Detail",
+            options: DETAILS.map((value) => ({ value, label: value })),
+        });
+        if (p.isCancel(picked)) {
+            return;
+        }
+        opts.detail = picked;
+    } else {
+        out.error(suggestEnumFlag("tools my-tool", "--detail", DETAILS));
+        process.exitCode = 1;
+        return;
+    }
+}
+```
+
+Invalid values get the same `Possible: …` line. `formatMissingEnumHelp` builds the text; `suggestEnumFlag` adds the filled command. See `src/config/commands/profiling.ts`.
+
 **Using Bun.spawn for External Commands**:
 
 ```typescript
@@ -288,7 +322,7 @@ spinner.succeed("Done!");
 ### 4. Best Practices
 
 1. **Always provide a help message** with clear usage examples
-2. **Support both CLI args and interactive mode** for better UX
+2. **Support both CLI args and interactive mode** for better UX. Enumerated flags: `--flag [value]`, TTY prompt, non-TTY `suggestEnumFlag` with possible values (see Common Patterns).
 3. **Use the centralized logger** instead of console.log
 4. **Handle errors gracefully** with meaningful messages
 5. **Support common output options**: file, clipboard, stdout

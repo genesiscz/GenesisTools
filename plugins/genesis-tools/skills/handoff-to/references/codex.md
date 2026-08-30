@@ -67,7 +67,7 @@ tools codex spawn --name <task> --cwd <abs path> \
 
 ### Keeping the worker lean
 
-`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` precisely because loading `~/.codex` costs about 450k input tokens and fires the user's notification hooks.
+`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
 
 Observed cost of not isolating: a code-review worker spent its startup attaching about 20 MCP servers it had no use for (expo, higgsfield, apify, vitrinka, playwright, firecrawl, jina, brave-search and more), four of which failed noisily — three "not logged in" errors and a vitrinka HTTP connect failure.
 
@@ -79,7 +79,7 @@ cp ~/.codex/auth.json ~/.genesis-tools/codex/lean-home/ 2>/tmp/lean-home.err; ca
 tools codex spawn --name <task> --home ~/.genesis-tools/codex/lean-home --cwd <abs path> ...
 ```
 
-Other flags: `--model` / `--effort`, `--mode review|task`, `--session <id>` when `CLAUDE_CODE_SESSION_ID` cannot be discovered, `--no-agents` to disable the bus (do not — the bus is the point).
+Other flags: `--model` / `--effort`, `--mode review|task`, `--session <id>` when no parent session can be discovered (resolution order: the explicit flag, then `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION`, and only then the host session id of whoever runs the spawn — Claude Code, Codex or grok. An assigned swarm always outranks an inherited host id, so a nested worker cannot re-parent its children), `--no-agents` to disable the bus (do not — the bus is the point).
 
 Sessions land in `~/.genesis-tools/codex/sessions/<name>.*` (`.jsonl` event log, `.meta.json`, `.daemon.log`). Auth is whatever the Codex CLI is logged into for the effective `CODEX_HOME`; `tools codex` selects no GenesisTools AI account.
 
@@ -189,7 +189,7 @@ command codex --sandbox workspace-write exec \
 
 - `command codex` — the user's zsh wrapper silently injects `--sandbox danger-full-access`; a worker must get an explicit narrower sandbox.
 - `--json` — first event is `{"type":"thread.started","thread_id":"..."}`; capture it or the run is not resumable.
-- `--ignore-user-config` — otherwise it loads `~/.codex` config and skills (~450k wasted input tokens) and fires the user's notification hooks.
+- `--ignore-user-config` — otherwise it loads `~/.codex` config and skills and fires the user's notification hooks. The hooks are the reason to pass it; the token cost is small. Measured 2026-08-29 on codex-cli 0.148.0, three interleaved pairs of `codex exec --json "reply with the single word ok"`: 25,247 input tokens loaded versus ~20.6k with the flag, so about **4.6k**. An earlier note here claimed ~450k, which is wrong by roughly 100x — no first turn in 25 recorded sessions exceeded 33,344 input tokens.
 - `-o <file>` — read the answer from this file, never by parsing the stream.
 - Never `--ephemeral` if you might resume.
 

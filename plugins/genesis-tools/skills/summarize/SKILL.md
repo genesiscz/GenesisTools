@@ -42,7 +42,7 @@ Show what you inferred with a brief explanation of WHY you chose each param. The
 
 ```
 Based on what you said, here's what I'll use:
-- Session: current session (from $CLAUDE_CODE_SESSION_ID)
+- Session: current session (Claude Code only)
 - Mode: learnings — extracts benchmarks tables, key findings, config changes, and actionable items
 
 Now let me ask about a few things:
@@ -111,7 +111,7 @@ Use this reference to explain any parameter to the user in detail.
 |--------|-------------|
 | `[session-id]` | Session UUID or prefix (min 8 chars). Find IDs via `tools claude history -i` or `tools claude history "keyword"` |
 | `-s, --session <id>` | Repeatable — process multiple sessions sequentially. E.g. `-s abc123 -s def456` |
-| `--current` | Use `$CLAUDE_CODE_SESSION_ID`. Only works when running inside an active Claude Code session |
+| `--current` | The active Claude Code session. Claude Code only: under grok or Codex it refuses with the host it detected, because the id is looked up in `~/.claude/projects` |
 | `--since <date>` | Process all sessions after this date. Accepts: `"7 days ago"`, `"yesterday"`, `"2026-03-01"`, ISO timestamps |
 | `--until <date>` | Process sessions before this date. Same formats as `--since` |
 | `-i, --interactive` | Guided flow: session picker -> mode picker -> model picker -> preview -> confirm |

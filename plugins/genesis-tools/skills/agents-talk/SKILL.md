@@ -205,11 +205,12 @@ On exit (signal, cap, or crash), the tool prints a `tools agents login ...` resu
 The CLI auto-detects the session in this order:
 
 1. `--session <id>` explicit
-2. `$GENESIS_AGENTS_SESSION`, then `$CLAUDE_CODE_SESSION_ID`, then `$GROK_SESSION_ID`
-3. Single session active (feed touched) in the last 60 seconds
-4. Otherwise: a friendly error asking for `--session` or one of those env vars
+2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok run` — the parent saying which swarm to join)
+3. The host session id: `$CLAUDE_CODE_SESSION_ID`, `$CODEX_THREAD_ID`, `$GROK_SESSION_ID`. When several are set (a worker inherits its parent's), the one whose swarm ALREADY EXISTS wins, so a worker joins its parent instead of starting an orphan swarm. If none exists, the first present id creates one.
+4. Single session active (feed touched) in the last 60 seconds
+5. Otherwise: a friendly error asking for `--session` or one of those env vars
 
-Claude Code sets `$CLAUDE_CODE_SESSION_ID` and subagent shells inherit it. Grok does not — pass `--session` on every command, or export `GENESIS_AGENTS_SESSION` in the parent so children inherit it. After main has logged in, the 60s single-recent fallback can bind a child that omits `--session` if no other swarm is active.
+Every host publishes a session id and subagent shells inherit it: Claude Code `$CLAUDE_CODE_SESSION_ID`, Codex `$CODEX_THREAD_ID`, grok `$GROK_SESSION_ID` (grok has always set it; the resolver ignored it until 2026-08-29). Passing `--session` explicitly is still the surest thing in a worker brief, and exporting `GENESIS_AGENTS_SESSION` in the parent pins the whole swarm.
 
 ## Common pitfalls
 

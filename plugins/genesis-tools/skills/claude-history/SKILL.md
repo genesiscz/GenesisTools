@@ -26,7 +26,8 @@ tools claude history "query" --all > /tmp/hist.md         # big result set → f
 Rules of thumb:
 
 - Cap with `--limit`, never with `head`. Default is 20; drop to `5`-`10` for a scoped question.
-- The command can take >10s on `--all`. Run it with `run_in_background: true` (or a longer `timeout`), not with a pipe that hides the stall.
+- A quoted query on `--all` is `rg` then a parallel parse of the hits (main sessions first, then subagents). It should return in about a second, not tens of seconds. If it is still walking every JSONL, the rg prefilter failed and you will see `fastPath: "rg-fallback"` in the debug log.
+- `--summary-only` reads the metadata cache: titles, summaries, and the first 5000 characters of USER text. It never sees assistant replies or tool output, so a path that only appeared in a tool result, or late in a long session, will miss. Use a normal query, or `--file`.
 - Need only a machine answer? `--format json | tools json` is fine — that is a converter, not a truncator.
 - Redirecting to a file with `>` and then `Read`ing costs less than a re-run after a bad truncation. There is no `-o` flag on this command.
 
@@ -55,7 +56,10 @@ tools claude history "authentication bug" --exact
 ```bash
 tools claude history --file "config/api.php"
 tools claude history --file "*.tsx" --tool Edit
+tools claude history --files ".vitrinka/" --all
 ```
+
+`--file` / `--files` are repeatable aliases. They match tool-call `file_path` / `path` **and** other tool inputs (Bash `command`, Write `content`, …).
 
 ### Find by Tool Usage
 ```bash
@@ -81,7 +85,8 @@ tools claude history "timer" --context 10  # 10 messages before/after
 | `-i, --interactive` | Interactive mode with autocomplete |
 | `-p, --project <name>` | Filter by project name |
 | `--all` | Search all projects |
-| `-f, --file <pattern>` | Filter by file path pattern |
+| `-f, --file <pattern>` | Match tool-call paths and tool inputs (repeatable) |
+| `--files <pattern>` | Same as `--file` |
 | `-t, --tool <name>` | Filter by tool (Edit, Write, Bash, etc.) |
 | `--since <date>` | Since date (e.g., "7 days ago", "yesterday") |
 | `--until <date>` | Until date |
@@ -100,6 +105,18 @@ tools claude history "timer" --context 10  # 10 messages before/after
 **Default (ai):** Perfect markdown with summaries and file paths
 **With --context:** Shows surrounding messages in markdown
 **JSON:** Raw JSON for programmatic use
+
+## Performance
+
+Content search no longer parses every JSONL under `~/.claude/projects`.
+
+1. `rg -l` the longest query word (or the `--file` token) across `*.jsonl`.
+2. Parse those hits in parallel (16 at a time).
+3. Main sessions first, then subagents, then `--limit`.
+
+`--exclude-agents` skips the second wave. `--agents-only` is only wave two. A query-less `--all` uses the SQLite session listing (and **does** refresh that index). A content query does **not** write the index; it only reads rg + JSONL hits.
+
+`--summary-only` reads the metadata cache (titles, summaries, first 5000 chars of user text). Good for names, unreliable for paths.
 
 ## Summarize Sessions
 
@@ -138,7 +155,7 @@ tools claude history summarize <session-id> --prompt-only --mode changelog
 | Option | Description |
 |--------|-------------|
 | `-s, --session <id>` | Session ID (repeatable) |
-| `--current` | Use current session from `$CLAUDE_CODE_SESSION_ID` |
+| `--current` | The active Claude Code session. Claude Code only: under grok or Codex it refuses, naming the host it detected, because the id is looked up in `~/.claude/projects` |
 | `--since <date>` | Sessions since date |
 | `--until <date>` | Sessions until date |
 | `-m, --mode <name>` | Template mode (default: documentation) |

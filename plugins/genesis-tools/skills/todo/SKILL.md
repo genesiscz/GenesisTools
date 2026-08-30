@@ -19,7 +19,6 @@ tools todo add "Fix the auth bug" \
   --tag auth,backend \
   --reminder "24h" --reminder "3d" \
   --link pr:142 --link ado:78901 \
-  --session-id $CLAUDE_CODE_SESSION_ID \
   --attach ./screenshot.png \
   --md ./notes.md \
   --description "The OAuth flow breaks when..."
@@ -30,7 +29,7 @@ tools todo list --all                        # all projects
 tools todo list --status done                # filter by status
 tools todo list --priority critical,high     # filter by priority
 tools todo list --tag auth                   # filter by tag
-tools todo list --session $CLAUDE_CODE_SESSION_ID
+tools todo list --session current            # this agent session's todos
 tools todo list --format ai|json|md|table
 
 # Show detail
@@ -70,9 +69,12 @@ tools todo import todos.json
 
 ### Always Do
 
-1. **Pass session ID** on every `add` command:
+1. **Session id is automatic.** `add` stamps the session of whichever agent runs it
+   (Claude Code, Codex or grok). Pass `--session-id <id>` only to override it:
+
    ```bash
-   tools todo add "..." --session-id $CLAUDE_CODE_SESSION_ID
+   tools todo add "..."                          # stamps the current agent session
+   tools todo add "..." --session-id <other-id>  # override
    ```
 
 2. **Use `--format ai`** when reading todos back for context:
@@ -111,7 +113,7 @@ tools todo import todos.json
 
 At the start of a session, check for existing todos:
 ```bash
-tools todo list --session $CLAUDE_CODE_SESSION_ID --format ai
+tools todo list --session current --format ai
 ```
 
 Or check all active todos for the project:
@@ -126,7 +128,6 @@ When the user says something like "remind me to..." or "I need to...", create a 
 tools todo add "What the user wants to track" \
   --priority <infer from context> \
   --tag <relevant tags from the discussion> \
-  --session-id $CLAUDE_CODE_SESSION_ID \
   --link <any relevant PR/issue> \
   --description "Additional context from the conversation"
 ```

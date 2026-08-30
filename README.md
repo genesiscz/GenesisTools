@@ -844,6 +844,8 @@ Type messages, save and exit to send them. Send `OK` on its own to release the A
 | Path | Contents |
 |------|----------|
 | `~/.genesis-tools/logs/<YYYY-MM-DD>.log` | Day-stamped pino JSON logs from every tool. First stop when anything misbehaves. |
+| `~/.genesis-tools/logs/<YYYY-MM-DD>-profiling.log` | Profiler duration lines when profiling is on. Not mixed into the pino day log. |
+| `~/.genesis-tools/GenesisTools/config.json` | Global toolkit config (profiler, preferred browser). `tools config profiling`. |
 | `~/.genesis-tools/<tool>/` | Per-tool config and cache, for example `say/config.json`, `mcp-manager/config.json`, `scripts/`. |
 | `~/.genesis-tools/ai/config.json` | AI accounts, defaults, and aliases (version 4 schema). |
 | `~/.genesis-tools/security/vault.json` | AES-256-GCM credential vault. Config stores references into it, never plaintext. |

@@ -136,6 +136,11 @@ Most tools follow these common patterns:
     // ... interactive prompt here
     ```
 
+-   **Enumerated flags (closed value set):** If a flag takes a known list (`--detail phases|all`, `--scopes` from `PROFILER_SCOPE_NAMES`), do **not** declare it as `--flag <value>`. Commander then exits with a generic "argument missing" and never lists the values. Declare `--flag [value]` (optional) and handle the empty case yourself:
+    - TTY: prompt with the possible values (`p.select` / `p.multiselect`).
+    - non-TTY, or an invalid value: print `suggestEnumFlag("tools my-tool", "--flag", VALUES)` from `@genesiscz/utils/cli` (possible values plus a filled `suggestCommand` line), set `process.exitCode = 1`, return. Do not prompt.
+    - Reference: `src/config/commands/profiling.ts` (`--scopes`, `--detail`).
+
 **Output Handling**:
 
 -   Support multiple output destinations: file, clipboard, stdout
