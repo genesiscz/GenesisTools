@@ -6,7 +6,7 @@ import { useThemeColors } from "@/theme/colors";
 
 interface ProcessRowProps {
     process: ProcessInfo;
-    onKill: (pid: number) => void;
+    onKill: (pid: number, command: string) => void;
 }
 
 const HIGH_CPU_PCT = 50;
@@ -24,7 +24,7 @@ export function ProcessRow({ process, onKill }: ProcessRowProps) {
     const confirmKill = () => {
         Alert.alert("Kill process?", `${process.name} (pid ${process.pid})`, [
             { text: "Cancel", style: "cancel" },
-            { text: "Kill", style: "destructive", onPress: () => onKill(process.pid) },
+            { text: "Kill", style: "destructive", onPress: () => onKill(process.pid, process.name) },
         ]);
     };
 

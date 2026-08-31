@@ -23,8 +23,8 @@ export default function ProcessMonitorScreen() {
     const query = useProcesses(sort);
     const killMutation = useKillProcess();
 
-    const handleKill = (pid: number) => {
-        killMutation.mutate({ pid });
+    const handleKill = (pid: number, command: string) => {
+        killMutation.mutate({ pid, command });
     };
 
     if (query.isPending) {

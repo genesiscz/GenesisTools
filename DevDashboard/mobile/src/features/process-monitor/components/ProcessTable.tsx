@@ -11,7 +11,7 @@ interface ProcessTableProps {
     processes: ProcessInfo[];
     sort: ProcessSort;
     onSortChange: (sort: ProcessSort) => void;
-    onKill: (pid: number) => void;
+    onKill: (pid: number, command: string) => void;
 }
 
 /**

@@ -53,6 +53,6 @@ describe("mock dashboard client — processes namespace", () => {
     });
 
     it("kill returns { ok: true }", async () => {
-        expect(await mockDashboardClient.processes.kill(4821)).toEqual({ ok: true });
+        expect(await mockDashboardClient.processes.kill(4821, "node")).toEqual({ ok: true });
     });
 });
