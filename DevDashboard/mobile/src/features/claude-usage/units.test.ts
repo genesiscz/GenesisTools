@@ -1,6 +1,17 @@
 import type { MultiBucketHistoryResult } from "@dd/contract";
 import { describe, expect, it } from "bun:test";
-import { bucketLabel, DASH, historyToBucketSeries, utilizationPct } from "@/features/claude-usage/units";
+import {
+    accountLabel,
+    appsSummary,
+    bucketLabel,
+    DASH,
+    formatCount,
+    formatTokens,
+    formatUsd,
+    historyToBucketSeries,
+    unpricedHint,
+    utilizationPct,
+} from "@/features/claude-usage/units";
 
 describe("claude-usage units — formatters", () => {
     it("utilizationPct rounds 0-1 to an integer percent, em-dash on missing", () => {
@@ -55,5 +66,52 @@ describe("claude-usage units — historyToBucketSeries", () => {
         };
 
         expect(historyToBucketSeries(history)[0].points).toHaveLength(0);
+    });
+});
+
+describe("claude-usage units — recorded spend", () => {
+    it("formatUsd keeps four decimals below a cent so small spend does not read as free", () => {
+        expect(formatUsd(0)).toBe("$0");
+        expect(formatUsd(0.0004)).toBe("$0.0004");
+        expect(formatUsd(0.009_9)).toBe("$0.0099");
+        expect(formatUsd(0.01)).toBe("$0.01");
+        expect(formatUsd(12.472)).toBe("$12.47");
+    });
+
+    it("formatTokens compacts to K/M and drops a trailing .0", () => {
+        expect(formatTokens(0)).toBe("0");
+        expect(formatTokens(999)).toBe("999");
+        expect(formatTokens(12_000)).toBe("12K");
+        expect(formatTokens(1_250)).toBe("1.3K");
+        expect(formatTokens(8_420_000)).toBe("8.4M");
+        expect(formatTokens(2_000_000)).toBe("2M");
+    });
+
+    it("formatCount groups thousands without a locale", () => {
+        expect(formatCount(0)).toBe("0");
+        expect(formatCount(999)).toBe("999");
+        expect(formatCount(1_284)).toBe("1,284");
+        expect(formatCount(1_234_567)).toBe("1,234,567");
+    });
+
+    it("unpricedHint is undefined at zero and singular at one", () => {
+        expect(unpricedHint(0)).toBeUndefined();
+        expect(unpricedHint(1)).toBe("1 call with no known rate");
+        expect(unpricedHint(1_284)).toBe("1,284 calls with no known rate");
+    });
+
+    it("appsSummary orders by event count, busiest first", () => {
+        expect(
+            appsSummary({
+                codex: { events: 182 },
+                claude: { events: 1_102 },
+            }),
+        ).toBe("claude 1,102 · codex 182");
+        expect(appsSummary({})).toBe("");
+    });
+
+    it("accountLabel appends the label only when there is one", () => {
+        expect(accountLabel({ name: "work", label: "max" })).toBe("work (max)");
+        expect(accountLabel({ name: "personal" })).toBe("personal");
     });
 });

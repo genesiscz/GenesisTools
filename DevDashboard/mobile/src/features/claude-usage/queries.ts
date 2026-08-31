@@ -1,4 +1,4 @@
-import type { AccountUsage, DashboardClient, MultiBucketHistoryResult } from "@dd/contract";
+import type { AccountUsage, DashboardClient, MultiBucketHistoryResult, UsageTotalsResult } from "@dd/contract";
 import { paths } from "@dd/contract";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -24,6 +24,7 @@ import { queryOptions } from "@tanstack/react-query";
 export const claudeUsageKeys = {
     usage: ["claude-usage", "accounts"] as const,
     history: (account: string, minutes: number) => ["claude-usage", "history", account, minutes] as const,
+    totals: (minutes: number) => ["claude-usage", "totals", minutes] as const,
 } as const;
 
 export const USAGE_INTERVAL_MS = 30_000;
@@ -62,5 +63,33 @@ export function usageHistoryQuery(client: DashboardClient, account: string, minu
             return asHistory(result);
         },
         refetchInterval: HISTORY_INTERVAL_MS,
+    });
+}
+
+/** Empty totals for a window the agent could not summarise — renders the "no events yet" state. */
+function emptyTotals(): UsageTotalsResult {
+    const zero = { events: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, unpricedEvents: 0 };
+
+    return { from: "", to: "", total: zero, accounts: [], byApp: {} };
+}
+
+/**
+ * Same escape-hatch caveat as the two queries above, and the same mock gap: the mock matches
+ * `/api/claude/usage` by prefix, so this path can come back as an `AccountUsage[]`. Coerce anything
+ * without a `total` to the empty shape so the card renders its empty state instead of crashing.
+ */
+export function usageTotalsQuery(client: DashboardClient, minutes: number) {
+    return queryOptions<UsageTotalsResult>({
+        queryKey: claudeUsageKeys.totals(minutes),
+        queryFn: async () => {
+            const result = await client.get<UsageTotalsResult>(paths.claudeUsageTotals(minutes));
+
+            if (result && typeof result === "object" && typeof (result as UsageTotalsResult).total === "object") {
+                return result;
+            }
+
+            return emptyTotals();
+        },
+        refetchInterval: USAGE_INTERVAL_MS,
     });
 }

@@ -69,9 +69,12 @@ export type {
     WorkItemDto,
 } from "@app/dev-dashboard/lib/boards/types";
 export type {
+    AccountTotals,
     BucketSeries,
     MultiBucketHistoryResult,
+    UsageAggregate,
     UsageHistoryResult,
+    UsageTotalsResult,
 } from "@app/dev-dashboard/lib/claude-usage/types";
 export type {
     AttachTmuxResult,
