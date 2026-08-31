@@ -37,10 +37,14 @@ export const terminalsKeys = {
 export const SESSIONS_INTERVAL_MS = 6_000;
 export const CMUX_INTERVAL_MS = 8_000;
 
+// `includeCmux` is required here: the server skips the cmux-layout RPC unless asked, and returns
+// `cmuxSurfaces: []` / `inCmux: false` when it does. Two screens read those — the cmux badge in
+// SessionsList and the cmux target list in quick-commands TargetPicker — so without the opt-in the
+// badge never shows and the picker offers nothing. The cost is the ~150ms layout fetch per poll.
 export function tmuxSessionsQuery(client: DashboardClient) {
     return queryOptions<TmuxSessionsRes>({
         queryKey: terminalsKeys.tmux,
-        queryFn: () => client.tmux.sessions(),
+        queryFn: () => client.tmux.sessions({ includeCmux: true }),
         refetchInterval: SESSIONS_INTERVAL_MS,
     });
 }
