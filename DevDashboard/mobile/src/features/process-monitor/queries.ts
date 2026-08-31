@@ -32,8 +32,10 @@ export function processesQuery(client: DashboardClient, sort: ProcessSort, limit
 
 export interface KillProcessInput {
     pid: number;
+    /** The name the row displayed. The server refuses the kill unless it still matches the live pid. */
+    command: string;
 }
 
 export function killProcess(client: DashboardClient, input: KillProcessInput) {
-    return client.processes.kill(input.pid);
+    return client.processes.kill(input.pid, input.command);
 }
