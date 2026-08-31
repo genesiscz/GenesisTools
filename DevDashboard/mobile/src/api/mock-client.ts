@@ -24,6 +24,7 @@ import type {
     TmuxPresetSummary,
     TmuxSessionsRes,
     TodosResult,
+    UsageTotalsResult,
     VaultEntry,
     WeatherRes,
 } from "@dd/contract";
@@ -597,6 +598,31 @@ function mockDeleteCommand(id: string): { removed: number } {
     return { removed: before - MOCK_COMMANDS.length };
 }
 
+const MOCK_USAGE_TOTALS: UsageTotalsResult = {
+    from: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+    to: new Date().toISOString(),
+    total: { events: 1284, inputTokens: 8_420_000, outputTokens: 312_000, costUsd: 12.47, unpricedEvents: 3 },
+    accounts: [
+        {
+            key: "acc_work",
+            name: "work",
+            label: "max",
+            known: true,
+            totals: { events: 980, inputTokens: 6_900_000, outputTokens: 241_000, costUsd: 9.88, unpricedEvents: 0 },
+        },
+        {
+            key: "acc_personal",
+            name: "personal",
+            known: true,
+            totals: { events: 301, inputTokens: 1_520_000, outputTokens: 71_000, costUsd: 2.59, unpricedEvents: 3 },
+        },
+    ],
+    byApp: {
+        claude: { events: 1102, inputTokens: 7_800_000, outputTokens: 280_000, costUsd: 11.4, unpricedEvents: 1 },
+        codex: { events: 182, inputTokens: 620_000, outputTokens: 32_000, costUsd: 1.07, unpricedEvents: 2 },
+    },
+};
+
 /**
  * Generic escape-hatch responder. The real `get<T>`/`post<T>` are generic, so the mock cannot
  * statically know `T` — it path-switches on the known deferred routes and returns a plausible
@@ -605,6 +631,11 @@ function mockDeleteCommand(id: string): { removed: number } {
  * to an empty render instead of a crash. Real-typed methods (system/tmux/…) never go through here.
  */
 function escapeHatch<T>(path: string): Promise<T> {
+    // Must precede the `claudeUsage()` prefix test below, which would otherwise swallow it.
+    if (path.startsWith("/api/claude/usage/totals")) {
+        return delay(MOCK_USAGE_TOTALS as unknown as T);
+    }
+
     if (path.startsWith(paths.claudeUsage())) {
         // NB: `/api/claude/usage` is a prefix of `/api/claude/usage/history`, so the history route
         // also lands here and gets the account-usage fixture (shape ≈ but not the history result).

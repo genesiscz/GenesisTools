@@ -83,6 +83,9 @@ export const paths = {
     cmuxRename: () => "/api/cmux/rename",
     // claude usage
     claudeUsage: () => "/api/claude/usage",
+    // Cross-surface token/cost totals from the shared usage layer — what every surface actually
+    // spent, as opposed to Anthropic's subscription limit percentages on /usage.
+    claudeUsageTotals: (minutes = 1440) => `/api/claude/usage/totals${qs({ minutes: String(minutes) })}`,
     claudeUsageHistory: (q: { account?: string; buckets?: string[]; bucket?: string; minutes?: number } = {}) =>
         `/api/claude/usage/history${qs({
             account: q.account,

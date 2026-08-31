@@ -7,6 +7,7 @@ import {
     USAGE_INTERVAL_MS,
     usageAccountsQuery,
     usageHistoryQuery,
+    usageTotalsQuery,
 } from "@/features/claude-usage/queries";
 
 /**
@@ -53,5 +54,29 @@ describe("claude-usage query factories", () => {
         const data = await (opts.queryFn as unknown as () => Promise<{ series: unknown[] }>)();
         expect(Array.isArray(data.series)).toBe(true);
         expect(data.series).toHaveLength(0);
+    });
+});
+
+describe("claude-usage queries — recorded spend totals", () => {
+    it("reaches the totals fixture, not the account-usage one the prefix would have matched", async () => {
+        const options = usageTotalsQuery(mockDashboardClient, 1440);
+        const result = await options.queryFn!({} as never);
+
+        expect(result.total.events).toBeGreaterThan(0);
+        expect(result.accounts.length).toBeGreaterThan(0);
+        expect(Object.keys(result.byApp).length).toBeGreaterThan(0);
+    });
+
+    it("keys the cache by window, so switching the range refetches", () => {
+        expect(claudeUsageKeys.totals(60)).not.toEqual(claudeUsageKeys.totals(1440));
+        expect(usageTotalsQuery(mockDashboardClient, 60).queryKey).toEqual(claudeUsageKeys.totals(60));
+    });
+
+    it("coerces a payload with no `total` to the empty shape instead of crashing the card", async () => {
+        const stub = { get: async () => [{ accountName: "work" }] } as unknown as typeof mockDashboardClient;
+        const result = await usageTotalsQuery(stub, 60).queryFn!({} as never);
+
+        expect(result.total.events).toBe(0);
+        expect(result.accounts).toEqual([]);
     });
 });

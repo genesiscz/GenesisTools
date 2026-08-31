@@ -85,3 +85,61 @@ export function historyToBucketSeries(history: MultiBucketHistoryResult): Bucket
         return { key: series.bucket, label: bucketLabel(series.bucket), points };
     });
 }
+
+// ── Recorded spend ────────────────────────────────────────────────────────────
+// Cross-surface token/cost totals (`/api/claude/usage/totals`). Separate from the bucket
+// utilization above: those are Anthropic's subscription limit percentages, these are what
+// every surface actually spent.
+
+/**
+ * Sub-cent spend is the normal case for a single call, and `$0.00` reads as free rather than
+ * small, so anything under a cent keeps four decimals.
+ */
+export function formatUsd(value: number): string {
+    if (value === 0) {
+        return "$0";
+    }
+
+    return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+/** Compact token count: 1_234_567 → "1.2M". Whole thousands keep no decimal ("12K", not "12.0K"). */
+export function formatTokens(value: number): string {
+    if (value < 1_000) {
+        return String(value);
+    }
+
+    const [scaled, suffix] = value < 1_000_000 ? [value / 1_000, "K"] : [value / 1_000_000, "M"];
+
+    return `${Number.isInteger(scaled) ? scaled : scaled.toFixed(1)}${suffix}`;
+}
+
+/** Thousands-separated call count. Locale-independent so the value is stable across devices. */
+export function formatCount(value: number): string {
+    return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * Unpriced events are surfaced rather than folded into the cost: a model with no known rate makes
+ * the total a floor, not an answer. Returns undefined when there is nothing to warn about.
+ */
+export function unpricedHint(unpriced: number): string | undefined {
+    if (unpriced <= 0) {
+        return undefined;
+    }
+
+    return `${formatCount(unpriced)} call${unpriced === 1 ? "" : "s"} with no known rate`;
+}
+
+/** "claude 412 · codex 87", busiest app first. Empty string when nothing was recorded. */
+export function appsSummary(byApp: Record<string, { events: number }>): string {
+    return Object.entries(byApp)
+        .sort((a, b) => b[1].events - a[1].events)
+        .map(([app, aggregate]) => `${app} ${formatCount(aggregate.events)}`)
+        .join(" · ");
+}
+
+/** Display handle for a totals row: "name (label)" when the account carries one. */
+export function accountLabel(account: { name: string; label?: string }): string {
+    return account.label ? `${account.name} (${account.label})` : account.name;
+}

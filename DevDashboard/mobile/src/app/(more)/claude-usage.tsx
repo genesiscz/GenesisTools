@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AccountHistoryCharts } from "@/features/claude-usage/components/AccountHistoryCharts";
 import { AccountUsageCard } from "@/features/claude-usage/components/AccountUsageCard";
 import { RangeSelector, USAGE_RANGES } from "@/features/claude-usage/components/RangeSelector";
-import { useUsageAccounts } from "@/features/claude-usage/hooks";
+import { SpendTotals } from "@/features/claude-usage/components/SpendTotals";
+import { useUsageAccounts, useUsageTotals } from "@/features/claude-usage/hooks";
 import { MockBadge } from "@/ui/MockBadge";
 import { useThemeColors } from "@/theme/colors";
 
@@ -20,6 +21,8 @@ export default function ClaudeUsageScreen() {
     const insets = useSafeAreaInsets();
     const accountsQuery = useUsageAccounts();
     const [rangeMinutes, setRangeMinutes] = useState<number>(USAGE_RANGES[2].minutes);
+    // Shares the range control with the history charts: the same window drives both.
+    const totalsQuery = useUsageTotals(rangeMinutes);
 
     const accounts = accountsQuery.data ?? [];
 
@@ -75,6 +78,8 @@ export default function ClaudeUsageScreen() {
                         ))}
 
                         <RangeSelector value={rangeMinutes} onChange={setRangeMinutes} />
+
+                        {totalsQuery.data ? <SpendTotals totals={totalsQuery.data} /> : null}
 
                         {accounts.map((account) => (
                             <AccountHistoryCharts
