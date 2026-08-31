@@ -15,6 +15,12 @@
       "@genesiscz/utils/json": [
         "./src/shims/safe-json.ts"
       ],
+      "@genesiscz/utils": [
+        "../../src/utils/index.ts"
+      ],
+      "@genesiscz/utils/*": [
+        "../../src/utils/*"
+      ],
       "@app/*": [
         "../../src/*"
       ]
