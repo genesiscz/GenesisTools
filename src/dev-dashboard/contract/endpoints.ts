@@ -56,7 +56,10 @@ export const paths = {
         `/api/processes${qs({ sort, limit: limit ? String(limit) : undefined })}`,
     processesKill: () => "/api/processes/kill",
     // tmux
-    tmuxSessions: () => "/api/tmux/sessions",
+    // `includeCmux` opts into the cmux-layout enrichment (`cmuxSurfaces` + `inCmux`). The server
+    // skips that ~150ms RPC by default and returns those two fields empty, so a caller that renders
+    // them has to ask. See server/routes/tmux.ts.
+    tmuxSessions: (includeCmux = false) => `/api/tmux/sessions${includeCmux ? "?include=cmux" : ""}`,
     tmuxCreate: () => "/api/tmux/create",
     tmuxRename: () => "/api/tmux/rename",
     // tmux presets

@@ -109,7 +109,8 @@ export function createDashboardClient(opts: DashboardClientOptions) {
                 post<KillPortResult>(paths.portsKill(), { pid, expectedCommand }),
         },
         tmux: {
-            sessions: () => get<TmuxSessionsRes>(paths.tmuxSessions()),
+            sessions: (opts: { includeCmux?: boolean } = {}) =>
+                get<TmuxSessionsRes>(paths.tmuxSessions(opts.includeCmux ?? false)),
             create: (body: { name?: string; cwd?: string; command?: string } = {}) =>
                 post<{ sessionName: string; cwd: string; command: string }>(paths.tmuxCreate(), body),
             rename: (body: { from: string; to: string }) => post<{ sessionName: string }>(paths.tmuxRename(), body),

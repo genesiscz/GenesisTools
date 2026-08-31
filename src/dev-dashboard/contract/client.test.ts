@@ -28,6 +28,27 @@ describe("createDashboardClient", () => {
         await expect(client.system.pulse()).rejects.toThrow(/500/);
     });
 
+    // The server skips the cmux-layout RPC unless `?include=cmux` is present, and answers with
+    // `cmuxSurfaces: []` / `inCmux: false`. Contract callers that render those fields must be able
+    // to ask for them; without the flag the default stays on the cheap path.
+    it("tmux.sessions asks for cmux enrichment only when told to", async () => {
+        const urls: string[] = [];
+        const fetchImpl = (async (url: string | URL | Request) => {
+            urls.push(String(url));
+
+            return new Response('{"sessions":[]}', {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            });
+        }) as unknown as typeof fetch;
+
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
+        await client.tmux.sessions();
+        await client.tmux.sessions({ includeCmux: true });
+
+        expect(urls).toEqual(["http://h/api/tmux/sessions", "http://h/api/tmux/sessions?include=cmux"]);
+    });
+
     it("presets.* hit the right paths/methods and parse JSON", async () => {
         const calls: Array<{ url: string; method: string; body: string }> = [];
         const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
