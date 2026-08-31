@@ -2,7 +2,7 @@ import { SafeJSON } from "@dashboard/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import type { AuthError } from "./auth-actions";
-import { workos } from "./auth-server";
+import { getWorkOS } from "./auth-server";
 
 const forgotPasswordSchema = z.object({
     email: z.string().email("Please enter a valid email address"),
@@ -53,7 +53,7 @@ export const forgotPasswordFn = createServerFn({ method: "POST" })
         }
 
         try {
-            await workos.userManagement.createPasswordReset({ email: data.email });
+            await getWorkOS().userManagement.createPasswordReset({ email: data.email });
         } catch (error) {
             // Log but do not surface — prevents user enumeration.
             console.error("[forgotPasswordFn] WorkOS error:", SafeJSON.stringify(error));
@@ -81,7 +81,7 @@ export const resetPasswordFn = createServerFn({ method: "POST" })
         }
 
         try {
-            await workos.userManagement.resetPassword({
+            await getWorkOS().userManagement.resetPassword({
                 token: data.token,
                 newPassword: data.newPassword,
             });

@@ -91,7 +91,7 @@
         "@types/react": "^19.2.2",
         "@types/react-dom": "^19.2.0",
         "@vitejs/plugin-react": "^6.0.2",
-        "@workos/authkit-session": "0.3.2",
+        "@workos/authkit-session": "0.5.1",
         "babel-plugin-react-compiler": "^1.0.0",
         "dotenv": "^17.2.3",
         "drizzle-kit": "^0.31.8",
@@ -845,7 +845,7 @@
 
     "@workos-inc/node": ["@workos-inc/node@8.0.0-rc.10", "", { "dependencies": { "iron-webcrypto": "^2.0.0", "jose": "~6.1.0" } }, "sha512-U75XCmjzVUCEgUJkny5BAiXHxkEhWPzb8/cknCYK3HwW4tPVNtEOZyLx8Bdx/O+Dp3DgO+q/2lEETIqe/kxEvw=="],
 
-    "@workos/authkit-session": ["@workos/authkit-session@0.3.2", "", { "dependencies": { "@workos-inc/node": "8.0.0-rc.5", "iron-webcrypto": "^2.0.0", "jose": "^6.1.3" } }, "sha512-+uTD+5S+5CeM/vpSXRP8rLtxx7pmI6RtO/d+Q0v+ITkTmNNoPIaWvXAYIAtV08qmIlHLO40UM6hoQSmEoDWifQ=="],
+    "@workos/authkit-session": ["@workos/authkit-session@0.5.1", "", { "dependencies": { "@workos-inc/node": "^8.0.0", "iron-webcrypto": "^2.0.0", "jose": "^6.1.3", "valibot": "^1.3.1" } }, "sha512-4nyHhxEfztJmmruMhefmxu/b2ElzswjlUZH/fub1GFXtLN1RNmT552L/VbV0by5ailiJYJ3gk7LJQ61obKHZLw=="],
 
     "@workos/authkit-tanstack-react-start": ["@workos/authkit-tanstack-react-start@0.4.1", "", { "dependencies": { "@workos/authkit-session": "0.3.2" }, "peerDependencies": { "@tanstack/react-router": ">=1.0.0", "@tanstack/react-start": ">=1.0.0", "react": "^18.0 || ^19.0", "react-dom": "^18.0 || ^19.0" } }, "sha512-9pFEVk8I5ufOVWA/eYZFIEz90fRQQKL6RS/nxVj4TQYvGA1Zg+A4yfrWY1FhzxnkdZ7gTra1XQ3oLa/hMb3vHA=="],
 
@@ -2021,6 +2021,8 @@
 
     "uuid": ["uuid@11.1.0", "", { "bin": { "uuid": "dist/esm/bin/uuid" } }, "sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A=="],
 
+    "valibot": ["valibot@1.4.2", "", { "peerDependencies": { "typescript": ">=5" }, "optionalPeers": ["typescript"] }, "sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg=="],
+
     "vary": ["vary@1.1.2", "", {}, "sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg=="],
 
     "vfile": ["vfile@6.0.3", "", { "dependencies": { "@types/unist": "^3.0.0", "vfile-message": "^4.0.0" } }, "sha512-KzIbH/9tXat2u30jf+smMwFCsno4wHVdNmzFyL+T/L3UGqqk6JKfVqOFOZEpZSHADH1k40ab6NUIXZq422ov3Q=="],
@@ -2227,7 +2229,9 @@
 
     "@vitest/mocker/vite": ["vite@7.3.1", "", { "dependencies": { "esbuild": "^0.27.0", "fdir": "^6.5.0", "picomatch": "^4.0.3", "postcss": "^8.5.6", "rollup": "^4.43.0", "tinyglobby": "^0.2.15" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^20.19.0 || >=22.12.0", "jiti": ">=1.21.0", "less": "^4.0.0", "lightningcss": "^1.21.0", "sass": "^1.70.0", "sass-embedded": "^1.70.0", "stylus": ">=0.54.8", "sugarss": "^5.0.0", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "jiti", "less", "lightningcss", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-w+N7Hifpc3gRjZ63vYBXA56dvvRlNWRczTdmCBBa+CotUzAPf5b7YMdMR/8CQoeYE5LX3W4wj6RYTgonm1b9DA=="],
 
-    "@workos/authkit-session/@workos-inc/node": ["@workos-inc/node@8.0.0-rc.5", "", { "dependencies": { "iron-webcrypto": "^2.0.0", "jose": "~6.1.0" } }, "sha512-g8mUd9iGFe5sLE7YCPbm/Cb5l5orQsEZ+9yKLq9i0U9H+yqYO/Vvl0KEvRiX3Xxo5AKDVLG1K+3QwlTb/s9/4Q=="],
+    "@workos/authkit-session/@workos-inc/node": ["@workos-inc/node@8.13.0", "", { "dependencies": { "eventemitter3": "^5.0.4" } }, "sha512-NgQKHpwh8AbT4KvAsW91Y+4f4jja2IvFPQ5atcy5NUxUMVRgXzRFEee3erawfXrTmiCVqJjd9PljHySKBXmHKQ=="],
+
+    "@workos/authkit-tanstack-react-start/@workos/authkit-session": ["@workos/authkit-session@0.3.2", "", { "dependencies": { "@workos-inc/node": "8.0.0-rc.5", "iron-webcrypto": "^2.0.0", "jose": "^6.1.3" } }, "sha512-+uTD+5S+5CeM/vpSXRP8rLtxx7pmI6RtO/d+Q0v+ITkTmNNoPIaWvXAYIAtV08qmIlHLO40UM6hoQSmEoDWifQ=="],
 
     "anymatch/picomatch": ["picomatch@2.3.1", "", {}, "sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA=="],
 
@@ -2456,6 +2460,10 @@
     "@vitest/mocker/vite/postcss": ["postcss@8.5.6", "", { "dependencies": { "nanoid": "^3.3.11", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg=="],
 
     "@vitest/mocker/vite/tinyglobby": ["tinyglobby@0.2.15", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.3" } }, "sha512-j2Zq4NyQYG5XMST4cbs02Ak8iJUdxRM0XI5QyxXuZOzKOINmWurp3smXu3y5wDcJrptwpSjgXHzIQxR0omXljQ=="],
+
+    "@workos/authkit-session/@workos-inc/node/eventemitter3": ["eventemitter3@5.0.4", "", {}, "sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw=="],
+
+    "@workos/authkit-tanstack-react-start/@workos/authkit-session/@workos-inc/node": ["@workos-inc/node@8.0.0-rc.5", "", { "dependencies": { "iron-webcrypto": "^2.0.0", "jose": "~6.1.0" } }, "sha512-g8mUd9iGFe5sLE7YCPbm/Cb5l5orQsEZ+9yKLq9i0U9H+yqYO/Vvl0KEvRiX3Xxo5AKDVLG1K+3QwlTb/s9/4Q=="],
 
     "cytoscape-fcose/cose-base/layout-base": ["layout-base@2.0.1", "", {}, "sha512-dp3s92+uNI1hWIpPGH3jK2kxE2lMjdXdr+DH8ynZHpd6PUlH6x6cbuXnoMmiNumznqaNO31xu9e79F0uuZ0JFg=="],
 
