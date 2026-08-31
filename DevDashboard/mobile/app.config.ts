@@ -1,4 +1,12 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
+import type { ConfigPlugin } from "expo/config-plugins";
+import { withEntitlementsPlist } from "expo/config-plugins";
+
+const withoutPushEntitlement: ConfigPlugin = (config) =>
+    withEntitlementsPlist(config, (mod) => {
+        delete mod.modResults["aps-environment"];
+        return mod;
+    });
 
 // Dynamic config (plan 02). Expo loads the static `app.json` first and passes it in as
 // `config`; we MERGE the transport/trust native requirements onto it so no app.json key is
@@ -46,6 +54,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         plugins: [
             ...(config.plugins ?? []),
             ["expo-camera", { cameraPermission: "Scan the pairing QR shown by the DevDashboard agent." }],
+            withoutPushEntitlement,
         ],
     };
 };
