@@ -23,6 +23,8 @@ function fullRow(over: Partial<QaRow> = {}): QaRow {
         cwd: "/repo",
         branch: "feat/x",
         commitSha: null,
+        commitMessage: null,
+        agent: "claude-code",
         isWorktree: false,
         worktreePath: null,
         aiAgent: null,

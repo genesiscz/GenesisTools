@@ -1,8 +1,11 @@
 import type { ConfigContext, ExpoConfig } from "expo/config";
-import type { ConfigPlugin } from "expo/config-plugins";
 import { withEntitlementsPlist } from "expo/config-plugins";
 
-const withoutPushEntitlement: ConfigPlugin = (config) =>
+// expo-notifications adds `aps-environment`, which makes a device build demand a push-capable
+// provisioning profile. Nothing here sends a remote push, so the entitlement is dropped.
+// Applied to the config object rather than listed in `plugins`: an ExpoConfig plugin entry is
+// a serializable `name` or `[name, props]` pair, never an inline mod function.
+const withoutPushEntitlement = (config: ExpoConfig): ExpoConfig =>
     withEntitlementsPlist(config, (mod) => {
         delete mod.modResults["aps-environment"];
         return mod;
@@ -22,7 +25,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           ? [existingScheme, "devdashboard"]
           : "devdashboard";
 
-    return {
+    return withoutPushEntitlement({
         ...config,
         name: config.name ?? "DevDashboard",
         slug: config.slug ?? "devdashboard-mobile",
@@ -54,7 +57,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         plugins: [
             ...(config.plugins ?? []),
             ["expo-camera", { cameraPermission: "Scan the pairing QR shown by the DevDashboard agent." }],
-            withoutPushEntitlement,
         ],
-    };
+    });
 };

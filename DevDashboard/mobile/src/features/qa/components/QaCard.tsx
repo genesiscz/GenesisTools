@@ -29,7 +29,10 @@ export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
     // Collapsed: cheap plain-text preview. Expanded: rich web-parity HTML in a WebView (heavy, so only
     // mounted on expand) when the server enriched the answer; otherwise the plain markdown text.
     const collapsedAnswer = answerPreview(entry.answerMd);
-    const hasRichAnswer = typeof entry.answerHtml === "string" && entry.answerHtml.length > 0;
+    // Only SSE frames carry the enrichment now; `/api/qa/log` returns raw rows, so `answerHtml` is
+    // optional on QaRow. Bind it to a local so the emptiness check narrows the value that is used.
+    const answerHtml = entry.answerHtml;
+    const hasRichAnswer = typeof answerHtml === "string" && answerHtml.length > 0;
 
     return (
         <Pressable
@@ -79,7 +82,7 @@ export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
                     Answer
                 </Text>
                 {expanded && hasRichAnswer ? (
-                    <QaAnswerHtml testID={`qa-answer-${id}`} html={entry.answerHtml} />
+                    <QaAnswerHtml testID={`qa-answer-${id}`} html={answerHtml} />
                 ) : (
                     <Text testID={`qa-answer-${id}`} className="text-[13px]" style={{ color: c.textPrimary }}>
                         {expanded ? (entry.answerMd ?? DASH) : collapsedAnswer}

@@ -25,8 +25,8 @@ describe("claude-usage units — historyToBucketSeries", () => {
                 {
                     bucket: "five_hour",
                     snapshots: [
-                        { id: 1, timestamp: "2026-05-29T00:00:00Z", accountName: "main", bucket: "five_hour", utilization: 0.4, resetsAt: null },
-                        { id: 2, timestamp: "2026-05-29T01:00:00Z", accountName: "main", bucket: "five_hour", utilization: 0.55, resetsAt: null },
+                        { id: 1, timestamp: "2026-05-29T00:00:00Z", accountName: "main", bucket: "five_hour", utilization: 0.4, resetsAt: null, severity: null, scopeModel: null },
+                        { id: 2, timestamp: "2026-05-29T01:00:00Z", accountName: "main", bucket: "five_hour", utilization: 0.55, resetsAt: null, severity: null, scopeModel: null },
                     ],
                 },
                 { bucket: "seven_day", snapshots: [] },
@@ -49,7 +49,7 @@ describe("claude-usage units — historyToBucketSeries", () => {
             series: [
                 {
                     bucket: "five_hour",
-                    snapshots: [{ id: 1, timestamp: "not-a-date", accountName: "main", bucket: "five_hour", utilization: 0.1, resetsAt: null }],
+                    snapshots: [{ id: 1, timestamp: "not-a-date", accountName: "main", bucket: "five_hour", utilization: 0.1, resetsAt: null, severity: null, scopeModel: null }],
                 },
             ],
         };

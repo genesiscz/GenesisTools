@@ -171,9 +171,39 @@ function mockWeather(): WeatherRes {
 
 const MOCK_TMUX: TmuxSessionsRes = {
     sessions: [
-        { name: "dev", attached: 1, windows: 3, ttydTabIds: ["ttyd-1"], canAttachInTtyd: true, cmuxSurfaces: [], inCmux: false },
-        { name: "agents", attached: 0, windows: 5, ttydTabIds: [], canAttachInTtyd: true, cmuxSurfaces: [], inCmux: true },
-        { name: "logs", attached: 0, windows: 1, ttydTabIds: [], canAttachInTtyd: false, cmuxSurfaces: [], inCmux: false },
+        {
+            name: "dev",
+            attached: 1,
+            windows: 3,
+            command: "bash",
+            cwd: "/Users/dev/project",
+            title: "dev",
+            ttydTabIds: ["ttyd-1"],
+            ttydTabs: [{ id: "ttyd-1", port: 7681, label: "dev", cwd: "/Users/dev/project", lastCommand: "bash" }],
+            canAttachInTtyd: true,
+            cmuxSurfaces: [],
+            inCmux: false,
+        },
+        {
+            name: "agents",
+            attached: 0,
+            windows: 5,
+            ttydTabIds: [],
+            ttydTabs: [],
+            canAttachInTtyd: true,
+            cmuxSurfaces: [],
+            inCmux: true,
+        },
+        {
+            name: "logs",
+            attached: 0,
+            windows: 1,
+            ttydTabIds: [],
+            ttydTabs: [],
+            canAttachInTtyd: false,
+            cmuxSurfaces: [],
+            inCmux: false,
+        },
     ],
 };
 
@@ -379,6 +409,7 @@ const MOCK_DISK_USAGE: DiskUsageResult = {
 
 const MOCK_PORTS: PortsResult = {
     lsofAvailable: true,
+    scannedAt: Date.now(),
     ports: [
         { port: 3000, pid: 4821, command: "node", address: "127.0.0.1", proto: "tcp4" },
         { port: 5173, pid: 9920, command: "bun", address: "127.0.0.1", proto: "tcp4" },
