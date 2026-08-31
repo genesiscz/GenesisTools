@@ -17,9 +17,23 @@ export function createQaStream(opts: QaStreamOptions): QaStream {
     const seen = new Set<string>();
     let handle: SseHandle | null = null;
 
+    /**
+     * `/api/qa/stream` is multiplexed: the server tags every frame with `type`, and emits
+     * `handoff` frames (`{ id, ev, ts }`) on the same stream as the `qa` ones. A handoff frame
+     * carries a handoff id, so an untagged read would push it into the QA list as a row with no
+     * question. Drop anything that is not a qa frame, and strip the tag before it reaches the UI.
+     */
     function parse(event: SseEvent): QaRow | null {
         try {
-            return SafeJSON.parse(event.data, { strict: true }) as QaRow;
+            const frame = SafeJSON.parse(event.data, { strict: true }) as { type?: string } & QaRow;
+
+            if (frame.type !== undefined && frame.type !== "qa") {
+                return null;
+            }
+
+            const { type: _type, ...row } = frame;
+
+            return row as QaRow;
         } catch {
             return null;
         }

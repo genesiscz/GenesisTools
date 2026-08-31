@@ -53,6 +53,27 @@ describe("createQaStream", () => {
         expect(rows).toEqual(["1"]);
     });
 
+    // `/api/qa/stream` is multiplexed (server/routes/qa.ts): qa frames are tagged `type:"qa"` and
+    // handoff frames `type:"handoff"`. A handoff frame carries a handoff id and no question, so an
+    // untagged read would push it into the QA list as an empty row.
+    it("drops handoff frames and strips the type tag off qa frames", () => {
+        const rows: { id: string; type?: string }[] = [];
+        const stream = createQaStream({
+            baseUrl: "http://h",
+            authHeader: () => undefined,
+            streamSseImpl: fakeStreamFactory([
+                { data: JSON.stringify({ type: "handoff", id: "h-1", ev: "task_checked", ts: 1 }) },
+                { data: JSON.stringify({ type: "qa", id: "1", question: "q", answer: "a" }) },
+            ]),
+        });
+        stream.connect(
+            (entry) => rows.push(entry as unknown as { id: string; type?: string }),
+            () => {},
+        );
+        expect(rows.map((r) => r.id)).toEqual(["1"]);
+        expect(rows[0]).not.toHaveProperty("type");
+    });
+
     it("ignores a malformed frame without throwing", () => {
         const rows: string[] = [];
         const stream = createQaStream({
