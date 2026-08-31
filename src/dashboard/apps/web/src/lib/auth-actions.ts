@@ -2,7 +2,7 @@ import { env } from "@genesiscz/utils/env";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { establishAuthSession } from "./auth/session";
-import { workos } from "./auth-server";
+import { getWorkOS } from "./auth-server";
 
 // Error response type
 export type AuthError = {
@@ -124,7 +124,7 @@ export const signInFn = createServerFn({ method: "POST" })
         const { email, password } = data;
 
         try {
-            const authResult = await workos.userManagement.authenticateWithPassword({
+            const authResult = await getWorkOS().userManagement.authenticateWithPassword({
                 clientId,
                 email,
                 password,
@@ -167,7 +167,7 @@ export const signUpFn = createServerFn({ method: "POST" })
 
         try {
             // Create the user
-            await workos.userManagement.createUser({
+            await getWorkOS().userManagement.createUser({
                 email,
                 password,
                 firstName,
@@ -175,7 +175,7 @@ export const signUpFn = createServerFn({ method: "POST" })
             });
 
             // Authenticate immediately after creation
-            const authResult = await workos.userManagement.authenticateWithPassword({
+            const authResult = await getWorkOS().userManagement.authenticateWithPassword({
                 clientId,
                 email,
                 password,
@@ -217,7 +217,7 @@ export const verifyEmailFn = createServerFn({ method: "POST" })
         const { code, pendingAuthenticationToken } = data as z.infer<typeof verifyEmailSchema>;
 
         try {
-            const authResult = await workos.userManagement.authenticateWithEmailVerification({
+            const authResult = await getWorkOS().userManagement.authenticateWithEmailVerification({
                 clientId,
                 code,
                 pendingAuthenticationToken,
@@ -244,7 +244,7 @@ export const getOAuthUrlFn = createServerFn({ method: "GET" })
             throw new Error("OAuth configuration missing");
         }
 
-        const authorizationUrl = workos.userManagement.getAuthorizationUrl({
+        const authorizationUrl = getWorkOS().userManagement.getAuthorizationUrl({
             clientId,
             redirectUri,
             provider: data.provider,

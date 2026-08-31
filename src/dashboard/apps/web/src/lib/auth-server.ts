@@ -3,10 +3,24 @@ import type { User } from "@workos-inc/node";
 import { WorkOS } from "@workos-inc/node";
 import { sealData } from "iron-session";
 
-// WorkOS client singleton
-const workos = new WorkOS(env.workos.getApiKey());
+let client: WorkOS | undefined;
 
-export { workos };
+/**
+ * WorkOS client singleton, constructed on FIRST USE rather than at module scope.
+ *
+ * `new WorkOS(undefined)` throws ("WorkOS requires either an API key or a clientId"), so building it
+ * eagerly made merely IMPORTING this module fail wherever no key is configured — a test runner, a
+ * build step, or a route that only wants `encryptSession` / `isSameOrigin`. Deferring the
+ * construction means the throw lands on the call that actually needs credentials, which is the
+ * only place that can do anything about it.
+ */
+export function getWorkOS(): WorkOS {
+    if (!client) {
+        client = new WorkOS(env.workos.getApiKey());
+    }
+
+    return client;
+}
 
 // Session types — shape matches AuthKit's Session (and WorkOS
 // AuthenticationResponse), so a session sealed here roundtrips through
