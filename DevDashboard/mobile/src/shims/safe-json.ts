@@ -44,3 +44,20 @@ export const SafeJSON = {
         return JSON.stringify(value, null, space);
     },
 } as const;
+
+/**
+ * Mirrors the real module's `parseJSON`. Repo files reached through the contract's type-only
+ * re-exports import it by name, so the shim has to carry it or those files fail to resolve.
+ * Comment support is the one thing dropped, exactly as for `SafeJSON.parse` above.
+ */
+export function parseJSON<T>(text: string, fallback?: T): T | null {
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        if (fallback !== undefined) {
+            return fallback;
+        }
+
+        return null;
+    }
+}
