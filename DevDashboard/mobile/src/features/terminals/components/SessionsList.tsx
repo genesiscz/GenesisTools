@@ -150,6 +150,9 @@ function ttydDisplayName(s: TtydSession): string {
     return s.tmuxSessionName ?? s.command;
 }
 
+const NO_WORKSPACES: CmuxWorkspace[] = [];
+const NO_PANES: CmuxPane[] = [];
+
 export function SessionsList({ onOpen }: SessionsListProps) {
     const c = useThemeColors();
     const tmux = useTmuxSessions();
@@ -164,8 +167,11 @@ export function SessionsList({ onOpen }: SessionsListProps) {
 
     const tmuxSessions: TmuxHubSession[] = tmux.data?.sessions ?? [];
     const ttydSessions: TtydSession[] = ttyd.data?.sessions ?? [];
-    const cmuxWorkspaces: CmuxWorkspace[] = cmux.data?.snapshot.workspaces ?? [];
-    const cmuxPanes: CmuxPane[] = cmux.data?.snapshot.panes ?? [];
+    // Module-level constants, not `?? []`: a fresh array literal each render changed the
+    // dependency identity of both useMemos below, so neither ever cached while the snapshot
+    // was still loading. React Compiler does not rewrite hand-written dependency arrays.
+    const cmuxWorkspaces: CmuxWorkspace[] = cmux.data?.snapshot.workspaces ?? NO_WORKSPACES;
+    const cmuxPanes: CmuxPane[] = cmux.data?.snapshot.panes ?? NO_PANES;
 
     const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput } from "react-native";
 import { Card } from "@/ui/Card";
 import { useAddTodo } from "@/features/reminders-todos/hooks";
 import { useThemeColors } from "@/theme/colors";
