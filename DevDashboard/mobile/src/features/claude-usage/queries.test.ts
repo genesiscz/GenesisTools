@@ -69,7 +69,9 @@ describe("claude-usage queries — recorded spend totals", () => {
 
     it("keys the cache by window, so switching the range refetches", () => {
         expect(claudeUsageKeys.totals(60)).not.toEqual(claudeUsageKeys.totals(1440));
-        expect(usageTotalsQuery(mockDashboardClient, 60).queryKey).toEqual(claudeUsageKeys.totals(60));
+        // Spread both sides: `queryOptions` brands its queryKey with the dataTag symbols, so the
+        // branded type and the plain key tuple are not comparable as-is.
+        expect([...usageTotalsQuery(mockDashboardClient, 60).queryKey]).toEqual([...claudeUsageKeys.totals(60)]);
     });
 
     it("coerces a payload with no `total` to the empty shape instead of crashing the card", async () => {
