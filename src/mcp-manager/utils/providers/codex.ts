@@ -253,7 +253,7 @@ export class CodexProvider extends MCPProvider {
             args: codex.args,
             env: codex.env,
             url: codex.url as string | undefined,
-            headers: codex.headers as Record<string, string> | undefined,
+            headers: (codex.http_headers ?? codex.headers) as Record<string, string> | undefined,
         };
     }
 
@@ -264,7 +264,7 @@ export class CodexProvider extends MCPProvider {
             args: unified.args,
             env: unified.env,
             url: unified.url,
-            headers: unified.headers,
+            http_headers: unified.headers,
         };
     }
 }
