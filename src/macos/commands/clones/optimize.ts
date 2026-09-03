@@ -10,13 +10,16 @@ import {
 } from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
+import { discoverRoots, RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
+import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
 import * as p from "@clack/prompts";
-import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
+import { isInteractive, parseVariadic, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { printLn } from "@genesiscz/utils/cli/stdout";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { CloneUnsupportedError } from "@genesiscz/utils/macos/apfs";
@@ -39,6 +42,9 @@ export interface OptimizeOpts {
     cache: boolean;
     yes?: boolean;
     nodeModules?: boolean;
+    dir: string[];
+    worktreesOf?: string;
+    targets?: string | boolean;
     minReal: string;
     include: string[];
     exclude: string[];
@@ -76,6 +82,9 @@ export function createOptimizeCommand(): Command {
         .option("--no-cache", "Ignore the 1h plan cache; force a fresh scan")
         .option("--yes", "Non-interactive confirm (required for --apply/--rollback in non-TTY)", false)
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
+        .option("--dir <path>", "Search this directory for install trees (repeatable)", collect, [])
+        .option("--worktrees-of <repo>", "Resolve this repo's git worktrees, siblings included")
+        .option("--targets [kinds]", `What to scan under --dir: ${TARGET_KIND_VALUES.join(", ")}`)
         .option("--min-real <bytes>", "Minimum real size to consider", "10485760")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
@@ -84,7 +93,7 @@ export function createOptimizeCommand(): Command {
         .action(async (rootsArg: string[], opts: OptimizeOpts) => {
             applyLogLevel(opts);
             if (opts.list) {
-                console.log(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
+                await printLn(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
                 process.exitCode = 0;
                 return;
             }
@@ -108,9 +117,9 @@ export function createOptimizeCommand(): Command {
 
                 const fmt = resolveFormat(opts.format);
                 if (fmt === "jsonl") {
-                    console.log(new JsonRenderer().processReportJsonl(rep));
+                    await printLn(new JsonRenderer().processReportJsonl(rep));
                 } else {
-                    console.log(resolveRenderer(fmt).processReport(rep));
+                    await printLn(resolveRenderer(fmt).processReport(rep));
                 }
 
                 process.exitCode = 0;
@@ -161,7 +170,7 @@ export function createOptimizeCommand(): Command {
 
                 try {
                     const rolled = rollbackProcess(opts.process);
-                    console.log(resolveRenderer(resolveFormat(opts.format)).processReport(rolled));
+                    await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(rolled));
                     process.exitCode = rolled.totals.errors > 0 ? 1 : 0;
                 } catch (err) {
                     if (err instanceof RollbackSpaceError) {
@@ -178,8 +187,64 @@ export function createOptimizeCommand(): Command {
             }
 
             const cfg = await loadClonesConfig();
-            const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
-            const roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;
+            const include = parseVariadic(opts.include);
+            let roots: string[];
+            let targets: string[] = [];
+            if (opts.dir.length > 0) {
+                // `--include node_modules` filters FILE relpaths inside a root
+                // that IS node_modules, so it would drop nearly everything.
+                const kindInInclude = include.find((g) => (TARGET_KIND_VALUES as readonly string[]).includes(g));
+                if (kindInInclude !== undefined) {
+                    console.error(
+                        `--include ${kindInInclude} filters FILE paths; to pick which trees to scan under --dir use --targets.`
+                    );
+                    console.error(
+                        suggestCommand("tools macos clones", {
+                            remove: ["--include"],
+                            add: ["--targets", kindInInclude],
+                            subcommand: ["macos", "clones", "optimize"],
+                        })
+                    );
+                    process.exit(1);
+                }
+
+                if (opts.targets === true) {
+                    console.error(
+                        suggestEnumFlag("tools macos clones", "--targets", TARGET_KIND_VALUES, {
+                            subcommand: ["macos", "clones", "optimize"],
+                        })
+                    );
+                    process.exit(1);
+                }
+
+                targets = typeof opts.targets === "string" ? parseVariadic(opts.targets) : ["gitignored"];
+                try {
+                    const discovered = await discoverRoots({
+                        dirs: opts.dir,
+                        targets,
+                        ...(opts.worktreesOf !== undefined ? { worktreesOf: opts.worktreesOf } : {}),
+                    });
+                    roots = discovered.roots;
+                    for (const s of discovered.skipped) {
+                        log.info({ path: s.path, reason: s.reason }, "root skipped");
+                    }
+                } catch (err) {
+                    if (err instanceof RepoNotFoundError) {
+                        console.error(err.message);
+                        if (err.candidates.length > 0) {
+                            console.error(`Repositories found: ${err.candidates.join(", ")}`);
+                        }
+
+                        process.exit(1);
+                    }
+
+                    throw err;
+                }
+            } else {
+                const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
+                roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;
+            }
+
             if (roots.length === 0) {
                 log.warn("no roots resolved");
                 console.error("No roots to optimize.");
@@ -189,9 +254,12 @@ export function createOptimizeCommand(): Command {
             const cacheParams = {
                 roots,
                 minSize: Number.parseInt(opts.minReal, 10) || 10485760,
-                include: parseVariadic(opts.include),
+                include,
                 exclude: parseVariadic(opts.exclude),
                 nodeModules: Boolean(opts.nodeModules),
+                targets,
+                worktreesOf: opts.worktreesOf ?? "",
+                keepPartners: [],
             };
 
             // SIGINT/SIGTERM → abort scan within ~one 64 KB chunk. Mirrors
@@ -275,7 +343,7 @@ export function createOptimizeCommand(): Command {
                             planCacheHit: Boolean(cached),
                             ...(cached ? { planCacheAgeMs: cached.ageMs } : {}),
                         });
-                        console.log(resolveRenderer(resolveFormat(opts.format)).processReport(rep));
+                        await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(rep));
                         process.exitCode = rep.totals.errors > 0 ? 1 : 0;
                     } catch (err) {
                         if (err instanceof IntegrityError) {
@@ -305,7 +373,7 @@ export function createOptimizeCommand(): Command {
                     })
                 ).sets;
                 await cachePlan(cacheParams, sets);
-                console.log(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
+                await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
                 process.exitCode = 0;
             } catch (err) {
                 if (controller.signal.aborted) {

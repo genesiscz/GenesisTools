@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,18 +22,28 @@ describe("createDuplicatesCommand", () => {
             mkdirSync(join(dir, "b"), { recursive: true });
             writeFileSync(join(dir, "a", "f"), Buffer.alloc(70_000, 1));
             writeFileSync(join(dir, "b", "f"), Buffer.alloc(70_000, 1));
-            const logs: string[] = [];
-            const orig = console.log;
-            console.log = (...a: unknown[]) => logs.push(a.join(" "));
+            let output = "";
+            const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+                (
+                    chunk: string | Uint8Array,
+                    encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                    callback?: (error?: Error | null) => void
+                ) => {
+                    output += String(chunk);
+                    const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                    cb?.();
+                    return true;
+                }
+            );
             try {
                 await createDuplicatesCommand().parseAsync(["node", "duplicates", dir, "--group", "--format", "json"], {
                     from: "node",
                 });
             } finally {
-                console.log = orig;
+                stdoutSpy.mockRestore();
             }
 
-            const parsed = SafeJSON.parse(logs.join("\n")) as {
+            const parsed = SafeJSON.parse(output) as {
                 grouped: boolean;
                 sets: { members: string[] }[];
             };

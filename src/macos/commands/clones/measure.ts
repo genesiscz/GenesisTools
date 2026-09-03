@@ -4,6 +4,7 @@ import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { parseVariadic } from "@genesiscz/utils/cli";
+import { printLn } from "@genesiscz/utils/cli/stdout";
 import { logger } from "@genesiscz/utils/logger";
 import { Command, Option } from "commander";
 
@@ -86,7 +87,7 @@ export function createMeasureCommand(): Command {
         }
 
         const fmt = resolveFormat(opts.format);
-        console.log(resolveRenderer(fmt).measure(report));
+        await printLn(resolveRenderer(fmt).measure(report));
 
         const wholeRootUnreadable = report.errors.length > 0 && report.totals.logical === 0;
         process.exitCode = wholeRootUnreadable ? 2 : 0;
@@ -131,7 +132,7 @@ export function createDuCommand(): Command {
         }
 
         const fmt = resolveFormat(opts.format);
-        console.log(resolveRenderer(fmt).measure(report));
+        await printLn(resolveRenderer(fmt).measure(report));
         process.exitCode = report.errors.length > 0 && report.totals.logical === 0 ? 2 : 0;
     });
 

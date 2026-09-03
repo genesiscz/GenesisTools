@@ -18,6 +18,7 @@
 | `reminders` | List/add/search/remove reminders across lists |
 | `messages` | List, search, and show iMessage / SMS conversations |
 | `voice-memos` | List, play, export, transcribe, search Voice Memos |
+| `clones` | Clone-aware sizes, duplicate detection, safe APFS dedupe across worktrees (alias: `apfs`) |
 | `sleep` | Inspect macOS sleep / wake metadata |
 
 ---
@@ -48,9 +49,25 @@ tools macos messages show "+420..."
 
 # Voice Memos (also available as `tools voice-memos`)
 tools macos voice-memos list
+
+# Clones (APFS clone-aware disk usage; run bare for the guide)
+tools macos clones
+tools macos clones measure ~/Projects/acme --show-partners
+tools macos clones duplicates ~/Projects/acme --node-modules
+tools macos clones reclaim plan --dir ~/Projects
+tools macos clones reclaim plan --dir ~/Projects --worktrees-of acme --save acme
+tools macos clones reclaim apply --dir ~/Projects --yes
+tools macos clones reclaim presets list
+tools macos clones optimize --rollback --process <id>
 ```
 
 Run `tools macos <subcommand> --help` for the full option list of each subcommand.
+
+### Clones: reclaim across worktrees
+
+`reclaim` finds the install trees under a directory (`node_modules`, composer `vendor`, `Pods`, `.cxx` — the gitignored ones by default), including the git worktrees of a repo that live beside it, and matches duplicates ACROSS those trees. `plan` changes nothing; `apply` clonefiles each duplicate onto one keep copy after a typed confirmation and writes an audit you can roll back. A preset (`--save <id>`, `presets run <id>`) stores the selector, never file paths, so it stays correct after a branch switch.
+
+Every phase is timed under the `clones` profiler scope: `PROFILE=clones tools macos clones reclaim plan --dir ~/Projects` writes phase timings to `~/.genesis-tools/logs/<date>-profiling.log`; `profiling.detail=all` also times each spawned `find` / `git check-ignore`. Each run also leaves `~/.genesis-tools/macos-clones/reclaim/<runId>.jsonl` with what it discovered, skipped and scanned. Benchmarks: `scripts/benchmarks/clones/run-reclaim.sh <label> <dir> [flags]` (cold + warm plan, phase timings, one JSONL row), beside the older `run.sh` (duplicates) and `run-measure.sh`. The result rows name the scanned paths, so they stay out of git; only the scripts are tracked.
 
 ---
 

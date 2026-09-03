@@ -3,13 +3,13 @@ import { registerClonesCommand } from "@app/macos/commands/clones/index";
 import { Command } from "commander";
 
 describe("registerClonesCommand", () => {
-    it("adds a 'clones' group with the six subcommands", () => {
+    it("adds a 'clones' group with the seven subcommands", () => {
         const program = new Command();
         registerClonesCommand(program);
         const clones = program.commands.find((c) => c.name() === "clones");
         expect(clones).toBeDefined();
         const subs = clones?.commands.map((c) => c.name()).sort();
-        expect(subs).toEqual(["config", "daemon", "du", "duplicates", "measure", "optimize"]);
+        expect(subs).toEqual(["config", "daemon", "du", "duplicates", "measure", "optimize", "reclaim"]);
     });
 
     it("adds a hidden 'apfs' alias group with the same subcommands", () => {
@@ -19,6 +19,6 @@ describe("registerClonesCommand", () => {
         expect(apfs).toBeDefined();
         expect((apfs as unknown as { _hidden?: boolean })._hidden).toBe(true);
         const subs = apfs?.commands.map((c) => c.name()).sort();
-        expect(subs).toEqual(["config", "daemon", "du", "duplicates", "measure", "optimize"]);
+        expect(subs).toEqual(["config", "daemon", "du", "duplicates", "measure", "optimize", "reclaim"]);
     });
 });

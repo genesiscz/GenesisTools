@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,9 +40,19 @@ describe("createMeasureCommand", () => {
         try {
             mkdirSync(join(dir, "s"), { recursive: true });
             writeFileSync(join(dir, "s", "f"), Buffer.alloc(20 * 1024 * 1024, 1));
-            const logs: string[] = [];
-            const orig = console.log;
-            console.log = (...a: unknown[]) => logs.push(a.join(" "));
+            let output = "";
+            const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+                (
+                    chunk: string | Uint8Array,
+                    encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                    callback?: (error?: Error | null) => void
+                ) => {
+                    output += String(chunk);
+                    const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                    cb?.();
+                    return true;
+                }
+            );
             try {
                 await createMeasureCommand().parseAsync(
                     ["node", "measure", dir, "--format", "json", "--min-real", "1024"],
@@ -51,10 +61,10 @@ describe("createMeasureCommand", () => {
                     }
                 );
             } finally {
-                console.log = orig;
+                stdoutSpy.mockRestore();
             }
 
-            const parsed = SafeJSON.parse(logs.join("\n"));
+            const parsed = SafeJSON.parse(output);
             expect(parsed).toHaveProperty("totals");
             expect(parsed).toHaveProperty("roots");
             expect((parsed as { roots: string[] }).roots[0]).toBe(dir);
@@ -76,19 +86,29 @@ describe("measure roots fall back to configured watchedDirs", () => {
             mkdirSync(join(dir, "s"), { recursive: true });
             writeFileSync(join(dir, "s", "f"), Buffer.alloc(20 * 1024 * 1024, 1));
             await addWatchedDirs([dir]);
-            const logs: string[] = [];
-            const orig = console.log;
-            console.log = (...a: unknown[]) => logs.push(a.join(" "));
+            let output = "";
+            const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+                (
+                    chunk: string | Uint8Array,
+                    encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                    callback?: (error?: Error | null) => void
+                ) => {
+                    output += String(chunk);
+                    const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                    cb?.();
+                    return true;
+                }
+            );
             try {
                 await createMeasureCommand().parseAsync(["node", "measure", "--format", "json", "--min-real", "1024"], {
                     from: "node",
                 });
             } finally {
-                console.log = orig;
+                stdoutSpy.mockRestore();
                 await removeWatchedDirs([dir]);
             }
 
-            const parsed = SafeJSON.parse(logs.join("\n")) as { roots: string[] };
+            const parsed = SafeJSON.parse(output) as { roots: string[] };
             expect(parsed.roots).toContain(dir);
         } finally {
             rmSync(dir, { recursive: true, force: true });
@@ -109,21 +129,31 @@ describe("createDuCommand", () => {
         try {
             mkdirSync(join(dir, "l1", "l2", "l3"), { recursive: true });
             writeFileSync(join(dir, "l1", "l2", "l3", "f"), Buffer.alloc(20 * 1024 * 1024, 1));
-            const logs: string[] = [];
-            const orig = console.log;
-            console.log = (...a: unknown[]) => logs.push(a.join(" "));
+            let output = "";
+            const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+                (
+                    chunk: string | Uint8Array,
+                    encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                    callback?: (error?: Error | null) => void
+                ) => {
+                    output += String(chunk);
+                    const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                    cb?.();
+                    return true;
+                }
+            );
             try {
                 await createDuCommand().parseAsync(
                     ["node", "du", dir, "--depth", "1", "--format", "json", "--min-real", "1024"],
                     { from: "node" }
                 );
             } finally {
-                console.log = orig;
+                stdoutSpy.mockRestore();
             }
 
-            const parsed = SafeJSON.parse(logs.join("\n")) as { roots: string[] };
+            const parsed = SafeJSON.parse(output) as { roots: string[] };
             expect(parsed.roots[0]).toBe(dir);
-            expect(logs.join("\n")).not.toContain("/l1/l2/l3");
+            expect(output).not.toContain("/l1/l2/l3");
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }

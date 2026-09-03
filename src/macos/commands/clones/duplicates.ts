@@ -7,6 +7,7 @@ import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestra
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
+import { printLn } from "@genesiscz/utils/cli/stdout";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -210,12 +211,12 @@ export function createDuplicatesCommand(): Command {
                     capped = true;
                 }
 
-                console.log(resolveRenderer(fmt).duplicates(report));
+                await printLn(resolveRenderer(fmt).duplicates(report));
 
                 if (isHumanFormat && capped) {
                     const hiddenSets = totalSets - report.sets.length;
                     const hiddenBytes = grandTotalReclaimable - report.totalReclaimable;
-                    console.log(
+                    await printLn(
                         `\n... ${hiddenSets} more set(s) hidden (≈ ${formatBytes(hiddenBytes)} more reclaimable). Use --top 0 for everything or --format json to dump.`
                     );
                 }

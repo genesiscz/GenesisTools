@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,16 +42,26 @@ describe("createConfigCommand (non-TTY)", () => {
             expect(cfg.watchedDirs).toContain(d1);
             expect(cfg.watchedDirs).toContain(d2);
 
-            const logs: string[] = [];
-            const orig = console.log;
-            console.log = (...x: unknown[]) => logs.push(x.join(" "));
+            let output = "";
+            const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+                (
+                    chunk: string | Uint8Array,
+                    encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                    callback?: (error?: Error | null) => void
+                ) => {
+                    output += String(chunk);
+                    const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                    cb?.();
+                    return true;
+                }
+            );
             try {
                 await createConfigCommand().parseAsync(["node", "config", "--list"], { from: "node" });
             } finally {
-                console.log = orig;
+                stdoutSpy.mockRestore();
             }
 
-            const parsed = SafeJSON.parse(logs.join("\n")) as { watchedDirs: string[] };
+            const parsed = SafeJSON.parse(output) as { watchedDirs: string[] };
             expect(parsed.watchedDirs).toContain(d1);
 
             await createConfigCommand().parseAsync(["node", "config", "--remove-dir", `${d1},${d2}`], {

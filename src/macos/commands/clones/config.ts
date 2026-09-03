@@ -9,6 +9,7 @@ import {
 } from "@app/macos/lib/clones/store";
 import * as p from "@clack/prompts";
 import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
+import { printLn } from "@genesiscz/utils/cli/stdout";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -93,7 +94,7 @@ export function createConfigCommand(): Command {
                     await setNodeModules(opts.nodeModules === "on" || opts.nodeModules === "true");
                 }
 
-                console.log(SafeJSON.stringify(await loadClonesConfig(), null, 2));
+                await printLn(SafeJSON.stringify(await loadClonesConfig(), null, 2));
                 return;
             }
 

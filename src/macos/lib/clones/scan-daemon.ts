@@ -54,6 +54,9 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
             include: [],
             exclude,
             nodeModules: Boolean(cfg.nodeModules),
+            targets: [],
+            worktreesOf: "",
+            keepPartners: [],
         },
         sets
     );

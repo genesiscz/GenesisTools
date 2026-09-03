@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { Executor } from "@genesiscz/utils/cli";
+import { printLn } from "@genesiscz/utils/cli/stdout";
 import { logger } from "@genesiscz/utils/logger";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import { Command } from "commander";
@@ -36,7 +37,7 @@ export function createDaemonCommand(): Command {
                 retention: { maxAgeDays: 14, minRuns: 14 },
                 description: "Clone-aware dry-run scan of watched dirs; notify reclaimable",
             });
-            console.log(created ? `registered ${TASK_NAME}` : `${TASK_NAME} already registered (use --overwrite)`);
+            await printLn(created ? `registered ${TASK_NAME}` : `${TASK_NAME} already registered (use --overwrite)`);
         });
 
     daemon
@@ -44,7 +45,7 @@ export function createDaemonCommand(): Command {
         .description("Unregister the clone-scan task")
         .action(async () => {
             const removed = await unregisterTask(TASK_NAME);
-            console.log(removed ? `unregistered ${TASK_NAME}` : `${TASK_NAME} was not registered`);
+            await printLn(removed ? `unregistered ${TASK_NAME}` : `${TASK_NAME} was not registered`);
         });
 
     daemon
@@ -56,7 +57,7 @@ export function createDaemonCommand(): Command {
                 .split("\n")
                 .filter((line) => line.includes(TASK_NAME) || line.startsWith("name") || line.trim() === "")
                 .join("\n");
-            console.log(filtered || `${TASK_NAME}: no status (is the daemon running? \`tools daemon start\`)`);
+            await printLn(filtered || `${TASK_NAME}: no status (is the daemon running? \`tools daemon start\`)`);
             if (result.exitCode !== 0) {
                 log.warn({ exitCode: result.exitCode }, "daemon status returned non-zero");
             }
