@@ -413,9 +413,6 @@ export function getDaysInPeriod(periodStart: string, periodFinish: string): Arra
 }
 
 /**
- * Convert minutes to seconds.
- */
-/**
  * Days of a period whose finish is INCLUSIVE, which is how Clarity's `timePeriodFinish` reports
  * the last day of a week. Use `getDaysInPeriod` for an exclusive end such as the carousel's
  * `finish_date`; mixing the two silently drops or adds a day of hours.
@@ -427,6 +424,9 @@ export function getDaysInPeriodInclusive(
     return getDaysInPeriod(periodStart, `${addDay(periodFinishInclusive.split("T")[0])}T00:00:00`);
 }
 
+/**
+ * Convert minutes to seconds.
+ */
 export function minutesToSeconds(minutes: number): number {
     return minutes * 60;
 }

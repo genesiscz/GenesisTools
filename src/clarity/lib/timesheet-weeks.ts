@@ -4,13 +4,24 @@ import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface TimesheetWeek {
-    timesheetId: number;
+    /**
+     * Absent on future periods Clarity has not opened a timesheet for. Every call that sends this
+     * to the API must narrow it first; `timesheetId=undefined` answers `API-1006 invalidAttrValue`.
+     */
+    timesheetId: number | undefined;
     timePeriodId: number;
     startDate: string;
     finishDate: string;
     totalHours: number;
     status: string;
     entryCount?: number;
+}
+
+/** A week Clarity has actually opened a timesheet for, so its id is safe to send to the API. */
+export type IdentifiedTimesheetWeek = TimesheetWeek & { timesheetId: number };
+
+export function hasTimesheetId(week: TimesheetWeek): week is IdentifiedTimesheetWeek {
+    return week.timesheetId !== undefined;
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Clarity carousel entries have inconsistent shapes
@@ -255,7 +266,9 @@ export async function getTimesheetWeeks(
     }
 
     // Fetch entry counts for weeks that don't have them yet (not in current period's timesheets section)
-    const needsCount = weeks.filter((w) => w.entryCount === undefined && w.timesheetId);
+    const needsCount = weeks.filter(
+        (w): w is IdentifiedTimesheetWeek => w.entryCount === undefined && hasTimesheetId(w)
+    );
 
     if (needsCount.length > 0) {
         const results = await Promise.allSettled(
@@ -322,8 +335,11 @@ async function findValidTimePeriodId(api: ClarityApi, mappings: ClarityMapping[]
  * half-open: the finish date belongs to the next period, not this one. Future periods carry no
  * timesheet id yet and are skipped, because the API rejects `timesheetId=undefined`.
  */
-export function findWeekForDate(weeks: TimesheetWeek[], date: string): TimesheetWeek | undefined {
-    return weeks.find((week) => week.timesheetId && isDateInHalfOpenRange(date, week.startDate, week.finishDate));
+export function findWeekForDate(weeks: TimesheetWeek[], date: string): IdentifiedTimesheetWeek | undefined {
+    return weeks.find(
+        (week): week is IdentifiedTimesheetWeek =>
+            hasTimesheetId(week) && isDateInHalfOpenRange(date, week.startDate, week.finishDate)
+    );
 }
 
 /**

@@ -53,6 +53,21 @@ describe("walkAncestorsBatched", () => {
         expect(requested.length).toBe(new Set(requested).size);
     });
 
+    test("never re-asks for a starting id the server omitted, even as another item's parent", async () => {
+        const batches: number[][] = [];
+        // 200001 is a starting id, is omitted by the server, and is also 100001's parent. Caching
+        // only what came back would ask for it a second time one level up.
+        const fetchMany = async (ids: number[]): Promise<Map<number, WorkItemNode>> => {
+            batches.push([...ids]);
+
+            return new Map(ids.filter((id) => TREE[id] && id !== 200001).map((id) => [id, TREE[id]]));
+        };
+
+        await walkAncestorsBatched({ fetchMany, ids: [100001, 200001], maxDepth: 3 });
+
+        expect(batches.flat().filter((id) => id === 200001).length).toBe(1);
+    });
+
     test("returns a single-node chain for a work item with no parent", async () => {
         const { fetchMany } = batchFetcher();
 

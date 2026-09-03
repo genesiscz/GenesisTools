@@ -10,6 +10,7 @@ import { listClarityTasks } from "@app/clarity/lib/tasks";
 import {
     findWeekForDate,
     getTimesheetWeeks,
+    hasTimesheetId,
     type TimesheetWeek,
     taskSourceWeekOrder,
 } from "@app/clarity/lib/timesheet-weeks";
@@ -40,6 +41,10 @@ export function parseMonthArg(date: string): { month: number; year: number } {
  */
 async function firstNonEmptyCatalogue(api: ClarityApi, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
     for (const candidate of candidates) {
+        if (!hasTimesheetId(candidate)) {
+            continue;
+        }
+
         const tasks = await listClarityTasks({ api, timesheetId: candidate.timesheetId });
 
         if (tasks.length > 0) {

@@ -9,7 +9,12 @@ import pc from "picocolors";
 import type { ClarityMapping } from "../config.js";
 import { getConfig, getMappingForWorkItem, requireConfig, saveConfig } from "../config.js";
 import { getTimelogWorkItems, type TimelogWorkItemGroup } from "../lib/timelog-workitems.js";
-import { getTimesheetWeeks, type TimesheetWeek } from "../lib/timesheet-weeks.js";
+import {
+    getTimesheetWeeks,
+    hasTimesheetId,
+    type IdentifiedTimesheetWeek,
+    type TimesheetWeek,
+} from "../lib/timesheet-weeks.js";
 
 interface ClarityProject {
     taskId: number;
@@ -132,7 +137,11 @@ export async function runInteractiveLinking(): Promise<void> {
         return;
     }
 
-    if (weeks.length === 0) {
+    // A period Clarity has not opened a timesheet for has no id to read entries with, so it cannot
+    // be picked here at all.
+    const selectableWeeks = weeks.filter(hasTimesheetId);
+
+    if (selectableWeeks.length === 0) {
         clack.log.warn("No timesheet weeks found.");
         clack.outro("Done");
         return;
@@ -140,7 +149,7 @@ export async function runInteractiveLinking(): Promise<void> {
 
     // State machine
     let step = 1;
-    let selectedWeek: TimesheetWeek | null = null;
+    let selectedWeek: IdentifiedTimesheetWeek | null = null;
     let selectedTask: ClarityProject | null = null;
     let projects: ClarityProject[] = [];
     let workItems: TimelogWorkItemGroup[] = [];
@@ -150,7 +159,7 @@ export async function runInteractiveLinking(): Promise<void> {
             // Step 1: Select week
             const result = await clack.select({
                 message: "Select timesheet week:",
-                options: weeks.map((w) => ({
+                options: selectableWeeks.map((w) => ({
                     value: w,
                     label: formatWeekLabel(w),
                     hint: `${w.totalHours}h – ${w.status}`,

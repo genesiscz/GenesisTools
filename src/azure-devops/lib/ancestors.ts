@@ -52,10 +52,17 @@ export async function walkAncestorsBatched({
     maxDepth?: number;
 }): Promise<Map<number, WorkItemNode[]>> {
     const known = new Map<number, WorkItemNode>();
+    // A work item the API omits never lands in `known`, so without a separate record of what was
+    // asked for, an omitted id named as someone else's parent is requested again a level later.
+    const attempted = new Set<number>();
     let level = [...new Set(ids)];
 
     for (let depth = 0; depth <= maxDepth && level.length > 0; depth++) {
-        const wanted = level.filter((id) => !known.has(id));
+        const wanted = level.filter((id) => !attempted.has(id));
+
+        for (const id of wanted) {
+            attempted.add(id);
+        }
 
         if (wanted.length === 0) {
             break;
@@ -71,7 +78,7 @@ export async function walkAncestorsBatched({
             ...new Set(
                 wanted
                     .map((id) => known.get(id)?.parent)
-                    .filter((parent): parent is number => parent !== undefined && !known.has(parent))
+                    .filter((parent): parent is number => parent !== undefined && !attempted.has(parent))
             ),
         ];
     }

@@ -60,9 +60,11 @@ const MAPPINGS_WITHOUT_TIMESHEET_ID = [
 
 function fakeApi() {
     const timesheetAppCalls: Array<number | undefined> = [];
+    const openPeriods = new Set(CAROUSEL.map((entry) => entry.id));
 
     return {
         timesheetAppCalls,
+        openPeriods,
         // biome-ignore lint/suspicious/noExplicitAny: test double mirrors the Clarity response shape
         getTimesheetApp: async (timePeriodId?: number): Promise<any> => {
             timesheetAppCalls.push(timePeriodId);
@@ -74,7 +76,11 @@ function fakeApi() {
             return {
                 resource: { _results: [{ user_id: 900001 }] },
                 timesheets: { _results: [{ _internalId: 555004, numberOfEntries: 8, timePeriodId: centre }] },
-                tscarousel: { _results: CAROUSEL.filter((entry) => Math.abs(entry.id - centre) <= 2) },
+                tscarousel: {
+                    _results: CAROUSEL.filter((entry) => Math.abs(entry.id - centre) <= 2).map((entry) =>
+                        openPeriods.has(entry.id) ? entry : { ...entry, tpTimesheet: { _results: [] } }
+                    ),
+                },
             };
         },
         // biome-ignore lint/suspicious/noExplicitAny: test double mirrors the Clarity response shape
@@ -110,6 +116,24 @@ describe("resolveFillWeeks", () => {
             year: 2026,
         });
 
+        expect(result.weeks.map((w) => w.timesheetId)).toEqual([555004]);
+    });
+
+    test("treats a period Clarity has not opened a timesheet for as an uncovered date", async () => {
+        const api = fakeApi();
+        // 2026-08-10..17 exists in the carousel but Clarity has not opened its timesheet, so it
+        // has no id to write to; sending an absent id answers API-1006.
+        api.openPeriods.delete(400002);
+
+        const result = await resolveFillWeeks({
+            api: api as unknown as ClarityApi,
+            mappings: MAPPINGS_WITHOUT_TIMESHEET_ID,
+            dates: ["2026-08-12", "2026-08-26"],
+            month: 8,
+            year: 2026,
+        });
+
+        expect(result.unresolvedDates).toEqual(["2026-08-12"]);
         expect(result.weeks.map((w) => w.timesheetId)).toEqual([555004]);
     });
 

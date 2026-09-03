@@ -3,7 +3,12 @@ import { requireConfig, saveConfig } from "@app/clarity/config";
 import { type AssignmentView, buildAssignmentView, parseMonthArg } from "@app/clarity/lib/assignment-view";
 import { type AssignmentRow, applyAssignments, removeAssignments } from "@app/clarity/lib/assignments";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
-import { getTimesheetWeeks, selectWeeksForDateArg, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
+import {
+    getTimesheetWeeks,
+    hasTimesheetId,
+    type IdentifiedTimesheetWeek,
+    selectWeeksForDateArg,
+} from "@app/clarity/lib/timesheet-weeks";
 import * as p from "@clack/prompts";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -59,6 +64,19 @@ export function registerTasksCommand(parent: Command): void {
             }
 
             const date = options.date ?? formatDate(new Date());
+            const wantsAssignmentView =
+                Boolean(options.assign) ||
+                Boolean(options.applyRecommended) ||
+                Boolean(options.assigned) ||
+                Boolean(options.unassigned);
+
+            if (options.timesheet && wantsAssignmentView) {
+                // The assignment view is built from a MONTH of ADO time entries, so a single
+                // timesheet id cannot scope it. Accepting the flag here would silently report the
+                // default date's month instead of the timesheet the user named.
+                out.error("--timesheet only applies to the task catalogue. Use --date <YYYY-MM> for this action.");
+                process.exit(1);
+            }
 
             if (options.assign || options.applyRecommended) {
                 await runAssign(date, options);
@@ -83,7 +101,7 @@ async function runCatalogue(date: string, options: TasksOptions): Promise<void> 
         cookies: config.cookies,
     });
 
-    let selected: TimesheetWeek[];
+    let selected: IdentifiedTimesheetWeek[];
 
     if (options.timesheet) {
         const timesheetId = Number.parseInt(options.timesheet, 10);
@@ -100,7 +118,8 @@ async function runCatalogue(date: string, options: TasksOptions): Promise<void> 
         }
 
         const { weeks } = await getTimesheetWeeks(api, config.mappings, month, year);
-        selected = selectWeeksForDateArg(weeks, date);
+        // A period with no opened timesheet has no catalogue to read, so it is not a match.
+        selected = selectWeeksForDateArg(weeks, date).filter(hasTimesheetId);
 
         if (selected.length === 0) {
             out.error(`No Clarity period covers ${date}`);

@@ -1,9 +1,9 @@
 import type { ClarityMapping } from "@app/clarity/config";
-import { findWeekForDate, getTimesheetWeeks, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
+import { findWeekForDate, getTimesheetWeeks, type IdentifiedTimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityApi } from "@genesiscz/utils/clarity";
 
 export interface ResolvedFillWeeks {
-    weeks: TimesheetWeek[];
+    weeks: IdentifiedTimesheetWeek[];
     unresolvedDates: string[];
     /** Clarity user id, needed as the author of a timesheet note. */
     userId?: number;
@@ -28,7 +28,7 @@ export async function resolveFillWeeks({
 }): Promise<ResolvedFillWeeks> {
     const { weeks: available, userId } = await getTimesheetWeeks(api, mappings, month, year);
 
-    const weeks: TimesheetWeek[] = [];
+    const weeks: IdentifiedTimesheetWeek[] = [];
     const unresolvedDates: string[] = [];
 
     for (const date of dates) {
