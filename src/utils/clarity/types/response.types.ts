@@ -36,8 +36,16 @@ export interface TimesheetRecord {
     resourceId: number;
     isActive: boolean;
     actualsTotal: number;
-    timePeriodStart: string; // ISO
-    timePeriodFinish: string; // ISO
+    timePeriodStart: string; // ISO, first day of the period
+    /**
+     * ISO, and INCLUSIVE: the last day that belongs to the period. A week running Monday to
+     * Sunday reports finish 2026-08-30, not 2026-08-31.
+     *
+     * 🛑 This is the opposite of `CarouselEntry.finish_date`, which is EXCLUSIVE for the same
+     * week. Never feed this field to `isDateInHalfOpenRange`; add a day first (`addDay`), the
+     * way `src/clarity/ui/src/server/fill.ts` does when it builds `exclusiveEnd`.
+     */
+    timePeriodFinish: string;
     timePeriodId: number;
     timePeriodOffset: number;
     version: number;
@@ -257,9 +265,23 @@ export interface TimesheetCarousel {
 
 export interface CarouselEntry {
     id: number; // timePeriodId
-    timesheet_id: number; // THE timesheetId we need
-    start_date: string; // ISO
-    finish_date: string; // ISO
+    /**
+     * THE timesheetId we need. Absent on future periods Clarity has not opened a timesheet for;
+     * sending `timesheetId=undefined` answers `API-1006 invalidAttrValue`.
+     */
+    timesheet_id: number;
+    start_date: string; // ISO, first day of the period
+    /**
+     * ISO, and EXCLUSIVE: the first day that no longer belongs to the period. Adjacent periods
+     * therefore share a boundary date. The week of 2026-08-24 reports finish_date 2026-08-31,
+     * while the next period reports start_date 2026-08-31.
+     *
+     * 🛑 The same week's timesheet reports `timePeriodFinish` 2026-08-30, which is INCLUSIVE.
+     * Two fields, two meanings, one day apart. Match dates against this one with
+     * `isDateInHalfOpenRange(date, start_date, finish_date)` from `@genesiscz/utils/date`;
+     * an inclusive comparison here assigns every boundary day to the earlier week.
+     */
+    finish_date: string;
     total: number; // total hours logged
     prstatus: LookupField; // status
     _self: string;

@@ -380,6 +380,23 @@ export function subtractDay(date: string): string {
  * Start is inclusive, finish is exclusive (standard half-open interval).
  * Format: "YYYY-MM-DD".
  */
+/**
+ * Test a date against a reporting period whose finish is EXCLUSIVE.
+ *
+ * Clarity timesheet periods and similar calendars share a boundary date: one period ends on
+ * 2026-08-24 while the next starts on it. An inclusive comparison puts that day in both, so the
+ * finish never counts. Accepts plain dates or ISO timestamps on any argument.
+ *
+ * 🛑 Feed this the EXCLUSIVE end. In Clarity that is `CarouselEntry.finish_date`. The timesheet's
+ * own `timePeriodFinish` is INCLUSIVE and sits one day earlier for the same week, so passing it
+ * here silently drops the last day of every period. Convert it with `addDay` first.
+ */
+export function isDateInHalfOpenRange(date: string, start: string, finish: string): boolean {
+    const day = date.split("T")[0];
+
+    return day >= start.split("T")[0] && day < finish.split("T")[0];
+}
+
 export function getDaysInPeriod(periodStart: string, periodFinish: string): Array<{ label: string; date: string }> {
     const start = parseUTCDate(periodStart);
     const finish = parseUTCDate(periodFinish);
@@ -398,6 +415,18 @@ export function getDaysInPeriod(periodStart: string, periodFinish: string): Arra
 /**
  * Convert minutes to seconds.
  */
+/**
+ * Days of a period whose finish is INCLUSIVE, which is how Clarity's `timePeriodFinish` reports
+ * the last day of a week. Use `getDaysInPeriod` for an exclusive end such as the carousel's
+ * `finish_date`; mixing the two silently drops or adds a day of hours.
+ */
+export function getDaysInPeriodInclusive(
+    periodStart: string,
+    periodFinishInclusive: string
+): Array<{ label: string; date: string }> {
+    return getDaysInPeriod(periodStart, `${addDay(periodFinishInclusive.split("T")[0])}T00:00:00`);
+}
+
 export function minutesToSeconds(minutes: number): number {
     return minutes * 60;
 }

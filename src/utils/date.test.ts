@@ -1,10 +1,12 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import {
     formatLocalDateTimeStamp,
     formatLocalFileTimestamp,
     formatLocalMonth,
     getDatesInMonth,
+    getDaysInPeriodInclusive,
     getMonthDateRange,
+    isDateInHalfOpenRange,
     parseDate,
 } from "./date";
 
@@ -84,5 +86,59 @@ describe("local timestamp formatting", () => {
 
     it("formats local month", () => {
         expect(formatLocalMonth(d)).toBe("2026-05");
+    });
+});
+
+describe("isDateInHalfOpenRange", () => {
+    // Reporting periods share a boundary date: one ends 2026-08-24 and the next starts on it.
+    // The finish is therefore exclusive, so a boundary day belongs to exactly one period.
+    test("includes the first day of the range", () => {
+        expect(isDateInHalfOpenRange("2026-08-24", "2026-08-24", "2026-08-31")).toBe(true);
+    });
+
+    test("includes the day before the finish", () => {
+        expect(isDateInHalfOpenRange("2026-08-30", "2026-08-24", "2026-08-31")).toBe(true);
+    });
+
+    test("excludes the finish day itself", () => {
+        expect(isDateInHalfOpenRange("2026-08-31", "2026-08-24", "2026-08-31")).toBe(false);
+    });
+
+    test("excludes a day before the range", () => {
+        expect(isDateInHalfOpenRange("2026-08-23", "2026-08-24", "2026-08-31")).toBe(false);
+    });
+
+    test("accepts ISO timestamps on either bound", () => {
+        expect(isDateInHalfOpenRange("2026-08-26", "2026-08-24T00:00:00", "2026-08-31T00:00:00")).toBe(true);
+    });
+});
+
+describe("getDaysInPeriodInclusive", () => {
+    // Clarity's timesheet reports timePeriodFinish as the LAST day of the period, unlike the
+    // carousel's exclusive finish_date. Dropping that day silently loses a whole day of hours.
+    test("includes the finish day", () => {
+        const days = getDaysInPeriodInclusive("2026-08-24T00:00:00", "2026-08-30T00:00:00");
+
+        expect(days.map((d) => d.date)).toEqual([
+            "2026-08-24",
+            "2026-08-25",
+            "2026-08-26",
+            "2026-08-27",
+            "2026-08-28",
+            "2026-08-29",
+            "2026-08-30",
+        ]);
+    });
+
+    test("returns the single day of a one-day period", () => {
+        const days = getDaysInPeriodInclusive("2026-08-31T00:00:00", "2026-08-31T00:00:00");
+
+        expect(days.map((d) => d.date)).toEqual(["2026-08-31"]);
+    });
+
+    test("labels each day with its weekday and day of month", () => {
+        const days = getDaysInPeriodInclusive("2026-08-31T00:00:00", "2026-08-31T00:00:00");
+
+        expect(days[0].label).toBe("Mon 31");
     });
 });

@@ -1,3 +1,4 @@
+import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type {
     ApiDebugInfo,
@@ -75,10 +76,7 @@ export class ClarityApi {
         const target = targetDate.toISOString().split("T")[0];
 
         for (const entry of app.tscarousel._results) {
-            const start = entry.start_date.split("T")[0];
-            const finish = entry.finish_date.split("T")[0];
-
-            if (target >= start && target <= finish) {
+            if (isDateInHalfOpenRange(target, entry.start_date, entry.finish_date)) {
                 return entry;
             }
         }
