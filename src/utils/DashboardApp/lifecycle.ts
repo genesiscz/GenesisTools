@@ -11,6 +11,7 @@ import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
+import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { getPortOwner } from "@genesiscz/utils/network";
 import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -30,6 +31,7 @@ import {
     defaultPlistLabel,
     installLaunchd,
     isLaunchdInstalled,
+    plistPath,
     refreshLaunchd,
     uninstallLaunchd,
 } from "./launchd";
@@ -305,12 +307,22 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
         out.log.success(`Launchd plist installed at ~/Library/LaunchAgents/${ctx.plistLabel}.plist`);
     } else {
         const portHeld = await getPortOwner(port);
+        // A plist from before GenesisTools.app keeps the bare command, and launchd runs the
+        // definition it loaded, not the file. Bootout first so the rewritten plist takes effect.
+        const migrate = launchdPlistNeedsGenesisApp(plistPath(ctx.plistLabel));
 
-        if (portHeld) {
+        if (migrate) {
+            out.log.step(`Migrating launchd agent ${ctx.plistLabel} to GenesisTools.app (shared privacy grants)…`);
+        }
+
+        if (portHeld || migrate) {
             out.log.step(`Restarting launchd agent ${ctx.plistLabel}…`);
             await bootoutLaunchd(ctx.plistLabel).catch((err) => {
                 logger.warn({ err }, `[${config.key}] launchd bootout failed`);
             });
+        }
+
+        if (portHeld) {
             out.log.step(`Waiting for port ${port} to free…`);
             await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
         }

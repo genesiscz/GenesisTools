@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import { LAUNCHD_MIGRATION_HINT } from "@genesiscz/utils/macos/genesis-app";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getDaemonPid } from "../daemon";
@@ -23,6 +24,10 @@ export function registerStatusCommand(program: Command): void {
                 p.log.warn("Daemon installed but not running");
             } else {
                 p.log.info("Daemon not running. Run: tools daemon install");
+            }
+
+            if (status.needsMigration) {
+                p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan("tools daemon restart")}`);
             }
 
             const config = await loadConfig();

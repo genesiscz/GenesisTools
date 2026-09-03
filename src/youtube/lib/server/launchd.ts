@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SERVER_BASE_DIR } from "@app/youtube/lib/server/port-file";
+import { launchdProgramArgumentsXml } from "@genesiscz/utils/macos/genesis-app";
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 export const LAUNCHD_LABEL = "com.genesis-tools.youtube-server";
@@ -23,12 +24,7 @@ export function generateLaunchdPlist(opts: Required<InstallLaunchdOptions>): str
 <dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
-  <array>
-    <string>${opts.bunPath}</string>
-    <string>run</string>
-    <string>${opts.entryPath}</string>
-    <string>--port</string><string>${opts.port}</string>
-  </array>
+${launchdProgramArgumentsXml([opts.bunPath, "run", opts.entryPath, "--port", String(opts.port)])}
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>${logPath}</string>

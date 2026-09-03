@@ -250,7 +250,18 @@ async function launchdSubmenu(): Promise<void> {
         message: `Launchd ${status.installed ? pc.green("(installed)") : pc.dim("(not installed)")}`,
         options: [
             ...(status.installed
-                ? [{ value: "uninstall" as const, label: "Uninstall", hint: "remove auto-start" }]
+                ? [
+                      ...(status.needsMigration
+                          ? [
+                                {
+                                    value: "install" as const,
+                                    label: "Migrate to GenesisTools.app",
+                                    hint: "reinstall under the shared privacy grants",
+                                },
+                            ]
+                          : []),
+                      { value: "uninstall" as const, label: "Uninstall", hint: "remove auto-start" },
+                  ]
                 : [{ value: "install" as const, label: "Install", hint: "auto-start on login" }]),
             { value: "back" as const, label: pc.dim("← Back") },
         ],

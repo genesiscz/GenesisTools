@@ -1,4 +1,4 @@
-import { getDaemonStatus } from "@app/daemon/lib/launchd";
+import { getDaemonStatus, installLaunchd } from "@app/daemon/lib/launchd";
 import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
 import type { Command } from "commander";
@@ -13,6 +13,29 @@ export function registerRestartCommand(program: Command): void {
 
             if (!status.installed) {
                 p.log.error(`Daemon is not installed via launchd. Run ${pc.cyan("tools daemon install")} first.`);
+                return;
+            }
+
+            if (status.needsMigration) {
+                // The user asked for a restart, so this is the moment to move the job under
+                // GenesisTools.app: reinstall rewrites the plist and launchd relaunches it.
+                const s = p.spinner();
+                s.start("Migrating daemon to GenesisTools.app…");
+
+                try {
+                    await installLaunchd();
+                    const result = await waitForDaemonRestart(status.pid);
+                    s.stop(
+                        result
+                            ? `Daemon restarted under GenesisTools.app (PID ${result.pid})`
+                            : "Daemon reinstalled under GenesisTools.app, but did not report a PID within 10s"
+                    );
+                } catch (err) {
+                    // The spinner owns the terminal line: leaving it running hides the error.
+                    s.stop("Migration to GenesisTools.app failed");
+                    throw err;
+                }
+
                 return;
             }
 

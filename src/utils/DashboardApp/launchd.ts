@@ -14,6 +14,7 @@ import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from "nod
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 
 const LAUNCH_AGENTS_DIR = join(homedir(), "Library", "LaunchAgents");
 
@@ -130,7 +131,10 @@ export function writeLaunchdPlist(opts: LaunchdInstallOptions): void {
     }
 
     const path = plistPath(opts.label);
-    const { command: resolvedCommand, env: baseEnv } = resolveCommandForLaunchd(opts.command, opts.cwd);
+    const { command: bareCommand, env: baseEnv } = resolveCommandForLaunchd(opts.command, opts.cwd);
+    // launchd jobs have no terminal to inherit TCC grants from; run them under GenesisTools.app
+    // when it is built, so the service shares the grants the CLI already has.
+    const resolvedCommand = wrapWithGenesisApp(bareCommand);
     const mergedEnv: Record<string, string> = { ...baseEnv };
 
     for (const [key, value] of Object.entries(opts.env ?? {})) {

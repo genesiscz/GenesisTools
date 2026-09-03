@@ -9,6 +9,7 @@ import {
 } from "@app/automate/lib/launchd";
 import * as p from "@clack/prompts";
 import { out } from "@genesiscz/utils/logger";
+import { LAUNCHD_MIGRATION_HINT } from "@genesiscz/utils/macos/genesis-app";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -101,6 +102,10 @@ export function registerDaemonCommand(program: Command): void {
             } else {
                 p.log.info("Daemon not installed. Run: tools automate daemon install");
             }
+
+            if (status.needsMigration) {
+                p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan("tools automate daemon install")}`);
+            }
         });
 
     daemon
@@ -115,8 +120,13 @@ export function registerDaemonCommand(program: Command): void {
         .description("Install macOS launchd plist")
         .action(async () => {
             try {
+                const migrating = (await getDaemonStatus()).needsMigration;
                 await installLaunchd();
-                p.log.success("Daemon installed via launchd");
+                p.log.success(
+                    migrating
+                        ? "Daemon migrated to GenesisTools.app and reinstalled via launchd"
+                        : "Daemon installed via launchd"
+                );
             } catch (err) {
                 p.log.error(`Failed: ${(err as Error).message}`);
             }
