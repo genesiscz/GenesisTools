@@ -200,6 +200,8 @@ export function buildPeriodReport(events: SpendEvent[], options: PeriodBuildOpti
     }
 
     if (options.source === "codex") {
+        const codexTotals = totalsOf(rows);
+
         return {
             [grainKey]: rows.map((bucket) => {
                 const models: Record<string, unknown> = {};
@@ -229,13 +231,13 @@ export function buildPeriodReport(events: SpendEvent[], options: PeriodBuildOpti
                 };
             }),
             totals: {
-                cacheCreationTokens: totalsOf(rows).cacheCreationTokens,
-                cacheReadTokens: totalsOf(rows).cacheReadTokens,
-                costUSD: totalsOf(rows).totalCost,
-                inputTokens: totalsOf(rows).inputTokens,
-                outputTokens: totalsOf(rows).outputTokens,
+                cacheCreationTokens: codexTotals.cacheCreationTokens,
+                cacheReadTokens: codexTotals.cacheReadTokens,
+                costUSD: codexTotals.totalCost,
+                inputTokens: codexTotals.inputTokens,
+                outputTokens: codexTotals.outputTokens,
                 reasoningOutputTokens: rows.reduce((sum, row) => sum + row.reasoningOutputTokens, 0),
-                totalTokens: totalsOf(rows).totalTokens,
+                totalTokens: codexTotals.totalTokens,
             },
         };
     }

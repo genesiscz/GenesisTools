@@ -82,8 +82,9 @@ function usd(value: number | undefined): string {
 }
 
 function formatRemaining(minutes: number): string {
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.round(minutes % 60);
+    const rounded = Math.round(minutes);
+    const hours = Math.floor(rounded / 60);
+    const mins = rounded % 60;
     return `${hours}h ${mins}m left`;
 }
 

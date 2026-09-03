@@ -37,6 +37,14 @@ export interface SessionBlock {
     };
     totalTokens: number;
     costUSD: number;
+    modelBreakdowns: Array<{
+        modelName: string;
+        inputTokens: number;
+        outputTokens: number;
+        cacheCreationTokens: number;
+        cacheReadTokens: number;
+        cost: number;
+    }>;
     burnRate: { tokensPerMinute: number; tokensPerMinuteForIndicator: number; costPerHour: number } | null;
     projection: { totalTokens: number; totalCost: number; remainingMinutes: number } | null;
 }
@@ -121,6 +129,16 @@ function createBlock(
     const isActive = nowMs - last < duration && nowMs < end;
     const models: string[] = [];
     const seen = new Set<string>();
+    const perModel = new Map<
+        string,
+        {
+            inputTokens: number;
+            outputTokens: number;
+            cacheCreationTokens: number;
+            cacheReadTokens: number;
+            cost: number;
+        }
+    >();
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheCreationInputTokens = 0;
@@ -128,17 +146,36 @@ function createBlock(
     let costUSD = 0;
 
     for (const event of entries) {
+        const eventCostUsd = costOf(event);
         inputTokens += event.inputTokens;
         outputTokens += event.outputTokens;
         cacheCreationInputTokens += event.cacheCreationTokens;
         cacheReadInputTokens += event.cacheReadTokens;
-        costUSD += costOf(event);
+        costUSD += eventCostUsd;
 
         if (!seen.has(event.model)) {
             seen.add(event.model);
             models.push(event.model);
         }
+
+        const model = perModel.get(event.model) ?? {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 0,
+            cost: 0,
+        };
+        model.inputTokens += event.inputTokens;
+        model.outputTokens += event.outputTokens;
+        model.cacheCreationTokens += event.cacheCreationTokens;
+        model.cacheReadTokens += event.cacheReadTokens;
+        model.cost += eventCostUsd;
+        perModel.set(event.model, model);
     }
+
+    const modelBreakdowns = [...perModel.entries()]
+        .map(([modelName, model]) => ({ modelName, ...model }))
+        .sort((a, b) => b.cost - a.cost || a.modelName.localeCompare(b.modelName));
 
     const tokenCounts = { inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens };
     const totalTokens = totalTokensOf({
@@ -178,6 +215,7 @@ function createBlock(
         tokenCounts,
         totalTokens,
         costUSD,
+        modelBreakdowns,
         burnRate,
         projection,
     };
@@ -196,6 +234,7 @@ function createGap(start: number, next: number, _duration: number): SessionBlock
         tokenCounts: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
         totalTokens: 0,
         costUSD: 0,
+        modelBreakdowns: [],
         burnRate: null,
         projection: null,
     };

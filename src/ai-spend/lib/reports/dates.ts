@@ -7,6 +7,15 @@ export function systemTimeZone(): string {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+export function isValidTimeZone(timeZone: string): boolean {
+    try {
+        Intl.DateTimeFormat("en-US", { timeZone });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /** Accept ccusage `YYYY-MM-DD` or `YYYYMMDD`. */
 export function parseDayArg(raw: string | undefined): string | undefined {
     if (!raw) {
@@ -118,6 +127,23 @@ export function lastSinceDay(grain: PeriodGrain, count: number, today: string): 
     const [year, month] = today.split("-").map(Number);
     const start = new Date(Date.UTC(year, month - n, 1));
     return start.toISOString().slice(0, 10);
+}
+
+/** `Nd` relative to the civil day of `now` in `timeZone`. */
+export function resolveRelativeSince(raw: string, now: Date, timeZone: string): string | undefined {
+    const match = raw.trim().match(/^(\d+)d$/);
+
+    if (!match) {
+        return undefined;
+    }
+
+    const today = zonedDay(now.toISOString(), timeZone);
+
+    if (!today) {
+        return undefined;
+    }
+
+    return addDays(today, -Number.parseInt(match[1], 10));
 }
 
 export function parseLast(raw: string | undefined): number | undefined {

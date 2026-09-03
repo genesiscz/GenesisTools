@@ -30,12 +30,16 @@ describe("ai-spend command tree", () => {
             expect(root).toContain(name);
         }
 
-        for (const source of SOURCE_IDS) {
-            const nested = await help([source]);
+        const nested = await Promise.all(SOURCE_IDS.map((source) => help([source])));
 
+        for (const [index, source] of SOURCE_IDS.entries()) {
             for (const kind of SOURCE_REPORTS[source]) {
-                expect(nested).toContain(kind);
+                expect(nested[index]).toContain(kind);
             }
         }
-    });
+
+        const statusline = await help(["statusline"]);
+        expect(statusline).toContain("--visual-burn-rate");
+        expect(statusline).toContain("--timezone");
+    }, 20_000);
 });

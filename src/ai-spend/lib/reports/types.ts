@@ -83,7 +83,8 @@ export interface ReportFlags {
     timezone?: string;
     last?: string;
     breakdown?: boolean;
-    mode?: string;
+    mode?: string | boolean;
+    visualBurnRate?: string | boolean;
     active?: boolean;
     recent?: boolean;
     sessionLength?: string;

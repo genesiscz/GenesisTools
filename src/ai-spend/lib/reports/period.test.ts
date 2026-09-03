@@ -6,6 +6,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { isolateAgentHomeEnv } from "../drivers/test-env";
 import { DEFAULT_PRICING } from "../pricing";
 import { identifySessionBlocks } from "./blocks";
+import { isValidTimeZone, resolveRelativeSince } from "./dates";
+import { firstFinite, optionalFinite } from "./jsonl";
 import { loadEvents } from "./load";
 import { buildPeriodReport } from "./period";
 import { buildSessionReport } from "./session";
@@ -13,6 +15,36 @@ import { parseStatuslineHook, renderStatusline } from "./statusline";
 import type { SpendEvent } from "./types";
 
 isolateAgentHomeEnv();
+
+describe("resolveRelativeSince", () => {
+    it("subtracts civil days in the report timezone, not UTC", () => {
+        const now = new Date("2026-06-02T04:00:00.000Z");
+        expect(resolveRelativeSince("0d", now, "UTC")).toBe("2026-06-02");
+        expect(resolveRelativeSince("0d", now, "America/Los_Angeles")).toBe("2026-06-01");
+        expect(resolveRelativeSince("1d", now, "America/Los_Angeles")).toBe("2026-05-31");
+    });
+});
+
+describe("isValidTimeZone", () => {
+    it("accepts IANA names and rejects unknown ones", () => {
+        expect(isValidTimeZone("UTC")).toBe(true);
+        expect(isValidTimeZone("America/Los_Angeles")).toBe(true);
+        expect(isValidTimeZone("Not/AZone")).toBe(false);
+        expect(isValidTimeZone("")).toBe(false);
+    });
+});
+
+describe("optionalFinite", () => {
+    it("keeps a present zero and skips absent fields", () => {
+        expect(optionalFinite(0)).toBe(0);
+        expect(optionalFinite("0")).toBe(0);
+        expect(optionalFinite(undefined)).toBeUndefined();
+        expect(optionalFinite("")).toBeUndefined();
+        expect(firstFinite(0, 9)).toBe(0);
+        expect(firstFinite(undefined, 9)).toBe(9);
+        expect(firstFinite(undefined, undefined)).toBe(0);
+    });
+});
 
 function ev(over: Partial<SpendEvent>): SpendEvent {
     return {
@@ -143,6 +175,8 @@ describe("identifySessionBlocks", () => {
         expect(real[1].tokenCounts.inputTokens).toBe(20);
         expect(real[0].totalTokens).toBe(11);
         expect(real[1].totalTokens).toBe(22);
+        expect(real[0].modelBreakdowns[0]?.modelName).toBe("claude-3-5-haiku");
+        expect(real[0].modelBreakdowns[0]?.inputTokens).toBe(10);
     });
 });
 
@@ -170,6 +204,23 @@ describe("statusline", () => {
         expect(line).toContain("$1.25 session");
         expect(line).toContain("25,000 (13%)");
         expect(line.split("\n")).toHaveLength(1);
+    });
+
+    it("shows the emoji burn-rate indicator when visualBurnRate is emoji", () => {
+        const hook = parseStatuslineHook(SafeJSON.stringify({ session_id: "sess-a" }));
+        const line = renderStatusline(
+            hook!,
+            [ev({ id: "a", timestamp: "2026-06-01T10:15:00.000Z", inputTokens: 100, recordedCostUsd: 0.5 })],
+            {
+                timezone: "UTC",
+                now: new Date("2026-06-01T12:00:00.000Z"),
+                pricing: DEFAULT_PRICING,
+                mode: "display",
+                costSource: "auto",
+                visualBurnRate: "emoji",
+            }
+        );
+        expect(line).toMatch(/🟢|⚠️|🚨/);
     });
 });
 

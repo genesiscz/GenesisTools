@@ -184,7 +184,20 @@ export function renderBlocksTable(report: { blocks: SessionBlock[] }, breakdown:
         ]);
 
         if (breakdown) {
-            void breakdown;
+            for (const model of block.modelBreakdowns) {
+                table.push([
+                    "",
+                    model.modelName,
+                    formatTokens(model.inputTokens),
+                    formatTokens(model.outputTokens),
+                    formatTokens(model.cacheCreationTokens),
+                    formatTokens(model.cacheReadTokens),
+                    formatTokens(
+                        model.inputTokens + model.outputTokens + model.cacheCreationTokens + model.cacheReadTokens
+                    ),
+                    formatCost(model.cost),
+                ]);
+            }
         }
     }
 

@@ -52,6 +52,32 @@ export function asNumber(value: unknown): number {
     return 0;
 }
 
+/** Finite number, including 0. Undefined when the field is absent or not numeric. */
+export function optionalFinite(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+
+    return undefined;
+}
+
+export function firstFinite(...values: unknown[]): number {
+    for (const value of values) {
+        const parsed = optionalFinite(value);
+
+        if (parsed !== undefined) {
+            return parsed;
+        }
+    }
+
+    return 0;
+}
+
 export function pickNumber(record: Record<string, unknown> | undefined, keys: string[]): number {
     if (!record) {
         return 0;

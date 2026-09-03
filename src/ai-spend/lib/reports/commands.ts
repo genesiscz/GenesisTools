@@ -5,14 +5,16 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { loadPricing } from "../config";
 import { buildBlocksReport } from "./blocks";
-import { parseCostMode, parseDayArg, parseLast, systemTimeZone } from "./dates";
+import { isValidTimeZone, parseCostMode, parseDayArg, parseLast, resolveRelativeSince, systemTimeZone } from "./dates";
 import { loadEvents } from "./load";
 import { buildPeriodReport } from "./period";
 import { renderBlocksTable, renderPeriodTable, renderSessionTable } from "./render";
 import { buildSessionReport } from "./session";
 import { parseStatuslineHook, renderStatusline } from "./statusline";
-import type { CostMode, PeriodGrain, ReportFlags, ReportKind, SourceId } from "./types";
+import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "./types";
 import { SOURCE_REPORTS } from "./types";
+
+const VISUAL_BURN_RATES = ["off", "emoji", "text", "emoji-text"] as const;
 
 async function readStdin(): Promise<string> {
     if (process.stdin.isTTY) {
@@ -24,6 +26,20 @@ async function readStdin(): Promise<string> {
 
 function flagsOf(cmd: Command): ReportFlags {
     return cmd.optsWithGlobals() as ReportFlags;
+}
+
+function optionFromCli(cmd: Command, key: string): boolean {
+    let current: Command | null = cmd;
+
+    while (current) {
+        if (current.getOptionValueSource(key) === "cli") {
+            return true;
+        }
+
+        current = current.parent;
+    }
+
+    return false;
 }
 
 export function addReportFlags(
@@ -61,13 +77,27 @@ export function addReportFlags(
     return cmd;
 }
 
-function resolveMode(raw: string | undefined): CostMode | undefined {
-    if (raw === undefined || raw === "") {
-        return "auto";
+function addStatuslineFlags(cmd: Command): Command {
+    cmd.option("-z, --timezone <timezone>", "Timezone for date grouping (IANA)");
+    cmd.option("-m, --mode [mode]", "Cost calculation mode (auto | calculate | display)");
+    cmd.option(
+        "-B, --visual-burn-rate [visual-burn-rate]",
+        "Burn-rate visualization (off | emoji | text | emoji-text)"
+    );
+    return cmd;
+}
+
+function parseVisualBurnRate(raw: string | boolean | undefined): (typeof VISUAL_BURN_RATES)[number] | undefined {
+    if (raw === undefined) {
+        return "off";
     }
 
-    if (raw === "auto" || raw === "calculate" || raw === "display") {
-        return raw;
+    if (raw === true || raw === "") {
+        return "emoji";
+    }
+
+    if (typeof raw === "string" && (VISUAL_BURN_RATES as readonly string[]).includes(raw)) {
+        return raw as (typeof VISUAL_BURN_RATES)[number];
     }
 
     return undefined;
@@ -76,25 +106,47 @@ function resolveMode(raw: string | undefined): CostMode | undefined {
 async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Promise<void> {
     const flags = flagsOf(cmd);
 
-    if (kind !== "statusline" && flags.mode !== undefined && flags.mode !== (true as unknown as string)) {
-        const mode = resolveMode(typeof flags.mode === "string" ? flags.mode : undefined);
-
-        if (flags.mode && !mode) {
+    if (flags.mode !== undefined) {
+        const raw = typeof flags.mode === "string" ? flags.mode : "";
+        if (raw !== "auto" && raw !== "calculate" && raw !== "display") {
             process.stderr.write(`${suggestEnumFlag("tools ai-spend", "--mode", ["auto", "calculate", "display"])}\n`);
             process.exitCode = 1;
             return;
         }
     }
 
-    const timezone = flags.timezone?.trim() || systemTimeZone();
+    const timezoneRaw = flags.timezone?.trim();
+    if (timezoneRaw && !isValidTimeZone(timezoneRaw)) {
+        process.stderr.write(`Invalid --timezone ${timezoneRaw}. Use an IANA timezone name.\n`);
+        process.exitCode = 1;
+        return;
+    }
+
+    const timezone = timezoneRaw || systemTimeZone();
     const home = homedir();
     const now = new Date();
     const storage = new Storage("ai-spend");
     const pricing = await loadPricing(storage);
     const mode = parseCostMode(typeof flags.mode === "string" ? flags.mode : undefined);
     const sources = source ? ([source] as const) : undefined;
-    const sinceDay = parseDayArg(flags.since);
-    const untilDay = parseDayArg(flags.until);
+    const sincePassed = optionFromCli(cmd, "since");
+    const untilPassed = optionFromCli(cmd, "until");
+    const sinceRaw = sincePassed ? flags.since : undefined;
+    const untilRaw = untilPassed ? flags.until : undefined;
+    const sinceDay = sinceRaw ? (parseDayArg(sinceRaw) ?? resolveRelativeSince(sinceRaw, now, timezone)) : undefined;
+    const untilDay = untilRaw ? parseDayArg(untilRaw) : undefined;
+
+    if (sinceRaw && !sinceDay) {
+        process.stderr.write(`Invalid --since ${sinceRaw}. Use YYYY-MM-DD, YYYYMMDD, or Nd.\n`);
+        process.exitCode = 1;
+        return;
+    }
+
+    if (untilRaw && !untilDay) {
+        process.stderr.write(`Invalid --until ${untilRaw}. Use YYYY-MM-DD or YYYYMMDD.\n`);
+        process.exitCode = 1;
+        return;
+    }
     let minMtimeMs = sinceDay ? Date.parse(`${sinceDay}T00:00:00.000Z`) - 3 * 24 * 60 * 60 * 1000 : 0;
 
     if (kind === "statusline" && !sinceDay) {
@@ -113,7 +165,13 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
             return;
         }
 
-        const visual = flags.breakdown === true ? "emoji" : "off";
+        const visual = parseVisualBurnRate(flags.visualBurnRate);
+        if (!visual) {
+            process.stderr.write(`${suggestEnumFlag("tools ai-spend", "--visual-burn-rate", VISUAL_BURN_RATES)}\n`);
+            process.exitCode = 1;
+            return;
+        }
+
         const line = renderStatusline(
             hook,
             events.filter((event) => event.source === "claude"),
@@ -219,27 +277,24 @@ export function registerCcusageCommands(program: Command): void {
         await runReport(cmd, "blocks");
     });
 
-    program
-        .command("statusline")
-        .description("Compact Claude Code hook status line (reads hook JSON from stdin)")
-        .option("-z, --timezone <timezone>", "Timezone for date grouping (IANA)")
-        .option("-m, --mode [mode]", "Cost calculation mode (auto | calculate | display)")
-        .action(async (_opts: ReportFlags, cmd: Command) => {
-            await runReport(cmd, "statusline");
-        });
+    addStatuslineFlags(
+        program.command("statusline").description("Compact Claude Code hook status line (reads hook JSON from stdin)")
+    ).action(async (_opts: ReportFlags, cmd: Command) => {
+        await runReport(cmd, "statusline");
+    });
 
     for (const [source, reports] of Object.entries(SOURCE_REPORTS) as Array<[SourceId, readonly ReportKind[]]>) {
         const parent = program.command(source).description(`Show ${source} usage commands`);
 
         for (const kind of reports) {
             if (kind === "statusline") {
-                parent
-                    .command("statusline")
-                    .description("Compact Claude Code hook status line (reads hook JSON from stdin)")
-                    .option("-z, --timezone <timezone>", "Timezone for date grouping (IANA)")
-                    .action(async (_opts: ReportFlags, cmd: Command) => {
-                        await runReport(cmd, "statusline", source);
-                    });
+                addStatuslineFlags(
+                    parent
+                        .command("statusline")
+                        .description("Compact Claude Code hook status line (reads hook JSON from stdin)")
+                ).action(async (_opts: ReportFlags, cmd: Command) => {
+                    await runReport(cmd, "statusline", source);
+                });
                 continue;
             }
 

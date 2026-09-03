@@ -8,7 +8,9 @@ import {
     asRecord,
     asString,
     fileStem,
+    firstFinite,
     isoFromUnknown,
+    optionalFinite,
     parseJsonl,
     parseJsonValue,
     pickNumber,
@@ -124,7 +126,7 @@ export function loadAmpEvents(home: string): SpendEvent[] {
                     outputTokens: pickNumber(tokens, ["output", "outputTokens"]),
                     cacheCreationTokens: 0,
                     cacheReadTokens: 0,
-                    recordedCostUsd: asNumber(event.credits) || undefined,
+                    recordedCostUsd: optionalFinite(event.credits),
                 });
 
                 if (spent) {
@@ -301,7 +303,7 @@ export function loadPiEvents(home: string): SpendEvent[] {
                 outputTokens: pickNumber(usage, ["output"]),
                 cacheCreationTokens: pickNumber(usage, ["cacheWrite"]),
                 cacheReadTokens: pickNumber(usage, ["cacheRead"]),
-                recordedCostUsd: asNumber(asRecord(usage?.cost)?.total) || undefined,
+                recordedCostUsd: optionalFinite(asRecord(usage?.cost)?.total),
             });
 
             if (spent) {
@@ -523,7 +525,7 @@ export function loadOpenclawEvents(home: string): SpendEvent[] {
                 outputTokens: pickNumber(usage, ["output"]),
                 cacheCreationTokens: pickNumber(usage, ["cacheWrite"]),
                 cacheReadTokens: pickNumber(usage, ["cacheRead"]),
-                recordedCostUsd: asNumber(asRecord(usage?.cost)?.total) || undefined,
+                recordedCostUsd: optionalFinite(asRecord(usage?.cost)?.total),
             });
 
             if (spent) {
@@ -645,7 +647,7 @@ function parseOpenCodeLike(source: SourceId, data: unknown, id: string, sessionI
         outputTokens: pickNumber(tokens, ["output"]),
         cacheCreationTokens: pickNumber(cache, ["write"]),
         cacheReadTokens: pickNumber(cache, ["read"]),
-        recordedCostUsd: asNumber(raw.cost) || undefined,
+        recordedCostUsd: optionalFinite(raw.cost),
         reasoningOutputTokens: pickNumber(tokens, ["reasoning"]),
     });
 }
@@ -735,7 +737,7 @@ export function loadHermesEvents(home: string): SpendEvent[] {
                         cacheCreationTokens: asNumber(row.cache_write_tokens),
                         cacheReadTokens: asNumber(row.cache_read_tokens),
                         reasoningOutputTokens: asNumber(row.reasoning_tokens),
-                        recordedCostUsd: asNumber(row.actual_cost_usd) || asNumber(row.estimated_cost_usd) || undefined,
+                        recordedCostUsd: optionalFinite(row.actual_cost_usd) ?? optionalFinite(row.estimated_cost_usd),
                     })
             )
         );
@@ -768,8 +770,8 @@ export function loadGooseEvents(home: string): SpendEvent[] {
                             ? parseJsonValue(row.model_config_json)
                             : row.model_config_json
                     );
-                    const input = asNumber(row.accumulated_input_tokens) || asNumber(row.input_tokens);
-                    const output = asNumber(row.accumulated_output_tokens) || asNumber(row.output_tokens);
+                    const input = firstFinite(row.accumulated_input_tokens, row.input_tokens);
+                    const output = firstFinite(row.accumulated_output_tokens, row.output_tokens);
                     return emit({
                         source: "goose",
                         id: String(row.id),
