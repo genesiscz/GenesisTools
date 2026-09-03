@@ -56,7 +56,10 @@ export const paths = {
         `/api/processes${qs({ sort, limit: limit ? String(limit) : undefined })}`,
     processesKill: () => "/api/processes/kill",
     // tmux
-    tmuxSessions: () => "/api/tmux/sessions",
+    // `includeCmux` opts into the cmux-layout enrichment (`cmuxSurfaces` + `inCmux`). The server
+    // skips that ~150ms RPC by default and returns those two fields empty, so a caller that renders
+    // them has to ask. See server/routes/tmux.ts.
+    tmuxSessions: (includeCmux = false) => `/api/tmux/sessions${includeCmux ? "?include=cmux" : ""}`,
     tmuxCreate: () => "/api/tmux/create",
     tmuxRename: () => "/api/tmux/rename",
     // tmux presets
@@ -80,6 +83,9 @@ export const paths = {
     cmuxRename: () => "/api/cmux/rename",
     // claude usage
     claudeUsage: () => "/api/claude/usage",
+    // Cross-surface token/cost totals from the shared usage layer — what every surface actually
+    // spent, as opposed to Anthropic's subscription limit percentages on /usage.
+    claudeUsageTotals: (minutes = 1440) => `/api/claude/usage/totals${qs({ minutes: String(minutes) })}`,
     claudeUsageHistory: (q: { account?: string; buckets?: string[]; bucket?: string; minutes?: number } = {}) =>
         `/api/claude/usage/history${qs({
             account: q.account,

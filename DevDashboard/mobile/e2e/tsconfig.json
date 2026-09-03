@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "types": ["node", "@wdio/types", "@wdio/globals/types", "@wdio/mocha-framework", "expect-webdriverio"],
+    "baseUrl": ".",
+    "paths": {
+      "@e2e/*": ["./*"]
+    }
+  },
+  "include": ["**/*.ts"]
+}
