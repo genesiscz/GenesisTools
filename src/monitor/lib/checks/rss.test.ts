@@ -1,0 +1,75 @@
+import { describe, expect, test } from "bun:test";
+import { filterItems, parseFeed } from "./rss";
+
+const RSS = `<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>SpaceXAI System Status</title>
+    <link>https://status.x.ai</link>
+    <item>
+      <title>[Grok (iOS)] Models outage</title>
+      <link>https://status.x.ai/ios-app/INCc33a8af</link>
+      <guid isPermaLink="false">INCc33a8af</guid>
+      <description><![CDATA[<h3>Status: ACTIVE</h3><p>Severity: outage</p>]]></description>
+      <pubDate>Thu, 03 Sep 2026 13:30:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Resolved &amp; closed</title>
+      <link>https://status.x.ai/web/INC1</link>
+      <guid>INC1</guid>
+      <pubDate>Wed, 02 Sep 2026 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`;
+
+const ATOM = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Claude Status - Incident History</title>
+  <entry>
+    <id>tag:status.claude.com,2005:Incident/1</id>
+    <published>2026-09-03T13:26:04Z</published>
+    <title>Elevated errors on claude.ai</title>
+    <link rel="alternate" href="https://status.claude.com/incidents/abc"/>
+    <content type="html">&lt;p&gt;Investigating.&lt;/p&gt;</content>
+  </entry>
+</feed>`;
+
+describe("parseFeed", () => {
+    test("reads RSS 2.0 items with guid, link, date and stripped description", () => {
+        const feed = parseFeed(RSS);
+
+        expect(feed.title).toBe("SpaceXAI System Status");
+        expect(feed.items).toHaveLength(2);
+        expect(feed.items[0]).toEqual({
+            guid: "INCc33a8af",
+            title: "[Grok (iOS)] Models outage",
+            link: "https://status.x.ai/ios-app/INCc33a8af",
+            summary: "Status: ACTIVE Severity: outage",
+            publishedAt: "2026-09-03T13:30:00.000Z",
+        });
+        expect(feed.items[1].title).toBe("Resolved & closed");
+    });
+
+    test("reads Atom entries with id, alternate link and content", () => {
+        const feed = parseFeed(ATOM);
+
+        expect(feed.title).toBe("Claude Status - Incident History");
+        expect(feed.items).toEqual([
+            {
+                guid: "tag:status.claude.com,2005:Incident/1",
+                title: "Elevated errors on claude.ai",
+                link: "https://status.claude.com/incidents/abc",
+                summary: "Investigating.",
+                publishedAt: "2026-09-03T13:26:04.000Z",
+            },
+        ]);
+    });
+
+    test("filterItems matches title or summary, case-insensitive", () => {
+        const items = parseFeed(RSS).items;
+
+        expect(filterItems(items, ["ios"]).map((item) => item.guid)).toEqual(["INCc33a8af"]);
+        expect(filterItems(items, ["severity"]).map((item) => item.guid)).toEqual(["INCc33a8af"]);
+        expect(filterItems(items, undefined)).toHaveLength(2);
+    });
+});

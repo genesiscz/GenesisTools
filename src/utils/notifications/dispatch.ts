@@ -5,15 +5,20 @@ import { dispatchWebhook } from "./channels/webhook";
 import { notificationsConfig } from "./config";
 import type { ChannelName, NotificationEvent, SayChannelConfig } from "./types";
 
-async function dispatchSay(message: string, config: SayChannelConfig): Promise<void> {
+export async function dispatchSay(message: string, config: SayChannelConfig): Promise<void> {
     if (!config.enabled) {
         return;
     }
 
     const voice = config.voice ?? "Samantha";
+    const args = ["tools", "say", message, "--voice", voice];
+
+    if (config.provider) {
+        args.push("--provider", config.provider);
+    }
 
     try {
-        const proc = Bun.spawn(["tools", "say", message, "--voice", voice], {
+        const proc = Bun.spawn(args, {
             stdout: "ignore",
             stderr: "pipe",
         });

@@ -19,6 +19,7 @@ const SCOPE = [
     "src/clarity/ui",
     "src/shops/ui",
     "src/spotify/ui",
+    "src/monitor/ui",
     "src/Internal/commands/reas/ui",
     "src/dev-dashboard/ui/src",
 ];

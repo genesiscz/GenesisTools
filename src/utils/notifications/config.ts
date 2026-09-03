@@ -108,10 +108,33 @@ export class NotificationsConfig {
                 config.apps[app] = { meta: {}, channels: {} };
             }
 
-            config.apps[app].channels[channel] = {
+            const merged: Record<string, unknown> = {
                 ...config.apps[app].channels[channel],
                 ...override,
             };
+
+            // An `undefined` value means "stop overriding this key": drop it so
+            // the global channel value applies again instead of a literal null.
+            for (const key of Object.keys(merged)) {
+                if (merged[key] === undefined) {
+                    delete merged[key];
+                }
+            }
+
+            config.apps[app].channels[channel] = merged as Partial<ChannelConfigs[K]>;
+        });
+
+        this.cached = null;
+    }
+
+    /** Remove every per-app override for `channel`, so the global value applies again. */
+    async clearAppChannel(app: string, channel: ChannelName): Promise<void> {
+        await this.storage.atomicConfigUpdate<NotifyGlobalConfig>((config) => {
+            const overrides = config.apps?.[app]?.channels;
+
+            if (overrides) {
+                delete overrides[channel];
+            }
         });
 
         this.cached = null;

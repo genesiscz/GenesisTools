@@ -15,6 +15,7 @@
         // youtube's in a repo-wide pass and both would lose. Typechecked on its own via
         // `bun run typecheck:all` (src/spotify/ui/tsconfig.json).
         "src/spotify/ui",
+        "src/monitor/ui",
         "src/Internal/commands/reas/ui"
     ],
     "compilerOptions": {

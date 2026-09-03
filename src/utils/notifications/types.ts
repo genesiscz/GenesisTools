@@ -19,6 +19,8 @@ export interface WebhookChannelConfig {
 export interface SayChannelConfig {
     enabled: boolean;
     voice?: string;
+    /** `tools say --provider`: macos, xai, openai. Unset = the say profile default. */
+    provider?: string;
 }
 
 export interface ChannelConfigs {
