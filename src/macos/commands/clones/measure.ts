@@ -40,7 +40,7 @@ export function applySharedMeasureFlags(cmd: Command): Command {
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
         .option(
             "--show-partners",
-            "Probe known clone-aware locations (~/.bun/install/cache) to resolve cross-tree partner paths. " +
+            "Probe known clone-aware locations (bun's install cache) to resolve cross-tree partner paths. " +
                 "Off by default; the probe can take seconds on large caches.",
             false
         )

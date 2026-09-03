@@ -16,6 +16,8 @@ import { logger } from "@genesiscz/utils/logger";
 import { CloneUnsupportedError, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { isUnderAny } from "./collapse";
+import { clonesProfile } from "./profile";
 import type {
     DuplicateSet,
     ProcessListEntry,
@@ -261,6 +263,8 @@ export interface RunOptimizeArgs {
     sets: DuplicateSet[];
     planCacheHit: boolean;
     planCacheAgeMs?: number;
+    /** Package-manager stores. A file under one of these is never rewritten. */
+    keepOnlyRoots?: string[];
 }
 
 /** Expand a DuplicateSet into the concrete (keep, replace) FILE pairs that
@@ -268,12 +272,17 @@ export interface RunOptimizeArgs {
  *  sets (produced by collapseDuplicates when whole folders are byte-identical)
  *  we walk the keeper's tree once and pair each file with the same-relative
  *  path under every other member dir. dedupeFile then handles each pair
- *  atomically with full safety-contract semantics. */
-export function expandSetToPairs(set: DuplicateSet): Array<{ keep: string; replace: string }> {
+ *  atomically with full safety-contract semantics. A replace path inside a
+ *  keep-only root is dropped here, at the layer that reaches `dedupeFile`. */
+export function expandSetToPairs(
+    set: DuplicateSet,
+    keepOnlyRoots: readonly string[] = []
+): Array<{ keep: string; replace: string }> {
     const pairs: Array<{ keep: string; replace: string }> = [];
+    const writable = (path: string): boolean => !isUnderAny(path, keepOnlyRoots);
     if (set.kind === "file") {
         for (const m of set.members) {
-            if (m !== set.keep) {
+            if (m !== set.keep && writable(m)) {
                 pairs.push({ keep: set.keep, replace: m });
             }
         }
@@ -293,7 +302,12 @@ export function expandSetToPairs(set: DuplicateSet): Array<{ keep: string; repla
                 continue;
             }
 
-            pairs.push({ keep: keepFile, replace: join(memberDir, rel) });
+            const replace = join(memberDir, rel);
+            if (!writable(replace)) {
+                continue;
+            }
+
+            pairs.push({ keep: keepFile, replace });
         }
     }
 
@@ -304,19 +318,31 @@ export function expandSetToPairs(set: DuplicateSet): Array<{ keep: string; repla
  *  pre-state → dedupeFile → on clone re-hash + assert byte-identity (abort
  *  on mismatch) → append ProcessOp JSONL. Per-file isolation for skips/errors.
  *  Preflight: off-APFS → throws (caller maps to exit 1). */
-export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOptimizeArgs): ProcessReport {
+export function runOptimize({
+    roots,
+    sets,
+    planCacheHit,
+    planCacheAgeMs,
+    keepOnlyRoots = [],
+}: RunOptimizeArgs): ProcessReport {
     if (!isApfsCloneSupported()) {
         throw new CloneUnsupportedError("APFS clone support unavailable on this volume — cannot --apply");
     }
 
+    const endApply = clonesProfile.start("apply");
     const id = newProcessId();
     const startedAt = new Date().toISOString();
     const sw = new Stopwatch();
     // dir-kind sets walk the keep tree to enumerate pairs — keep one materialised
     // copy and reuse it for both the log preamble and the per-pair loop.
-    const pairsBySet = sets.map((s) => expandSetToPairs(s));
+    const pairsBySet = clonesProfile.measure("apply.expand-pairs", () =>
+        sets.map((s) => expandSetToPairs(s, keepOnlyRoots))
+    );
     const totalPairs = pairsBySet.reduce((s, p) => s + p.length, 0);
-    log.info({ id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs }, "runOptimize starting");
+    log.info(
+        { id, roots, sets: sets.length, totalPairs, planCacheHit, planCacheAgeMs, keepOnlyRoots },
+        "runOptimize starting"
+    );
     writeMeta({
         id,
         state: "applied",
@@ -475,6 +501,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
             });
         }
 
+        endApply();
         throw err;
     }
 
@@ -508,6 +535,7 @@ export function runOptimize({ roots, sets, planCacheHit, planCacheAgeMs }: RunOp
         totals,
     };
 
+    endApply();
     log.info(
         {
             id,

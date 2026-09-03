@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import {
     appendOp,
     closestProcessIds,
+    expandSetToPairs,
     listProcesses,
     newProcessId,
     processJsonlPath,
@@ -238,5 +239,38 @@ describe.skipIf(skip.unlessMac)("rollbackProcess un-shares clones", () => {
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("expandSetToPairs keep-only guard", () => {
+    it("drops any pair whose replace path is inside a keep-only root", () => {
+        const set = {
+            kind: "file" as const,
+            what: "lib.a",
+            copies: 3,
+            eachBytes: 10,
+            reclaimable: 20,
+            members: ["/w1/lib.a", "/store/x/lib.a", "/w2/lib.a"],
+            keep: "/w1/lib.a",
+        };
+        expect(
+            expandSetToPairs(set)
+                .map((p) => p.replace)
+                .sort()
+        ).toEqual(["/store/x/lib.a", "/w2/lib.a"]);
+        expect(expandSetToPairs(set, ["/store"]).map((p) => p.replace)).toEqual(["/w2/lib.a"]);
+    });
+
+    it("a keep inside a keep-only root still produces its replace pairs", () => {
+        const set = {
+            kind: "file" as const,
+            what: "lib.a",
+            copies: 2,
+            eachBytes: 10,
+            reclaimable: 10,
+            members: ["/store/x/lib.a", "/w1/lib.a"],
+            keep: "/store/x/lib.a",
+        };
+        expect(expandSetToPairs(set, ["/store"])).toEqual([{ keep: "/store/x/lib.a", replace: "/w1/lib.a" }]);
     });
 });

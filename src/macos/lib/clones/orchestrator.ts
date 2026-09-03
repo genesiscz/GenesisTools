@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { formatBytes } from "@genesiscz/utils/format";
 import {
     type DiskUsage,
@@ -14,6 +13,7 @@ import {
 import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { passesGlobs } from "./filters";
+import { resolveKeepPartners, spawnCacheCommand } from "./keep-partners";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
 const log = logger.child({ component: "clones:orchestrator" });
@@ -197,10 +197,13 @@ function detectCrossTreeShared(records: Map<string, RootRecords>): CrossTreeData
 
 /** Known external locations that DO use APFS clonefile — the only places
  *  worth probing to discover the WHERE of cross-tree partners. Bun is the
- *  primary suspect (`bun install` clones from cache to node_modules). */
+ *  primary suspect (`bun install` clones from cache to node_modules). The
+ *  cache root comes from `bun pm cache`; the global install dir sits beside
+ *  it. Nothing here assumes where bun lives. */
 function partnerProbePaths(): string[] {
-    const home = homedir();
-    return [`${home}/.bun/install/cache`, `${home}/.bun/install/global`].filter((p) => existsSync(p));
+    return resolveKeepPartners(["bun"], spawnCacheCommand)
+        .flatMap((p) => [p.root, join(dirname(p.root), "global")])
+        .filter((p) => existsSync(p));
 }
 
 /** Wall-clock budget for the partner probe. The probe is best-effort; if we
@@ -248,7 +251,7 @@ function findCrossTreePartners(loneIds: Set<string>): string[] {
 
             filesScanned += 1;
             // P7 plumbing: walker-supplied cloneIdHex over per-file getCloneId.
-            // Probe walk runs against ~/.bun cache — also benefits.
+            // Probe walk runs against the bun cache — also benefits.
             const key = resolveCloneIdHex(e);
             if (key === "" || !remaining.has(key)) {
                 continue;

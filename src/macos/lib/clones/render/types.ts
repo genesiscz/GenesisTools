@@ -149,7 +149,7 @@ export const CLONES_GLOSSARY = [
     "          from another (bun from its cache, or cp -c). Same content, separate",
     "          inodes, copy-on-write — editing one never touches the other.",
     "cross-tree the family's sharing partner is OUTSIDE the measured folder (usually",
-    "          ~/.bun/install/cache): deleting this folder frees only its private",
+    "          bun's install cache): deleting this folder frees only its private",
     "          bytes; shared blocks stay alive in the cache. intra-tree = both copies",
     "          inside → deleting really frees them.",
 ].join("\n");

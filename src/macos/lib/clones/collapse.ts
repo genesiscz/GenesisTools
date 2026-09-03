@@ -310,7 +310,7 @@ export async function collapseDuplicates({
     const sets: DuplicateSet[] = [];
     const ancestor = commonAncestor(roots);
     // Name a set after the member that lives inside a scan root, so a set whose
-    // keep is a store file does not read as "../../.bun/…".
+    // keep is a store file does not read as "../../<store>/…".
     const displayName = (members: string[]): string => {
         const inRoot = members.find((m) => rootOf(m, roots) !== null) ?? members[0];
         return relative(ancestor, inRoot) || inRoot;
