@@ -6,6 +6,8 @@ Reads the session records your coding agents leave on disk and turns them into a
 
 `summary`, `sessions` and `today` read Claude Code only. `monitor` reads Claude Code, Codex and Grok, and reports each one separately.
 
+`daily`, `weekly`, `monthly`, `session`, `blocks` and `statusline` mirror the live `ccusage` command tree (unified across every detected source, plus per-source namespaces). `--json` uses the same grouping keys and token field names as `ccusage --json`.
+
 Also reachable as `tools claude spending`, which is an alias for this tool.
 
 ---
@@ -18,6 +20,11 @@ Also reachable as `tools claude spending`, which is an alias for this tool.
 | `sessions` | Most expensive sessions leaderboard |
 | `today` | Today's spend, by UTC day |
 | `monitor` | Today + current week (LOCAL timezone, Monday week start) across Claude Code, Codex and Grok in well under 1s — for status bars. `--json` emits `{today, week, todayDate, weekStart, timezone, agents}` |
+| `daily` / `weekly` / `monthly` | All detected sources grouped by period (ccusage-compatible JSON) |
+| `session` | All detected sources grouped by session |
+| `blocks` | Claude Code 5-hour billing windows (`--active`, `--recent`) |
+| `statusline` | Compact Claude Code hook line (reads hook JSON from stdin) |
+| `<source> daily\|monthly\|session` | One source only (`claude` also has `weekly`, `blocks`, `statusline`; `opencode` also has `weekly`) |
 
 ## Quick start
 

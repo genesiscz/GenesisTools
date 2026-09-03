@@ -31,6 +31,8 @@ export interface DriverUsageEvent {
     outputTokens: number;
     cacheCreationTokens: number;
     cacheReadTokens: number;
+    /** Subset of outputTokens. Codex/Grok report it; never added on top of output. */
+    reasoningOutputTokens?: number;
     /**
      * Cost in USD that the agent itself recorded for this event. Authoritative
      * when present: Grok prices each API request separately and only reports

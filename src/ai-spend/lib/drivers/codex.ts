@@ -249,6 +249,7 @@ export const codexDriver: MonitorDriver = {
                     outputTokens: output,
                     cacheCreationTokens: 0,
                     cacheReadTokens: cached,
+                    reasoningOutputTokens: reasoning,
                 });
             },
             snapshot(): unknown {

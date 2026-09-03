@@ -8,6 +8,7 @@ import { findTranscriptFiles, readEvents } from "./discover";
 import { AGENT_IDS } from "./drivers";
 import { buildMonitorReport } from "./monitor";
 import { renderSessions, renderSummary, renderToday } from "./render";
+import { registerCcusageCommands } from "./reports/commands";
 import { resolveSince } from "./since";
 import type { Report } from "./types";
 
@@ -99,6 +100,8 @@ export function registerSpendCommand(program: Command): Command {
             await runSpend(cmd, "today");
         }
     );
+
+    registerCcusageCommands(program);
 
     program
         .command("monitor")
