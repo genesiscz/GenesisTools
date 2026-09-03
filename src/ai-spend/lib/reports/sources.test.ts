@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { isolateAgentHomeEnv } from "../drivers/test-env";
 import {
     loadAmpEvents,
+    loadCodebuffEvents,
     loadCopilotEvents,
     loadDroidEvents,
     loadGeminiEvents,
@@ -284,6 +285,46 @@ describe("extra source loaders", () => {
         expect(events[0].outputTokens).toBe(50);
         expect(events[0].cacheCreationTokens).toBe(20);
         expect(events[0].cacheReadTokens).toBe(10);
+    });
+
+    it("codebuff reads assistant turns from a manicode chat-messages.json", () => {
+        const root = home();
+        const dir = join(root, ".config/manicode/projects/app/sess-cb");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, "chat-messages.json"),
+            SafeJSON.stringify([
+                {
+                    role: "user",
+                    id: "cb-user",
+                    timestamp: "2026-06-01T10:00:00.000Z",
+                    usage: { input_tokens: 999, output_tokens: 999 },
+                },
+                {
+                    role: "assistant",
+                    id: "cb-1",
+                    model: "codebuff-max",
+                    timestamp: "2026-06-01T10:00:01.000Z",
+                    usage: {
+                        input_tokens: 120,
+                        output_tokens: 40,
+                        cache_creation_input_tokens: 15,
+                        cache_read_input_tokens: 5,
+                    },
+                },
+            ])
+        );
+
+        const events = loadCodebuffEvents(root);
+
+        expect(events).toHaveLength(1);
+        expect(events[0].id).toBe("cb-1");
+        expect(events[0].model).toBe("codebuff-max");
+        expect(events[0].sessionId).toBe("app/sess-cb");
+        expect(events[0].inputTokens).toBe(120);
+        expect(events[0].outputTokens).toBe(40);
+        expect(events[0].cacheCreationTokens).toBe(15);
+        expect(events[0].cacheReadTokens).toBe(5);
     });
 
     it("gemini reads both jsonl lines and a json messages array", () => {
