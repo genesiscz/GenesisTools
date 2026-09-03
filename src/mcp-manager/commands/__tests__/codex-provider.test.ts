@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setGlobalOptions } from "@app/mcp-manager/utils/config.utils.js";
@@ -19,7 +19,7 @@ describe("CodexProvider remote HTTP authentication", () => {
     });
 
     afterEach(() => {
-        if (previousHome) {
+        if (previousHome !== undefined) {
             env.testing.set("HOME", previousHome);
         } else {
             env.testing.unset("HOME");
@@ -54,7 +54,7 @@ describe("CodexProvider remote HTTP authentication", () => {
     it("reads Codex HTTP headers into the unified configuration", async () => {
         // Regression test: user report 2026-09-02 — sync could not recover authentication from Codex.
         mkdirSync(join(homeDir, ".codex"), { recursive: true });
-        writeFileSync(
+        await Bun.write(
             join(homeDir, ".codex", "config.toml"),
             `[mcp_servers.jina]
 url = "https://mcp.jina.ai/v1"
