@@ -948,3 +948,56 @@ harness diffs is byte-identical for both targets (the full per-group lines were 
 
 Identical totals are the requirement here: `--bigfiles` is an additive mode and the scan
 path did not change, so nothing may move. Nothing did.
+
+## 2026-09-03 03:53 — --bigfiles prunes foreign mounts, reports roots and read errors
+
+PR #345 review fixes in `src/du/native/clonesize.c`. Three changes, all inside the
+`--bigfiles` path plus argument parsing:
+
+1. `big_process_dir` now prunes a subdirectory that `is_excluded` names, so the big-file
+   walk skips other volumes' mount points exactly as the scan path does.
+   `collect_foreign_mounts` is split into `reset_foreign_mounts` + `add_foreign_mounts`,
+   and `--bigfiles` collects for every root instead of only the last one.
+2. `getattrlistbulk` returning -1 is counted as a read error (JSON `read_errors`, one
+   stderr line each) and makes the binary exit 1, so the caller falls back to its own walk
+   instead of reading a truncated listing as a clean one.
+3. The positional-roots array grows on demand instead of dropping everything past 4096, and
+   the JSON carries `roots` so the caller can compare roots sent against roots walked.
+
+**What deliberately moves.** `--bigfiles` over a directory that contains a foreign mount now
+returns the files on THIS volume only. Measured on `/Library/Developer/CoreSimulator/Volumes`,
+which holds two read-only simulator runtime volumes:
+
+| binary | files_listed | dirs | wall |
+|---|---|---|---|
+| before | 1,033,186 | 401,342 | > 60 s |
+| after | 0 | 2 | 0.06 s |
+
+Cross-volume pairs could never be cloned anyway (`clonefile(2)` needs one volume), so they
+only inflated the reclaimable total and then failed at apply time.
+
+**What must not move: the scan path.** `--json --quiet` over this worktree, old binary vs new
+binary, back to back on the same tree: every scalar in the JSON is identical (diffed
+programmatically, empty diff).
+
+**Benchmark matrix** (`src/du/native/bench.sh`, hyperfine, 5 runs, warmup 1). The machine was
+heavily loaded and the load moved a lot during both runs, so wall time is not comparable
+between them; system CPU is the metric.
+
+- baseline `uptime`: start `load averages: 16.72 19.94 20.94`, after the matrix `63.89 35.77 27.09`, end `71.37 42.59 30.10`.
+- after `uptime`: start `load averages: 10.64 21.30 24.03`, after the matrix `48.27 32.44 28.08`, end `73.83 40.22 31.09`.
+
+| mode | before wall | before system CPU | after wall | after system CPU |
+|---|---|---|---|---|
+| T1 flat | 7.160 s ± 0.659 s | 75.304 s | 7.505 s ± 0.231 s | 90.444 s |
+| T1 depth2 | 7.374 s ± 0.369 s | 82.668 s | 7.093 s ± 0.281 s | 80.894 s |
+| T2 flat | 4.463 s ± 0.270 s | 49.780 s | 4.259 s ± 0.181 s | 45.461 s |
+| T2 depth2 | 3.873 s ± 0.703 s | 31.062 s | 4.212 s ± 0.301 s | 48.847 s |
+| T1 cache-cold (3 runs) | 7.353 s ± 0.245 s | 75.047 s | 6.725 s ± 0.169 s | 53.621 s |
+| T1 cache-warm (3 runs) | 661.8 ms ± 78.8 ms | 7.358 s | 640.2 ms ± 164.6 ms | 1.989 s |
+
+The system-CPU spread across arms is larger than any effect these changes could have: the scan
+path executes the same instructions (the split of `collect_foreign_mounts` is reset-then-append,
+byte-identical in behaviour for a single root) and the identical `--json` totals prove it. Read
+the table as "no regression visible above the noise on a load-average-30 machine", not as a
+measurement of the change.

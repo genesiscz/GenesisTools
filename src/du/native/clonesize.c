@@ -283,6 +283,19 @@ static int      g_denied_kept = 0;
 static uint64_t g_denied_dirs = 0, g_denied_files = 0;
 static pthread_mutex_t g_denied_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+// A directory listing that fails PART WAY (getattrlistbulk returning -1) is a
+// silent truncation, not an end of directory: without this counter a subtree on
+// a filesystem answering ENOTSUP or a transient EIO reads exactly like a clean
+// empty scan, and the caller never falls back to its own walk.
+static uint64_t g_read_errors = 0;
+
+static void note_read_error(const char *path, int err) {
+    pthread_mutex_lock(&g_denied_mtx);
+    g_read_errors++;
+    pthread_mutex_unlock(&g_denied_mtx);
+    fprintf(stderr, "getattrlistbulk failed in %s: %s\n", path, strerror(err));
+}
+
 static void note_denied(const char *path, int is_dir) {
     pthread_mutex_lock(&g_denied_mtx);
     if (is_dir) g_denied_dirs++; else g_denied_files++;
@@ -903,10 +916,14 @@ static double now_s(void) {
  * Collect every mount point inside `target` that belongs to a DIFFERENT
  * filesystem, so the walk can prune them by path without ever opening them.
  */
-static void collect_foreign_mounts(const char *target) {
+static void reset_foreign_mounts(void) {
     for (int i = 0; i < g_nforeign; i++) { free(g_foreign_mounts[i]); g_foreign_mounts[i] = NULL; }
     g_nforeign = 0;
+}
 
+/** Append `target`'s foreign mounts to the list, keeping what is already there.
+ *  --bigfiles takes many roots in one pass, so each one contributes. */
+static void add_foreign_mounts(const char *target) {
     struct statfs root;
     if (statfs(target, &root) < 0) return;
 
@@ -949,6 +966,11 @@ static void collect_foreign_mounts(const char *target) {
             }
         }
     }
+}
+
+static void collect_foreign_mounts(const char *target) {
+    reset_foreign_mounts();
+    add_foreign_mounts(target);
 }
 
 /** The attribute set every getattrlistbulk call requests. See the layout note above. */
@@ -1585,7 +1607,7 @@ static void reset_state(void) {
     for (int i = 0; i < g_nnodes; i++) free(g_nodes[i].name);
     free(g_nodes); g_nodes = NULL; g_nnodes = 0; g_node_cap = 0;
     for (int i = 0; i < g_denied_kept; i++) { free(g_denied_paths[i]); g_denied_paths[i] = NULL; }
-    g_denied_kept = 0; g_denied_dirs = 0; g_denied_files = 0;
+    g_denied_kept = 0; g_denied_dirs = 0; g_denied_files = 0; g_read_errors = 0;
     for (int i = 0; i < g_ncloud; i++) { free(g_cloud_roots[i]); g_cloud_roots[i] = NULL; }
     g_ncloud = 0;
     g_qn = 0; g_pending = 0; g_done = 0;
@@ -1924,7 +1946,8 @@ static void big_process_dir(BigOut *o, const char *dirpath) {
     char buf[64 * 1024];
     for (;;) {
         int n = getattrlistbulk(dfd, &g_big_al, buf, sizeof buf, g_big_alopt);
-        if (n <= 0) break;
+        if (n < 0) { note_read_error(dirpath, errno); break; }
+        if (n == 0) break;
         char *p = buf;
         for (int e = 0; e < n; e++) {
             char *entry = p;
@@ -1952,6 +1975,10 @@ static void big_process_dir(BigOut *o, const char *dirpath) {
                 char *sub = malloc(pl + 1 + nl + 1);
                 if (!sub) { perror("malloc bigdir"); exit(1); }
                 memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
+                // Same pruning as the scan walk: without it --bigfiles descends
+                // into every other volume mounted inside a root, so cross-volume
+                // pairs join duplicate sets that clonefile can never share.
+                if ((g_nexcludes || g_nforeign) && is_excluded(sub)) { free(sub); continue; }
                 q_push(sub, -1, -1, 0);
                 continue;
             }
@@ -2014,6 +2041,8 @@ char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
 
     reset_state();
     big_setup_attrlist();
+    reset_foreign_mounts();
+    for (int i = 0; i < nroots; i++) add_foreign_mounts(roots[i]);
     g_big_progress = 0;
     double t0 = now_s();
     g_big_outs = calloc(nthreads, sizeof(BigOut));
@@ -2055,10 +2084,11 @@ char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
             need = snprintf(out + len, cap - len, __VA_ARGS__); } \
         len += need; \
     } while (0)
-    BEMIT("{\"files_listed\":%llu,\"dirs\":%llu,\"min_bytes\":%llu,\"threads\":%d,\"walk_ms\":%llu,",
-          (unsigned long long)files, (unsigned long long)dirs, (unsigned long long)min_bytes, nthreads,
+    BEMIT("{\"files_listed\":%llu,\"dirs\":%llu,\"roots\":%d,\"min_bytes\":%llu,\"threads\":%d,\"walk_ms\":%llu,",
+          (unsigned long long)files, (unsigned long long)dirs, nroots, (unsigned long long)min_bytes, nthreads,
           (unsigned long long)(walk_s * 1000.0));
-    BEMIT("\"denied_dirs\":%llu,\"files\":[", (unsigned long long)g_denied_dirs);
+    BEMIT("\"denied_dirs\":%llu,\"read_errors\":%llu,\"files\":[",
+          (unsigned long long)g_denied_dirs, (unsigned long long)g_read_errors);
     for (size_t i = 0; i < total; i++) {
         char *pesc = json_escape(all[i].path);
         // mtime_ns is emitted as a string: it is past 2^53 and a JSON number would lose precision.
@@ -2098,8 +2128,10 @@ static void usage(const char *me) {
 int main(int argc, char **argv) {
     const char *target = NULL, *partners_of = NULL;
     int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0;
-    const char *roots[4096];
-    int nroots = 0;
+    // Grown on demand: a fixed 4096 cap dropped every root past it with no
+    // diagnostic, so a large fleet got a silently incomplete listing.
+    const char **roots = NULL;
+    int nroots = 0, roots_cap = 0;
     const char *prune[MAX_PRUNE_NAMES];
     int nprune = 0;
     for (int i = 1; i < argc; i++) {
@@ -2124,17 +2156,30 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--quiet"))                  quiet = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(argv[0]); return 0; }
         else if (a[0] == '-') { fprintf(stderr, "unknown option: %s\n", a); usage(argv[0]); return 2; }
-        else { target = a; if (nroots < 4096) roots[nroots++] = a; }
+        else {
+            target = a;
+            if (nroots == roots_cap) {
+                int next = roots_cap ? roots_cap * 2 : 64;
+                const char **grown = realloc(roots, (size_t)next * sizeof(*roots));
+                if (!grown) { perror("realloc roots"); free(roots); return 1; }
+                roots = grown; roots_cap = next;
+            }
+            roots[nroots++] = a;
+        }
     }
-    if (!target) { usage(argv[0]); return 2; }
+    if (!target) { usage(argv[0]); free(roots); return 2; }
 
     if (bigfiles) {
         char *b = clonesize_bigfiles_json(roots, nroots, g_nthreads, (unsigned long long)g_min_blocks, prune, nprune);
+        free(roots);
         if (!b) return 1;
         fputs(b, stdout);
         free(b);
-        return 0;
+        // A truncated listing must not read as a clean one: a non-zero exit is
+        // what makes the caller fall back to its own walk.
+        return g_read_errors ? 1 : 0;
     }
+    free(roots);
     g_profile = getenv("PROFILE") ? 1 : 0;
 
     if (volume) {

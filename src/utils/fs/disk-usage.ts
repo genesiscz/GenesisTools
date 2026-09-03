@@ -16,7 +16,7 @@ import {
     utimesSync,
     writeSync,
 } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { formatBytes } from "@genesiscz/utils/format";
 import { sha256FilesParallel } from "@genesiscz/utils/fs/parallel-sha256";
 import { logger } from "@genesiscz/utils/logger";
@@ -733,6 +733,9 @@ export interface FindDuplicatesStats {
     /** P3 — reps dropped without full sha256 because their prefix was unique
      *  within the size bucket (provably not a duplicate). */
     prefixHashDrops: number;
+    /** Directories the walk could not open (EACCES/EPERM). A permission-denied
+     *  subtree otherwise reads exactly like a clean scan that found nothing. */
+    deniedDirs: number;
 }
 
 export function emptyFindDuplicatesStats(): FindDuplicatesStats {
@@ -752,6 +755,7 @@ export function emptyFindDuplicatesStats(): FindDuplicatesStats {
         cacheMisses: 0,
         prefixHashCalls: 0,
         prefixHashDrops: 0,
+        deniedDirs: 0,
     };
 }
 
@@ -809,8 +813,17 @@ export interface FindDuplicatesOptions {
      *  the subtree entirely (no `stat` cost on its contents). */
     shouldEnter?: (dir: string) => boolean;
     /** Forwarded to `walkFiles` — called per directory entered. CLI uses
-     *  this to drive a live spinner. */
+     *  this to drive a live spinner. Never fires on the native candidate
+     *  lister, which reports files rather than directories. */
     onDirEntered?: (dir: string) => void;
+    /** Forwarded to `walkFiles`. Per-entry walk errors (EACCES on a subtree,
+     *  ENOENT mid-walk). Denials are counted into `stats.deniedDirs` either
+     *  way, so a caller only needs this to see the paths. */
+    onError?: (err: WalkError) => void;
+    /** Coarse walk progress from whichever walker ran, counted in FILES. The
+     *  native lister has no per-directory event, so this is the only signal a
+     *  spinner gets there. */
+    onWalkProgress?: (p: WalkProgress) => void;
     /** Optional out-param: this function adds-to (does NOT reset) these counters
      *  so a caller scanning N roots in sequence gets aggregate totals. */
     stats?: FindDuplicatesStats;
@@ -862,6 +875,15 @@ export interface CandidateListing {
     /** Regular files seen, before the `minSize` cut (mirrors `walkedFiles`). */
     walkedFiles: number;
     walkedDirs: number;
+    /** Directories the lister could not open. */
+    deniedDirs: number;
+}
+
+export interface WalkProgress {
+    /** Regular files seen so far, across every root. */
+    files: number;
+    /** The directory the walker was in when it reported. */
+    dir: string;
 }
 
 export type CandidateLister = (args: {
@@ -869,7 +891,9 @@ export type CandidateLister = (args: {
     minSize: number;
     pruneNames: string[];
     signal?: AbortSignal;
-    onDirEntered?: (dir: string) => void;
+    /** Coarse progress. The native lister reports once per N files, not per
+     *  directory, so a caller must not read this as a directory count. */
+    onProgress?: (p: WalkProgress) => void;
 }) => Promise<CandidateListing>;
 
 /** How often we yield to the event loop during the size-bucket loop.
@@ -925,12 +949,17 @@ const HASH_HEARTBEAT_EVERY = 1_000;
  *  A candidate that already shares the walked file's clone family collapses
  *  the bucket to one family (nothing to reclaim); a private copy hashes
  *  against it and, when equal, becomes a keep candidate. */
-function addPartnerCandidates(
-    paths: string[],
-    size: number,
-    partnerFor: (path: string, size: number) => string[],
-    mtimeByPath: Map<string, bigint>
-): string[] {
+function addPartnerCandidates({
+    paths,
+    size,
+    partnerFor,
+    mtimeByPath,
+}: {
+    paths: string[];
+    size: number;
+    partnerFor: (path: string, size: number) => string[];
+    mtimeByPath: Map<string, bigint>;
+}): string[] {
     const out = [...paths];
     const seen = new Set(paths);
     for (const p of paths) {
@@ -960,17 +989,50 @@ function addPartnerCandidates(
     return out;
 }
 
+/** Drop a root that is a duplicate of, or nested inside, another root. The
+ *  walk visits a file once per root that contains it, so overlapping roots
+ *  over-count `walkedFiles` and `walkedDirs` (the byte totals stay correct —
+ *  the clone-family key dedupes the path). */
+export function denestRoots(roots: readonly string[]): string[] {
+    const sorted = [...new Set(roots)].sort();
+    const out: string[] = [];
+    for (const candidate of sorted) {
+        if (out.some((kept) => candidate === kept || candidate.startsWith(`${kept}${sep}`))) {
+            continue;
+        }
+
+        out.push(candidate);
+    }
+
+    return out;
+}
+
+/** A cloud-provider root (`~/Library/CloudStorage`, `~/Library/Mobile
+ *  Documents`). The native lister already refuses to descend into these —
+ *  their contents are dataless placeholders and touching one can trigger a
+ *  download — so the in-process walk has to refuse them too, or the two
+ *  walkers disagree about what a scan contains. */
+function isCloudRoot(dir: string): boolean {
+    const name = basename(dir);
+    if (name !== "CloudStorage" && name !== "Mobile Documents") {
+        return false;
+    }
+
+    return basename(dirname(dir)) === "Library";
+}
+
 export async function findDuplicateFiles(
     root: string | string[],
     opts: FindDuplicatesOptions = {}
 ): Promise<DuplicateGroup[]> {
-    const roots = Array.isArray(root) ? root : [root];
+    const roots = denestRoots(Array.isArray(root) ? root : [root]);
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, onDirEntered, stats, cache, partnerFor, candidateLister, onStage } = opts;
+    const { signal, onDirEntered, stats, cache, partnerFor, candidateLister, onStage, onWalkProgress } = opts;
     const pruneNames = opts.pruneNames ?? [];
     const pruneSet = new Set(pruneNames);
-    const shouldEnter =
+    const nameFilter =
         opts.shouldEnter ?? (pruneNames.length > 0 ? (dir: string) => !pruneSet.has(basename(dir)) : undefined);
+    const shouldEnter = (dir: string): boolean => !isCloudRoot(dir) && (nameFilter === undefined || nameFilter(dir));
     const prefixHashEnabled = opts.prefixHash === true;
 
     const sw = new Stopwatch();
@@ -1001,9 +1063,16 @@ export async function findDuplicateFiles(
     if (signal !== undefined) {
         walkOpts.signal = signal;
     }
-    if (shouldEnter !== undefined) {
-        walkOpts.shouldEnter = shouldEnter;
-    }
+    walkOpts.shouldEnter = shouldEnter;
+    let deniedDirs = 0;
+    const userOnError = opts.onError;
+    walkOpts.onError = (err) => {
+        if (err.errno === "EACCES" || err.errno === "EPERM") {
+            deniedDirs += 1;
+        }
+
+        userOnError?.(err);
+    };
     // Wrap caller's onDirEntered so we can count dirs walked even with no caller hook.
     const userDirEntered = onDirEntered;
     walkOpts.onDirEntered = (dir) => {
@@ -1018,9 +1087,28 @@ export async function findDuplicateFiles(
     let walker: "native" | "js" = "js";
     if (candidateLister !== undefined && opts.shouldEnter === undefined) {
         try {
-            const listing = await candidateLister({ roots, minSize, pruneNames, signal, onDirEntered: userDirEntered });
+            const listing = await candidateLister({
+                roots,
+                minSize,
+                pruneNames,
+                signal,
+                onProgress: (p) => {
+                    logger.info(
+                        {
+                            event: "walk.progress",
+                            roots,
+                            files: p.files,
+                            elapsedMs: Math.round(sw.elapsedMs - phaseStartMs),
+                            currentDir: p.dir,
+                        },
+                        "walk progress"
+                    );
+                    onWalkProgress?.(p);
+                },
+            });
             walkedFiles = listing.walkedFiles;
             walkedDirs = listing.walkedDirs;
+            deniedDirs += listing.deniedDirs;
             for (const f of listing.files) {
                 const list = bySize.get(f.size) ?? [];
                 list.push(f.path);
@@ -1055,6 +1143,7 @@ export async function findDuplicateFiles(
                     },
                     "walk progress"
                 );
+                onWalkProgress?.({ files: walkedFiles, dir: lastDir });
             }
 
             if (e.logical < minSize) {
@@ -1079,6 +1168,7 @@ export async function findDuplicateFiles(
             walker,
             files: walkedFiles,
             dirs: walkedDirs,
+            deniedDirs,
             buckets: bySize.size,
             walkMs: Math.round(walkMs),
         },
@@ -1086,10 +1176,19 @@ export async function findDuplicateFiles(
     );
     onStage?.({
         name: "walk",
-        detail: `${walkedFiles} files in ${walkedDirs} dirs → ${bySize.size} size bucket(s) (${walker} walk)`,
+        detail:
+            `${walkedFiles} files in ${walkedDirs} dirs → ${bySize.size} size bucket(s) (${walker} walk)` +
+            (deniedDirs > 0 ? ` · ${deniedDirs} dir(s) unreadable` : ""),
         elapsedMs: walkMs,
     });
     phaseStartMs = sw.elapsedMs;
+
+    // The native lister never fills `walkCloneIdByPath`, so on that walker the
+    // cache row is the ONLY other source — and cloning changes a file's clone
+    // id without changing its (size, mtimeNs). A cached id there would keep
+    // reporting an already-shared pair as reclaimable forever. One getattrlist
+    // per rep is far cheaper than the hash it would otherwise trigger.
+    const trustCachedCloneId = walker !== "native";
 
     let cloneIdCalls = 0;
     let sha256Calls = 0;
@@ -1131,7 +1230,9 @@ export async function findDuplicateFiles(
         }
 
         const paths =
-            partnerFor === undefined ? sizePaths : addPartnerCandidates(sizePaths, size, partnerFor, mtimeByPath);
+            partnerFor === undefined
+                ? sizePaths
+                : addPartnerCandidates({ paths: sizePaths, size, partnerFor, mtimeByPath });
         if (paths.length < 2) {
             continue;
         }
@@ -1156,13 +1257,21 @@ export async function findDuplicateFiles(
             //  1. Walk-supplied cloneIdHex (set by the P1 bulk path — current,
             //     no extra syscall). Empty string is a valid "no clone family"
             //     answer — distinct from undefined ("walker didn't fetch").
-            //  2. File-meta cache when (size, mtimeNs) match (saves a syscall
-            //     on warm reruns where the walk took the dir-cache replay
-            //     path and so didn't fill cloneIdHex).
+            //  2. File-meta cache when (size, mtimeNs) match AND the walk was
+            //     the in-process one (saves a syscall on warm reruns where it
+            //     took the dir-cache replay path and so didn't fill
+            //     cloneIdHex). Never on the native path — see
+            //     `trustCachedCloneId`.
             //  3. Per-file `getCloneId(path)` syscall fallback.
             if (walked !== undefined) {
                 cloneIdHex = walked;
-            } else if (hit && mtimeNs !== undefined && hit.size === BigInt(size) && hit.mtimeNs === mtimeNs) {
+            } else if (
+                trustCachedCloneId &&
+                hit &&
+                mtimeNs !== undefined &&
+                hit.size === BigInt(size) &&
+                hit.mtimeNs === mtimeNs
+            ) {
                 cloneIdHex = hit.cloneId;
             } else {
                 cloneIdCalls += 1;
@@ -1423,6 +1532,7 @@ export async function findDuplicateFiles(
         stats.cacheMisses += cacheMisses;
         stats.prefixHashCalls += prefixHashCalls;
         stats.prefixHashDrops += prefixHashDrops;
+        stats.deniedDirs += deniedDirs;
     }
 
     logger.info(

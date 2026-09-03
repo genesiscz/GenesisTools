@@ -333,6 +333,7 @@ describe("duplicate detection", () => {
                 cacheMisses: 0,
                 prefixHashCalls: 0,
                 prefixHashDrops: 0,
+                deniedDirs: 0,
             });
 
             // Baseline: WITHOUT a cache, byte-compare runs unconditionally.
@@ -771,6 +772,7 @@ describe("findDuplicateFiles candidate lister", () => {
                     ],
                     walkedFiles: 2,
                     walkedDirs: 2,
+                    deniedDirs: 0,
                 };
             };
             const stats = emptyFindDuplicatesStats();
@@ -809,13 +811,103 @@ describe("findDuplicateFiles candidate lister", () => {
         }
     });
 
+    it("counts a file once when one root is nested inside another", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-denest-"));
+        try {
+            const inner = join(outer, "a");
+            mkdirSync(inner, { recursive: true });
+            writeFileSync(join(outer, "one.bin"), Buffer.alloc(4096, 1));
+            writeFileSync(join(inner, "two.bin"), Buffer.alloc(4096, 2));
+
+            const stats = emptyFindDuplicatesStats();
+            await findDuplicateFiles([outer, inner], { stats });
+            expect(stats.walkedFiles).toBe(2);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("never reuses a cached cloneId on the native lister path", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-native-cloneid-"));
+        try {
+            const payload = Buffer.alloc(64_000, 0x5b);
+            const one = join(outer, "one.bin");
+            const two = join(outer, "two.bin");
+            writeFileSync(one, payload);
+            writeFileSync(two, payload);
+            const mtimeNs = statSync(one, { bigint: true }).mtimeNs;
+
+            // A stale row claiming both files already share one clone family.
+            // Trusting it would drop the bucket and report nothing to reclaim.
+            const row = (path: string) => ({
+                size: BigInt(64_000),
+                mtimeNs: statSync(path, { bigint: true }).mtimeNs,
+                sha256: "",
+                prefixHash: "",
+                cloneId: "deadbeef",
+                lastSeenAt: 0,
+            });
+            const mem = new Map([
+                [one, row(one)],
+                [two, row(two)],
+            ]);
+            const cache = {
+                get: (p: string) => mem.get(p) ?? null,
+                set: (p: string, e: ReturnType<typeof row>) => {
+                    mem.set(p, e);
+                },
+            };
+            expect(mtimeNs).toBeGreaterThan(0n);
+
+            const lister: CandidateLister = async () => ({
+                files: [
+                    { path: one, size: 64_000, mtimeNs: statSync(one, { bigint: true }).mtimeNs },
+                    { path: two, size: 64_000, mtimeNs: statSync(two, { bigint: true }).mtimeNs },
+                ],
+                walkedFiles: 2,
+                walkedDirs: 1,
+                deniedDirs: 0,
+            });
+
+            const groups = await findDuplicateFiles([outer], { minSize: 1000, candidateLister: lister, cache });
+            expect(groups.length).toBe(1);
+            expect(groups[0]?.paths.sort()).toEqual([one, two].sort());
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("surfaces the lister's denied directories in the stats and the walk stage", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-denied-"));
+        try {
+            const lister: CandidateLister = async () => ({
+                files: [],
+                walkedFiles: 0,
+                walkedDirs: 1,
+                deniedDirs: 3,
+            });
+            const stats = emptyFindDuplicatesStats();
+            const details: string[] = [];
+            await findDuplicateFiles([outer], {
+                minSize: 1000,
+                candidateLister: lister,
+                stats,
+                onStage: (stage) => details.push(`${stage.name}: ${stage.detail}`),
+            });
+            expect(stats.deniedDirs).toBe(3);
+            expect(details.find((d) => d.startsWith("walk:"))).toContain("3 dir(s) unreadable");
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("is not consulted when a shouldEnter predicate is set", async () => {
         const { outer, r1, r2 } = twoCopies();
         try {
             let called = false;
             const lister: CandidateLister = async () => {
                 called = true;
-                return { files: [], walkedFiles: 0, walkedDirs: 0 };
+                return { files: [], walkedFiles: 0, walkedDirs: 0, deniedDirs: 0 };
             };
             const groups = await findDuplicateFiles([r1, r2], { shouldEnter: () => true, candidateLister: lister });
             expect(called).toBe(false);

@@ -73,6 +73,22 @@ export function createConfigCommand(): Command {
                 opts.nodeModules !== undefined;
 
             if (!isInteractive() || mutating || opts.list) {
+                // Validate BEFORE any write: a rejected --set-min-real used to
+                // still apply the other mutations and print the config to
+                // stdout, so a wrapper saw a partial change and a success shape
+                // beside a failure exit code.
+                let minReal: number | null = null;
+                if (opts.setMinReal !== undefined) {
+                    minReal = parseMinReal(opts.setMinReal);
+                    if (minReal === null) {
+                        console.error(
+                            `--set-min-real must be a positive whole number of bytes, got "${opts.setMinReal}".`
+                        );
+                        process.exitCode = 1;
+                        return;
+                    }
+                }
+
                 if (adds.length > 0) {
                     const valid = validateExisting(adds);
                     if (valid.length > 0) {
@@ -84,16 +100,8 @@ export function createConfigCommand(): Command {
                     await removeWatchedDirs(removes);
                 }
 
-                if (opts.setMinReal !== undefined) {
-                    const n = parseMinReal(opts.setMinReal);
-                    if (n === null) {
-                        console.error(
-                            `--set-min-real must be a positive whole number of bytes, got "${opts.setMinReal}".`
-                        );
-                        process.exitCode = 1;
-                    } else {
-                        await setMinReal(n);
-                    }
+                if (minReal !== null) {
+                    await setMinReal(minReal);
                 }
 
                 if (opts.nodeModules !== undefined) {

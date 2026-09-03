@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listBigFiles } from "@app/du/lib/engine";
@@ -52,4 +52,36 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
             rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    it("reports the roots it accepted and no read errors", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-bigfiles-roots-"));
+        try {
+            const roots: string[] = [];
+            for (let i = 0; i < 4_100; i++) {
+                const dir = join(outer, `r${i}`);
+                mkdirSync(dir, { recursive: true });
+                writeFileSync(join(dir, "f.bin"), Buffer.alloc(MB, 7));
+                roots.push(dir);
+            }
+
+            const r = await listBigFiles({ roots, minBytes: MB });
+            expect(r.roots).toBe(4_100);
+            expect(r.files.length).toBe(4_100);
+            expect(r.readErrors).toBe(0);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    }, 120_000);
+
+    it("does not descend into a mount point that belongs to another volume", async () => {
+        // The simulator runtime volumes are the only foreign mounts every dev
+        // machine has; without the prune this walk lists a million files.
+        const mounts = "/Library/Developer/CoreSimulator/Volumes";
+        if (!existsSync(mounts) || readdirSync(mounts).length === 0) {
+            return;
+        }
+
+        const r = await listBigFiles({ roots: [mounts], minBytes: 1 });
+        expect(r.filesListed).toBe(0);
+    }, 60_000);
 });

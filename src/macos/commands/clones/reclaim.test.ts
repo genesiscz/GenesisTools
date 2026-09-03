@@ -1,11 +1,22 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createReclaimCommand } from "@app/macos/commands/clones/reclaim";
 import { getCachedPlan } from "@app/macos/lib/clones/cache";
 import { presetsPath } from "@app/macos/lib/clones/presets";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+// A finished plan registers the daemon tasks. Keep the real `tools daemon`
+// config out of the test run and record what would have been registered.
+const registerSpy = mock(async (opts: { name: string }) => opts.name === "macos-clones-scan");
+mock.module("@app/daemon/lib/register", () => ({
+    registerTask: registerSpy,
+    unregisterTask: mock(async () => true),
+    isTaskRegistered: mock(async () => false),
+}));
+mock.module("@app/daemon/lib/config", () => ({ getTask: mock(async () => undefined) }));
+
+const { createReclaimCommand } = await import("@app/macos/commands/clones/reclaim");
 
 interface Captured {
     out: string;
@@ -115,6 +126,11 @@ describe("createReclaimCommand", () => {
             });
             expect(cached?.plan.length).toBe(1);
             expect(cached?.rootStamps.length).toBe(2);
+
+            // The finished plan registered both daemon tasks (none existed).
+            const names = registerSpy.mock.calls.map((c) => c[0].name);
+            expect(names).toContain("macos-clones-scan");
+            expect(names).toContain("macos-clones-cache-prune");
         } finally {
             rmSync(outer, { recursive: true, force: true });
         }
@@ -131,6 +147,27 @@ describe("createReclaimCommand", () => {
     // Checks the FORMAT only (one record, one line). Delivery of a large
     // result through a real pipe is printLn's guarantee, pinned by the
     // subprocess test in src/utils/cli/stdout.test.ts.
+    it("--no-daemon skips the daemon registration", async () => {
+        const outer = twoTrees();
+        try {
+            registerSpy.mockClear();
+            const res = await run([
+                "plan",
+                "--dir",
+                outer,
+                "--targets",
+                "node_modules",
+                "--min-real",
+                "1024",
+                "--no-daemon",
+            ]);
+            expect(res.code).toBe(0);
+            expect(registerSpy.mock.calls.length).toBe(0);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("--format jsonl prints the plan as one line", async () => {
         const outer = twoTrees();
         try {

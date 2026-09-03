@@ -56,8 +56,19 @@ function readIdentity(dir: string): PackageIdentity | null {
         return null;
     }
 
-    const parsed = SafeJSON.parse(raw) as { name?: unknown; version?: unknown };
-    if (typeof parsed.name !== "string" || typeof parsed.version !== "string") {
+    // A zero-byte, truncated or `null` package.json is normal enough inside a
+    // half-written install tree, and this runs inside the hash loop: an
+    // uncaught SyntaxError here aborts the whole reclaim plan after the walk
+    // and the hashing have already been paid for.
+    let parsed: { name?: unknown; version?: unknown } | null;
+    try {
+        parsed = SafeJSON.parse(raw) as { name?: unknown; version?: unknown } | null;
+    } catch (err) {
+        log.debug({ err, dir }, "package.json parse failed");
+        return null;
+    }
+
+    if (parsed === null || typeof parsed.name !== "string" || typeof parsed.version !== "string") {
         return null;
     }
 
@@ -65,8 +76,14 @@ function readIdentity(dir: string): PackageIdentity | null {
 }
 
 /** Walk up from a file to the package directory that `node_modules` (or a
- *  `node_modules/@scope`) directly contains, then read its identity. */
-export function packageIdentityOf(file: string): PackageIdentity | null {
+ *  `node_modules/@scope`) directly contains, then read its identity.
+ *  `identityOfDir` lets a caller memoise the read: identical worktrees resolve
+ *  to the same few hundred package dirs, and this runs once per bucketed file
+ *  inside the hash loop. */
+export function packageIdentityOf(
+    file: string,
+    identityOfDir: (dir: string) => PackageIdentity | null = readIdentity
+): PackageIdentity | null {
     let dir = dirname(file);
     while (dir !== dirname(dir)) {
         const parent = dirname(dir);
@@ -75,7 +92,7 @@ export function packageIdentityOf(file: string): PackageIdentity | null {
             parentName === "node_modules" ||
             (parentName.startsWith("@") && basename(dirname(parent)) === "node_modules");
         if (isPackageDir) {
-            return readIdentity(dir);
+            return identityOfDir(dir);
         }
 
         dir = parent;
@@ -89,12 +106,18 @@ export function packageIdentityOf(file: string): PackageIdentity | null {
  *  inside. The `@` after the version is what keeps `plain` from matching
  *  `plainer`. Several entries can exist for one version (different
  *  registries), so every match is returned and the hash decides. */
-export function bunCacheCandidates(
-    cacheRoot: string,
-    id: PackageIdentity,
-    rel: string,
-    listDir: (dir: string) => string[]
-): string[] {
+export function bunCacheCandidates({
+    cacheRoot,
+    id,
+    rel,
+    listDir,
+}: {
+    cacheRoot: string;
+    id: PackageIdentity;
+    /** Path of the file inside its package directory. */
+    rel: string;
+    listDir: (dir: string) => string[];
+}): string[] {
     const slash = id.name.indexOf("/");
     const parent = slash === -1 ? cacheRoot : join(cacheRoot, id.name.slice(0, slash));
     const bare = slash === -1 ? id.name : id.name.slice(slash + 1);
@@ -132,12 +155,26 @@ export function resolveKeepPartners(ids: readonly KeepPartnerId[], run: RunComma
 
 /** Build the `partnerFor` hook `findDuplicateFiles` calls per bucketed file.
  *  Only bun can map a worktree path to a store path; every other manager is
- *  content-addressed or archive-based and returns nothing. */
+ *  content-addressed or archive-based and returns nothing. The returned paths
+ *  are PROPOSALS: the caller stats each one and drops what is missing or the
+ *  wrong size. */
 export function makePartnerFor(partners: readonly ResolvedKeepPartner[]): (file: string, size: number) => string[] {
     const bunRoots = partners.filter((p) => p.id === "bun").map((p) => p.root);
     if (bunRoots.length === 0) {
         return () => [];
     }
+
+    const identityCache = new Map<string, PackageIdentity | null>();
+    const identityOfDir = (dir: string): PackageIdentity | null => {
+        const hit = identityCache.get(dir);
+        if (hit !== undefined) {
+            return hit;
+        }
+
+        const identity = readIdentity(dir);
+        identityCache.set(dir, identity);
+        return identity;
+    };
 
     const dirCache = new Map<string, string[]>();
     const listDir = (dir: string): string[] => {
@@ -160,7 +197,7 @@ export function makePartnerFor(partners: readonly ResolvedKeepPartner[]): (file:
 
     return (file) =>
         measureItem("keep-partners.partnerFor", () => {
-            const id = packageIdentityOf(file);
+            const id = packageIdentityOf(file, identityOfDir);
             if (id === null) {
                 return [];
             }
@@ -168,7 +205,10 @@ export function makePartnerFor(partners: readonly ResolvedKeepPartner[]): (file:
             const rel = relative(id.dir, file);
             const out: string[] = [];
             for (const root of bunRoots) {
-                out.push(...bunCacheCandidates(root, id, rel, listDir).filter((p) => existsSync(p)));
+                // No existsSync here: `addPartnerCandidates` stats every
+                // candidate anyway and drops the ones that are missing or the
+                // wrong size, so a second stat per candidate buys nothing.
+                out.push(...bunCacheCandidates({ cacheRoot: root, id, rel, listDir }));
             }
 
             return out;

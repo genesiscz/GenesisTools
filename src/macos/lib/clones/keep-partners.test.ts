@@ -49,7 +49,12 @@ describe("bunCacheCandidates", () => {
             : ["plain@0.1.0@@@1", "plainer@0.1.0@@@1"];
 
     it("matches every cache entry for that exact name and version, scoped", () => {
-        const got = bunCacheCandidates("/c", { dir: "/w", name: "@scope/pkg", version: "1.2.3" }, "lib/x.a", listDir);
+        const got = bunCacheCandidates({
+            cacheRoot: "/c",
+            id: { dir: "/w", name: "@scope/pkg", version: "1.2.3" },
+            rel: "lib/x.a",
+            listDir,
+        });
         expect(got).toEqual([
             join("/c", "@scope", "pkg@1.2.3@@@1", "lib/x.a"),
             join("/c", "@scope", "pkg@1.2.3@@registry.example@@@1", "lib/x.a"),
@@ -57,7 +62,12 @@ describe("bunCacheCandidates", () => {
     });
 
     it("does not match a different package whose name merely shares the prefix", () => {
-        const got = bunCacheCandidates("/c", { dir: "/w", name: "plain", version: "0.1.0" }, "lib/x.a", listDir);
+        const got = bunCacheCandidates({
+            cacheRoot: "/c",
+            id: { dir: "/w", name: "plain", version: "0.1.0" },
+            rel: "lib/x.a",
+            listDir,
+        });
         expect(got).toEqual([join("/c", "plain@0.1.0@@@1", "lib/x.a")]);
     });
 });
@@ -109,7 +119,10 @@ describe("makePartnerFor", () => {
 
             const partnerFor = makePartnerFor([{ id: "bun", root: cache }]);
             expect(partnerFor(join(dir, "lib", "x.a"), 4096)).toEqual([join(entry, "lib", "x.a")]);
-            expect(partnerFor(join(dir, "lib", "missing.a"), 4096)).toEqual([]);
+            // Candidates are proposals: `addPartnerCandidates` stats each one
+            // and drops what is missing or the wrong size, so this layer does
+            // not pay a second stat per candidate to pre-filter them.
+            expect(partnerFor(join(dir, "lib", "missing.a"), 4096)).toEqual([join(entry, "lib", "missing.a")]);
         } finally {
             rmSync(outer, { recursive: true, force: true });
         }
@@ -121,6 +134,30 @@ describe("makePartnerFor", () => {
             const dir = worktreePkg(outer, "@scope/pkg", "1.2.3");
             const partnerFor = makePartnerFor([{ id: "npm", root: join(outer, "npm-cache") }]);
             expect(partnerFor(join(dir, "lib", "x.a"), 4096)).toEqual([]);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("readIdentity robustness", () => {
+    it("returns null for an empty or null package.json instead of throwing out of the plan", () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-cl-kp-bad-"));
+        try {
+            const empty = join(outer, "node_modules", "broken");
+            mkdirSync(join(empty, "lib"), { recursive: true });
+            writeFileSync(join(empty, "package.json"), "");
+            writeFileSync(join(empty, "lib", "x.a"), "x");
+            expect(packageIdentityOf(join(empty, "lib", "x.a"))).toBeNull();
+
+            const nulled = join(outer, "node_modules", "nulled");
+            mkdirSync(join(nulled, "lib"), { recursive: true });
+            writeFileSync(join(nulled, "package.json"), "null");
+            writeFileSync(join(nulled, "lib", "x.a"), "x");
+            expect(packageIdentityOf(join(nulled, "lib", "x.a"))).toBeNull();
+
+            const partner = makePartnerFor([{ id: "bun", root: outer }]);
+            expect(partner(join(empty, "lib", "x.a"), 1)).toEqual([]);
         } finally {
             rmSync(outer, { recursive: true, force: true });
         }

@@ -8,6 +8,7 @@ import {
     type FileMetaCacheLike,
     type FindDuplicatesStage,
     findDuplicateFiles,
+    type WalkProgress,
 } from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
 import { getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
@@ -38,8 +39,12 @@ export interface CollapseArgs {
     /** `false` forces the in-process walk (tests, or a machine without clang). */
     nativeWalk?: boolean;
     /** Forwarded to `walkFiles` — called per directory entered (high rate;
-     *  cheap callback only). CLI uses this to drive a live spinner. */
+     *  cheap callback only). CLI uses this to drive a live spinner. Never
+     *  fires on the native walk, which has no per-directory event. */
     onDirEntered?: (dir: string) => void;
+    /** Coarse walk progress counted in FILES, from whichever walker ran. This
+     *  is the only progress the native walk emits. */
+    onWalkProgress?: (p: WalkProgress) => void;
     /** Forwarded to `findDuplicateFiles`: one call per finished stage. */
     onStage?: (stage: FindDuplicatesStage) => void;
     /** Forwarded to `findDuplicateFiles`. When provided, the hash phase
@@ -149,50 +154,69 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
     return roots.some((root) => dir === root || !relative(dir, root).startsWith(".."));
 }
 
-/** Rank a keep candidate. Directories use their files: a cloned tree has
- *  nonzero clone ids and near-zero private bytes; a full copy does not. */
-function keepRank(path: string): { shared: boolean; priv: number } {
-    const children = listFiles(path);
-    if (children.length > 0) {
-        let priv = 0;
-        let shared = false;
-        for (const f of children) {
-            const id = getCloneId(f);
-            if (id !== null && id !== 0n) {
-                shared = true;
-            }
+interface KeepRank {
+    shared: boolean;
+    priv: number;
+}
 
-            const n = getPrivateSize(f);
-            if (n !== null) {
-                priv += n;
-            }
-        }
-
-        return { shared, priv };
+/** Rank a keep candidate. A directory is ranked from its files: a cloned tree
+ *  has nonzero clone ids and near-zero private bytes; a full copy does not. A
+ *  FILE is ranked directly — calling `listFiles` on one is a guaranteed
+ *  ENOTDIR plus a debug stack trace, and one 11.7 s duplicates run over two
+ *  cloned node_modules copies wrote 24.9 MB of those into the day log. */
+function keepRank(path: string, kind: "dir" | "file", listDirFiles: (dir: string) => string[]): KeepRank {
+    if (kind === "file") {
+        const id = getCloneId(path);
+        const n = getPrivateSize(path);
+        return {
+            shared: id !== null && id !== 0n,
+            priv: n === null ? Number.POSITIVE_INFINITY : n,
+        };
     }
 
-    const id = getCloneId(path);
-    const n = getPrivateSize(path);
-    return {
-        shared: id !== null && id !== 0n,
-        priv: n === null ? Number.POSITIVE_INFINITY : n,
-    };
+    let priv = 0;
+    let shared = false;
+    for (const f of listDirFiles(path)) {
+        const id = getCloneId(f);
+        if (id !== null && id !== 0n) {
+            shared = true;
+        }
+
+        const n = getPrivateSize(f);
+        if (n !== null) {
+            priv += n;
+        }
+    }
+
+    return { shared, priv };
 }
 
 /** Prefer a member that already shares extents so --apply clonefile's onto it
  *  (and frees the private copy) instead of the other way around. Lex path is
  *  the stable tie-break when clone-id and private size match. */
-function pickKeep(members: string[], keepOnlyRoots: readonly string[]): string {
-    const keepOnly = members.filter((m) => isUnderAny(m, keepOnlyRoots)).sort();
-    if (keepOnly.length > 0) {
-        return keepOnly[0];
+function pickKeep({
+    members,
+    kind,
+    keepOnlyRoots,
+    listDirFiles,
+}: {
+    members: string[];
+    kind: "dir" | "file";
+    keepOnlyRoots: readonly string[];
+    listDirFiles: (dir: string) => string[];
+}): string {
+    if (keepOnlyRoots.length > 0) {
+        const keepOnly = members.filter((m) => isUnderAny(m, keepOnlyRoots)).sort();
+        if (keepOnly.length > 0) {
+            return keepOnly[0];
+        }
     }
 
     let best = members[0];
-    let bestRank = keepRank(best);
+    let bestRank = keepRank(best, kind, listDirFiles);
     for (let i = 1; i < members.length; i++) {
         const candidate = members[i];
-        const rank = keepRank(candidate);
+        const rank = keepRank(candidate, kind, listDirFiles);
         if (rank.shared !== bestRank.shared) {
             if (rank.shared) {
                 best = candidate;
@@ -223,24 +247,30 @@ function pickKeep(members: string[], keepOnlyRoots: readonly string[]): string {
  *  candidates and the JSON hand-off costs more than the in-process walk saves. */
 export const NATIVE_WALK_MIN_SIZE = 1 << 20;
 
-const nativeCandidateLister: CandidateLister = async ({ roots, minSize, pruneNames, signal, onDirEntered }) => {
+const nativeCandidateLister: CandidateLister = async ({ roots, minSize, pruneNames, signal, onProgress }) => {
     const endWalk = clonesProfile.start("walk.native");
     try {
-        const r = await listBigFiles({
-            roots,
-            minBytes: minSize,
-            pruneNames,
-            signal,
-            onProgress: (p) => onDirEntered?.(p.dir),
-        });
+        // The C walker reports once per 200k FILES, never per directory —
+        // feeding that into a per-directory hook made a 378k-file tree render
+        // "Scanned 1 dirs" and left trees under 200k files with no progress
+        // at all.
+        const r = await listBigFiles({ roots, minBytes: minSize, pruneNames, signal, onProgress });
         logger.debug(
-            { roots: roots.length, files: r.filesListed, dirs: r.dirs, big: r.files.length, walkMs: r.walkMs },
+            {
+                roots: roots.length,
+                files: r.filesListed,
+                dirs: r.dirs,
+                deniedDirs: r.deniedDirs,
+                big: r.files.length,
+                walkMs: r.walkMs,
+            },
             "collapse: native walk complete"
         );
         return {
             files: r.files.map((f) => ({ path: f.path, size: f.size, mtimeNs: f.mtimeNs })),
             walkedFiles: r.filesListed,
             walkedDirs: r.dirs,
+            deniedDirs: r.deniedDirs,
         };
     } finally {
         endWalk();
@@ -257,6 +287,7 @@ export async function collapseDuplicates({
     pruneNames,
     nativeWalk,
     onDirEntered,
+    onWalkProgress,
     onStage,
     cache,
     prefixHash,
@@ -291,6 +322,9 @@ export async function collapseDuplicates({
     }
     if (onDirEntered !== undefined) {
         findOpts.onDirEntered = onDirEntered;
+    }
+    if (onWalkProgress !== undefined) {
+        findOpts.onWalkProgress = onWalkProgress;
     }
     if (onStage !== undefined) {
         findOpts.onStage = onStage;
@@ -413,7 +447,9 @@ export async function collapseDuplicates({
                     eachBytes: bestInfo.bytes,
                     reclaimable: (members.length - 1) * bestInfo.bytes,
                     members,
-                    keep: pickKeep(members, keepOnlyRoots),
+                    // The rollup already listed every member with the memoised
+                    // lister; ranking must not walk them a second time.
+                    keep: pickKeep({ members, kind: "dir", keepOnlyRoots, listDirFiles: listFilesCached }),
                 });
             }
         }
@@ -436,13 +472,13 @@ export async function collapseDuplicates({
             eachBytes: g.size,
             reclaimable: (remaining.length - 1) * g.size,
             members: remaining,
-            keep: pickKeep(remaining, keepOnlyRoots),
+            keep: pickKeep({ members: remaining, kind: "file", keepOnlyRoots, listDirFiles: listFilesCached }),
         });
     }
 
     // A keep-only member that is not the keep can never be replaced, so it must
     // not inflate `copies` or `reclaimable`.
-    const normalized = sets.flatMap((set) => {
+    const normalizedSets = sets.flatMap((set) => {
         const members = set.members.filter((m) => m === set.keep || !isUnderAny(m, keepOnlyRoots));
         if (members.length === set.members.length) {
             return [set];
@@ -461,12 +497,9 @@ export async function collapseDuplicates({
             },
         ];
     });
-    sets.length = 0;
-    sets.push(...normalized);
-
-    const totalReclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
-    const dirSets = sets.filter((s) => s.kind === "dir").length;
-    const fileSets = sets.length - dirSets;
+    const totalReclaimable = normalizedSets.reduce((s, x) => s + x.reclaimable, 0);
+    const dirSets = normalizedSets.filter((s) => s.kind === "dir").length;
+    const fileSets = normalizedSets.length - dirSets;
     log.info(
         {
             roots,
@@ -482,5 +515,5 @@ export async function collapseDuplicates({
         },
         "collapseDuplicates complete"
     );
-    return { roots, sets, totalReclaimable, grouped: false, hardStop: roots, stats };
+    return { roots, sets: normalizedSets, totalReclaimable, grouped: false, hardStop: roots, stats };
 }

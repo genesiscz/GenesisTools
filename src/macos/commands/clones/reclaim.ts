@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { runOptimize } from "@app/macos/lib/clones/audit";
 import { cachePlan, getCachedPlan, type PlanCacheParams, stampRoots, stampsMatch } from "@app/macos/lib/clones/cache";
+import { ensureClonesDaemonTasks } from "@app/macos/lib/clones/daemon-tasks";
 import { RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
 import { KEEP_PARTNER_IDS, type KeepPartnerId } from "@app/macos/lib/clones/keep-partners";
@@ -54,6 +55,8 @@ interface ReclaimOpts {
     yes?: boolean;
     /** commander `--no-cache` → false. Undefined when the verb has no such flag. */
     cache?: boolean;
+    /** commander `--no-daemon` → false: do not register the daily daemon tasks. */
+    daemon?: boolean;
     verbose?: boolean;
     silent?: boolean;
 }
@@ -88,7 +91,8 @@ function applyOutputFlags(cmd: Command): Command {
             new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
         )
         .option("-v, --verbose", "Verbose logging", false)
-        .option("--silent", "Suppress non-essential output", false);
+        .option("--silent", "Suppress non-essential output", false)
+        .option("--no-daemon", "Do not register the daily scan and cache reconciliation with tools daemon");
 }
 
 /** Resolve an enumerated flag that may arrive empty. Returns null when the
@@ -309,6 +313,27 @@ const NEXT_STAGE: Record<ReclaimPhase, string> = {
     snapshot: "Finishing…",
 };
 
+/** A finished plan registers the daily scan and cache reconciliation with
+ *  `tools daemon`, once: an existing registration is never overwritten (that
+ *  is `daemon enable`). A failure here is logged and never fails the plan. */
+async function registerDaemonAfterPlan(opts: ReclaimOpts): Promise<void> {
+    if (opts.daemon === false) {
+        return;
+    }
+
+    try {
+        const done = await ensureClonesDaemonTasks({ overwrite: false });
+        if (done.scan || done.prune) {
+            recorded(
+                opts,
+                "daemon tasks: scan daily at 03:00, cache reconciliation at 04:00 (tools macos clones daemon status)"
+            );
+        }
+    } catch (err) {
+        log.warn({ err }, "daemon registration after plan failed");
+    }
+}
+
 /** A line for something that was written, printed after the spinner is gone. */
 function recorded(opts: ReclaimOpts, text: string): void {
     if (!opts.silent) {
@@ -390,6 +415,7 @@ async function runPlan(
             `${plan.roots.length} root(s) · ${plan.sets.length} set(s) · ${formatBytes(plan.totalReclaimable)}`
         );
         clonesProfile.summary("reclaim");
+        await registerDaemonAfterPlan(opts);
         return plan;
     } catch (err) {
         spinner?.stop("reclaim failed");
@@ -429,7 +455,9 @@ async function runPlan(
 }
 
 function createPlanCommand(): Command {
-    const cmd = new Command("plan").description("Discover the trees and show what apply would do (changes nothing)");
+    const cmd = new Command("plan").description(
+        "Discover the trees and show what apply would do (rewrites nothing; registers the daily daemon tasks once, --no-daemon to skip)"
+    );
     applyOutputFlags(applySelectorFlags(cmd))
         .option("--save <id>", "Save this selector as a preset for later runs")
         .action(async (dirsArg: string[], opts: ReclaimOpts) => {

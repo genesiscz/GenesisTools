@@ -299,15 +299,23 @@ export interface BigFilesResult {
     walkMs: number;
     threads: number;
     deniedDirs: number;
+    /** Roots the walker accepted. Compared against the roots we sent, so a
+     *  silently dropped root can never read as "that tree holds nothing". */
+    roots: number;
+    /** Directory listings that failed part way. Non-zero also makes the C
+     *  binary exit non-zero, so this never arrives here on its own. */
+    readErrors: number;
     files: BigFileEntry[];
 }
 
 interface BigFilesJson {
     files_listed: number;
     dirs: number;
+    roots?: number;
     walk_ms: number;
     threads: number;
     denied_dirs: number;
+    read_errors?: number;
     files: { path: string; size: number; alloc: number; fileid: number; mtime_ns: string; nlink: number }[];
 }
 
@@ -325,7 +333,8 @@ export interface ListBigFilesOptions {
     threads?: number;
     /** Kills the subprocess; the returned promise then rejects with `signal.reason`. */
     signal?: AbortSignal;
-    /** One call per 200k files listed, with the directory the walker was in. */
+    /** One call per 200k FILES listed, with the directory the walker was in.
+     *  There is no per-directory event on this path. */
     onProgress?: (p: BigFilesProgress) => void;
 }
 
@@ -391,12 +400,19 @@ export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesR
         }
 
         const raw = SafeJSON.parse(stdout) as BigFilesJson;
+        const rootsWalked = raw.roots ?? opts.roots.length;
+        if (rootsWalked !== opts.roots.length) {
+            throw new Error(`clonesize --bigfiles walked ${rootsWalked} of ${opts.roots.length} root(s)`);
+        }
+
         return {
             filesListed: raw.files_listed,
             dirs: raw.dirs,
             walkMs: raw.walk_ms,
             threads: raw.threads,
             deniedDirs: raw.denied_dirs,
+            roots: rootsWalked,
+            readErrors: raw.read_errors ?? 0,
             files: raw.files.map((f) => ({
                 path: f.path,
                 size: f.size,
@@ -406,6 +422,12 @@ export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesR
                 nlink: f.nlink,
             })),
         };
+    } catch (err) {
+        // Without this the multi-threaded walker keeps draining to completion
+        // while the caller has already started its in-process fallback over
+        // the same roots, and the parent cannot exit until it finishes.
+        proc.kill();
+        throw err;
     } finally {
         opts.signal?.removeEventListener("abort", onAbort);
         end();

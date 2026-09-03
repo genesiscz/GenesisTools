@@ -42,7 +42,17 @@ export function listPresets(): Preset[] {
         return [];
     }
 
-    const parsed = SafeJSON.parse(raw) as { presets?: Preset[] } | null;
+    // A truncated, empty or merge-conflicted presets.json must not crash every
+    // preset verb: savePreset and removePreset both read through here, so a
+    // throw would also make the bad file unrepairable from the CLI.
+    let parsed: { presets?: Preset[] } | null;
+    try {
+        parsed = SafeJSON.parse(raw) as { presets?: Preset[] } | null;
+    } catch (err) {
+        log.warn({ err, path }, "presets file is not valid JSON");
+        return [];
+    }
+
     const presets = parsed?.presets;
     if (!Array.isArray(presets)) {
         log.warn({ path }, "presets file has no presets array");

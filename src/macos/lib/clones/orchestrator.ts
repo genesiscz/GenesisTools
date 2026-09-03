@@ -195,15 +195,37 @@ function detectCrossTreeShared(records: Map<string, RootRecords>): CrossTreeData
     return { sharedByPath, loneCloneIds };
 }
 
+/** Bun's global install dir. `BUN_INSTALL` names bun's own directory and the
+ *  global tree lives at `<BUN_INSTALL>/install/global`; the cache dir is NOT a
+ *  reliable anchor for it, because `BUN_INSTALL_CACHE_DIR` and bunfig's
+ *  `install.cache.dir` move the cache on its own (a cache redirected to /tmp
+ *  made the derived path /tmp/global, which never exists). */
+function bunGlobalDir(): string | null {
+    const stdout = spawnCacheCommand(["bun", "pm", "-g", "bin"]);
+    if (stdout === null) {
+        return null;
+    }
+
+    const bin = stdout.trim();
+    if (bin.length === 0) {
+        return null;
+    }
+
+    // `bun pm -g bin` prints <BUN_INSTALL>/bin; the global package tree is
+    // <BUN_INSTALL>/install/global.
+    return join(dirname(bin), "install", "global");
+}
+
 /** Known external locations that DO use APFS clonefile — the only places
  *  worth probing to discover the WHERE of cross-tree partners. Bun is the
- *  primary suspect (`bun install` clones from cache to node_modules). The
- *  cache root comes from `bun pm cache`; the global install dir sits beside
- *  it. Nothing here assumes where bun lives. */
+ *  primary suspect (`bun install` clones from cache to node_modules). Both
+ *  paths are asked of bun; nothing here assumes where bun lives. */
 function partnerProbePaths(): string[] {
-    return resolveKeepPartners(["bun"], spawnCacheCommand)
-        .flatMap((p) => [p.root, join(dirname(p.root), "global")])
-        .filter((p) => existsSync(p));
+    const global = bunGlobalDir();
+    return [
+        ...resolveKeepPartners(["bun"], spawnCacheCommand).map((p) => p.root),
+        ...(global === null ? [] : [global]),
+    ].filter((p) => existsSync(p));
 }
 
 /** Wall-clock budget for the partner probe. The probe is best-effort; if we

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import {
     getPreset,
     listPresets,
@@ -63,5 +63,14 @@ describe("presets", () => {
 
     it("getPreset returns null for an unknown id", () => {
         expect(getPreset("nope")).toBeNull();
+    });
+
+    it("a corrupt presets.json reads as empty instead of crashing every preset verb", () => {
+        writeFileSync(presetsPath(), '{"presets": [ {"id": "half"');
+        expect(listPresets()).toEqual([]);
+        expect(getPreset("half")).toBeNull();
+        expect(removePreset("half")).toBe(false);
+        savePreset(preset("fresh"));
+        expect(listPresets().map((p) => p.id)).toEqual(["fresh"]);
     });
 });

@@ -110,4 +110,44 @@ describe("--set-min-real contract", () => {
         expect(errLines.join("\n")).toContain("positive whole number");
         expect((await loadClonesConfig()).minReal).toBe(4096);
     });
+
+    it("applies no other mutation and prints nothing when --set-min-real is invalid", async () => {
+        await storage.setConfig({ watchedDirs: [], minReal: 4096, nodeModules: false });
+        const errLines: string[] = [];
+        const origErr = console.error;
+        console.error = (...x: unknown[]) => errLines.push(x.join(" "));
+        let output = "";
+        const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+            (
+                chunk: string | Uint8Array,
+                encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                callback?: (error?: Error | null) => void
+            ) => {
+                output += String(chunk);
+                const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                cb?.();
+                return true;
+            }
+        );
+        process.exitCode = undefined;
+        try {
+            await createConfigCommand().parseAsync(
+                ["node", "config", "--set-min-real", "abc", "--node-modules", "on"],
+                {
+                    from: "node",
+                }
+            );
+        } finally {
+            stdoutSpy.mockRestore();
+            console.error = origErr;
+        }
+
+        const exitCode: unknown = process.exitCode;
+        process.exitCode = undefined;
+        expect(exitCode).toBe(1);
+        expect(output).toBe("");
+        const cfg = await loadClonesConfig();
+        expect(cfg.minReal).toBe(4096);
+        expect(cfg.nodeModules).toBe(false);
+    });
 });

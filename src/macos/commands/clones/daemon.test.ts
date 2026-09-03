@@ -5,6 +5,7 @@ const unregisterSpy = mock(async () => true);
 mock.module("@app/daemon/lib/register", () => ({
     registerTask: registerSpy,
     unregisterTask: unregisterSpy,
+    isTaskRegistered: mock(async () => false),
 }));
 
 const { createDaemonCommand } = await import("@app/macos/commands/clones/daemon");
