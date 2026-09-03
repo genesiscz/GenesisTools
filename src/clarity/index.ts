@@ -8,6 +8,7 @@ import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";
 import { registerFillCommand } from "./commands/fill.js";
 import { registerLinkCommand } from "./commands/link-workitems.js";
+import { registerTasksCommand } from "./commands/tasks.js";
 import { registerTimesheetCommand } from "./commands/timesheet.js";
 import { runClarityPreflight } from "./lib/preflight.js";
 
@@ -20,6 +21,7 @@ registerConfigureCommand(program);
 registerTimesheetCommand(program);
 registerFillCommand(program);
 registerLinkCommand(program);
+registerTasksCommand(program);
 
 const uiDir = resolve(import.meta.dirname, "ui");
 const configPath = resolve(uiDir, "vite.config.ts");
