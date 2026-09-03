@@ -5,7 +5,9 @@ import { type CalendarDoctorReport, runCalendarDoctor } from "../../lib/calendar
 
 function printReport(report: CalendarDoctorReport): void {
     ui.header("Calendar access");
-    const statusLine = `${report.status}${report.authorized ? "" : " (not enough to read events)"}`;
+    const statusLine = report.promptSkipped
+        ? "not read (reading it would show the macOS permission dialog)"
+        : `${report.status}${report.authorized ? "" : " (not enough to read events)"}`;
 
     if (report.authorized) {
         ui.ok(statusLine);
@@ -65,11 +67,12 @@ export function registerDoctorCommand(program: Command): void {
     program
         .command("doctor")
         .description(
-            "Explain whether this process may read the calendar: authorization status, calendar count, host app, TCC grants. Read-only; macOS prompts only when the status is still notDetermined."
+            "Explain whether this process may read the calendar: authorization status, calendar count, host app, TCC grants. Read-only: with no recorded grant it reports that instead of asking, because the macOS dialog writes a durable TCC row."
         )
         .option("--json", "Print the report as JSON")
-        .action(async (options: { json?: boolean }) => {
-            const report = await runCalendarDoctor();
+        .option("--request-access", "Read the status even when that shows the macOS permission dialog")
+        .action(async (options: { json?: boolean; requestAccess?: boolean }) => {
+            const report = await runCalendarDoctor({ requestAccess: options.requestAccess });
 
             if (options.json) {
                 out.result(report);

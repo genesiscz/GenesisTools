@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { execPath } from "node:process";
 import type { CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import { ensureBinary } from "@genesiscz/darwinkit";
 import { env } from "@genesiscz/utils/env";
@@ -28,6 +29,8 @@ export interface TccCalendarRow {
 
 export interface CalendarDoctorReport {
     status: string;
+    /** True when the status was NOT read, because reading it would have prompted. */
+    promptSkipped: boolean;
     authorized: boolean;
     calendarCount: number;
     placeholderOnly: boolean;
@@ -73,9 +76,18 @@ export function buildVerdict(input: {
     status: string;
     calendarCount: number;
     placeholderOnly: boolean;
+    promptSkipped?: boolean;
 }): Pick<CalendarDoctorReport, "verdict" | "fix"> {
     const host = describeCalendarHostApp();
     const fix = `System Settings > Privacy & Security > Calendars: set ${host} to Full Access, then re-run.`;
+
+    if (input.promptSkipped) {
+        return {
+            verdict:
+                "macOS has recorded no Calendar answer for this process, and the doctor did not ask: reading the status would show the permission dialog and write a durable TCC grant, which a diagnostic must never do.",
+            fix: `Run \`tools macos calendar list-calendars\` once and answer the macOS dialog, or grant it yourself: ${fix}`,
+        };
+    }
 
     switch (input.status) {
         case "fullAccess":
@@ -150,13 +162,58 @@ export function readTccCalendarRows(dbPath = TCC_DB_PATH): CalendarDoctorReport[
     }
 }
 
-export async function runCalendarDoctor(): Promise<CalendarDoctorReport> {
+/**
+ * True when macOS has already recorded an answer for this process, so reading
+ * the status cannot show a dialog.
+ *
+ * `MacCalendar.authorizationStatus()` REQUESTS access when the status is still
+ * notDetermined (darwinkit 0.7.5 has no non-prompting status call), and a TCC
+ * grant is durable state every later process observes. TCC.db carries the
+ * recorded answer, keyed by bundle id (`client_type` 0) or by the launching
+ * executable's absolute path (`client_type` 1).
+ */
+export function tccDecisionRecorded(
+    tcc: CalendarDoctorReport["tcc"],
+    hostApp: { bundleId?: string; executablePath?: string }
+): boolean {
+    if (!tcc.readable) {
+        // Cannot prove a decision exists, so assume none: the doctor must not
+        // gamble a permission dialog on a guess.
+        return false;
+    }
+
+    return tcc.rows.some(
+        (row) =>
+            (row.clientType === 0 && row.client === hostApp.bundleId) ||
+            (row.clientType === 1 && row.client === hostApp.executablePath)
+    );
+}
+
+export interface CalendarDoctorOptions {
+    /**
+     * Read the status even when that may show the macOS permission dialog and
+     * write a TCC grant. Off by default: `doctor` is a diagnostic.
+     */
+    requestAccess?: boolean;
+}
+
+export async function runCalendarDoctor(opts: CalendarDoctorOptions = {}): Promise<CalendarDoctorReport> {
     const binaryPath = await ensureBinary();
     const plistPath = appBundleInfoPlist(binaryPath);
     const hasCalendarUsageString =
         plistPath && existsSync(plistPath) ? plistHasKey(plistPath, CALENDAR_USAGE_KEY) : null;
 
-    const auth: CalendarAuthorizedResult = await MacCalendar.authorizationStatus();
+    const hostApp = { bundleId: env.device.getHostBundleIdentifier(), termProgram: env.device.getTermProgram() };
+    const tcc = readTccCalendarRows();
+    const mayRead = opts.requestAccess === true || tccDecisionRecorded(tcc, { ...hostApp, executablePath: execPath });
+    const auth: CalendarAuthorizedResult = mayRead
+        ? await MacCalendar.authorizationStatus()
+        : { status: "notDetermined", authorized: false };
+
+    if (!mayRead) {
+        logger.debug({ bundleId: hostApp.bundleId, tccReadable: tcc.readable }, "calendar doctor: skipped the prompt");
+    }
+
     let calendars: CalendarInfo[] = [];
     let sources: SourceInfo[] = [];
 
@@ -165,17 +222,22 @@ export async function runCalendarDoctor(): Promise<CalendarDoctorReport> {
     }
 
     const placeholderOnly = isPlaceholderCalendarList(calendars);
-    const tcc = readTccCalendarRows();
 
     return {
         status: auth.status,
+        promptSkipped: !mayRead,
         authorized: auth.authorized,
         calendarCount: calendars.length,
         placeholderOnly,
         sources: sources.map((s) => ({ title: s.title, source_type: s.source_type })),
         binary: { path: binaryPath, inAppBundle: plistPath !== undefined, hasCalendarUsageString },
-        hostApp: { bundleId: env.device.getHostBundleIdentifier(), termProgram: env.device.getTermProgram() },
+        hostApp,
         tcc,
-        ...buildVerdict({ status: auth.status, calendarCount: calendars.length, placeholderOnly }),
+        ...buildVerdict({
+            status: auth.status,
+            calendarCount: calendars.length,
+            placeholderOnly,
+            promptSkipped: !mayRead,
+        }),
     };
 }
