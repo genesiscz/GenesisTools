@@ -29,6 +29,7 @@ import { Command } from "commander";
 handleReadmeFlag(import.meta.url);
 
 // Import command registration functions
+import { registerAncestorsCommand } from "@app/azure-devops/commands/ancestors";
 import { registerConfigureCommand } from "@app/azure-devops/commands/configure";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
 import { registerHistoryCommand } from "@app/azure-devops/commands/history";
@@ -63,6 +64,7 @@ program
 registerConfigureCommand(program);
 registerQueryCommand(program);
 registerWorkitemCommand(program);
+registerAncestorsCommand(program);
 registerWorkitemCreateCommand(program);
 registerWorkitemCacheCommand(program);
 registerDashboardCommand(program);
