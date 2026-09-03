@@ -159,7 +159,7 @@ export async function discoverRoots(args: DiscoverArgs): Promise<DiscoverResult>
         scanDirs = await worktreeDirs(repoRoot);
     }
 
-    const expanded = expandTargets({ dirs: scanDirs, targets: args.targets });
+    const expanded = await expandTargets({ dirs: scanDirs, targets: args.targets });
     const apfs = clonesProfile.measure("discover.fs-type", () => partitionApfs(expanded.roots, getFsType));
     const elapsedMs = Math.round(end());
     log.info(

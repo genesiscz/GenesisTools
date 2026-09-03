@@ -28,10 +28,10 @@ describe("targets", () => {
         expect([...TARGET_KIND_VALUES]).toEqual(["gitignored", "node_modules", "vendor", "Pods", ".cxx"]);
     });
 
-    it("findNamedDirs prunes at the first match and skips .git", () => {
+    it("findNamedDirs prunes at the first match and skips .git", async () => {
         const outer = fixture();
         try {
-            const found = findNamedDirs(outer, ["node_modules", "vendor"]);
+            const found = await findNamedDirs(outer, ["node_modules", "vendor"]);
             expect(found).toEqual(
                 [
                     join(outer, "plain", "node_modules"),
@@ -46,12 +46,12 @@ describe("targets", () => {
         }
     });
 
-    it("isGitIgnored answers true / false inside a repo and null outside one", () => {
+    it("isGitIgnored answers true / false inside a repo and null outside one", async () => {
         const outer = fixture();
         try {
-            expect(isGitIgnored(join(outer, "repo", "node_modules"))).toBe(true);
-            expect(isGitIgnored(join(outer, "repo", "vendor"))).toBe(false);
-            expect(isGitIgnored(join(outer, "plain", "node_modules"))).toBeNull();
+            expect(await isGitIgnored(join(outer, "repo", "node_modules"))).toBe(true);
+            expect(await isGitIgnored(join(outer, "repo", "vendor"))).toBe(false);
+            expect(await isGitIgnored(join(outer, "plain", "node_modules"))).toBeNull();
         } finally {
             rmSync(outer, { recursive: true, force: true });
         }
@@ -67,10 +67,10 @@ describe("targets", () => {
         }
     });
 
-    it("gitignored takes ignored install dirs and dirs outside any repo, with reasons", () => {
+    it("gitignored takes ignored install dirs and dirs outside any repo, with reasons", async () => {
         const outer = fixture();
         try {
-            const res = expandTargets({ dirs: [outer], targets: ["gitignored"] });
+            const res = await expandTargets({ dirs: [outer], targets: ["gitignored"] });
             expect(res.roots).toEqual([join(outer, "plain", "node_modules"), join(outer, "repo", "node_modules")]);
             expect(res.skipped).toEqual([
                 { path: join(outer, "repo", "pkg", "vendor"), reason: "not-ignored" },
@@ -81,10 +81,10 @@ describe("targets", () => {
         }
     });
 
-    it("an explicit kind overrides the gitignore filter but never the composer rule", () => {
+    it("an explicit kind overrides the gitignore filter but never the composer rule", async () => {
         const outer = fixture();
         try {
-            const res = expandTargets({ dirs: [outer], targets: ["vendor"] });
+            const res = await expandTargets({ dirs: [outer], targets: ["vendor"] });
             expect(res.roots).toEqual([join(outer, "repo", "pkg", "vendor")]);
             expect(res.skipped).toEqual([{ path: join(outer, "repo", "vendor"), reason: "no-composer" }]);
         } finally {

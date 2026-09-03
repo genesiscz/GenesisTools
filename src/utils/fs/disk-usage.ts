@@ -16,7 +16,7 @@ import {
     utimesSync,
     writeSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { formatBytes } from "@genesiscz/utils/format";
 import { sha256FilesParallel } from "@genesiscz/utils/fs/parallel-sha256";
 import { logger } from "@genesiscz/utils/logger";
@@ -834,7 +834,33 @@ export interface FindDuplicatesOptions {
      *  candidate is therefore dropped, never cloned. Candidates are never
      *  walked and never counted in `stats`. */
     partnerFor?: (path: string, size: number) => string[];
+    /** Directory names never entered (`.git`). Unlike `shouldEnter`, a name
+     *  list can be handed to the native candidate lister, so callers that only
+     *  need name pruning should prefer this. Ignored when `shouldEnter` is set. */
+    pruneNames?: string[];
+    /** Native replacement for the in-process walk: returns every file at or
+     *  above `minSize` under the roots in one call (macOS: the clonesize
+     *  `--bigfiles` pass, ~14x faster than `walkFiles` on node_modules trees).
+     *  Used only when `shouldEnter` is unset, because a predicate cannot cross
+     *  into a subprocess. Any failure other than an abort falls back to the
+     *  in-process walk with a warning, so a missing compiler never breaks a scan. */
+    candidateLister?: CandidateLister;
 }
+
+export interface CandidateListing {
+    files: { path: string; size: number; mtimeNs: bigint }[];
+    /** Regular files seen, before the `minSize` cut (mirrors `walkedFiles`). */
+    walkedFiles: number;
+    walkedDirs: number;
+}
+
+export type CandidateLister = (args: {
+    roots: string[];
+    minSize: number;
+    pruneNames: string[];
+    signal?: AbortSignal;
+    onDirEntered?: (dir: string) => void;
+}) => Promise<CandidateListing>;
 
 /** How often we yield to the event loop during the size-bucket loop.
  *  Async-needed so SIGINT handlers can run — pure sync code in Node/Bun
@@ -930,7 +956,11 @@ export async function findDuplicateFiles(
 ): Promise<DuplicateGroup[]> {
     const roots = Array.isArray(root) ? root : [root];
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, shouldEnter, onDirEntered, stats, cache, partnerFor } = opts;
+    const { signal, onDirEntered, stats, cache, partnerFor, candidateLister } = opts;
+    const pruneNames = opts.pruneNames ?? [];
+    const pruneSet = new Set(pruneNames);
+    const shouldEnter =
+        opts.shouldEnter ?? (pruneNames.length > 0 ? (dir: string) => !pruneSet.has(basename(dir)) : undefined);
     const prefixHashEnabled = opts.prefixHash === true;
 
     const sw = new Stopwatch();
@@ -975,7 +1005,27 @@ export async function findDuplicateFiles(
         walkOpts.cache = cache;
     }
     let walkCount = 0;
-    for (const scanRoot of roots) {
+    let walker: "native" | "js" = "js";
+    if (candidateLister !== undefined && opts.shouldEnter === undefined) {
+        try {
+            const listing = await candidateLister({ roots, minSize, pruneNames, signal, onDirEntered: userDirEntered });
+            walkedFiles = listing.walkedFiles;
+            walkedDirs = listing.walkedDirs;
+            for (const f of listing.files) {
+                const list = bySize.get(f.size) ?? [];
+                list.push(f.path);
+                bySize.set(f.size, list);
+                mtimeByPath.set(f.path, f.mtimeNs);
+            }
+
+            walker = "native";
+        } catch (err) {
+            signal?.throwIfAborted();
+            logger.warn({ err, roots }, "findDuplicateFiles: native candidate listing failed, walking in-process");
+        }
+    }
+
+    for (const scanRoot of walker === "native" ? [] : roots) {
         for (const e of walkFiles(scanRoot, walkOpts)) {
             if ((walkCount++ & (YIELD_EVERY_WALK_ENTRIES - 1)) === 0) {
                 await yieldToLoop();
@@ -1016,6 +1066,7 @@ export async function findDuplicateFiles(
         {
             event: "walk.complete",
             roots,
+            walker,
             files: walkedFiles,
             dirs: walkedDirs,
             buckets: bySize.size,

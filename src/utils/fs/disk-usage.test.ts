@@ -741,3 +741,104 @@ describe("findDuplicateFiles partnerFor", () => {
         }
     });
 });
+
+import { type CandidateLister, emptyFindDuplicatesStats } from "@genesiscz/utils/fs/disk-usage";
+
+describe("findDuplicateFiles candidate lister", () => {
+    function twoCopies(): { outer: string; r1: string; r2: string } {
+        const outer = mkdtempSync(join(tmpdir(), "gt-dup-lister-"));
+        const r1 = join(outer, "r1");
+        const r2 = join(outer, "r2");
+        mkdirSync(join(r1, ".git"), { recursive: true });
+        mkdirSync(r2, { recursive: true });
+        const payload = Buffer.alloc(64_000, 0x5a);
+        writeFileSync(join(r1, "same.bin"), payload);
+        writeFileSync(join(r2, "same.bin"), payload);
+        writeFileSync(join(r1, ".git", "same.bin"), payload);
+        return { outer, r1, r2 };
+    }
+
+    it("takes its size buckets from the lister instead of walking", async () => {
+        const { outer, r1, r2 } = twoCopies();
+        try {
+            const calls: Parameters<CandidateLister>[0][] = [];
+            const lister: CandidateLister = async (args) => {
+                calls.push(args);
+                return {
+                    files: [
+                        { path: join(r1, "same.bin"), size: 64_000, mtimeNs: 1n },
+                        { path: join(r2, "same.bin"), size: 64_000, mtimeNs: 1n },
+                    ],
+                    walkedFiles: 2,
+                    walkedDirs: 2,
+                };
+            };
+            const stats = emptyFindDuplicatesStats();
+            const groups = await findDuplicateFiles([r1, r2], {
+                minSize: 1000,
+                pruneNames: [".git"],
+                candidateLister: lister,
+                stats,
+            });
+
+            expect(calls.length).toBe(1);
+            expect(calls[0]?.roots).toEqual([r1, r2]);
+            expect(calls[0]?.minSize).toBe(1000);
+            expect(calls[0]?.pruneNames).toEqual([".git"]);
+            expect(groups.length).toBe(1);
+            expect(groups[0]?.paths.sort()).toEqual([join(r1, "same.bin"), join(r2, "same.bin")].sort());
+            expect(stats.walkedFiles).toBe(2);
+            expect(stats.walkedDirs).toBe(2);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("falls back to the in-process walk when the lister fails", async () => {
+        const { outer, r1, r2 } = twoCopies();
+        try {
+            const lister: CandidateLister = async () => {
+                throw new Error("no compiler here");
+            };
+            const groups = await findDuplicateFiles([r1, r2], { pruneNames: [".git"], candidateLister: lister });
+            expect(groups.length).toBe(1);
+            // the walk honoured pruneNames: the .git copy is not in the group
+            expect(groups[0]?.paths.sort()).toEqual([join(r1, "same.bin"), join(r2, "same.bin")].sort());
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("is not consulted when a shouldEnter predicate is set", async () => {
+        const { outer, r1, r2 } = twoCopies();
+        try {
+            let called = false;
+            const lister: CandidateLister = async () => {
+                called = true;
+                return { files: [], walkedFiles: 0, walkedDirs: 0 };
+            };
+            const groups = await findDuplicateFiles([r1, r2], { shouldEnter: () => true, candidateLister: lister });
+            expect(called).toBe(false);
+            expect(groups.length).toBe(1);
+            expect(groups[0]?.paths.length).toBe(3);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("rethrows an abort instead of falling back", async () => {
+        const { outer, r1, r2 } = twoCopies();
+        try {
+            const ac = new AbortController();
+            const lister: CandidateLister = async () => {
+                ac.abort(new Error("stop"));
+                throw new Error("killed");
+            };
+            await expect(findDuplicateFiles([r1, r2], { candidateLister: lister, signal: ac.signal })).rejects.toThrow(
+                "stop"
+            );
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+});

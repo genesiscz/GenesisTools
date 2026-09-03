@@ -14,3 +14,11 @@ export function measureItem<T>(label: string, fn: () => T): T {
 
     return clonesProfile.measure(label, fn);
 }
+
+export async function measureItemAsync<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    if (profiler.detail !== "all") {
+        return fn();
+    }
+
+    return clonesProfile.measureAsync(label, fn);
+}

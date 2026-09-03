@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { basename } from "node:path";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
@@ -55,9 +54,7 @@ interface DuplicatesOpts {
  *  clone-family pre-filter makes bun trees free (one syscall per file, no
  *  hashing) AND yarn trees contain real duplicate small files we want to
  *  surface. */
-function shouldEnterByDefault(dir: string): boolean {
-    return basename(dir) !== ".git";
-}
+const PRUNE_NAMES = [".git"];
 
 /** Cap on duplicate sets printed in human formats. The clone-family
  *  pre-filter already drops bun-cloned files entirely (zero reclaim), so
@@ -159,7 +156,7 @@ export function createDuplicatesCommand(): Command {
                     include: parseVariadic(opts.include),
                     exclude: parseVariadic(opts.exclude),
                     signal: controller.signal,
-                    shouldEnter: shouldEnterByDefault,
+                    pruneNames: PRUNE_NAMES,
                     onDirEntered,
                     cache,
                     ...(opts.prefixHash ? { prefixHash: true } : {}),

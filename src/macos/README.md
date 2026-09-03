@@ -67,6 +67,10 @@ Run `tools macos <subcommand> --help` for the full option list of each subcomman
 
 `reclaim` finds the install trees under a directory (`node_modules`, composer `vendor`, `Pods`, `.cxx` — the gitignored ones by default), including the git worktrees of a repo that live beside it, and matches duplicates ACROSS those trees. `plan` changes nothing; `apply` clonefiles each duplicate onto one keep copy after a typed confirmation and writes an audit you can roll back. A preset (`--save <id>`, `presets run <id>`) stores the selector, never file paths, so it stays correct after a branch switch.
 
+On macOS the walk runs in the `tools du` native core (`clonesize --bigfiles`): one parallel `getattrlistbulk` pass over every root that returns only the files at or above the size floor, about 14x faster than the in-process walk on node_modules trees (a 233-root fleet of 13.7M files lists in under 40 s instead of 8 minutes). It is used automatically when the floor is at least 1 MB; `nativeWalk: false` in the library, or a machine without clang, falls back to the in-process walk.
+
+`tools macos clones daemon enable` registers two daily `tools daemon` tasks: the dry-run scan at 03:00 and, at 04:00, a cache reconciliation that drops file-meta rows older than 30 days across the whole table plus rows whose paths are gone (one probe per gone subtree), then VACUUMs when at least a tenth of the rows went. Run it by hand with `bun run src/macos/lib/clones/cache-prune-daemon.ts`.
+
 Every phase is timed under the `clones` profiler scope: `PROFILE=clones tools macos clones reclaim plan --dir ~/Projects` writes phase timings to `~/.genesis-tools/logs/<date>-profiling.log`; `profiling.detail=all` also times each spawned `find` / `git check-ignore`. Each run also leaves `~/.genesis-tools/macos-clones/reclaim/<runId>.jsonl` with what it discovered, skipped and scanned. Benchmarks: `scripts/benchmarks/clones/run-reclaim.sh <label> <dir> [flags]` (cold + warm plan, phase timings, one JSONL row), beside the older `run.sh` (duplicates) and `run-measure.sh`. The result rows name the scanned paths, so they stay out of git; only the scripts are tracked.
 
 ---

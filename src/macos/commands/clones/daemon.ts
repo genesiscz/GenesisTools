@@ -8,18 +8,29 @@ import { Command } from "commander";
 
 const log = logger.child({ component: "clones:daemon-cmd" });
 const TASK_NAME = "macos-clones-scan";
+const PRUNE_TASK_NAME = "macos-clones-cache-prune";
+
+function resolveScriptCommand(relative: string): string {
+    const absBun = Bun.which("bun") ?? process.execPath;
+    const absScript = fileURLToPath(new URL(relative, import.meta.url));
+    // The registered command is run via shell by `tools daemon`. Quote BOTH
+    // paths so spaces / quotes / shell metachars in absBun or absScript
+    // can't inject. macOS dev paths often contain spaces (e.g. ~/Library/...).
+    return `${escapeShellArg(absBun)} run ${escapeShellArg(absScript)}`;
+}
 
 function resolveScanCommand(): string {
-    const absBun = Bun.which("bun") ?? process.execPath;
-    const absScanScript = fileURLToPath(new URL("../../lib/clones/scan-daemon.ts", import.meta.url));
-    // The registered command is run via shell by `tools daemon`. Quote BOTH
-    // paths so spaces / quotes / shell metachars in absBun or absScanScript
-    // can't inject. macOS dev paths often contain spaces (e.g. ~/Library/...).
-    return `${escapeShellArg(absBun)} run ${escapeShellArg(absScanScript)}`;
+    return resolveScriptCommand("../../lib/clones/scan-daemon.ts");
+}
+
+function resolvePruneCommand(): string {
+    return resolveScriptCommand("../../lib/clones/cache-prune-daemon.ts");
 }
 
 export function createDaemonCommand(): Command {
-    const daemon = new Command("daemon").description("Once/24h clone-aware dry-run scan + notify (report-only)");
+    const daemon = new Command("daemon").description(
+        "Daily clone-aware dry-run scan + notify, and the daily cache reconciliation"
+    );
 
     daemon
         .command("enable")
@@ -38,6 +49,20 @@ export function createDaemonCommand(): Command {
                 description: "Clone-aware dry-run scan of watched dirs; notify reclaimable",
             });
             await printLn(created ? `registered ${TASK_NAME}` : `${TASK_NAME} already registered (use --overwrite)`);
+            const prune = await registerTask({
+                name: PRUNE_TASK_NAME,
+                command: resolvePruneCommand(),
+                every: "every day at 04:00",
+                overwrite: opts.overwrite !== false,
+                notify: false,
+                timeoutMs: 30 * 60_000,
+                retries: 1,
+                retention: { maxAgeDays: 14, minRuns: 14 },
+                description: "Drop file-meta cache rows that are stale or whose paths are gone; VACUUM when it pays",
+            });
+            await printLn(
+                prune ? `registered ${PRUNE_TASK_NAME}` : `${PRUNE_TASK_NAME} already registered (use --overwrite)`
+            );
         });
 
     daemon
@@ -46,6 +71,8 @@ export function createDaemonCommand(): Command {
         .action(async () => {
             const removed = await unregisterTask(TASK_NAME);
             await printLn(removed ? `unregistered ${TASK_NAME}` : `${TASK_NAME} was not registered`);
+            const prune = await unregisterTask(PRUNE_TASK_NAME);
+            await printLn(prune ? `unregistered ${PRUNE_TASK_NAME}` : `${PRUNE_TASK_NAME} was not registered`);
         });
 
     daemon
@@ -55,7 +82,13 @@ export function createDaemonCommand(): Command {
             const result = await new Executor().exec(["tools", "daemon", "status"]);
             const filtered = result.stdout
                 .split("\n")
-                .filter((line) => line.includes(TASK_NAME) || line.startsWith("name") || line.trim() === "")
+                .filter(
+                    (line) =>
+                        line.includes(TASK_NAME) ||
+                        line.includes(PRUNE_TASK_NAME) ||
+                        line.startsWith("name") ||
+                        line.trim() === ""
+                )
                 .join("\n");
             await printLn(filtered || `${TASK_NAME}: no status (is the daemon running? \`tools daemon start\`)`);
             if (result.exitCode !== 0) {

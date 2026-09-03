@@ -67,6 +67,31 @@ describe("planReclaim", () => {
         }
     });
 
+    it("hands the discovered roots to onDiscovered before the collapse", async () => {
+        const outer = twoTrees();
+        let runId = "";
+        try {
+            const order: string[] = [];
+            let handed: string[] = [];
+            const plan = await planReclaim(
+                { ...defaultSelector([outer]), minReal: 1024 },
+                {
+                    onPhase: (phase) => order.push(phase),
+                    onDiscovered: async (roots) => {
+                        handed = [...roots];
+                        order.push("onDiscovered");
+                    },
+                }
+            );
+            runId = plan.runId;
+            expect(handed.sort()).toEqual([...plan.roots].sort());
+            expect(order).toEqual(["discover", "onDiscovered", "collapse"]);
+        } finally {
+            dropRunLog(runId);
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("reuses a snapshot when the hook returns sets, and skips the scan", async () => {
         const outer = twoTrees();
         let runId = "";

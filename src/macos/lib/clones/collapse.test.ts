@@ -268,3 +268,29 @@ describe("isUnderAny", () => {
         expect(isUnderAny("/a/b", [])).toBe(false);
     });
 });
+
+describe.skipIf(process.platform !== "darwin")("collapseDuplicates native walk", () => {
+    it("finds cross-root duplicates at the reclaim floor through the clonesize lister", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-cl-native-"));
+        try {
+            const r1 = join(outer, "r1", "node_modules");
+            const r2 = join(outer, "r2", "node_modules");
+            mkdirSync(join(r1, "skia"), { recursive: true });
+            mkdirSync(join(r2, "skia"), { recursive: true });
+            const payload = Buffer.alloc(3 * (1 << 20), 7);
+            writeFileSync(join(r1, "skia", "lib.a"), payload);
+            writeFileSync(join(r2, "skia", "lib.a"), payload);
+            writeFileSync(join(r1, "skia", "tiny.txt"), Buffer.alloc(10, 1));
+
+            const report = await collapseDuplicates({ roots: [r1, r2], minSize: 1 << 20, pruneNames: [".git"] });
+            expect(report.sets.length).toBe(1);
+            expect(report.sets[0]?.members.sort()).toEqual(
+                [join(r1, "skia", "lib.a"), join(r2, "skia", "lib.a")].sort()
+            );
+            // the native pass counts every regular file it saw, including the one below the floor
+            expect(report.stats?.walkedFiles).toBe(3);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+});

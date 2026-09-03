@@ -282,3 +282,129 @@ export function scanWithC(opts: ScanOptions): ClonesizeResult {
     end();
     return SafeJSON.parse(stdout) as ClonesizeResult;
 }
+
+export interface BigFileEntry {
+    path: string;
+    size: number;
+    alloc: number;
+    fileid: number;
+    /** APFS mtime in nanoseconds; past 2^53, so it travels as a string in the JSON. */
+    mtimeNs: bigint;
+    nlink: number;
+}
+
+export interface BigFilesResult {
+    filesListed: number;
+    dirs: number;
+    walkMs: number;
+    threads: number;
+    deniedDirs: number;
+    files: BigFileEntry[];
+}
+
+interface BigFilesJson {
+    files_listed: number;
+    dirs: number;
+    walk_ms: number;
+    threads: number;
+    denied_dirs: number;
+    files: { path: string; size: number; alloc: number; fileid: number; mtime_ns: string; nlink: number }[];
+}
+
+interface BigFilesProgress {
+    files: number;
+    dir: string;
+}
+
+export interface ListBigFilesOptions {
+    roots: string[];
+    /** Files with a logical size below this are not returned (they are still walked). */
+    minBytes: number;
+    /** Directory names never entered (`.git`). */
+    pruneNames?: string[];
+    threads?: number;
+    /** Kills the subprocess; the returned promise then rejects with `signal.reason`. */
+    signal?: AbortSignal;
+    /** One call per 200k files listed, with the directory the walker was in. */
+    onProgress?: (p: BigFilesProgress) => void;
+}
+
+/**
+ * Every regular file at or above `minBytes` under `roots`, from ONE parallel
+ * getattrlistbulk pass of the C engine (`--bigfiles`). This is the walk
+ * `findDuplicateFiles` uses on macOS: it never opens a file and never asks for
+ * PRIVATESIZE, so it lists about 370k files per second per tree, against
+ * roughly 27k for the in-process walk. Runs as a subprocess so the event loop
+ * stays free for spinners and SIGINT while the kernel does the work.
+ */
+export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesResult> {
+    const bin = ensureBinary();
+    const args = ["--bigfiles", "--min-bytes", String(Math.max(0, Math.floor(opts.minBytes)))];
+    if (opts.threads && opts.threads > 0) {
+        args.push("--threads", String(opts.threads));
+    }
+    for (const name of opts.pruneNames ?? []) {
+        args.push("--prune-name", name);
+    }
+    args.push(...opts.roots);
+
+    logger.debug({ bin, roots: opts.roots.length, minBytes: opts.minBytes }, "du: listing big files natively");
+    const end = prof.start("c-subprocess.bigfiles");
+    const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+    const onAbort = () => proc.kill();
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const stderrTail: string[] = [];
+    const drainStderr = async () => {
+        let pending = "";
+        for await (const chunk of proc.stderr) {
+            pending += Buffer.from(chunk).toString("utf8");
+            const lines = pending.split("\n");
+            pending = lines.pop() ?? "";
+            for (const line of lines) {
+                if (line.startsWith('{"progress":true')) {
+                    const p = SafeJSON.parse(line) as BigFilesProgress;
+                    opts.onProgress?.(p);
+                    continue;
+                }
+
+                if (line.length > 0) {
+                    logger.debug({ line }, "du: bigfiles stderr");
+                    stderrTail.push(line);
+                    if (stderrTail.length > 5) {
+                        stderrTail.shift();
+                    }
+                }
+            }
+        }
+    };
+
+    try {
+        const [stdout] = await Promise.all([new Response(proc.stdout).text(), drainStderr()]);
+        const code = await proc.exited;
+        opts.signal?.throwIfAborted();
+        if (code !== 0) {
+            throw new Error(`clonesize --bigfiles exited with ${code}: ${stderrTail.join(" | ")}`);
+        }
+
+        const raw = SafeJSON.parse(stdout) as BigFilesJson;
+        return {
+            filesListed: raw.files_listed,
+            dirs: raw.dirs,
+            walkMs: raw.walk_ms,
+            threads: raw.threads,
+            deniedDirs: raw.denied_dirs,
+            files: raw.files.map((f) => ({
+                path: f.path,
+                size: f.size,
+                alloc: f.alloc,
+                fileid: f.fileid,
+                mtimeNs: BigInt(f.mtime_ns),
+                nlink: f.nlink,
+            })),
+        };
+    } finally {
+        opts.signal?.removeEventListener("abort", onAbort);
+        end();
+    }
+}

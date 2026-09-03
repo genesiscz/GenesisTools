@@ -325,3 +325,65 @@ describe("FileMetaCache", () => {
         });
     });
 });
+
+describe("FileMetaCache.reconcile", () => {
+    it("drops stale rows table-wide and gone paths with one probe per gone subtree, then vacuums", async () => {
+        await withTmpDb("reconcile", async (dbPath) => {
+            const cache = FileMetaCache.resetForTests(dbPath);
+            try {
+                const now = Date.UTC(2026, 8, 2);
+                const old = now - 45 * 24 * 60 * 60 * 1000;
+                const file = (sha: string) => ({
+                    size: 10n,
+                    mtimeNs: 1n,
+                    sha256: sha,
+                    prefixHash: "",
+                    cloneId: "",
+                    lastSeenAt: 0,
+                });
+                const dir = () => ({ dirMtimeNs: 1n, ino: 1n, childNames: [], lastSeenAt: 0 });
+
+                cache.set("/t/live/old.bin", file("aa"));
+                cache.setDir("/t/oldd", dir());
+                await cache.flush(old);
+                await cache.flushDir(old);
+
+                cache.set("/t/live/a.bin", file("bb"));
+                cache.set("/t/gone/b.bin", file("cc"));
+                cache.setDir("/t/live", dir());
+                cache.setDir("/t/gone", dir());
+                cache.setDir("/t/gone/sub", dir());
+                await cache.flush(now);
+                await cache.flushDir(now);
+
+                const report = await cache.reconcile({
+                    nowMs: now,
+                    exists: (p) => !p.startsWith("/t/gone"),
+                    vacuumAtFraction: 0.5,
+                });
+
+                expect(report.rowsBefore).toBe(7);
+                expect(report.staleFiles).toBe(1);
+                expect(report.staleDirs).toBe(1);
+                expect(report.goneFiles).toBe(1);
+                expect(report.goneDirs).toBe(2);
+                // /, /t, /t/live, /t/live/a.bin, /t/gone: the gone child dir
+                // and the file under /t/gone were answered from the memo.
+                expect(report.probes).toBe(5);
+                expect(report.vacuumed).toBe(true);
+
+                const again = await cache.reconcile({ nowMs: now, exists: () => true, vacuumAtFraction: 0 });
+                expect(again.rowsBefore).toBe(2);
+                expect(again.staleFiles + again.staleDirs + again.goneFiles + again.goneDirs).toBe(0);
+                expect(again.vacuumed).toBe(false);
+
+                await cache.loadScope("/t");
+                expect(cache.get("/t/live/a.bin")?.sha256).toBe("bb");
+                expect(cache.get("/t/gone/b.bin")).toBeNull();
+                expect(cache.get("/t/live/old.bin")).toBeNull();
+            } finally {
+                cache.close();
+            }
+        });
+    });
+});

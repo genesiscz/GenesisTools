@@ -51,6 +51,12 @@ export interface PlanReclaimOpts {
     /** Called with the discovered roots. Returning sets skips the collapse
      *  (an apply that follows a fresh plan). Null means scan. */
     snapshot?: (roots: string[]) => Promise<DuplicateSet[] | null> | DuplicateSet[] | null;
+    /** Called with the discovered roots right before the collapse, and never
+     *  when a snapshot answered. The command uses it to load the file-meta
+     *  cache scope for every root; without that load every warm run re-hashes
+     *  each candidate (the reclaim cold and warm fleet runs both did 1,053
+     *  sha256 calls before this hook existed). */
+    onDiscovered?: (roots: string[]) => Promise<void> | void;
 }
 
 export function defaultSelector(dirs: string[]): ReclaimSelector {
@@ -134,6 +140,10 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
     if (snapshot !== null) {
         opts.onPhase?.("snapshot", `${snapshot.length} set(s) reused`);
         return finish(snapshot, true);
+    }
+
+    if (opts.onDiscovered !== undefined) {
+        await clonesProfile.measureAsync("cache.load", () => Promise.resolve(opts.onDiscovered?.(discovered.roots)));
     }
 
     opts.onPhase?.("collapse", `${discovered.roots.length} root(s)`);

@@ -1859,6 +1859,221 @@ void clonesize_free(char *p) { free(p); }
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Big-file listing (--bigfiles): every regular file at or above a size floor,
+// across many roots, from ONE parallel getattrlistbulk pass that never opens a
+// file and never asks for PRIVATESIZE. Dedupe wants the ~0.1% of files that
+// are large enough to matter, and PRIVATESIZE doubles the per-entry kernel
+// cost (measured: 12 s vs 6 s system time over 379k files), so this pass has
+// its own attribute list. Directories named in --prune-name are not entered.
+// Progress goes to stderr as one JSON line per BIG_PROGRESS_EVERY files, so a
+// caller reading the pipe can drive a spinner while the walk runs.
+// ---------------------------------------------------------------------------
+typedef struct { char *path; uint64_t dlen, alloc, fileid, mtime_ns; uint32_t nlink; } BigRec;
+typedef struct { BigRec *recs; size_t n, cap; uint64_t files, dirs; } BigOut;
+
+#define BIG_PROGRESS_EVERY 200000ULL
+#define MAX_PRUNE_NAMES 64
+static struct attrlist g_big_al;
+static uint64_t g_big_alopt;
+static uint64_t g_big_min;
+static const char *g_prune_names[MAX_PRUNE_NAMES];
+static int g_nprune = 0;
+static BigOut *g_big_outs = NULL;
+static uint64_t g_big_progress = 0;   // files listed so far, all workers (atomic adds)
+
+static void big_setup_attrlist(void) {
+    memset(&g_big_al, 0, sizeof g_big_al);
+    g_big_al.bitmapcount = ATTR_BIT_MAP_COUNT;
+    g_big_al.commonattr  = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE |
+                           ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
+    g_big_al.fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
+    g_big_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_NOFOLLOW;
+}
+
+static int is_pruned_name(const char *name) {
+    for (int i = 0; i < g_nprune; i++) {
+        if (strcmp(g_prune_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint64_t fileid,
+                     uint64_t mtime_ns, uint32_t nlink) {
+    if (o->n == o->cap) {
+        o->cap = o->cap ? o->cap * 2 : 256;
+        o->recs = realloc(o->recs, o->cap * sizeof(BigRec));
+        if (!o->recs) { perror("realloc bigrecs"); exit(1); }
+    }
+    BigRec *r = &o->recs[o->n++];
+    r->path = path; r->dlen = dlen; r->alloc = alloc; r->fileid = fileid; r->mtime_ns = mtime_ns; r->nlink = nlink;
+}
+
+// Entry layout without the fork attr (same order as process_dir's, minus
+// privatesize at the tail):
+//   0 u32 length | 4 returned_attrs(20) | 24 name attrref(8) | 32 objtype(4)
+//   36 modtime timespec(16) | 52 fileid u64(8) | 60 linkcount u32(4)
+//   64 alloc off_t(8) | 72 datalength off_t(8)
+static void big_process_dir(BigOut *o, const char *dirpath) {
+    int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
+    if (dfd < 0) {
+        if (errno == EACCES || errno == EPERM) note_denied(dirpath, 1);
+        return;
+    }
+    o->dirs++;
+    char buf[64 * 1024];
+    for (;;) {
+        int n = getattrlistbulk(dfd, &g_big_al, buf, sizeof buf, g_big_alopt);
+        if (n <= 0) break;
+        char *p = buf;
+        for (int e = 0; e < n; e++) {
+            char *entry = p;
+            uint32_t len; memcpy(&len, entry, 4);
+            uint32_t off = 4 + 20;
+            int32_t nameoff; memcpy(&nameoff, entry + off, 4);
+            const char *name = entry + off + nameoff;
+            off += 8;
+            uint32_t objtype; memcpy(&objtype, entry + off, 4); off += 4;
+            int64_t mtime, mnsec;
+            memcpy(&mtime, entry + off, 8);
+            memcpy(&mnsec, entry + off + 8, 8);
+            off += 16;
+            uint64_t fileid; memcpy(&fileid, entry + off, 8); off += 8;
+            uint32_t nlink;  memcpy(&nlink,  entry + off, 4); off += 4;
+            off_t alloc; memcpy(&alloc, entry + off, 8); off += 8;
+            off_t dlen;  memcpy(&dlen,  entry + off, 8); off += 8;
+            p += len;
+
+            if (objtype == VDIR) {
+                if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+                if (g_nprune && is_pruned_name(name)) continue;
+                if (is_cloud_root(dirpath, name)) continue;
+                size_t pl = strlen(dirpath), nl = strlen(name);
+                char *sub = malloc(pl + 1 + nl + 1);
+                if (!sub) { perror("malloc bigdir"); exit(1); }
+                memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
+                q_push(sub, -1, -1, 0);
+                continue;
+            }
+            if (objtype != VREG) continue;
+
+            o->files++;
+            uint64_t seen = __atomic_add_fetch(&g_big_progress, 1, __ATOMIC_RELAXED);
+            if (seen % BIG_PROGRESS_EVERY == 0) {
+                char *desc = json_escape(dirpath);
+                fprintf(stderr, "{\"progress\":true,\"files\":%llu,\"dir\":\"%s\"}\n",
+                        (unsigned long long)seen, desc);
+                free(desc);
+            }
+            if ((uint64_t)dlen < g_big_min) continue;
+
+            size_t pl = strlen(dirpath), nl = strlen(name);
+            char *full = malloc(pl + 1 + nl + 1);
+            if (!full) { perror("malloc bigpath"); exit(1); }
+            memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
+            uint64_t mtime_ns = (uint64_t)mtime * 1000000000ULL + (uint64_t)mnsec;
+            big_push(o, full, (uint64_t)dlen, (uint64_t)alloc, fileid, mtime_ns, nlink);
+        }
+    }
+    close(dfd);
+}
+
+static void *big_worker(void *arg) {
+    BigOut *o = arg;
+    for (;;) {
+        pthread_mutex_lock(&g_qmtx);
+        while (g_qn == 0 && !g_done) pthread_cond_wait(&g_qcv, &g_qmtx);
+        if (g_qn == 0 && g_done) { pthread_mutex_unlock(&g_qmtx); break; }
+        DirJob job = g_q[--g_qn];
+        pthread_mutex_unlock(&g_qmtx);
+
+        big_process_dir(o, job.path);
+        free(job.path);
+
+        pthread_mutex_lock(&g_qmtx);
+        if (--g_pending == 0) { g_done = 1; pthread_cond_broadcast(&g_qcv); }
+        pthread_mutex_unlock(&g_qmtx);
+    }
+    return NULL;
+}
+
+static int cmp_bigrec_path(const void *a, const void *b) {
+    return strcmp(((const BigRec *)a)->path, ((const BigRec *)b)->path);
+}
+
+__attribute__((visibility("default")))
+char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
+                              unsigned long long min_bytes,
+                              const char *const *prune_names, int nprune) {
+    g_nthreads = threads;
+    g_big_min = min_bytes;
+    g_nprune = 0;
+    for (int i = 0; i < nprune && i < MAX_PRUNE_NAMES; i++) g_prune_names[g_nprune++] = prune_names[i];
+    g_profile = getenv("PROFILE") ? 1 : 0;
+    int nthreads = resolve_threads();
+
+    reset_state();
+    big_setup_attrlist();
+    g_big_progress = 0;
+    double t0 = now_s();
+    g_big_outs = calloc(nthreads, sizeof(BigOut));
+    pthread_t *th = calloc(nthreads, sizeof(pthread_t));
+    if (!g_big_outs || !th) { perror("calloc bigwalk"); exit(1); }
+    for (int i = 0; i < nroots; i++) q_push(strdup(roots[i]), -1, -1, 0);
+    if (nroots == 0) g_done = 1;
+    for (int i = 0; i < nthreads; i++) pthread_create(&th[i], NULL, big_worker, &g_big_outs[i]);
+    for (int i = 0; i < nthreads; i++) pthread_join(th[i], NULL);
+    free(th);
+
+    size_t total = 0;
+    uint64_t files = 0, dirs = 0;
+    for (int i = 0; i < nthreads; i++) { total += g_big_outs[i].n; files += g_big_outs[i].files; dirs += g_big_outs[i].dirs; }
+    BigRec *all = malloc((total ? total : 1) * sizeof(BigRec));
+    if (!all) { perror("malloc bigall"); exit(1); }
+    size_t k = 0;
+    for (int i = 0; i < nthreads; i++) {
+        for (size_t j = 0; j < g_big_outs[i].n; j++) all[k++] = g_big_outs[i].recs[j];
+        free(g_big_outs[i].recs);
+    }
+    free(g_big_outs); g_big_outs = NULL;
+    // Worker interleaving is nondeterministic; a sorted list keeps the output
+    // stable for callers that diff or cache it.
+    qsort(all, total, sizeof(BigRec), cmp_bigrec_path);
+    double walk_s = now_s() - t0;
+    if (g_profile) fprintf(stderr, "[bigfiles] walk %.2fs files=%llu dirs=%llu big=%zu threads=%d\n",
+                           walk_s, (unsigned long long)files, (unsigned long long)dirs, total, nthreads);
+
+    size_t cap = 4096 + total * 256;
+    char *out = malloc(cap);
+    if (!out) { perror("malloc bigjson"); exit(1); }
+    size_t len = 0;
+    #define BEMIT(...) do { \
+        int need = snprintf(out + len, cap - len, __VA_ARGS__); \
+        if (need < 0) return out; \
+        if ((size_t)need >= cap - len) { cap = (cap + need) * 2; out = realloc(out, cap); \
+            if (!out) { perror("realloc bigjson"); exit(1); } \
+            need = snprintf(out + len, cap - len, __VA_ARGS__); } \
+        len += need; \
+    } while (0)
+    BEMIT("{\"files_listed\":%llu,\"dirs\":%llu,\"min_bytes\":%llu,\"threads\":%d,\"walk_ms\":%llu,",
+          (unsigned long long)files, (unsigned long long)dirs, (unsigned long long)min_bytes, nthreads,
+          (unsigned long long)(walk_s * 1000.0));
+    BEMIT("\"denied_dirs\":%llu,\"files\":[", (unsigned long long)g_denied_dirs);
+    for (size_t i = 0; i < total; i++) {
+        char *pesc = json_escape(all[i].path);
+        // mtime_ns is emitted as a string: it is past 2^53 and a JSON number would lose precision.
+        BEMIT("%s{\"path\":\"%s\",\"size\":%llu,\"alloc\":%llu,\"fileid\":%llu,\"mtime_ns\":\"%llu\",\"nlink\":%u}",
+              i ? "," : "", pesc, (unsigned long long)all[i].dlen, (unsigned long long)all[i].alloc,
+              (unsigned long long)all[i].fileid, (unsigned long long)all[i].mtime_ns, all[i].nlink);
+        free(pesc);
+        free(all[i].path);
+    }
+    BEMIT("]}\n");
+    #undef BEMIT
+    free(all);
+    return out;
+}
+
 static void usage(const char *me) {
     fprintf(stderr,
         "usage: %s [options] <dir>\n"
@@ -1871,6 +2086,8 @@ static void usage(const char *me) {
         "  --partners-of PATH   list files sharing blocks with PATH (dir = scan root)\n"
         "  --top N              partner rows to print (default 30)\n"
         "  --volume             print the volume's authoritative used/free bytes\n"
+        "  --bigfiles           list every regular file >= --min-bytes under ALL given dirs (JSON)\n"
+        "  --prune-name NAME    with --bigfiles: never enter a directory with this name (repeatable)\n"
         "  --cache-dir DIR      extent-cache directory (omit to disable the cache)\n"
         "  --no-cache           ignore the cache when reading (still writes it)\n"
         "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive (slow; may download)\n"
@@ -1880,7 +2097,11 @@ static void usage(const char *me) {
 
 int main(int argc, char **argv) {
     const char *target = NULL, *partners_of = NULL;
-    int json = 0, quiet = 0, volume = 0, topn = 30;
+    int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0;
+    const char *roots[4096];
+    int nroots = 0;
+    const char *prune[MAX_PRUNE_NAMES];
+    int nprune = 0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if      (!strcmp(a, "--format") && i + 1 < argc) json = !strcmp(argv[++i], "json");
@@ -1895,15 +2116,25 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--partners-of") && i + 1 < argc) partners_of = argv[++i];
         else if (!strcmp(a, "--top") && i + 1 < argc)    topn = atoi(argv[++i]);
         else if (!strcmp(a, "--volume"))                 volume = 1;
+        else if (!strcmp(a, "--bigfiles"))               bigfiles = 1;
+        else if (!strcmp(a, "--prune-name") && i + 1 < argc) { if (nprune < MAX_PRUNE_NAMES) prune[nprune++] = argv[++i]; else i++; }
         else if (!strcmp(a, "--cache-dir") && i + 1 < argc) g_cache_dir = argv[++i];
         else if (!strcmp(a, "--no-cache"))               g_cache_read = 0;
         else if (!strcmp(a, "--include-cloud"))          g_skip_cloud = 0;
         else if (!strcmp(a, "--quiet"))                  quiet = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(argv[0]); return 0; }
         else if (a[0] == '-') { fprintf(stderr, "unknown option: %s\n", a); usage(argv[0]); return 2; }
-        else target = a;
+        else { target = a; if (nroots < 4096) roots[nroots++] = a; }
     }
     if (!target) { usage(argv[0]); return 2; }
+
+    if (bigfiles) {
+        char *b = clonesize_bigfiles_json(roots, nroots, g_nthreads, (unsigned long long)g_min_blocks, prune, nprune);
+        if (!b) return 1;
+        fputs(b, stdout);
+        free(b);
+        return 0;
+    }
     g_profile = getenv("PROFILE") ? 1 : 0;
 
     if (volume) {

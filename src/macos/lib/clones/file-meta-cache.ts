@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createKyselyClient, type DatabaseClient } from "@genesiscz/utils/database/client";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -61,6 +62,29 @@ export interface DirMetaEntry {
     ino: bigint;
     childNames: DirChild[];
     lastSeenAt: number;
+}
+
+export interface ReconcileOptions {
+    nowMs?: number;
+    /** Existence probe, injectable for tests. Default `existsSync`. */
+    exists?: (path: string) => boolean;
+    /** Rows fetched per page while sweeping for gone paths. */
+    pageSize?: number;
+    /** VACUUM when at least this fraction of rows was deleted (0 = never). */
+    vacuumAtFraction?: number;
+}
+
+export interface ReconcileReport {
+    rowsBefore: number;
+    staleFiles: number;
+    staleDirs: number;
+    goneFiles: number;
+    goneDirs: number;
+    /** Existence probes actually issued (memoised ancestors make this far
+     *  smaller than the row count when whole trees are gone). */
+    probes: number;
+    vacuumed: boolean;
+    elapsedMs: number;
 }
 
 /** Writable cache database for per-file (size, mtime_ns, sha256, clone_id)
@@ -307,6 +331,168 @@ export class FileMetaCache {
             "FileMetaCache flush complete"
         );
         this.dirty.clear();
+    }
+
+    /** The daily reconciliation, for the daemon. Two passes over BOTH tables,
+     *  then an optional VACUUM:
+     *
+     *  1. TTL over the whole table. `pruneScope` / `pruneDirScope` only see the
+     *     roots of the scan that ran, so a tree that is never scanned again
+     *     keeps its rows forever (1.47M dir_meta rows / 1.37 GB on the first
+     *     machine this ran on, all from one day of fleet walks).
+     *  2. Gone paths. Rows are swept in path order and each path is probed
+     *     from its shallowest unknown ancestor down, with the answers
+     *     memoised, so a deleted worktree costs one probe for its whole
+     *     subtree instead of one per row.
+     *
+     *  Stale-but-present rows are harmless for correctness (the size/mtime and
+     *  dir mtime/ino checks catch divergence), so this exists only to keep the
+     *  file bounded. Never called from a scan. */
+    async reconcile(opts: ReconcileOptions = {}): Promise<ReconcileReport> {
+        const { kysely } = this.getClient();
+        const sw = new Stopwatch();
+        const nowMs = opts.nowMs ?? Date.now();
+        const exists = opts.exists ?? existsSync;
+        const pageSize = opts.pageSize ?? 5000;
+        const vacuumAtFraction = opts.vacuumAtFraction ?? 0.1;
+        const cutoff = BigInt(nowMs - PRUNE_TTL_MS);
+
+        const countRows = async (table: "file_meta" | "dir_meta"): Promise<number> => {
+            const r = await kysely
+                .selectFrom(table)
+                .select((eb) => eb.fn.countAll<number>().as("n"))
+                .executeTakeFirst();
+            return Number(r?.n ?? 0);
+        };
+        const rowsBefore = (await countRows("file_meta")) + (await countRows("dir_meta"));
+        log.info(
+            { event: "cache.reconcile.start", rowsBefore, cutoff: Number(cutoff) },
+            "FileMetaCache reconcile start"
+        );
+
+        const staleFilesRes = await kysely
+            .deleteFrom("file_meta")
+            .where("last_seen_at", "<", cutoff)
+            .executeTakeFirst();
+        const staleDirsRes = await kysely.deleteFrom("dir_meta").where("last_seen_at", "<", cutoff).executeTakeFirst();
+        const staleFiles = Number(staleFilesRes.numDeletedRows ?? 0n);
+        const staleDirs = Number(staleDirsRes.numDeletedRows ?? 0n);
+        for (const [path, entry] of this.mem) {
+            if (BigInt(entry.lastSeenAt) < cutoff) {
+                this.mem.delete(path);
+            }
+        }
+
+        for (const [path, entry] of this.dirMem) {
+            if (BigInt(entry.lastSeenAt) < cutoff) {
+                this.dirMem.delete(path);
+            }
+        }
+
+        // Memoised directory existence. Rows arrive in path order, so the memo
+        // hits on almost every row; it is cleared when it grows past a bound
+        // rather than allowed to mirror the whole table.
+        const dirKnown = new Map<string, boolean>();
+        let probes = 0;
+        const dirExists = (dir: string): boolean => {
+            const known = dirKnown.get(dir);
+            if (known !== undefined) {
+                return known;
+            }
+
+            const parent = dirname(dir);
+            let present = true;
+            if (parent !== dir && !dirExists(parent)) {
+                present = false;
+            } else {
+                probes += 1;
+                present = exists(dir);
+            }
+
+            if (dirKnown.size >= 200_000) {
+                dirKnown.clear();
+            }
+
+            dirKnown.set(dir, present);
+            return present;
+        };
+
+        const sweep = async (table: "file_meta" | "dir_meta", isDirRow: boolean): Promise<number> => {
+            let gone = 0;
+            let after = "";
+            for (;;) {
+                const page = await kysely
+                    .selectFrom(table)
+                    .select("path")
+                    .where("path", ">", after)
+                    .orderBy("path")
+                    .limit(pageSize)
+                    .execute();
+                if (page.length === 0) {
+                    break;
+                }
+
+                const dead: string[] = [];
+                for (const row of page) {
+                    let present: boolean;
+                    if (isDirRow) {
+                        present = dirExists(row.path);
+                    } else {
+                        present = dirExists(dirname(row.path));
+                        if (present) {
+                            probes += 1;
+                            present = exists(row.path);
+                        }
+                    }
+
+                    if (!present) {
+                        dead.push(row.path);
+                    }
+                }
+
+                for (let i = 0; i < dead.length; i += 500) {
+                    const chunk = dead.slice(i, i + 500);
+                    await kysely.deleteFrom(table).where("path", "in", chunk).execute();
+                    for (const path of chunk) {
+                        if (isDirRow) {
+                            this.dirMem.delete(path);
+                        } else {
+                            this.mem.delete(path);
+                        }
+                    }
+                }
+
+                gone += dead.length;
+                after = page[page.length - 1]?.path ?? after;
+                if (page.length < pageSize) {
+                    break;
+                }
+            }
+
+            return gone;
+        };
+        const goneFiles = await sweep("file_meta", false);
+        const goneDirs = await sweep("dir_meta", true);
+
+        const deleted = staleFiles + staleDirs + goneFiles + goneDirs;
+        let vacuumed = false;
+        if (vacuumAtFraction > 0 && rowsBefore > 0 && deleted / rowsBefore >= vacuumAtFraction) {
+            this.getClient().raw.exec("VACUUM");
+            vacuumed = true;
+        }
+
+        const report: ReconcileReport = {
+            rowsBefore,
+            staleFiles,
+            staleDirs,
+            goneFiles,
+            goneDirs,
+            probes,
+            vacuumed,
+            elapsedMs: Math.round(sw.elapsedMs),
+        };
+        log.info({ event: "cache.reconcile.complete", ...report }, "FileMetaCache reconcile complete");
+        return report;
     }
 
     /** Garbage-collect cached rows older than PRUNE_TTL_MS within `root`.

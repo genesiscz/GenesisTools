@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
 import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { emptyFindDuplicatesStats, type FileMetaCacheLike, findDuplicateFiles } from "@genesiscz/utils/fs/disk-usage";
+import { listBigFiles } from "@app/du/lib/engine";
+import {
+    type CandidateLister,
+    emptyFindDuplicatesStats,
+    type FileMetaCacheLike,
+    findDuplicateFiles,
+} from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
 import { getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { passesGlobs } from "./filters";
+import { clonesProfile } from "./profile";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
 
 const log = logger.child({ component: "clones:collapse" });
@@ -24,6 +31,11 @@ export interface CollapseArgs {
      *  entire `node_modules` / `.git` subtrees before any syscall is spent
      *  on them — far cheaper than post-filtering globs. */
     shouldEnter?: (dir: string) => boolean;
+    /** Directory names never entered. Prefer this over `shouldEnter`: a name
+     *  list keeps the native walk available. */
+    pruneNames?: string[];
+    /** `false` forces the in-process walk (tests, or a machine without clang). */
+    nativeWalk?: boolean;
     /** Forwarded to `walkFiles` — called per directory entered (high rate;
      *  cheap callback only). CLI uses this to drive a live spinner. */
     onDirEntered?: (dir: string) => void;
@@ -204,6 +216,34 @@ function pickKeep(members: string[], keepOnlyRoots: readonly string[]): string {
     return best;
 }
 
+/** Below this floor the native lister would return most of the tree as
+ *  candidates and the JSON hand-off costs more than the in-process walk saves. */
+export const NATIVE_WALK_MIN_SIZE = 1 << 20;
+
+const nativeCandidateLister: CandidateLister = async ({ roots, minSize, pruneNames, signal, onDirEntered }) => {
+    const endWalk = clonesProfile.start("walk.native");
+    try {
+        const r = await listBigFiles({
+            roots,
+            minBytes: minSize,
+            pruneNames,
+            signal,
+            onProgress: (p) => onDirEntered?.(p.dir),
+        });
+        logger.debug(
+            { roots: roots.length, files: r.filesListed, dirs: r.dirs, big: r.files.length, walkMs: r.walkMs },
+            "collapse: native walk complete"
+        );
+        return {
+            files: r.files.map((f) => ({ path: f.path, size: f.size, mtimeNs: f.mtimeNs })),
+            walkedFiles: r.filesListed,
+            walkedDirs: r.dirs,
+        };
+    } finally {
+        endWalk();
+    }
+};
+
 export async function collapseDuplicates({
     roots,
     minSize,
@@ -211,6 +251,8 @@ export async function collapseDuplicates({
     exclude,
     signal,
     shouldEnter,
+    pruneNames,
+    nativeWalk,
     onDirEntered,
     cache,
     prefixHash,
@@ -236,6 +278,12 @@ export async function collapseDuplicates({
     }
     if (shouldEnter !== undefined) {
         findOpts.shouldEnter = shouldEnter;
+    }
+    if (pruneNames !== undefined) {
+        findOpts.pruneNames = pruneNames;
+    }
+    if (nativeWalk !== false && process.platform === "darwin" && (minSize ?? 0) >= NATIVE_WALK_MIN_SIZE) {
+        findOpts.candidateLister = nativeCandidateLister;
     }
     if (onDirEntered !== undefined) {
         findOpts.onDirEntered = onDirEntered;

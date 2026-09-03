@@ -311,7 +311,11 @@ async function runPlan(
     try {
         const plan = await planReclaim(selector, {
             signal: controller.signal,
-            cache,
+            // File rows only. The native walk never consults the dir cache, and
+            // loading it is what a 1.4M-row dir_meta table costs: 67 s of a 120 s
+            // fleet plan before this view existed. Leaving getDir/setDir off the
+            // view also keeps the in-process fallback from writing new dir rows.
+            cache: { get: (path) => cache.get(path), set: (path, entry) => cache.set(path, entry) },
             onDirEntered: (dir) => {
                 dirsSeen += 1;
                 lastDir = dir;
@@ -324,13 +328,16 @@ async function runPlan(
                 }
             },
             ...(reuseSnapshot ? { snapshot: snapshotHook(selector) } : {}),
+            onDiscovered: async (roots) => {
+                for (const root of roots) {
+                    await cache.loadScope(root);
+                }
+            },
         });
 
         await cache.flush(scanStartedAt);
-        await cache.flushDir(scanStartedAt);
         for (const root of plan.roots) {
             await cache.pruneScope(root, scanStartedAt);
-            await cache.pruneDirScope(root, scanStartedAt);
         }
 
         spinner?.stop(

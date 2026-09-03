@@ -876,3 +876,45 @@ resolve. No regression, and no claim of an improvement either.
 - **The correctness cross-check prints the real totals**, not `head -c 600` of the
   JSON — a fixed byte prefix is arbitrary once `groups[]` grows, so a "correctness
   diff" could silently compare nothing.
+
+## 2026-09-02 19:01 — `--bigfiles`: a listing-only pass for the clones dedupe walk
+
+`tools macos clones reclaim` needs one thing from a 13.7M-file worktree fleet: the
+few thousand regular files at or above its 10 MB floor, with size and mtime. The
+in-process `walkFiles` generator did that at ~27k files/s (505 s of a 563 s cold
+plan), so the walk moved into the native core as a separate mode. Nothing in the
+`du` scan path changed: `--bigfiles` has its own attribute list, worker function
+and output; `g_al`, `process_dir` and `run_scan` are untouched, and a `du` parity
+run on this worktree's `node_modules` (old binary from the main checkout vs the
+new one) reported identical `files_listed` / `files_scanned` / `naive_bytes` /
+`unique_bytes`.
+
+What the mode does differently from the scan, and why:
+
+- **No `ATTR_CMNEXT_PRIVATESIZE`.** Measured on one 378,708-file `node_modules`
+  with a probe that only varies the attribute set (16 threads, 3 interleaved
+  runs each): name+type+datalength **~6 s system CPU**, the same plus
+  privatesize **~12 s**. The dedupe pipeline resolves clone families for the
+  candidates on the JS side (a few thousand `getattrlist` calls), so the walk
+  does not pay for it on every entry.
+- **No opens.** Nothing is extent-scanned; the pass is `open(dir)` +
+  `getattrlistbulk` only.
+- **Many roots in one queue.** The 233 fleet roots go into the same work queue,
+  so small trees do not serialise behind big ones.
+- **`--prune-name`.** Name-based pruning (`.git`) lives in the walker, which is
+  what lets `duplicates` and the scan daemon use the native pass too.
+- Output is sorted by path, so it is stable across worker interleavings.
+
+Numbers (load average 13–22 throughout, other sessions active):
+
+| target | files | dirs | wall | system CPU | big (≥10 MB) |
+|---|---|---|---|---|---|
+| one worktree `node_modules` | 378,708 | 36,054 | 0.89 s | 6.4 s | 76 |
+| a 41-worktree fleet, 233 roots | 13,688,184 | 1,439,649 | 37.5 s | 303 s | 2,680 |
+
+The fleet number is kernel-bound: 16 and 32 threads both land at ~38–40 s with
+~310–365 s of system time, i.e. about 22 µs per entry with ~8 cores' worth of
+parallelism before APFS stops scaling. `find -type f` over the same single tree
+costs ~6 µs per entry (no per-inode lookup), which is the floor a walk that needs
+sizes cannot reach. `searchfs(2)` over the whole Data volume (29M inodes,
+datalength ≥ 10 MB) was also tried and did not return within 2 minutes.
