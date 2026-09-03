@@ -91,10 +91,13 @@ export function SayVoicePicker({
 }) {
     const voices = useSayVoices(enabled);
     const providers = voices.data ?? [];
-    const known = providers.some((group) => group.voices.some((entry) => entry.id === voice));
-    const inferredProvider =
-        provider || providers.find((group) => group.voices.some((entry) => entry.id === voice))?.id || "";
-    const value = voice ? (known ? `${inferredProvider}::${voice}` : `${CUSTOM_PREFIX}${voice}`) : "";
+    // The group that actually lists the voice wins over a stale stored provider,
+    // otherwise the trigger shows the placeholder for a perfectly valid voice.
+    const owner =
+        providers.find((group) => group.id === provider && group.voices.some((entry) => entry.id === voice)) ??
+        providers.find((group) => group.voices.some((entry) => entry.id === voice));
+    const value = voice ? (owner ? `${owner.id}::${voice}` : `${CUSTOM_PREFIX}${voice}`) : "";
+    const known = owner !== undefined;
 
     return (
         <div className="space-y-1.5 sm:col-span-2">

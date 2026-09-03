@@ -3,6 +3,54 @@ import type { CheckResult, ParsedFeedItem, Watcher } from "../types";
 import { describeFetchError, timedFetch } from "./http";
 
 const MAX_ITEMS = 50;
+const MAX_FEED_BYTES = 5 * 1024 * 1024;
+const MAX_CODE_POINT = 0x10_ff_ff;
+
+/** Out-of-range numeric entities stay as written; `String.fromCodePoint` would throw on them. */
+function fromCodePoint(code: number, original: string): string {
+    return Number.isFinite(code) && code >= 0 && code <= MAX_CODE_POINT ? String.fromCodePoint(code) : original;
+}
+
+/** Reads at most `MAX_FEED_BYTES`; a bigger body is cut there instead of buffered whole. */
+async function readBounded(response: Response): Promise<{ text: string; truncated: boolean }> {
+    const declared = Number(response.headers.get("content-length") ?? "");
+
+    if (Number.isFinite(declared) && declared > MAX_FEED_BYTES) {
+        await response.body?.cancel();
+
+        return { text: "", truncated: true };
+    }
+
+    if (!response.body) {
+        return { text: await response.text(), truncated: false };
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let truncated = false;
+
+    while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+            break;
+        }
+
+        total += value.byteLength;
+
+        if (total > MAX_FEED_BYTES) {
+            chunks.push(value.subarray(0, value.byteLength - (total - MAX_FEED_BYTES)));
+            truncated = true;
+            await reader.cancel();
+            break;
+        }
+
+        chunks.push(value);
+    }
+
+    return { text: new TextDecoder().decode(Buffer.concat(chunks)), truncated };
+}
 
 function decodeEntities(value: string): string {
     return value
@@ -12,8 +60,8 @@ function decodeEntities(value: string): string {
         .replace(/&quot;/g, '"')
         .replace(/&#39;|&apos;/g, "'")
         .replace(/&nbsp;/g, " ")
-        .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-        .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
+        .replace(/&#(\d+);/g, (match, code: string) => fromCodePoint(Number(code), match))
+        .replace(/&#x([0-9a-f]+);/gi, (match, code: string) => fromCodePoint(Number.parseInt(code, 16), match))
         .replace(/&amp;/g, "&");
 }
 
@@ -146,7 +194,17 @@ export async function checkRss(watcher: Pick<Watcher, "target" | "config" | "tim
         };
     }
 
-    const xml = await response.text();
+    const { text: xml, truncated } = await readBounded(response);
+
+    if (truncated) {
+        return {
+            status: "down",
+            latencyMs,
+            httpStatus: response.status,
+            detail: `feed is larger than ${Math.round(MAX_FEED_BYTES / 1024 / 1024)} MB, not parsed`,
+        };
+    }
+
     const feed = parseFeed(xml);
 
     if (feed.items.length === 0 && !/<(rss|feed|channel)[\s>]/i.test(xml)) {

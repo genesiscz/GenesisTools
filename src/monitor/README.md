@@ -14,8 +14,9 @@ tools monitor add --preset xai-status status.x.ai             # Grok apps + API 
 tools monitor add --preset xai-incidents https://status.x.ai/feed.xml   # rss: every incident delivered
 tools monitor add acc_claude-main --name "Claude account"     # ai-provider: plugin health probe
 tools monitor list
-tools monitor check              # run every enabled watcher now (exit 2 if any is down)
+tools monitor check              # probe every enabled watcher and report (exit 2 if any is down); records nothing
 tools monitor check --url https://example.com                 # ad-hoc, nothing saved
+tools monitor run                # run every enabled watcher and RECORD it: status, incidents, notifications
 tools monitor edit 3 --targets 1,2 --interval 120
 tools monitor items 8            # rss: items a feed watcher has seen
 tools monitor incidents --open

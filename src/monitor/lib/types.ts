@@ -1,3 +1,6 @@
+/** One version for the CLI `--version` and the server `/healthz`. */
+export const MONITOR_VERSION = "1.1.0";
+
 export const WATCHER_KINDS = ["website", "statuspage", "ai-provider", "rss"] as const;
 export type WatcherKind = (typeof WATCHER_KINDS)[number];
 
@@ -105,6 +108,92 @@ export type NotifyTargetPatch = Partial<NotifyTargetInput>;
 
 export function isNotifyChannel(value: unknown): value is NotifyChannel {
     return typeof value === "string" && (NOTIFY_CHANNELS as readonly string[]).includes(value);
+}
+
+/**
+ * Channel config fields that must never leave this process. The one list both
+ * the notify-settings view and the `/api/v1/targets` responses mask against.
+ */
+export const SECRET_KEYS = new Set(["botToken", "url"]);
+
+const SECRET_MARKER_SUFFIX = "Set";
+/** Non-secret hint a masked view adds next to `urlSet` so the UI can still name the webhook. */
+const URL_HOST_MARKER = "urlHost";
+
+/** True for the `botTokenSet` / `urlSet` / `urlHost` view keys a masked config carries in place of the secret. */
+export function isSecretMarker(key: string): boolean {
+    if (key === URL_HOST_MARKER) {
+        return true;
+    }
+
+    return key.endsWith(SECRET_MARKER_SUFFIX) && SECRET_KEYS.has(key.slice(0, -SECRET_MARKER_SUFFIX.length));
+}
+
+/** Hostname of a webhook URL, or null when it is not a URL. Safe to show and log. */
+export function webhookHost(url: unknown): string | null {
+    if (typeof url !== "string") {
+        return null;
+    }
+
+    try {
+        return new URL(url).host;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Replaces every secret field with a `<key>Set` boolean saying whether one is
+ * stored. A webhook URL carries its token in the path (Slack, Discord), so the
+ * whole URL is secret; only its host survives, as `urlHost`.
+ */
+export function maskSecrets(config: Record<string, unknown>): Record<string, unknown> {
+    const view: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(config)) {
+        if (SECRET_KEYS.has(key)) {
+            view[`${key}${SECRET_MARKER_SUFFIX}`] = typeof value === "string" && value.length > 0;
+
+            if (key === "url") {
+                view[URL_HOST_MARKER] = webhookHost(value);
+            }
+
+            continue;
+        }
+
+        view[key] = value;
+    }
+
+    return view;
+}
+
+/** A target as it leaves the HTTP API: the same shape, minus the stored secrets. */
+export function maskTarget(target: NotifyTarget): NotifyTarget {
+    return { ...target, config: maskSecrets(target.config) as Record<string, string | boolean> };
+}
+
+export const MASKED_HEADER_VALUE = "***";
+
+/**
+ * A watcher as it leaves this process in an event: `config.headers` can carry
+ * an `Authorization: Bearer …` for an authenticated website watcher, and the
+ * event stream reaches every WebSocket listener. The names stay (they are what
+ * makes a watcher recognisable in the dashboard), the values do not.
+ */
+export function maskWatcher(watcher: Watcher): Watcher {
+    const headers = watcher.config.headers;
+
+    if (!headers) {
+        return watcher;
+    }
+
+    const masked: Record<string, string> = {};
+
+    for (const key of Object.keys(headers)) {
+        masked[key] = MASKED_HEADER_VALUE;
+    }
+
+    return { ...watcher, config: { ...watcher.config, headers: masked } };
 }
 
 export type WatcherPatch = Partial<WatcherInput>;

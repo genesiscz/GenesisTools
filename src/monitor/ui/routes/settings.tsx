@@ -15,6 +15,7 @@ import { EmptyState } from "@app/monitor/ui/components/empty-state";
 import { ErrorPanel, Loading } from "@app/monitor/ui/components/loading";
 import { PageHeader } from "@app/monitor/ui/components/page-header";
 import { TargetDialog } from "@app/monitor/ui/components/target-dialog";
+import { buildChannelOverride } from "@app/monitor/ui/lib/channel-override";
 import { Badge } from "@genesiscz/utils/ui/components/badge";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
@@ -50,7 +51,7 @@ function describeTargetConfig(target: NotifyTarget): string {
         case "telegram":
             return `chat ${config.chatId ?? "?"}`;
         case "webhook":
-            return typeof config.url === "string" ? config.url : "no url";
+            return typeof config.urlHost === "string" ? config.urlHost : config.urlSet ? "url set" : "no url";
     }
 }
 
@@ -133,7 +134,10 @@ function DefaultChannelCard({ view }: { view: ChannelView }) {
     const update = useUpdateNotifySettings();
     const test = useTestNotification();
     const [draft, setDraft] = useState<ChannelDraft>(() => draftFor(view));
-    const [dirty, setDirty] = useState(false);
+    // Which keys the user actually edited. The draft is seeded from the merged
+    // global + override view, so it is not evidence of intent on its own.
+    const [touched, setTouched] = useState<string[]>([]);
+    const dirty = touched.length > 0;
     const enabled = draft.enabled === true;
     const testing = test.isPending && test.variables === view.name;
 
@@ -145,37 +149,44 @@ function DefaultChannelCard({ view }: { view: ChannelView }) {
 
     function set(key: string, value: string | boolean) {
         setDraft((current) => ({ ...current, [key]: value }));
-        setDirty(true);
+        setTouched((current) => (current.includes(key) ? current : [...current, key]));
     }
 
     async function toggle(next: boolean) {
         set("enabled", next);
-        await update.mutateAsync({ channels: { [view.name]: { enabled: next } } });
-        setDirty(false);
+
+        try {
+            // Unsaved field edits ride along, so flipping the switch never silently drops them.
+            await update.mutateAsync({
+                channels: { [view.name]: buildChannelOverride({ ...draft, enabled: next }, [...touched, "enabled"]) },
+            });
+        } catch {
+            return;
+        }
+
+        setTouched([]);
         toast.success(`${spec.title} ${next ? "enabled" : "disabled"} for monitor`);
     }
 
     async function save() {
-        const override: Record<string, string | boolean> = { enabled };
-
-        for (const [key, value] of Object.entries(draft)) {
-            if (key === "enabled" || key.endsWith("Set")) {
-                continue;
-            }
-
-            if (typeof value === "boolean" || (typeof value === "string" && value !== "")) {
-                override[key] = value;
-            }
+        try {
+            await update.mutateAsync({ channels: { [view.name]: buildChannelOverride(draft, touched) } });
+        } catch {
+            return;
         }
 
-        await update.mutateAsync({ channels: { [view.name]: override } });
-        setDirty(false);
+        setTouched([]);
         toast.success(`${spec.title} saved`);
     }
 
     async function reset() {
-        await update.mutateAsync({ channels: { [view.name]: null } });
-        setDirty(false);
+        try {
+            await update.mutateAsync({ channels: { [view.name]: null } });
+        } catch {
+            return;
+        }
+
+        setTouched([]);
         toast.success(`${spec.title} follows the global notify config again`);
     }
 
@@ -212,7 +223,7 @@ function DefaultChannelCard({ view }: { view: ChannelView }) {
                     channel={view.name}
                     draft={draft}
                     onChange={set}
-                    secretsSet={{ botToken: view.resolved.botTokenSet === true }}
+                    secretsSet={{ botToken: view.resolved.botTokenSet === true, url: view.resolved.urlSet === true }}
                 />
                 <div className="flex flex-wrap justify-end gap-2">
                     <Button variant="outline" size="sm" disabled={testing} onClick={() => test.mutate(view.name)}>

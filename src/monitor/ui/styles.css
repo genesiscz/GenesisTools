@@ -19,7 +19,7 @@ body {
     background:
         radial-gradient(circle at top left, rgba(16, 185, 129, 0.12), transparent 30rem),
         radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.12), transparent 28rem),
-        hsl(var(--background));
+        var(--background);
 }
 
 button,

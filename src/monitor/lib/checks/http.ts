@@ -45,44 +45,70 @@ export async function checkWebsite(watcher: Pick<Watcher, "target" | "config" | 
     }
 
     const { response, latencyMs } = fetched;
+    // The scheduler polls forever. An unread body keeps its socket checked out
+    // of the fetch pool until GC, one per watcher per interval, so every path
+    // that does not read the body cancels it.
+    let bodyConsumed = false;
     const statusLine = `${response.status} ${response.statusText}`.trim();
     const expected = watcher.config.expectStatus;
     const statusOk = expected !== undefined ? response.status === expected : response.status < 400;
 
-    if (!statusOk) {
-        const want = expected !== undefined ? `expected ${expected}` : "expected < 400";
+    try {
+        if (!statusOk) {
+            const want = expected !== undefined ? `expected ${expected}` : "expected < 400";
 
-        return {
-            status: "down",
-            latencyMs,
-            httpStatus: response.status,
-            detail: `${statusLine} (${want}) · ${latencyMs} ms`,
-        };
-    }
-
-    if (watcher.config.expectBody && method !== "HEAD") {
-        const body = await response.text();
-
-        if (!body.includes(watcher.config.expectBody)) {
             return {
                 status: "down",
                 latencyMs,
                 httpStatus: response.status,
-                detail: `${statusLine} but body lacks "${watcher.config.expectBody}" · ${latencyMs} ms`,
+                detail: `${statusLine} (${want}) · ${latencyMs} ms`,
             };
         }
+
+        if (watcher.config.expectBody && method !== "HEAD") {
+            bodyConsumed = true;
+            let body: string;
+
+            try {
+                body = await response.text();
+            } catch (readError) {
+                logger.debug({ readError, target: watcher.target }, "monitor: response body read failed");
+
+                return {
+                    status: "down",
+                    latencyMs,
+                    httpStatus: response.status,
+                    detail: `${statusLine} but the body could not be read: ${describeFetchError(readError, watcher.timeoutMs)}`,
+                };
+            }
+
+            if (!body.includes(watcher.config.expectBody)) {
+                return {
+                    status: "down",
+                    latencyMs,
+                    httpStatus: response.status,
+                    detail: `${statusLine} but body lacks "${watcher.config.expectBody}" · ${latencyMs} ms`,
+                };
+            }
+        }
+
+        const threshold = watcher.config.degradedAboveMs;
+
+        if (threshold !== undefined && latencyMs > threshold) {
+            return {
+                status: "degraded",
+                latencyMs,
+                httpStatus: response.status,
+                detail: `${statusLine} · ${latencyMs} ms (slower than ${threshold} ms)`,
+            };
+        }
+
+        return { status: "up", latencyMs, httpStatus: response.status, detail: `${statusLine} · ${latencyMs} ms` };
+    } finally {
+        if (!bodyConsumed) {
+            await response.body?.cancel().catch((cancelError) => {
+                logger.debug({ cancelError, target: watcher.target }, "monitor: response body cancel failed");
+            });
+        }
     }
-
-    const threshold = watcher.config.degradedAboveMs;
-
-    if (threshold !== undefined && latencyMs > threshold) {
-        return {
-            status: "degraded",
-            latencyMs,
-            httpStatus: response.status,
-            detail: `${statusLine} · ${latencyMs} ms (slower than ${threshold} ms)`,
-        };
-    }
-
-    return { status: "up", latencyMs, httpStatus: response.status, detail: `${statusLine} · ${latencyMs} ms` };
 }

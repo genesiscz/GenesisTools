@@ -1,4 +1,10 @@
-import { NOTIFY_CHANNELS, type NotifyChannel, type NotifyTarget, type NotifyTargetInput } from "@app/monitor/lib/types";
+import {
+    isSecretMarker,
+    NOTIFY_CHANNELS,
+    type NotifyChannel,
+    type NotifyTarget,
+    type NotifyTargetInput,
+} from "@app/monitor/lib/types";
 import { useCreateTarget, useUpdateTarget } from "@app/monitor/ui/api.hooks";
 import { CHANNEL_SPECS, type ChannelDraft, ChannelFields } from "@app/monitor/ui/components/channel-fields";
 import { Button } from "@genesiscz/utils/ui/components/button";
@@ -29,7 +35,17 @@ function emptyForm(): FormState {
 }
 
 function fromTarget(target: NotifyTarget): FormState {
-    return { name: target.name, channel: target.channel, config: { ...target.config }, enabled: target.enabled };
+    // The API masks secrets into `botTokenSet` booleans. Those are a view, not a
+    // field: sending one back is rejected as an unknown config key.
+    const config: ChannelDraft = {};
+
+    for (const [key, value] of Object.entries(target.config)) {
+        if (!isSecretMarker(key)) {
+            config[key] = value;
+        }
+    }
+
+    return { name: target.name, channel: target.channel, config, enabled: target.enabled };
 }
 
 function toInput(form: FormState): NotifyTargetInput {
@@ -70,12 +86,18 @@ export function TargetDialog({
         event.preventDefault();
         const input = toInput(form);
 
-        if (editing) {
-            // Secrets left blank keep their stored value.
-            const merged = { ...editing.config, ...input.config };
-            await update.mutateAsync({ id: editing.id, patch: { ...input, config: merged } });
-        } else {
-            await create.mutateAsync(input);
+        try {
+            if (editing) {
+                // Only what the form holds is sent: a cleared field clears. Secrets
+                // left blank are the one exception, and the server carries the
+                // stored value forward for those.
+                await update.mutateAsync({ id: editing.id, patch: input });
+            } else {
+                await create.mutateAsync(input);
+            }
+        } catch {
+            // The mutation hook already toasted the failure; keep the dialog open.
+            return;
         }
 
         onOpenChange(false);
@@ -147,11 +169,10 @@ export function TargetDialog({
                         channel={form.channel}
                         draft={form.config}
                         enabled={open}
-                        secretsSet={
-                            editing?.channel === "telegram" && typeof editing.config.botToken === "string"
-                                ? { botToken: true }
-                                : {}
-                        }
+                        secretsSet={{
+                            botToken: editing?.config.botTokenSet === true,
+                            url: editing?.config.urlSet === true,
+                        }}
                         onChange={(key, value) =>
                             setForm((current) => ({ ...current, config: { ...current.config, [key]: value } }))
                         }

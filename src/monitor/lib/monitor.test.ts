@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { MonitorDatabase } from "./db";
 import { Monitor } from "./monitor";
 import { isDue } from "./scheduler";
-import type { MonitorEvent, Watcher } from "./types";
+import { MASKED_HEADER_VALUE, type MonitorEvent, type Watcher } from "./types";
 
 let server: ReturnType<typeof Bun.serve>;
 let statusCode = 200;
@@ -24,6 +25,11 @@ beforeAll(() => {
 
 afterAll(() => {
     server.stop(true);
+});
+
+beforeEach(() => {
+    statusCode = 200;
+    delayMs = 0;
 });
 
 function target(): string {
@@ -190,5 +196,176 @@ describe("Scheduler.isDue", () => {
     test("due exactly at the interval, not before", () => {
         expect(isDue(base, at + 59_000)).toBe(false);
         expect(isDue(base, at + 60_000)).toBe(true);
+    });
+});
+
+describe("MonitorDatabase notify targets", () => {
+    test("setWatcherTargets survives a list where every id is unknown", async () => {
+        const db = new MonitorDatabase(":memory:");
+        const target = await db.createTarget({ name: "ops", channel: "webhook", config: { url: "https://a.dev/h" } });
+        const watcher = await db.createWatcher({
+            name: "a",
+            kind: "website",
+            target: "https://a.dev/",
+            targetIds: [target.id],
+        });
+
+        expect((await db.getWatcher(watcher.id))?.targetIds).toEqual([target.id]);
+
+        // Kysely renders `values([])` as invalid SQL; this used to throw and
+        // leave the watcher with no targets and the caller with a 500.
+        const updated = await db.updateWatcher(watcher.id, { targetIds: [999] });
+
+        expect(updated?.targetIds).toEqual([]);
+        db.close();
+    });
+});
+
+describe("MonitorDatabase feed items", () => {
+    const item = (guid: string, title: string) => ({
+        guid,
+        title,
+        link: null,
+        summary: null,
+        publishedAt: null,
+    });
+
+    test("a first check that ingests nothing does not re-prime on the next one", async () => {
+        const db = new MonitorDatabase(":memory:");
+        const watcher = await db.createWatcher({ name: "feed", kind: "rss", target: "https://a.dev/rss" });
+
+        // Check 1: the item filter matched nothing, so no row is written.
+        await db.recordCheck(watcher.id, { status: "up", latencyMs: 1, httpStatus: 200, detail: "ok" });
+        expect(await db.ingestFeedItems(watcher.id, [])).toEqual({ fresh: [], first: true });
+
+        // Check 2, days later: the first matching item must be delivered, not
+        // swallowed as history by a second "first sync".
+        await db.recordCheck(watcher.id, { status: "up", latencyMs: 1, httpStatus: 200, detail: "ok" });
+        const second = await db.ingestFeedItems(watcher.id, [item("g1", "release 1.0")]);
+
+        expect(second.first).toBe(false);
+        expect(second.fresh.map((entry) => entry.guid)).toEqual(["g1"]);
+        db.close();
+    });
+
+    test("the very first check still primes silently", async () => {
+        const db = new MonitorDatabase(":memory:");
+        const watcher = await db.createWatcher({ name: "feed", kind: "rss", target: "https://a.dev/rss" });
+
+        await db.recordCheck(watcher.id, { status: "up", latencyMs: 1, httpStatus: 200, detail: "ok" });
+        const first = await db.ingestFeedItems(watcher.id, [item("g1", "old"), item("g2", "older")]);
+
+        expect(first.first).toBe(true);
+        expect(first.fresh).toEqual([]);
+        expect(await db.listFeedItems(watcher.id, 10)).toHaveLength(2);
+        db.close();
+    });
+});
+
+describe("Monitor notify target secrets", () => {
+    test("a config patch that omits botToken keeps the stored one", async () => {
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const created = await monitor.createTarget({
+            name: "family",
+            channel: "telegram",
+            config: { botToken: "123:AAA", chatId: "-100" },
+        });
+
+        const updated = await monitor.updateTarget(created.id, { config: { chatId: "-200" } });
+
+        expect(updated?.config).toEqual({ botToken: "123:AAA", chatId: "-200" });
+        monitor.close();
+    });
+
+    test("an explicit new botToken still replaces the stored one", async () => {
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const created = await monitor.createTarget({
+            name: "family",
+            channel: "telegram",
+            config: { botToken: "123:AAA", chatId: "-100" },
+        });
+
+        const updated = await monitor.updateTarget(created.id, { config: { botToken: "456:BBB", chatId: "-100" } });
+
+        expect(updated?.config.botToken).toBe("456:BBB");
+        monitor.close();
+    });
+});
+
+describe("Monitor event payloads", () => {
+    test("a watcher event masks config.headers while the stored watcher keeps them", async () => {
+        // The event stream leaves this process over a WebSocket that no route
+        // handler sees, so an `Authorization` header set on a website watcher
+        // would otherwise reach every listener verbatim.
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const events: MonitorEvent[] = [];
+        monitor.on((event) => {
+            events.push(event);
+        });
+
+        const created = await monitor.createWatcher({
+            name: "private site",
+            kind: "website",
+            target: target(),
+            notify: false,
+            config: { headers: { Authorization: "Bearer super-secret" } },
+        });
+
+        const [event] = events;
+        expect(event.type).toBe("watcher:created");
+        expect("watcher" in event ? event.watcher.config.headers : null).toEqual({
+            Authorization: MASKED_HEADER_VALUE,
+        });
+        expect(SafeJSON.stringify(events)).not.toContain("super-secret");
+
+        // The check itself must still send the real header.
+        expect((await monitor.getWatcher(created.id))?.config.headers).toEqual({
+            Authorization: "Bearer super-secret",
+        });
+        monitor.close();
+    });
+});
+
+describe("Monitor.runWatcher", () => {
+    test("a check that throws still records a row, so the watcher is not due again at once", async () => {
+        // `checkRss` reads `await response.text()` outside its own try/catch. A
+        // body that ends early rejects there, and unrecorded the watcher keeps
+        // `last_checked_at` null: `isDue` stays true and the 1 s scheduler tick
+        // re-runs it forever while the card sits on "unknown" with no error.
+        const truncating = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+                data(socket) {
+                    // Content-Length promises 4096 bytes; the socket closes after 14.
+                    socket.write(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n<rss><channel>"
+                    );
+                    setTimeout(() => socket.end(), 10);
+                },
+            },
+        });
+        const monitor = new Monitor({ dbPath: ":memory:" });
+
+        try {
+            const watcher = await monitor.createWatcher({
+                name: "truncated feed",
+                kind: "rss",
+                target: `http://127.0.0.1:${truncating.port}/feed.xml`,
+                notify: false,
+                timeoutMs: 2_000,
+            });
+            const outcome = await monitor.runWatcher(watcher.id);
+
+            expect(outcome?.check.status).toBe("unknown");
+            expect(outcome?.check.detail).toStartWith("check failed:");
+
+            const stored = (await monitor.getWatcher(watcher.id)) as Watcher;
+            expect(stored.lastCheckedAt).not.toBeNull();
+            expect(isDue(stored, Date.now())).toBe(false);
+        } finally {
+            monitor.close();
+            truncating.stop(true);
+        }
     });
 });

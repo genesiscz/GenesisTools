@@ -12,6 +12,7 @@ import {
     type WatcherStatus,
 } from "@app/monitor/lib/types";
 import { parseWatcherInput, parseWatcherPatch, WatcherValidationError } from "@app/monitor/lib/validate";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
@@ -79,6 +80,13 @@ function ago(value: string | null): string {
 
 function latency(value: number | null): string {
     return value === null ? "—" : `${value} ms`;
+}
+
+/** `--limit` as a whole number between 1 and 500; anything else is the default. */
+function parseLimit(raw: string, fallback: number): number {
+    const value = Number.parseInt(raw, 10);
+
+    return Number.isInteger(value) && value > 0 ? Math.min(value, 500) : fallback;
 }
 
 function parseId(raw: string): number {
@@ -211,6 +219,22 @@ function printWatchers(watchers: Watcher[]): void {
 
 function printCheck(label: string, result: CheckResult): void {
     out.println(`${statusCell(result.status)}  ${pc.white(label)}  ${pc.dim(result.detail)}`);
+}
+
+const CLI_CONCURRENCY = 8;
+
+/** Bounded fan-out, in input order: a long watcher list must not open every socket at once. */
+async function mapWatchers<T>(watchers: Watcher[], fn: (watcher: Watcher) => Promise<T>): Promise<T[]> {
+    const results = await concurrentMap({
+        items: watchers,
+        fn,
+        concurrency: CLI_CONCURRENCY,
+        onError: (watcher, error) => {
+            throw error instanceof Error ? error : new Error(`${watcher.name}: ${String(error)}`);
+        },
+    });
+
+    return watchers.flatMap((watcher) => (results.has(watcher) ? [results.get(watcher) as T] : []));
 }
 
 async function withMonitor<T>(fn: (monitor: Monitor) => Promise<T>): Promise<T> {
@@ -362,7 +386,7 @@ export function registerWatcherCommands(program: Command): void {
 
     program
         .command("check")
-        .description("Run checks now. With no id: every enabled watcher. With --url: an ad-hoc check, nothing saved.")
+        .description("Probe watchers and report. Reads only: nothing is recorded and nobody is notified.")
         .argument("[id]", "Watcher id")
         .option("--url <target>", "Ad-hoc target to probe without saving a watcher")
         .option("-k, --kind <kind>", "Kind for --url (default: guessed)")
@@ -383,11 +407,55 @@ export function registerWatcherCommands(program: Command): void {
                 return;
             }
 
+            // `check` inspects. It calls runCheck directly rather than
+            // monitor.runWatcher, which records rows, opens and closes
+            // incidents, delivers feed items and pages the user's phone.
+            // `tools monitor run` is the verb that does all of that.
+            const probes = await withMonitor(async (monitor) => {
+                const targets = id
+                    ? [await requireWatcher(monitor, id)]
+                    : await monitor.listWatchers({ enabledOnly: true });
+
+                return mapWatchers(targets, async (watcher) => ({
+                    watcher,
+                    check: await runCheck(watcher),
+                    saved: false,
+                }));
+            });
+
+            if (opts.json) {
+                out.result({ probes });
+
+                return;
+            }
+
+            for (const probe of probes) {
+                printCheck(`#${probe.watcher.id} ${probe.watcher.name}`, probe.check);
+
+                if (probe.check.status !== probe.watcher.lastStatus) {
+                    out.println(`    ${pc.yellow("would change")} ${probe.watcher.lastStatus} → ${probe.check.status}`);
+                }
+            }
+
+            if (probes.length > 0) {
+                out.println(pc.dim("Nothing was recorded. To record and notify:"));
+                out.println(suggestCommand("tools monitor", { replaceCommand: id ? ["run", id] : ["run"] }));
+            }
+
+            process.exitCode = probes.some((probe) => probe.check.status === "down") ? 2 : 0;
+        });
+
+    program
+        .command("run")
+        .description("Run checks now and record them: status, incidents, feed items and notifications.")
+        .argument("[id]", "Watcher id")
+        .option("--json", "Emit JSON")
+        .action(async (id: string | undefined, opts: { json?: boolean }) => {
             const outcomes = await withMonitor(async (monitor) => {
                 const targets = id
                     ? [await requireWatcher(monitor, id)]
                     : await monitor.listWatchers({ enabledOnly: true });
-                const results = await Promise.all(targets.map((watcher) => monitor.runWatcher(watcher)));
+                const results = await mapWatchers(targets, (watcher) => monitor.runWatcher(watcher));
 
                 return results.filter((outcome): outcome is NonNullable<typeof outcome> => outcome !== null);
             });
@@ -421,7 +489,7 @@ export function registerWatcherCommands(program: Command): void {
 
                 return {
                     watcher: current,
-                    items: await monitor.db.listFeedItems(current.id, Number(opts.limit) || 20),
+                    items: await monitor.db.listFeedItems(current.id, parseLimit(opts.limit, 20)),
                 };
             });
 
@@ -508,7 +576,7 @@ export function registerWatcherCommands(program: Command): void {
         .option("--json", "Emit JSON")
         .action(async (opts: { open?: boolean; limit: string; json?: boolean }) => {
             const incidents = await withMonitor((monitor) =>
-                monitor.db.listIncidents({ openOnly: opts.open, limit: Number.parseInt(opts.limit, 10) || 50 })
+                monitor.db.listIncidents({ openOnly: opts.open, limit: parseLimit(opts.limit, 50) })
             );
 
             if (opts.json) {

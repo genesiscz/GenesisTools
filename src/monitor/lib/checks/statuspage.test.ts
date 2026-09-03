@@ -17,10 +17,24 @@ describe("statuspage", () => {
         expect(summaryUrl("https://status.claude.com/")).toBe("https://status.claude.com/api/v2/summary.json");
     });
 
-    test("worstStatus ranks down over degraded over up", () => {
+    test("worstStatus ranks down over degraded over unknown over up", () => {
         expect(worstStatus(["up", "degraded", "down"])).toBe("down");
-        expect(worstStatus(["up", "unknown"])).toBe("up");
+        expect(worstStatus(["up", "unknown"])).toBe("unknown");
+        expect(worstStatus(["unknown", "degraded"])).toBe("degraded");
         expect(worstStatus([])).toBe("up");
+    });
+
+    test("a component state the table does not know reads as unknown, never as up", () => {
+        // A self-hosted page with its own vocabulary, or a new Atlassian /
+        // incident.io state. Mapping it to "up" rendered a real outage green.
+        const result = evaluateSummary(
+            { status: { indicator: "none" }, components: [{ name: "Claude API", status: "catastrophe" }] },
+            ["claude api"]
+        );
+
+        expect(result.status).toBe("unknown");
+        expect(result.affected.map((c) => c.name)).toEqual(["Claude API"]);
+        expect(result.detail).toContain("Claude API: catastrophe");
     });
 
     test("without a filter the page indicator and affected components both count", () => {
@@ -80,6 +94,15 @@ describe("parseXaiStatusHtml", () => {
         expect(summary.status?.indicator).toBe("major");
         expect(evaluateSummary(summary, ["API ("]).status).toBe("degraded");
         expect(evaluateSummary(summary, undefined).status).toBe("down");
+    });
+
+    test("a foreign token mid-list fails closed instead of reporting a partial page", () => {
+        const html =
+            "<p>Services</p><p>Grok (iOS)</p><p>available</p><p>Some new widget</p><p>Grok (Web)</p><p>outage</p>";
+        const summary = parseXaiStatusHtml(html);
+
+        expect(summary.components).toEqual([]);
+        expect(() => evaluateSummary(summary, undefined)).not.toThrow();
     });
 
     test("an all-available page is operational", () => {

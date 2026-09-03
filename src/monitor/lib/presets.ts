@@ -1,9 +1,11 @@
 import type { WatcherPreset } from "./types";
 
 /**
- * One-click watchers. Every statuspage entry answers `/api/v2/status.json`
- * (verified 2026-09-03 with curl); status.x.ai sits behind a bot wall and is
- * left out on purpose.
+ * One-click watchers. Atlassian / incident.io entries are read through
+ * `summaryUrl()`, which fetches `/api/v2/summary.json`: only summary.json
+ * carries the `components` array the filtered presets (`claude-api`,
+ * `grok-api`) select on. status.x.ai has no JSON API at all, so `isXai()`
+ * routes it to the `parseXaiStatusHtml` reader instead (both checks/statuspage.ts).
  */
 export const WATCHER_PRESETS: readonly WatcherPreset[] = [
     {

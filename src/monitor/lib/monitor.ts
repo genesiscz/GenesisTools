@@ -6,6 +6,7 @@ import { getMonitorNotifyMeta } from "./notify-settings";
 import { dispatchToTarget, dispatchToTargets, NOTIFY_APP } from "./notify-targets";
 import type {
     CheckRecord,
+    CheckResult,
     FeedItem,
     Incident,
     IncidentStatus,
@@ -22,6 +23,8 @@ import type {
     WatcherStatus,
     WatcherSummary,
 } from "./types";
+import { maskWatcher, SECRET_KEYS } from "./types";
+import { assertTargetConfigComplete } from "./validate";
 
 export type MonitorListener = (event: MonitorEvent) => void;
 
@@ -65,10 +68,17 @@ export class Monitor {
         };
     }
 
+    /**
+     * Fan an event out to every listener. The watcher is masked HERE, not per
+     * route: the event stream leaves this process over a WebSocket that no
+     * route handler sees, and `config.headers` can hold an auth token.
+     */
     private emit(event: MonitorEvent): void {
+        const published: MonitorEvent = "watcher" in event ? { ...event, watcher: maskWatcher(event.watcher) } : event;
+
         for (const listener of this.listeners) {
             try {
-                listener(event);
+                listener(published);
             } catch (error) {
                 logger.warn({ error, type: event.type }, "monitor: event listener threw");
             }
@@ -161,8 +171,39 @@ export class Monitor {
         return this.db.createTarget(input);
     }
 
-    updateTarget(id: number, patch: NotifyTargetPatch): Promise<NotifyTarget | null> {
-        return this.db.updateTarget(id, patch);
+    async updateTarget(id: number, patch: NotifyTargetPatch): Promise<NotifyTarget | null> {
+        return this.db.updateTarget(id, await this.preserveSecrets(id, patch));
+    }
+
+    /**
+     * The HTTP API masks `botToken` out of every target it hands back, so an
+     * editor that round-trips a target has no secret to send. Carry the stored
+     * value forward instead of writing a config that lost it.
+     */
+    private async preserveSecrets(id: number, patch: NotifyTargetPatch): Promise<NotifyTargetPatch> {
+        if (!patch.config) {
+            return patch;
+        }
+
+        const current = await this.db.getTarget(id);
+
+        if (!current || (patch.channel !== undefined && patch.channel !== current.channel)) {
+            return patch;
+        }
+
+        const config = { ...patch.config };
+
+        for (const key of SECRET_KEYS) {
+            const stored = current.config[key];
+
+            if (config[key] === undefined && typeof stored === "string" && stored.length > 0) {
+                config[key] = stored;
+            }
+        }
+
+        assertTargetConfigComplete(current.channel, config);
+
+        return { ...patch, config };
     }
 
     deleteTarget(id: number): Promise<boolean> {
@@ -214,7 +255,7 @@ export class Monitor {
         this.inFlight.add(watcher.id);
 
         try {
-            const result = await runCheck(watcher);
+            const result = await this.safeRunCheck(watcher);
             // Feed items live in their own table; the check row keeps only the count.
             const { meta, ...rest } = result;
             const storedMeta =
@@ -236,6 +277,26 @@ export class Monitor {
             return { watcher: updated, check, transition, newItems };
         } finally {
             this.inFlight.delete(watcher.id);
+        }
+    }
+
+    /**
+     * A check that THROWS must still record a row. Without this the `finally`
+     * in runWatcher clears the in-flight mark, `last_checked_at` never advances,
+     * and the 1 s scheduler tick finds the same watcher due again forever.
+     */
+    private async safeRunCheck(watcher: Watcher): Promise<CheckResult> {
+        try {
+            return await runCheck(watcher);
+        } catch (error) {
+            logger.warn({ error, id: watcher.id, name: watcher.name }, "monitor: check threw, recording it as unknown");
+
+            return {
+                status: "unknown",
+                latencyMs: null,
+                httpStatus: null,
+                detail: `check failed: ${error instanceof Error ? error.message : String(error)}`,
+            };
         }
     }
 
@@ -275,17 +336,23 @@ export class Monitor {
         const worthNotifying = isOutage(to) || (to === "up" && isOutage(from));
 
         if (watcher.notify && worthNotifying) {
-            void this.notifyTransition(watcher, from, to, check.detail);
+            // Detached on purpose (a slow telegram send must not hold the check
+            // open), so it needs its own catch: the first await reads the notify
+            // config, and a hand-broken config.json would otherwise take the
+            // whole scheduler process down as an unhandled rejection.
+            void this.notifyTransition(watcher, from, to, check.detail).catch((notifyError) => {
+                logger.warn({ notifyError, id: watcher.id }, "monitor: transition notification failed");
+            });
         }
 
         return { from, to, incident };
     }
 
     private async deliverFeedItems(watcher: Watcher, items: ParsedFeedItem[]): Promise<FeedItem[]> {
-        if (items.length === 0) {
-            return [];
-        }
-
+        // No early return on an empty list: ingest is what PRIMES the feed. Skip
+        // it and the first item that ever passes an `--item-filter` is stored as
+        // already-delivered and never notified, which is the one item the filter
+        // existed to catch.
         const { fresh, first } = await this.db.ingestFeedItems(watcher.id, items);
         await this.db.pruneFeedItems(watcher.id);
 
@@ -293,29 +360,50 @@ export class Monitor {
             logger.info({ id: watcher.id, items: items.length }, "monitor: feed primed, history not delivered");
         }
 
-        if (fresh.length === 0) {
-            return [];
+        if (fresh.length > 0) {
+            logger.info({ id: watcher.id, name: watcher.name, fresh: fresh.length }, "monitor: new feed items");
+            this.emit({ type: "feed:items", watcher, items: fresh });
         }
 
-        logger.info({ id: watcher.id, name: watcher.name, fresh: fresh.length }, "monitor: new feed items");
-        this.emit({ type: "feed:items", watcher, items: fresh });
+        const deliver = watcher.notify && watcher.config.deliverItems !== false;
 
-        if (watcher.notify && watcher.config.deliverItems !== false) {
-            for (const item of fresh) {
-                await this.send(watcher, {
-                    app: NOTIFY_APP,
-                    title: `${watcher.name}: ${item.title}`.slice(0, 120),
-                    subtitle: "new item",
-                    message: item.summary?.slice(0, 240) || item.title,
-                    open: item.link ?? undefined,
-                    group: `monitor-feed-${watcher.id}`,
-                });
+        if (!deliver) {
+            return fresh;
+        }
+
+        // Items whose notification failed last time are retried before the new
+        // ones, so a dead webhook loses nothing once it is back.
+        const retries = await this.db.listUndeliveredFeedItems(
+            watcher.id,
+            fresh.map((item) => item.id)
+        );
+        const delivered = new Set<number>();
+
+        for (const item of [...retries, ...fresh]) {
+            const sent = await this.send(watcher, {
+                app: NOTIFY_APP,
+                title: `${watcher.name}: ${item.title}`.slice(0, 120),
+                subtitle: "new item",
+                message: item.summary?.slice(0, 240) || item.title,
+                open: item.link ?? undefined,
+                group: `monitor-feed-${watcher.id}`,
+            });
+
+            if (sent) {
+                delivered.add(item.id);
             }
-
-            await this.db.markFeedItemsDelivered(fresh.map((item) => item.id));
         }
 
-        return fresh.map((item) => ({ ...item, delivered: watcher.notify && watcher.config.deliverItems !== false }));
+        await this.db.markFeedItemsDelivered([...delivered]);
+
+        if (delivered.size < retries.length + fresh.length) {
+            logger.warn(
+                { id: watcher.id, failed: retries.length + fresh.length - delivered.size },
+                "monitor: feed items not delivered, will retry on the next check"
+            );
+        }
+
+        return fresh.map((item) => ({ ...item, delivered: delivered.has(item.id) }));
     }
 
     private async notifyTransition(
@@ -351,18 +439,21 @@ export class Monitor {
      * Routes one event: through the watcher's library targets when it has any,
      * otherwise through the monitor app defaults of the shared notify config.
      */
-    private async send(watcher: Watcher, event: NotificationEvent): Promise<void> {
+    private async send(watcher: Watcher, event: NotificationEvent): Promise<boolean> {
         try {
             if (watcher.targetIds.length > 0) {
                 const targets = await this.db.getTargets(watcher.targetIds);
-                await dispatchToTargets(targets, event);
 
-                return;
+                return dispatchToTargets(targets, event);
             }
 
             await dispatchNotification(event);
+
+            return true;
         } catch (error) {
             logger.warn({ error, id: watcher.id }, "monitor: notification dispatch failed");
+
+            return false;
         }
     }
 }

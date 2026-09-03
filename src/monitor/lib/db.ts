@@ -302,11 +302,18 @@ export class MonitorDatabase {
             .where("id", "in", unique)
             .execute();
         const known = new Set(existing.map((row) => row.id));
+        const rows = unique.filter((id) => known.has(id)).map((target_id) => ({ watcher_id: watcherId, target_id }));
 
-        await this.client.kysely
-            .insertInto("watcher_targets")
-            .values(unique.filter((id) => known.has(id)).map((target_id) => ({ watcher_id: watcherId, target_id })))
-            .execute();
+        if (rows.length === 0) {
+            // Kysely renders `values([])` as `... VALUES ()`, which SQLite
+            // rejects with a syntax error. Every requested id being unknown is
+            // an ordinary outcome (the target was deleted), not a crash.
+            logger.warn({ watcherId, targetIds: unique }, "monitor: no known notify target in the requested list");
+
+            return;
+        }
+
+        await this.client.kysely.insertInto("watcher_targets").values(rows).execute();
     }
 
     async createWatcher(input: WatcherInput): Promise<Watcher> {
@@ -511,7 +518,18 @@ export class MonitorDatabase {
             .select((eb) => eb.fn.countAll<number>().as("n"))
             .where("watcher_id", "=", watcherId)
             .executeTakeFirst();
-        const first = Number(existing?.n ?? 0) === 0;
+        // "First sync" is the watcher's FIRST check, not merely "no rows yet".
+        // A check whose `itemFilter` matched nothing stores no row, so the row
+        // count alone would prime again days later and swallow the first item
+        // the filter ever matched: the one item it existed to catch. The caller
+        // records its check row before it ingests, so the count is 1 here on
+        // that first run.
+        const checked = await this.client.kysely
+            .selectFrom("checks")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("watcher_id", "=", watcherId)
+            .executeTakeFirst();
+        const first = Number(existing?.n ?? 0) === 0 && Number(checked?.n ?? 0) <= 1;
         const seenAt = nowUtcIso();
         const fresh: FeedItem[] = [];
 
@@ -547,6 +565,23 @@ export class MonitorDatabase {
         }
 
         return { fresh, first };
+    }
+
+    /** Items a previous check could not deliver, oldest first, minus the ones the caller already holds. */
+    async listUndeliveredFeedItems(watcherId: number, excludeIds: number[] = [], limit = 20): Promise<FeedItem[]> {
+        let query = this.client.kysely
+            .selectFrom("feed_items")
+            .selectAll()
+            .where("watcher_id", "=", watcherId)
+            .where("delivered", "=", 0);
+
+        if (excludeIds.length > 0) {
+            query = query.where("id", "not in", excludeIds);
+        }
+
+        const rows = await query.orderBy("id").limit(limit).execute();
+
+        return rows.map(rowToFeedItem);
     }
 
     async markFeedItemsDelivered(ids: number[]): Promise<void> {

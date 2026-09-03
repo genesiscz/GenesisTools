@@ -40,7 +40,17 @@ const COMPONENT_STATUS: Record<string, WatcherStatus> = {
     major_outage: "down",
 };
 
-const SEVERITY: Record<WatcherStatus, number> = { up: 0, unknown: 0, degraded: 1, down: 2 };
+// `unknown` outranks `up` on purpose: a component whose state string is not in
+// the table above is NOT known to be healthy, and treating it as `up` renders a
+// real outage green (a self-hosted page with its own vocabulary, or a new
+// Atlassian/incident.io state). It stays below `degraded` so a page that also
+// reports a real problem still reports that problem.
+const SEVERITY: Record<WatcherStatus, number> = { up: 0, unknown: 1, degraded: 2, down: 3 };
+
+/** The watcher status a component's state string means; `unknown` for a state we do not know. */
+function componentStatus(component: StatuspageComponent): WatcherStatus {
+    return COMPONENT_STATUS[component.status] ?? "unknown";
+}
 
 export function worstStatus(statuses: WatcherStatus[]): WatcherStatus {
     let worst: WatcherStatus = "up";
@@ -75,15 +85,13 @@ export function evaluateSummary(
     filters: string[] | undefined
 ): { status: WatcherStatus; detail: string; affected: StatuspageComponent[]; matched: number } {
     const components = pickComponents(summary.components ?? [], filters);
-    const affected = components.filter((component) => (COMPONENT_STATUS[component.status] ?? "up") !== "up");
+    const affected = components.filter((component) => componentStatus(component) !== "up");
     const indicator = summary.status?.indicator ?? "none";
     const filtered = filters !== undefined && filters.length > 0;
-    const componentStatus = worstStatus(affected.map((component) => COMPONENT_STATUS[component.status] ?? "up"));
+    const worstComponent = worstStatus(affected.map(componentStatus));
     // With a component filter the page-wide indicator is noise: an outage on an
     // unrelated product must not flip a watcher that only cares about the API.
-    const status = filtered
-        ? componentStatus
-        : worstStatus([INDICATOR_STATUS[indicator] ?? "degraded", componentStatus]);
+    const status = filtered ? worstComponent : worstStatus([INDICATOR_STATUS[indicator] ?? "degraded", worstComponent]);
     const description = summary.status?.description ?? indicator;
     const detail =
         affected.length > 0
@@ -124,22 +132,37 @@ export function parseXaiStatusHtml(html: string): StatuspageSummary {
         .filter(Boolean);
     const start = parts.lastIndexOf("Services");
     const components: StatuspageComponent[] = [];
+    let terminated = false;
 
     if (start >= 0) {
-        for (let i = start + 1; i + 1 < parts.length; i += 2) {
+        let i = start + 1;
+
+        for (; i + 1 < parts.length; i += 2) {
             const name = parts[i];
             const word = parts[i + 1].toLowerCase();
             const status = XAI_WORD_STATUS[word];
 
             if (!status) {
+                // The list ends at the page footer. Anything else here means the
+                // layout changed mid-list: report nothing rather than a partial "up".
+                terminated = XAI_LIST_TERMINATORS.has(name);
                 break;
             }
 
             components.push({ name, status });
         }
+
+        // Running out of text after whole pairs is a complete read too.
+        if (i + 1 >= parts.length) {
+            terminated = true;
+        }
     }
 
-    const worst = worstStatus(components.map((component) => COMPONENT_STATUS[component.status] ?? "up"));
+    if (!terminated) {
+        components.length = 0;
+    }
+
+    const worst = worstStatus(components.map(componentStatus));
     const indicator = worst === "down" ? "major" : worst === "degraded" ? "minor" : "none";
     const affected = components.filter((component) => component.status !== "operational").length;
     const description =
@@ -148,6 +171,16 @@ export function parseXaiStatusHtml(html: string): StatuspageSummary {
             : `${affected} service${affected === 1 ? "" : "s"} ${worst === "down" ? "down" : "degraded"}`;
 
     return { page: { name: "xAI" }, status: { indicator, description }, components };
+}
+
+/** Footer words that legitimately end the Services list on status.x.ai. */
+const XAI_LIST_TERMINATORS = new Set(["Models", "Try Grok on", "Products", "API", "Company", "Resources", "Legal"]);
+
+/** A failed poll must not keep its socket until the timeout fires. */
+async function discardBody(response: Response): Promise<void> {
+    await response.body?.cancel().catch((cancelError) => {
+        logger.debug({ cancelError }, "monitor: status page body cancel failed");
+    });
 }
 
 function isXai(target: string): boolean {
@@ -165,6 +198,7 @@ async function fetchXaiSummary(
     );
 
     if (!response.ok) {
+        await discardBody(response);
         throw new Error(`status.x.ai answered ${response.status}`);
     }
 
@@ -192,6 +226,7 @@ async function fetchSummary(
     );
 
     if (!response.ok) {
+        await discardBody(response);
         throw new Error(`status page answered ${response.status} for /api/v2/summary.json`);
     }
 

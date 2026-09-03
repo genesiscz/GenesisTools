@@ -1,6 +1,6 @@
 import { Monitor } from "@app/monitor/lib/monitor";
 import { describeTarget } from "@app/monitor/lib/notify-targets";
-import { NOTIFY_CHANNELS, type NotifyChannel, type NotifyTarget } from "@app/monitor/lib/types";
+import { isNotifyChannel, NOTIFY_CHANNELS, type NotifyTarget } from "@app/monitor/lib/types";
 import { parseNotifyTargetInput, parseNotifyTargetPatch, WatcherValidationError } from "@app/monitor/lib/validate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
@@ -166,7 +166,7 @@ export function registerTargetCommands(program: Command): void {
             .option("-c, --channel [channel]", `One of ${NOTIFY_CHANNELS.join(", ")}`)
             .option("--disabled", "Create the target paused")
     ).action(async (flags: TargetFlags & { disabled?: boolean }) => {
-        if (typeof flags.channel !== "string" || !(NOTIFY_CHANNELS as readonly string[]).includes(flags.channel)) {
+        if (!isNotifyChannel(flags.channel)) {
             out.println(suggestEnumFlag("tools monitor targets add", "--channel", [...NOTIFY_CHANNELS]));
             process.exitCode = 1;
 
@@ -208,7 +208,7 @@ export function registerTargetCommands(program: Command): void {
                     config: Object.keys(config).length > 0 ? { ...current.config, ...config } : undefined,
                     enabled: flags.enable ? true : flags.disable ? false : undefined,
                 },
-                current.channel as NotifyChannel
+                current.channel
             );
 
             return monitor.updateTarget(current.id, patch);
@@ -244,9 +244,9 @@ export function registerTargetCommands(program: Command): void {
         .argument("<id>", "Target id")
         .action(async (id: string) => {
             const target = await withMonitor(async (monitor) => {
-                await requireTarget(monitor, id);
+                const current = await requireTarget(monitor, id);
 
-                return monitor.testTarget(parseId(id));
+                return monitor.testTarget(current.id);
             });
             out.log.success(`Demo sent through #${id} "${target?.name ?? ""}" (${target?.channel ?? ""})`);
         });

@@ -10,7 +10,7 @@ import {
     type TelegramChannelConfig,
     type WebhookChannelConfig,
 } from "@genesiscz/utils/notifications";
-import type { NotifyTarget } from "./types";
+import { type NotifyTarget, webhookHost } from "./types";
 
 export const NOTIFY_APP = "monitor";
 
@@ -37,14 +37,15 @@ export function describeTarget(target: NotifyTarget): string {
         case "telegram":
             return `chat ${config.chatId ?? "?"} · token ${config.botToken ? "set" : "missing"}`;
         case "webhook":
-            return typeof config.url === "string" ? config.url : "no url";
+            return webhookHost(config.url) ?? "no url";
     }
 }
 
 /** Sends one event to one library target, with that target's own config. Never throws. */
-export async function dispatchToTarget(target: NotifyTarget, event: NotificationEvent): Promise<void> {
+/** True when the channel accepted the event; false when its dispatcher threw. */
+export async function dispatchToTarget(target: NotifyTarget, event: NotificationEvent): Promise<boolean> {
     if (!target.enabled) {
-        return;
+        return true;
     }
 
     const config = { ...target.config, enabled: true };
@@ -66,11 +67,18 @@ export async function dispatchToTarget(target: NotifyTarget, event: Notification
         }
 
         logger.debug({ target: target.id, channel: target.channel, title: event.title }, "monitor: target notified");
+
+        return true;
     } catch (error) {
         logger.warn({ error, target: target.id, channel: target.channel }, "monitor: target dispatch failed");
+
+        return false;
     }
 }
 
-export async function dispatchToTargets(targets: NotifyTarget[], event: NotificationEvent): Promise<void> {
-    await Promise.all(targets.map((target) => dispatchToTarget(target, event)));
+/** True only when every target accepted the event. */
+export async function dispatchToTargets(targets: NotifyTarget[], event: NotificationEvent): Promise<boolean> {
+    const results = await Promise.all(targets.map((target) => dispatchToTarget(target, event)));
+
+    return results.every(Boolean);
 }

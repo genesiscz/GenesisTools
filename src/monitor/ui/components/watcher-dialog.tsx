@@ -348,18 +348,28 @@ export function WatcherDialog({
         event.preventDefault();
         const input = toInput(form);
 
-        if (editing) {
-            await update.mutateAsync({ id: editing.id, patch: input });
-        } else {
-            await create.mutateAsync(input);
+        try {
+            if (editing) {
+                await update.mutateAsync({ id: editing.id, patch: input });
+            } else {
+                await create.mutateAsync(input);
+            }
+        } catch {
+            // The mutation hook already toasted the failure; keep the dialog open.
+            return;
         }
 
         onOpenChange(false);
     }
 
     async function onTest() {
-        const result = await test.mutateAsync(toInput(form));
-        setTestResult(result.check);
+        try {
+            const result = await test.mutateAsync(toInput(form));
+            setTestResult(result.check);
+        } catch {
+            // Toasted by the hook; a stale green result must not outlive a failed test.
+            setTestResult(null);
+        }
     }
 
     const canSubmit = form.name.trim().length > 0 && form.target.trim().length > 0;
@@ -516,7 +526,12 @@ export function WatcherDialog({
                                 max={120000}
                                 step={500}
                                 value={form.timeoutMs}
-                                onChange={(event) => patch({ timeoutMs: Number(event.target.value) })}
+                                onChange={(event) => {
+                                    const next = Number(event.target.value);
+                                    patch({
+                                        timeoutMs: event.target.value === "" || !next ? DEFAULT_TIMEOUT_MS : next,
+                                    });
+                                }}
                             />
                         </Field>
 

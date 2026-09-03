@@ -288,14 +288,36 @@ export function parseNotifyTargetConfig(channel: NotifyChannel, value: unknown):
     }
 
     if (channel === "webhook" && typeof config.url === "string") {
+        let parsed: URL;
+
         try {
-            new URL(config.url);
+            parsed = new URL(config.url);
         } catch {
             throw new WatcherValidationError("config.url must be a valid URL");
+        }
+
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new WatcherValidationError("config.url must be an http(s) URL");
         }
     }
 
     return config;
+}
+
+const REQUIRED_TARGET_FIELDS: Record<NotifyChannel, readonly string[]> = {
+    system: [],
+    say: [],
+    telegram: ["botToken", "chatId"],
+    webhook: ["url"],
+};
+
+/** A target that cannot deliver (webhook without url, telegram without token or chat) is refused, not stored. */
+export function assertTargetConfigComplete(channel: NotifyChannel, config: Record<string, string | boolean>): void {
+    for (const key of REQUIRED_TARGET_FIELDS[channel]) {
+        if (typeof config[key] !== "string" || !config[key]) {
+            throw new WatcherValidationError(`${channel} target needs config.${key}`);
+        }
+    }
 }
 
 export function parseNotifyTargetInput(value: unknown): NotifyTargetInput {
@@ -312,10 +334,13 @@ export function parseNotifyTargetInput(value: unknown): NotifyTargetInput {
         throw new WatcherValidationError("name is required");
     }
 
+    const config = parseNotifyTargetConfig(channel, record.config);
+    assertTargetConfigComplete(channel, config);
+
     return {
         name,
         channel,
-        config: parseNotifyTargetConfig(channel, record.config),
+        config,
         enabled: optionalBoolean(record, "enabled") ?? true,
     };
 }
@@ -344,6 +369,17 @@ export function parseNotifyTargetPatch(value: unknown, currentChannel: NotifyCha
 
     if (record.config !== undefined) {
         patch.config = parseNotifyTargetConfig(patch.channel ?? currentChannel, record.config);
+    } else if (patch.channel !== undefined && patch.channel !== currentChannel) {
+        // Without this the row keeps the OLD channel's fields: a webhook turned
+        // telegram reports as telegram while still holding only `url`, and every
+        // notification through it dies silently.
+        throw new WatcherValidationError(`changing the channel to ${patch.channel} needs a config for it`);
+    }
+
+    if (patch.channel !== undefined && patch.channel !== currentChannel && patch.config) {
+        // No stored secret carries over across a channel switch, so the new
+        // config has to be complete on its own.
+        assertTargetConfigComplete(patch.channel, patch.config);
     }
 
     const enabled = optionalBoolean(record, "enabled");
@@ -418,6 +454,13 @@ export function parseWatcherPatch(value: unknown, currentKind: WatcherKind): Wat
 
     if (target !== undefined) {
         patch.target = normalizeTarget(patch.kind ?? currentKind, target);
+    } else if (patch.kind !== undefined && patch.kind !== currentKind) {
+        // Same hazard as a notify target that changes channel without a config:
+        // the row would keep the OLD kind's target. A website turned ai-provider
+        // reports "no AI account with id https://example.com/" on every tick,
+        // and a website turned statuspage has `/api/v2/summary.json` appended to
+        // a URL that still carries a path.
+        throw new WatcherValidationError(`changing the kind to ${patch.kind} needs a target for it`);
     }
 
     if (record.config !== undefined) {

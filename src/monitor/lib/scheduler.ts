@@ -33,6 +33,8 @@ export function isDue(watcher: Watcher, now: number): boolean {
 export class Scheduler {
     private timer: ReturnType<typeof setInterval> | null = null;
     private ticking = false;
+    private readonly active = new Set<number>();
+    private settled: Promise<void> = Promise.resolve();
     private readonly tickMs: number;
     private readonly concurrency: number;
     private readonly now: () => number;
@@ -70,6 +72,16 @@ export class Scheduler {
         return this.timer !== null;
     }
 
+    /** Checks started by the scheduler that have not settled yet. */
+    get activeRuns(): number {
+        return this.active.size;
+    }
+
+    /**
+     * Starts due checks up to the free concurrency and returns at once; a slow
+     * check (up to the 120 s timeout) never blocks the next tick from starting
+     * other watchers. Returns how many checks this tick launched.
+     */
     async tick(): Promise<number> {
         if (this.ticking) {
             return 0;
@@ -78,18 +90,36 @@ export class Scheduler {
         this.ticking = true;
 
         try {
+            const free = this.concurrency - this.active.size;
+
+            if (free <= 0) {
+                return 0;
+            }
+
             const watchers = await this.monitor.listWatchers({ enabledOnly: true });
             const now = this.now();
-            const due = watchers.filter((watcher) => isDue(watcher, now) && !this.monitor.isRunning(watcher.id));
-            const batch = due.slice(0, this.concurrency);
-
-            await Promise.all(
-                batch.map((watcher) =>
-                    this.monitor.runWatcher(watcher).catch((error) => {
-                        logger.error({ error, id: watcher.id, name: watcher.name }, "monitor: scheduled check failed");
-                    })
-                )
+            const due = watchers.filter(
+                (watcher) => isDue(watcher, now) && !this.active.has(watcher.id) && !this.monitor.isRunning(watcher.id)
             );
+            const batch = due.slice(0, free);
+
+            for (const watcher of batch) {
+                this.active.add(watcher.id);
+                this.settled = Promise.all([
+                    this.settled,
+                    this.monitor
+                        .runWatcher(watcher)
+                        .catch((error) => {
+                            logger.error(
+                                { error, id: watcher.id, name: watcher.name },
+                                "monitor: scheduled check failed"
+                            );
+                        })
+                        .finally(() => {
+                            this.active.delete(watcher.id);
+                        }),
+                ]).then(() => undefined);
+            }
 
             return batch.length;
         } catch (error) {
@@ -99,5 +129,10 @@ export class Scheduler {
         } finally {
             this.ticking = false;
         }
+    }
+
+    /** Resolves once every check launched so far has settled (tests, shutdown). */
+    drain(): Promise<void> {
+        return this.settled;
     }
 }

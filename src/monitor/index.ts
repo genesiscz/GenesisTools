@@ -3,6 +3,7 @@ import { registerTargetCommands } from "@app/monitor/commands/targets";
 import { registerUiCommand } from "@app/monitor/commands/ui";
 import { registerWatcherCommands } from "@app/monitor/commands/watchers";
 import { monitorServerApp } from "@app/monitor/lib/server/app";
+import { MONITOR_VERSION } from "@app/monitor/lib/types";
 import { WatcherValidationError } from "@app/monitor/lib/validate";
 import { runTool } from "@genesiscz/utils/cli";
 import { enhanceHelp } from "@genesiscz/utils/cli/executor";
@@ -13,7 +14,7 @@ export function buildMonitorProgram(): Command {
     const program = new Command()
         .name("monitor")
         .description("Uptime watchers for websites, status pages and AI providers: CLI + daemon + dashboard")
-        .version("1.0.0");
+        .version(MONITOR_VERSION);
 
     registerWatcherCommands(program);
     registerTargetCommands(program);

@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_INTERVAL_SEC, DEFAULT_TIMEOUT_MS } from "./types";
-import { normalizeTarget, parseWatcherInput, parseWatcherPatch, WatcherValidationError } from "./validate";
+import {
+    normalizeTarget,
+    parseNotifyTargetPatch,
+    parseWatcherInput,
+    parseWatcherPatch,
+    WatcherValidationError,
+} from "./validate";
 
 describe("normalizeTarget", () => {
     test("adds https:// to a bare host for websites", () => {
@@ -89,5 +95,61 @@ describe("parseWatcherPatch", () => {
 
     test("rejects an empty name", () => {
         expect(() => parseWatcherPatch({ name: "  " }, "website")).toThrow(WatcherValidationError);
+    });
+
+    test("a kind change without a target is refused", () => {
+        // The row would keep the old kind's target: an ai-provider watcher
+        // pointing at https://example.com/ reports "no AI account with id
+        // https://example.com/" on every tick, forever.
+        expect(() => parseWatcherPatch({ kind: "ai-provider" }, "website")).toThrow(WatcherValidationError);
+        expect(() => parseWatcherPatch({ kind: "statuspage" }, "website")).toThrow(
+            "changing the kind to statuspage needs a target for it"
+        );
+    });
+
+    test("a kind change with a target is accepted and normalized for the new kind", () => {
+        expect(parseWatcherPatch({ kind: "statuspage", target: "status.x.dev/foo" }, "website")).toEqual({
+            kind: "statuspage",
+            target: "https://status.x.dev",
+        });
+    });
+
+    test("naming the same kind without a target is fine", () => {
+        expect(parseWatcherPatch({ kind: "website", enabled: false }, "website")).toEqual({
+            kind: "website",
+            enabled: false,
+        });
+    });
+});
+
+describe("parseNotifyTargetPatch", () => {
+    test("a channel change without a config is refused", () => {
+        // The row would keep the previous channel's fields: a webhook reporting
+        // as telegram, with a url and no botToken, silently dead.
+        expect(() => parseNotifyTargetPatch({ channel: "telegram" }, "webhook")).toThrow(WatcherValidationError);
+    });
+
+    test("a channel change with the new channel's config is accepted", () => {
+        expect(
+            parseNotifyTargetPatch({ channel: "telegram", config: { botToken: "1:A", chatId: "-1" } }, "webhook")
+        ).toEqual({ channel: "telegram", config: { botToken: "1:A", chatId: "-1" } });
+    });
+
+    test("naming the same channel without a config is fine", () => {
+        expect(parseNotifyTargetPatch({ channel: "webhook", enabled: false }, "webhook")).toEqual({
+            channel: "webhook",
+            enabled: false,
+        });
+    });
+});
+
+describe("parseNotifyTargetPatch channel switch", () => {
+    test("an empty config on a channel change is refused: no stored secret carries over", () => {
+        expect(() => parseNotifyTargetPatch({ channel: "telegram", config: {} }, "webhook")).toThrow(
+            /telegram target needs config.botToken/
+        );
+        expect(() => parseNotifyTargetPatch({ channel: "webhook", config: {} }, "telegram")).toThrow(
+            /webhook target needs config.url/
+        );
     });
 });

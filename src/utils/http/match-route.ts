@@ -32,7 +32,13 @@ export function matchRoute(
         const pathPart = pathParts[i];
 
         if (patternPart.startsWith(":")) {
-            params[patternPart.slice(1)] = decodeURIComponent(pathPart);
+            try {
+                params[patternPart.slice(1)] = decodeURIComponent(pathPart);
+            } catch {
+                // A malformed escape (%E0%A4%A) is not a match, not a crash.
+                return null;
+            }
+
             continue;
         }
 

@@ -65,6 +65,25 @@ describe("parseFeed", () => {
         ]);
     });
 
+    test("an out-of-range numeric entity is left as written instead of throwing", () => {
+        // `String.fromCodePoint(1114112)` throws RangeError, which used to
+        // propagate out of the whole check and record nothing at all.
+        const feed = parseFeed(
+            `<rss><channel><item><title>bad &#1114112; entity</title><guid>x1</guid></item></channel></rss>`
+        );
+
+        expect(feed.items).toHaveLength(1);
+        expect(feed.items[0].title).toBe("bad &#1114112; entity");
+    });
+
+    test("a valid numeric entity still decodes", () => {
+        const feed = parseFeed(
+            `<rss><channel><item><title>caf&#233; &#x2014; open</title><guid>x2</guid></item></channel></rss>`
+        );
+
+        expect(feed.items[0].title).toBe("café — open");
+    });
+
     test("filterItems matches title or summary, case-insensitive", () => {
         const items = parseFeed(RSS).items;
 

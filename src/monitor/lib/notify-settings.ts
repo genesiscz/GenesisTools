@@ -15,6 +15,7 @@ import {
     type TelegramChannelConfig,
     type WebhookChannelConfig,
 } from "@genesiscz/utils/notifications";
+import { maskSecrets } from "./types";
 import { WatcherValidationError } from "./validate";
 
 export const NOTIFY_APP = "monitor";
@@ -49,23 +50,6 @@ export interface NotifySettingsPatch {
     };
 }
 
-const SECRET_KEYS = new Set(["botToken"]);
-
-function mask(channel: Record<string, unknown>): Record<string, unknown> {
-    const view: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(channel)) {
-        if (SECRET_KEYS.has(key)) {
-            view[`${key}Set`] = typeof value === "string" && value.length > 0;
-            continue;
-        }
-
-        view[key] = value;
-    }
-
-    return view;
-}
-
 function readMeta(raw: Record<string, unknown>): MonitorNotifyMeta {
     return {
         onDegraded: raw.onDegraded !== false,
@@ -88,7 +72,7 @@ export async function getNotifySettings(): Promise<NotifySettings> {
         meta: readMeta(config.apps[NOTIFY_APP]?.meta ?? {}),
         channels: CHANNEL_NAMES.map((name) => ({
             name,
-            resolved: mask(resolved[name] as unknown as Record<string, unknown>),
+            resolved: maskSecrets(resolved[name] as unknown as Record<string, unknown>),
             overridden: Object.keys(overrides[name] ?? {}),
         })),
     };
@@ -142,6 +126,23 @@ function cleanChannelPatch(name: ChannelName, raw: unknown): Record<string, unkn
     return clean;
 }
 
+/**
+ * Wraps a validated key/value bag as the override of one channel. The keys have
+ * been checked against that channel's field list by then, so this is where the
+ * loose record becomes the channel's own config type, in one place.
+ */
+export function channelOverride<K extends ChannelName>(
+    channel: K,
+    override: unknown
+): NonNullable<NotifySettingsPatch["channels"]> {
+    // Validation lives here, so no caller (HTTP or CLI) can hand an unchecked bag to setAppChannel.
+    return { [channel]: cleanChannelPatch(channel, override) as Partial<ChannelConfigs[K]> };
+}
+
+function applyChannelOverride<K extends ChannelName>(channel: K, override: Partial<ChannelConfigs[K]>): Promise<void> {
+    return notificationsConfig.setAppChannel(NOTIFY_APP, channel, override);
+}
+
 export function parseNotifySettingsPatch(value: unknown): NotifySettingsPatch {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new WatcherValidationError("body must be a JSON object");
@@ -186,7 +187,7 @@ export function parseNotifySettingsPatch(value: unknown): NotifySettingsPatch {
             }
 
             const channel = name as ChannelName;
-            patch.channels[channel] = raw === null ? null : (cleanChannelPatch(channel, raw) as never);
+            Object.assign(patch.channels, raw === null ? { [channel]: null } : channelOverride(channel, raw));
         }
     }
 
@@ -203,15 +204,19 @@ export async function updateNotifySettings(patch: NotifySettingsPatch): Promise<
         await notificationsConfig.setAppMeta(NOTIFY_APP, patch.meta);
     }
 
-    for (const [name, override] of Object.entries(patch.channels ?? {})) {
-        const channel = name as ChannelName;
+    for (const channel of CHANNEL_NAMES) {
+        const override = patch.channels?.[channel];
+
+        if (override === undefined) {
+            continue;
+        }
 
         if (override === null) {
             await notificationsConfig.clearAppChannel(NOTIFY_APP, channel);
             continue;
         }
 
-        await notificationsConfig.setAppChannel(NOTIFY_APP, channel, override as never);
+        await applyChannelOverride(channel, override);
     }
 
     logger.info({ patch: describePatch(patch) }, "monitor: notification settings updated");
@@ -223,7 +228,7 @@ function describePatch(patch: NotifySettingsPatch): Record<string, unknown> {
     const channels: Record<string, unknown> = {};
 
     for (const [name, override] of Object.entries(patch.channels ?? {})) {
-        channels[name] = override === null ? null : mask(override as Record<string, unknown>);
+        channels[name] = override === null ? null : maskSecrets(override as Record<string, unknown>);
     }
 
     return { meta: patch.meta, channels };

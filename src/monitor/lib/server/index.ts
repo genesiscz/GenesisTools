@@ -13,7 +13,7 @@ import {
 import { WATCHER_PRESETS } from "@app/monitor/lib/presets";
 import { listSayVoices } from "@app/monitor/lib/say-voices";
 import { Scheduler } from "@app/monitor/lib/scheduler";
-import { isNotifyChannel, type MonitorEvent } from "@app/monitor/lib/types";
+import { isNotifyChannel, MONITOR_VERSION, type MonitorEvent, maskTarget } from "@app/monitor/lib/types";
 import {
     normalizeTarget,
     parseNotifyTargetInput,
@@ -26,19 +26,58 @@ import { env } from "@genesiscz/utils/env";
 import { matchRoute } from "@genesiscz/utils/http/match-route";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
+import { DASHBOARDS, WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 import type { ServerWebSocket } from "bun";
 
 export const DEFAULT_PORT = WEB_SERVICES["monitor-server"].port;
 const CHECK_RETENTION_DAYS = 30;
 const UI_DIST = resolve(import.meta.dirname, "..", "..", "ui", "dist");
 
-const CORS_HEADERS: Record<string, string> = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Max-Age": "600",
-};
+/**
+ * No CORS headers on purpose. The dashboard is always same-origin: `vite dev`
+ * proxies `/api/` to this port, and the built bundle is served by this process.
+ * `Access-Control-Allow-Origin: *` let ANY page the user had open read
+ * `GET /api/v1/targets` (webhook URLs, telegram bot tokens) and POST new
+ * targets at this loopback daemon.
+ */
+const LOOPBACK_ORIGIN_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * The pages allowed to talk to this daemon from a browser: the Vite dashboard
+ * and this server's own static bundle, on any loopback alias. Another local
+ * port is another program, not us.
+ */
+export function isAllowedBrowserOrigin(origin: string | null, ownPort: number): boolean {
+    if (!origin) {
+        // No Origin at all: curl, the CLI, a test. Not a browser page.
+        return true;
+    }
+
+    try {
+        const url = new URL(origin);
+        const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+        const allowedPorts = new Set([DASHBOARDS.monitor.port, WEB_SERVICES["monitor-server"].port, ownPort]);
+
+        return url.protocol === "http:" && LOOPBACK_ORIGIN_HOSTS.has(url.hostname) && allowedPorts.has(port);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * A browser cannot forge `Origin`, and a page on another site cannot read a
+ * response without CORS headers. What is still reachable is the mutation side
+ * of a "simple" cross-origin POST (`Content-Type: text/plain` skips the
+ * preflight) and a WebSocket upgrade, which CORS never covered. Both are
+ * refused unless the page is one of ours.
+ */
+function isForbiddenCrossOriginWrite(req: Request, ownPort: number): boolean {
+    if (req.method === "GET" || req.method === "HEAD") {
+        return false;
+    }
+
+    return !isAllowedBrowserOrigin(req.headers.get("origin"), ownPort);
+}
 
 export interface StartServerOptions {
     port?: number;
@@ -60,7 +99,7 @@ type WsData = { scope: "events" };
 function json(data: unknown, status = 200): Response {
     return new Response(SafeJSON.stringify(data, { strict: true }), {
         status,
-        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        headers: { "Content-Type": "application/json" },
     });
 }
 
@@ -237,11 +276,13 @@ async function handleTargetRoutes(req: Request, url: URL, monitor: Monitor): Pro
     const path = url.pathname;
 
     if (matchRoute(req, "GET", "/api/v1/targets", path)) {
-        return json({ targets: await monitor.listTargets() });
+        return json({ targets: (await monitor.listTargets()).map(maskTarget) });
     }
 
     if (matchRoute(req, "POST", "/api/v1/targets", path)) {
-        return json({ target: await monitor.createTarget(parseNotifyTargetInput(await readBody(req))) }, 201);
+        const created = await monitor.createTarget(parseNotifyTargetInput(await readBody(req)));
+
+        return json({ target: maskTarget(created) }, 201);
     }
 
     const patch = matchRoute(req, "PATCH", "/api/v1/targets/:id", path);
@@ -259,7 +300,7 @@ async function handleTargetRoutes(req: Request, url: URL, monitor: Monitor): Pro
             parseNotifyTargetPatch(await readBody(req), current.channel)
         );
 
-        return json({ target });
+        return json({ target: target ? maskTarget(target) : target });
     }
 
     const remove = matchRoute(req, "DELETE", "/api/v1/targets/:id", path);
@@ -277,7 +318,7 @@ async function handleTargetRoutes(req: Request, url: URL, monitor: Monitor): Pro
         const id = parseId(test.id);
         const target = id ? await monitor.testTarget(id) : null;
 
-        return target ? json({ sent: true, target }) : error("target not found", 404);
+        return target ? json({ sent: true, target: maskTarget(target) }) : error("target not found", 404);
     }
 
     return null;
@@ -287,7 +328,7 @@ export async function handleApiRequest(req: Request, url: URL, monitor: Monitor,
     const path = url.pathname;
 
     if (path === "/api/v1/healthz") {
-        return json({ ok: true, uptimeMs: Date.now() - startedAt, version: "1.1.0" });
+        return json({ ok: true, uptimeMs: Date.now() - startedAt, version: MONITOR_VERSION });
     }
 
     if (matchRoute(req, "GET", "/api/v1/overview", path)) {
@@ -407,10 +448,23 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
             const url = new URL(req.url);
 
             if (req.method === "OPTIONS") {
-                return new Response(null, { status: 204, headers: CORS_HEADERS });
+                return new Response(null, { status: 204 });
+            }
+
+            if (isForbiddenCrossOriginWrite(req, bunServer.port ?? port)) {
+                logger.warn(
+                    { origin: req.headers.get("origin"), method: req.method, path: url.pathname },
+                    "monitor server: refused a cross-origin write"
+                );
+
+                return error("cross-origin writes are not allowed", 403);
             }
 
             if (url.pathname === "/api/v1/events") {
+                if (!isAllowedBrowserOrigin(req.headers.get("origin"), bunServer.port ?? port)) {
+                    return error("cross-origin websocket upgrades are not allowed", 403);
+                }
+
                 if (bunServer.upgrade(req, { data: { scope: "events" } })) {
                     return undefined;
                 }
@@ -448,6 +502,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         scheduler,
         async stop() {
             scheduler.stop();
+            await scheduler.drain();
             offEvents();
 
             for (const ws of sockets) {

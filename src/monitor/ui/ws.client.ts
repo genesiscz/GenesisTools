@@ -27,8 +27,11 @@ function eventsUrl(): string {
 export function useEventStream(opts: UseEventStreamOpts = {}) {
     const [connected, setConnected] = useState(false);
     const latestOpts = useRef(opts);
-    latestOpts.current = opts;
     const enabled = opts.enabled !== false;
+
+    useEffect(() => {
+        latestOpts.current = opts;
+    });
 
     useEffect(() => {
         if (!enabled) {

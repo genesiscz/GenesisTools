@@ -1,5 +1,6 @@
 import {
     CHANNEL_NAMES,
+    channelOverride,
     getNotifySettings,
     type NotifySettings,
     type NotifySettingsPatch,
@@ -7,6 +8,7 @@ import {
     updateNotifySettings,
 } from "@app/monitor/lib/notify-settings";
 import { listSayVoices } from "@app/monitor/lib/say-voices";
+import { isNotifyChannel } from "@app/monitor/lib/types";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import type { ChannelName } from "@genesiscz/utils/notifications";
@@ -71,7 +73,7 @@ function printSettings(settings: NotifySettings): void {
     out.println(`  ${suggestCommand("tools monitor notify", { replaceCommand: ["test"] })}`);
 }
 
-function buildPatch(channel: ChannelName, opts: SetOptions): NotifySettingsPatch {
+function buildPatch(channel: ChannelName | undefined, opts: SetOptions): NotifySettingsPatch {
     const patch: NotifySettingsPatch = {};
 
     if (opts.onDegraded !== undefined || opts.onRecover !== undefined) {
@@ -84,6 +86,10 @@ function buildPatch(channel: ChannelName, opts: SetOptions): NotifySettingsPatch
         if (opts.onRecover !== undefined) {
             patch.meta.onRecover = opts.onRecover;
         }
+    }
+
+    if (channel === undefined) {
+        return patch;
     }
 
     if (opts.reset) {
@@ -123,7 +129,7 @@ function buildPatch(channel: ChannelName, opts: SetOptions): NotifySettingsPatch
     }
 
     if (Object.keys(override).length > 0) {
-        patch.channels = { [channel]: override as never };
+        patch.channels = channelOverride(channel, override);
     }
 
     return patch;
@@ -179,7 +185,7 @@ export function registerNotifyCommands(program: Command): void {
                 return;
             }
 
-            const patch = buildPatch((channel ?? "system") as ChannelName, opts);
+            const patch = buildPatch(channel !== undefined && isNotifyChannel(channel) ? channel : undefined, opts);
 
             if (!patch.meta && !patch.channels) {
                 out.log.warn("Nothing to change; pass --enable, --disable, --reset or a field flag.");

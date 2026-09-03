@@ -229,14 +229,18 @@ function Header({ watcher }: { watcher: WatcherSummary }) {
 
 function WatcherPage() {
     const { id: rawId } = Route.useParams();
-    const id = Number.parseInt(rawId, 10);
+
+    if (!/^\d+$/.test(rawId)) {
+        return <ErrorPanel title="Not a watcher id." detail={`"${rawId}" is not a number.`} />;
+    }
+
+    return <WatcherPageBody id={Number.parseInt(rawId, 10)} />;
+}
+
+function WatcherPageBody({ id }: { id: number }) {
     const watcher = useWatcher(id);
     const checks = useChecks(id, 200);
     const incidents = useWatcherIncidents(id);
-
-    if (!Number.isInteger(id)) {
-        return <ErrorPanel title="Not a watcher id." detail={`"${rawId}" is not a number.`} />;
-    }
 
     if (watcher.isPending) {
         return <Loading label="Loading watcher" cards={3} />;
