@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
+import { parseMinReal } from "@app/macos/lib/clones/min-real";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -96,6 +97,13 @@ export function createDuplicatesCommand(): Command {
                 process.exit(2);
             }
 
+            const minSize = opts.minReal === undefined ? undefined : parseMinReal(opts.minReal);
+            if (minSize === null) {
+                console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+                process.exitCode = 1;
+                return;
+            }
+
             // SIGINT → abort the walk + hash within one 64 KB chunk. Without
             // this, sync readSync on a multi-GB file blocks Ctrl+C until the
             // syscall returns (seconds, sometimes longer).
@@ -108,8 +116,6 @@ export function createDuplicatesCommand(): Command {
             };
             process.on("SIGINT", onSigint);
             process.on("SIGTERM", onSigint);
-
-            const minSize = opts.minReal ? Number.parseInt(opts.minReal, 10) : undefined;
 
             // Live progress spinner — only when stderr is a TTY and we're
             // not piped/silent. The walk just bumps counters via onDirEntered

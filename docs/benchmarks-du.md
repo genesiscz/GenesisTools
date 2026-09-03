@@ -918,3 +918,33 @@ parallelism before APFS stops scaling. `find -type f` over the same single tree
 costs ~6 µs per entry (no per-inode lookup), which is the floor a walk that needs
 sizes cannot reach. `searchfs(2)` over the whole Data volume (29M inodes,
 datalength ≥ 10 MB) was also tried and did not return within 2 minutes.
+
+### 2026-09-02 23:33 — `bench.sh bigfiles-after`: the fixed matrix, before and after the `--bigfiles` mode
+
+Run with `src/du/native/bench.sh bigfiles-after` on this branch (the harness rebuilds the
+binary from the working tree). The "old" binary is `clonesize.c` from the merge base
+(`origin/feat/2026-08-30-enhancements`), built with the same `clang -O2 -pthread`.
+
+- `uptime` at start: `load averages: 19.68 33.32 38.34`; after the matrix: `62.02 43.63 41.82`;
+  at the end: `61.74 45.42 42.54` (32 users, a full test suite and an iOS build had just run).
+  System CPU is the metric below; wall time on this load is not comparable to earlier sections.
+
+| mode | wall (mean ± σ, 5 runs) | user | system CPU |
+|---|---|---|---|
+| T1 flat | 3.797 s ± 0.126 s | 0.150 s | 24.502 s |
+| T1 depth2 | 4.516 s ± 0.865 s | 0.148 s | 19.717 s |
+| T2 flat | 2.247 s ± 0.180 s | 0.080 s | 10.415 s |
+| T2 depth2 | 2.091 s ± 0.081 s | 0.085 s | 13.052 s |
+| T1 cache-cold (3 runs) | 3.726 s ± 0.097 s | 0.158 s | 23.610 s |
+| T1 cache-warm (3 runs) | 524.5 ms ± 11.9 ms | 54.5 ms | 3.513 s |
+
+`--json` totals, old binary vs new binary, same targets, run back to back. Every scalar the
+harness diffs is byte-identical for both targets (the full per-group lines were compared too):
+
+| target | files_scanned | files_listed | naive_bytes | unique_bytes | shared_bytes |
+|---|---|---|---|---|---|
+| T1 (this worktree), old = new | 174,671 | 175,246 | 3,616,108,544 | 2,836,356,762 | 779,751,782 |
+| T2 (its node_modules), old = new | 100,501 | 100,647 | 2,557,087,744 | 2,133,221,171 | 423,866,573 |
+
+Identical totals are the requirement here: `--bigfiles` is an additive mode and the scan
+path did not change, so nothing may move. Nothing did.

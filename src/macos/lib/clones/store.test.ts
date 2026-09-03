@@ -43,3 +43,16 @@ describe("clones store", () => {
         expect(b.nodeModules).toBe(true);
     });
 });
+
+describe("minReal contract", () => {
+    it("setMinReal refuses anything that is not a positive whole number", async () => {
+        for (const bad of [-1, 0, 1.5, Number.NaN]) {
+            await expect(setMinReal(bad)).rejects.toThrow(RangeError);
+        }
+    });
+
+    it("a stored non-positive minReal reads back as unset", async () => {
+        await storage.setConfig({ watchedDirs: [], minReal: -1 });
+        expect((await loadClonesConfig()).minReal).toBeUndefined();
+    });
+});

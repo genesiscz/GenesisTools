@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseMinReal } from "@app/macos/lib/clones/min-real";
 import {
     addWatchedDirs,
     loadClonesConfig,
@@ -84,8 +85,13 @@ export function createConfigCommand(): Command {
                 }
 
                 if (opts.setMinReal !== undefined) {
-                    const n = Number.parseInt(opts.setMinReal, 10);
-                    if (!Number.isNaN(n)) {
+                    const n = parseMinReal(opts.setMinReal);
+                    if (n === null) {
+                        console.error(
+                            `--set-min-real must be a positive whole number of bytes, got "${opts.setMinReal}".`
+                        );
+                        process.exitCode = 1;
+                    } else {
                         await setMinReal(n);
                     }
                 }
@@ -161,8 +167,10 @@ export function createConfigCommand(): Command {
                     return;
                 }
 
-                const n = Number.parseInt(v, 10);
-                if (!Number.isNaN(n)) {
+                const n = parseMinReal(v);
+                if (n === null) {
+                    p.log.error(`min-real must be a positive whole number of bytes, got "${v}".`);
+                } else {
                     await setMinReal(n);
                     p.log.success(`min-real → ${n}`);
                 }

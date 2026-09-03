@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [master, main]
+  # Every base branch, so stacked PRs get CI too. Drafts are skipped by the
+  # job-level `if` below and run once the PR is marked ready for review.
   pull_request:
-    branches: [master, main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +14,7 @@ jobs:
   # ubuntu always; windows-latest only when the PR opts in via title/label
   # containing "windows" (case-insensitive), or on manual workflow_dispatch.
   setup:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.decide.outputs.matrix }}

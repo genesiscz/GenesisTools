@@ -51,7 +51,7 @@ describe("planCacheKey", () => {
 describe("cachePlan / getCachedPlan round-trip", () => {
     it("stores and retrieves the plan with a non-negative age", async () => {
         const uniq = { ...params, roots: [`/tmp/gt-cache-test-${Date.now()}`] };
-        await cachePlan(uniq, sets);
+        await cachePlan(uniq, sets, stampRoots(uniq.roots));
         const hit = await getCachedPlan(uniq);
         expect(hit).not.toBeNull();
         expect(hit?.plan).toEqual(sets);

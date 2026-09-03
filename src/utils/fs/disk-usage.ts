@@ -845,6 +845,16 @@ export interface FindDuplicatesOptions {
      *  into a subprocess. Any failure other than an abort falls back to the
      *  in-process walk with a warning, so a missing compiler never breaks a scan. */
     candidateLister?: CandidateLister;
+    /** Called once when the walk finishes and once when the hash phase
+     *  finishes, with a one-line human summary and the phase wall time. The
+     *  CLI prints one done-line per stage from this. */
+    onStage?: (stage: FindDuplicatesStage) => void;
+}
+
+export interface FindDuplicatesStage {
+    name: "walk" | "hash";
+    detail: string;
+    elapsedMs: number;
 }
 
 export interface CandidateListing {
@@ -956,7 +966,7 @@ export async function findDuplicateFiles(
 ): Promise<DuplicateGroup[]> {
     const roots = Array.isArray(root) ? root : [root];
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, onDirEntered, stats, cache, partnerFor, candidateLister } = opts;
+    const { signal, onDirEntered, stats, cache, partnerFor, candidateLister, onStage } = opts;
     const pruneNames = opts.pruneNames ?? [];
     const pruneSet = new Set(pruneNames);
     const shouldEnter =
@@ -1074,6 +1084,11 @@ export async function findDuplicateFiles(
         },
         "walk complete"
     );
+    onStage?.({
+        name: "walk",
+        detail: `${walkedFiles} files in ${walkedDirs} dirs → ${bySize.size} size bucket(s) (${walker} walk)`,
+        elapsedMs: walkMs,
+    });
     phaseStartMs = sw.elapsedMs;
 
     let cloneIdCalls = 0;
@@ -1386,6 +1401,11 @@ export async function findDuplicateFiles(
     }
 
     const hashMs = sw.elapsedMs - phaseStartMs;
+    onStage?.({
+        name: "hash",
+        detail: `${sha256Calls} hashed · ${cacheHits} cache hits · ${byteCompareCalls} byte-compares → ${groups.length} group(s)`,
+        elapsedMs: hashMs,
+    });
 
     if (stats) {
         stats.walkedFiles += walkedFiles;

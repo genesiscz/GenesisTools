@@ -348,6 +348,9 @@ export async function listBigFiles(opts: ListBigFilesOptions): Promise<BigFilesR
     }
     args.push(...opts.roots);
 
+    // An "abort" listener never fires for a signal that is already aborted,
+    // so check first: otherwise the whole native walk runs before the throw.
+    opts.signal?.throwIfAborted();
     logger.debug({ bin, roots: opts.roots.length, minBytes: opts.minBytes }, "du: listing big files natively");
     const end = prof.start("c-subprocess.bigfiles");
     const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });

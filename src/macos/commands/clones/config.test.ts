@@ -90,3 +90,24 @@ describe("createConfigCommand (non-TTY)", () => {
         expect(errs.join("\n")).toContain("/no/such/dir/xyz-123");
     });
 });
+
+describe("--set-min-real contract", () => {
+    it("refuses a non-positive value, exits 1, and leaves the stored value alone", async () => {
+        await storage.setConfig({ watchedDirs: [], minReal: 4096 });
+        const errLines: string[] = [];
+        const origErr = console.error;
+        console.error = (...x: unknown[]) => errLines.push(x.join(" "));
+        process.exitCode = undefined;
+        try {
+            await createConfigCommand().parseAsync(["node", "config", "--set-min-real", "-1"], { from: "node" });
+        } finally {
+            console.error = origErr;
+        }
+
+        const exitCode: unknown = process.exitCode;
+        process.exitCode = undefined;
+        expect(exitCode).toBe(1);
+        expect(errLines.join("\n")).toContain("positive whole number");
+        expect((await loadClonesConfig()).minReal).toBe(4096);
+    });
+});

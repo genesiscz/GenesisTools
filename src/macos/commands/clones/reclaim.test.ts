@@ -128,6 +128,37 @@ describe("createReclaimCommand", () => {
         expect(res.err).toContain("--targets");
     });
 
+    // Checks the FORMAT only (one record, one line). Delivery of a large
+    // result through a real pipe is printLn's guarantee, pinned by the
+    // subprocess test in src/utils/cli/stdout.test.ts.
+    it("--format jsonl prints the plan as one line", async () => {
+        const outer = twoTrees();
+        try {
+            const res = await run([
+                "plan",
+                "--dir",
+                outer,
+                "--targets",
+                "node_modules",
+                "--min-real",
+                "1024",
+                "--format",
+                "jsonl",
+            ]);
+            expect(res.out).not.toContain("\n");
+            expect((SafeJSON.parse(res.out) as PlanJson).sets.length).toBe(1);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("a non-positive --min-real is refused instead of scanning every file", async () => {
+        const res = await run(["plan", "--dir", tmpdir(), "--min-real", "-1"]);
+        expect(res.code).toBe(1);
+        expect(res.err).toContain("--min-real");
+        expect(res.err).toContain("positive whole number");
+    });
+
     it("an unknown --keep-partners value is refused with the possible values", async () => {
         const res = await run(["plan", "--dir", tmpdir(), "--keep-partners", "cargo"]);
         expect(res.code).toBe(1);

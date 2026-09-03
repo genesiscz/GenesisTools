@@ -5,6 +5,7 @@ import { cachePlan, getCachedPlan, type PlanCacheParams, stampRoots, stampsMatch
 import { RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
 import { KEEP_PARTNER_IDS, type KeepPartnerId } from "@app/macos/lib/clones/keep-partners";
+import { parseMinReal } from "@app/macos/lib/clones/min-real";
 import {
     getPreset,
     listPresets,
@@ -14,7 +15,13 @@ import {
     touchPreset,
 } from "@app/macos/lib/clones/presets";
 import { clonesProfile } from "@app/macos/lib/clones/profile";
-import { DEFAULT_MIN_REAL, planReclaim, type ReclaimPlan, type ReclaimSelector } from "@app/macos/lib/clones/reclaim";
+import {
+    DEFAULT_MIN_REAL,
+    planReclaim,
+    type ReclaimPhase,
+    type ReclaimPlan,
+    type ReclaimSelector,
+} from "@app/macos/lib/clones/reclaim";
 import { appendReclaimEvent } from "@app/macos/lib/clones/reclaim-run";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
@@ -67,7 +74,10 @@ function applySelectorFlags(cmd: Command): Command {
         .option("--dir <path>", "Directory to search (repeatable)", collect, [])
         .option("--worktrees-of <repo>", "Resolve this repo's git worktrees, siblings included")
         .option("--targets [kinds]", `What to scan: ${TARGET_KIND_VALUES.join(", ")}, or a find -name pattern`)
-        .option("--keep-partners [ids]", `Package-manager stores to use as keep-only: ${KEEP_PARTNER_IDS.join(", ")}`)
+        .option(
+            "--keep-partners [ids]",
+            `Package-manager stores never rewritten (${KEEP_PARTNER_IDS.join(", ")}); only bun also offers its cached copies as keep candidates`
+        )
         .option("--exclude <glob>", "Exclude glob (repeatable)", collect, [])
         .option("--min-real <bytes>", "Minimum per-file size to consider", String(DEFAULT_MIN_REAL));
 }
@@ -166,13 +176,22 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         return null;
     }
 
-    const minReal = Number.parseInt(opts.minReal, 10);
+    const minReal = parseMinReal(opts.minReal);
+    if (minReal === null) {
+        console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+        console.error(
+            suggestCommand("tools macos clones", { add: ["--min-real", String(DEFAULT_MIN_REAL)], subcommand })
+        );
+        process.exitCode = 1;
+        return null;
+    }
+
     return {
         dirs,
         ...(opts.worktreesOf !== undefined ? { worktreesOf: opts.worktreesOf } : {}),
         targets,
         exclude: parseVariadic(opts.exclude),
-        minReal: Number.isNaN(minReal) ? DEFAULT_MIN_REAL : minReal,
+        minReal,
         keepPartners: keepPartners.filter((k): k is KeepPartnerId =>
             (KEEP_PARTNER_IDS as readonly string[]).includes(k)
         ),
@@ -222,7 +241,11 @@ function planCacheParamsFor(selector: ReclaimSelector, roots: string[]): PlanCac
 
 function renderPlan(plan: ReclaimPlan, format: string | undefined): string {
     const fmt = resolveFormat(format);
-    if (fmt === "json" || fmt === "jsonl") {
+    if (fmt === "jsonl") {
+        return SafeJSON.stringify(plan);
+    }
+
+    if (fmt === "json") {
         return SafeJSON.stringify(plan, null, 2);
     }
 
@@ -276,6 +299,23 @@ function snapshotHook(selector: ReclaimSelector): (roots: string[]) => Promise<D
 
 /** Shared plan phase: spinner or stderr status lines, file-meta cache
  *  lifetime, SIGINT. Returns null when the run was aborted or refused. */
+/** Spinner label for the stage that starts once `phase` is done. */
+const NEXT_STAGE: Record<ReclaimPhase, string> = {
+    discover: "Loading cache…",
+    cache: "Walking…",
+    walk: "Hashing…",
+    hash: "Collapsing…",
+    collapse: "Finishing…",
+    snapshot: "Finishing…",
+};
+
+/** A line for something that was written, printed after the spinner is gone. */
+function recorded(opts: ReclaimOpts, text: string): void {
+    if (!opts.silent) {
+        ui.ok(`recorded: ${text}`);
+    }
+}
+
 async function runPlan(
     selector: ReclaimSelector,
     opts: ReclaimOpts,
@@ -293,7 +333,7 @@ async function runPlan(
     process.on("SIGTERM", onSigint);
 
     const quiet = Boolean(opts.silent);
-    const spinner = isInteractive() && !quiet ? p.spinner() : null;
+    let spinner = isInteractive() && !quiet ? p.spinner() : null;
     let dirsSeen = 0;
     let lastDir = "";
     let tick: ReturnType<typeof setInterval> | null = null;
@@ -301,7 +341,7 @@ async function runPlan(
         spinner.start("Discovering…");
         tick = setInterval(() => {
             if (lastDir) {
-                spinner.message(`Scanned ${dirsSeen} dirs · in ${shortenForSpinner(lastDir)}`);
+                spinner?.message(`Scanned ${dirsSeen} dirs · in ${shortenForSpinner(lastDir)}`);
             }
         }, 100);
     }
@@ -320,11 +360,17 @@ async function runPlan(
                 dirsSeen += 1;
                 lastDir = dir;
             },
+            // One persistent line per finished stage. In a TTY the running
+            // spinner becomes that line and a fresh spinner starts on the next
+            // stage; piped output gets the same line through `ui.ok`.
             onPhase: (phase, detail) => {
+                const line = `${phase}: ${detail}`;
                 if (spinner) {
-                    spinner.message(`${phase}: ${detail}`);
+                    spinner.stop(line);
+                    spinner = p.spinner();
+                    spinner.start(NEXT_STAGE[phase]);
                 } else if (!quiet) {
-                    ui.dim(`${phase}: ${detail}`);
+                    ui.ok(line);
                 }
             },
             ...(reuseSnapshot ? { snapshot: snapshotHook(selector) } : {}),
@@ -399,11 +445,14 @@ function createPlanCommand(): Command {
             }
 
             // Same-session shortcut only: an apply that follows can reuse this
-            // snapshot while every root keeps its mtime. It expires in 1 hour.
-            await cachePlan(planCacheParamsFor(selector, plan.roots), plan.sets, stampRoots(plan.roots));
+            // snapshot while every root keeps the mtime it had before the scan.
+            // It expires in 1 hour, and apply still byte-verifies every pair.
+            await cachePlan(planCacheParamsFor(selector, plan.roots), plan.sets, plan.rootStamps);
+            recorded(opts, `plan snapshot for apply (valid 1 h) · run log ${plan.runId}`);
 
             if (opts.save !== undefined) {
                 savePreset(presetFromSelector(opts.save, selector, { reclaimable: plan.totalReclaimable }));
+                recorded(opts, `preset "${opts.save}"`);
             }
 
             await printLn(renderPlan(plan, opts.format));
@@ -596,7 +645,8 @@ function createPresetsCommand(): Command {
 
             touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalReclaimable });
             if (opts.apply !== true) {
-                await cachePlan(planCacheParamsFor(selector, plan.roots), plan.sets, stampRoots(plan.roots));
+                await cachePlan(planCacheParamsFor(selector, plan.roots), plan.sets, plan.rootStamps);
+                recorded(opts, `plan snapshot for apply (valid 1 h) · run log ${plan.runId}`);
                 await printLn(renderPlan(plan, opts.format));
                 process.exitCode = 0;
                 return;

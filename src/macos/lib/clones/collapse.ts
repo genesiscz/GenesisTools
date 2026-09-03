@@ -6,6 +6,7 @@ import {
     type CandidateLister,
     emptyFindDuplicatesStats,
     type FileMetaCacheLike,
+    type FindDuplicatesStage,
     findDuplicateFiles,
 } from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
@@ -39,6 +40,8 @@ export interface CollapseArgs {
     /** Forwarded to `walkFiles` — called per directory entered (high rate;
      *  cheap callback only). CLI uses this to drive a live spinner. */
     onDirEntered?: (dir: string) => void;
+    /** Forwarded to `findDuplicateFiles`: one call per finished stage. */
+    onStage?: (stage: FindDuplicatesStage) => void;
     /** Forwarded to `findDuplicateFiles`. When provided, the hash phase
      *  reuses cached sha for unchanged files. */
     cache?: FileMetaCacheLike;
@@ -254,6 +257,7 @@ export async function collapseDuplicates({
     pruneNames,
     nativeWalk,
     onDirEntered,
+    onStage,
     cache,
     prefixHash,
     keepOnlyRoots = [],
@@ -287,6 +291,9 @@ export async function collapseDuplicates({
     }
     if (onDirEntered !== undefined) {
         findOpts.onDirEntered = onDirEntered;
+    }
+    if (onStage !== undefined) {
+        findOpts.onStage = onStage;
     }
     if (cache !== undefined) {
         findOpts.cache = cache;

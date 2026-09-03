@@ -13,10 +13,18 @@ export interface ClonesConfig {
  *  Production callers should use the typed helpers below. */
 export const storage = new Storage("macos-clones");
 
+/** Same contract as `--min-real` on the CLI: a positive whole number of
+ *  bytes. A config written before this check (or edited by hand) that holds
+ *  `-1` reads back as unset, so the daemon falls back to the default instead
+ *  of walking and hashing every file. */
+function isValidMinReal(value: unknown): value is number {
+    return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
 function normalize(config: Partial<ClonesConfig>): ClonesConfig {
     return {
         watchedDirs: Array.isArray(config.watchedDirs) ? config.watchedDirs : [],
-        ...(typeof config.minReal === "number" ? { minReal: config.minReal } : {}),
+        ...(isValidMinReal(config.minReal) ? { minReal: config.minReal } : {}),
         ...(Array.isArray(config.exclude) ? { exclude: config.exclude } : {}),
         ...(typeof config.nodeModules === "boolean" ? { nodeModules: config.nodeModules } : {}),
     };
@@ -44,6 +52,10 @@ export async function removeWatchedDirs(dirs: string[]): Promise<ClonesConfig> {
 }
 
 export async function setMinReal(bytes: number): Promise<ClonesConfig> {
+    if (!isValidMinReal(bytes)) {
+        throw new RangeError(`minReal must be a positive whole number of bytes, got ${bytes}`);
+    }
+
     const updated = await storage.atomicConfigUpdate<ClonesConfig>((c) => {
         c.minReal = bytes;
     });

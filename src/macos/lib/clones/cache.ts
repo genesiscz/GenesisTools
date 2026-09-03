@@ -77,7 +77,12 @@ export function stampsMatch(a: RootStamp[], b: RootStamp[]): boolean {
     return b.every((s) => s.mtimeMs >= 0 && byPath.get(s.path) === s.mtimeMs);
 }
 
-export async function cachePlan(p: PlanCacheParams, plan: DuplicateSet[], rootStamps: RootStamp[] = []): Promise<void> {
+/** Every writer stamps the roots it scanned, with stamps taken BEFORE the
+ *  scan: a plan without stamps can never be reused, so `optimize --apply`,
+ *  `reclaim apply` and the daemon all read the same invalidation contract.
+ *  The stamp is a cheap same-session shortcut, not the safety net: apply
+ *  byte-verifies every pair in `dedupeFile` before it clones. */
+export async function cachePlan(p: PlanCacheParams, plan: DuplicateSet[], rootStamps: RootStamp[]): Promise<void> {
     const file: PlanCacheFile = { plan, rootStamps };
     await storage.putCacheFile(planCacheKey(p), file, TTL);
 }

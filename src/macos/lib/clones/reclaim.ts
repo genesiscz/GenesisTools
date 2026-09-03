@@ -1,5 +1,7 @@
+import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import type { FileMetaCacheLike } from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
+import { type RootStamp, stampRoots } from "./cache";
 import { collapseDuplicates } from "./collapse";
 import { discoverRoots } from "./discover";
 import {
@@ -33,6 +35,9 @@ export interface ReclaimPlan {
     runId: string;
     selector: ReclaimSelector;
     roots: string[];
+    /** Root mtimes taken right after discovery, BEFORE the scan, so a root
+     *  that changes while the scan runs can never match the stored stamp. */
+    rootStamps: RootStamp[];
     skipped: SkippedRoot[];
     keepRoots: ResolvedKeepPartner[];
     sets: DuplicateSet[];
@@ -41,11 +46,14 @@ export interface ReclaimPlan {
     fromSnapshot: boolean;
 }
 
-export type ReclaimPhase = "discover" | "collapse" | "snapshot";
+export type ReclaimPhase = "discover" | "cache" | "walk" | "hash" | "collapse" | "snapshot";
 
 export interface PlanReclaimOpts {
     signal?: AbortSignal;
     onDirEntered?: (dir: string) => void;
+    /** Called once per FINISHED stage, in order: discover, cache (only when
+     *  `onDiscovered` is set), walk, hash, collapse; or discover, snapshot when
+     *  a snapshot answered. `detail` ends with the stage wall time. */
     onPhase?: (phase: ReclaimPhase, detail: string) => void;
     cache?: FileMetaCacheLike;
     /** Called with the discovered roots. Returning sets skips the collapse
@@ -83,6 +91,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
         minReal: selector.minReal,
     });
 
+    const discoverStart = performance.now();
     const discovered = await discoverRoots({
         dirs: selector.dirs,
         targets: selector.targets,
@@ -93,7 +102,11 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
         roots: discovered.roots.length,
         skipped: discovered.skipped,
     });
-    opts.onPhase?.("discover", `${discovered.roots.length} root(s), ${discovered.skipped.length} skipped`);
+    opts.onPhase?.(
+        "discover",
+        `${discovered.roots.length} root(s), ${discovered.skipped.length} skipped · ${formatDuration(performance.now() - discoverStart)}`
+    );
+    const rootStamps = stampRoots(discovered.roots);
 
     const keepRoots = resolveKeepPartners(selector.keepPartners, spawnCacheCommand);
     const keepOnlyRoots = keepRoots.map((k) => k.root);
@@ -119,6 +132,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             runId,
             selector,
             roots: discovered.roots,
+            rootStamps,
             skipped: discovered.skipped,
             keepRoots,
             sets,
@@ -143,10 +157,18 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
     }
 
     if (opts.onDiscovered !== undefined) {
+        const cacheStart = performance.now();
         await clonesProfile.measureAsync("cache.load", () => Promise.resolve(opts.onDiscovered?.(discovered.roots)));
+        opts.onPhase?.(
+            "cache",
+            `scope loaded for ${discovered.roots.length} root(s) · ${formatDuration(performance.now() - cacheStart)}`
+        );
     }
 
-    opts.onPhase?.("collapse", `${discovered.roots.length} root(s)`);
+    const onPhase = opts.onPhase;
+    // Reset when the hash stage reports, so "collapse" only covers turning the
+    // duplicate groups into sets and never re-counts the walk and hash time.
+    let collapseStart = performance.now();
     const report = await clonesProfile.measureAsync("collapse", () =>
         collapseDuplicates({
             roots: discovered.roots,
@@ -157,8 +179,20 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
             ...(opts.onDirEntered !== undefined ? { onDirEntered: opts.onDirEntered } : {}),
             ...(opts.cache !== undefined ? { cache: opts.cache } : {}),
+            ...(onPhase !== undefined
+                ? {
+                      onStage: (s: { name: "walk" | "hash"; detail: string; elapsedMs: number }) => {
+                          onPhase(s.name, `${s.detail} · ${formatDuration(s.elapsedMs)}`);
+                          collapseStart = performance.now();
+                      },
+                  }
+                : {}),
         })
     );
     appendReclaimEvent(runId, { phase: "collapse", sets: report.sets.length, stats: report.stats ?? null });
+    opts.onPhase?.(
+        "collapse",
+        `${report.sets.length} set(s) · ${formatBytes(sumReclaimable(report.sets))} reclaimable · ${formatDuration(performance.now() - collapseStart)}`
+    );
     return finish(report.sets, false);
 }

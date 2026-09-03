@@ -8,10 +8,11 @@ import {
     rollbackProcess,
     runOptimize,
 } from "@app/macos/lib/clones/audit";
-import { cachePlan, getCachedPlan } from "@app/macos/lib/clones/cache";
+import { cachePlan, getCachedPlan, stampRoots, stampsMatch } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { discoverRoots, RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
+import { parseMinReal } from "@app/macos/lib/clones/min-real";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
@@ -251,9 +252,16 @@ export function createOptimizeCommand(): Command {
                 process.exit(2);
             }
 
+            const minReal = parseMinReal(opts.minReal);
+            if (minReal === null) {
+                console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+                process.exitCode = 1;
+                return;
+            }
+
             const cacheParams = {
                 roots,
-                minSize: Number.parseInt(opts.minReal, 10) || 10485760,
+                minSize: minReal,
                 include,
                 exclude: parseVariadic(opts.exclude),
                 nodeModules: Boolean(opts.nodeModules),
@@ -283,6 +291,9 @@ export function createOptimizeCommand(): Command {
             // incorrect dedupe — at worst one extra streaming byte-compare.
             const fileCache = FileMetaCache.getInstance();
             const scanStartedAt = Date.now();
+            // Taken before the scan so a root that changes mid-scan can never
+            // match the stamp stored with the plan.
+            const rootStamps = stampRoots(roots);
 
             try {
                 for (const root of roots) {
@@ -295,7 +306,12 @@ export function createOptimizeCommand(): Command {
                 );
 
                 if (opts.apply) {
-                    const cached = opts.cache === false ? null : await getCachedPlan(cacheParams);
+                    const stored = opts.cache === false ? null : await getCachedPlan(cacheParams);
+                    const cached = stored !== null && stampsMatch(stored.rootStamps, rootStamps) ? stored : null;
+                    if (stored !== null && cached === null) {
+                        log.info({ roots: roots.length, ageMs: stored.ageMs }, "plan cache stale — rescanning");
+                    }
+
                     const sets =
                         cached?.plan ??
                         (
@@ -372,7 +388,7 @@ export function createOptimizeCommand(): Command {
                         signal: controller.signal,
                     })
                 ).sets;
-                await cachePlan(cacheParams, sets);
+                await cachePlan(cacheParams, sets, rootStamps);
                 await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(dryRunReport(roots, sets)));
                 process.exitCode = 0;
             } catch (err) {

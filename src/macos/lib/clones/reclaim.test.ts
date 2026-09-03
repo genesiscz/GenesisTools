@@ -57,7 +57,9 @@ describe("planReclaim", () => {
             expect(plan.totalReclaimable).toBe(plan.sets[0].eachBytes);
             expect(plan.keepRoots).toEqual([]);
             expect(plan.fromSnapshot).toBe(false);
-            expect(phases).toEqual(["discover", "collapse"]);
+            expect(phases).toEqual(["discover", "walk", "hash", "collapse"]);
+            expect(plan.rootStamps.map((s) => s.path).sort()).toEqual([...plan.roots].sort());
+            expect(plan.rootStamps.every((s) => s.mtimeMs >= 0)).toBe(true);
 
             const events = readReclaimEvents(plan.runId).map((e) => e.phase);
             expect(events).toEqual(["start", "discover", "collapse", "plan"]);
@@ -85,7 +87,7 @@ describe("planReclaim", () => {
             );
             runId = plan.runId;
             expect(handed.sort()).toEqual([...plan.roots].sort());
-            expect(order).toEqual(["discover", "onDiscovered", "collapse"]);
+            expect(order).toEqual(["discover", "onDiscovered", "cache", "walk", "hash", "collapse"]);
         } finally {
             dropRunLog(runId);
             rmSync(outer, { recursive: true, force: true });

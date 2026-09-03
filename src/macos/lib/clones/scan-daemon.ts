@@ -1,5 +1,5 @@
 import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
-import { cachePlan } from "@app/macos/lib/clones/cache";
+import { cachePlan, stampRoots } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -38,6 +38,7 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
     // collapseDuplicates so the cached plan matches its cache key — otherwise
     // a follow-up `optimize` cache hit serves an unfiltered plan against a
     // filter-aware request.
+    const rootStamps = stampRoots(roots);
     const sets = (await collapseDuplicates({ roots, minSize: minReal, exclude, pruneNames: [".git"] })).sets;
     const reclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
 
@@ -52,7 +53,8 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
             worktreesOf: "",
             keepPartners: [],
         },
-        sets
+        sets,
+        rootStamps
     );
 
     const id = newProcessId();
