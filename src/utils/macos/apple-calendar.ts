@@ -1,8 +1,105 @@
-import type { CalendarEventInfo, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
-
+import type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
+import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { getDarwinKit } from "./darwinkit";
 
-export type { CalendarEventInfo, CalendarInfo, SourceInfo };
+export type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo };
+
+/** EventKit hands this single fake calendar back when the process has Add Only (write-only) access. */
+export const CALENDAR_PLACEHOLDER_IDENTIFIER = "VIRTUAL_APP_CALENDAR_UUID";
+
+const AUTH_TIMEOUT_MS = 30_000;
+/** The Swift side polls up to 15 s for the user's answer to the upgrade dialog. */
+const UPGRADE_TIMEOUT_MS = 40_000;
+
+export interface CalendarAuthClient {
+    authorized: (opts?: { timeout?: number }) => Promise<CalendarAuthorizedResult>;
+    requestFullAccess: (opts?: { timeout?: number }) => Promise<CalendarAuthorizedResult>;
+}
+
+export interface EnsureAccessOptions {
+    /** Ask macOS to upgrade Add Only to Full Access (shows a system dialog). Defaults to TTY-only. */
+    requestUpgrade?: boolean;
+}
+
+export function describeCalendarHostApp(): string {
+    const bundleId = env.device.getHostBundleIdentifier();
+
+    if (bundleId) {
+        return `the app "${bundleId}"`;
+    }
+
+    return "the terminal app that runs `tools` (under launchd it is the `bun` binary)";
+}
+
+export function calendarPermissionMessage(status: string, need: "read" | "write"): string {
+    const target = need === "read" ? "Full Access" : "Add Only or Full Access";
+    const host = describeCalendarHostApp();
+    const fix = `Fix: System Settings > Privacy & Security > Calendars, set ${host} to ${target}, then re-run. macOS grants Calendar access to the launching app, not to \`tools\`. Run \`tools macos calendar doctor\` to see what macOS granted.`;
+
+    switch (status) {
+        case "writeOnly":
+            return `Calendar access for this process is Add Only (status: writeOnly): events and calendars are hidden. ${fix}`;
+        case "denied":
+            return `Calendar access for this process is denied (status: denied). ${fix}`;
+        case "restricted":
+            return `Calendar access for this process is restricted by a profile or parental controls (status: restricted). ${fix}`;
+        default:
+            return `Calendar access for this process is not granted (status: ${status}) and macOS showed no permission prompt. ${fix}`;
+    }
+}
+
+export class CalendarPermissionError extends Error {
+    readonly name = "CalendarPermissionError";
+    readonly status: string;
+
+    constructor(status: string, need: "read" | "write") {
+        super(calendarPermissionMessage(status, need));
+        this.status = status;
+    }
+}
+
+export function isPlaceholderCalendarList(calendars: CalendarInfo[]): boolean {
+    if (calendars.length !== 1) {
+        return false;
+    }
+
+    const [only] = calendars;
+    return (
+        only.identifier === CALENDAR_PLACEHOLDER_IDENTIFIER || (only.title === "Calendar" && only.source === "Account")
+    );
+}
+
+/** Read access needs fullAccess. `authorized()` itself triggers the macOS prompt when the status is notDetermined. */
+export async function resolveCalendarReadAccess(
+    auth: CalendarAuthClient,
+    options?: EnsureAccessOptions
+): Promise<CalendarAuthorizedResult> {
+    let result = await auth.authorized({ timeout: AUTH_TIMEOUT_MS });
+    const requestUpgrade = options?.requestUpgrade ?? isInteractive();
+
+    if (result.status === "writeOnly" && requestUpgrade) {
+        logger.info("Calendar access is Add Only; asking macOS to upgrade to Full Access (watch for a system dialog)");
+        result = await auth.requestFullAccess({ timeout: UPGRADE_TIMEOUT_MS });
+    }
+
+    if (result.status !== "fullAccess") {
+        throw new CalendarPermissionError(result.status, "read");
+    }
+
+    return result;
+}
+
+export async function resolveCalendarWriteAccess(auth: CalendarAuthClient): Promise<CalendarAuthorizedResult> {
+    const result = await auth.authorized({ timeout: AUTH_TIMEOUT_MS });
+
+    if (result.status !== "fullAccess" && result.status !== "writeOnly") {
+        throw new CalendarPermissionError(result.status, "write");
+    }
+
+    return result;
+}
 
 export interface CreateEventOptions {
     title: string;
@@ -30,24 +127,32 @@ export interface UpdateEventOptions {
 }
 
 export class MacCalendar {
-    static async ensureAuthorized(): Promise<void> {
-        const dk = getDarwinKit();
-        const auth = await dk.calendar.authorized();
+    /** Current status. Triggers the macOS prompt only when the status is still notDetermined. */
+    static async authorizationStatus(): Promise<CalendarAuthorizedResult> {
+        return getDarwinKit().calendar.authorized({ timeout: AUTH_TIMEOUT_MS });
+    }
 
-        if (!auth.authorized && auth.status !== "writeOnly") {
-            throw new Error(
-                `Calendar access not authorized (status: ${auth.status}). Grant at least write access in System Settings > Privacy & Security > Calendars.`
-            );
-        }
+    static async ensureReadAccess(options?: EnsureAccessOptions): Promise<void> {
+        await resolveCalendarReadAccess(getDarwinKit().calendar, options);
+    }
+
+    static async ensureWriteAccess(): Promise<void> {
+        await resolveCalendarWriteAccess(getDarwinKit().calendar);
     }
 
     static async listCalendars(): Promise<CalendarInfo[]> {
-        const dk = getDarwinKit();
-        const result = await dk.calendar.calendars();
+        await MacCalendar.ensureReadAccess();
+        return MacCalendar.listCalendarsUnguarded();
+    }
+
+    /** Unguarded: under Add Only this is the single placeholder calendar, which is still a valid save target. */
+    static async listCalendarsUnguarded(): Promise<CalendarInfo[]> {
+        const result = await getDarwinKit().calendar.calendars();
         return result.calendars;
     }
 
     static async listEvents(options: { calendarName?: string; from?: Date; to?: Date }): Promise<CalendarEventInfo[]> {
+        await MacCalendar.ensureReadAccess();
         const dk = getDarwinKit();
         const from = options.from ?? new Date();
         const to = options.to ?? new Date(from.getTime() + 30 * 24 * 60 * 60_000);
@@ -55,7 +160,7 @@ export class MacCalendar {
         let calendarIdentifiers: string[] | undefined;
 
         if (options.calendarName) {
-            const calendars = await MacCalendar.listCalendars();
+            const calendars = await MacCalendar.listCalendarsUnguarded();
             const filtered = calendars.filter((c) => c.title === options.calendarName);
 
             if (filtered.length === 0) {
@@ -94,6 +199,7 @@ export class MacCalendar {
     }
 
     static async createEvent(options: CreateEventOptions): Promise<string> {
+        await MacCalendar.ensureWriteAccess();
         const dk = getDarwinKit();
         const calendarId = await MacCalendar.ensureCalendarExists(options.calendarName ?? "GenesisTools");
         let startDate = options.startDate;
@@ -129,6 +235,7 @@ export class MacCalendar {
     }
 
     static async updateEvent(eventId: string, options: UpdateEventOptions): Promise<string> {
+        await MacCalendar.ensureReadAccess();
         const dk = getDarwinKit();
         const existing = await dk.calendar.event({ identifier: eventId });
 
@@ -165,6 +272,7 @@ export class MacCalendar {
     }
 
     static async deleteEvent(options: { eventId: string }): Promise<boolean> {
+        await MacCalendar.ensureReadAccess();
         const dk = getDarwinKit();
         const result = await dk.calendar.removeEvent({
             identifier: options.eventId,
@@ -179,7 +287,7 @@ export class MacCalendar {
     }
 
     static async ensureCalendarExists(name: string, calendars?: CalendarInfo[]): Promise<string> {
-        const allCalendars = calendars ?? (await MacCalendar.listCalendars());
+        const allCalendars = calendars ?? (await MacCalendar.listCalendarsUnguarded());
         const filtered = allCalendars.filter((c) => c.title === name);
 
         if (filtered.length > 1) {

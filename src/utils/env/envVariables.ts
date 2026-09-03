@@ -224,6 +224,8 @@ export const env = {
         isRoot: () => getRaw("USER") === "root",
         getTermProgram: () => getTrimmed("TERM_PROGRAM"),
         getCmuxBundleId: () => getTrimmed("CMUX_BUNDLE_ID"),
+        /** Bundle id of the .app that launched this process tree (macOS sets it); the TCC client for CLI children. */
+        getHostBundleIdentifier: () => getTrimmed("__CFBundleIdentifier"),
         getDarwinKitTimeoutMs: () => parseIntEnv("DARWINKIT_TIMEOUT_MS", 0),
     },
 

@@ -82,3 +82,29 @@ Most commands need Full Disk Access and/or specific Privacy permissions (Contact
 1. **System Settings -> Privacy & Security -> Full Disk Access** -> enable your terminal app.
 2. Grant the specific framework permission when macOS prompts (Calendars, Reminders, ...).
 3. Restart the terminal and re-run.
+
+### Calendar: who holds the permission (decided 2026-09-03 19:30)
+
+macOS TCC grants Calendar access to the **responsible process**, which for a CLI is the app that launched the process tree: the terminal (cmux, Warp, Terminal.app, Ghostty), or `bun` itself when a service runs under launchd. `tools` and the DarwinKit child it spawns inherit that grant. Evidence: the TCC database has rows for `com.cmuxterm.app` and `dev.warp.Warp-Stable` under `kTCCServiceCalendar` and no row for DarwinKit, even though DarwinKit is the process that talks to EventKit. The `DarwinKit.app` bundle exists only for notifications (`UNUserNotificationCenter` needs a bundle); an `NSCalendarsFullAccessUsageDescription` in it would change nothing for a child process, so we do **not** ship `tools` inside an `.app` bundle.
+
+Calendar has three grant levels, and the middle one is the trap:
+
+| Grant | `tools macos calendar` sees |
+|---|---|
+| Full Access | every calendar and event |
+| Add Only (write-only) | one placeholder calendar `Calendar` from source `Account`, zero events. `add` still works. |
+| Denied / none | nothing |
+
+Since 2026-09-03 every read command (`list`, `search`, `list-calendars`, `update`, `delete`) checks the status first and exits 1 with the fix instead of printing an empty list. On a TTY it first asks macOS to upgrade Add Only to Full Access (a system dialog; the tool waits up to 15 s for your answer).
+
+Fresh machine, step by step:
+
+```bash
+tools macos calendar doctor        # status, host app, what TCC granted; exit 1 while not Full Access
+# If status is notDetermined the prompt appears now: click Allow Full Access.
+# Otherwise: System Settings > Privacy & Security > Calendars > set the app doctor names to Full Access.
+tools macos calendar doctor        # must say "Full Access is granted"
+tools macos calendar list --from 2026-09-01 --to 2026-09-30
+```
+
+For a launchd service (dev-dashboard), the client to toggle is `/Users/<you>/.bun/bin/bun`, and the prompt only appears when the service runs in the foreground once (`tools dev-dashboard ui up --foreground`).
