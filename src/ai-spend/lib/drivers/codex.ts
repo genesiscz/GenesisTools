@@ -242,13 +242,14 @@ export const codexDriver: MonitorDriver = {
                 const inputTokens = inputTotal - cached;
 
                 emit({
-                    id: `${timestamp}|${model}|${inputTokens}|${cached}|${output}`,
+                    id: `${timestamp}|${model}|${inputTokens}|${cached}|${output}|${reasoning}`,
                     model,
                     timestamp,
                     inputTokens,
                     outputTokens: output,
                     cacheCreationTokens: 0,
                     cacheReadTokens: cached,
+                    reasoningOutputTokens: reasoning,
                 });
             },
             snapshot(): unknown {

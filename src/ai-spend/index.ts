@@ -4,7 +4,11 @@ import { registerSpendCommand } from "./lib/register";
 
 const program = new Command();
 
-program.name("ai-spend").description("Claude Code token & cost analytics across all local sessions");
+program
+    .name("ai-spend")
+    .description(
+        "Coding-agent token and cost analytics (ccusage-compatible daily/session/blocks plus summary/monitor)"
+    );
 
 registerSpendCommand(program);
 
