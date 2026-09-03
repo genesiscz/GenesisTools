@@ -41,7 +41,7 @@ Examples:
   tools monitor watch          live events from the server
   tools monitor doctor         read-only health report
   tools monitor server up && tools monitor ui up
-Every command takes --json for machine-readable output.`
+Reading commands take --json: list, show, status, uptime, history, check, run, items, incidents, presets, doctor.`
         )
         .action(async () => {
             await runInteractiveMenu();
@@ -58,14 +58,17 @@ Every command takes --json for machine-readable output.`
     return program;
 }
 
-const program = buildMonitorProgram();
+// Only run the CLI when executed directly, never on import: a test that pulls
+// a helper out of this module would otherwise launch the whole program while
+// bun is still collecting the suite.
+if (import.meta.main) {
+    await runTool(buildMonitorProgram(), { tool: "monitor" }).catch((error) => {
+        if (error instanceof WatcherValidationError) {
+            out.error(error.message);
+        } else {
+            out.error(error instanceof Error ? error.message : String(error));
+        }
 
-await runTool(program, { tool: "monitor" }).catch((error) => {
-    if (error instanceof WatcherValidationError) {
-        out.error(error.message);
-    } else {
-        out.error(error instanceof Error ? error.message : String(error));
-    }
-
-    process.exitCode = 1;
-});
+        process.exitCode = 1;
+    });
+}

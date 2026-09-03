@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import type { CheckResult, ParsedFeedItem, Watcher } from "../types";
+import { readBounded } from "./body";
 import { describeFetchError, timedFetch } from "./http";
 
 const MAX_ITEMS = 50;
@@ -9,47 +10,6 @@ const MAX_CODE_POINT = 0x10_ff_ff;
 /** Out-of-range numeric entities stay as written; `String.fromCodePoint` would throw on them. */
 function fromCodePoint(code: number, original: string): string {
     return Number.isFinite(code) && code >= 0 && code <= MAX_CODE_POINT ? String.fromCodePoint(code) : original;
-}
-
-/** Reads at most `MAX_FEED_BYTES`; a bigger body is cut there instead of buffered whole. */
-async function readBounded(response: Response): Promise<{ text: string; truncated: boolean }> {
-    const declared = Number(response.headers.get("content-length") ?? "");
-
-    if (Number.isFinite(declared) && declared > MAX_FEED_BYTES) {
-        await response.body?.cancel();
-
-        return { text: "", truncated: true };
-    }
-
-    if (!response.body) {
-        return { text: await response.text(), truncated: false };
-    }
-
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    let truncated = false;
-
-    while (true) {
-        const { value, done } = await reader.read();
-
-        if (done) {
-            break;
-        }
-
-        total += value.byteLength;
-
-        if (total > MAX_FEED_BYTES) {
-            chunks.push(value.subarray(0, value.byteLength - (total - MAX_FEED_BYTES)));
-            truncated = true;
-            await reader.cancel();
-            break;
-        }
-
-        chunks.push(value);
-    }
-
-    return { text: new TextDecoder().decode(Buffer.concat(chunks)), truncated };
 }
 
 function decodeEntities(value: string): string {
@@ -205,7 +165,7 @@ export async function checkRss(watcher: Pick<Watcher, "target" | "config" | "tim
         };
     }
 
-    const { text: xml, truncated } = await readBounded(response);
+    const { text: xml, truncated } = await readBounded(response, MAX_FEED_BYTES);
 
     if (truncated) {
         return {

@@ -6,19 +6,22 @@ export interface HostPort {
     port: number;
 }
 
+/** Both branches of `parseHostPort` come through here, so `[::1]:70000` fails like `host:70000`. */
+function requirePort(port: number | undefined): number {
+    if (!port || !Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error("port must be 1..65535");
+    }
+
+    return port;
+}
+
 /** `host:port`, `[v6]:port` or a URL; the port is required. */
 export function parseHostPort(target: string, defaultPort?: number): HostPort {
     const trimmed = target.trim().replace(/^[a-z]+:\/\//i, "");
     const bracket = trimmed.match(/^\[([^\]]+)\](?::(\d+))?$/);
 
     if (bracket) {
-        const port = bracket[2] ? Number(bracket[2]) : defaultPort;
-
-        if (!port) {
-            throw new Error("port is required");
-        }
-
-        return { host: bracket[1], port };
+        return { host: bracket[1], port: requirePort(bracket[2] ? Number(bracket[2]) : defaultPort) };
     }
 
     const lastColon = trimmed.lastIndexOf(":");
@@ -30,11 +33,7 @@ export function parseHostPort(target: string, defaultPort?: number): HostPort {
         throw new Error("host is required");
     }
 
-    if (!port || !Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error("port must be 1..65535");
-    }
-
-    return { host: host.replace(/\/.*$/, ""), port };
+    return { host: host.replace(/\/.*$/, ""), port: requirePort(port) };
 }
 
 /** Opens a TCP connection and closes it again: the port answers, or it does not. */

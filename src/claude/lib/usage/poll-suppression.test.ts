@@ -179,7 +179,7 @@ describe("poll suppression never spends a refresh token", () => {
         expect(usage.error).not.toContain("invalid_grant");
     });
 
-    // pribik.turena, 2026-08-29: renewed hours earlier, still rendered "plan
+    // Observed on a live account, 2026-08-29: renewed hours earlier, still rendered "plan
     // expired". Its refresh grant was dead, so the profile re-read that would have
     // noticed the renewal could never run — the stale reading was self-sustaining.
     // The long-lived token proves the org is alive, which retires the reading and
@@ -187,19 +187,19 @@ describe("poll suppression never spends a refresh token", () => {
     it("a dead-plan account whose org probe proves it alive reports the grant, not the plan", async () => {
         useTempHome();
         accounts = [
-            account("turena", {
+            account("revived", {
                 subscriptionPlan: "claude_free",
                 subscriptionStatus: "canceled",
             } as Partial<AIAccountEntry>),
         ];
-        anchorDueFor.add("turena");
-        orgAliveFor.add("turena");
+        anchorDueFor.add("revived");
+        orgAliveFor.add("revived");
 
         const now = Date.now();
         await savePollGate(
             recordFailure(
-                recordFailure({}, "turena", "Token expired (invalid_grant)", now),
-                "turena",
+                recordFailure({}, "revived", "Token expired (invalid_grant)", now),
+                "revived",
                 "Token expired (invalid_grant)",
                 now
             )
@@ -207,7 +207,7 @@ describe("poll suppression never spends a refresh token", () => {
 
         const [usage] = await fetchAllAccountsUsage();
 
-        expect(revalidateCalls).toEqual(["turena"]);
+        expect(revalidateCalls).toEqual(["revived"]);
         expect(usage.error).toContain("invalid_grant");
         expect(usage.error).not.toContain("claude_free");
     });

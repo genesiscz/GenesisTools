@@ -13,7 +13,7 @@ import {
     type WatcherKind,
     type WatcherStatus,
 } from "@app/monitor/lib/types";
-import { parseWatcherInput, parseWatcherPatch, WatcherValidationError } from "@app/monitor/lib/validate";
+import { parseEntityId, parseWatcherInput, parseWatcherPatch, WatcherValidationError } from "@app/monitor/lib/validate";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { formatRelativeTime } from "@genesiscz/utils/format";
@@ -101,16 +101,6 @@ function parseLimit(raw: string, fallback: number): number {
     const value = Number.parseInt(raw, 10);
 
     return Number.isInteger(value) && value > 0 ? Math.min(value, 500) : fallback;
-}
-
-function parseId(raw: string): number {
-    const id = Number.parseInt(raw, 10);
-
-    if (!Number.isInteger(id) || id <= 0) {
-        throw new WatcherValidationError(`"${raw}" is not a watcher id`);
-    }
-
-    return id;
 }
 
 function guessKind(target: string): WatcherKind {
@@ -263,12 +253,12 @@ async function withMonitor<T>(fn: (monitor: Monitor) => Promise<T>): Promise<T> 
     try {
         return await fn(monitor);
     } finally {
-        monitor.close();
+        await monitor.close();
     }
 }
 
 async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
-    const watcher = await monitor.getWatcher(parseId(raw));
+    const watcher = await monitor.getWatcher(parseEntityId(raw));
 
     if (!watcher) {
         throw new WatcherValidationError(`no watcher with id ${raw}; run: tools monitor list`);

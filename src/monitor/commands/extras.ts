@@ -8,6 +8,8 @@ import {
     type FeedItem,
     isMuted,
     type MonitorEvent,
+    maskTarget,
+    maskWatcher,
     type NotifyTarget,
     type Watcher,
     type WatcherStatus,
@@ -15,6 +17,7 @@ import {
 } from "@app/monitor/lib/types";
 import {
     normalizeTarget,
+    parseEntityId,
     parseNotifyTargetInput,
     parseWatcherInput,
     WatcherValidationError,
@@ -61,28 +64,18 @@ function latency(value: number | null): string {
     return value === null ? "—" : `${value} ms`;
 }
 
-function parseId(raw: string): number {
-    const id = Number.parseInt(raw, 10);
-
-    if (!Number.isInteger(id) || id <= 0 || !/^\d+$/.test(raw)) {
-        throw new WatcherValidationError(`"${raw}" is not a watcher id`);
-    }
-
-    return id;
-}
-
 export async function withMonitor<T>(fn: (monitor: Monitor) => Promise<T>): Promise<T> {
     const monitor = new Monitor();
 
     try {
         return await fn(monitor);
     } finally {
-        monitor.close();
+        await monitor.close();
     }
 }
 
 async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
-    const watcher = await monitor.getWatcher(parseId(raw));
+    const watcher = await monitor.getWatcher(parseEntityId(raw));
 
     if (!watcher) {
         throw new WatcherValidationError(`no watcher with id ${raw}; run: tools monitor list`);
@@ -93,12 +86,17 @@ async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
 
 /** `2h`, `45m`, `1d`, or bare minutes, as an ISO time from now. */
 export function muteUntilFrom(duration: string): string {
+    return new Date(Date.now() + requireDuration(duration)).toISOString();
+}
+
+/** `parseDuration` answers 0 for anything it cannot read, which would silently mean "since now". */
+function requireDuration(duration: string): number {
     let ms: number;
 
     try {
         ms = parseDuration(duration);
     } catch (error) {
-        logger.debug({ error, duration }, "monitor: bad mute duration");
+        logger.debug({ error, duration }, "monitor: bad duration");
         throw new WatcherValidationError(`"${duration}" is not a duration (try 30m, 2h, 1d)`);
     }
 
@@ -106,12 +104,15 @@ export function muteUntilFrom(duration: string): string {
         throw new WatcherValidationError(`"${duration}" is not a duration (try 30m, 2h, 1d)`);
     }
 
-    return new Date(Date.now() + ms).toISOString();
+    return ms;
 }
 
 // ------------------------------------------------------------------ show
 
-export async function printWatcherDetail(monitor: Monitor, summary: WatcherSummary): Promise<void> {
+export async function printWatcherDetail(monitor: Monitor, raw: WatcherSummary): Promise<void> {
+    // `summarize()` hands back the stored watcher, so an `Authorization` header
+    // would be printed in full by the Config row below.
+    const summary = maskWatcher(raw);
     const targets = summary.targetIds.length > 0 ? await monitor.db.getTargets(summary.targetIds) : [];
     const checks = await monitor.db.listChecks(summary.id, { limit: 5 });
 
@@ -358,14 +359,14 @@ export async function applyImport(
     }
 
     const existing = await monitor.listWatchers();
-    const seen = new Set(existing.map((watcher) => `${watcher.kind} ${watcher.target}`));
+    const seen = new Set(existing.map((watcher) => `${watcher.kind}\u0000${watcher.target}`));
     let watchersCreated = 0;
     let skipped = 0;
 
     for (const entry of data.watchers) {
         const target = normalizeTarget(entry.kind, entry.target);
 
-        if (seen.has(`${entry.kind} ${target}`)) {
+        if (seen.has(`${entry.kind}\u0000${target}`)) {
             skipped += 1;
             continue;
         }
@@ -374,7 +375,7 @@ export async function applyImport(
             .map((name) => targetIdByName.get(name))
             .filter((id): id is number => id !== undefined);
         await monitor.createWatcher(parseWatcherInput({ ...entry, targetIds }));
-        seen.add(`${entry.kind} ${target}`);
+        seen.add(`${entry.kind}\u0000${target}`);
         watchersCreated += 1;
     }
 
@@ -605,7 +606,8 @@ export function registerExtraCommands(program: Command): void {
                 const summary = await monitor.db.summarize(watcher);
 
                 if (opts.json) {
-                    out.result({ watcher: summary, targets: await monitor.db.getTargets(summary.targetIds) });
+                    const targets = await monitor.db.getTargets(summary.targetIds);
+                    out.result({ watcher: maskWatcher(summary), targets: targets.map(maskTarget) });
 
                     return;
                 }
@@ -624,7 +626,7 @@ export function registerExtraCommands(program: Command): void {
         .action(async (id: string, opts: { limit: string; since?: string; json?: boolean }) => {
             const limitValue = Number.parseInt(opts.limit, 10);
             const limit = Number.isInteger(limitValue) && limitValue > 0 ? Math.min(limitValue, 500) : 30;
-            const since = opts.since ? new Date(Date.now() - parseDuration(opts.since)).toISOString() : undefined;
+            const since = opts.since ? new Date(Date.now() - requireDuration(opts.since)).toISOString() : undefined;
             const { watcher, checks } = await withMonitor(async (monitor) => {
                 const current = await requireWatcher(monitor, id);
 

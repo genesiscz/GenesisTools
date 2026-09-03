@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { CheckResult, Watcher } from "../types";
+import { readBounded } from "./body";
 import { describeFetchError, timedFetch } from "./http";
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -15,7 +16,10 @@ export function getPath(value: unknown, path: string): unknown {
     let current: unknown = value;
 
     for (const part of parts) {
-        if (current === null || typeof current !== "object") {
+        // Own properties only: a plain index read walks Object.prototype, so
+        // `--json-path __proto__` reports "up" for a path the document lacks
+        // and `constructor` hands renderValue a function to stringify.
+        if (current === null || typeof current !== "object" || !Object.hasOwn(current, part)) {
             return undefined;
         }
 
@@ -78,11 +82,9 @@ export async function checkJson(watcher: Pick<Watcher, "target" | "config" | "ti
         return { status: "down", latencyMs, httpStatus: response.status, detail: `${statusLine} · ${latencyMs} ms` };
     }
 
-    const declared = Number(response.headers.get("content-length") ?? "");
+    const { text, truncated } = await readBounded(response, MAX_JSON_BYTES);
 
-    if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) {
-        await response.body?.cancel();
-
+    if (truncated) {
         return {
             status: "down",
             latencyMs,
@@ -94,7 +96,7 @@ export async function checkJson(watcher: Pick<Watcher, "target" | "config" | "ti
     let document: unknown;
 
     try {
-        document = SafeJSON.parse(await response.text(), { strict: true });
+        document = SafeJSON.parse(text, { strict: true });
     } catch (error) {
         logger.debug({ error, target: watcher.target }, "monitor: json body unreadable");
 

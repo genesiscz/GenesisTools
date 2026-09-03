@@ -183,6 +183,16 @@ const XAI_LIST_TERMINATORS = new Set(["Models", "Try Grok on", "Products", "API"
  * a string, which escapes `listStatuspageComponents` as a 500 carrying the
  * internal message. A page that answers something else is a check result.
  */
+function isStatuspageComponent(value: unknown): boolean {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+
+    const { name, status } = value as { name?: unknown; status?: unknown };
+
+    return typeof name === "string" && typeof status === "string";
+}
+
 function isStatuspageSummary(value: unknown): value is StatuspageSummary {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
@@ -190,7 +200,15 @@ function isStatuspageSummary(value: unknown): value is StatuspageSummary {
 
     const components = (value as { components?: unknown }).components;
 
-    return components === undefined || components === null || Array.isArray(components);
+    if (components === undefined || components === null) {
+        return true;
+    }
+
+    // Every element too: `[null]` throws on `component.group` in
+    // pickComponents, and `[1]` throws on `component.status.replace` while
+    // evaluateSummary builds the detail. Both happen outside fetchSummary's
+    // try block, so they escape listStatuspageComponents as a 500.
+    return Array.isArray(components) && components.every(isStatuspageComponent);
 }
 
 /** A failed poll must not keep its socket until the timeout fires. */

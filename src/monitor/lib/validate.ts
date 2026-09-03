@@ -590,3 +590,23 @@ export function parseWatcherPatch(value: unknown, currentKind: WatcherKind): Wat
 
     return patch;
 }
+
+/**
+ * A positive integer id, validated against the WHOLE string: `Number.parseInt`
+ * reads "3abc" as 3, so a typo used to act on watcher 3 instead of failing.
+ */
+export function parseEntityId(raw: string, what: "watcher" | "target" = "watcher"): number {
+    const trimmed = raw.trim();
+
+    if (!/^\d+$/.test(trimmed)) {
+        throw new WatcherValidationError(`"${raw}" is not a ${what} id`);
+    }
+
+    const id = Number.parseInt(trimmed, 10);
+
+    if (!Number.isInteger(id) || id <= 0) {
+        throw new WatcherValidationError(`"${raw}" is not a ${what} id`);
+    }
+
+    return id;
+}

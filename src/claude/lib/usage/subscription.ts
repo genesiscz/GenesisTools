@@ -161,7 +161,7 @@ export async function refreshSubscriptionProfile(
  * by a profile read, and a profile read needs a live OAuth grant. So an account
  * whose refresh token died keeps asserting "plan expired" FOREVER — straight
  * through a renewal — because the one mechanism that could correct it is the very
- * thing that is broken. Observed on `pribik.turena` 2026-08-29: renewed hours
+ * thing that is broken. Observed on a live account 2026-08-29: renewed hours
  * earlier, still rendered as an expired free account.
  *
  * The long-lived setup token is the way out. It cannot read the profile (inference

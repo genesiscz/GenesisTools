@@ -146,7 +146,12 @@ async function readBody(req: Request): Promise<unknown> {
     }
 }
 
+/** Whole-string, like the CLI's `parseEntityId`: `/watchers/3abc` is a 404, not watcher 3. */
 function parseId(raw: string): number | null {
+    if (!/^\d+$/.test(raw)) {
+        return null;
+    }
+
     const id = Number.parseInt(raw, 10);
 
     return Number.isInteger(id) && id > 0 ? id : null;
@@ -554,7 +559,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
             sockets.clear();
             server.stop(true);
-            monitor.close();
+            await monitor.close();
         },
     };
 }

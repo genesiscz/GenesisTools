@@ -1,7 +1,12 @@
 import { Monitor } from "@app/monitor/lib/monitor";
 import { describeTarget } from "@app/monitor/lib/notify-targets";
 import { isNotifyChannel, NOTIFY_CHANNELS, type NotifyTarget } from "@app/monitor/lib/types";
-import { parseNotifyTargetInput, parseNotifyTargetPatch, WatcherValidationError } from "@app/monitor/lib/validate";
+import {
+    parseEntityId,
+    parseNotifyTargetInput,
+    parseNotifyTargetPatch,
+    WatcherValidationError,
+} from "@app/monitor/lib/validate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import {
@@ -56,28 +61,18 @@ function configFromFlags(flags: TargetFlags): Record<string, string | boolean> {
     return config;
 }
 
-function parseId(raw: string): number {
-    const id = Number.parseInt(raw, 10);
-
-    if (!Number.isInteger(id) || id <= 0) {
-        throw new WatcherValidationError(`"${raw}" is not a target id`);
-    }
-
-    return id;
-}
-
 async function withMonitor<T>(fn: (monitor: Monitor) => Promise<T>): Promise<T> {
     const monitor = new Monitor();
 
     try {
         return await fn(monitor);
     } finally {
-        monitor.close();
+        await monitor.close();
     }
 }
 
 async function requireTarget(monitor: Monitor, raw: string): Promise<NotifyTarget> {
-    const target = await monitor.getTarget(parseId(raw));
+    const target = await monitor.getTarget(parseEntityId(raw, "target"));
 
     if (!target) {
         throw new WatcherValidationError(`no notification target with id ${raw}; run: tools monitor targets`);

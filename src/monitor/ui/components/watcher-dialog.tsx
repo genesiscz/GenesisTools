@@ -427,6 +427,11 @@ export function WatcherDialog({
         setTestResult(null);
     }
 
+    /** Component names belong to one status page, so a new target starts with none ticked. */
+    function patchTarget(target: string) {
+        patch(form.kind === "statuspage" && target !== form.target ? { target, components: [] } : { target });
+    }
+
     async function onSubmit(event: React.FormEvent) {
         event.preventDefault();
         const input = toInput(form);
@@ -556,7 +561,7 @@ export function WatcherDialog({
                             <Field label={TARGET_FIELD[form.kind].label} hint={TARGET_FIELD[form.kind].hint}>
                                 <Input
                                     value={form.target}
-                                    onChange={(event) => patch({ target: event.target.value })}
+                                    onChange={(event) => patchTarget(event.target.value)}
                                     placeholder={TARGET_FIELD[form.kind].placeholder}
                                     className="font-mono"
                                 />

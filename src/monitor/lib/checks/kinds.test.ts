@@ -18,6 +18,10 @@ describe("parseHostPort", () => {
     test("rejects a missing or silly port", () => {
         expect(() => parseHostPort("example.com")).toThrow(/port/);
         expect(() => parseHostPort("example.com:70000")).toThrow(/port/);
+        // The bracketed branch used to skip the range check, so a tcp/tls
+        // watcher on `[::1]:70000` was stored as valid and failed at connect.
+        expect(() => parseHostPort("[::1]:70000")).toThrow(/port/);
+        expect(() => parseHostPort("[::1]:0")).toThrow(/port/);
     });
 });
 
@@ -94,6 +98,12 @@ describe("checkJson", () => {
         expect(getPath(doc, "a.b[0].c")).toBe(1);
         expect(getPath(doc, "a.b.0.c")).toBe(1);
         expect(getPath(doc, "a.x")).toBeUndefined();
+        // Inherited keys are not data: `__proto__` reported "up" for a path the
+        // document does not have, and `constructor` handed renderValue a
+        // function that strict stringify turns into undefined.
+        expect(getPath(doc, "__proto__")).toBeUndefined();
+        expect(getPath(doc, "constructor")).toBeUndefined();
+        expect(getPath(doc, "a.toString")).toBeUndefined();
         expect(getPath(doc, "")).toBe(doc);
         expect(renderValue(true)).toBe("true");
     });
@@ -152,6 +162,17 @@ describe("checkCommand", () => {
 
         expect(result.status).toBe("down");
         expect(result.detail).toContain("killed");
+    });
+
+    test("a command that ignores SIGTERM is still killed", async () => {
+        // With `proc.kill()` (SIGTERM) this hung for the full 5 s and the
+        // watcher stayed marked in-flight, so it never ran again.
+        const started = performance.now();
+        const result = await checkCommand({ ...base, timeoutMs: 300, target: "trap '' TERM; sleep 5" });
+
+        expect(result.status).toBe("down");
+        expect(result.detail).toContain("killed");
+        expect(performance.now() - started).toBeLessThan(3_000);
     });
 });
 

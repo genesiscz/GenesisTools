@@ -103,7 +103,7 @@ describe("formatRenewsAt / formatRenewsAtFull", () => {
 });
 
 describe("planAllowsClaudeCode: a contradicted reading", () => {
-    // pribik.turena, 2026-08-29. Its refresh grant was dead, so the profile
+    // Observed on a live account, 2026-08-29. Its refresh grant was dead, so the profile
     // re-read that would have noticed the renewal could never run and the stale
     // "claude_free (canceled)" sustained itself indefinitely.
     test("a live probe overrides a stored dead plan", () => {

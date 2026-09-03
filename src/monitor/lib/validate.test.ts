@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_INTERVAL_SEC, DEFAULT_TIMEOUT_MS, WATCHER_KINDS } from "./types";
 import {
     normalizeTarget,
+    parseEntityId,
     parseNotifyTargetPatch,
     parseWatcherInput,
     parseWatcherPatch,
@@ -173,5 +174,20 @@ describe("watcher kind errors", () => {
                 }
             }
         }
+    });
+});
+
+describe("parseEntityId", () => {
+    test("takes a whole positive integer and nothing else", () => {
+        expect(parseEntityId("3")).toBe(3);
+        expect(parseEntityId(" 12 ")).toBe(12);
+
+        // `Number.parseInt` reads all three as valid ids, so `monitor edit 3abc`
+        // used to edit watcher 3.
+        for (const bad of ["3abc", "0", "-2", "", "1.5", "1e3"]) {
+            expect(() => parseEntityId(bad)).toThrow(WatcherValidationError);
+        }
+
+        expect(() => parseEntityId("x", "target")).toThrow(/target id/);
     });
 });

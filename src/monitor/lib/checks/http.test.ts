@@ -29,6 +29,27 @@ function bodyReleased(response: Response): boolean {
     return response.bodyUsed || response.body === null || response.body.locked;
 }
 
+/** A 200 whose body stream fails halfway: a connection reset after the headers. */
+async function probeUnreadableBody(config: Watcher["config"]) {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (): Promise<Response> => {
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode("hel"));
+                controller.error(new Error("The socket connection was closed unexpectedly"));
+            },
+        });
+
+        return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+
+    try {
+        return await checkWebsite({ target: "https://a.dev/", config, timeoutMs: 1_000 });
+    } finally {
+        globalThis.fetch = original;
+    }
+}
+
 describe("checkWebsite", () => {
     test("releases the body on the plain up path", async () => {
         const { result, response } = await probe({});
@@ -56,5 +77,15 @@ describe("checkWebsite", () => {
 
         expect(result.status).toBe("up");
         expect(response.bodyUsed).toBe(true);
+    });
+
+    test("a body that fails mid-read is down, not a thrown check", async () => {
+        // Without the try/catch around `response.text()` this rejection escapes
+        // checkWebsite, and the watcher only ever shows "check failed: …".
+        const result = await probeUnreadableBody({ expectBody: "hello" });
+
+        expect(result.status).toBe("down");
+        expect(result.httpStatus).toBe(200);
+        expect(result.detail).toContain("the body could not be read");
     });
 });

@@ -178,3 +178,28 @@ describe("checkStatuspage summary shape", () => {
         expect(result.detail).toBe("All Systems Operational");
     });
 });
+
+describe("malformed summaries", () => {
+    test("a component element that is not an object is a check result, not a throw", async () => {
+        // `[null]` used to reach pickComponents and throw on `component.group`;
+        // `[1]` threw on `component.status.replace` while building the detail.
+        // Both escaped listStatuspageComponents as a 500 with the raw message.
+        for (const body of ['{"components":[null]}', '{"components":[1]}', '{"components":[{"name":"a"}]}']) {
+            const server = Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch: () => new Response(body, { headers: { "Content-Type": "application/json" } }),
+            });
+
+            try {
+                const target = `http://127.0.0.1:${server.port}`;
+                const result = await checkStatuspage({ target, config: {}, timeoutMs: 2_000 });
+
+                expect(result.status).toBe("unknown");
+                await expect(listStatuspageComponents(target, 2_000)).rejects.toThrow();
+            } finally {
+                server.stop(true);
+            }
+        }
+    });
+});

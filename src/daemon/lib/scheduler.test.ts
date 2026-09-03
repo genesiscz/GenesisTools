@@ -8,7 +8,7 @@ const logsBaseDir = mkdtempSync(join(tmpdir(), "scheduler-test-"));
 
 // No-op notifier: bun test must NEVER fire real macOS notification banners
 // (they spammed the user's notification center before this seam existed).
-const noopNotify = async () => {};
+const noopNotify = async () => true;
 
 let runDurationMs = 1;
 

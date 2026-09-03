@@ -34,6 +34,7 @@
  * helper is genuinely library code, the better fix is to move it into
  * `src/<tool>/lib/` and import it from there.
  */
+import { posix } from "node:path";
 import { $ } from "bun";
 
 /** Top-level invocations that hand control to the CLI. */
@@ -112,17 +113,31 @@ function runsOnImport(source: string): boolean {
     return withoutGuard.split("\n").some((line) => RUNNER_CALL.test(line));
 }
 
-/** `./index`, `../index`, `./index.ts`, `@app/<tool>/index` — all reach the same module. */
-function importsFrom(source: string, moduleDir: string, toolName: string): boolean {
-    const specifiers = [...source.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+/**
+ * `./index`, `../index`, `./index.ts`, `@app/<tool>/index` — all reach the same
+ * module. A relative specifier is resolved against the importing FILE, not
+ * matched by name: `src/<tool>/lib/server/index.test.ts` importing `./index`
+ * means its own sibling, and treating that as the entrypoint failed CI for a
+ * test that never touched the CLI.
+ */
+function importsFrom(source: string, testFile: string, entry: string, toolName: string): boolean {
+    // Side-effect imports (`import "./index";`) count too, and are in fact the
+    // worst case: nothing is bound, so nothing hints that collecting the file
+    // starts the CLI. Only the `from` form was matched before.
+    const specifiers = [
+        ...source.matchAll(/from\s+["']([^"']+)["']/g),
+        ...source.matchAll(/^\s*import\s+["']([^"']+)["']/gm),
+    ].map((match) => match[1]);
+    const entryModule = entry.replace(/\.tsx?$/, "");
 
     return specifiers.some((spec) => {
         const bare = spec.replace(/\.tsx?$/, "");
-        if (bare === "./index" || bare === "../index") {
-            return true;
+
+        if (bare.startsWith(".")) {
+            return posix.normalize(posix.join(posix.dirname(testFile), bare)) === entryModule;
         }
 
-        return bare === `@app/${toolName}/index` || bare === `@app/${toolName}` || bare === moduleDir;
+        return bare === `@app/${toolName}/index` || bare === `@app/${toolName}` || bare === entryModule;
     });
 }
 
@@ -158,7 +173,6 @@ for (const entry of entrypoints) {
     }
 
     const toolName = entry.split("/")[1];
-    const moduleDir = `src/${toolName}/index`;
 
     // NB: never `git ls-files "src/x/**/*.test.ts"` — that matches NOTHING,
     // because git's `*` already crosses `/`, so `**/` is two stars and a slash
@@ -167,7 +181,7 @@ for (const entry of entrypoints) {
     for (const test of testsByTool.get(toolName) ?? []) {
         const testSource = await Bun.file(test).text();
 
-        if (importsFrom(testSource, moduleDir, toolName)) {
+        if (importsFrom(testSource, test, entry, toolName)) {
             offenders.push({ entry, test });
         }
     }

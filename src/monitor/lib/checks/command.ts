@@ -20,18 +20,28 @@ function lastLine(text: string): string {
 export async function checkCommand(watcher: Pick<Watcher, "target" | "config" | "timeoutMs">): Promise<CheckResult> {
     const started = performance.now();
     const proc = Bun.spawn(["sh", "-c", watcher.target], { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    // Read both pipes from the start: a command that fills one would block on
+    // write and never exit if we only started reading after `proc.exited`.
+    const pipes = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]).catch(
+        (readError): [string, string] => {
+            logger.debug({ readError, target: watcher.target }, "monitor: command output unreadable");
+
+            return ["", ""];
+        }
+    );
     let timedOut = false;
     const timer = setTimeout(() => {
         timedOut = true;
-        proc.kill();
+        // SIGKILL, not SIGTERM: a command that traps SIGTERM would otherwise
+        // keep the watcher marked in-flight and it would never run again.
+        proc.kill("SIGKILL");
     }, watcher.timeoutMs);
 
     try {
-        const [exitCode, stdout, stderr] = await Promise.all([
-            proc.exited,
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-        ]);
+        const exitCode = await proc.exited;
+        // A background descendant can inherit the pipes and hold them open
+        // after the shell is gone, so give the readers a moment and move on.
+        const [stdout, stderr] = await Promise.race([pipes, Bun.sleep(250).then((): [string, string] => ["", ""])]);
         const latencyMs = Math.round(performance.now() - started);
         const output = `${stdout}\n${stderr}`.slice(-MAX_OUTPUT);
         const tail = lastLine(stderr) || lastLine(stdout);

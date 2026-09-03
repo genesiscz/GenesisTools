@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MonitorDatabase } from "./db";
 import { isWorthNotifying, Monitor } from "./monitor";
-import { isDue } from "./scheduler";
+import { allTargetsResolved } from "./notify-targets";
+import { isDue, Scheduler } from "./scheduler";
 import {
     DEFAULT_INTERVAL_SEC,
     DEFAULT_TIMEOUT_MS,
@@ -191,7 +192,31 @@ describe("Monitor transitions", () => {
             "watcher:checked",
             "watcher:state",
         ]);
-        monitor.close();
+        await monitor.close();
+    });
+
+    test("close waits for an in-flight check instead of closing the database under it", async () => {
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const watcher = await monitor.createWatcher({ name: "slow", kind: "website", target: target() });
+        // The handler sleeps, so the check is mid-flight while close() runs. Closing the client
+        // there used to reject recordCheck with `database is closed` and lose the row.
+        delayMs = 40;
+
+        const running = monitor.runWatcher(watcher.id);
+        await monitor.close();
+        const outcome = await running;
+
+        expect(outcome?.check.status).toBe("up");
+        expect(monitor.isRunning(watcher.id)).toBe(false);
+    });
+
+    test("close refuses to start a new check", async () => {
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const watcher = await monitor.createWatcher({ name: "after-close", kind: "website", target: target() });
+
+        await monitor.close();
+
+        expect(await monitor.runWatcher(watcher.id)).toBeNull();
     });
 
     test("latency above degradedAboveMs is degraded and expected status is honoured", async () => {
@@ -212,7 +237,7 @@ describe("Monitor transitions", () => {
         expect(outcome?.check.status).toBe("degraded");
         expect(outcome?.check.httpStatus).toBe(503);
         expect(outcome?.check.detail).toContain("slower than 20 ms");
-        monitor.close();
+        await monitor.close();
     });
 
     test("overview counts paused watchers separately", async () => {
@@ -222,7 +247,7 @@ describe("Monitor transitions", () => {
         const overview = await monitor.overview();
 
         expect(overview.counts).toEqual({ total: 2, up: 0, degraded: 0, down: 0, unknown: 1, paused: 1 });
-        monitor.close();
+        await monitor.close();
     });
 });
 
@@ -393,7 +418,7 @@ describe("Monitor notify target secrets", () => {
         const updated = await monitor.updateTarget(created.id, { config: { chatId: "-200" } });
 
         expect(updated?.config).toEqual({ botToken: "123:AAA", chatId: "-200" });
-        monitor.close();
+        await monitor.close();
     });
 
     test("an explicit new botToken still replaces the stored one", async () => {
@@ -407,7 +432,34 @@ describe("Monitor notify target secrets", () => {
         const updated = await monitor.updateTarget(created.id, { config: { botToken: "456:BBB", chatId: "-100" } });
 
         expect(updated?.config.botToken).toBe("456:BBB");
-        monitor.close();
+        await monitor.close();
+    });
+});
+
+describe("Monitor watcher headers", () => {
+    test("a patch that drops a header removes it, and the mask keeps the stored value", async () => {
+        // The old rule restored every stored header the patch did not mention,
+        // so deleting `Authorization` in the dashboard kept sending it forever.
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const created = await monitor.createWatcher({
+            name: "private site",
+            kind: "website",
+            target: "https://a.dev/",
+            notify: false,
+            config: { headers: { Authorization: "Bearer secret", "X-Trace": "on" } },
+        });
+
+        const dropped = await monitor.updateWatcher(created.id, { config: { headers: { "X-Trace": "on" } } });
+        expect(dropped?.config.headers).toEqual({ "X-Trace": "on" });
+
+        // A round-trip of the masked view keeps what is stored.
+        await monitor.updateWatcher(created.id, { config: { headers: { "X-Trace": MASKED_HEADER_VALUE } } });
+        expect((await monitor.getWatcher(created.id))?.config.headers).toEqual({ "X-Trace": "on" });
+
+        // A patch with no headers key at all leaves them alone.
+        await monitor.updateWatcher(created.id, { config: { expectStatus: 401 } });
+        expect((await monitor.getWatcher(created.id))?.config.headers).toEqual({ "X-Trace": "on" });
+        await monitor.close();
     });
 });
 
@@ -441,7 +493,7 @@ describe("Monitor event payloads", () => {
         expect((await monitor.getWatcher(created.id))?.config.headers).toEqual({
             Authorization: "Bearer super-secret",
         });
-        monitor.close();
+        await monitor.close();
     });
 });
 
@@ -483,8 +535,138 @@ describe("Monitor.runWatcher", () => {
             expect(stored.lastCheckedAt).not.toBeNull();
             expect(isDue(stored, Date.now())).toBe(false);
         } finally {
-            monitor.close();
+            await monitor.close();
             truncating.stop(true);
+        }
+    });
+});
+
+function feedXml(items: Array<{ guid: string; title: string }>): string {
+    const entries = items
+        .map(
+            (item) =>
+                `<item><guid>${item.guid}</guid><title>${item.title}</title><link>https://a.dev/${item.guid}</link></item>`
+        )
+        .join("");
+
+    return `<?xml version="1.0"?><rss version="2.0"><channel><title>ops</title>${entries}</channel></rss>`;
+}
+
+describe("Monitor feed delivery", () => {
+    test("an item whose webhook failed is redelivered on the next check", async () => {
+        // The whole point of storing `delivered`: a webhook that answers 500
+        // must not cost the user the item. Every channel reports its outcome
+        // rather than throwing, so this only works while `dispatchToTarget`
+        // reads the returned boolean.
+        let items = [{ guid: "g1", title: "primed" }];
+        const feed = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: () =>
+                new Response(feedXml(items), { headers: { "Content-Type": "application/rss+xml" }, status: 200 }),
+        });
+        let hookStatus = 500;
+        const posted: string[] = [];
+        const hook = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            async fetch(request) {
+                posted.push(await request.text());
+
+                return new Response("", { status: hookStatus });
+            },
+        });
+        const monitor = new Monitor({ dbPath: ":memory:" });
+
+        try {
+            const notifyTarget = await monitor.createTarget({
+                name: "ops webhook",
+                channel: "webhook",
+                config: { url: `http://127.0.0.1:${hook.port}/hook` },
+            });
+            const watcher = await monitor.createWatcher({
+                name: "ops feed",
+                kind: "rss",
+                target: `http://127.0.0.1:${feed.port}/feed.xml`,
+                notify: true,
+                timeoutMs: 5_000,
+                targetIds: [notifyTarget.id],
+            });
+
+            // Check 1 primes the history: nothing is announced.
+            await monitor.runWatcher(watcher.id);
+            expect(posted).toHaveLength(0);
+
+            // Check 2 finds a new item and the webhook is down.
+            items = [{ guid: "g2", title: "outage started" }, ...items];
+            const failed = await monitor.runWatcher(watcher.id);
+
+            expect(failed?.newItems.map((item) => item.guid)).toEqual(["g2"]);
+            expect(posted).toHaveLength(1);
+            expect((await monitor.db.listFeedItems(watcher.id, 10)).find((item) => item.guid === "g2")?.delivered).toBe(
+                false
+            );
+
+            // Check 3 brings nothing new, but the endpoint is back.
+            hookStatus = 200;
+            const retried = await monitor.runWatcher(watcher.id);
+
+            expect(retried?.newItems).toEqual([]);
+            expect(posted).toHaveLength(2);
+            expect(posted[1]).toContain("outage started");
+            expect((await monitor.db.listFeedItems(watcher.id, 10)).find((item) => item.guid === "g2")?.delivered).toBe(
+                true
+            );
+        } finally {
+            await monitor.close();
+            feed.stop(true);
+            hook.stop(true);
+        }
+    });
+
+    test("a selected target that no longer exists counts as a failed delivery", async () => {
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const first = await monitor.createTarget({ name: "a", channel: "webhook", config: { url: "https://a.dev/h" } });
+        const targets = await monitor.listTargets();
+
+        expect(allTargetsResolved([first.id], targets)).toBe(true);
+        expect(allTargetsResolved([first.id, first.id + 99], targets)).toBe(false);
+        await monitor.close();
+    });
+});
+
+describe("Scheduler.tick", () => {
+    test("launches at most `concurrency` checks and skips a tick already running", async () => {
+        delayMs = 300;
+        const monitor = new Monitor({ dbPath: ":memory:" });
+        const scheduler = new Scheduler(monitor, { concurrency: 2 });
+
+        try {
+            for (const name of ["a", "b", "c", "d"]) {
+                await monitor.createWatcher({ name, kind: "website", target: target(), notify: false });
+            }
+
+            // Both calls start before the first one awaits the database, so the
+            // second must see the guard and launch nothing.
+            const [firstTick, reentrant] = await Promise.all([scheduler.tick(), scheduler.tick()]);
+
+            expect(firstTick).toBe(2);
+            expect(reentrant).toBe(0);
+            expect(scheduler.activeRuns).toBe(2);
+
+            // No free slot while those two are in flight.
+            expect(await scheduler.tick()).toBe(0);
+
+            await scheduler.drain();
+            expect(scheduler.activeRuns).toBe(0);
+
+            // The two that never got a slot are still due.
+            expect(await scheduler.tick()).toBe(2);
+            await scheduler.drain();
+            expect(await scheduler.tick()).toBe(0);
+        } finally {
+            scheduler.stop();
+            await monitor.close();
         }
     });
 });

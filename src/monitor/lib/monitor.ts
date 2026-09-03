@@ -3,7 +3,7 @@ import { dispatchNotification, type NotificationEvent } from "@genesiscz/utils/n
 import { runCheck } from "./checks/run-check";
 import { MonitorDatabase } from "./db";
 import { getMonitorNotifyMeta } from "./notify-settings";
-import { dispatchToTarget, dispatchToTargets, NOTIFY_APP } from "./notify-targets";
+import { allTargetsResolved, dispatchToTarget, dispatchToTargets, NOTIFY_APP } from "./notify-targets";
 import type {
     CheckRecord,
     CheckResult,
@@ -80,6 +80,10 @@ export class Monitor {
     readonly db: MonitorDatabase;
     private readonly listeners = new Set<MonitorListener>();
     private readonly inFlight = new Set<number>();
+    /** Every `runWatcher` still running, so `close` can wait for it. Keyed by promise, because the
+     * watcher lookup that starts a run also queries the database and precedes any id. */
+    private readonly pending = new Set<Promise<RunOutcome | null>>();
+    private closed = false;
 
     constructor(opts: { dbPath?: string } = {}) {
         this.db = new MonitorDatabase(opts.dbPath);
@@ -110,8 +114,15 @@ export class Monitor {
         }
     }
 
-    close(): void {
+    /**
+     * A check mid-query when the connection closes fails with `database is closed`, and its row is
+     * never written, so wait for whatever `runWatcher` already started before closing the client.
+     * `closed` stops new checks from queueing behind the wait.
+     */
+    async close(): Promise<void> {
+        this.closed = true;
         this.listeners.clear();
+        await Promise.allSettled([...this.pending]);
         this.db.close();
     }
 
@@ -190,11 +201,20 @@ export class Monitor {
             return patch;
         }
 
+        if (!patch.config.headers) {
+            // No `headers` key at all: the editor is patching something else and
+            // never saw the headers, so the stored ones stay.
+            return { ...patch, config: { ...patch.config, headers: stored } };
+        }
+
+        // A `headers` object IS the new set, so a name the user deleted stays
+        // deleted (an Authorization header must not survive its own removal).
+        // Only the masked placeholder is swapped back for the stored value.
         const headers = { ...patch.config.headers };
 
-        for (const [name, value] of Object.entries(stored)) {
-            if (headers[name] === undefined || headers[name] === MASKED_HEADER_VALUE) {
-                headers[name] = value;
+        for (const [name, value] of Object.entries(headers)) {
+            if (value === MASKED_HEADER_VALUE && stored[name] !== undefined) {
+                headers[name] = stored[name];
             }
         }
 
@@ -295,6 +315,23 @@ export class Monitor {
      * instead of running twice.
      */
     async runWatcher(target: number | Watcher): Promise<RunOutcome | null> {
+        if (this.closed) {
+            logger.debug({ target: typeof target === "number" ? target : target.id }, "monitor: closed, no new checks");
+
+            return null;
+        }
+
+        const run = this.resolveAndCheck(target);
+        this.pending.add(run);
+
+        try {
+            return await run;
+        } finally {
+            this.pending.delete(run);
+        }
+    }
+
+    private async resolveAndCheck(target: number | Watcher): Promise<RunOutcome | null> {
         const watcher = typeof target === "number" ? await this.db.getWatcher(target) : target;
 
         if (!watcher) {
@@ -310,29 +347,32 @@ export class Monitor {
         this.inFlight.add(watcher.id);
 
         try {
-            const result = await this.safeRunCheck(watcher);
-            // Feed items live in their own table; the check row keeps only the count.
-            const { meta, ...rest } = result;
-            const storedMeta =
-                watcher.kind === "rss" && meta
-                    ? { feedTitle: meta.feedTitle, itemCount: feedItemsFromMeta(meta).length }
-                    : meta;
-            const check = await this.db.recordCheck(watcher.id, { ...rest, meta: storedMeta });
-            const updated = (await this.db.getWatcher(watcher.id)) ?? { ...watcher, lastStatus: result.status };
-            logger.debug(
-                { id: watcher.id, name: watcher.name, status: result.status, latencyMs: result.latencyMs },
-                "monitor: check recorded"
-            );
-            this.emit({ type: "watcher:checked", watcher: updated, check });
-
-            const transition = await this.applyTransition(updated, watcher.lastStatus, check);
-            const newItems =
-                watcher.kind === "rss" ? await this.deliverFeedItems(updated, feedItemsFromMeta(meta)) : [];
-
-            return { watcher: updated, check, transition, newItems };
+            return await this.executeCheck(watcher);
         } finally {
             this.inFlight.delete(watcher.id);
         }
+    }
+
+    private async executeCheck(watcher: Watcher): Promise<RunOutcome | null> {
+        const result = await this.safeRunCheck(watcher);
+        // Feed items live in their own table; the check row keeps only the count.
+        const { meta, ...rest } = result;
+        const storedMeta =
+            watcher.kind === "rss" && meta
+                ? { feedTitle: meta.feedTitle, itemCount: feedItemsFromMeta(meta).length }
+                : meta;
+        const check = await this.db.recordCheck(watcher.id, { ...rest, meta: storedMeta });
+        const updated = (await this.db.getWatcher(watcher.id)) ?? { ...watcher, lastStatus: result.status };
+        logger.debug(
+            { id: watcher.id, name: watcher.name, status: result.status, latencyMs: result.latencyMs },
+            "monitor: check recorded"
+        );
+        this.emit({ type: "watcher:checked", watcher: updated, check });
+
+        const transition = await this.applyTransition(updated, watcher.lastStatus, check);
+        const newItems = watcher.kind === "rss" ? await this.deliverFeedItems(updated, feedItemsFromMeta(meta)) : [];
+
+        return { watcher: updated, check, transition, newItems };
     }
 
     /**
@@ -515,12 +555,22 @@ export class Monitor {
             if (watcher.targetIds.length > 0) {
                 const targets = await this.db.getTargets(watcher.targetIds);
 
+                // Before dispatching, not after: sending to the survivors and
+                // then reporting failure makes the retry deliver the same item
+                // to them a second time.
+                if (!allTargetsResolved(watcher.targetIds, targets)) {
+                    logger.warn(
+                        { id: watcher.id, wanted: watcher.targetIds, found: targets.map((entry) => entry.id) },
+                        "monitor: selected notify targets no longer exist, nothing sent"
+                    );
+
+                    return false;
+                }
+
                 return dispatchToTargets(targets, event);
             }
 
-            await dispatchNotification(event);
-
-            return true;
+            return dispatchNotification(event);
         } catch (error) {
             logger.warn({ error, id: watcher.id }, "monitor: notification dispatch failed");
 
