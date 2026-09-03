@@ -53,33 +53,8 @@ fi
 
 EXIT=0
 CHECKED=0
-
-scan() {
-    local label="$1"
-    local pattern="$2"
-    local hits
-    local status
-    # `-i` is not optional: a value is spelled however the person typing it felt
-    # at the time, and a case-sensitive pass silently misses half of them.
-    hits=$(git grep -nIPi -e "$pattern" -- .) && status=0 || status=$?
-
-    # 0 = matched, 1 = no match, anything above = the scan itself broke. A plain
-    # `|| true` would turn that into empty output and report the tree clean, the
-    # exact silent pass this repo has already shipped twice.
-    if [ "$status" -gt 1 ]; then
-        echo "::error:: \`git grep\` exited ${status} while scanning for ${label} — this check checked nothing."
-        exit "$status"
-    fi
-
-    CHECKED=$((CHECKED + 1))
-
-    if [ -n "$hits" ]; then
-        echo "✗ ${label}"
-        echo "$hits" | sed 's/^/    /'
-        echo
-        EXIT=1
-    fi
-}
+PATTERNS=$(mktemp)
+trap 'rm -f "$PATTERNS"' EXIT
 
 echo "→ Checking tracked files against ${MARKERS}..."
 
@@ -89,10 +64,12 @@ while IFS= read -r line || [ -n "$line" ]; do
     esac
 
     if [[ "$line" == *$'\t'* ]]; then
-        scan "${line%%$'\t'*}" "${line#*$'\t'}"
+        printf '%s\n' "${line#*$'\t'}" >> "$PATTERNS"
     else
-        scan "$line" "$line"
+        printf '%s\n' "$line" >> "$PATTERNS"
     fi
+
+    CHECKED=$((CHECKED + 1))
 done < "$MARKERS"
 
 if [ "$CHECKED" -eq 0 ]; then
@@ -100,10 +77,28 @@ if [ "$CHECKED" -eq 0 ]; then
     exit 1
 fi
 
+# One `git grep -f` pass. A loop of per-needle greps would take minutes once the
+# local Teams harvest is a few hundred emails. 0 = matched, 1 = no match,
+# anything above = the scan itself broke. A plain `|| true` would turn that into
+# empty output and report the tree clean.
+hits=$(git grep -nIPi -f "$PATTERNS" -- .) && status=0 || status=$?
+
+if [ "$status" -gt 1 ]; then
+    echo "::error:: \`git grep\` exited ${status} while scanning ${CHECKED} pattern(s) — this check checked nothing."
+    exit "$status"
+fi
+
+if [ -n "$hits" ]; then
+    echo "✗ placeholder-check: tracked file(s) matched a local needle"
+    echo "$hits" | sed 's/^/    /'
+    echo
+    echo "Replace the values above with placeholders before merging."
+    echo "Needles live in ${MARKERS} (not in git)."
+    EXIT=1
+fi
+
 if [ "$EXIT" -eq 0 ]; then
     echo "✓ ${CHECKED} pattern(s) checked, no matches in tracked files"
-else
-    echo "Replace the values above with placeholders before merging."
 fi
 
 exit "$EXIT"
