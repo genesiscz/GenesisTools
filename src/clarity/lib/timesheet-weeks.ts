@@ -1,5 +1,7 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import type { ClarityApi } from "@genesiscz/utils/clarity";
+import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
+import { logger } from "@genesiscz/utils/logger";
 
 export interface TimesheetWeek {
     timesheetId: number;
@@ -52,6 +54,95 @@ function parseCarouselEntry(entry: CarouselEntry, entryCountMap: Map<number, num
     };
 }
 
+/**
+ * Pick the period id the carousel walk starts from. Without one, `getTimesheetApp` returns only the
+ * window around today and any month further back is unreachable, so a fill for an older month found
+ * no periods and silently booked nothing. A mapping's cached period is used when present; otherwise
+ * the server is asked for its current one.
+ */
+export async function resolveCarouselSeed({
+    api,
+    cachedTimePeriodId,
+}: {
+    api: { getTimesheetApp: (timePeriodId?: number) => Promise<TimesheetAppLike> };
+    cachedTimePeriodId: number | undefined;
+}): Promise<number | undefined> {
+    if (cachedTimePeriodId !== undefined) {
+        return cachedTimePeriodId;
+    }
+
+    const app = await api.getTimesheetApp();
+
+    const carousel = app.tscarousel?._results ?? [];
+    // The first carousel entry is the OLDEST in the window; the active one is what "current" means.
+    const active = carousel.find((entry) => entry.is_active) ?? carousel[Math.floor(carousel.length / 2)];
+
+    return app.timesheets?._results?.[0]?.timePeriodId ?? active?.id;
+}
+
+interface TimesheetAppLike {
+    tscarousel?: { _results?: Array<{ id?: number; is_active?: boolean }> };
+    timesheets?: { _results?: Array<{ timePeriodId?: number }> };
+}
+
+/**
+ * Walk the carousel to the period covering a date. One window spans about nine weeks, so a month a
+ * quarter back needs several hops; a single `findTimesheetForDate` call only ever searched the
+ * first window and quietly returned nothing for anything older.
+ */
+export async function navigateToPeriodForDate({
+    api,
+    seedTimePeriodId,
+    date,
+    maxHops = 12,
+}: {
+    api: { getTimesheetApp: (timePeriodId?: number) => Promise<CarouselWindowLike> };
+    seedTimePeriodId: number;
+    date: string;
+    maxHops?: number;
+}): Promise<number | undefined> {
+    let centre = seedTimePeriodId;
+    const visited = new Set<number>();
+
+    for (let hop = 0; hop < maxHops; hop++) {
+        if (visited.has(centre)) {
+            return undefined;
+        }
+
+        visited.add(centre);
+        const entries = (await api.getTimesheetApp(centre)).tscarousel?._results ?? [];
+
+        if (entries.length === 0) {
+            return undefined;
+        }
+
+        const covering = entries.find((entry) =>
+            isDateInHalfOpenRange(date, entry.start_date ?? "", entry.finish_date ?? "")
+        );
+
+        if (covering?.id !== undefined) {
+            return covering.id;
+        }
+
+        const sorted = [...entries].sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""));
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        const next = date < (first.start_date ?? "").split("T")[0] ? first.id : last.id;
+
+        if (next === undefined) {
+            return undefined;
+        }
+
+        centre = next;
+    }
+
+    return undefined;
+}
+
+interface CarouselWindowLike {
+    tscarousel?: { _results?: Array<{ id?: number; start_date?: string; finish_date?: string }> };
+}
+
 export async function getTimesheetWeeks(
     api: ClarityApi,
     mappings: ClarityMapping[],
@@ -61,20 +152,23 @@ export async function getTimesheetWeeks(
     // Try to find a valid timePeriodId to seed the carousel.
     // When a specific month/year is requested, try to navigate to a period covering that month
     // so the carousel window is anchored correctly.
-    const seedTimePeriodId = await findValidTimePeriodId(api, mappings);
+    const seedTimePeriodId = await resolveCarouselSeed({
+        api,
+        cachedTimePeriodId: await findValidTimePeriodId(api, mappings),
+    });
     let timePeriodId = seedTimePeriodId;
 
     if (month !== undefined && year !== undefined && seedTimePeriodId !== undefined) {
-        const targetDate = new Date(year, month - 1, 15); // mid-month
+        const targetDate = `${year}-${String(month).padStart(2, "0")}-15`;
 
         try {
-            const entry = await api.findTimesheetForDate(seedTimePeriodId, targetDate);
+            const reached = await navigateToPeriodForDate({ api, seedTimePeriodId, date: targetDate });
 
-            if (entry) {
-                timePeriodId = entry.id;
+            if (reached !== undefined) {
+                timePeriodId = reached;
             }
-        } catch {
-            // Navigation failed, fall back to the seed period
+        } catch (err) {
+            logger.debug(`[clarity] carousel navigation to ${targetDate} failed, using the seed period: ${err}`);
         }
     }
 
@@ -130,8 +224,8 @@ export async function getTimesheetWeeks(
                 }
 
                 weeks.sort((a, b) => a.startDate.localeCompare(b.startDate));
-            } catch {
-                // Navigation failed, return what we have
+            } catch (err) {
+                logger.debug(`[clarity] carousel edge hop failed, returning the window we have: ${err}`);
             }
         }
 
@@ -152,8 +246,8 @@ export async function getTimesheetWeeks(
                 }
 
                 weeks.sort((a, b) => a.startDate.localeCompare(b.startDate));
-            } catch {
-                // Navigation failed, return what we have
+            } catch (err) {
+                logger.debug(`[clarity] carousel edge hop failed, returning the window we have: ${err}`);
             }
         }
 
@@ -221,4 +315,47 @@ async function findValidTimePeriodId(api: ClarityApi, mappings: ClarityMapping[]
 
     // Strategy 2: Fall back to undefined (no filter = current period)
     return undefined;
+}
+
+/**
+ * Pick the period covering a date. Clarity periods share a boundary date, so the range is
+ * half-open: the finish date belongs to the next period, not this one. Future periods carry no
+ * timesheet id yet and are skipped, because the API rejects `timesheetId=undefined`.
+ */
+export function findWeekForDate(weeks: TimesheetWeek[], date: string): TimesheetWeek | undefined {
+    return weeks.find((week) => week.timesheetId && isDateInHalfOpenRange(date, week.startDate, week.finishDate));
+}
+
+/**
+ * Select periods for a `--date` argument. A full `YYYY-MM-DD` picks the single covering period;
+ * a `YYYY-MM` picks every period that reaches into that month.
+ */
+export function selectWeeksForDateArg(weeks: TimesheetWeek[], dateArg: string): TimesheetWeek[] {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateArg)) {
+        const week = findWeekForDate(weeks, dateArg);
+
+        return week ? [week] : [];
+    }
+
+    if (!/^\d{4}-\d{2}$/.test(dateArg)) {
+        throw new Error(`Invalid --date '${dateArg}': expected YYYY-MM-DD or YYYY-MM`);
+    }
+
+    const [year, month] = dateArg.split("-").map(Number);
+    const monthStart = `${dateArg}-01`;
+    const monthEnd = `${dateArg}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+
+    return weeks.filter((week) => week.timesheetId && week.startDate <= monthEnd && week.finishDate > monthStart);
+}
+
+/**
+ * Order the periods to try when looking for the Clarity task catalogue. A month's own timesheet
+ * can exist with no task rows yet, so fall back to the newest other period that does have them.
+ */
+export function taskSourceWeekOrder(weeks: TimesheetWeek[], preferred: TimesheetWeek | undefined): TimesheetWeek[] {
+    const rest = weeks
+        .filter((week) => week.timesheetId && week.timesheetId !== preferred?.timesheetId)
+        .sort((a, b) => b.startDate.localeCompare(a.startDate));
+
+    return preferred?.timesheetId ? [preferred, ...rest] : rest;
 }

@@ -45,14 +45,51 @@ Cache-Control: no-cache
 
 Discover timesheets and navigate the time period carousel.
 
-**Query:** `?filter=(timeperiodId = {id})`
+**Query:** `?filter=(timeperiodId = {id})` — optional. Without it the server returns the window
+around the current period; with it the ~9-week window re-centres on that period, which is how you
+walk backwards or forwards through the year.
 
 **Response:** `TimesheetAppResponse`
 - `calendar._results[]` - Days in the period with work day info
 - `tpcounts` - Previous/next period counts for pagination
-- `tscarousel._results[]` - Sliding window (~9 weeks) mapping `timePeriodId` to `timesheet_id`
+- `tscarousel._results[]` - Sliding window (~9 weeks) of periods
 - `timesheets._results[]` - Full timesheet data with time entries
 - `resource._results[]` - Current user info (resourceId, name, email)
+
+**Carousel entry shape.** The timesheet id is nested, not a sibling of `id`:
+
+```json
+{
+  "id": 400004,
+  "start_date": "2026-08-24T00:00:00",
+  "finish_date": "2026-08-31T00:00:00",
+  "has_entries": "true",
+  "is_active": true,
+  "selected_id": 400004,
+  "resourceId": 900001,
+  "tpTimesheet": {
+    "_results": [
+      {
+        "timesheet_id": 555004,
+        "total": "0,00",
+        "prstatus": { "_results": [{ "displayValue": "Otevřeno", "id": "0" }] }
+      }
+    ]
+  }
+}
+```
+
+Some responses return `timesheet_id`, `total` and `prstatus` flat on the entry instead. Parse both
+shapes — `parseCarouselEntry` in `src/clarity/lib/timesheet-weeks.ts` does.
+
+**`finish_date` is exclusive.** Adjacent periods share a boundary date: one ends `2026-08-24` while
+the next starts `2026-08-24`, and the timesheet for the second reports `timePeriodStart 2026-08-24`
+/ `timePeriodFinish 2026-08-30`. Match a date with `start <= date < finish`, which is what
+`findWeekForDate` does. An inclusive comparison assigns boundary days to the wrong week.
+
+**No timesheet id needed to start.** This endpoint is the discovery entry point: call it with no
+filter, read `tpTimesheet._results[0].timesheet_id` off the carousel, and you have a valid
+timesheet id without any stored mapping.
 
 ### GET `/private/timesheet`
 

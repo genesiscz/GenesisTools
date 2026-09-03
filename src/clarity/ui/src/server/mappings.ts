@@ -1,8 +1,8 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import { getConfig, saveConfig } from "@app/clarity/config";
+import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
-import type { TimeEntryRecord } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 
 export type { TimesheetWeek };
@@ -94,23 +94,7 @@ export async function getClarityTasks(timesheetId: number): Promise<{ tasks: Cla
         cookies: config.cookies,
     });
 
-    const data = await api.getTimesheet(timesheetId);
-    const ts = data.timesheets._results[0];
-
-    if (!ts) {
-        throw new Error(`Timesheet ${timesheetId} not found`);
-    }
-
-    const tasks: ClarityTask[] = (ts.timeentries?._results ?? []).map((e: TimeEntryRecord) => ({
-        taskId: e.taskId,
-        taskName: e.taskName,
-        taskCode: e.taskCode,
-        investmentName: e.investmentName,
-        investmentCode: e.investmentCode,
-        timeEntryId: e._internalId,
-    }));
-
-    return { tasks };
+    return { tasks: await listClarityTasks({ api, timesheetId }) };
 }
 
 export async function moveMapping(
