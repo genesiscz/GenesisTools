@@ -675,3 +675,69 @@ describe("bulk fast path vs process.cwd()", () => {
         }
     });
 });
+
+describe("findDuplicateFiles multi-root", () => {
+    it("merges identical files that live in DIFFERENT roots into one group", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-dup-multiroot-"));
+        try {
+            const r1 = join(outer, "r1");
+            const r2 = join(outer, "r2");
+            mkdirSync(r1, { recursive: true });
+            mkdirSync(r2, { recursive: true });
+            const payload = Buffer.alloc(64_000, 0x5a);
+            writeFileSync(join(r1, "same.bin"), payload);
+            writeFileSync(join(r2, "same.bin"), payload);
+
+            const perRoot = [...(await findDuplicateFiles(r1)), ...(await findDuplicateFiles(r2))];
+            expect(perRoot.length).toBe(0);
+
+            const merged = await findDuplicateFiles([r1, r2]);
+            expect(merged.length).toBe(1);
+            expect(merged[0].size).toBe(64_000);
+            expect(merged[0].paths.sort()).toEqual([join(r1, "same.bin"), join(r2, "same.bin")].sort());
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("a single string root behaves exactly as before", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-dup-oneroot-"));
+        try {
+            const payload = Buffer.alloc(32_000, 0x11);
+            writeFileSync(join(dir, "a.bin"), payload);
+            writeFileSync(join(dir, "b.bin"), payload);
+            const groups = await findDuplicateFiles(dir);
+            expect(groups.length).toBe(1);
+            expect(groups[0].paths.length).toBe(2);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("findDuplicateFiles partnerFor", () => {
+    it("pulls a same-size candidate from outside the roots into the group", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-dup-partner-"));
+        try {
+            const scan = join(outer, "scan");
+            const store = join(outer, "store");
+            mkdirSync(scan, { recursive: true });
+            mkdirSync(store, { recursive: true });
+            const payload = Buffer.alloc(48_000, 0x7c);
+            writeFileSync(join(scan, "lib.a"), payload);
+            writeFileSync(join(store, "lib.a"), payload);
+            writeFileSync(join(store, "other.a"), Buffer.alloc(48_000, 0x01));
+
+            const without = await findDuplicateFiles(scan);
+            expect(without.length).toBe(0);
+
+            const groups = await findDuplicateFiles(scan, {
+                partnerFor: () => [join(store, "lib.a"), join(store, "other.a"), join(store, "missing.a")],
+            });
+            expect(groups.length).toBe(1);
+            expect(groups[0].paths.sort()).toEqual([join(scan, "lib.a"), join(store, "lib.a")].sort());
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+});

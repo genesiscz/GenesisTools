@@ -3,6 +3,7 @@ import { type Dirent, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { emptyFindDuplicatesStats, type FileMetaCacheLike, findDuplicateFiles } from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
+import { getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import type { DuplicateSet, DuplicatesReport } from "./render/types";
@@ -31,6 +32,16 @@ export interface CollapseArgs {
     cache?: FileMetaCacheLike;
     /** P3 — opt-in prefix-hash pre-filter. Forwarded to `findDuplicateFiles`. */
     prefixHash?: boolean;
+    /** Package-manager stores. A member under one of these always wins `keep`,
+     *  is never a replace target, and stops the directory rollup. */
+    keepOnlyRoots?: string[];
+    /** Forwarded to `findDuplicateFiles` — injects keep-partner candidates. */
+    partnerFor?: (path: string, size: number) => string[];
+}
+
+/** True when `path` equals one of `roots` or sits below it. */
+export function isUnderAny(path: string, roots: readonly string[]): boolean {
+    return roots.some((r) => path === r || path.startsWith(`${r}${sep}`));
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
@@ -123,6 +134,76 @@ function isAtOrAboveRoot(dir: string, roots: string[]): boolean {
     return roots.some((root) => dir === root || !relative(dir, root).startsWith(".."));
 }
 
+/** Rank a keep candidate. Directories use their files: a cloned tree has
+ *  nonzero clone ids and near-zero private bytes; a full copy does not. */
+function keepRank(path: string): { shared: boolean; priv: number } {
+    const children = listFiles(path);
+    if (children.length > 0) {
+        let priv = 0;
+        let shared = false;
+        for (const f of children) {
+            const id = getCloneId(f);
+            if (id !== null && id !== 0n) {
+                shared = true;
+            }
+
+            const n = getPrivateSize(f);
+            if (n !== null) {
+                priv += n;
+            }
+        }
+
+        return { shared, priv };
+    }
+
+    const id = getCloneId(path);
+    const n = getPrivateSize(path);
+    return {
+        shared: id !== null && id !== 0n,
+        priv: n === null ? Number.POSITIVE_INFINITY : n,
+    };
+}
+
+/** Prefer a member that already shares extents so --apply clonefile's onto it
+ *  (and frees the private copy) instead of the other way around. Lex path is
+ *  the stable tie-break when clone-id and private size match. */
+function pickKeep(members: string[], keepOnlyRoots: readonly string[]): string {
+    const keepOnly = members.filter((m) => isUnderAny(m, keepOnlyRoots)).sort();
+    if (keepOnly.length > 0) {
+        return keepOnly[0];
+    }
+
+    let best = members[0];
+    let bestRank = keepRank(best);
+    for (let i = 1; i < members.length; i++) {
+        const candidate = members[i];
+        const rank = keepRank(candidate);
+        if (rank.shared !== bestRank.shared) {
+            if (rank.shared) {
+                best = candidate;
+                bestRank = rank;
+            }
+
+            continue;
+        }
+
+        if (rank.priv !== bestRank.priv) {
+            if (rank.priv < bestRank.priv) {
+                best = candidate;
+                bestRank = rank;
+            }
+
+            continue;
+        }
+
+        if (candidate < best) {
+            best = candidate;
+        }
+    }
+
+    return best;
+}
+
 export async function collapseDuplicates({
     roots,
     minSize,
@@ -133,6 +214,8 @@ export async function collapseDuplicates({
     onDirEntered,
     cache,
     prefixHash,
+    keepOnlyRoots = [],
+    partnerFor,
 }: CollapseArgs): Promise<DuplicatesReport> {
     const sw = new Stopwatch();
     const shaOf = new Map<string, string>();
@@ -142,47 +225,55 @@ export async function collapseDuplicates({
     // counters, so we get sum-of-roots in `stats` at the end.
     const stats = emptyFindDuplicatesStats();
 
-    for (const root of roots) {
-        const findOpts: Parameters<typeof findDuplicateFiles>[1] = { stats };
-        if (minSize !== undefined) {
-            findOpts.minSize = minSize;
-        }
-        if (signal !== undefined) {
-            findOpts.signal = signal;
-        }
-        if (shouldEnter !== undefined) {
-            findOpts.shouldEnter = shouldEnter;
-        }
-        if (onDirEntered !== undefined) {
-            findOpts.onDirEntered = onDirEntered;
-        }
-        if (cache !== undefined) {
-            findOpts.cache = cache;
-        }
-        if (prefixHash === true) {
-            findOpts.prefixHash = true;
-        }
-        for (const g of await findDuplicateFiles(root, findOpts)) {
-            // If include/exclude prunes the group below 2 paths it is no
-            // longer a duplicate — drop it.
-            const filtered =
-                (include && include.length > 0) || (exclude && exclude.length > 0)
-                    ? g.paths.filter((p) => {
-                          const containingRoot = rootOf(p, roots) ?? root;
-                          return passesGlobs(relative(containingRoot, p), include, exclude);
-                      })
-                    : g.paths;
-            if (filtered.length < 2) {
-                continue;
-            }
+    // ONE walk over every root, bucketed together: a file that is alone in its
+    // own root still meets its twin in another root (the worktree case).
+    const findOpts: Parameters<typeof findDuplicateFiles>[1] = { stats };
+    if (minSize !== undefined) {
+        findOpts.minSize = minSize;
+    }
+    if (signal !== undefined) {
+        findOpts.signal = signal;
+    }
+    if (shouldEnter !== undefined) {
+        findOpts.shouldEnter = shouldEnter;
+    }
+    if (onDirEntered !== undefined) {
+        findOpts.onDirEntered = onDirEntered;
+    }
+    if (cache !== undefined) {
+        findOpts.cache = cache;
+    }
+    if (prefixHash === true) {
+        findOpts.prefixHash = true;
+    }
+    if (partnerFor !== undefined) {
+        findOpts.partnerFor = partnerFor;
+    }
+    for (const g of await findDuplicateFiles(roots, findOpts)) {
+        // If include/exclude prunes the group below 2 paths it is no longer a
+        // duplicate — drop it. Keep-partner paths live outside every root and
+        // are never glob-filtered.
+        const filtered =
+            (include && include.length > 0) || (exclude && exclude.length > 0)
+                ? g.paths.filter((p) => {
+                      const containingRoot = rootOf(p, roots);
+                      if (containingRoot === null) {
+                          return true;
+                      }
 
-            for (const p of filtered) {
-                shaOf.set(p, g.sha256);
-                sizeOf.set(p, g.size);
-            }
-
-            fileGroups.push({ sha256: g.sha256, size: g.size, paths: filtered });
+                      return passesGlobs(relative(containingRoot, p), include, exclude);
+                  })
+                : g.paths;
+        if (filtered.length < 2) {
+            continue;
         }
+
+        for (const p of filtered) {
+            shaOf.set(p, g.sha256);
+            sizeOf.set(p, g.size);
+        }
+
+        fileGroups.push({ sha256: g.sha256, size: g.size, paths: filtered });
     }
 
     // The ancestor walk re-enumerates the same dirs many times — once per
@@ -212,9 +303,18 @@ export async function collapseDuplicates({
         return info;
     };
 
+    // Keep-only roots join the hard stop so a cache-side rollup can never
+    // ascend into (or above) the package-manager store.
+    const hardStopRoots = [...roots, ...keepOnlyRoots];
     const consumed = new Set<string>();
     const sets: DuplicateSet[] = [];
     const ancestor = commonAncestor(roots);
+    // Name a set after the member that lives inside a scan root, so a set whose
+    // keep is a store file does not read as "../../.bun/…".
+    const displayName = (members: string[]): string => {
+        const inRoot = members.find((m) => rootOf(m, roots) !== null) ?? members[0];
+        return relative(ancestor, inRoot) || inRoot;
+    };
 
     for (const g of fileGroups) {
         if (g.paths.some((p) => consumed.has(p))) {
@@ -225,7 +325,7 @@ export async function collapseDuplicates({
         let bestInfo: DirInfo | null = null;
         let cursor = g.paths.map((p) => dirname(p));
 
-        while (cursor.every((d) => !isAtOrAboveRoot(d, roots))) {
+        while (cursor.every((d) => !isAtOrAboveRoot(d, hardStopRoots))) {
             const infos = cursor.map(infoFor);
             const counts = new Set(infos.map((i) => i.fileCount));
             // Null-hashed dirs must compare distinct from every other dir; key
@@ -253,12 +353,12 @@ export async function collapseDuplicates({
 
                 sets.push({
                     kind: "dir",
-                    what: relative(ancestor, members[0]) || members[0],
+                    what: displayName(members),
                     copies: members.length,
                     eachBytes: bestInfo.bytes,
                     reclaimable: (members.length - 1) * bestInfo.bytes,
                     members,
-                    keep: members[0],
+                    keep: pickKeep(members, keepOnlyRoots),
                 });
             }
         }
@@ -276,14 +376,38 @@ export async function collapseDuplicates({
 
         sets.push({
             kind: "file",
-            what: relative(ancestor, remaining[0]) || remaining[0],
+            what: displayName(remaining),
             copies: remaining.length,
             eachBytes: g.size,
             reclaimable: (remaining.length - 1) * g.size,
             members: remaining,
-            keep: remaining[0],
+            keep: pickKeep(remaining, keepOnlyRoots),
         });
     }
+
+    // A keep-only member that is not the keep can never be replaced, so it must
+    // not inflate `copies` or `reclaimable`.
+    const normalized = sets.flatMap((set) => {
+        const members = set.members.filter((m) => m === set.keep || !isUnderAny(m, keepOnlyRoots));
+        if (members.length === set.members.length) {
+            return [set];
+        }
+
+        if (members.length < 2) {
+            return [];
+        }
+
+        return [
+            {
+                ...set,
+                members,
+                copies: members.length,
+                reclaimable: (members.length - 1) * set.eachBytes,
+            },
+        ];
+    });
+    sets.length = 0;
+    sets.push(...normalized);
 
     const totalReclaimable = sets.reduce((s, x) => s + x.reclaimable, 0);
     const dirSets = sets.filter((s) => s.kind === "dir").length;

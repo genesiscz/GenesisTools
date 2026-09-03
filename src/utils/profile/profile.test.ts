@@ -3,7 +3,13 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { setProfilingConfig } from "@genesiscz/utils/GenesisTools";
-import { FLUSH_AFTER_RECORDS, flushProfilerFile, profiler, reloadProfiler } from "@genesiscz/utils/profile";
+import {
+    FLUSH_AFTER_RECORDS,
+    flushProfilerFile,
+    PROFILER_SCOPE_NAMES,
+    profiler,
+    reloadProfiler,
+} from "@genesiscz/utils/profile";
 import { realGenesisToolsRoot, rmTestPath } from "@genesiscz/utils/storage/real-home-guard";
 
 function logsDir(): string {
@@ -348,5 +354,17 @@ describe("reloadProfiler and retained scopes", () => {
         expect(retained.enabled).toBe(true);
         retained.measure("after-reload", () => 1);
         expect(profilingLogBodies()).toContain("[profile:t] after-reload");
+    });
+});
+
+describe("clones profiler scope", () => {
+    it("is a known scope name and records under PROFILE=clones", () => {
+        expect(PROFILER_SCOPE_NAMES).toContain("clones");
+        env.testing.set("PROFILE", "clones");
+        reloadProfiler();
+
+        profiler.scope("clones").measure("discover", () => 1);
+
+        expect(profilingLogBodies()).toContain("[profile:clones] discover");
     });
 });

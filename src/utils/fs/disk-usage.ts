@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+    type BigIntStats,
     chmodSync,
     chownSync,
     closeSync,
@@ -826,6 +827,13 @@ export interface FindDuplicatesOptions {
      *  recommended for one-off cold scans of heterogeneous media trees
      *  (the `fclones` / `rmlint` use case). */
     prefixHash?: boolean;
+    /** Keep-partner lookup (package-manager caches). Called once per walked
+     *  file in a size bucket; every returned path that exists and has the same
+     *  size joins that bucket, so the clone-family, sha256 and byte-compare
+     *  pipeline decides equality exactly as it does for walked files. A wrong
+     *  candidate is therefore dropped, never cloned. Candidates are never
+     *  walked and never counted in `stats`. */
+    partnerFor?: (path: string, size: number) => string[];
 }
 
 /** How often we yield to the event loop during the size-bucket loop.
@@ -876,16 +884,60 @@ function yieldToLoop(): Promise<void> {
 const WALK_HEARTBEAT_EVERY = 50_000;
 const HASH_HEARTBEAT_EVERY = 1_000;
 
-export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptions = {}): Promise<DuplicateGroup[]> {
+/** Append keep-partner candidates (e.g. the bun-cache copy of a package file)
+ *  to one size bucket. Only an existing regular file of the same size joins.
+ *  A candidate that already shares the walked file's clone family collapses
+ *  the bucket to one family (nothing to reclaim); a private copy hashes
+ *  against it and, when equal, becomes a keep candidate. */
+function addPartnerCandidates(
+    paths: string[],
+    size: number,
+    partnerFor: (path: string, size: number) => string[],
+    mtimeByPath: Map<string, bigint>
+): string[] {
+    const out = [...paths];
+    const seen = new Set(paths);
+    for (const p of paths) {
+        for (const candidate of partnerFor(p, size)) {
+            if (seen.has(candidate)) {
+                continue;
+            }
+
+            seen.add(candidate);
+            let st: BigIntStats;
+            try {
+                st = statSync(candidate, { bigint: true });
+            } catch (err) {
+                logger.debug({ err, candidate }, "partner candidate stat failed");
+                continue;
+            }
+
+            if (!st.isFile() || st.size !== BigInt(size)) {
+                continue;
+            }
+
+            out.push(candidate);
+            mtimeByPath.set(candidate, st.mtimeNs);
+        }
+    }
+
+    return out;
+}
+
+export async function findDuplicateFiles(
+    root: string | string[],
+    opts: FindDuplicatesOptions = {}
+): Promise<DuplicateGroup[]> {
+    const roots = Array.isArray(root) ? root : [root];
     const minSize = Math.max(1, opts.minSize ?? 1);
-    const { signal, shouldEnter, onDirEntered, stats, cache } = opts;
+    const { signal, shouldEnter, onDirEntered, stats, cache, partnerFor } = opts;
     const prefixHashEnabled = opts.prefixHash === true;
 
     const sw = new Stopwatch();
     let phaseStartMs = sw.elapsedMs;
 
     logger.info(
-        { event: "findDuplicateFiles.start", root, minSize, cacheAttached: cache !== undefined },
+        { event: "findDuplicateFiles.start", roots, minSize, cacheAttached: cache !== undefined },
         "findDuplicateFiles start"
     );
 
@@ -923,37 +975,39 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
         walkOpts.cache = cache;
     }
     let walkCount = 0;
-    for (const e of walkFiles(root, walkOpts)) {
-        if ((walkCount++ & (YIELD_EVERY_WALK_ENTRIES - 1)) === 0) {
-            await yieldToLoop();
-            signal?.throwIfAborted();
-        }
+    for (const scanRoot of roots) {
+        for (const e of walkFiles(scanRoot, walkOpts)) {
+            if ((walkCount++ & (YIELD_EVERY_WALK_ENTRIES - 1)) === 0) {
+                await yieldToLoop();
+                signal?.throwIfAborted();
+            }
 
-        walkedFiles += 1;
-        if (walkedFiles % WALK_HEARTBEAT_EVERY === 0) {
-            logger.info(
-                {
-                    event: "walk.progress",
-                    root,
-                    files: walkedFiles,
-                    dirs: walkedDirs,
-                    elapsedMs: Math.round(sw.elapsedMs - phaseStartMs),
-                    currentDir: lastDir,
-                },
-                "walk progress"
-            );
-        }
+            walkedFiles += 1;
+            if (walkedFiles % WALK_HEARTBEAT_EVERY === 0) {
+                logger.info(
+                    {
+                        event: "walk.progress",
+                        root: scanRoot,
+                        files: walkedFiles,
+                        dirs: walkedDirs,
+                        elapsedMs: Math.round(sw.elapsedMs - phaseStartMs),
+                        currentDir: lastDir,
+                    },
+                    "walk progress"
+                );
+            }
 
-        if (e.logical < minSize) {
-            continue;
-        }
+            if (e.logical < minSize) {
+                continue;
+            }
 
-        const list = bySize.get(e.logical) ?? [];
-        list.push(e.path);
-        bySize.set(e.logical, list);
-        mtimeByPath.set(e.path, e.mtimeNs);
-        if (e.cloneIdHex !== undefined) {
-            walkCloneIdByPath.set(e.path, e.cloneIdHex);
+            const list = bySize.get(e.logical) ?? [];
+            list.push(e.path);
+            bySize.set(e.logical, list);
+            mtimeByPath.set(e.path, e.mtimeNs);
+            if (e.cloneIdHex !== undefined) {
+                walkCloneIdByPath.set(e.path, e.cloneIdHex);
+            }
         }
     }
 
@@ -961,7 +1015,7 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     logger.info(
         {
             event: "walk.complete",
-            root,
+            roots,
             files: walkedFiles,
             dirs: walkedDirs,
             buckets: bySize.size,
@@ -984,7 +1038,7 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
 
     const groups: DuplicateGroup[] = [];
     let bucketIndex = 0;
-    for (const [size, paths] of bySize) {
+    for (const [size, sizePaths] of bySize) {
         if ((bucketIndex & (YIELD_EVERY_BUCKETS - 1)) === 0) {
             await yieldToLoop();
         }
@@ -995,7 +1049,7 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             logger.info(
                 {
                     event: "hash.progress",
-                    root,
+                    roots,
                     bucketsTotal: bySize.size,
                     bucketsSeen: bucketIndex,
                     bucketsHashed,
@@ -1010,6 +1064,8 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
             );
         }
 
+        const paths =
+            partnerFor === undefined ? sizePaths : addPartnerCandidates(sizePaths, size, partnerFor, mtimeByPath);
         if (paths.length < 2) {
             continue;
         }
@@ -1301,7 +1357,7 @@ export async function findDuplicateFiles(root: string, opts: FindDuplicatesOptio
     logger.info(
         {
             event: "findDuplicateFiles.complete",
-            root,
+            roots,
             walkedFiles,
             walkedDirs,
             walkMs: Math.round(walkMs),
