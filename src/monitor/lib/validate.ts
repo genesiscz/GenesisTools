@@ -11,6 +11,7 @@ import {
     type NotifyChannel,
     type NotifyTargetInput,
     type NotifyTargetPatch,
+    WATCHER_KINDS,
     type WatcherConfig,
     type WatcherInput,
     type WatcherKind,
@@ -25,6 +26,13 @@ export class WatcherValidationError extends Error {
         this.name = "WatcherValidationError";
     }
 }
+
+/**
+ * Derived, never spelled out twice. Both watcher errors used to name three
+ * kinds while `WATCHER_KINDS` had grown to nine, so a caller who mistyped
+ * `rrs` read the message and concluded rss watchers did not exist.
+ */
+const KIND_MESSAGE = `kind must be one of ${WATCHER_KINDS.join(", ")}`;
 
 const ACCOUNT_ID = /^acc_[a-z0-9][a-z0-9_-]*$/;
 const HOSTNAME = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
@@ -472,7 +480,7 @@ export function parseWatcherInput(value: unknown): WatcherInput {
     const kind = record.kind;
 
     if (!isWatcherKind(kind)) {
-        throw new WatcherValidationError("kind must be website, statuspage or ai-provider");
+        throw new WatcherValidationError(KIND_MESSAGE);
     }
 
     const name = optionalString(record, "name")?.trim();
@@ -511,7 +519,7 @@ export function parseWatcherPatch(value: unknown, currentKind: WatcherKind): Wat
 
     if (kindValue !== undefined) {
         if (!isWatcherKind(kindValue)) {
-            throw new WatcherValidationError("kind must be website, statuspage or ai-provider");
+            throw new WatcherValidationError(KIND_MESSAGE);
         }
 
         patch.kind = kindValue;

@@ -13,7 +13,7 @@ import {
 import { WATCHER_PRESETS } from "@app/monitor/lib/presets";
 import { listSayVoices } from "@app/monitor/lib/say-voices";
 import { Scheduler } from "@app/monitor/lib/scheduler";
-import { isNotifyChannel, MONITOR_VERSION, type MonitorEvent, maskTarget } from "@app/monitor/lib/types";
+import { isNotifyChannel, MONITOR_VERSION, type MonitorEvent, maskTarget, maskWatcher } from "@app/monitor/lib/types";
 import {
     normalizeTarget,
     parseNotifyTargetInput,
@@ -77,6 +77,30 @@ function isForbiddenCrossOriginWrite(req: Request, ownPort: number): boolean {
     }
 
     return !isAllowedBrowserOrigin(req.headers.get("origin"), ownPort);
+}
+
+const IPV4_LITERAL = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+/**
+ * DNS rebinding is what the `Origin` guard cannot see. A page on evil.example
+ * whose name is re-pointed at 127.0.0.1 is SAME-origin to the browser, so it
+ * sends no `Origin` at all and every read route answers it. What the attacker
+ * cannot change is the `Host` the browser asks for: it is still the rebound
+ * DNS name. Only an IP literal or a loopback name reaches this daemon, GET
+ * included. A missing `Host` is HTTP/1.0 or a raw socket, never a browser.
+ */
+export function isAllowedHost(host: string | null): boolean {
+    if (!host) {
+        return true;
+    }
+
+    if (host.startsWith("[")) {
+        return true;
+    }
+
+    const hostname = host.split(":")[0].toLowerCase();
+
+    return IPV4_LITERAL.test(hostname) || hostname === "localhost" || hostname.endsWith(".localhost");
 }
 
 export interface StartServerOptions {
@@ -169,7 +193,7 @@ async function handleWatcherRoutes(req: Request, url: URL, monitor: Monitor): Pr
     const path = url.pathname;
 
     if (matchRoute(req, "GET", "/api/v1/watchers", path)) {
-        return json({ watchers: await monitor.db.summarizeAll() });
+        return json({ watchers: (await monitor.db.summarizeAll()).map(maskWatcher) });
     }
 
     if (matchRoute(req, "POST", "/api/v1/watchers", path)) {
@@ -180,7 +204,7 @@ async function handleWatcherRoutes(req: Request, url: URL, monitor: Monitor): Pr
             logger.warn({ runError, id: watcher.id }, "monitor server: initial check failed");
         });
 
-        return json({ watcher }, 201);
+        return json({ watcher: maskWatcher(watcher) }, 201);
     }
 
     const single = matchRoute(req, "GET", "/api/v1/watchers/:id", path);
@@ -189,7 +213,7 @@ async function handleWatcherRoutes(req: Request, url: URL, monitor: Monitor): Pr
         const id = parseId(single.id);
         const watcher = id ? await monitor.getSummary(id) : null;
 
-        return watcher ? json({ watcher }) : error("watcher not found", 404);
+        return watcher ? json({ watcher: maskWatcher(watcher) }) : error("watcher not found", 404);
     }
 
     const patch = matchRoute(req, "PATCH", "/api/v1/watchers/:id", path);
@@ -204,7 +228,7 @@ async function handleWatcherRoutes(req: Request, url: URL, monitor: Monitor): Pr
 
         const watcher = await monitor.updateWatcher(current.id, parseWatcherPatch(await readBody(req), current.kind));
 
-        return json({ watcher });
+        return json({ watcher: watcher ? maskWatcher(watcher) : watcher });
     }
 
     const remove = matchRoute(req, "DELETE", "/api/v1/watchers/:id", path);
@@ -228,7 +252,7 @@ async function handleWatcherRoutes(req: Request, url: URL, monitor: Monitor): Pr
             return exists ? error("check already running", 409, "CHECK_IN_FLIGHT") : error("watcher not found", 404);
         }
 
-        return json(outcome);
+        return json({ ...outcome, watcher: maskWatcher(outcome.watcher) });
     }
 
     const checks = matchRoute(req, "GET", "/api/v1/watchers/:id/checks", path);
@@ -332,7 +356,9 @@ export async function handleApiRequest(req: Request, url: URL, monitor: Monitor,
     }
 
     if (matchRoute(req, "GET", "/api/v1/overview", path)) {
-        return json(await monitor.overview());
+        const overview = await monitor.overview();
+
+        return json({ ...overview, watchers: overview.watchers.map(maskWatcher) });
     }
 
     if (matchRoute(req, "GET", "/api/v1/presets", path)) {
@@ -423,7 +449,15 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         const payload = SafeJSON.stringify(event, { strict: true });
 
         for (const ws of sockets) {
-            ws.send(payload);
+            // Per socket: a tab that closed between the `close` handler and this
+            // event throws here, and one dead socket must not cost every socket
+            // later in the Set its copy of the event.
+            try {
+                ws.send(payload);
+            } catch (sendError) {
+                logger.debug({ sendError, type: event.type }, "monitor server: event send failed, dropping socket");
+                sockets.delete(ws);
+            }
         }
     });
 
@@ -449,6 +483,15 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
             if (req.method === "OPTIONS") {
                 return new Response(null, { status: 204 });
+            }
+
+            if (!isAllowedHost(req.headers.get("host"))) {
+                logger.warn(
+                    { host: req.headers.get("host"), method: req.method, path: url.pathname },
+                    "monitor server: refused a request for a foreign host name"
+                );
+
+                return error("this daemon only answers on loopback", 403);
             }
 
             if (isForbiddenCrossOriginWrite(req, bunServer.port ?? port)) {

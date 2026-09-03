@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { filterItems, parseFeed } from "./rss";
+import { checkRss, filterItems, parseFeed } from "./rss";
 
 const RSS = `<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
@@ -90,5 +90,59 @@ describe("parseFeed", () => {
         expect(filterItems(items, ["ios"]).map((item) => item.guid)).toEqual(["INCc33a8af"]);
         expect(filterItems(items, ["severity"]).map((item) => item.guid)).toEqual(["INCc33a8af"]);
         expect(filterItems(items, undefined)).toHaveLength(2);
+    });
+
+    test("a feed with no item tag keeps its whole document, last byte included", () => {
+        // `xml.search(...)` answers -1 with no <item>, and -1 is truthy, so the
+        // old `|| xml.length` fallback never fired and the head was
+        // xml.slice(0, -1). A body cut by a proxy right after the channel title
+        // loses the `>` of `</title>`, and the title stops being readable.
+        const feed = parseFeed(`<rss><channel><title>All quiet</title>`);
+
+        expect(feed.title).toBe("All quiet");
+        expect(feed.items).toEqual([]);
+    });
+
+    test("a document that starts at the first item has no channel title to read", () => {
+        // The other half of the same expression: search answers 0 here, and
+        // `0 || xml.length` widened the head to the whole document, so the
+        // FIRST ITEM's title was reported as the name of the feed.
+        const feed = parseFeed(`<item><title>Item one</title><guid>g1</guid></item>`);
+
+        expect(feed.title).toBeNull();
+        expect(feed.items.map((entry) => entry.title)).toEqual(["Item one"]);
+    });
+});
+
+describe("checkRss", () => {
+    test("a non-ok response cancels the body instead of leaking a pooled socket", async () => {
+        // The scheduler polls forever; an unread body holds its socket out of
+        // the fetch pool until GC, one per watcher per interval.
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(new TextEncoder().encode("rate limited"));
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const realFetch = globalThis.fetch;
+        globalThis.fetch = Object.assign(
+            async () => new Response(body, { status: 429, statusText: "Too Many Requests" }),
+            {
+                preconnect: realFetch.preconnect,
+            }
+        );
+
+        try {
+            const result = await checkRss({ target: "https://a.dev/rss", config: {}, timeoutMs: 1_000 });
+
+            expect(result.status).toBe("down");
+            expect(result.httpStatus).toBe(429);
+            expect(cancelled).toBe(true);
+        } finally {
+            globalThis.fetch = realFetch;
+        }
     });
 });

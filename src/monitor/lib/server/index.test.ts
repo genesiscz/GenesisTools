@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { startServer } from "./index";
+import { MASKED_HEADER_VALUE } from "../types";
+import { isAllowedHost, startServer } from "./index";
 
 let handle: Awaited<ReturnType<typeof startServer>>;
 let base: string;
@@ -42,6 +43,117 @@ describe("monitor server target responses", () => {
 
         // The stored secret survived a patch that could not carry it.
         expect((await handle.monitor.getTarget(1))?.config.botToken).toBe("123:SECRET");
+    });
+});
+
+describe("monitor server watcher responses", () => {
+    const SECRET = "Bearer super-secret";
+
+    test("every route that returns a watcher masks config.headers", async () => {
+        // maskWatcher used to run only on the WebSocket event stream, so the
+        // same Authorization token the stream hid was returned verbatim by
+        // list, get, create, patch and run.
+        const created = await fetch(`${base}/api/v1/watchers`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({
+                name: "private site",
+                kind: "website",
+                // Refused at once, so the create route's own initial check
+                // settles before the assertions below.
+                target: "http://127.0.0.1:1/health",
+                enabled: false,
+                notify: false,
+                timeoutMs: 1_000,
+                config: { headers: { Authorization: SECRET } },
+            }),
+        });
+        const { watcher } = (await created.json()) as { watcher: { id: number; config: { headers: unknown } } };
+
+        expect(created.status).toBe(201);
+        expect(watcher.config.headers).toEqual({ Authorization: MASKED_HEADER_VALUE });
+
+        for (const path of ["/watchers", `/watchers/${watcher.id}`, "/overview"]) {
+            const response = await fetch(`${base}/api/v1${path}`);
+
+            expect(SafeJSON.stringify(await response.json())).not.toContain("super-secret");
+        }
+
+        const patched = await fetch(`${base}/api/v1/watchers/${watcher.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ name: "private site 2" }),
+        });
+
+        expect(SafeJSON.stringify(await patched.json())).not.toContain("super-secret");
+
+        // The check itself must still send the real header.
+        expect((await handle.monitor.getWatcher(watcher.id))?.config.headers).toEqual({ Authorization: SECRET });
+        await handle.monitor.deleteWatcher(watcher.id);
+    });
+
+    test("the run outcome masks the watcher it carries", async () => {
+        const created = await handle.monitor.createWatcher({
+            name: "run me",
+            kind: "website",
+            target: "http://127.0.0.1:1/health",
+            enabled: false,
+            notify: false,
+            timeoutMs: 1_000,
+            config: { headers: { Authorization: SECRET } },
+        });
+        const response = await fetch(`${base}/api/v1/watchers/${created.id}/run`, { method: "POST" });
+        const outcome = (await response.json()) as { watcher: { config: { headers: unknown } } };
+
+        expect(response.status).toBe(200);
+        expect(outcome.watcher.config.headers).toEqual({ Authorization: MASKED_HEADER_VALUE });
+        await handle.monitor.deleteWatcher(created.id);
+    });
+
+    test("a patch that echoes the masked header back keeps the stored value", async () => {
+        const created = await handle.monitor.createWatcher({
+            name: "round trip",
+            kind: "website",
+            target: "https://example.invalid/health",
+            enabled: false,
+            notify: false,
+            config: { headers: { Authorization: SECRET }, expectStatus: 200 },
+        });
+        const response = await fetch(`${base}/api/v1/watchers/${created.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({
+                config: { headers: { Authorization: MASKED_HEADER_VALUE }, expectStatus: 204 },
+            }),
+        });
+
+        expect(response.status).toBe(200);
+
+        const stored = await handle.monitor.getWatcher(created.id);
+        expect(stored?.config.headers).toEqual({ Authorization: SECRET });
+        expect(stored?.config.expectStatus).toBe(204);
+        await handle.monitor.deleteWatcher(created.id);
+    });
+});
+
+describe("monitor server host policy", () => {
+    test("isAllowedHost accepts loopback names and IP literals, refuses DNS names", () => {
+        expect(isAllowedHost(null)).toBe(true);
+        expect(isAllowedHost("127.0.0.1:3077")).toBe(true);
+        expect(isAllowedHost("localhost:3077")).toBe(true);
+        expect(isAllowedHost("monitor.localhost")).toBe(true);
+        expect(isAllowedHost("[::1]:3077")).toBe(true);
+        expect(isAllowedHost("evil.example:3077")).toBe(false);
+        expect(isAllowedHost("LOCALHOST.evil.example")).toBe(false);
+    });
+
+    test("a GET whose Host is a rebound DNS name is refused", async () => {
+        // DNS rebinding makes the attacker page same-origin, so no Origin is
+        // sent and the cross-origin write guard never fires. The Host still
+        // names evil.example, and that is the only thing left to check.
+        const response = await fetch(`${base}/api/v1/watchers`, { headers: { Host: "evil.example" } });
+
+        expect(response.status).toBe(403);
     });
 });
 

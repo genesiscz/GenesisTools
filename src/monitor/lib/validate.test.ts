@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_INTERVAL_SEC, DEFAULT_TIMEOUT_MS } from "./types";
+import { DEFAULT_INTERVAL_SEC, DEFAULT_TIMEOUT_MS, WATCHER_KINDS } from "./types";
 import {
     normalizeTarget,
     parseNotifyTargetPatch,
@@ -152,5 +152,26 @@ describe("parseNotifyTargetPatch channel switch", () => {
         expect(() => parseNotifyTargetPatch({ channel: "webhook", config: {} }, "telegram")).toThrow(
             /webhook target needs config.url/
         );
+    });
+});
+
+describe("watcher kind errors", () => {
+    test("the message names every supported kind, not a stale three", () => {
+        // `rss`, `tcp`, `dns`, `tls`, `json` and `command` all have a wired-up
+        // check pipeline, and the message used to say only three kinds existed.
+        for (const parse of [
+            () => parseWatcherInput({ name: "a", kind: "rrs", target: "https://a.dev/" }),
+            () => parseWatcherPatch({ kind: "rrs" }, "website"),
+        ]) {
+            expect(parse).toThrow(WatcherValidationError);
+
+            try {
+                parse();
+            } catch (error) {
+                for (const kind of WATCHER_KINDS) {
+                    expect((error as Error).message).toContain(kind);
+                }
+            }
+        }
     });
 });

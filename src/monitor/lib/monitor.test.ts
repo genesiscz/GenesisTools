@@ -1,9 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { MonitorDatabase } from "./db";
-import { Monitor } from "./monitor";
+import { isWorthNotifying, Monitor } from "./monitor";
 import { isDue } from "./scheduler";
-import { MASKED_HEADER_VALUE, type MonitorEvent, type Watcher } from "./types";
+import {
+    DEFAULT_INTERVAL_SEC,
+    DEFAULT_TIMEOUT_MS,
+    type Incident,
+    MASKED_HEADER_VALUE,
+    type MonitorEvent,
+    type Watcher,
+} from "./types";
 
 let server: ReturnType<typeof Bun.serve>;
 let statusCode = 200;
@@ -44,6 +51,10 @@ describe("MonitorDatabase", () => {
         expect(created.id).toBe(1);
         expect(created.lastStatus).toBe("unknown");
         expect(created.enabled).toBe(true);
+        // db.createWatcher used to carry its own literal 60 / 10_000, so this
+        // door kept the old value when the constants moved.
+        expect(created.intervalSec).toBe(DEFAULT_INTERVAL_SEC);
+        expect(created.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
 
         const updated = await db.updateWatcher(1, { enabled: false, config: { expectStatus: 401 } });
         expect(updated?.enabled).toBe(false);
@@ -71,6 +82,53 @@ describe("MonitorDatabase", () => {
         expect(summary.avgLatency24h).toBe(200);
         expect(summary.recent.map((point) => point.status)).toEqual(["up", "down", "up"]);
         expect(await db.listChecks(watcher.id, { limit: 2 })).toHaveLength(2);
+        db.close();
+    });
+
+    test("summarizeAll matches the per-watcher summary it replaced", async () => {
+        // summarizeAll now issues four grouped queries instead of four per
+        // watcher, so the two paths must still answer identically.
+        const db = new MonitorDatabase(":memory:");
+        const a = await db.createWatcher({ name: "a", kind: "website", target: "https://a.dev/" });
+        const b = await db.createWatcher({ name: "b", kind: "website", target: "https://b.dev/" });
+        await db.createWatcher({ name: "silent", kind: "website", target: "https://c.dev/" });
+
+        await db.recordCheck(a.id, { status: "up", latencyMs: 100, httpStatus: 200, detail: "ok" });
+        await db.recordCheck(a.id, { status: "down", latencyMs: null, httpStatus: null, detail: "boom" });
+        await db.recordCheck(b.id, { status: "up", latencyMs: 300, httpStatus: 200, detail: "ok" });
+        await db.startIncident(a.id, "down", "boom");
+
+        const all = await db.summarizeAll();
+        const one = await Promise.all(
+            (await db.listWatchers()).map((watcher) => db.summarize(watcher as unknown as Watcher))
+        );
+
+        expect(all).toEqual(one);
+        expect(all.map((summary) => summary.checks24h)).toEqual([2, 1, 0]);
+        expect(all[0].openIncident?.detail).toBe("boom");
+        expect(all[1].openIncident).toBeNull();
+        expect(all[2].recent).toEqual([]);
+        expect(all[0].recent.map((point) => point.status)).toEqual(["up", "down"]);
+        db.close();
+    });
+
+    test("listWatchers only reads the subscriptions of the watchers it returns", async () => {
+        const db = new MonitorDatabase(":memory:");
+        const notify = await db.createTarget({ name: "ops", channel: "webhook", config: { url: "https://a.dev/h" } });
+        await db.createWatcher({
+            name: "paused",
+            kind: "website",
+            target: "https://a.dev/",
+            enabled: false,
+            targetIds: [notify.id],
+        });
+        const live = await db.createWatcher({ name: "live", kind: "website", target: "https://b.dev/" });
+
+        const enabled = await db.listWatchers({ enabledOnly: true });
+
+        expect(enabled.map((watcher) => watcher.id)).toEqual([live.id]);
+        expect(enabled[0].targetIds).toEqual([]);
+        expect((await db.listWatchers()).map((watcher) => watcher.targetIds)).toEqual([[notify.id], []]);
         db.close();
     });
 
@@ -168,6 +226,47 @@ describe("Monitor transitions", () => {
     });
 });
 
+describe("isWorthNotifying", () => {
+    const incident = (status: "down" | "degraded"): Incident => ({
+        id: 1,
+        watcherId: 1,
+        status,
+        startedAt: "2026-09-03T10:00:00.000Z",
+        endedAt: null,
+        detail: "boom",
+    });
+
+    test("entering an outage with no open incident is announced", () => {
+        expect(isWorthNotifying({ from: "up", to: "down", open: null })).toBe(true);
+        expect(isWorthNotifying({ from: "unknown", to: "degraded", open: null })).toBe(true);
+    });
+
+    test("re-entering the same outage through unknown is not announced again", () => {
+        // down -> unknown leaves the incident open and lastStatus "unknown", so
+        // unknown -> down used to send "<name> is down" a second time. A page
+        // that intermittently fails to parse paged on every re-parse.
+        expect(isWorthNotifying({ from: "unknown", to: "down", open: incident("down") })).toBe(false);
+        expect(isWorthNotifying({ from: "unknown", to: "degraded", open: incident("degraded") })).toBe(false);
+    });
+
+    test("escalating degraded to down is still announced", () => {
+        expect(isWorthNotifying({ from: "degraded", to: "down", open: incident("degraded") })).toBe(true);
+        expect(isWorthNotifying({ from: "down", to: "degraded", open: incident("down") })).toBe(true);
+    });
+
+    test("recovery is announced whenever it closes an incident", () => {
+        expect(isWorthNotifying({ from: "down", to: "up", open: incident("down") })).toBe(true);
+        // down -> unknown -> up: `from` is not an outage, but the incident that
+        // was announced is being closed, so the user is told it is over.
+        expect(isWorthNotifying({ from: "unknown", to: "up", open: incident("down") })).toBe(true);
+    });
+
+    test("unknown itself and an ordinary first up are never announced", () => {
+        expect(isWorthNotifying({ from: "down", to: "unknown", open: incident("down") })).toBe(false);
+        expect(isWorthNotifying({ from: "unknown", to: "up", open: null })).toBe(false);
+    });
+});
+
 describe("Scheduler.isDue", () => {
     const base: Watcher = {
         id: 1,
@@ -246,6 +345,25 @@ describe("MonitorDatabase feed items", () => {
 
         expect(second.first).toBe(false);
         expect(second.fresh.map((entry) => entry.guid)).toEqual(["g1"]);
+        db.close();
+    });
+
+    test("a failed first check does not consume the priming run", async () => {
+        // safeRunCheck records a row for a check that threw too, so counting
+        // check rows made run 1 (down) the "first sync" and run 2 replayed the
+        // whole feed as notifications: the exact history dump priming prevents.
+        const db = new MonitorDatabase(":memory:");
+        const watcher = await db.createWatcher({ name: "feed", kind: "rss", target: "https://a.dev/rss" });
+
+        await db.recordCheck(watcher.id, { status: "down", latencyMs: null, httpStatus: 429, detail: "429" });
+        expect(await db.ingestFeedItems(watcher.id, [])).toEqual({ fresh: [], first: true });
+
+        await db.recordCheck(watcher.id, { status: "up", latencyMs: 1, httpStatus: 200, detail: "ok" });
+        const second = await db.ingestFeedItems(watcher.id, [item("g1", "old"), item("g2", "older")]);
+
+        expect(second.first).toBe(true);
+        expect(second.fresh).toEqual([]);
+        expect(await db.listFeedItems(watcher.id, 10)).toHaveLength(2);
         db.close();
     });
 

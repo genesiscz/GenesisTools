@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { evaluateSummary, parseXaiStatusHtml, summaryUrl, worstStatus } from "./statuspage";
+import {
+    checkStatuspage,
+    evaluateSummary,
+    listStatuspageComponents,
+    parseXaiStatusHtml,
+    summaryUrl,
+    worstStatus,
+} from "./statuspage";
 
 const SUMMARY = {
     page: { name: "Claude" },
@@ -110,5 +117,64 @@ describe("parseXaiStatusHtml", () => {
 
         expect(summary.components).toEqual([{ name: "Docs", status: "operational" }]);
         expect(summary.status).toEqual({ indicator: "none", description: "All Systems Operational" });
+    });
+});
+
+describe("checkStatuspage summary shape", () => {
+    async function withJsonBody<T>(payload: string, run: () => Promise<T>): Promise<T> {
+        const realFetch = globalThis.fetch;
+        globalThis.fetch = Object.assign(
+            async () => new Response(payload, { status: 200, headers: { "Content-Type": "application/json" } }),
+            { preconnect: realFetch.preconnect }
+        );
+
+        try {
+            return await run();
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+    }
+
+    test("a page answering null is a check result, not a crash", async () => {
+        // `as StatuspageSummary` accepted null, and evaluateSummary then died on
+        // `summary.components ?? []` -> "Cannot read properties of null".
+        const result = await withJsonBody("null", () =>
+            checkStatuspage({ target: "https://status.a.dev", config: {}, timeoutMs: 1_000 })
+        );
+
+        expect(result.status).toBe("unknown");
+        expect(result.detail).toContain("did not answer");
+    });
+
+    test("a page answering an array is a check result too", async () => {
+        const result = await withJsonBody("[]", () =>
+            checkStatuspage({ target: "https://status.a.dev", config: {}, timeoutMs: 1_000 })
+        );
+
+        expect(result.status).toBe("unknown");
+    });
+
+    test("a components field that is not a list is refused", async () => {
+        const result = await withJsonBody(`{"components":"all good"}`, () =>
+            checkStatuspage({ target: "https://status.a.dev", config: {}, timeoutMs: 1_000 })
+        );
+
+        expect(result.status).toBe("unknown");
+    });
+
+    test("the component picker rejects the same shape instead of leaking a 500", async () => {
+        const promise = withJsonBody("null", () => listStatuspageComponents("https://status.a.dev", 1_000));
+
+        await expect(promise).rejects.toThrow("did not answer");
+    });
+
+    test("a well-formed summary still parses", async () => {
+        const result = await withJsonBody(
+            `{"page":{"name":"A"},"status":{"indicator":"none","description":"All Systems Operational"},"components":[{"name":"API","status":"operational"}]}`,
+            () => checkStatuspage({ target: "https://status.a.dev", config: {}, timeoutMs: 1_000 })
+        );
+
+        expect(result.status).toBe("up");
+        expect(result.detail).toBe("All Systems Operational");
     });
 });

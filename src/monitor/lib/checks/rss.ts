@@ -105,7 +105,11 @@ export function parseFeed(xml: string): { title: string | null; items: ParsedFee
     const blocks = [...xml.matchAll(new RegExp(`<${itemTag}(?:\\s[^>]*)?>([\\s\\S]*?)</${itemTag}>`, "gi"))].map(
         (match) => match[1]
     );
-    const head = xml.slice(0, xml.search(new RegExp(`<${itemTag}[\\s>]`, "i")) || xml.length);
+    // `search` answers -1 when the item tag is absent, and -1 is truthy: a
+    // `|| xml.length` fallback there sliced the last byte off the document
+    // instead of reading all of it.
+    const itemAt = xml.search(new RegExp(`<${itemTag}[\\s>]`, "i"));
+    const head = itemAt === -1 ? xml : xml.slice(0, itemAt);
     const title = tag(head, "title");
     const items: ParsedFeedItem[] = [];
 
@@ -186,6 +190,13 @@ export async function checkRss(watcher: Pick<Watcher, "target" | "config" | "tim
     }
 
     if (!response.ok) {
+        // The scheduler polls forever, and an unread body keeps its socket
+        // checked out of the fetch pool until GC. A feed answering 429 on a
+        // 60 s watcher would leak 1440 undrained streams a day.
+        await response.body?.cancel().catch((cancelError) => {
+            logger.debug({ cancelError, target: watcher.target }, "monitor: feed body cancel failed");
+        });
+
         return {
             status: "down",
             latencyMs,

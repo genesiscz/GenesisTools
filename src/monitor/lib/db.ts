@@ -3,10 +3,13 @@ import { createKyselyClient, type DatabaseClient, type Migration, nowUtcIso } fr
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { sql } from "kysely";
 import type { CheckRow, FeedItemRow, IncidentRow, MonitorDB, NotifyTargetRow, WatcherRow } from "./db-types";
 import {
     type CheckRecord,
     type CheckResult,
+    DEFAULT_INTERVAL_SEC,
+    DEFAULT_TIMEOUT_MS,
     type FeedItem,
     type Incident,
     type IncidentStatus,
@@ -123,7 +126,10 @@ function parseObject(json: string | null, what: string): Record<string, unknown>
             return parsed as Record<string, unknown>;
         }
     } catch (error) {
-        logger.warn({ error, json, what }, "monitor: unreadable JSON column, using defaults");
+        // The column itself never reaches the log: a notify target's config
+        // holds the plaintext telegram botToken, and the day-stamped log file
+        // is exactly where SECRET_KEYS exists to stop it going.
+        logger.warn({ error, what, bytes: json.length }, "monitor: unreadable JSON column, using defaults");
     }
 
     return {};
@@ -290,7 +296,10 @@ export class MonitorDatabase {
         }
 
         const rows = await query.orderBy("id").execute();
-        const targets = await this.targetIdsByWatcher();
+        // Scoped to the rows being returned: the scheduler calls this once per
+        // 1 s tick with `enabledOnly`, and an unscoped read walks every paused
+        // watcher's subscriptions too.
+        const targets = await this.targetIdsByWatcher(rows.map((row) => row.id));
 
         return rows.map((row) => rowToWatcher(row, targets.get(row.id) ?? []));
     }
@@ -344,8 +353,8 @@ export class MonitorDatabase {
                 kind: input.kind,
                 target: input.target,
                 config_json: SafeJSON.stringify(input.config ?? {}),
-                interval_sec: input.intervalSec ?? 60,
-                timeout_ms: input.timeoutMs ?? 10_000,
+                interval_sec: input.intervalSec ?? DEFAULT_INTERVAL_SEC,
+                timeout_ms: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
                 enabled: input.enabled === false ? 0 : 1,
                 notify: input.notify === false ? 0 : 1,
                 created_at: now,
@@ -542,18 +551,23 @@ export class MonitorDatabase {
             .select((eb) => eb.fn.countAll<number>().as("n"))
             .where("watcher_id", "=", watcherId)
             .executeTakeFirst();
-        // "First sync" is the watcher's FIRST check, not merely "no rows yet".
-        // A check whose `itemFilter` matched nothing stores no row, so the row
-        // count alone would prime again days later and swallow the first item
-        // the filter ever matched: the one item it existed to catch. The caller
-        // records its check row before it ingests, so the count is 1 here on
-        // that first run.
-        const checked = await this.client.kysely
+        // "First sync" is the watcher's first SUCCESSFUL read, not merely "no
+        // rows yet" and not "its first check row" either.
+        //  - "no rows yet" alone would prime again days later, because a check
+        //    whose `itemFilter` matched nothing stores no row: it would swallow
+        //    the first item the filter ever matched, the one it existed to catch.
+        //  - "its first check row" alone lets a failed first check consume the
+        //    priming run (safeRunCheck records a row for a throw too), so the
+        //    next success replays the whole feed as notifications.
+        // Only an `up` check ever carries items. The caller records its check
+        // row before it ingests, so the count is 1 here on that first read.
+        const read = await this.client.kysely
             .selectFrom("checks")
             .select((eb) => eb.fn.countAll<number>().as("n"))
             .where("watcher_id", "=", watcherId)
+            .where("status", "=", "up")
             .executeTakeFirst();
-        const first = Number(existing?.n ?? 0) === 0 && Number(checked?.n ?? 0) <= 1;
+        const first = Number(existing?.n ?? 0) === 0 && Number(read?.n ?? 0) <= 1;
         const seenAt = nowUtcIso();
         const fresh: FeedItem[] = [];
 
@@ -800,29 +814,46 @@ export class MonitorDatabase {
     // --------------------------------------------------------------- summaries
 
     async summarize(watcher: Watcher): Promise<WatcherSummary> {
+        const [summary] = await this.summarizeMany([watcher]);
+
+        return summary;
+    }
+
+    async summarizeAll(): Promise<WatcherSummary[]> {
+        return this.summarizeMany(await this.listWatchers());
+    }
+
+    /**
+     * Four grouped queries for the whole list, not four per watcher. Every
+     * dashboard poll (`GET /api/v1/watchers`, `GET /api/v1/overview`) lands
+     * here, so the per-watcher shape put 80 statements on the wire for a
+     * 20-watcher board.
+     */
+    private async summarizeMany(watchers: Watcher[]): Promise<WatcherSummary[]> {
+        if (watchers.length === 0) {
+            return [];
+        }
+
+        const ids = watchers.map((watcher) => watcher.id);
         const since = new Date(Date.now() - DAY_MS).toISOString();
-        const stats = await this.client.kysely
+        const since7 = new Date(Date.now() - 7 * DAY_MS).toISOString();
+        const since30 = new Date(Date.now() - 30 * DAY_MS).toISOString();
+        const statsRows = await this.client.kysely
             .selectFrom("checks")
             .select((eb) => [
+                "watcher_id",
                 eb.fn.countAll<number>().as("total"),
                 eb.fn.sum<number>(eb.case().when("status", "=", "down").then(1).else(0).end()).as("down"),
                 eb.fn.avg<number>("latency_ms").as("avg_latency"),
             ])
-            .where("watcher_id", "=", watcher.id)
+            .where("watcher_id", "in", ids)
             .where("checked_at", ">=", since)
-            .executeTakeFirst();
-        const recentRows = await this.client.kysely
-            .selectFrom("checks")
-            .select(["checked_at", "status", "latency_ms"])
-            .where("watcher_id", "=", watcher.id)
-            .orderBy("checked_at", "desc")
-            .limit(RECENT_POINTS)
+            .groupBy("watcher_id")
             .execute();
-        const since7 = new Date(Date.now() - 7 * DAY_MS).toISOString();
-        const since30 = new Date(Date.now() - 30 * DAY_MS).toISOString();
-        const windows = await this.client.kysely
+        const windowRows = await this.client.kysely
             .selectFrom("checks")
             .select((eb) => [
+                "watcher_id",
                 eb.fn.countAll<number>().as("total30"),
                 eb.fn.sum<number>(eb.case().when("status", "=", "down").then(1).else(0).end()).as("down30"),
                 eb.fn.sum<number>(eb.case().when("checked_at", ">=", since7).then(1).else(0).end()).as("total7"),
@@ -837,36 +868,74 @@ export class MonitorDatabase {
                     )
                     .as("down7"),
             ])
-            .where("watcher_id", "=", watcher.id)
+            .where("watcher_id", "in", ids)
             .where("checked_at", ">=", since30)
-            .executeTakeFirst();
+            .groupBy("watcher_id")
+            .execute();
+        // `LIMIT` cannot be per-group in plain SQL, so the newest N per watcher
+        // come from a window function rather than one query per watcher.
+        const recentRows = await sql<{
+            watcher_id: number;
+            checked_at: string;
+            status: string;
+            latency_ms: number | null;
+        }>`
+            SELECT watcher_id, checked_at, status, latency_ms FROM (
+                SELECT watcher_id, checked_at, status, latency_ms,
+                       ROW_NUMBER() OVER (PARTITION BY watcher_id ORDER BY checked_at DESC, id DESC) AS rn
+                FROM checks
+                WHERE watcher_id IN (${sql.join(ids)})
+            ) WHERE rn <= ${RECENT_POINTS}
+            ORDER BY watcher_id, rn
+        `.execute(this.client.kysely);
+        const openRows = await this.client.kysely
+            .selectFrom("incidents")
+            .selectAll()
+            .where("watcher_id", "in", ids)
+            .where("ended_at", "is", null)
+            .orderBy("started_at", "desc")
+            .execute();
+        const statsById = new Map(statsRows.map((row) => [row.watcher_id, row]));
+        const windowsById = new Map(windowRows.map((row) => [row.watcher_id, row]));
+        const openById = new Map<number, Incident>();
+        const recentById = new Map<number, RecentPoint[]>();
+
+        for (const row of openRows) {
+            if (!openById.has(row.watcher_id)) {
+                openById.set(row.watcher_id, rowToIncident(row));
+            }
+        }
+
+        for (const row of recentRows.rows) {
+            const points = recentById.get(row.watcher_id) ?? [];
+            points.unshift({ t: row.checked_at, status: toStatus(row.status), latencyMs: row.latency_ms });
+            recentById.set(row.watcher_id, points);
+        }
+
         const ratio = (totalValue: unknown, downValue: unknown): number | null => {
             const t = Number(totalValue ?? 0);
 
             return t > 0 ? (t - Number(downValue ?? 0)) / t : null;
         };
-        const total = Number(stats?.total ?? 0);
-        const down = Number(stats?.down ?? 0);
-        const avg = stats?.avg_latency === null || stats?.avg_latency === undefined ? null : Number(stats.avg_latency);
-        const recent: RecentPoint[] = recentRows
-            .map((row) => ({ t: row.checked_at, status: toStatus(row.status), latencyMs: row.latency_ms }))
-            .reverse();
 
-        return {
-            ...watcher,
-            uptime24h: total > 0 ? (total - down) / total : null,
-            uptime7d: ratio(windows?.total7, windows?.down7),
-            uptime30d: ratio(windows?.total30, windows?.down30),
-            avgLatency24h: avg === null ? null : Math.round(avg),
-            checks24h: total,
-            recent,
-            openIncident: await this.openIncident(watcher.id),
-        };
-    }
+        return watchers.map((watcher) => {
+            const stats = statsById.get(watcher.id);
+            const windows = windowsById.get(watcher.id);
+            const total = Number(stats?.total ?? 0);
+            const down = Number(stats?.down ?? 0);
+            const avg =
+                stats?.avg_latency === null || stats?.avg_latency === undefined ? null : Number(stats.avg_latency);
 
-    async summarizeAll(): Promise<WatcherSummary[]> {
-        const watchers = await this.listWatchers();
-
-        return Promise.all(watchers.map((watcher) => this.summarize(watcher)));
+            return {
+                ...watcher,
+                uptime24h: total > 0 ? (total - down) / total : null,
+                uptime7d: ratio(windows?.total7, windows?.down7),
+                uptime30d: ratio(windows?.total30, windows?.down30),
+                avgLatency24h: avg === null ? null : Math.round(avg),
+                checks24h: total,
+                recent: recentById.get(watcher.id) ?? [],
+                openIncident: openById.get(watcher.id) ?? null,
+            };
+        });
     }
 }

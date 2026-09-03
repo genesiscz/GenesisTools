@@ -23,7 +23,7 @@ import type {
     WatcherStatus,
     WatcherSummary,
 } from "./types";
-import { isMuted, maskWatcher, SECRET_KEYS } from "./types";
+import { isMuted, MASKED_HEADER_VALUE, maskWatcher, SECRET_KEYS } from "./types";
 import { assertTargetConfigComplete } from "./validate";
 
 export type MonitorListener = (event: MonitorEvent) => void;
@@ -38,6 +38,31 @@ export interface RunOutcome {
 
 function isOutage(status: WatcherStatus): status is IncidentStatus {
     return status === "down" || status === "degraded";
+}
+
+/**
+ * One incident, one page. A status page that intermittently fails to parse goes
+ * down -> unknown -> down, and `unknown` is not a recovery, so the incident
+ * stays open across it. Announcing every re-entry pages the user again and
+ * again for one problem, so only the transition that OPENS an incident, or that
+ * escalates `degraded` to `down`, is announced. Recovery is announced whenever
+ * it closes an incident, `unknown -> up` included, where `from` is not itself
+ * an outage. `open` is the incident as it stood BEFORE this transition.
+ */
+export function isWorthNotifying({
+    from,
+    to,
+    open,
+}: {
+    from: WatcherStatus;
+    to: WatcherStatus;
+    open: Incident | null;
+}): boolean {
+    if (isOutage(to)) {
+        return !open || open.status !== to;
+    }
+
+    return to === "up" && (isOutage(from) || open !== null);
 }
 
 function feedItemsFromMeta(meta: Record<string, unknown> | undefined): ParsedFeedItem[] {
@@ -136,7 +161,7 @@ export class Monitor {
     }
 
     async updateWatcher(id: number, patch: WatcherPatch): Promise<Watcher | null> {
-        const watcher = await this.db.updateWatcher(id, patch);
+        const watcher = await this.db.updateWatcher(id, await this.preserveHeaders(id, patch));
 
         if (watcher) {
             logger.info({ id, patch }, "monitor: watcher updated");
@@ -144,6 +169,36 @@ export class Monitor {
         }
 
         return watcher;
+    }
+
+    /**
+     * The same round-trip hazard as `preserveSecrets`, one level up: a watcher
+     * leaves this process with every `config.headers` value replaced by `***`,
+     * and `config` is written whole, so an editor that reads a watcher and
+     * sends it back would store the mask as the Authorization header. A patch
+     * that echoes the mask, or that carries a config with no headers at all,
+     * keeps the stored values. Sending a real value still replaces it.
+     */
+    private async preserveHeaders(id: number, patch: WatcherPatch): Promise<WatcherPatch> {
+        if (!patch.config) {
+            return patch;
+        }
+
+        const stored = (await this.db.getWatcher(id))?.config.headers;
+
+        if (!stored) {
+            return patch;
+        }
+
+        const headers = { ...patch.config.headers };
+
+        for (const [name, value] of Object.entries(stored)) {
+            if (headers[name] === undefined || headers[name] === MASKED_HEADER_VALUE) {
+                headers[name] = value;
+            }
+        }
+
+        return { ...patch, config: { ...patch.config, headers } };
     }
 
     async deleteWatcher(id: number): Promise<boolean> {
@@ -333,7 +388,7 @@ export class Monitor {
         logger.info({ id: watcher.id, name: watcher.name, from, to, detail: check.detail }, "monitor: state changed");
         this.emit({ type: "watcher:state", watcher, from, to, incident });
 
-        const worthNotifying = isOutage(to) || (to === "up" && isOutage(from));
+        const worthNotifying = isWorthNotifying({ from, to, open });
 
         if (watcher.notify && worthNotifying && isMuted(watcher)) {
             logger.info(

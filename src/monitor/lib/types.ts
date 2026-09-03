@@ -209,12 +209,14 @@ export function maskTarget(target: NotifyTarget): NotifyTarget {
 export const MASKED_HEADER_VALUE = "***";
 
 /**
- * A watcher as it leaves this process in an event: `config.headers` can carry
- * an `Authorization: Bearer …` for an authenticated website watcher, and the
- * event stream reaches every WebSocket listener. The names stay (they are what
- * makes a watcher recognisable in the dashboard), the values do not.
+ * A watcher as it leaves this process, in an event or in an HTTP response:
+ * `config.headers` can carry an `Authorization: Bearer …` for an authenticated
+ * website watcher, and both the event stream and `GET /api/v1/watchers` reach
+ * anything that can open a socket to the daemon. The names stay (they are what
+ * makes a watcher recognisable in the dashboard), the values do not. Generic
+ * so a `WatcherSummary` masks to a `WatcherSummary`.
  */
-export function maskWatcher(watcher: Watcher): Watcher {
+export function maskWatcher<T extends Watcher>(watcher: T): T {
     const headers = watcher.config.headers;
 
     if (!headers) {

@@ -45,7 +45,7 @@ function fetchCertificate(host: string, port: number, timeoutMs: number): Promis
             const cert = socket.getPeerCertificate();
             socket.end();
 
-            if (!cert || !cert.valid_to) {
+            if (!cert?.valid_to) {
                 reject(new Error("no certificate presented"));
 
                 return;

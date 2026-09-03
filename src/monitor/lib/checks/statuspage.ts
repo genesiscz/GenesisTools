@@ -176,6 +176,23 @@ export function parseXaiStatusHtml(html: string): StatuspageSummary {
 /** Footer words that legitimately end the Services list on status.x.ai. */
 const XAI_LIST_TERMINATORS = new Set(["Models", "Try Grok on", "Products", "API", "Company", "Resources", "Legal"]);
 
+/**
+ * `SafeJSON.parse` accepts `null`, a number and an array, and every one of
+ * those reaches `evaluateSummary` as a `StatuspageSummary` the cast promised.
+ * `summary.components ?? []` then throws on `null` and `.filter` is missing on
+ * a string, which escapes `listStatuspageComponents` as a 500 carrying the
+ * internal message. A page that answers something else is a check result.
+ */
+function isStatuspageSummary(value: unknown): value is StatuspageSummary {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return false;
+    }
+
+    const components = (value as { components?: unknown }).components;
+
+    return components === undefined || components === null || Array.isArray(components);
+}
+
 /** A failed poll must not keep its socket until the timeout fires. */
 async function discardBody(response: Response): Promise<void> {
     await response.body?.cancel().catch((cancelError) => {
@@ -230,7 +247,11 @@ async function fetchSummary(
         throw new Error(`status page answered ${response.status} for /api/v2/summary.json`);
     }
 
-    const summary = SafeJSON.parse(await response.text(), { strict: true }) as StatuspageSummary;
+    const summary: unknown = SafeJSON.parse(await response.text(), { strict: true });
+
+    if (!isStatuspageSummary(summary)) {
+        throw new Error("status page did not answer a /api/v2/summary.json document");
+    }
 
     return { summary, latencyMs, httpStatus: response.status };
 }
