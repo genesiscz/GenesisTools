@@ -279,6 +279,15 @@ Two cleanly separated layers (the 2026-05 logger+out overhaul):
 - Migrations: `src/utils/database/migrations.ts` (`Migration`, `runMigrations()`, `Migrator`); applied IDs persist in `_migrations`; indexer applies `INDEXER_MIGRATIONS` on read-write opens.
 - DB test pattern: in-memory `new Database(":memory:")` in `*.test.ts` beside source. Full map: `src/utils/database/CLAUDE.md`.
 
+## macOS privacy grants (TCC) live on GenesisTools.app
+
+`tools` runs every tool through `~/Applications/GenesisTools.app` (source `src/macos/GenesisTools/`, built by `tools macos permissions build`, signed with the first Developer ID or Apple Development identity on the machine, ad-hoc as a last resort; an ad-hoc build loses every grant on the next rebuild, and `tools macos permissions` says so). The launcher disclaims responsibility for itself, so macOS attributes Calendar, Reminders, Contacts, Full Disk Access, Accessibility and Automation to `com.genesiscz.genesistools`, not to the terminal. Consequences for agents:
+
+- **An empty result from a permission-gated tool is never proof of empty data.** Run `tools macos permissions` (all grants) or `tools macos calendar doctor` first; both exit 1 while something is missing and print the pane to open.
+- Never read `__CFBundleIdentifier` to name the responsible app; use `responsibleIdentity()` from `@genesiscz/utils/macos/genesis-app`, which knows about the launcher marker.
+- `GENESIS_TOOLS_NO_APP=1` bypasses the launcher (grants then follow the terminal again). Use it only to reproduce the old behaviour. The window (`tools macos permissions ui`) has the same switch as a persistent marker; `tools macos permissions` reports it.
+- darwinkit stays a plain child: never start it with `disclaim: true` from GenesisTools, or the grants split into a second identity (`DarwinKit.app`).
+
 ## Web servers & ports
 
 - Canonical registry: `src/utils/ui/dashboards.ts` — `DASHBOARDS` (browser UIs, consumed by DashboardApp launchers) + `WEB_SERVICES` (http-api/extension/proxy listeners); ports must be unique across both.

@@ -77,17 +77,48 @@ While a plan runs, the command prints one line per finished stage (discover, cac
 
 ## Permissions
 
-Most commands need Full Disk Access and/or specific Privacy permissions (Contacts, Calendars, Reminders, Messages). If you see "not authorized" errors, the CLI prints step-by-step instructions — the short version is:
+macOS keys every privacy grant (Calendars, Reminders, Contacts, Full Disk Access, Accessibility, Automation, Speech, Microphone, protected folders) to the **responsible process**. For a plain CLI that is the terminal that launched it, or `bun` itself under launchd, so every terminal needed its own grants and a launchd job had none. Since 2026-09-03 19:40 GenesisTools owns them itself:
 
-1. **System Settings -> Privacy & Security -> Full Disk Access** -> enable your terminal app.
-2. Grant the specific framework permission when macOS prompts (Calendars, Reminders, ...).
-3. Restart the terminal and re-run.
+- **`GenesisTools.app`** (`src/macos/GenesisTools/`, Swift, ~100 lines) is a launcher installed at `~/Applications/GenesisTools.app`. `tools` runs every tool through it. The launcher re-spawns itself with the `responsibility_spawnattrs_setdisclaim` attribute and then starts the tool, so macOS treats the signed bundle `com.genesiscz.genesistools` as the client for the whole process tree, including the DarwinKit child. Grants attach to that one identity, and every terminal, worktree and launchd job shares them.
+- It is signed with the first available **Developer ID Application** or **Apple Development** certificate (`GENESIS_TOOLS_CODESIGN_IDENTITY` overrides). That is what makes the identity survive rebuilds: TCC remembers the signing requirement, not the binary hash. An ad-hoc signature works but loses every grant on the next build, and `tools macos permissions` says so.
+- `install.sh` builds it when `swift` is available; `bun run build:app` or `tools macos permissions build` rebuilds it. Without the bundle, or with `GENESIS_TOOLS_NO_APP=1`, `tools` runs the old way under the terminal's grants.
+- **Who builds the bundle.** Three entry points, and nothing else: `./install.sh` on a fresh clone, `tools macos permissions build` by hand, and `tools update`. Ordinary commands never build it: `tools macos mail` just runs, under the app if it exists and under the terminal if it does not, and the permission dialog names `tools macos permissions build` when it is the terminal.
 
-### Calendar: who holds the permission (decided 2026-09-03 19:30)
+  The app lives outside the repo, so a `git pull` never touches it. `tools update` therefore checks it after installing dependencies and does one of three things:
 
-macOS TCC grants Calendar access to the **responsible process**, which for a CLI is the app that launched the process tree: the terminal (cmux, Warp, Terminal.app, Ghostty), or `bun` itself when a service runs under launchd. `tools` and the DarwinKit child it spawns inherit that grant. Evidence: the TCC database has rows for `com.cmuxterm.app` and `dev.warp.Warp-Stable` under `kTCCServiceCalendar` and no row for DarwinKit, even though DarwinKit is the process that talks to EventKit. The `DarwinKit.app` bundle exists only for notifications (`UNUserNotificationCenter` needs a bundle); an `NSCalendarsFullAccessUsageDescription` in it would change nothing for a child process, so we do **not** ship `tools` inside an `.app` bundle.
+  | Bundle state | What `tools update` does |
+  |---|---|
+  | missing | installs it, and prints what now attaches to it plus how to opt out |
+  | source hash differs from the installed manifest | rebuilds and re-signs it |
+  | current | nothing |
 
-Calendar has three grant levels, and the middle one is the trap:
+  The missing case is the one that matters on the first update after this shipped, since no existing user has the bundle and nobody re-runs `install.sh` to update. A failed build never fails the update: tools keep working under the terminal's own permissions and the `permissions build` command is printed. Re-signing with the same identity leaves every TCC row intact, verified by rebuilding with grants in place.
+- **Cost of the launcher, measured 2026-09-04 00:55** (25 interleaved samples per arm; the machine sat at load average 27-51, so the minimum is the load-robust statistic):
+
+  | Arm | min | p25 | median |
+  |---|---|---|---|
+  | launcher + `/usr/bin/true` | 18.9 ms | 22.7 ms | 25.1 ms |
+  | same launcher built Foundation-only | 13.1 ms | 17.4 ms | 19.9 ms |
+  | no launcher at all | 2.3 ms | 2.9 ms | 4.4 ms |
+
+  So a `tools` command pays about 16 ms: roughly 11 ms for the two-stage spawn, which is irreducible because only a parent can set the disclaim attribute, and about 6 ms for loading AppKit and SwiftUI, which the launcher links only because the settings window shares its binary. End to end that is 10-18 ms on a ~290 ms floor dominated by bun startup, and it disappears into the noise on real work (`tools macos mail search` runs 600 ms+). **The window was deliberately not split into a second binary**: a non-main executable inside `Contents/MacOS` is not covered by tccd's BUNDLE_ATTRIBUTION, so the window's own permission prompts could stop being attributed to the bundle. Six milliseconds is not worth risking the identity the whole design rests on. Re-measure with `/tmp/bench-launcher2.py` style interleaving if this ever feels slow.
+- The icon is Genesis's amber sparkles on the same dark rounded square, with a golden ring around the mark so the two apps are distinguishable; the 16px tile drops the ring, where it would only smudge. `src/macos/GenesisTools/scripts/build-icon.swift` renders the iconset and `AppIcon.icns` (both committed); `bun run build:app-icon` regenerates them, and the bundle build copies the `.icns` into `Contents/Resources`.
+- The same bundle is also a small app: `open -a GenesisTools`, a Finder double-click or `tools macos permissions ui` opens a window with every grant and a Request button (the prompt names GenesisTools, same identity as the CLI), the `com.genesis-tools.*` launchd jobs and whether they run under the app, and a switch that routes `tools` through the launcher or not (`~/.genesis-tools/app/disabled`; also `tools macos permissions enable|disable`). The launcher path never loads AppKit, so a `tools` run stays two tiny processes with no Dock icon.
+- Children see `GENESIS_TOOLS_APP_BUNDLE_ID=com.genesiscz.genesistools`; `tools macos permissions` and `tools macos calendar doctor` read it to say who is responsible.
+- Every launchd writer (`DashboardApp/launchd.ts` for the dashboards and ai-proxy, `daemon`, `automate`) puts the launcher first in `ProgramArguments`, so services share the CLI's grants instead of needing rows for `~/.bun/bin/bun`. A plist from before the app existed is left alone until the user starts that service again: `ui up` boots the job out and rewrites it, `tools daemon restart` and `tools automate daemon install` reinstall it, and `status` says so until then. Without the bundle, or with the launcher switched off, the plists come out exactly as before.
+
+Fresh machine:
+
+```bash
+./install.sh                                   # builds and signs GenesisTools.app
+tools macos permissions                        # identity, signature, and every grant recorded for it
+tools macos permissions open --pane full-disk-access   # opens the pane and reveals the .app: drag it in
+tools macos calendar list --from 2026-09-01 --to 2026-09-30   # first run prompts "GenesisTools would like to access your calendar"
+```
+
+Full Disk Access and Accessibility have no system prompt. Only Mail, Messages and Voice Memos need Full Disk Access; when one of those commands hits the missing grant on a TTY, GenesisTools shows its own dialog that says which command needs it, opens the pane and selects the app in Finder (the "+" picker also lists GenesisTools under Applications). `tools macos permissions` only reports; `tools macos permissions open --pane full-disk-access` shows the dialog on demand. Files you name on the Desktop, in Documents or in Downloads get the per-folder system prompt instead, and allowing one folder is enough. The dialog is throttled to once per hour. Calendars, Reminders, Contacts, Automation and folders prompt on first use, with GenesisTools as the name in the dialog. The user TCC database is itself behind Full Disk Access, so `tools macos permissions` treats an unreadable database under GenesisTools.app as "Full Disk Access missing".
+
+### Calendar: three grant levels, and the middle one is the trap
 
 | Grant | `tools macos calendar` sees |
 |---|---|
@@ -95,16 +126,4 @@ Calendar has three grant levels, and the middle one is the trap:
 | Add Only (write-only) | one placeholder calendar `Calendar` from source `Account`, zero events. `add` still works. |
 | Denied / none | nothing |
 
-Since 2026-09-03 every read command (`list`, `search`, `list-calendars`, `update`, `delete`) checks the status first and exits 1 with the fix instead of printing an empty list. On a TTY it first asks macOS to upgrade Add Only to Full Access (a system dialog; the tool waits up to 15 s for your answer).
-
-Fresh machine, step by step:
-
-```bash
-tools macos calendar doctor        # status, host app, what TCC granted; exit 1 while not Full Access
-# If status is notDetermined the prompt appears now: click Allow Full Access.
-# Otherwise: System Settings > Privacy & Security > Calendars > set the app doctor names to Full Access.
-tools macos calendar doctor        # must say "Full Access is granted"
-tools macos calendar list --from 2026-09-01 --to 2026-09-30
-```
-
-For a launchd service (dev-dashboard), the client to toggle is `/Users/<you>/.bun/bin/bun`, and the prompt only appears when the service runs in the foreground once (`tools dev-dashboard ui up --foreground`).
+Every read command (`list`, `search`, `list-calendars`, `update`, `delete`) checks the status first and exits 1 with the fix instead of printing an empty list. On a TTY it first asks macOS to upgrade Add Only to Full Access (a system dialog; the tool waits up to 15 s for your answer). `tools macos calendar doctor` shows the status, the responsible identity and every `kTCCServiceCalendar` row.
