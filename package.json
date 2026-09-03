@@ -135,7 +135,7 @@
         "@tanstack/react-router": "^1.168.10",
         "@tanstack/react-start": "^1.167.16",
         "@tanstack/react-virtual": "^3.13.24",
-        "@toon-format/toon": "^2.1.0",
+        "@toon-format/toon": "^2.3.1",
         "@truto/turndown-plugin-gfm": "^1.0.2",
         "@types/chokidar": "^2.1.7",
         "@types/fb-watchman": "^2.0.4",
