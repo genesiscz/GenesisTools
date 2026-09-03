@@ -16,6 +16,9 @@
  *   tools macos voice-memos transcribe [id] [--all] [--force]
  *   tools macos voice-memos search <query>
  *
+ *   tools macos permissions [status|build|ui|enable|disable|open --pane <name>]
+ *
+ *   tools macos calendar doctor
  *   tools macos calendar list-calendars
  *   tools macos calendar list [name] [--from/--to]
  *   tools macos calendar search <query>
@@ -44,6 +47,7 @@ import { registerClonesCommand } from "@app/macos/commands/clones/index";
 import { registerControlCommand } from "@app/macos/commands/control/index";
 import { registerMailCommand } from "@app/macos/commands/mail/index";
 import { registerMessagesCommand } from "@app/macos/commands/messages/index";
+import { registerPermissionsCommand } from "@app/macos/commands/permissions/index";
 import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
 import { registerSleepCommand } from "@app/macos/commands/sleep/index";
 import { registerSwapCommand } from "@app/macos/commands/swap/index";
@@ -63,6 +67,7 @@ program
 
 registerCalendarCommand(program);
 registerClonesCommand(program);
+registerPermissionsCommand(program);
 registerControlCommand(program);
 registerMailCommand(program);
 registerMessagesCommand(program);
@@ -78,11 +83,12 @@ async function main(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         logger.error(`Error: ${message}`);
 
+        // Every permission-aware path (MacDatabase, Voice Memos, Calendar) already prints the
+        // grant it needs, who holds it and how to switch it on. A second generic block here used
+        // to contradict them by naming the terminal, which stopped being the grant holder when
+        // GenesisTools.app became the responsible process.
         if (message.includes("not authorized") || message.includes("permission")) {
-            out.println("\nTo fix permission issues:");
-            out.println("  1. Open System Settings > Privacy & Security > Full Disk Access");
-            out.println("  2. Enable access for your terminal app");
-            out.println("  3. Restart the terminal and try again");
+            out.println("\nRun `tools macos permissions` to see which grants GenesisTools holds.");
         }
 
         process.exit(1);

@@ -150,6 +150,10 @@ function computeOffset(limit: number, page?: number): number {
 export class iMessagesDatabase extends MacDatabase {
     protected readonly dbPath = IMESSAGE_DB_PATH;
     protected readonly dbLabel = "iMessage database";
+    protected readonly fullDiskAccess = {
+        reason: "read your iMessage and SMS history",
+        feature: "messages",
+    } as const;
     protected readonly notFoundMessage = "Make sure Messages.app has been used on this Mac.";
 
     /**

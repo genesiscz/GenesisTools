@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.genesiscz.genesistools</string>
+	<key>CFBundleName</key>
+	<string>GenesisTools</string>
+	<key>CFBundleDisplayName</key>
+	<string>GenesisTools</string>
+	<key>CFBundleExecutable</key>
+	<string>GenesisTools</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- macOS 13 reads the pre-14 keys; PermissionsModel calls requestAccess(to:) there. -->
+	<key>NSCalendarsUsageDescription</key>
+	<string>You ran a command that reads or writes events: tools macos calendar (list, search, add, update, delete) or tools todo sync. Nothing is read outside those commands.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>You ran a command that reads or writes reminders: tools macos reminders, tools todo, or the dev-dashboard todo sync. Nothing is read outside those commands.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>You ran a command that reads or writes events: tools macos calendar (list, search, add, update, delete) or tools todo sync. Nothing is read outside those commands.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>You ran tools macos calendar add, which creates an event. Full Access is only needed to list or search events.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>You ran a command that reads or writes reminders: tools macos reminders, tools todo, or the dev-dashboard todo sync. Nothing is read outside those commands.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>You ran tools macos mail or messages, which resolve sender and attendee names from your contacts. Contacts are only read, never changed.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>You ran tools transcribe or tools macos voice-memos transcribe, which turn an audio file into text with Apple's on-device speech engine. Audio stays on this Mac.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>You ran tools ask with voice dictation, which records from the microphone while you speak. Nothing records outside that command.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>You ran a command that drives another app through AppleScript: tools say, tools macos control, or the Mail and Calendar helpers. GenesisTools only sends the events that command needs.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>You passed a Desktop path to a tools command (a HAR file for har-analyzer, an export, a screenshot). GenesisTools reads only the file you named. Allowing this folder is enough; Full Disk Access is only needed for Mail, Messages and Voice Memos.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>You passed a Documents path to a tools command. GenesisTools reads only the file you named. Allowing this folder is enough; Full Disk Access is only needed for Mail, Messages and Voice Memos.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>You passed a Downloads path to a tools command, usually a HAR file for tools har-analyzer. GenesisTools reads only the file you named. Allowing this folder is enough; Full Disk Access is only needed for Mail, Messages and Voice Memos.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>You passed a path on an external drive to a tools command. GenesisTools reads only the file you named.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>You passed a path on a network volume to a tools command. GenesisTools reads only the file you named.</string>
+	<key>NSSystemAdministrationUsageDescription</key>
+	<string>Full Disk Access lets tools macos mail, messages and voice-memos read the Mail, Messages and Voice Memos databases. Nothing else in GenesisTools needs it.</string>
+</dict>
+</plist>

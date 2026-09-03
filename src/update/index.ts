@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
@@ -129,7 +130,16 @@ const program = new Command()
             }
         }
 
-        // 3. Claude Code plugin management
+        // 3. Install or rebuild GenesisTools.app.
+        //
+        // The bundle lives outside the repo (~/Applications), so a pull never touches it and the
+        // existing user would never get the app at all, and after a source change the old launcher
+        // would keep running while the repo moved on. Grants survive either way, because re-signing
+        // keeps the identity. Rebuilding while this very process runs under the old bundle is safe:
+        // the running binary stays mapped until it exits.
+        await refreshGenesisApp();
+
+        // 4. Claude Code plugin management
         const inClaudeCode = getAgentRuntimeContext().isInAgent;
         const runClaudeUpdates = await p.confirm({
             message: inClaudeCode
@@ -221,7 +231,7 @@ const program = new Command()
             }
         }
 
-        // 4. Show latest changelog entry
+        // 5. Show latest changelog entry
         const changelogPath = join(genesisPath, "CHANGELOG.md");
         if (existsSync(changelogPath)) {
             const changelog = readFileSync(changelogPath, "utf-8");
@@ -232,7 +242,7 @@ const program = new Command()
             }
         }
 
-        // 5. "Did you know" message
+        // 6. "Did you know" message
         const tools = discoverTools(srcDir);
         const skills = discoverSkills(join(genesisPath, "plugins/genesis-tools/skills"));
 
@@ -256,6 +266,71 @@ const program = new Command()
 
         out.println("");
     });
+
+/**
+ * Install GenesisTools.app when it is missing, or re-sign it when its sources moved.
+ *
+ * Never fatal: an update that cannot build the app is still a successful update, tools keep
+ * running under the terminal's own permissions, and `tools macos permissions` reports the gap.
+ */
+async function refreshGenesisApp(): Promise<void> {
+    if (process.platform !== "darwin") {
+        return;
+    }
+
+    const status = appStatus();
+
+    if (status.built && !status.stale) {
+        return;
+    }
+
+    // Missing is the common case on the first update after this landed: `install.sh` builds the
+    // bundle, but nobody re-runs that to update. Without this an existing user would silently keep
+    // the old model, where each terminal owns its own grants.
+    const installing = !status.built;
+    out.println(
+        pc.dim(
+            installing
+                ? "\n  Installing GenesisTools.app, which owns the macOS privacy grants for tools..."
+                : "\n  Rebuilding GenesisTools.app (its sources changed in this update)..."
+        )
+    );
+
+    try {
+        const result = await buildApp({ onStep: (message) => out.println(pc.dim(`    ${message}`)) });
+
+        if (installing) {
+            out.println(pc.green(`  GenesisTools.app installed at ${result.bundlePath}`));
+            out.println(
+                pc.dim(
+                    "  Calendars, Reminders, Contacts and Full Disk Access now attach to it instead of to each terminal."
+                )
+            );
+            out.println(
+                pc.dim("  Review and grant: tools macos permissions    Opt out: tools macos permissions disable")
+            );
+            return;
+        }
+
+        out.println(
+            pc.green(
+                `  GenesisTools.app rebuilt${result.signature.adhoc ? " (ad-hoc signed — macOS will forget its privacy grants)" : "; privacy grants survive, the signing identity is unchanged"}.`
+            )
+        );
+    } catch (err) {
+        logger.warn({ err, installing }, "update: GenesisTools.app build failed");
+        out.println(
+            pc.yellow(`  Could not build GenesisTools.app: ${err instanceof Error ? err.message : String(err)}`)
+        );
+        out.println(
+            pc.dim(
+                installing
+                    ? "  Tools keep working under your terminal's own permissions. Retry with: tools macos permissions build"
+                    : "  Tools keep running under the previous bundle. Rebuild later with: tools macos permissions build"
+            )
+        );
+    }
+}
 
 function extractLatestEntry(changelog: string): string | null {
     const lines = changelog.split("\n");

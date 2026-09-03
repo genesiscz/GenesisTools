@@ -7,6 +7,8 @@ minimumReleaseAge = 604800
 # package. Nothing goes in here that does not need permanent latest-tracking.
 # AI SDK: we track latest majors closely.
 minimumReleaseAgeExcludes = [
+    # Our own package (genesiscz/darwinkit-swift): consumed the minute it is released.
+    "@genesiscz/darwinkit",
     "ai",
     "@ai-sdk/anthropic",
     "@ai-sdk/deepgram",

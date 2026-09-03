@@ -3,8 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { detectTerminalApp } from "@genesiscz/utils/terminal";
-import { MacOS } from "./MacOS";
+import { fullDiskAccessInstructions, requestFullDiskAccess } from "./full-disk-access";
 
 // Apple Core Data epoch offset: 2001-01-01 vs 1970-01-01
 const APPLE_EPOCH_OFFSET = 978307200;
@@ -101,19 +100,13 @@ function openDb(dbPath: string): Database {
             message.includes("not authorized") ||
             message.includes("authorization denied")
         ) {
-            const termApp = detectTerminalApp();
+            const context = { reason: "open your Voice Memos library", feature: "voice-memos" } as const;
 
-            MacOS.settings.openFullDiskAccess();
+            if (process.stdout.isTTY) {
+                requestFullDiskAccess(context);
+            }
 
-            throw new VoiceMemosError(
-                [
-                    "Full Disk Access required for Voice Memos.",
-                    "",
-                    "Opening System Settings → Privacy & Security → Full Disk Access...",
-                    `Add "${termApp}" to the list, then restart your terminal.`,
-                ].join("\n"),
-                "PERMISSION_DENIED"
-            );
+            throw new VoiceMemosError(fullDiskAccessInstructions(context), "PERMISSION_DENIED");
         }
 
         throw err;

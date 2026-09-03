@@ -5,6 +5,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 
 // --- Configuration ---
 const SRC_DIR_NAME = "src";
@@ -228,8 +229,16 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
     capturedStderr = "";
     const TAIL_BYTES = 64 * 1024;
 
+    // GenesisTools.app (tools macos permissions build) is a signed launcher that makes
+    // itself the macOS TCC "responsible process" for the tool it runs, so Calendar,
+    // Reminders, Full Disk Access and friends are granted to GenesisTools once instead
+    // of to every terminal. Absent bundle, GENESIS_TOOLS_NO_APP=1 or non-macOS: plain spawn.
+    const launcher = genesisAppLauncher();
+    const command = launcher ? launcher : execPath;
+    const commandArgs = launcher ? [execPath, ...args] : args;
+
     return new Promise<number>((resolvePromise, reject) => {
-        const child = spawn(execPath, args, {
+        const child = spawn(command, commandArgs, {
             stdio: ["inherit", "inherit", "pipe"],
             // cwd stays at the user's shell so tools resolving `.claude/...`
             // via process.cwd() keep working. Bunfig's preload is forwarded

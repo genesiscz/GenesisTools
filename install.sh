@@ -36,6 +36,21 @@ else
     echo "✅ Dependencies already installed"
 fi
 
+# macOS: build GenesisTools.app, the signed launcher that owns the privacy grants
+# (Calendars, Reminders, Full Disk Access, ...) instead of every terminal owning them.
+if [[ "$OSTYPE" == darwin* ]]; then
+    if command -v swift &> /dev/null; then
+        echo "🔐 Building GenesisTools.app (TCC identity)..."
+        if bun run src/macos/index.ts permissions build; then
+            echo "✅ GenesisTools.app installed at ~/Applications (grant it Full Disk Access once: tools macos permissions open --pane full-disk-access)"
+        else
+            echo "⚠️  GenesisTools.app build failed; tools will run under the terminal's permissions. Retry with: bun run build:app"
+        fi
+    else
+        echo "⚠️  swift not found; skipping GenesisTools.app. Install Xcode Command Line Tools, then run: bun run build:app"
+    fi
+fi
+
 # Detect Windows (Git Bash / MSYS2 / Cygwin)
 IS_WINDOWS=false
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then

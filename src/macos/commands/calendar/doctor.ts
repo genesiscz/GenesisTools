@@ -23,7 +23,17 @@ function printReport(report: CalendarDoctorReport): void {
     ui.kv("sources", report.sources.map((s) => `${s.title} [${s.source_type}]`).join(", ") || "none", 11);
 
     ui.section("This process");
-    ui.kv("host app", report.hostApp.bundleId ?? "unknown (no __CFBundleIdentifier; launchd or a bare shell)", 11);
+    const responsible = report.hostApp.responsible;
+    ui.kv(
+        "responsible",
+        responsible.kind === "genesis-app"
+            ? `GenesisTools.app (${responsible.bundleId})`
+            : responsible.kind === "host-app"
+              ? `${responsible.bundleId} (launching app; build GenesisTools.app to own the grants)`
+              : "unknown (no bundle; launchd or a bare shell)",
+        11
+    );
+    ui.kv("host app", report.hostApp.bundleId ?? "none", 11);
     ui.kv("terminal", report.hostApp.termProgram ?? "unknown", 11);
     ui.kv("darwinkit", report.binary.path, 11);
     ui.kv(
@@ -42,7 +52,7 @@ function printReport(report: CalendarDoctorReport): void {
         ui.info("no Calendar rows at all");
     } else {
         for (const row of report.tcc.rows) {
-            const mine = report.hostApp.bundleId && row.client === report.hostApp.bundleId ? "  <- this process" : "";
+            const mine = row.client === report.hostApp.responsible.bundleId ? "  <- this process" : "";
             const line = `${row.client}: ${row.label}${mine}`;
 
             if (row.authValue === 2) {

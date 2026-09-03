@@ -1,6 +1,4 @@
-import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { execPath } from "node:process";
 import type { CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
@@ -9,23 +7,18 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type CalendarAuthorizedResult,
-    describeCalendarHostApp,
     isPlaceholderCalendarList,
     MacCalendar,
 } from "@genesiscz/utils/macos/apple-calendar";
+import {
+    describeResponsibleIdentity,
+    type ResponsibleIdentity,
+    responsibleIdentity,
+} from "@genesiscz/utils/macos/genesis-app";
+import { readTccRows, TCC_USER_DB_PATH, type TccReadResult, type TccRow } from "../permissions/tcc";
 
-const TCC_DB_PATH = join(homedir(), "Library/Application Support/com.apple.TCC/TCC.db");
 const TCC_CALENDAR_SERVICE = "kTCCServiceCalendar";
 const CALENDAR_USAGE_KEY = "NSCalendarsFullAccessUsageDescription";
-
-export interface TccCalendarRow {
-    client: string;
-    /** 0 = bundle id, 1 = absolute path of the executable */
-    clientType: number;
-    authValue: number;
-    label: string;
-    lastModified: string;
-}
 
 export interface CalendarDoctorReport {
     status: string;
@@ -42,35 +35,17 @@ export interface CalendarDoctorReport {
         hasCalendarUsageString: boolean | null;
     };
     hostApp: {
+        /** who macOS holds responsible for this process */
+        responsible: ResponsibleIdentity;
         bundleId?: string;
         termProgram?: string;
     };
-    tcc: {
-        readable: boolean;
-        rows: TccCalendarRow[];
-        error?: string;
-    };
+    tcc: TccReadResult;
     verdict: string;
     fix?: string;
 }
 
-/** TCC `auth_value` meanings for kTCCServiceCalendar on macOS 14+. */
-export function tccAuthLabel(authValue: number): string {
-    switch (authValue) {
-        case 0:
-            return "denied";
-        case 1:
-            return "unknown";
-        case 2:
-            return "Full Access";
-        case 3:
-            return "limited";
-        case 4:
-            return "Add Only";
-        default:
-            return `unknown (${authValue})`;
-    }
-}
+export type TccCalendarRow = TccRow;
 
 export function buildVerdict(input: {
     status: string;
@@ -78,7 +53,7 @@ export function buildVerdict(input: {
     placeholderOnly: boolean;
     promptSkipped?: boolean;
 }): Pick<CalendarDoctorReport, "verdict" | "fix"> {
-    const host = describeCalendarHostApp();
+    const host = describeResponsibleIdentity();
     const fix = `System Settings > Privacy & Security > Calendars: set ${host} to Full Access, then re-run.`;
 
     if (input.promptSkipped) {
@@ -132,34 +107,8 @@ function plistHasKey(plistPath: string, key: string): boolean {
     return proc.exitCode === 0;
 }
 
-export function readTccCalendarRows(dbPath = TCC_DB_PATH): CalendarDoctorReport["tcc"] {
-    let db: Database | undefined;
-
-    try {
-        db = new Database(dbPath, { readonly: true });
-        const raw = db
-            .query<{ client: string; client_type: number; auth_value: number; last_modified: number }, [string]>(
-                "SELECT client, client_type, auth_value, last_modified FROM access WHERE service = ? ORDER BY client"
-            )
-            .all(TCC_CALENDAR_SERVICE);
-        logger.debug({ dbPath, rows: raw.length }, "read TCC calendar rows");
-
-        return {
-            readable: true,
-            rows: raw.map((r) => ({
-                client: r.client,
-                clientType: r.client_type,
-                authValue: r.auth_value,
-                label: tccAuthLabel(r.auth_value),
-                lastModified: new Date(r.last_modified * 1000).toISOString(),
-            })),
-        };
-    } catch (error) {
-        logger.debug({ error, dbPath }, "TCC.db not readable (needs Full Disk Access)");
-        return { readable: false, rows: [], error: error instanceof Error ? error.message : String(error) };
-    } finally {
-        db?.close();
-    }
+export function readTccCalendarRows(dbPath = TCC_USER_DB_PATH): TccReadResult {
+    return readTccRows({ dbPath, services: [TCC_CALENDAR_SERVICE] });
 }
 
 /**
@@ -231,7 +180,9 @@ export async function runCalendarDoctor(opts: CalendarDoctorOptions = {}): Promi
         placeholderOnly,
         sources: sources.map((s) => ({ title: s.title, source_type: s.source_type })),
         binary: { path: binaryPath, inAppBundle: plistPath !== undefined, hasCalendarUsageString },
-        hostApp,
+        // `hostApp` is also the input to tccDecisionRecorded above, so it stays a const;
+        // `responsible` is who macOS actually asks, which is the app when the launcher ran us.
+        hostApp: { responsible: responsibleIdentity(), ...hostApp },
         tcc,
         ...buildVerdict({
             status: auth.status,

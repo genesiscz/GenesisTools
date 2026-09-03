@@ -1,15 +1,9 @@
 import { describe, expect, it, test } from "bun:test";
 import type { CalendarDoctorReport } from "./doctor";
-import { buildVerdict, readTccCalendarRows, tccAuthLabel, tccDecisionRecorded } from "./doctor";
+import { buildVerdict, readTccCalendarRows, tccDecisionRecorded } from "./doctor";
 
-describe("tccAuthLabel", () => {
-    it("maps the kTCCServiceCalendar auth values", () => {
-        expect(tccAuthLabel(0)).toBe("denied");
-        expect(tccAuthLabel(2)).toBe("Full Access");
-        expect(tccAuthLabel(4)).toBe("Add Only");
-        expect(tccAuthLabel(9)).toContain("unknown");
-    });
-});
+// tccAuthLabel moved to ../permissions/tcc, where it takes the service so Calendar's
+// "Add Only" can be told apart from a plain allow. Its tests moved with it.
 
 describe("buildVerdict", () => {
     it("tells a denied machine from an empty calendar", () => {
@@ -44,7 +38,10 @@ describe("tccDecisionRecorded", () => {
         return { readable: true, rows };
     }
 
+    // TccRow is shared with the permissions report since the reader moved to ../permissions/tcc,
+    // so a row now names its service as well.
     const row = {
+        service: "kTCCServiceCalendar",
         client: "com.example.terminal",
         clientType: 0,
         authValue: 2,

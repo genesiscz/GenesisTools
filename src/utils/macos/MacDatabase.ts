@@ -3,8 +3,11 @@ import { existsSync } from "node:fs";
 import { BunSqliteDialect } from "@genesiscz/utils/database";
 import { type Migration, Migrator } from "@genesiscz/utils/database/migrations";
 import { logger } from "@genesiscz/utils/logger";
-import { MacOS } from "@genesiscz/utils/macos/MacOS";
-import { detectTerminalApp } from "@genesiscz/utils/terminal";
+import {
+    type FullDiskAccessContext,
+    fullDiskAccessInstructions,
+    requestFullDiskAccess,
+} from "@genesiscz/utils/macos/full-disk-access";
 import { Kysely } from "kysely";
 
 /**
@@ -27,6 +30,11 @@ export abstract class MacDatabase {
 
     protected abstract readonly dbPath: string;
     protected abstract readonly dbLabel: string;
+    /**
+     * What the user loses while this database is unreadable, for the Full Disk Access dialog:
+     * a verb phrase completing "GenesisTools could not …", plus which capability asked.
+     */
+    protected abstract readonly fullDiskAccess: FullDiskAccessContext;
     protected abstract readonly notFoundMessage: string;
 
     /** Subclasses can override to register UDFs / set extra pragmas after the DB opens. */
@@ -69,18 +77,16 @@ export abstract class MacDatabase {
                 message.includes("unable to open database file") ||
                 message.includes("SQLITE_CANTOPEN")
             ) {
-                const termApp = detectTerminalApp();
-                // Only surface the GUI pane interactively — a launchd/cron daemon must not
-                // pop System Settings on every scheduled run.
+                // Only surface the dialog and the GUI pane interactively — a launchd/cron daemon
+                // must not pop System Settings on every scheduled run.
                 if (process.stdout.isTTY) {
-                    MacOS.settings.openFullDiskAccess();
+                    requestFullDiskAccess(this.fullDiskAccess);
                 }
 
                 throw new Error(
                     [
-                        `Full Disk Access is required to read the ${this.dbLabel}.`,
-                        `Grant it in System Settings → Privacy & Security → Full Disk Access, add "${termApp}" (or the binary running this command), then restart it.`,
-                        "If you recently upgraded a runtime (nvm/brew/bun), the new binary lives at a new path and must be re-granted — old grants don't transfer.",
+                        fullDiskAccessInstructions(this.fullDiskAccess),
+                        "If you recently upgraded a runtime (nvm/brew/bun) and run without GenesisTools.app, the new binary lives at a new path and must be re-granted — old grants don't transfer.",
                     ].join("\n")
                 );
             }

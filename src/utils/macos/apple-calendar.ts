@@ -1,20 +1,24 @@
 import type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import { isInteractive } from "@genesiscz/utils/cli";
-import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { getDarwinKit } from "./darwinkit";
+import { describeResponsibleIdentity } from "./genesis-app";
 
 export type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo };
 
 /** EventKit hands this single fake calendar back when the process has Add Only (write-only) access. */
 export const CALENDAR_PLACEHOLDER_IDENTIFIER = "VIRTUAL_APP_CALENDAR_UUID";
 
-const AUTH_TIMEOUT_MS = 30_000;
+/** `authorized()` blocks inside EventKit while the macOS prompt is on screen; give a human time to read it. */
+const AUTH_TIMEOUT_MS = 120_000;
 /** The Swift side polls up to 15 s for the user's answer to the upgrade dialog. */
 const UPGRADE_TIMEOUT_MS = 40_000;
 
 export interface CalendarAuthClient {
+    /** prompts when the status is notDetermined */
     authorized: (opts?: { timeout?: number }) => Promise<CalendarAuthorizedResult>;
+    /** never prompts */
+    authorizationStatus: (opts?: { timeout?: number }) => Promise<CalendarAuthorizedResult>;
     requestFullAccess: (opts?: { timeout?: number }) => Promise<CalendarAuthorizedResult>;
 }
 
@@ -23,20 +27,10 @@ export interface EnsureAccessOptions {
     requestUpgrade?: boolean;
 }
 
-export function describeCalendarHostApp(): string {
-    const bundleId = env.device.getHostBundleIdentifier();
-
-    if (bundleId) {
-        return `the app "${bundleId}"`;
-    }
-
-    return "the terminal app that runs `tools` (under launchd it is the `bun` binary)";
-}
-
 export function calendarPermissionMessage(status: string, need: "read" | "write"): string {
     const target = need === "read" ? "Full Access" : "Add Only or Full Access";
-    const host = describeCalendarHostApp();
-    const fix = `Fix: System Settings > Privacy & Security > Calendars, set ${host} to ${target}, then re-run. macOS grants Calendar access to the launching app, not to \`tools\`. Run \`tools macos calendar doctor\` to see what macOS granted.`;
+    const host = describeResponsibleIdentity();
+    const fix = `Fix: System Settings > Privacy & Security > Calendars, set ${host} to ${target}, then re-run. macOS grants Calendar access to the responsible app, not to \`tools\`. Run \`tools macos calendar doctor\` to see what macOS granted.`;
 
     switch (status) {
         case "writeOnly":
@@ -127,9 +121,9 @@ export interface UpdateEventOptions {
 }
 
 export class MacCalendar {
-    /** Current status. Triggers the macOS prompt only when the status is still notDetermined. */
+    /** Current status, read-only: never shows the macOS prompt (diagnostics use this). */
     static async authorizationStatus(): Promise<CalendarAuthorizedResult> {
-        return getDarwinKit().calendar.authorized({ timeout: AUTH_TIMEOUT_MS });
+        return getDarwinKit().calendar.authorizationStatus({ timeout: 10_000 });
     }
 
     static async ensureReadAccess(options?: EnsureAccessOptions): Promise<void> {

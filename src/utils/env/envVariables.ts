@@ -176,6 +176,12 @@ export const env = {
         getHome: () => getTrimmed("GENESIS_TOOLS_HOME") ?? homedir(),
         /** True only when GENESIS_TOOLS_HOME is actually set (a sandboxed root). */
         hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
+        /** Set by the GenesisTools.app launcher for its children: the TCC identity this process runs under. */
+        getAppBundleId: () => getTrimmed("GENESIS_TOOLS_APP_BUNDLE_ID"),
+        /** GENESIS_TOOLS_NO_APP=1 runs tools straight from the terminal, without the GenesisTools.app launcher. */
+        isAppLauncherDisabled: () => getRaw("GENESIS_TOOLS_NO_APP") === "1",
+        /** codesign identity for the GenesisTools.app build; overrides the automatic Developer ID / Apple Development pick. */
+        getCodesignIdentity: () => getTrimmed("GENESIS_TOOLS_CODESIGN_IDENTITY"),
         /**
          * Opt out of the worktree migration guard for the deliberate post-merge
          * run. Read through the facade so `env.testing` overrides are seen; a

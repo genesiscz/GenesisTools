@@ -152,6 +152,10 @@ const MESSAGE_SELECT_COLUMNS = [
 export class MailDatabase extends MacDatabase {
     protected readonly dbPath = ENVELOPE_INDEX_PATH;
     protected readonly dbLabel = "Mail database";
+    protected readonly fullDiskAccess = {
+        reason: "search your mail",
+        feature: "mail",
+    } as const;
     protected readonly notFoundMessage = "Make sure Mail.app is configured and has downloaded messages.";
 
     private k() {

@@ -19,6 +19,7 @@ function fakeAuth(status: AuthStatus, afterUpgrade: AuthStatus = status): FakeAu
     const auth: FakeAuth = {
         requests: 0,
         authorized: async () => ({ status, authorized: status === "fullAccess" }),
+        authorizationStatus: async () => ({ status, authorized: status === "fullAccess" }),
         requestFullAccess: async () => {
             auth.requests++;
             return { status: afterUpgrade, authorized: afterUpgrade === "fullAccess" };

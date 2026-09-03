@@ -379,16 +379,18 @@ export class RemindersPermissionError extends Error {
 
 type RemindersClient = {
     authorized: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
+    authorizationStatus: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
     requestFullAccess: (opts?: { timeout?: number }) => Promise<RemindersAuthResult>;
 };
 
 export class MacReminders {
+    /** Read-only: never shows the macOS prompt. `ensureAuthorized` requests access separately. */
     static async authorizationStatus(options?: GuardOptions): Promise<RemindersAuthResult> {
         return runDarwinkitGuarded(
             getDarwinKit(),
-            "reminders.authorized",
+            "reminders.authorization_status",
             (dk) =>
-                (dk.reminders as RemindersClient).authorized({
+                (dk.reminders as RemindersClient).authorizationStatus({
                     timeout: options?.timeoutMs ?? resolveDefaultTimeoutMs(),
                 }),
             options
