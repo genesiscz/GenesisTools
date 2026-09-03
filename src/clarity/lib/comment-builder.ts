@@ -2,7 +2,7 @@
 // Clarity weeks start on Monday — output naturally starts with "Po" because dates sort ascending
 const CZECH_DAYS = ["Ne", "Po", "Út", "St", "Čt", "Pá", "So"] as const;
 
-interface CommentEntry {
+export interface CommentEntry {
     workItemId: number;
     timeTypeDescription: string;
     comment: string | null;
@@ -54,4 +54,26 @@ export function buildWeekComment(entries: CommentEntry[]): string {
     }
 
     return lines.join("\n");
+}
+
+/**
+ * Build the note for one timesheet period. `periodFinishInclusive` is Clarity's `timePeriodFinish`,
+ * which names the LAST day of the period, so the filter has to include it. Using the carousel's
+ * exclusive `finish_date` here would pull the next week's first day into this note.
+ */
+export function buildPeriodComment({
+    entries,
+    periodStart,
+    periodFinishInclusive,
+}: {
+    entries: CommentEntry[];
+    periodStart: string;
+    periodFinishInclusive: string;
+}): string {
+    const start = periodStart.split("T")[0];
+    const finish = periodFinishInclusive.split("T")[0];
+
+    return buildWeekComment(
+        entries.filter((entry) => entry.date.split("T")[0] >= start && entry.date.split("T")[0] <= finish)
+    );
 }

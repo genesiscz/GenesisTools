@@ -13,7 +13,7 @@ import {
 import { getTimesheetWeeks } from "@app/clarity/lib/timesheet-weeks";
 import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
-import { addDay } from "@genesiscz/utils/date";
+import { addDay, isDateInHalfOpenRange } from "@genesiscz/utils/date";
 
 interface WeekPreviewTimelogEntry {
     workItemId: number;
@@ -187,15 +187,15 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
             let weekTotal = 0;
 
             for (const [date, mins] of Object.entries(fill.dayMinutes)) {
-                if (date >= cw.startDate && date < cw.finishDate) {
+                if (isDateInHalfOpenRange(date, cw.startDate, cw.finishDate)) {
                     weekDayValues[date] = mins;
                     weekTotal += mins;
                 }
             }
 
             if (weekTotal > 0) {
-                const weekTimelogs = (fill.timelogEntries ?? []).filter(
-                    (e) => e.date >= cw.startDate && e.date < cw.finishDate
+                const weekTimelogs = (fill.timelogEntries ?? []).filter((e) =>
+                    isDateInHalfOpenRange(e.date, cw.startDate, cw.finishDate)
                 );
 
                 weekEntries.push({
@@ -212,7 +212,7 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         const weekUnmappedMap = new Map<number, number>();
 
         for (const ue of unmappedEntries) {
-            if (ue.date >= cw.startDate && ue.date < cw.finishDate) {
+            if (isDateInHalfOpenRange(ue.date, cw.startDate, cw.finishDate)) {
                 weekUnmappedMap.set(ue.workItemId, (weekUnmappedMap.get(ue.workItemId) ?? 0) + ue.minutes);
             }
         }
