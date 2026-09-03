@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { createKyselyClient, type DatabaseClient, nowUtcIso } from "@genesiscz/utils/database";
+import { createKyselyClient, type DatabaseClient, type Migration, nowUtcIso } from "@genesiscz/utils/database";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -52,7 +52,8 @@ const BOOTSTRAP: string[] = [
         last_status     TEXT NOT NULL DEFAULT 'unknown',
         last_checked_at TEXT,
         last_latency_ms INTEGER,
-        last_detail     TEXT
+        last_detail     TEXT,
+        muted_until     TEXT
     )`,
     `CREATE TABLE IF NOT EXISTS checks (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,6 +155,7 @@ export function rowToWatcher(row: WatcherRow, targetIds: number[] = []): Watcher
         lastLatencyMs: row.last_latency_ms,
         lastDetail: row.last_detail,
         targetIds,
+        mutedUntil: row.muted_until,
     };
 }
 
@@ -218,6 +220,21 @@ function rowToFeedItem(row: FeedItemRow): FeedItem {
     };
 }
 
+/** Columns added after the first release; `CREATE TABLE IF NOT EXISTS` never alters an existing table. */
+const MIGRATIONS: Migration[] = [
+    {
+        id: "001-watchers-muted-until",
+        description: "maintenance mute on watchers",
+        isApplied: (db) =>
+            (db.query("PRAGMA table_info(watchers)").all() as Array<{ name: string }>).some(
+                (column) => column.name === "muted_until"
+            ),
+        apply: (db) => {
+            db.run("ALTER TABLE watchers ADD COLUMN muted_until TEXT");
+        },
+    },
+];
+
 export class MonitorDatabase {
     private readonly client: DatabaseClient<MonitorDB>;
 
@@ -225,6 +242,8 @@ export class MonitorDatabase {
         this.client = createKyselyClient<MonitorDB>({
             path: dbPath,
             bootstrap: BOOTSTRAP,
+            migrations: MIGRATIONS,
+            migrationContext: { tableName: "monitor" },
             pragmas: { foreignKeys: true },
         });
         logger.debug({ dbPath }, "monitor: database opened");
@@ -332,6 +351,7 @@ export class MonitorDatabase {
                 created_at: now,
                 updated_at: now,
                 last_status: "unknown",
+                muted_until: input.mutedUntil ?? null,
             })
             .executeTakeFirstOrThrow();
         const id = Number(result.insertId);
@@ -384,6 +404,10 @@ export class MonitorDatabase {
 
         if (patch.notify !== undefined) {
             set.notify = patch.notify ? 1 : 0;
+        }
+
+        if (patch.mutedUntil !== undefined) {
+            set.muted_until = patch.mutedUntil;
         }
 
         await this.client.kysely.updateTable("watchers").set(set).where("id", "=", id).execute();
@@ -794,6 +818,33 @@ export class MonitorDatabase {
             .orderBy("checked_at", "desc")
             .limit(RECENT_POINTS)
             .execute();
+        const since7 = new Date(Date.now() - 7 * DAY_MS).toISOString();
+        const since30 = new Date(Date.now() - 30 * DAY_MS).toISOString();
+        const windows = await this.client.kysely
+            .selectFrom("checks")
+            .select((eb) => [
+                eb.fn.countAll<number>().as("total30"),
+                eb.fn.sum<number>(eb.case().when("status", "=", "down").then(1).else(0).end()).as("down30"),
+                eb.fn.sum<number>(eb.case().when("checked_at", ">=", since7).then(1).else(0).end()).as("total7"),
+                eb.fn
+                    .sum<number>(
+                        eb
+                            .case()
+                            .when(eb.and([eb("checked_at", ">=", since7), eb("status", "=", "down")]))
+                            .then(1)
+                            .else(0)
+                            .end()
+                    )
+                    .as("down7"),
+            ])
+            .where("watcher_id", "=", watcher.id)
+            .where("checked_at", ">=", since30)
+            .executeTakeFirst();
+        const ratio = (totalValue: unknown, downValue: unknown): number | null => {
+            const t = Number(totalValue ?? 0);
+
+            return t > 0 ? (t - Number(downValue ?? 0)) / t : null;
+        };
         const total = Number(stats?.total ?? 0);
         const down = Number(stats?.down ?? 0);
         const avg = stats?.avg_latency === null || stats?.avg_latency === undefined ? null : Number(stats.avg_latency);
@@ -804,6 +855,8 @@ export class MonitorDatabase {
         return {
             ...watcher,
             uptime24h: total > 0 ? (total - down) / total : null,
+            uptime7d: ratio(windows?.total7, windows?.down7),
+            uptime30d: ratio(windows?.total30, windows?.down30),
             avgLatency24h: avg === null ? null : Math.round(avg),
             checks24h: total,
             recent,

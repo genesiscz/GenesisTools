@@ -186,6 +186,7 @@ describe("Scheduler.isDue", () => {
         lastLatencyMs: 1,
         lastDetail: null,
         targetIds: [],
+        mutedUntil: null,
     };
     const at = Date.parse("2026-09-03T10:00:00.000Z");
 

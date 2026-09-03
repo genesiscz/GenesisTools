@@ -122,6 +122,11 @@ export const KIND_LABEL: Record<WatcherKind, string> = {
     statuspage: "Status page",
     "ai-provider": "AI provider",
     rss: "RSS feed",
+    tcp: "TCP port",
+    dns: "DNS",
+    tls: "TLS certificate",
+    json: "JSON API",
+    command: "Command",
 };
 
 export const STATUS_LABEL: Record<WatcherStatus, string> = {

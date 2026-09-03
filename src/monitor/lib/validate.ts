@@ -1,3 +1,4 @@
+import { parseHostPort } from "./checks/tcp";
 import {
     DEFAULT_INTERVAL_SEC,
     DEFAULT_TIMEOUT_MS,
@@ -26,6 +27,7 @@ export class WatcherValidationError extends Error {
 }
 
 const ACCOUNT_ID = /^acc_[a-z0-9][a-z0-9_-]*$/;
+const HOSTNAME = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 const HTTP_METHODS = new Set(["GET", "HEAD", "POST"]);
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -103,6 +105,33 @@ export function normalizeTarget(kind: WatcherKind, raw: string): string {
         }
 
         return target;
+    }
+
+    if (kind === "command") {
+        return target;
+    }
+
+    if (kind === "tcp" || kind === "tls") {
+        try {
+            const { host, port } = parseHostPort(target, kind === "tls" ? 443 : undefined);
+
+            return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+        } catch (error) {
+            throw new WatcherValidationError(`${kind} target must be host:port (${(error as Error).message})`);
+        }
+    }
+
+    if (kind === "dns") {
+        const host = target
+            .replace(/^[a-z]+:\/\//i, "")
+            .replace(/[/:].*$/, "")
+            .toLowerCase();
+
+        if (!HOSTNAME.test(host)) {
+            throw new WatcherValidationError(`dns target must be a hostname, got "${raw}"`);
+        }
+
+        return host;
     }
 
     const withScheme = /^https?:\/\//i.test(target) ? target : `https://${target}`;
@@ -192,7 +221,54 @@ export function parseWatcherConfig(value: unknown): WatcherConfig {
         config.deliverItems = deliverItems;
     }
 
+    const expectIp = optionalString(record, "expectIp")?.trim();
+
+    if (expectIp) {
+        config.expectIp = expectIp;
+    }
+
+    const jsonPath = optionalString(record, "jsonPath")?.trim();
+
+    if (jsonPath) {
+        config.jsonPath = jsonPath;
+    }
+
+    const expect = optionalString(record, "expect");
+
+    if (expect !== undefined && expect !== "") {
+        config.expect = expect;
+    }
+
+    const warnDays = optionalInt(record, "warnDays", { min: 1, max: 3650 });
+
+    if (warnDays !== undefined) {
+        config.warnDays = warnDays;
+    }
+
+    const minDays = optionalInt(record, "minDays", { min: 0, max: 3650 });
+
+    if (minDays !== undefined) {
+        config.minDays = minDays;
+    }
+
     return config;
+}
+
+/** ISO date/time, or null to clear. */
+export function parseMutedUntil(value: unknown): string | null | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (value === null || value === "") {
+        return null;
+    }
+
+    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+        throw new WatcherValidationError("mutedUntil must be an ISO date/time or null");
+    }
+
+    return new Date(value).toISOString();
 }
 
 /** Comma string or array of strings; `undefined` when absent or empty after trimming. */
@@ -423,6 +499,7 @@ export function parseWatcherInput(value: unknown): WatcherInput {
         enabled: optionalBoolean(record, "enabled") ?? true,
         notify: optionalBoolean(record, "notify") ?? true,
         targetIds: optionalIdList(record, "targetIds") ?? [],
+        mutedUntil: parseMutedUntil(record.mutedUntil) ?? null,
     };
 }
 
@@ -495,6 +572,12 @@ export function parseWatcherPatch(value: unknown, currentKind: WatcherKind): Wat
 
     if (targetIds !== undefined) {
         patch.targetIds = targetIds;
+    }
+
+    const mutedUntil = parseMutedUntil(record.mutedUntil);
+
+    if (mutedUntil !== undefined) {
+        patch.mutedUntil = mutedUntil;
     }
 
     return patch;

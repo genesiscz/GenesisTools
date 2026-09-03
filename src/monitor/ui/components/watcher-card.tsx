@@ -1,10 +1,11 @@
-import type { WatcherSummary } from "@app/monitor/lib/types";
+import { isMuted, type WatcherSummary } from "@app/monitor/lib/types";
 import { useDeleteWatcher, useRunWatcher, useUpdateWatcher } from "@app/monitor/ui/api.hooks";
 import { LatencySparkline } from "@app/monitor/ui/components/latency-sparkline";
 import { StatusBadge, StatusDot, statusKey } from "@app/monitor/ui/components/status-badge";
 import {
     displayTarget,
     formatAgo,
+    formatDateTime,
     formatInterval,
     formatLatency,
     formatUptime,
@@ -20,10 +21,44 @@ import {
 } from "@genesiscz/utils/ui/components/dropdown-menu";
 import { cn } from "@genesiscz/utils/ui/lib/utils";
 import { Link } from "@tanstack/react-router";
-import { Bot, Globe, Loader2, MoreHorizontal, Pause, Pencil, Play, RefreshCw, Rss, Trash2, Waves } from "lucide-react";
+import {
+    Bell,
+    BellOff,
+    Bot,
+    Braces,
+    Globe,
+    Loader2,
+    MoreHorizontal,
+    Network,
+    Pause,
+    Pencil,
+    Play,
+    Plug,
+    RefreshCw,
+    Rss,
+    ShieldCheck,
+    Terminal,
+    Trash2,
+    Waves,
+} from "lucide-react";
 import type { MouseEvent } from "react";
 
-const KIND_ICON = { website: Globe, statuspage: Waves, "ai-provider": Bot, rss: Rss } as const;
+/** ISO time `minutes` from now, for a maintenance mute. */
+export function muteUntil(minutes: number): string {
+    return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
+const KIND_ICON = {
+    website: Globe,
+    statuspage: Waves,
+    "ai-provider": Bot,
+    rss: Rss,
+    tcp: Plug,
+    dns: Network,
+    tls: ShieldCheck,
+    json: Braces,
+    command: Terminal,
+} as const;
 
 export function WatcherCard({
     watcher,
@@ -102,6 +137,31 @@ export function WatcherCard({
                                 )}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {isMuted(watcher) ? (
+                                <DropdownMenuItem
+                                    onClick={() => update.mutate({ id: watcher.id, patch: { mutedUntil: null } })}
+                                >
+                                    <Bell className="size-4" /> Unmute
+                                </DropdownMenuItem>
+                            ) : (
+                                <>
+                                    <DropdownMenuItem
+                                        onClick={() =>
+                                            update.mutate({ id: watcher.id, patch: { mutedUntil: muteUntil(60) } })
+                                        }
+                                    >
+                                        <BellOff className="size-4" /> Silence 1 hour
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        onClick={() =>
+                                            update.mutate({ id: watcher.id, patch: { mutedUntil: muteUntil(24 * 60) } })
+                                        }
+                                    >
+                                        <BellOff className="size-4" /> Silence 24 hours
+                                    </DropdownMenuItem>
+                                </>
+                            )}
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 onClick={() => {
@@ -135,7 +195,17 @@ export function WatcherCard({
             <LatencySparkline points={watcher.recent} />
 
             <div className="flex items-center justify-between gap-2">
-                <StatusBadge status={watcher.lastStatus} enabled={watcher.enabled} />
+                <span className="flex items-center gap-1.5">
+                    <StatusBadge status={watcher.lastStatus} enabled={watcher.enabled} />
+                    {isMuted(watcher) && (
+                        <span
+                            title={`Muted until ${formatDateTime(watcher.mutedUntil)}`}
+                            className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground"
+                        >
+                            <BellOff className="size-3" /> muted
+                        </span>
+                    )}
+                </span>
                 <p className="truncate font-mono text-[0.65rem] text-muted-foreground">
                     {KIND_LABEL[watcher.kind]} · every {formatInterval(watcher.intervalSec)} ·{" "}
                     {formatAgo(watcher.lastCheckedAt)}

@@ -16,6 +16,7 @@ export interface WatchersTable {
     last_checked_at: string | null;
     last_latency_ms: number | null;
     last_detail: string | null;
+    muted_until: string | null;
 }
 
 export interface ChecksTable {

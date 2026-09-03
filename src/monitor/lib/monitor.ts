@@ -23,7 +23,7 @@ import type {
     WatcherStatus,
     WatcherSummary,
 } from "./types";
-import { maskWatcher, SECRET_KEYS } from "./types";
+import { isMuted, maskWatcher, SECRET_KEYS } from "./types";
 import { assertTargetConfigComplete } from "./validate";
 
 export type MonitorListener = (event: MonitorEvent) => void;
@@ -335,7 +335,14 @@ export class Monitor {
 
         const worthNotifying = isOutage(to) || (to === "up" && isOutage(from));
 
-        if (watcher.notify && worthNotifying) {
+        if (watcher.notify && worthNotifying && isMuted(watcher)) {
+            logger.info(
+                { id: watcher.id, until: watcher.mutedUntil },
+                "monitor: state change not announced, watcher is muted"
+            );
+        }
+
+        if (watcher.notify && worthNotifying && !isMuted(watcher)) {
             // Detached on purpose (a slow telegram send must not hold the check
             // open), so it needs its own catch: the first await reads the notify
             // config, and a hand-broken config.json would otherwise take the
@@ -366,6 +373,15 @@ export class Monitor {
         }
 
         const deliver = watcher.notify && watcher.config.deliverItems !== false;
+
+        if (deliver && isMuted(watcher)) {
+            // A muted feed swallows its items on purpose; replaying them after the
+            // mute ends would dump the whole maintenance window on the user.
+            await this.db.markFeedItemsDelivered(fresh.map((item) => item.id));
+            logger.info({ id: watcher.id, items: fresh.length }, "monitor: feed items silenced, watcher is muted");
+
+            return fresh.map((item) => ({ ...item, delivered: true }));
+        }
 
         if (!deliver) {
             return fresh;

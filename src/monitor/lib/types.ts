@@ -1,7 +1,17 @@
 /** One version for the CLI `--version` and the server `/healthz`. */
 export const MONITOR_VERSION = "1.1.0";
 
-export const WATCHER_KINDS = ["website", "statuspage", "ai-provider", "rss"] as const;
+export const WATCHER_KINDS = [
+    "website",
+    "statuspage",
+    "ai-provider",
+    "rss",
+    "tcp",
+    "dns",
+    "tls",
+    "json",
+    "command",
+] as const;
 export type WatcherKind = (typeof WATCHER_KINDS)[number];
 
 export const WATCHER_STATUSES = ["up", "degraded", "down", "unknown"] as const;
@@ -26,6 +36,16 @@ export interface WatcherConfig {
     deliverItems?: boolean;
     /** rss: only items whose title or summary contains one of these (case-insensitive). Empty = all. */
     itemFilter?: string[];
+    /** dns: this address must be among the answers. */
+    expectIp?: string;
+    /** json: dot path into the document (`status.indicator`, `items[0].id`). Empty = whole document. */
+    jsonPath?: string;
+    /** json: the value at `jsonPath`, as text, must equal this. Absent = the path only has to exist. */
+    expect?: string;
+    /** tls: fewer days left than this is degraded. Default 14. */
+    warnDays?: number;
+    /** tls: fewer days left than this is down. Default 0 (expired). */
+    minDays?: number;
 }
 
 export interface FeedItem {
@@ -67,6 +87,19 @@ export interface Watcher {
     lastDetail: string | null;
     /** Notification targets from the library. Empty = the monitor app defaults. */
     targetIds: number[];
+    /** ISO time until which notifications are silenced (maintenance); null = not muted. */
+    mutedUntil: string | null;
+}
+
+/** True while a maintenance mute is in force. */
+export function isMuted(watcher: Pick<Watcher, "mutedUntil">, now: number = Date.now()): boolean {
+    if (!watcher.mutedUntil) {
+        return false;
+    }
+
+    const until = Date.parse(watcher.mutedUntil);
+
+    return Number.isFinite(until) && until > now;
 }
 
 export interface WatcherInput {
@@ -79,6 +112,7 @@ export interface WatcherInput {
     enabled?: boolean;
     notify?: boolean;
     targetIds?: number[];
+    mutedUntil?: string | null;
 }
 
 export const NOTIFY_CHANNELS = ["system", "say", "telegram", "webhook"] as const;
@@ -237,6 +271,8 @@ export interface RecentPoint {
 export interface WatcherSummary extends Watcher {
     /** Share of checks in the last 24h that were not `down`; null without checks. */
     uptime24h: number | null;
+    uptime7d: number | null;
+    uptime30d: number | null;
     avgLatency24h: number | null;
     checks24h: number;
     /** Oldest first. */

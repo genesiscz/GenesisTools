@@ -44,6 +44,7 @@ describe("parseWatcherInput", () => {
             enabled: true,
             notify: true,
             targetIds: [],
+            mutedUntil: null,
         });
     });
 

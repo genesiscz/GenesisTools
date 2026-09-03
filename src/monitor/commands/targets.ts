@@ -86,7 +86,7 @@ async function requireTarget(monitor: Monitor, raw: string): Promise<NotifyTarge
     return target;
 }
 
-function printTargets(targets: NotifyTarget[]): void {
+export function printTargets(targets: NotifyTarget[]): void {
     renderCliHeader("Notification library", `${targets.length} target${targets.length === 1 ? "" : "s"}`);
     const table = createBoxTable(["ID", "STATE", "NAME", "CHANNEL", "SETTINGS", "USED BY"]);
 

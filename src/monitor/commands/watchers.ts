@@ -1,3 +1,5 @@
+import { muteUntilFrom } from "@app/monitor/commands/extras";
+import { runAddWizard } from "@app/monitor/commands/interactive";
 import { runCheck } from "@app/monitor/lib/checks/run-check";
 import { Monitor } from "@app/monitor/lib/monitor";
 import { findPreset, WATCHER_PRESETS } from "@app/monitor/lib/presets";
@@ -13,7 +15,7 @@ import {
 } from "@app/monitor/lib/types";
 import { parseWatcherInput, parseWatcherPatch, WatcherValidationError } from "@app/monitor/lib/validate";
 import { concurrentMap } from "@genesiscz/utils/async";
-import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { parseSqliteOrIsoDate } from "@genesiscz/utils/sql-time";
@@ -39,6 +41,12 @@ interface AddOptions {
     degradedMs?: string;
     components?: string;
     itemFilter?: string;
+    expectIp?: string;
+    jsonPath?: string;
+    expect?: string;
+    warnDays?: string;
+    minDays?: string;
+    mute?: string;
     deliver: boolean;
     targets?: string;
     notify: boolean;
@@ -55,6 +63,12 @@ interface EditOptions {
     degradedMs?: string;
     components?: string;
     itemFilter?: string;
+    expectIp?: string;
+    jsonPath?: string;
+    expect?: string;
+    warnDays?: string;
+    minDays?: string;
+    mute?: string;
     deliver?: boolean;
     targets?: string;
     notify?: boolean;
@@ -137,6 +151,11 @@ function configFromFlags(opts: Partial<EditOptions>, base: Record<string, unknow
         ["components", opts.components],
         ["itemFilter", opts.itemFilter],
         ["deliverItems", opts.deliver],
+        ["expectIp", opts.expectIp],
+        ["jsonPath", opts.jsonPath],
+        ["expect", opts.expect],
+        ["warnDays", opts.warnDays],
+        ["minDays", opts.minDays],
     ];
 
     for (const [key, value] of flagged) {
@@ -173,10 +192,11 @@ function buildInput(target: string, opts: AddOptions): WatcherInput {
         enabled: !opts.paused,
         notify: opts.notify,
         targetIds: opts.targets,
+        mutedUntil: opts.mute ? muteUntilFrom(opts.mute) : undefined,
     });
 }
 
-function printWatchers(watchers: Watcher[]): void {
+export function printWatchers(watchers: Watcher[]): void {
     renderCliHeader("Monitor watchers", `${watchers.length} configured`);
     const table = createBoxTable([
         "ID",
@@ -266,6 +286,12 @@ function commonFlags(command: Command): Command {
         .option("--degraded-ms <ms>", "website/ai-provider: slower than this is degraded")
         .option("--components <names>", "statuspage: comma-separated component names to watch")
         .option("--item-filter <words>", "rss: only items whose title/summary contains one of these words")
+        .option("--expect-ip <address>", "dns: the host must resolve to this address")
+        .option("--json-path <path>", "json: dot path into the document (status.indicator, items[0].id)")
+        .option("--expect <value>", "json: the value at --json-path must equal this (as text)")
+        .option("--warn-days <n>", "tls: degraded when fewer days remain (default 14)")
+        .option("--min-days <n>", "tls: down when fewer days remain (default 0)")
+        .option("--mute <duration>", "Silence notifications for 30m, 2h, 1d, …")
         .option("--targets <ids>", "Notification targets from the library, comma-separated ids (empty = defaults)")
         .option("--json", "Emit JSON");
 }
@@ -274,15 +300,35 @@ export function registerWatcherCommands(program: Command): void {
     commonFlags(
         program
             .command("add")
-            .description("Add a watcher: a website URL, a status page, an RSS/Atom feed or an AI account id (acc_…)")
-            .argument("<target>", "URL, status page, feed URL or acc_… account id")
+            .description(
+                "Add a watcher. No target in a terminal = guided wizard. Kinds: website, statuspage, rss, tcp, dns, tls, json, command, ai-provider"
+            )
+            .argument("[target]", "URL, status page, feed URL, host:port, hostname, shell command or acc_… account id")
             .option("-n, --name <name>", "Display name (default: host or preset name)")
             .option("-k, --kind [kind]", `One of ${WATCHER_KINDS.join(", ")} (default: guessed from the target)`)
             .option("-p, --preset <id>", "Start from a preset (see: tools monitor presets)")
             .option("--no-deliver", "rss: record new items without delivering them")
             .option("--no-notify", "Do not send notifications on state changes or new items")
             .option("--paused", "Create the watcher disabled")
-    ).action(async (target: string, opts: AddOptions) => {
+    ).action(async (target: string | undefined, opts: AddOptions) => {
+        if (target === undefined) {
+            if (!isInteractive()) {
+                out.error("target is required in non-interactive mode.");
+                out.println(
+                    suggestCommand("tools monitor", {
+                        replaceCommand: ["add", "https://example.com", "--name", "Example"],
+                    })
+                );
+                process.exitCode = 1;
+
+                return;
+            }
+
+            await withMonitor((monitor) => runAddWizard(monitor));
+
+            return;
+        }
+
         if (opts.kind === true || (opts.kind && !(WATCHER_KINDS as readonly string[]).includes(opts.kind))) {
             out.println(suggestEnumFlag("tools monitor add", "--kind", [...WATCHER_KINDS]));
             process.exitCode = 1;
@@ -333,6 +379,7 @@ export function registerWatcherCommands(program: Command): void {
                     config: Object.keys(config).length > 0 ? { ...current.config, ...config } : undefined,
                     notify: opts.notify,
                     targetIds: opts.targets,
+                    mutedUntil: opts.mute ? muteUntilFrom(opts.mute) : undefined,
                 },
                 current.kind
             );

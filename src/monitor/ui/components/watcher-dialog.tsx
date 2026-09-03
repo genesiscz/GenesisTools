@@ -34,7 +34,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@genesiscz/utils/ui/components/switch";
 import { cn } from "@genesiscz/utils/ui/lib/utils";
 import { Link } from "@tanstack/react-router";
-import { Bot, FlaskConical, Globe, Loader2, RefreshCw, Rss, Save, Waves } from "lucide-react";
+import {
+    Bot,
+    Braces,
+    FlaskConical,
+    Globe,
+    Loader2,
+    Network,
+    Plug,
+    RefreshCw,
+    Rss,
+    Save,
+    ShieldCheck,
+    Terminal,
+    Waves,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 const KIND_OPTIONS: Array<{ kind: WatcherKind; icon: typeof Globe; blurb: string }> = [
@@ -42,7 +56,36 @@ const KIND_OPTIONS: Array<{ kind: WatcherKind; icon: typeof Globe; blurb: string
     { kind: "statuspage", icon: Waves, blurb: "Reads the page's own component data" },
     { kind: "rss", icon: Rss, blurb: "New feed items delivered to your targets" },
     { kind: "ai-provider", icon: Bot, blurb: "Health probe of a configured AI account" },
+    { kind: "tcp", icon: Plug, blurb: "A port answers a TCP connect" },
+    { kind: "dns", icon: Network, blurb: "Host resolves, optionally to one address" },
+    { kind: "tls", icon: ShieldCheck, blurb: "Certificate valid, days until expiry" },
+    { kind: "json", icon: Braces, blurb: "A JSON path equals a value" },
+    { kind: "command", icon: Terminal, blurb: "Shell command exits 0" },
 ];
+
+const TARGET_FIELD: Record<WatcherKind, { label: string; placeholder: string; hint?: string }> = {
+    website: { label: "URL", placeholder: "https://example.com" },
+    statuspage: {
+        label: "Status page URL",
+        placeholder: "status.claude.com",
+        hint: "Statuspage, incident.io or status.x.ai. The page's component data is read, not the HTML.",
+    },
+    rss: { label: "Feed URL", placeholder: "https://status.x.ai/feed.xml", hint: "RSS 2.0 or Atom" },
+    "ai-provider": { label: "Account", placeholder: "acc_…" },
+    tcp: { label: "Host and port", placeholder: "db.example.com:5432", hint: "A TCP connect must succeed" },
+    dns: { label: "Hostname", placeholder: "example.com", hint: "A or AAAA records are resolved" },
+    tls: {
+        label: "Host (port optional)",
+        placeholder: "example.com:443",
+        hint: "Verified handshake, then the leaf certificate's expiry",
+    },
+    json: {
+        label: "JSON URL",
+        placeholder: "https://api.example.com/health",
+        hint: "Fetched with Accept: application/json",
+    },
+    command: { label: "Shell command", placeholder: "pg_isready -h db.local", hint: "Run with sh -c; exit 0 means up" },
+};
 
 const INTERVALS: Array<{ value: number; label: string }> = [
     { value: 30, label: "30 seconds" },
@@ -65,6 +108,11 @@ interface FormState {
     components: string[];
     itemFilter: string;
     deliverItems: boolean;
+    expectIp: string;
+    jsonPath: string;
+    expect: string;
+    warnDays: string;
+    minDays: string;
     notify: boolean;
     enabled: boolean;
     targetIds: number[];
@@ -83,6 +131,11 @@ function emptyForm(): FormState {
         components: [],
         itemFilter: "",
         deliverItems: true,
+        expectIp: "",
+        jsonPath: "",
+        expect: "",
+        warnDays: "",
+        minDays: "",
         notify: true,
         enabled: true,
         targetIds: [],
@@ -102,6 +155,11 @@ function fromWatcher(watcher: WatcherSummary): FormState {
         components: watcher.config.components ?? [],
         itemFilter: watcher.config.itemFilter?.join(", ") ?? "",
         deliverItems: watcher.config.deliverItems !== false,
+        expectIp: watcher.config.expectIp ?? "",
+        jsonPath: watcher.config.jsonPath ?? "",
+        expect: watcher.config.expect ?? "",
+        warnDays: watcher.config.warnDays?.toString() ?? "",
+        minDays: watcher.config.minDays?.toString() ?? "",
         notify: watcher.notify,
         enabled: watcher.enabled,
         targetIds: watcher.targetIds,
@@ -120,6 +178,11 @@ function fromPreset(preset: WatcherPreset, current: FormState): FormState {
         degradedAboveMs: preset.config?.degradedAboveMs?.toString() ?? "",
         components: preset.config?.components ?? [],
         itemFilter: preset.config?.itemFilter?.join(", ") ?? "",
+        expectIp: preset.config?.expectIp ?? "",
+        jsonPath: preset.config?.jsonPath ?? "",
+        expect: preset.config?.expect ?? "",
+        warnDays: preset.config?.warnDays?.toString() ?? "",
+        minDays: preset.config?.minDays?.toString() ?? "",
     };
 }
 
@@ -151,6 +214,26 @@ function toInput(form: FormState): WatcherInput {
 
     if (form.kind === "rss") {
         config.deliverItems = form.deliverItems;
+    }
+
+    if (form.expectIp.trim()) {
+        config.expectIp = form.expectIp.trim();
+    }
+
+    if (form.jsonPath.trim()) {
+        config.jsonPath = form.jsonPath.trim();
+    }
+
+    if (form.expect !== "") {
+        config.expect = form.expect;
+    }
+
+    if (form.warnDays.trim()) {
+        config.warnDays = Number(form.warnDays);
+    }
+
+    if (form.minDays.trim()) {
+        config.minDays = Number(form.minDays);
     }
 
     return {
@@ -390,7 +473,7 @@ export function WatcherDialog({
                         </DialogDescription>
                     </DialogHeader>
 
-                    <div className="grid gap-2 sm:grid-cols-4">
+                    <div className="grid gap-2 sm:grid-cols-3">
                         {KIND_OPTIONS.map((option) => {
                             const Icon = option.icon;
                             const active = form.kind === option.kind;
@@ -470,32 +553,11 @@ export function WatcherDialog({
                                 </Select>
                             </Field>
                         ) : (
-                            <Field
-                                label={
-                                    form.kind === "statuspage"
-                                        ? "Status page URL"
-                                        : form.kind === "rss"
-                                          ? "Feed URL"
-                                          : "URL"
-                                }
-                                hint={
-                                    form.kind === "statuspage"
-                                        ? "Statuspage, incident.io or status.x.ai. The page's component data is read, not the HTML."
-                                        : form.kind === "rss"
-                                          ? "RSS 2.0 or Atom, e.g. status.x.ai/feed.xml"
-                                          : undefined
-                                }
-                            >
+                            <Field label={TARGET_FIELD[form.kind].label} hint={TARGET_FIELD[form.kind].hint}>
                                 <Input
                                     value={form.target}
                                     onChange={(event) => patch({ target: event.target.value })}
-                                    placeholder={
-                                        form.kind === "statuspage"
-                                            ? "status.claude.com"
-                                            : form.kind === "rss"
-                                              ? "https://status.x.ai/feed.xml"
-                                              : "https://example.com"
-                                    }
+                                    placeholder={TARGET_FIELD[form.kind].placeholder}
                                     className="font-mono"
                                 />
                             </Field>
@@ -557,7 +619,7 @@ export function WatcherDialog({
                             </>
                         )}
 
-                        {(form.kind === "website" || form.kind === "ai-provider") && (
+                        {form.kind !== "statuspage" && form.kind !== "rss" && form.kind !== "tls" && (
                             <Field label="Degraded above (ms)" hint="Slower answers count as degraded">
                                 <Input
                                     type="number"
@@ -567,6 +629,70 @@ export function WatcherDialog({
                                     placeholder="2000"
                                 />
                             </Field>
+                        )}
+
+                        {form.kind === "dns" && (
+                            <Field label="Expected address" hint="Optional; the host must resolve to this IP">
+                                <Input
+                                    value={form.expectIp}
+                                    onChange={(event) => patch({ expectIp: event.target.value })}
+                                    placeholder="203.0.113.10"
+                                    className="font-mono"
+                                />
+                            </Field>
+                        )}
+
+                        {form.kind === "json" && (
+                            <>
+                                <Field
+                                    label="JSON path"
+                                    hint="Dot path, e.g. status.indicator or items[0].id; empty = whole document"
+                                >
+                                    <Input
+                                        value={form.jsonPath}
+                                        onChange={(event) => patch({ jsonPath: event.target.value })}
+                                        placeholder="status.indicator"
+                                        className="font-mono"
+                                    />
+                                </Field>
+                                <Field
+                                    label="Expected value"
+                                    hint="Compared as text; empty = the path only has to exist"
+                                >
+                                    <Input
+                                        value={form.expect}
+                                        onChange={(event) => patch({ expect: event.target.value })}
+                                        placeholder="none"
+                                        className="font-mono"
+                                    />
+                                </Field>
+                            </>
+                        )}
+
+                        {form.kind === "tls" && (
+                            <>
+                                <Field label="Warn below (days)" hint="Degraded when fewer days remain. Default 14">
+                                    <Input
+                                        type="number"
+                                        min={1}
+                                        value={form.warnDays}
+                                        onChange={(event) => patch({ warnDays: event.target.value })}
+                                        placeholder="14"
+                                    />
+                                </Field>
+                                <Field
+                                    label="Down below (days)"
+                                    hint="Down when fewer days remain. Default 0 (expired)"
+                                >
+                                    <Input
+                                        type="number"
+                                        min={0}
+                                        value={form.minDays}
+                                        onChange={(event) => patch({ minDays: event.target.value })}
+                                        placeholder="0"
+                                    />
+                                </Field>
+                            </>
                         )}
 
                         {form.kind === "statuspage" && (

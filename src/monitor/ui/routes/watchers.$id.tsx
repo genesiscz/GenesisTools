@@ -1,4 +1,4 @@
-import type { CheckRecord, WatcherSummary } from "@app/monitor/lib/types";
+import { type CheckRecord, isMuted, type WatcherSummary } from "@app/monitor/lib/types";
 import {
     useChecks,
     useDeleteWatcher,
@@ -15,10 +15,12 @@ import { IncidentsTable } from "@app/monitor/ui/components/incidents-table";
 import { ErrorPanel, Loading } from "@app/monitor/ui/components/loading";
 import { PageHeader } from "@app/monitor/ui/components/page-header";
 import { StatusBadge } from "@app/monitor/ui/components/status-badge";
+import { muteUntil } from "@app/monitor/ui/components/watcher-card";
 import { WatcherDialog } from "@app/monitor/ui/components/watcher-dialog";
 import {
     displayTarget,
     formatAgo,
+    formatDateTime,
     formatInterval,
     formatLatency,
     formatTime,
@@ -40,7 +42,7 @@ import {
     YAxis,
 } from "@genesiscz/utils/ui/graphs";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ExternalLink, Loader2, Pause, Pencil, Play, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, ExternalLink, Loader2, Pause, Pencil, Play, RefreshCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export const Route = createFileRoute("/watchers/$id")({
@@ -213,6 +215,24 @@ function Header({ watcher }: { watcher: WatcherSummary }) {
                             {watcher.enabled ? <Pause className="size-4" /> : <Play className="size-4" />}
                             {watcher.enabled ? "Pause" : "Resume"}
                         </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            title={
+                                isMuted(watcher)
+                                    ? `Muted until ${formatDateTime(watcher.mutedUntil)}`
+                                    : "Silence notifications for 1 hour"
+                            }
+                            onClick={() =>
+                                update.mutate({
+                                    id: watcher.id,
+                                    patch: { mutedUntil: isMuted(watcher) ? null : muteUntil(60) },
+                                })
+                            }
+                        >
+                            {isMuted(watcher) ? <Bell className="size-4" /> : <BellOff className="size-4" />}
+                            {isMuted(watcher) ? "Unmute" : "Silence 1h"}
+                        </Button>
                         <Button size="sm" className="btn-glow" onClick={() => setEditing(true)}>
                             <Pencil className="size-4" /> Edit
                         </Button>
@@ -258,7 +278,11 @@ function WatcherPageBody({ id }: { id: number }) {
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <Stat label="Latency" value={formatLatency(data.lastLatencyMs)} sub={formatAgo(data.lastCheckedAt)} />
-                <Stat label="Uptime 24h" value={formatUptime(data.uptime24h)} sub={`${data.checks24h} checks`} />
+                <Stat
+                    label="Uptime 24h"
+                    value={formatUptime(data.uptime24h)}
+                    sub={`${data.checks24h} checks · 7d ${formatUptime(data.uptime7d)} · 30d ${formatUptime(data.uptime30d)}`}
+                />
                 <Stat label="Avg latency 24h" value={formatLatency(data.avgLatency24h)} />
                 <Stat
                     label="Open incident"
