@@ -4,6 +4,7 @@ import {
     removeClonesDaemonTasks,
     SCAN_TASK_NAME,
 } from "@app/macos/lib/clones/daemon-tasks";
+import { setDaemonEnabled } from "@app/macos/lib/clones/store";
 import { Executor } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
 import { logger } from "@genesiscz/utils/logger";
@@ -21,6 +22,7 @@ export function createDaemonCommand(): Command {
         .description("Register the daily clone-scan task with `tools daemon` (a finished reclaim plan does this too)")
         .option("--overwrite", "Overwrite an existing registration", true)
         .action(async (opts: { overwrite?: boolean }) => {
+            await setDaemonEnabled(true);
             const done = await ensureClonesDaemonTasks({ overwrite: opts.overwrite !== false });
             await printLn(
                 done.scan ? `registered ${SCAN_TASK_NAME}` : `${SCAN_TASK_NAME} already registered (use --overwrite)`
@@ -32,11 +34,15 @@ export function createDaemonCommand(): Command {
 
     daemon
         .command("disable")
-        .description("Unregister the clone-scan task")
+        .description("Unregister the clone-scan task and stop plans from re-registering it")
         .action(async () => {
+            // The opt-out has to be persisted, not just unregistered: a later
+            // `reclaim plan` sees "no task" and would register both again.
+            await setDaemonEnabled(false);
             const removed = await removeClonesDaemonTasks();
             await printLn(removed.scan ? `unregistered ${SCAN_TASK_NAME}` : `${SCAN_TASK_NAME} was not registered`);
             await printLn(removed.prune ? `unregistered ${PRUNE_TASK_NAME}` : `${PRUNE_TASK_NAME} was not registered`);
+            await printLn("a finished reclaim plan will not re-register them (tools macos clones daemon enable does)");
         });
 
     daemon

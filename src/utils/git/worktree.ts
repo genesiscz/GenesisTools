@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Executor } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 // =============================================================================
@@ -156,33 +156,32 @@ export async function getMainRepoRoot(cwd?: string): Promise<string> {
 }
 
 /**
- * Sync version of getMainRepoRoot. If `dir` is inside a git worktree,
- * returns the main repo root. Otherwise returns `dir` unchanged.
- * Falls back to `dir` on any error (not a git repo, git not available).
+ * Sync version of getMainRepoRoot. Returns the MAIN checkout's root for any
+ * directory inside a repository — a linked worktree, the main checkout itself,
+ * or a subdirectory of either. Returns `dir` unchanged when it is not inside a
+ * repository, or when git is unavailable.
+ *
+ * `--path-format=absolute` is what makes one query enough: without it git
+ * answers relatively from the repo root and absolutely from a subdirectory,
+ * and the older two-query form compared those two spellings and so reported a
+ * plain subdirectory of the main checkout as a worktree.
  */
 export function getMainRepoRootSync(dir?: string): string {
     const cwd = dir ?? process.cwd();
 
     try {
-        const gitCommonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+        const gitCommonDir = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
             cwd,
             encoding: "utf-8",
             timeout: 2000,
             stdio: ["pipe", "pipe", "pipe"],
         }).trim();
 
-        const gitDir = execFileSync("git", ["rev-parse", "--git-dir"], {
-            cwd,
-            encoding: "utf-8",
-            timeout: 2000,
-            stdio: ["pipe", "pipe", "pipe"],
-        }).trim();
-
-        if (gitCommonDir !== gitDir) {
-            return resolve(cwd, gitCommonDir, "..");
+        if (gitCommonDir.length > 0) {
+            return resolve(gitCommonDir, "..");
         }
-    } catch {
-        // Not a git repo or git not available
+    } catch (err) {
+        logger.debug({ err, cwd }, "getMainRepoRootSync: not a git repository");
     }
 
     return cwd;

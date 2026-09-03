@@ -1001,3 +1001,15 @@ path executes the same instructions (the split of `collect_foreign_mounts` is re
 byte-identical in behaviour for a single root) and the identical `--json` totals prove it. Read
 the table as "no regression visible above the noise on a load-average-30 machine", not as a
 measurement of the change.
+
+## 2026-09-03 04:27 — `--bigfiles` records every non-permission open failure
+
+`big_process_dir` counted only EACCES/EPERM when `open` failed, so EMFILE, ENFILE, EIO, ENOENT
+and ENOTDIR dropped a whole subtree with `read_errors` still zero and the process exiting 0.
+The TS caller then accepted a truncated candidate list instead of falling back to the
+in-process walk. Every other errno now goes through `note_read_error`, which is what makes the
+exit code non-zero.
+
+No measured number moves. This is error accounting only: the walk enters the same directories,
+lists the same files, and emits the same `files_listed` / `dirs` / `files[]` on every tree that
+scanned cleanly before. No bench matrix was run.

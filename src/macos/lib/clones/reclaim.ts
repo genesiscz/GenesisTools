@@ -1,5 +1,5 @@
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
-import type { FileMetaCacheLike } from "@genesiscz/utils/fs/disk-usage";
+import type { FileMetaCacheLike, WalkProgress } from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
 import { type RootStamp, stampRoots } from "./cache";
 import { collapseDuplicates } from "./collapse";
@@ -44,6 +44,9 @@ export interface ReclaimPlan {
     totalReclaimable: number;
     /** True when the sets came from a fresh plan snapshot instead of a scan. */
     fromSnapshot: boolean;
+    /** Directories the walk could not open. A permission-denied subtree
+     *  otherwise reads exactly like a clean scan that found nothing. */
+    deniedDirs: number;
 }
 
 export type ReclaimPhase = "discover" | "cache" | "walk" | "hash" | "collapse" | "snapshot";
@@ -51,6 +54,9 @@ export type ReclaimPhase = "discover" | "cache" | "walk" | "hash" | "collapse" |
 export interface PlanReclaimOpts {
     signal?: AbortSignal;
     onDirEntered?: (dir: string) => void;
+    /** Coarse walk progress counted in FILES. The native walk emits nothing
+     *  else, so this is what a spinner has to read there. */
+    onWalkProgress?: (p: WalkProgress) => void;
     /** Called once per FINISHED stage, in order: discover, cache (only when
      *  `onDiscovered` is set), walk, hash, collapse; or discover, snapshot when
      *  a snapshot answered. `detail` ends with the stage wall time. */
@@ -59,12 +65,13 @@ export interface PlanReclaimOpts {
     /** Called with the discovered roots. Returning sets skips the collapse
      *  (an apply that follows a fresh plan). Null means scan. */
     snapshot?: (roots: string[]) => Promise<DuplicateSet[] | null> | DuplicateSet[] | null;
-    /** Called with the discovered roots right before the collapse, and never
-     *  when a snapshot answered. The command uses it to load the file-meta
-     *  cache scope for every root; without that load every warm run re-hashes
-     *  each candidate (the reclaim cold and warm fleet runs both did 1,053
-     *  sha256 calls before this hook existed). */
-    onDiscovered?: (roots: string[]) => Promise<void> | void;
+    /** Called with the discovered roots AND the resolved keep-partner store
+     *  roots, right before the collapse, and never when a snapshot answered.
+     *  The command uses it to load the file-meta cache scope for both; without
+     *  that load every warm run re-hashes each candidate (the reclaim cold and
+     *  warm fleet runs both did 1,053 sha256 calls before this hook existed),
+     *  and an injected store candidate was a guaranteed miss every time. */
+    onDiscovered?: (roots: string[], keepRoots: string[]) => Promise<void> | void;
 }
 
 export function defaultSelector(dirs: string[]): ReclaimSelector {
@@ -111,7 +118,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
     const keepRoots = resolveKeepPartners(selector.keepPartners, spawnCacheCommand);
     const keepOnlyRoots = keepRoots.map((k) => k.root);
 
-    const finish = (sets: DuplicateSet[], fromSnapshot: boolean): ReclaimPlan => {
+    const finish = (sets: DuplicateSet[], fromSnapshot: boolean, deniedDirs = 0): ReclaimPlan => {
         const totalReclaimable = sumReclaimable(sets);
         appendReclaimEvent(runId, { phase: "plan", sets: sets.length, totalReclaimable, fromSnapshot });
         const elapsedMs = Math.round(endPlan());
@@ -124,6 +131,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
                 sets: sets.length,
                 totalReclaimable,
                 fromSnapshot,
+                deniedDirs,
                 elapsedMs,
             },
             "reclaim plan complete"
@@ -138,6 +146,7 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             sets,
             totalReclaimable,
             fromSnapshot,
+            deniedDirs,
         };
     };
 
@@ -158,10 +167,13 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
 
     if (opts.onDiscovered !== undefined) {
         const cacheStart = performance.now();
-        await clonesProfile.measureAsync("cache.load", () => Promise.resolve(opts.onDiscovered?.(discovered.roots)));
+        const scopes = discovered.roots.length + keepOnlyRoots.length;
+        await clonesProfile.measureAsync("cache.load", () =>
+            Promise.resolve(opts.onDiscovered?.(discovered.roots, keepOnlyRoots))
+        );
         opts.onPhase?.(
             "cache",
-            `scope loaded for ${discovered.roots.length} root(s) · ${formatDuration(performance.now() - cacheStart)}`
+            `scope loaded for ${scopes} root(s) · ${formatDuration(performance.now() - cacheStart)}`
         );
     }
 
@@ -175,9 +187,13 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
             minSize: selector.minReal,
             exclude: selector.exclude,
             keepOnlyRoots,
+            // Every sibling command prunes .git; without it a git-sourced
+            // package's pack files join a set the others deliberately exclude.
+            pruneNames: [".git"],
             ...(keepOnlyRoots.length > 0 ? { partnerFor: makePartnerFor(keepRoots) } : {}),
             ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
             ...(opts.onDirEntered !== undefined ? { onDirEntered: opts.onDirEntered } : {}),
+            ...(opts.onWalkProgress !== undefined ? { onWalkProgress: opts.onWalkProgress } : {}),
             ...(opts.cache !== undefined ? { cache: opts.cache } : {}),
             ...(onPhase !== undefined
                 ? {
@@ -194,5 +210,5 @@ export async function planReclaim(selector: ReclaimSelector, opts: PlanReclaimOp
         "collapse",
         `${report.sets.length} set(s) · ${formatBytes(sumReclaimable(report.sets))} reclaimable · ${formatDuration(performance.now() - collapseStart)}`
     );
-    return finish(report.sets, false);
+    return finish(report.sets, false, report.stats?.deniedDirs ?? 0);
 }

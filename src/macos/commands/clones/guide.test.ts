@@ -9,11 +9,13 @@ describe("clonesGuide", () => {
         }
     });
 
-    it("teaches the two meanings of plan and never calls the 1h snapshot a preset", () => {
+    it("teaches the two meanings of plan and never calls the 60 s snapshot a preset", () => {
         const text = clonesGuide();
         expect(text).toContain("preset");
         expect(text).toContain("rediscovers");
-        expect(text).toContain("1 hour");
+        expect(text).toContain("60 seconds");
+        // The snapshot must never read as a completeness claim.
+        expect(text).toContain("never that it is still complete");
     });
 
     it("states the keep-only rule and lists the log locations", () => {

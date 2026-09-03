@@ -289,11 +289,11 @@ static pthread_mutex_t g_denied_mtx = PTHREAD_MUTEX_INITIALIZER;
 // empty scan, and the caller never falls back to its own walk.
 static uint64_t g_read_errors = 0;
 
-static void note_read_error(const char *path, int err) {
+static void note_read_error(const char *op, const char *path, int err) {
     pthread_mutex_lock(&g_denied_mtx);
     g_read_errors++;
     pthread_mutex_unlock(&g_denied_mtx);
-    fprintf(stderr, "getattrlistbulk failed in %s: %s\n", path, strerror(err));
+    fprintf(stderr, "%s failed in %s: %s\n", op, path, strerror(err));
 }
 
 static void note_denied(const char *path, int is_dir) {
@@ -1939,14 +1939,19 @@ static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint6
 static void big_process_dir(BigOut *o, const char *dirpath) {
     int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
     if (dfd < 0) {
+        // A denial is a hole the report NAMES, so it stays its own counter.
+        // Everything else (EMFILE, ENFILE, EIO, ENOENT, ENOTDIR) drops the
+        // whole subtree with nothing said: without this the walk exits 0 and
+        // the caller accepts a truncated candidate list as a complete one.
         if (errno == EACCES || errno == EPERM) note_denied(dirpath, 1);
+        else note_read_error("open", dirpath, errno);
         return;
     }
     o->dirs++;
     char buf[64 * 1024];
     for (;;) {
         int n = getattrlistbulk(dfd, &g_big_al, buf, sizeof buf, g_big_alopt);
-        if (n < 0) { note_read_error(dirpath, errno); break; }
+        if (n < 0) { note_read_error("getattrlistbulk", dirpath, errno); break; }
         if (n == 0) break;
         char *p = buf;
         for (int e = 0; e < n; e++) {

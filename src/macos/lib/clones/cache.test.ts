@@ -1,6 +1,19 @@
 import { describe, expect, it } from "bun:test";
-import { cachePlan, getCachedPlan, planCacheKey, stampRoots, stampsMatch } from "@app/macos/lib/clones/cache";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+    cachePlan,
+    getCachedPlan,
+    membersMatch,
+    PLAN_SNAPSHOT_TTL,
+    planCacheKey,
+    planCacheParams,
+    stampRoots,
+    stampsMatch,
+} from "@app/macos/lib/clones/cache";
 import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
+import { Storage } from "@genesiscz/utils/storage/storage";
 
 const params = {
     roots: ["/b", "/a"],
@@ -126,5 +139,108 @@ describe("plan cache root stamps", () => {
     it("stampRoots stamps a missing root as -1", () => {
         const got = stampRoots(["/definitely/not/here/gt-stamp"]);
         expect(got).toEqual([{ path: "/definitely/not/here/gt-stamp", mtimeMs: -1 }]);
+    });
+});
+
+describe("plan snapshot member stamps", () => {
+    const params = {
+        roots: ["/member-stamp-test"],
+        minSize: 1,
+        include: [],
+        exclude: [],
+        nodeModules: false,
+        targets: [],
+        worktreesOf: "",
+        keepPartners: [],
+    };
+
+    function set(members: string[]): DuplicateSet {
+        return {
+            kind: "file",
+            what: "f",
+            copies: members.length,
+            eachBytes: 4,
+            reclaimable: 4,
+            members,
+            keep: members[0],
+        };
+    }
+
+    it("goes stale when a member's content is rewritten in place", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-member-"));
+        try {
+            const one = join(dir, "one.bin");
+            const two = join(dir, "two.bin");
+            writeFileSync(one, "aaaa");
+            writeFileSync(two, "aaaa");
+
+            await cachePlan(params, [set([one, two])], [{ path: dir, mtimeMs: 1 }]);
+            const fresh = await getCachedPlan(params);
+            expect(fresh?.memberStamps.length).toBe(2);
+            expect(membersMatch(fresh?.memberStamps ?? [])).toBe(true);
+
+            // Same size, same parent-directory mtime: only the member's own
+            // mtime moves, which is exactly what the root stamps never saw.
+            writeFileSync(one, "bbbb");
+            expect(membersMatch(fresh?.memberStamps ?? [])).toBe(false);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("goes stale when a member is gone", () => {
+        expect(membersMatch([{ path: "/definitely/not/here/gt-member", size: 1, mtimeNs: "1" }])).toBe(false);
+    });
+
+    // The known limit, pinned so nobody reads the stamps as a completeness
+    // proof again: they re-stat only what the plan NAMES.
+    it("does NOT notice a duplicate created after the plan was written", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-cl-newdup-"));
+        try {
+            const one = join(dir, "one.bin");
+            const two = join(dir, "two.bin");
+            writeFileSync(one, "aaaa");
+            writeFileSync(two, "aaaa");
+
+            await cachePlan(params, [set([one, two])], [{ path: dir, mtimeMs: 1 }]);
+            const fresh = await getCachedPlan(params);
+
+            // A third copy in a nested directory: a new duplicate the plan
+            // never listed, so it is in no stamp.
+            mkdirSync(join(dir, "nested"), { recursive: true });
+            writeFileSync(join(dir, "nested", "three.bin"), "aaaa");
+
+            expect(membersMatch(fresh?.memberStamps ?? [])).toBe(true);
+            expect(fresh?.plan[0]?.members).toEqual([one, two]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // The bound on how long that incompleteness can be served.
+    it("stops reusing a snapshot older than the 60 s TTL", async () => {
+        expect(PLAN_SNAPSHOT_TTL).toBe("60 seconds");
+
+        const uniq = { ...params, roots: [join(tmpdir(), `gt-cl-ttl-${Date.now()}-${Math.random()}`)] };
+        await cachePlan(uniq, [], [{ path: uniq.roots[0], mtimeMs: 1 }]);
+        expect(await getCachedPlan(uniq)).not.toBeNull();
+
+        // Back-date the file rather than sleeping: expiry is read off its mtime.
+        const file = join(new Storage("macos-clones").getCacheDir(), planCacheKey(uniq));
+        const past = new Date(Date.now() - 61_000);
+        utimesSync(file, past, past);
+        expect(await getCachedPlan(uniq)).toBeNull();
+    });
+});
+
+describe("planCacheKey normalisation", () => {
+    it("keys an empty targets list the same as the spelled-out default", () => {
+        const base = { roots: ["/k"], minSize: 10 };
+        expect(planCacheKey(planCacheParams({ ...base, targets: [] }))).toBe(
+            planCacheKey(planCacheParams({ ...base, targets: ["gitignored"] }))
+        );
+        expect(planCacheKey(planCacheParams({ ...base, targets: ["node_modules"] }))).not.toBe(
+            planCacheKey(planCacheParams({ ...base, targets: [] }))
+        );
     });
 });

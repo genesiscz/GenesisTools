@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listBigFiles } from "@app/du/lib/engine";
@@ -72,6 +81,45 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
             rmSync(outer, { recursive: true, force: true });
         }
     }, 120_000);
+
+    it("a root it cannot open is a read error, not a silent empty listing", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-bigfiles-openfail-"));
+        try {
+            // ENOENT and ENOTDIR are the two open failures a test can produce
+            // without a special mount. Both drop a whole subtree, so both must
+            // reach the caller instead of reading as "that tree holds nothing".
+            const missing = join(outer, "gone");
+            await expect(listBigFiles({ roots: [missing], minBytes: MB })).rejects.toThrow(
+                "clonesize --bigfiles exited with 1"
+            );
+
+            const file = join(outer, "plain.bin");
+            writeFileSync(file, Buffer.alloc(MB, 1));
+            await expect(listBigFiles({ roots: [file], minBytes: MB })).rejects.toThrow(
+                "clonesize --bigfiles exited with 1"
+            );
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it.skipIf(process.getuid?.() === 0)("a directory it may not open stays a denial and still succeeds", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-bigfiles-denied-"));
+        try {
+            const locked = join(outer, "locked");
+            mkdirSync(locked, { recursive: true });
+            writeFileSync(join(outer, "big.bin"), Buffer.alloc(2 * MB, 1));
+            chmodSync(locked, 0o000);
+
+            const r = await listBigFiles({ roots: [outer], minBytes: MB });
+            expect(r.deniedDirs).toBe(1);
+            expect(r.readErrors).toBe(0);
+            expect(r.files.map((f) => f.path)).toEqual([join(outer, "big.bin")]);
+        } finally {
+            chmodSync(join(outer, "locked"), 0o755);
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
 
     it("does not descend into a mount point that belongs to another volume", async () => {
         // The simulator runtime volumes are the only foreign mounts every dev

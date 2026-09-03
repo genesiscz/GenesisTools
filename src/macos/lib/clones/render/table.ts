@@ -8,6 +8,7 @@ import {
     type DirNode,
     type DuplicatesReport,
     type MeasureReport,
+    type PlanReport,
     type ProcessListReport,
     type ProcessOp,
     type ProcessReport,
@@ -140,6 +141,44 @@ export class TableRenderer implements CloneRenderer {
         lines.push(pc.bold(`projected reclaim: ${formatBytes(r.totalReclaimable)}`));
         lines.push("");
         lines.push(pc.dim(CLONES_GLOSSARY));
+        return lines.join("\n");
+    }
+
+    plan(r: PlanReport): string {
+        const lines: string[] = [];
+        lines.push(
+            this.duplicates({
+                roots: r.roots,
+                sets: r.sets,
+                totalReclaimable: r.totalReclaimable,
+                grouped: false,
+                hardStop: r.roots,
+            })
+        );
+        lines.push("");
+        lines.push(`roots scanned: ${r.roots.length}`);
+        if (r.fromSnapshot) {
+            // The stamps prove nothing the snapshot names has changed. They
+            // cannot prove it is complete, so say that instead of implying a
+            // fresh scan.
+            lines.push(
+                "sets reused from the plan snapshot — nothing it lists has changed, " +
+                    "but a duplicate created since the plan is not in it (--no-cache rescans)"
+            );
+        }
+        if (r.keepRoots.length > 0) {
+            lines.push(`keep-only stores: ${r.keepRoots.map((k) => `${k.id} (${k.root})`).join(", ")}`);
+        }
+
+        for (const s of r.skipped) {
+            lines.push(`skipped ${s.path} — ${s.reason}`);
+        }
+
+        if (r.deniedDirs > 0) {
+            lines.push(`${r.deniedDirs} directory(ies) could not be read — results may be incomplete`);
+        }
+
+        lines.push(`run log: ${r.runId}`);
         return lines.join("\n");
     }
 

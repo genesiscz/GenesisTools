@@ -6,6 +6,10 @@ export interface ClonesConfig {
     minReal?: number;
     exclude?: string[];
     nodeModules?: boolean;
+    /** `false` is the opt-out `clones daemon disable` leaves behind. Without a
+     *  persisted flag the next finished reclaim plan re-registered both daily
+     *  tasks, because "no task exists" is exactly the state disable creates. */
+    daemon?: boolean;
 }
 
 /** Exported for test fixtures that need to snapshot/restore the entire config
@@ -27,6 +31,7 @@ function normalize(config: Partial<ClonesConfig>): ClonesConfig {
         ...(isValidMinReal(config.minReal) ? { minReal: config.minReal } : {}),
         ...(Array.isArray(config.exclude) ? { exclude: config.exclude } : {}),
         ...(typeof config.nodeModules === "boolean" ? { nodeModules: config.nodeModules } : {}),
+        ...(typeof config.daemon === "boolean" ? { daemon: config.daemon } : {}),
     };
 }
 
@@ -72,6 +77,15 @@ export async function setNodeModules(on: boolean): Promise<ClonesConfig> {
 export async function setExclude(globs: string[]): Promise<ClonesConfig> {
     const updated = await storage.atomicConfigUpdate<ClonesConfig>((c) => {
         c.exclude = [...new Set(globs)];
+    });
+    return normalize(updated);
+}
+
+/** Persist the daemon opt-out. `false` makes every later plan skip the daily
+ *  task registration; `true` (what `daemon enable` writes) lifts it again. */
+export async function setDaemonEnabled(on: boolean): Promise<ClonesConfig> {
+    const updated = await storage.atomicConfigUpdate<ClonesConfig>((c) => {
+        c.daemon = on;
     });
     return normalize(updated);
 }

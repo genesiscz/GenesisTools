@@ -130,9 +130,24 @@ export interface ProcessListReport {
     processes: ProcessListEntry[];
 }
 
+/** What a renderer needs from a reclaim plan. The real `ReclaimPlan`
+ *  (src/macos/lib/clones/reclaim.ts) is a superset, and JsonRenderer
+ *  serialises whatever it is handed, so the JSON output keeps every field. */
+export interface PlanReport {
+    runId: string;
+    roots: string[];
+    skipped: { path: string; reason: string }[];
+    keepRoots: { id: string; root: string }[];
+    sets: DuplicateSet[];
+    totalReclaimable: number;
+    fromSnapshot: boolean;
+    deniedDirs: number;
+}
+
 export interface CloneRenderer {
     measure(r: MeasureReport): string;
     duplicates(r: DuplicatesReport): string;
+    plan(r: PlanReport): string;
     processReport(r: ProcessReport): string;
     processList(r: ProcessListReport): string;
 }

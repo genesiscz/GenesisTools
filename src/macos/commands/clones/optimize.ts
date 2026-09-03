@@ -1,3 +1,4 @@
+import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import {
     closestProcessIds,
@@ -8,7 +9,14 @@ import {
     rollbackProcess,
     runOptimize,
 } from "@app/macos/lib/clones/audit";
-import { cachePlan, getCachedPlan, stampRoots, stampsMatch } from "@app/macos/lib/clones/cache";
+import {
+    cachePlan,
+    getCachedPlan,
+    membersMatch,
+    planCacheParams,
+    stampRoots,
+    stampsMatch,
+} from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { discoverRoots, RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
@@ -19,7 +27,7 @@ import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/t
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
 import * as p from "@clack/prompts";
-import { isInteractive, parseVariadic, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
@@ -80,7 +88,7 @@ export function createOptimizeCommand(): Command {
         .option("--list", "List recorded optimize runs", false)
         .option("--log", "Replay a process's JSONL audit log (requires --process)", false)
         .option("--process <id>", "Target process id for --log / --rollback")
-        .option("--no-cache", "Ignore the 1h plan cache; force a fresh scan")
+        .option("--no-cache", "Ignore the 60 s plan cache; force a fresh scan")
         .option("--yes", "Non-interactive confirm (required for --apply/--rollback in non-TTY)", false)
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
         .option("--dir <path>", "Search this directory for install trees (repeatable)", collect, [])
@@ -191,7 +199,11 @@ export function createOptimizeCommand(): Command {
             const include = parseVariadic(opts.include);
             let roots: string[];
             let targets: string[] = [];
-            if (opts.dir.length > 0) {
+            // Any selector flag turns on discovery, not just --dir: without
+            // this, `--targets vendor` alone was silently ignored and the
+            // narrowing flag widened the scan instead.
+            const discovering = opts.dir.length > 0 || opts.targets !== undefined || opts.worktreesOf !== undefined;
+            if (discovering) {
                 // `--include node_modules` filters FILE relpaths inside a root
                 // that IS node_modules, so it would drop nearly everything.
                 const kindInInclude = include.find((g) => (TARGET_KIND_VALUES as readonly string[]).includes(g));
@@ -209,19 +221,40 @@ export function createOptimizeCommand(): Command {
                     process.exit(1);
                 }
 
-                if (opts.targets === true) {
+                if (opts.nodeModules) {
+                    // Discovery already returns install trees, so expanding
+                    // them again finds nothing — yet `nodeModules: true` went
+                    // into the cache key and made it lie about the scan.
+                    console.error("--node-modules cannot be combined with --dir / --targets / --worktrees-of.");
                     console.error(
-                        suggestEnumFlag("tools macos clones", "--targets", TARGET_KIND_VALUES, {
+                        suggestCommand("tools macos clones", {
+                            remove: ["--node-modules"],
+                            add: ["--targets", "node_modules"],
                             subcommand: ["macos", "clones", "optimize"],
                         })
                     );
                     process.exit(1);
                 }
 
-                targets = typeof opts.targets === "string" ? parseVariadic(opts.targets) : ["gitignored"];
+                // Same resolver as `reclaim`: a bare --targets prompts in a TTY
+                // and prints the possible values otherwise, from both doors.
+                const resolvedTargets = await resolveKinds({
+                    raw: opts.targets,
+                    fallback: ["gitignored"],
+                    flag: "--targets",
+                    values: TARGET_KIND_VALUES,
+                    subcommand: ["macos", "clones", "optimize"],
+                });
+                if (resolvedTargets === null) {
+                    return;
+                }
+
+                targets = resolvedTargets;
                 try {
+                    // Positional roots are search dirs here too; dropping them
+                    // whenever --dir was present silently narrowed the scan.
                     const discovered = await discoverRoots({
-                        dirs: opts.dir,
+                        dirs: [...(rootsArg ?? []), ...opts.dir],
                         targets,
                         ...(opts.worktreesOf !== undefined ? { worktreesOf: opts.worktreesOf } : {}),
                     });
@@ -259,7 +292,7 @@ export function createOptimizeCommand(): Command {
                 return;
             }
 
-            const cacheParams = {
+            const cacheParams = planCacheParams({
                 roots,
                 minSize: minReal,
                 include,
@@ -267,8 +300,7 @@ export function createOptimizeCommand(): Command {
                 nodeModules: Boolean(opts.nodeModules),
                 targets,
                 worktreesOf: opts.worktreesOf ?? "",
-                keepPartners: [],
-            };
+            });
 
             // SIGINT/SIGTERM → abort scan within ~one 64 KB chunk. Mirrors
             // duplicates.ts so optimize's dry-run + --apply scan phases are
@@ -307,7 +339,14 @@ export function createOptimizeCommand(): Command {
 
                 if (opts.apply) {
                     const stored = opts.cache === false ? null : await getCachedPlan(cacheParams);
-                    const cached = stored !== null && stampsMatch(stored.rootStamps, rootStamps) ? stored : null;
+                    // Root mtimes move only on a direct-child namespace change,
+                    // so the members the plan names have to be re-stat'd too.
+                    const cached =
+                        stored !== null &&
+                        stampsMatch(stored.rootStamps, rootStamps) &&
+                        membersMatch(stored.memberStamps)
+                            ? stored
+                            : null;
                     if (stored !== null && cached === null) {
                         log.info({ roots: roots.length, ageMs: stored.ageMs }, "plan cache stale — rescanning");
                     }
@@ -357,6 +396,7 @@ export function createOptimizeCommand(): Command {
                             roots,
                             sets,
                             planCacheHit: Boolean(cached),
+                            cache: fileCache,
                             ...(cached ? { planCacheAgeMs: cached.ageMs } : {}),
                         });
                         await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(rep));

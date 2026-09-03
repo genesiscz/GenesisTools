@@ -280,6 +280,7 @@ describe("optimize --dir", () => {
             code = c;
             throw new Error("__exit__");
         }) as typeof process.exit;
+        process.exitCode = undefined;
         try {
             await createOptimizeCommand().parseAsync(["node", "optimize", ...argv], { from: "node" });
         } catch (e) {
@@ -291,7 +292,11 @@ describe("optimize --dir", () => {
             process.exit = origExit;
         }
 
-        return { code, err: errs.join("\n") };
+        // A refusal either calls process.exit or sets process.exitCode; the
+        // shared enum-flag resolver uses the latter.
+        const exitCode = process.exitCode;
+        process.exitCode = undefined;
+        return { code: code ?? (typeof exitCode === "number" ? exitCode : undefined), err: errs.join("\n") };
     }
 
     it("an empty --targets in non-TTY prints the possible values and exits 1", async () => {
@@ -305,5 +310,121 @@ describe("optimize --dir", () => {
         expect(res.code).toBe(1);
         expect(res.err).toContain("--targets");
         expect(res.err).toContain("node_modules");
+    });
+});
+
+describe("optimize selector flags", () => {
+    function fixture(): string {
+        const outer = mkdtempSync(join(tmpdir(), "gt-cl-optsel-"));
+        const proj = join(outer, "proj");
+        mkdirSync(join(proj, "vendor"), { recursive: true });
+        for (const name of ["w1", "w2"]) {
+            const dep = join(proj, name, "node_modules", "dep");
+            mkdirSync(dep, { recursive: true });
+            writeFileSync(join(dep, "index.js"), Buffer.alloc(100_000, 4));
+        }
+
+        return outer;
+    }
+
+    async function capture(argv: string[]): Promise<{ out: string; err: string; code: number | undefined }> {
+        let output = "";
+        const errs: string[] = [];
+        const origErr = console.error;
+        const origExit = process.exit;
+        let code: number | undefined;
+        process.exitCode = undefined;
+        const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+            (
+                chunk: string | Uint8Array,
+                encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+                callback?: (error?: Error | null) => void
+            ) => {
+                output += String(chunk);
+                const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+                cb?.();
+                return true;
+            }
+        );
+        console.error = (...x: unknown[]) => errs.push(x.join(" "));
+        process.exit = ((c?: number) => {
+            code = c;
+            throw new Error("__exit__");
+        }) as typeof process.exit;
+        try {
+            await createOptimizeCommand().parseAsync(["node", "optimize", ...argv], { from: "node" });
+        } catch (e) {
+            if (!(e instanceof Error) || e.message !== "__exit__") {
+                throw e;
+            }
+        } finally {
+            stdoutSpy.mockRestore();
+            console.error = origErr;
+            process.exit = origExit;
+        }
+
+        const exitCode = process.exitCode;
+        process.exitCode = undefined;
+        return {
+            out: output,
+            err: errs.join("\n"),
+            code: code ?? (typeof exitCode === "number" ? exitCode : undefined),
+        };
+    }
+
+    it("--targets without --dir narrows the scan instead of being ignored", async () => {
+        const outer = fixture();
+        try {
+            // `vendor` is empty, so a --targets that is honoured finds no roots.
+            const res = await capture([join(outer, "proj"), "--targets", "vendor", "--min-real", "1024"]);
+            expect(res.code).toBe(2);
+            expect(res.err).toContain("No roots");
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("keeps positional roots when --dir is also given", async () => {
+        const outer = fixture();
+        try {
+            const res = await capture([
+                join(outer, "proj"),
+                "--dir",
+                join(outer, "nowhere-else"),
+                "--targets",
+                "node_modules",
+                "--min-real",
+                "1024",
+                "--format",
+                "json",
+            ]);
+            const rep = SafeJSON.parse(res.out) as { roots: string[] };
+            expect(rep.roots.length).toBe(2);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    }, 30_000);
+
+    it("refuses --node-modules beside the discovery flags instead of lying in the cache key", async () => {
+        const outer = fixture();
+        try {
+            const res = await capture([join(outer, "proj"), "--dir", join(outer, "proj"), "--node-modules"]);
+            expect(res.code).toBe(1);
+            expect(res.err).toContain("--node-modules");
+            expect(res.err).toContain("--targets");
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("--worktrees-of names an unknown repository instead of exiting 0", async () => {
+        const outer = fixture();
+        try {
+            const res = await capture([join(outer, "proj"), "--worktrees-of", "no-such-repo-xyz"]);
+            expect(res.code).toBe(1);
+            expect(res.err).toContain("no-such-repo-xyz");
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
     });
 });

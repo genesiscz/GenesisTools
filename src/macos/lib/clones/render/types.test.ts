@@ -14,6 +14,7 @@ describe("clones render types", () => {
         const r: CloneRenderer = {
             measure: () => "m",
             duplicates: () => "d",
+            plan: () => "pl",
             processReport: () => "p",
             processList: () => "l",
         };

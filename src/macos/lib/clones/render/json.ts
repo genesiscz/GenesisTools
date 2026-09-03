@@ -1,5 +1,12 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { CloneRenderer, DuplicatesReport, MeasureReport, ProcessListReport, ProcessReport } from "./types";
+import type {
+    CloneRenderer,
+    DuplicatesReport,
+    MeasureReport,
+    PlanReport,
+    ProcessListReport,
+    ProcessReport,
+} from "./types";
 
 export class JsonRenderer implements CloneRenderer {
     measure(r: MeasureReport): string {
@@ -8,6 +15,15 @@ export class JsonRenderer implements CloneRenderer {
 
     duplicates(r: DuplicatesReport): string {
         return SafeJSON.stringify(r, null, 2);
+    }
+
+    plan(r: PlanReport): string {
+        return SafeJSON.stringify(r, null, 2);
+    }
+
+    /** `plan --format jsonl`: the whole plan on one line. */
+    planJsonl(r: PlanReport): string {
+        return SafeJSON.stringify(r);
     }
 
     processReport(r: ProcessReport): string {

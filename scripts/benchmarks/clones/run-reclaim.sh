@@ -40,17 +40,21 @@ run_once() {
     shift
     SECONDS=0
     local out
+    # --no-daemon: a timing run must not register the 03:00 scan and the 04:00
+    # VACUUM on the developer's machine, and --silent hides the line that says so.
     out="$(PROFILE=clones PROFILE_TO_FILE="$PROFILE_FILE" \
-        bun run src/macos/index.ts clones reclaim plan --dir "$DIR" --format json --silent "$@")"
+        bun run src/macos/index.ts clones reclaim plan --dir "$DIR" --format json --silent --no-daemon "$@")"
     local total=$SECONDS
     echo "[reclaim-bench] ${name} finished in ${total}s" >&2
 
     local run_id
     run_id="$(echo "$out" | jq -r '.runId')"
     local run_log="${TOOLS_HOME}/.genesis-tools/macos-clones/reclaim/${run_id}.jsonl"
+    # `rg` with no match exits 1, which under `set -e` kills the whole script
+    # and discards both completed runs before the row is written.
     local stats="{}"
     if [[ -f "$run_log" ]]; then
-        stats="$(rg --color=never -F '"phase":"collapse"' "$run_log" | tail -1 | jq -c '.stats // {}')"
+        stats="$(rg --color=never -F '"phase":"collapse"' "$run_log" | tail -1 | jq -c '.stats // {}' || true)"
     fi
 
     local plan
@@ -68,7 +72,11 @@ WARM="$(run_once warm "$@")"
 
 # The profiler appends a summary table per run; keep every clones line so the
 # row is self-contained (labels + n + total + avg + max).
-PROFILE_JSON="$(rg --color=never -F '[profile:clones]' "$PROFILE_FILE" | jq -R . | jq -sc .)"
+PROFILE_JSON="$(rg --color=never -F '[profile:clones]' "$PROFILE_FILE" | jq -R . | jq -sc . || true)"
+if [[ -z "$PROFILE_JSON" ]]; then
+    echo "[reclaim-bench] no [profile:clones] lines in ${PROFILE_FILE}" >&2
+    PROFILE_JSON="[]"
+fi
 
 mkdir -p "$(dirname "$RESULTS")"
 DIR_ANON="${DIR/#$HOME/~}"

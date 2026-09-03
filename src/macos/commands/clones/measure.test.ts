@@ -159,3 +159,41 @@ describe("createDuCommand", () => {
         }
     });
 });
+
+describe("measure --min-real contract", () => {
+    it("refuses a non-positive value instead of scanning every file", async () => {
+        const errs: string[] = [];
+        const origErr = console.error;
+        console.error = (...x: unknown[]) => errs.push(x.join(" "));
+        process.exitCode = undefined;
+        try {
+            await createMeasureCommand().parseAsync(["node", "measure", tmpdir(), "--min-real", "-1"], {
+                from: "node",
+            });
+        } finally {
+            console.error = origErr;
+        }
+
+        const exitCode: unknown = process.exitCode;
+        process.exitCode = undefined;
+        expect(exitCode).toBe(1);
+        expect(errs.join("\n")).toContain("positive whole number");
+    });
+
+    it("refuses a non-positive value on du too", async () => {
+        const errs: string[] = [];
+        const origErr = console.error;
+        console.error = (...x: unknown[]) => errs.push(x.join(" "));
+        process.exitCode = undefined;
+        try {
+            await createDuCommand().parseAsync(["node", "du", tmpdir(), "--min-real", "1.5"], { from: "node" });
+        } finally {
+            console.error = origErr;
+        }
+
+        const exitCode: unknown = process.exitCode;
+        process.exitCode = undefined;
+        expect(exitCode).toBe(1);
+        expect(errs.join("\n")).toContain("positive whole number");
+    });
+});

@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCachedPlan } from "@app/macos/lib/clones/cache";
-import { presetsPath } from "@app/macos/lib/clones/presets";
+import { getPreset, presetsPath } from "@app/macos/lib/clones/presets";
+import { type ClonesConfig, storage } from "@app/macos/lib/clones/store";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 // A finished plan registers the daemon tasks. Keep the real `tools daemon`
@@ -279,6 +280,77 @@ describe("createReclaimCommand", () => {
             expect((await run(["presets", "rm", "fixture"])).out).toContain("fixture");
             expect((await run(["presets", "rm", "second"])).out).toContain("second");
             expect((await run(["presets", "rm", "second"])).code).toBe(1);
+        } finally {
+            if (existsSync(presetsPath())) {
+                rmSync(presetsPath());
+            }
+
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("a persisted daemon opt-out survives the next plan", async () => {
+        const outer = twoTrees();
+        const snapshot = await storage.getConfig<ClonesConfig>();
+        try {
+            await storage.setConfig({ ...(snapshot ?? { watchedDirs: [] }), daemon: false });
+            registerSpy.mockClear();
+            const res = await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            expect(res.code).toBe(0);
+            expect(registerSpy.mock.calls.length).toBe(0);
+
+            // Lifting the opt-out lets a plan register again.
+            await storage.setConfig({ ...(snapshot ?? { watchedDirs: [] }), daemon: true });
+            const again = await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            expect(again.code).toBe(0);
+            expect(registerSpy.mock.calls.length).toBeGreaterThan(0);
+        } finally {
+            if (snapshot === null) {
+                await storage.clearConfig();
+            } else {
+                await storage.setConfig(snapshot);
+            }
+
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("presets run --apply does not record a run that was refused for a missing --yes", async () => {
+        const outer = twoTrees();
+        try {
+            await run([
+                "presets",
+                "save",
+                "refused",
+                "--dir",
+                outer,
+                "--targets",
+                "node_modules",
+                "--min-real",
+                "1024",
+            ]);
+            const res = await run(["presets", "run", "refused", "--apply"]);
+            expect(res.code).toBe(1);
+            expect(getPreset("refused")?.lastRunAt).toBeUndefined();
+            expect(getPreset("refused")?.lastReclaimable).toBeUndefined();
+        } finally {
+            if (existsSync(presetsPath())) {
+                rmSync(presetsPath());
+            }
+
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("presets list --format table prints an aligned inventory", async () => {
+        const outer = twoTrees();
+        try {
+            await run(["presets", "save", "boxed", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            const listed = await run(["presets", "list", "--format", "table"]);
+            expect(listed.out).toContain("ID");
+            expect(listed.out).toContain("TARGETS");
+            expect(listed.out).toContain("boxed");
+            expect(listed.out).toContain("─");
         } finally {
             if (existsSync(presetsPath())) {
                 rmSync(presetsPath());

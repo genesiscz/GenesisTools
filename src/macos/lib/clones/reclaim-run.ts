@@ -1,11 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage/storage";
+import { appendRunLogRow, newRunLogId, runLogDir, runLogPath } from "./audit";
 
 const log = logger.child({ component: "clones:reclaim-run" });
-const storage = new Storage("macos-clones");
+
+/** The reclaim run log lives beside the apply audit log, on the same JSONL
+ *  primitives — one mechanism, one convention, one place to fix. */
+const RECLAIM_LOG_DIR = "reclaim";
 
 export interface ReclaimEvent {
     ts: string;
@@ -13,23 +15,16 @@ export interface ReclaimEvent {
     [key: string]: unknown;
 }
 
-let counter = 0;
-
-/** Filename-safe UTC id + pid + in-process counter, so two runs started in the
- *  same millisecond by the same process still get separate logs. */
 export function newReclaimRunId(): string {
-    counter += 1;
-    return `${new Date().toISOString().replace(/[:.]/g, "-")}.${process.pid}.${counter}`;
+    return newRunLogId({ counter: true });
 }
 
 export function reclaimDir(): string {
-    const dir = join(storage.getBaseDir(), "reclaim");
-    mkdirSync(dir, { recursive: true });
-    return dir;
+    return runLogDir(RECLAIM_LOG_DIR);
 }
 
 export function reclaimRunPath(id: string): string {
-    return join(reclaimDir(), `${id}.jsonl`);
+    return runLogPath(RECLAIM_LOG_DIR, id);
 }
 
 /** `Omit<ReclaimEvent, "ts">` would erase `phase` behind the index signature,
@@ -37,7 +32,7 @@ export function reclaimRunPath(id: string): string {
 export function appendReclaimEvent(id: string, event: { phase: string } & Record<string, unknown>): void {
     const row: ReclaimEvent = { ts: new Date().toISOString(), ...event };
     try {
-        appendFileSync(reclaimRunPath(id), `${SafeJSON.stringify(row)}\n`);
+        appendRunLogRow(RECLAIM_LOG_DIR, id, row);
     } catch (err) {
         log.warn({ err, id, phase: event.phase }, "reclaim event append failed");
     }

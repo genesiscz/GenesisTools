@@ -1,12 +1,12 @@
-import { homedir } from "node:os";
+import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
-import { runOptimize } from "@app/macos/lib/clones/audit";
-import { cachePlan, getCachedPlan, type PlanCacheParams, stampRoots, stampsMatch } from "@app/macos/lib/clones/cache";
-import { ensureClonesDaemonTasks } from "@app/macos/lib/clones/daemon-tasks";
-import { RepoNotFoundError } from "@app/macos/lib/clones/discover";
-import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
-import { KEEP_PARTNER_IDS, type KeepPartnerId } from "@app/macos/lib/clones/keep-partners";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { KEEP_PARTNER_IDS } from "@app/macos/lib/clones/keep-partners";
+import {
+    applyReclaimPlan,
+    type PlanRunHooks,
+    runReclaimPlan,
+    savePlanSnapshot,
+} from "@app/macos/lib/clones/plan-runner";
 import {
     getPreset,
     listPresets,
@@ -15,27 +15,26 @@ import {
     savePreset,
     touchPreset,
 } from "@app/macos/lib/clones/presets";
-import { clonesProfile } from "@app/macos/lib/clones/profile";
 import {
     DEFAULT_MIN_REAL,
-    planReclaim,
     type ReclaimPhase,
     type ReclaimPlan,
     type ReclaimSelector,
 } from "@app/macos/lib/clones/reclaim";
-import { appendReclaimEvent } from "@app/macos/lib/clones/reclaim-run";
-import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
-import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
+import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
+import { resolveSelector, type SelectorError } from "@app/macos/lib/clones/selector";
 import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
-import { isInteractive, parseVariadic, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { CloneUnsupportedError } from "@genesiscz/utils/macos/apfs";
+import { collapsePathForDisplay } from "@genesiscz/utils/paths.client";
 import * as p from "@genesiscz/utils/prompts/p";
+import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import { Command, Option } from "commander";
+import pc from "picocolors";
 
 const log = logger.child({ component: "clones:reclaim-cmd" });
 
@@ -61,10 +60,11 @@ interface ReclaimOpts {
     silent?: boolean;
 }
 
+const SPINNER_PATH_MAX = 80;
+
 function shortenForSpinner(dir: string): string {
-    const home = homedir();
-    const rel = dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir;
-    if (rel.length <= 80) {
+    const rel = collapsePathForDisplay(dir);
+    if (rel.length <= SPINNER_PATH_MAX) {
         return rel;
     }
 
@@ -91,61 +91,47 @@ function applyOutputFlags(cmd: Command): Command {
             new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
         )
         .option("-v, --verbose", "Verbose logging", false)
-        .option("--silent", "Suppress non-essential output", false)
-        .option("--no-daemon", "Do not register the daily scan and cache reconciliation with tools daemon");
+        .option(
+            "--no-daemon",
+            "Do not register the daily scan and cache reconciliation with tools daemon (clones daemon disable makes it permanent)"
+        )
+        .option("--silent", "Suppress non-essential output", false);
 }
 
-/** Resolve an enumerated flag that may arrive empty. Returns null when the
- *  caller should stop (the suggestion was printed, or the prompt cancelled). */
-async function resolveKinds(args: {
-    raw: string | boolean | undefined;
-    fallback: string[];
-    flag: string;
-    values: readonly string[];
-    subcommand: string[];
-}): Promise<string[] | null> {
-    if (args.raw === undefined) {
-        return args.fallback;
+/** Print the exact message each selector failure used to print, and set the
+ *  exit code that goes with it. */
+function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subcommand: string[]): void {
+    if (error.kind === "no-dirs") {
+        console.error("Nothing to search. Pass a directory, or --dir <path>.");
+        console.error(suggestCommand("tools macos clones", { add: ["--dir", process.cwd()], subcommand }));
+        process.exitCode = 2;
+        return;
     }
 
-    if (typeof args.raw === "string") {
-        return parseVariadic(args.raw);
-    }
-
-    if (!isInteractive()) {
-        console.error(suggestEnumFlag("tools macos clones", args.flag, args.values, { subcommand: args.subcommand }));
+    if (error.kind === "unknown-keep-partners") {
+        console.error(
+            suggestEnumFlag("tools macos clones", "--keep-partners", KEEP_PARTNER_IDS, {
+                subcommand,
+                given: error.given[0],
+            })
+        );
         process.exitCode = 1;
-        return null;
+        return;
     }
 
-    const picked = await p.multiselect({
-        message: `Which ${args.flag} do you want?`,
-        options: args.values.map((v) => ({ value: v, label: v })),
-        required: true,
-    });
-    if (p.isCancel(picked)) {
-        p.cancel("Aborted.");
-        return null;
-    }
-
-    return picked.map(String);
+    console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+    console.error(suggestCommand("tools macos clones", { add: ["--min-real", String(DEFAULT_MIN_REAL)], subcommand }));
+    process.exitCode = 1;
 }
 
 async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]): Promise<ReclaimSelector | null> {
+    const subcommand = ["macos", "clones", "reclaim", ...verb];
     const dirs = [...dirsArg, ...opts.dir];
     if (dirs.length === 0) {
-        console.error("Nothing to search. Pass a directory, or --dir <path>.");
-        console.error(
-            suggestCommand("tools macos clones", {
-                add: ["--dir", process.cwd()],
-                subcommand: ["macos", "clones", "reclaim", ...verb],
-            })
-        );
-        process.exitCode = 2;
+        reportSelectorError({ kind: "no-dirs" }, opts, subcommand);
         return null;
     }
 
-    const subcommand = ["macos", "clones", "reclaim", ...verb];
     const targets = await resolveKinds({
         raw: opts.targets,
         fallback: ["gitignored"],
@@ -168,38 +154,20 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         return null;
     }
 
-    const unknownPartners = keepPartners.filter((k) => !(KEEP_PARTNER_IDS as readonly string[]).includes(k));
-    if (unknownPartners.length > 0) {
-        console.error(
-            suggestEnumFlag("tools macos clones", "--keep-partners", KEEP_PARTNER_IDS, {
-                subcommand,
-                given: unknownPartners[0],
-            })
-        );
-        process.exitCode = 1;
-        return null;
-    }
-
-    const minReal = parseMinReal(opts.minReal);
-    if (minReal === null) {
-        console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
-        console.error(
-            suggestCommand("tools macos clones", { add: ["--min-real", String(DEFAULT_MIN_REAL)], subcommand })
-        );
-        process.exitCode = 1;
-        return null;
-    }
-
-    return {
+    const resolved = resolveSelector({
         dirs,
         ...(opts.worktreesOf !== undefined ? { worktreesOf: opts.worktreesOf } : {}),
         targets,
-        exclude: parseVariadic(opts.exclude),
-        minReal,
-        keepPartners: keepPartners.filter((k): k is KeepPartnerId =>
-            (KEEP_PARTNER_IDS as readonly string[]).includes(k)
-        ),
-    };
+        keepPartners,
+        exclude: opts.exclude,
+        minReal: opts.minReal,
+    });
+    if ("error" in resolved) {
+        reportSelectorError(resolved.error, opts, subcommand);
+        return null;
+    }
+
+    return resolved.selector;
 }
 
 function selectorFromPreset(preset: Preset): ReclaimSelector {
@@ -228,81 +196,15 @@ function presetFromSelector(id: string, selector: ReclaimSelector, run?: { recla
     };
 }
 
-/** The 1-hour snapshot is keyed exactly like `optimize`'s, so a plan here can
- *  feed an `optimize --apply` on the same roots and the other way round. */
-function planCacheParamsFor(selector: ReclaimSelector, roots: string[]): PlanCacheParams {
-    return {
-        roots,
-        minSize: selector.minReal,
-        include: [],
-        exclude: selector.exclude,
-        nodeModules: false,
-        targets: selector.targets,
-        worktreesOf: selector.worktreesOf ?? "",
-        keepPartners: selector.keepPartners,
-    };
-}
-
 function renderPlan(plan: ReclaimPlan, format: string | undefined): string {
     const fmt = resolveFormat(format);
     if (fmt === "jsonl") {
-        return SafeJSON.stringify(plan);
+        return new JsonRenderer().planJsonl(plan);
     }
 
-    if (fmt === "json") {
-        return SafeJSON.stringify(plan, null, 2);
-    }
-
-    const lines: string[] = [];
-    lines.push(
-        resolveRenderer(fmt).duplicates({
-            roots: plan.roots,
-            sets: plan.sets,
-            totalReclaimable: plan.totalReclaimable,
-            grouped: false,
-            hardStop: plan.roots,
-        })
-    );
-    lines.push("");
-    lines.push(
-        `roots scanned: ${plan.roots.length}${plan.fromSnapshot ? " (sets reused from the plan snapshot)" : ""}`
-    );
-    if (plan.keepRoots.length > 0) {
-        lines.push(`keep-only stores: ${plan.keepRoots.map((k) => `${k.id} (${k.root})`).join(", ")}`);
-    }
-
-    for (const s of plan.skipped) {
-        lines.push(`skipped ${s.path} — ${s.reason}`);
-    }
-
-    lines.push(`run log: ${plan.runId}`);
-    return lines.join("\n");
+    return resolveRenderer(fmt).plan(plan);
 }
 
-/** Reuse the snapshot only while every discovered root has the mtime it had
- *  when the plan was written. A branch switch rewrites `node_modules` under
- *  the same paths, and that snapshot would name packages that are gone. */
-function snapshotHook(selector: ReclaimSelector): (roots: string[]) => Promise<DuplicateSet[] | null> {
-    return async (roots) => {
-        const params = planCacheParamsFor(selector, roots);
-        const cached = await getCachedPlan(params);
-        if (cached === null) {
-            log.info({ roots: roots.length }, "plan snapshot absent — scanning");
-            return null;
-        }
-
-        if (!stampsMatch(cached.rootStamps, stampRoots(roots))) {
-            log.info({ roots: roots.length, ageMs: cached.ageMs }, "plan snapshot stale — scanning");
-            return null;
-        }
-
-        log.info({ roots: roots.length, ageMs: cached.ageMs, sets: cached.plan.length }, "plan snapshot reused");
-        return cached.plan;
-    };
-}
-
-/** Shared plan phase: spinner or stderr status lines, file-meta cache
- *  lifetime, SIGINT. Returns null when the run was aborted or refused. */
 /** Spinner label for the stage that starts once `phase` is done. */
 const NEXT_STAGE: Record<ReclaimPhase, string> = {
     discover: "Loading cache…",
@@ -313,27 +215,6 @@ const NEXT_STAGE: Record<ReclaimPhase, string> = {
     snapshot: "Finishing…",
 };
 
-/** A finished plan registers the daily scan and cache reconciliation with
- *  `tools daemon`, once: an existing registration is never overwritten (that
- *  is `daemon enable`). A failure here is logged and never fails the plan. */
-async function registerDaemonAfterPlan(opts: ReclaimOpts): Promise<void> {
-    if (opts.daemon === false) {
-        return;
-    }
-
-    try {
-        const done = await ensureClonesDaemonTasks({ overwrite: false });
-        if (done.scan || done.prune) {
-            recorded(
-                opts,
-                "daemon tasks: scan daily at 03:00, cache reconciliation at 04:00 (tools macos clones daemon status)"
-            );
-        }
-    } catch (err) {
-        log.warn({ err }, "daemon registration after plan failed");
-    }
-}
-
 /** A line for something that was written, printed after the spinner is gone. */
 function recorded(opts: ReclaimOpts, text: string): void {
     if (!opts.silent) {
@@ -341,98 +222,82 @@ function recorded(opts: ReclaimOpts, text: string): void {
     }
 }
 
-async function runPlan(
-    selector: ReclaimSelector,
-    opts: ReclaimOpts,
-    verb: string[],
-    reuseSnapshot: boolean
-): Promise<ReclaimPlan | null> {
-    const controller = new AbortController();
-    const onSigint = (): void => {
-        if (!controller.signal.aborted) {
-            log.warn("SIGINT received, aborting reclaim");
-            controller.abort(new Error("aborted by SIGINT"));
-        }
-    };
-    process.on("SIGINT", onSigint);
-    process.on("SIGTERM", onSigint);
-
+async function runPlan({
+    selector,
+    opts,
+    verb,
+    reuseSnapshot,
+}: {
+    selector: ReclaimSelector;
+    opts: ReclaimOpts;
+    verb: string[];
+    reuseSnapshot: boolean;
+}): Promise<ReclaimPlan | null> {
     const quiet = Boolean(opts.silent);
     let spinner = isInteractive() && !quiet ? p.spinner() : null;
     let dirsSeen = 0;
+    let filesSeen = 0;
     let lastDir = "";
     let tick: ReturnType<typeof setInterval> | null = null;
     if (spinner) {
         spinner.start("Discovering…");
         tick = setInterval(() => {
             if (lastDir) {
-                spinner?.message(`Scanned ${dirsSeen} dirs · in ${shortenForSpinner(lastDir)}`);
+                // The native walk counts FILES (it has no per-directory event);
+                // the in-process one counts directories. Label what is counted.
+                const seen = filesSeen > 0 ? `${filesSeen} files` : `${dirsSeen} dirs`;
+                spinner?.message(`Scanned ${seen} · in ${shortenForSpinner(lastDir)}`);
             }
         }, 100);
     }
 
-    const cache = FileMetaCache.getInstance();
-    const scanStartedAt = Date.now();
+    const hooks: PlanRunHooks = {
+        onDirEntered: (dir) => {
+            dirsSeen += 1;
+            lastDir = dir;
+        },
+        onWalkProgress: (progress) => {
+            filesSeen = progress.files;
+            lastDir = progress.dir;
+        },
+        // One persistent line per finished stage. In a TTY the running spinner
+        // becomes that line and a fresh spinner starts on the next stage;
+        // piped output gets the same line through `ui.ok`.
+        onPhase: (phase, detail) => {
+            const line = `${phase}: ${detail}`;
+            if (spinner) {
+                spinner.stop(line);
+                spinner = p.spinner();
+                spinner.start(NEXT_STAGE[phase]);
+            } else if (!quiet) {
+                ui.ok(line);
+            }
+        },
+        onRecorded: (text) => recorded(opts, text),
+        onFailed: () => spinner?.stop("reclaim failed"),
+    };
+
     try {
-        const plan = await planReclaim(selector, {
-            signal: controller.signal,
-            // File rows only. The native walk never consults the dir cache, and
-            // loading it is what a 1.4M-row dir_meta table costs: 67 s of a 120 s
-            // fleet plan before this view existed. Leaving getDir/setDir off the
-            // view also keeps the in-process fallback from writing new dir rows.
-            cache: { get: (path) => cache.get(path), set: (path, entry) => cache.set(path, entry) },
-            onDirEntered: (dir) => {
-                dirsSeen += 1;
-                lastDir = dir;
-            },
-            // One persistent line per finished stage. In a TTY the running
-            // spinner becomes that line and a fresh spinner starts on the next
-            // stage; piped output gets the same line through `ui.ok`.
-            onPhase: (phase, detail) => {
-                const line = `${phase}: ${detail}`;
-                if (spinner) {
-                    spinner.stop(line);
-                    spinner = p.spinner();
-                    spinner.start(NEXT_STAGE[phase]);
-                } else if (!quiet) {
-                    ui.ok(line);
-                }
-            },
-            ...(reuseSnapshot ? { snapshot: snapshotHook(selector) } : {}),
-            onDiscovered: async (roots) => {
-                for (const root of roots) {
-                    await cache.loadScope(root);
-                }
-            },
+        const result = await runReclaimPlan({
+            selector,
+            reuseSnapshot,
+            registerDaemon: opts.daemon !== false,
+            hooks,
         });
 
-        await cache.flush(scanStartedAt);
-        for (const root of plan.roots) {
-            await cache.pruneScope(root, scanStartedAt);
-        }
-
-        spinner?.stop(
-            `${plan.roots.length} root(s) · ${plan.sets.length} set(s) · ${formatBytes(plan.totalReclaimable)}`
-        );
-        clonesProfile.summary("reclaim");
-        await registerDaemonAfterPlan(opts);
-        return plan;
-    } catch (err) {
-        spinner?.stop("reclaim failed");
-        if (controller.signal.aborted) {
-            log.warn({ err }, "reclaim aborted");
+        if (result.status === "aborted") {
             process.exitCode = 130;
             return null;
         }
 
-        if (err instanceof RepoNotFoundError) {
-            console.error(err.message);
-            if (err.candidates.length > 0) {
-                console.error(`Repositories found: ${err.candidates.join(", ")}`);
+        if (result.status === "repo-not-found") {
+            console.error(result.error.message);
+            if (result.error.candidates.length > 0) {
+                console.error(`Repositories found: ${result.error.candidates.join(", ")}`);
                 console.error(
                     suggestCommand("tools macos clones", {
                         remove: ["--worktrees-of"],
-                        add: ["--worktrees-of", err.candidates[0]],
+                        add: ["--worktrees-of", result.error.candidates[0]],
                         subcommand: ["macos", "clones", "reclaim", ...verb],
                     })
                 );
@@ -442,21 +307,21 @@ async function runPlan(
             return null;
         }
 
-        throw err;
+        const plan = result.plan;
+        spinner?.stop(
+            `${plan.roots.length} root(s) · ${plan.sets.length} set(s) · ${formatBytes(plan.totalReclaimable)}`
+        );
+        return plan;
     } finally {
         if (tick) {
             clearInterval(tick);
         }
-
-        cache.close();
-        process.off("SIGINT", onSigint);
-        process.off("SIGTERM", onSigint);
     }
 }
 
 function createPlanCommand(): Command {
     const cmd = new Command("plan").description(
-        "Discover the trees and show what apply would do (rewrites nothing; registers the daily daemon tasks once, --no-daemon to skip)"
+        "Discover the trees and show what apply would do (rewrites nothing; registers the daily daemon tasks once unless they are disabled, --no-daemon to skip this run)"
     );
     applyOutputFlags(applySelectorFlags(cmd))
         .option("--save <id>", "Save this selector as a preset for later runs")
@@ -467,16 +332,20 @@ function createPlanCommand(): Command {
                 return;
             }
 
-            const plan = await runPlan(selector, opts, ["plan"], false);
+            const plan = await runPlan({ selector, opts, verb: ["plan"], reuseSnapshot: false });
             if (plan === null) {
                 return;
             }
 
-            // Same-session shortcut only: an apply that follows can reuse this
-            // snapshot while every root keeps the mtime it had before the scan.
-            // It expires in 1 hour, and apply still byte-verifies every pair.
-            await cachePlan(planCacheParamsFor(selector, plan.roots), plan.sets, plan.rootStamps);
-            recorded(opts, `plan snapshot for apply (valid 1 h) · run log ${plan.runId}`);
+            // Hand-off shortcut only: the apply typed right after this one can
+            // reuse the snapshot while every root and every member it names is
+            // unchanged. It expires in 60 s because the stamps prove freshness
+            // and never completeness, and apply byte-verifies every pair.
+            await savePlanSnapshot(selector, plan);
+            recorded(
+                opts,
+                `plan snapshot for apply (valid 60 s, and only for the duplicates it already names) · run log ${plan.runId}`
+            );
 
             if (opts.save !== undefined) {
                 savePreset(presetFromSelector(opts.save, selector, { reclaimable: plan.totalReclaimable }));
@@ -519,40 +388,26 @@ async function applyPlan(plan: ReclaimPlan, opts: ReclaimOpts, verb: string[]): 
         return 1;
     }
 
-    try {
-        const rep = runOptimize({
-            roots: plan.roots,
-            sets: plan.sets,
-            planCacheHit: plan.fromSnapshot,
-            keepOnlyRoots: plan.keepRoots.map((k) => k.root),
-        });
-        appendReclaimEvent(plan.runId, {
-            phase: "apply",
-            processId: rep.id,
-            cloned: rep.totals.cloned,
-            skipped: rep.totals.skipped,
-            errors: rep.totals.errors,
-            bytesReclaimed: rep.totals.bytesReclaimed,
-        });
-        clonesProfile.summary("reclaim apply");
-        await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(rep));
-        return rep.totals.errors > 0 ? 1 : 0;
-    } catch (err) {
-        if (err instanceof CloneUnsupportedError) {
-            appendReclaimEvent(plan.runId, { phase: "error", message: err.message });
-            console.error(`Cannot apply: ${err.message}`);
-            return 1;
-        }
-
-        throw err;
+    const applied = applyReclaimPlan(plan);
+    if (applied.status === "integrity") {
+        console.error(`INTEGRITY ABORT: ${applied.message}`);
+        return 1;
     }
+
+    if (applied.status === "clone-unsupported") {
+        console.error(`Cannot apply: ${applied.message}`);
+        return 1;
+    }
+
+    await printLn(resolveRenderer(resolveFormat(opts.format)).processReport(applied.report));
+    return applied.report.totals.errors > 0 ? 1 : 0;
 }
 
 function createApplyCommand(): Command {
     const cmd = new Command("apply").description("Discover, then convert the duplicates into clones (audited)");
     applyOutputFlags(applySelectorFlags(cmd))
         .option("--yes", "Non-interactive confirm (required in non-TTY)", false)
-        .option("--no-cache", "Ignore the 1h plan snapshot; always rescan")
+        .option("--no-cache", "Ignore the 60 s plan snapshot; always rescan")
         .action(async (dirsArg: string[], opts: ReclaimOpts) => {
             applyLogLevel(opts);
             const selector = await selectorFrom(dirsArg ?? [], opts, ["apply"]);
@@ -560,7 +415,7 @@ function createApplyCommand(): Command {
                 return;
             }
 
-            const plan = await runPlan(selector, opts, ["apply"], opts.cache !== false);
+            const plan = await runPlan({ selector, opts, verb: ["apply"], reuseSnapshot: opts.cache !== false });
             if (plan === null) {
                 return;
             }
@@ -569,6 +424,20 @@ function createApplyCommand(): Command {
         });
 
     return cmd;
+}
+
+function renderPresetTable(presets: Preset[]): string {
+    const table = createBoxTable(["ID", "DIRS", "TARGETS", "LAST"]);
+    for (const preset of presets) {
+        table.push([
+            pc.white(preset.id),
+            truncateDisplay(preset.dirs.map(collapsePathForDisplay).join(", "), 48),
+            truncateDisplay(preset.targets.join(","), 24),
+            preset.lastReclaimable !== undefined ? formatBytes(preset.lastReclaimable) : "—",
+        ]);
+    }
+
+    return table.toString();
 }
 
 function createPresetsCommand(): Command {
@@ -586,14 +455,7 @@ function createPresetsCommand(): Command {
                     return;
                 }
 
-                for (const preset of presets) {
-                    const last =
-                        preset.lastReclaimable !== undefined ? `  last=${formatBytes(preset.lastReclaimable)}` : "";
-                    await printLn(
-                        `${preset.id}  ${preset.dirs.join(", ")}  targets=${preset.targets.join(",")}${last}`
-                    );
-                }
-
+                await printLn(renderPresetTable(presets));
                 return;
             }
 
@@ -646,7 +508,7 @@ function createPresetsCommand(): Command {
     applyOutputFlags(run)
         .option("--apply", "Apply instead of planning only", false)
         .option("--yes", "Non-interactive confirm (required in non-TTY)", false)
-        .option("--no-cache", "Ignore the 1h plan snapshot; always rescan")
+        .option("--no-cache", "Ignore the 60 s plan snapshot; always rescan")
         .action(async (id: string, opts: ReclaimOpts & { apply?: boolean }) => {
             applyLogLevel(opts);
             const preset = getPreset(id);
@@ -661,29 +523,40 @@ function createPresetsCommand(): Command {
             }
 
             const selector = selectorFromPreset(preset);
-            const plan = await runPlan(
+            const plan = await runPlan({
                 selector,
                 opts,
-                ["presets", "run", id],
-                opts.apply === true && opts.cache !== false
-            );
+                verb: ["presets", "run", id],
+                reuseSnapshot: opts.apply === true && opts.cache !== false,
+            });
             if (plan === null) {
                 return;
             }
 
-            touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalReclaimable });
             if (opts.apply !== true) {
-                await cachePlan(planCacheParamsFor(selector, plan.roots), plan.sets, plan.rootStamps);
-                recorded(opts, `plan snapshot for apply (valid 1 h) · run log ${plan.runId}`);
+                touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalReclaimable });
+                await savePlanSnapshot(selector, plan);
+                recorded(
+                    opts,
+                    `plan snapshot for apply (valid 60 s, and only for the duplicates it already names) · run log ${plan.runId}`
+                );
                 await printLn(renderPlan(plan, opts.format));
                 process.exitCode = 0;
                 return;
             }
 
-            process.exitCode = await applyPlan(plan, opts, ["presets", "run", id]);
+            const code = await applyPlan(plan, opts, ["presets", "run", id]);
+            // Only a run that actually applied is a run: a cancelled prompt, a
+            // missing --yes or a refused clone used to be recorded as one.
+            if (code === 0) {
+                touchPreset(id, { lastRunAt: new Date().toISOString(), lastReclaimable: plan.totalReclaimable });
+            } else {
+                log.info({ id, code }, "preset run not recorded — apply did not complete");
+            }
+
+            process.exitCode = code;
         });
     group.addCommand(run);
-
     return group;
 }
 

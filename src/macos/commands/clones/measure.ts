@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
+import { parseMinReal } from "@app/macos/lib/clones/min-real";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -58,7 +59,16 @@ export function createMeasureCommand(): Command {
     );
     cmd.action(async (rootsArg: string[], opts: MeasureOpts) => {
         applyLogLevel(opts);
-        const minReal = Number.parseInt(opts.minReal, 10);
+        // Same contract as every sibling command: a negative or truncated floor
+        // is what disables the native walk and turns this into a walk-and-hash
+        // of every file under every root.
+        const minReal = parseMinReal(opts.minReal);
+        if (minReal === null) {
+            console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+            process.exitCode = 1;
+            return;
+        }
+
         const cfg = await loadClonesConfig();
         const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
         const roots = opts.nodeModules ? expandNodeModules(roots0) : roots0;
@@ -70,7 +80,7 @@ export function createMeasureCommand(): Command {
 
         const report = buildMeasureReport({
             roots,
-            minReal: Number.isNaN(minReal) ? 10485760 : minReal,
+            minReal,
             breakdown: opts.breakdown,
             include: parseVariadic(opts.include),
             exclude: parseVariadic(opts.exclude),
@@ -110,12 +120,18 @@ export function createDuCommand(): Command {
     cmd.action(async (folderArg: string | undefined, opts: DuOpts) => {
         applyLogLevel(opts);
         const folder = resolve(folderArg ?? process.cwd());
-        const minReal = Number.parseInt(opts.minReal, 10);
+        const minReal = parseMinReal(opts.minReal);
+        if (minReal === null) {
+            console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+            process.exitCode = 1;
+            return;
+        }
+
         const depth = opts.depth ? Number.parseInt(opts.depth, 10) : undefined;
 
         const report = buildMeasureReport({
             roots: [folder],
-            minReal: Number.isNaN(minReal) ? 10485760 : minReal,
+            minReal,
             breakdown: opts.breakdown,
             include: parseVariadic(opts.include),
             exclude: parseVariadic(opts.exclude),

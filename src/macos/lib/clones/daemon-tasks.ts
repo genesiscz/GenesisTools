@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTask } from "@app/daemon/lib/config";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
+import { getMainRepoRootSync } from "@genesiscz/utils/git/worktree";
 import { logger } from "@genesiscz/utils/logger";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
@@ -26,15 +26,7 @@ export interface ClonesDaemonTasks {
 function scriptPath(fileName: string): string {
     const here = dirname(fileURLToPath(import.meta.url));
     const local = join(here, fileName);
-    const res = spawnSync("git", ["-C", here, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
-        encoding: "utf8",
-    });
-    if (res.status !== 0) {
-        log.debug({ status: res.status, stderr: res.stderr }, "git-common-dir lookup failed, using this checkout");
-        return local;
-    }
-
-    const inMain = join(dirname(res.stdout.trim()), "src/macos/lib/clones", fileName);
+    const inMain = join(getMainRepoRootSync(here), "src/macos/lib/clones", fileName);
     return existsSync(inMain) ? inMain : local;
 }
 

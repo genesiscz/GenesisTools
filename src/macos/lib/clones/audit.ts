@@ -10,10 +10,17 @@ import {
     utimesSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { copyFileStreaming, dedupeFile, freeDiskSpace, sha256File, walkFiles } from "@genesiscz/utils/fs/disk-usage";
+import {
+    copyFileStreaming,
+    dedupeFile,
+    type FileMetaCacheLike,
+    freeDiskSpace,
+    sha256File,
+    walkFiles,
+} from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { CloneUnsupportedError, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
+import { CloneUnsupportedError, getCloneId, isApfsCloneSupported } from "@genesiscz/utils/macos/apfs";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { isUnderAny } from "./collapse";
@@ -51,33 +58,66 @@ function isMetaLine(v: unknown): v is MetaLine {
 /** The process/ audit dir — sibling of cache/ under the tool's base dir.
  *  NOT a Storage cache helper (those write under cache/). Cached after first
  *  call to avoid re-running mkdirSync on every appendOp/writeMeta. */
-let cachedProcessDir: string | null = null;
-export function processDir(): string {
-    if (cachedProcessDir !== null) {
-        return cachedProcessDir;
+const cachedLogDirs = new Map<string, string>();
+
+/** A JSONL run-log directory under the tool's base dir — sibling of cache/,
+ *  NOT a Storage cache helper (those write under cache/). The mkdir is cached
+ *  so it does not run again on every append. `reclaim-run.ts` uses the same
+ *  primitives under its own subdir instead of a second implementation. */
+export function runLogDir(subdir: string): string {
+    const hit = cachedLogDirs.get(subdir);
+    if (hit !== undefined) {
+        return hit;
     }
 
-    const dir = join(storage.getBaseDir(), "process");
+    const dir = join(storage.getBaseDir(), subdir);
     mkdirSync(dir, { recursive: true });
-    cachedProcessDir = dir;
+    cachedLogDirs.set(subdir, dir);
     return dir;
 }
 
-export function processJsonlPath(id: string): string {
-    return join(processDir(), `${id}.jsonl`);
+export function runLogPath(subdir: string, id: string): string {
+    return join(runLogDir(subdir), `${id}.jsonl`);
 }
 
-/** Filename-safe UTC id + pid suffix (collision-proof for same-second runs). */
+/** Filename-safe UTC id + pid suffix, with an in-process counter so two runs
+ *  started in the same millisecond by the same process still get separate
+ *  logs. */
+let runIdCounter = 0;
+export function newRunLogId(opts: { counter?: boolean } = {}): string {
+    const base = `${new Date().toISOString().replace(/[:.]/g, "-")}.${process.pid}`;
+    if (opts.counter !== true) {
+        return base;
+    }
+
+    runIdCounter += 1;
+    return `${base}.${runIdCounter}`;
+}
+
+export function appendRunLogRow(subdir: string, id: string, row: unknown): void {
+    appendFileSync(runLogPath(subdir, id), `${SafeJSON.stringify(row)}\n`);
+}
+
+export const PROCESS_LOG_DIR = "process";
+
+export function processDir(): string {
+    return runLogDir(PROCESS_LOG_DIR);
+}
+
+export function processJsonlPath(id: string): string {
+    return runLogPath(PROCESS_LOG_DIR, id);
+}
+
 export function newProcessId(): string {
-    return `${new Date().toISOString().replace(/[:.]/g, "-")}.${process.pid}`;
+    return newRunLogId();
 }
 
 export function writeMeta(meta: ProcessMeta): void {
-    appendFileSync(processJsonlPath(meta.id), `${SafeJSON.stringify({ _meta: meta })}\n`);
+    appendRunLogRow(PROCESS_LOG_DIR, meta.id, { _meta: meta });
 }
 
 export function appendOp(id: string, op: ProcessOp): void {
-    appendFileSync(processJsonlPath(id), `${SafeJSON.stringify(op)}\n`);
+    appendRunLogRow(PROCESS_LOG_DIR, id, op);
 }
 
 function totalsOf(ops: ProcessOp[]): ProcessTotals {
@@ -265,6 +305,10 @@ export interface RunOptimizeArgs {
     planCacheAgeMs?: number;
     /** Package-manager stores. A file under one of these is never rewritten. */
     keepOnlyRoots?: string[];
+    /** File-meta cache to keep honest. Cloning changes BOTH sides' APFS clone
+     *  id while leaving `keep`'s (size, mtimeNs) untouched, so a cached row
+     *  would keep reporting an already-shared pair as reclaimable. */
+    cache?: FileMetaCacheLike;
 }
 
 /** Expand a DuplicateSet into the concrete (keep, replace) FILE pairs that
@@ -318,18 +362,50 @@ export function expandSetToPairs(
  *  pre-state → dedupeFile → on clone re-hash + assert byte-identity (abort
  *  on mismatch) → append ProcessOp JSONL. Per-file isolation for skips/errors.
  *  Preflight: off-APFS → throws (caller maps to exit 1). */
-export function runOptimize({
+/** Re-read the clone id of both sides of a finished clone so the next plan
+ *  sees the pair as shared. Nothing else in the row changed, and a row we
+ *  cannot re-stat is simply left alone (the detector falls back to a live
+ *  getattrlist for it). */
+function refreshCloneIds(cache: FileMetaCacheLike, paths: string[]): void {
+    for (const path of paths) {
+        const row = cache.get(path);
+        if (row === null) {
+            continue;
+        }
+
+        try {
+            const st = statSync(path, { bigint: true });
+            const id = getCloneId(path);
+            cache.set(path, {
+                ...row,
+                size: st.size,
+                mtimeNs: st.mtimeNs,
+                cloneId: id !== null && id !== 0n ? id.toString(16) : "",
+            });
+        } catch (err) {
+            log.debug({ err, path }, "clone-id refresh failed");
+        }
+    }
+}
+
+export function runOptimize(args: RunOptimizeArgs): ProcessReport {
+    if (!isApfsCloneSupported()) {
+        throw new CloneUnsupportedError("APFS clone support unavailable on this volume — cannot --apply");
+    }
+
+    // One stop point for the span: a future early return or throw anywhere
+    // below would otherwise leak an open span into the next "apply" measurement.
+    return clonesProfile.measure("apply", () => runOptimizeInner(args));
+}
+
+function runOptimizeInner({
     roots,
     sets,
     planCacheHit,
     planCacheAgeMs,
     keepOnlyRoots = [],
+    cache,
 }: RunOptimizeArgs): ProcessReport {
-    if (!isApfsCloneSupported()) {
-        throw new CloneUnsupportedError("APFS clone support unavailable on this volume — cannot --apply");
-    }
-
-    const endApply = clonesProfile.start("apply");
     const id = newProcessId();
     const startedAt = new Date().toISOString();
     const sw = new Stopwatch();
@@ -449,6 +525,9 @@ export function runOptimize({
                             sha256Before,
                             sha256After,
                         });
+                        if (cache !== undefined) {
+                            refreshCloneIds(cache, [keep, replace]);
+                        }
                     } else {
                         recordOp({
                             seq,
@@ -501,7 +580,6 @@ export function runOptimize({
             });
         }
 
-        endApply();
         throw err;
     }
 
@@ -535,7 +613,6 @@ export function runOptimize({
         totals,
     };
 
-    endApply();
     log.info(
         {
             id,

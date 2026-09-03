@@ -25,7 +25,6 @@ export interface DiscoverArgs {
 }
 
 export interface DiscoverResult {
-    searchDirs: string[];
     roots: string[];
     skipped: SkippedRoot[];
 }
@@ -175,7 +174,6 @@ export async function discoverRoots(args: DiscoverArgs): Promise<DiscoverResult>
         "discoverRoots complete"
     );
     return {
-        searchDirs,
         roots: apfs.apfs,
         skipped: [...skipped, ...expanded.skipped, ...apfs.skipped],
     };
