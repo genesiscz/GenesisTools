@@ -7,6 +7,7 @@ import {
     getTimesheetWeeks,
     hasTimesheetId,
     type IdentifiedTimesheetWeek,
+    parseTimesheetArg,
     selectWeeksForDateArg,
 } from "@app/clarity/lib/timesheet-weeks";
 import * as p from "@clack/prompts";
@@ -70,11 +71,18 @@ export function registerTasksCommand(parent: Command): void {
                 Boolean(options.assigned) ||
                 Boolean(options.unassigned);
 
-            if (options.timesheet && wantsAssignmentView) {
+            const timesheet = parseTimesheetArg(options.timesheet);
+
+            if (timesheet.supplied && wantsAssignmentView) {
                 // The assignment view is built from a MONTH of ADO time entries, so a single
                 // timesheet id cannot scope it. Accepting the flag here would silently report the
                 // default date's month instead of the timesheet the user named.
                 out.error("--timesheet only applies to the task catalogue. Use --date <YYYY-MM> for this action.");
+                process.exit(1);
+            }
+
+            if (timesheet.supplied && timesheet.id === undefined) {
+                out.error(`Invalid --timesheet '${options.timesheet}': expected a positive timesheet id`);
                 process.exit(1);
             }
 
@@ -103,8 +111,9 @@ async function runCatalogue(date: string, options: TasksOptions): Promise<void> 
 
     let selected: IdentifiedTimesheetWeek[];
 
-    if (options.timesheet) {
-        const timesheetId = Number.parseInt(options.timesheet, 10);
+    const timesheetId = parseTimesheetArg(options.timesheet).id;
+
+    if (timesheetId !== undefined) {
         selected = [{ timesheetId, timePeriodId: 0, startDate: date, finishDate: date, totalHours: 0, status: "" }];
     } else {
         let month: number;

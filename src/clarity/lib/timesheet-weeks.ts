@@ -17,6 +17,25 @@ export interface TimesheetWeek {
     entryCount?: number;
 }
 
+/**
+ * Resolve an explicit `--timesheet` argument. A flag that was passed at all must name a real
+ * timesheet: `--timesheet ""` is truthy-false, so a bare truthiness test lets a blank value fall
+ * through to the default date and quietly act on the wrong month.
+ */
+export function parseTimesheetArg(raw: string | undefined): { supplied: boolean; id?: number } {
+    if (raw === undefined) {
+        return { supplied: false };
+    }
+
+    const id = Number(raw.trim());
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return { supplied: true };
+    }
+
+    return { supplied: true, id };
+}
+
 /** A week Clarity has actually opened a timesheet for, so its id is safe to send to the API. */
 export type IdentifiedTimesheetWeek = TimesheetWeek & { timesheetId: number };
 

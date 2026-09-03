@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
     findWeekForDate,
+    parseTimesheetArg,
     selectWeeksForDateArg,
     type TimesheetWeek,
     taskSourceWeekOrder,
@@ -111,5 +112,29 @@ describe("taskSourceWeekOrder", () => {
 
     test("returns every week newest first when there is no preference", () => {
         expect(taskSourceWeekOrder(WEEKS, undefined).map((w) => w.timesheetId)).toEqual([555003, 555002, 555001]);
+    });
+});
+
+describe("parseTimesheetArg", () => {
+    test("an absent flag is not supplied", () => {
+        expect(parseTimesheetArg(undefined)).toEqual({ supplied: false });
+    });
+
+    test("a blank value counts as supplied so the caller cannot fall through to today's date", () => {
+        expect(parseTimesheetArg("")).toEqual({ supplied: true });
+        expect(parseTimesheetArg("   ")).toEqual({ supplied: true });
+    });
+
+    test("a non-numeric or non-positive value is supplied but has no id", () => {
+        expect(parseTimesheetArg("abc")).toEqual({ supplied: true });
+        expect(parseTimesheetArg("12abc")).toEqual({ supplied: true });
+        expect(parseTimesheetArg("1.5")).toEqual({ supplied: true });
+        expect(parseTimesheetArg("0")).toEqual({ supplied: true });
+        expect(parseTimesheetArg("-3")).toEqual({ supplied: true });
+    });
+
+    test("a positive whole id parses", () => {
+        expect(parseTimesheetArg("555004")).toEqual({ supplied: true, id: 555004 });
+        expect(parseTimesheetArg(" 555004 ")).toEqual({ supplied: true, id: 555004 });
     });
 });
