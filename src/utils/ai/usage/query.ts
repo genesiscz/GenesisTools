@@ -2,7 +2,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { dayFilePath, daysInRange, parseBound } from "./paths";
-import type { UsageAggregate, UsageEvent, UsageQuery, UsageQueryResult } from "./types";
+import { spendBucketKey } from "./series-keys";
+import type {
+    SpendSeriesBucket,
+    SpendSeriesPoint,
+    UsageAggregate,
+    UsageEvent,
+    UsageQuery,
+    UsageQueryResult,
+} from "./types";
 
 /**
  * Read usage rows over a window and fold them.
@@ -41,13 +49,75 @@ export function queryUsage(query: UsageQuery): UsageQueryResult {
 
     events.sort((a, b) => a.at.localeCompare(b.at));
 
-    return {
+    const result: UsageQueryResult = {
         total: fold(events),
         byApp: groupBy(events, (event) => event.app),
         byAccount: groupBy(events, (event) => event.accountId),
         byModel: groupBy(events, (event) => `${event.provider}/${event.modelId}`),
         events,
     };
+
+    if (query.grain) {
+        result.points = bucketPoints(events, query);
+    }
+
+    return result;
+}
+
+function addTo(into: Record<string, SpendSeriesBucket>, key: string, event: UsageEvent): void {
+    const bucket = into[key] ?? { costUsd: 0, tokens: 0 };
+    bucket.costUsd += event.costUsd ?? 0;
+    bucket.tokens += event.inputTokens + event.outputTokens;
+    into[key] = bucket;
+}
+
+/**
+ * Fold the same rows into time buckets.
+ *
+ * `tokens` is input + output, the only two counts a `UsageEvent` carries. An
+ * event with no `costUsd` adds nothing to `costUsd` here and is already counted
+ * in `total.unpricedEvents`, so a point that looks cheap can be checked against
+ * that number rather than being taken at face value.
+ */
+function bucketPoints(events: UsageEvent[], query: UsageQuery): SpendSeriesPoint[] {
+    const grain = query.grain;
+
+    if (!grain) {
+        return [];
+    }
+
+    const buckets = new Map<string, SpendSeriesPoint>();
+
+    for (const event of events) {
+        const key = spendBucketKey(event.at, grain, query.timeZone);
+
+        if (key === "") {
+            logger.debug({ at: event.at }, "usage: row has an unusable timestamp; not bucketed");
+            continue;
+        }
+
+        let point = buckets.get(key);
+
+        if (!point) {
+            point = { t: key, costUsd: 0, tokens: 0, byAccount: {} };
+
+            if (query.byModel) {
+                point.byModel = {};
+            }
+
+            buckets.set(key, point);
+        }
+
+        point.costUsd += event.costUsd ?? 0;
+        point.tokens += event.inputTokens + event.outputTokens;
+        addTo(point.byAccount, event.accountId, event);
+
+        if (point.byModel) {
+            addTo(point.byModel, `${event.provider}/${event.modelId}`, event);
+        }
+    }
+
+    return [...buckets.values()].sort((a, b) => a.t.localeCompare(b.t));
 }
 
 function toSet(value: string | string[] | undefined): Set<string> | undefined {
