@@ -4,6 +4,11 @@ import { assertApiKeySourceAllowed } from "@app/ai-proxy/lib/providers/api-key-g
 import { defaultApiKeyEnvName } from "@app/ai-proxy/lib/providers/api-key-state";
 import { relayHeaders, rewriteSessionModel, toWsBase } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
+import {
+    harvestResponsesOutput,
+    inlineResponsesItemReferencesInBodyText,
+    whamItemScope,
+} from "@app/ai-proxy/lib/providers/wham-item-store";
 import { resolveXaiApiKey, XAI_API_BASE_URL } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import { clampXaiReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-vocab";
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -221,7 +226,13 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
     private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
         const started = performance.now();
-        const upstreamBody = rewriteBodyModel(clampXaiReasoningEffort(bodyText, upstreamModel), upstreamModel);
+        // xAI has no item store: item_reference pointers are inlined from the
+        // proxy's own store on the way in and output items remembered on the
+        // way out (see wham-item-store.ts).
+        const isResponses = path === "/responses";
+        const itemScope = whamItemScope(req);
+        const clientBody = isResponses ? inlineResponsesItemReferencesInBodyText(itemScope, bodyText) : bodyText;
+        const upstreamBody = rewriteBodyModel(clampXaiReasoningEffort(clientBody, upstreamModel), upstreamModel);
         const url = `${this.baseUrl}${path}`;
 
         try {
@@ -262,7 +273,9 @@ export class XaiApiKeyProvider implements ProxyProvider {
                 );
             }
 
-            return new Response(upstream.body, {
+            const body = isResponses ? await harvestResponsesOutput(itemScope, upstream) : upstream.body;
+
+            return new Response(body, {
                 status: upstream.status,
                 headers: relayHeaders(upstream),
             });

@@ -1,4 +1,5 @@
 import { ensureResponsesInput } from "@app/ai-proxy/lib/chat-to-responses-body";
+import { inlineResponsesItemReferences } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { extractFoldedThinking } from "@app/ai-proxy/lib/thinking-folded";
 import { inferModelThinking } from "@genesiscz/utils/ai/grok/models";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -684,10 +685,20 @@ function patchGrokAssistantReasoningForToolCalls(body: JsonObject): void {
     }
 }
 
+/** Read-only partition: no code path writes items under this name. */
+const UNSCOPED_ITEM_SCOPE = "unscoped";
+
 export function prepareGrokUpstreamBody(
     bodyText: string,
     upstreamModel: string,
-    target: "chat" | "responses" = "chat"
+    target: "chat" | "responses" = "chat",
+    /**
+     * Store partition of the presenting client, from `whamItemScope(req)`.
+     * The default names a partition nothing ever writes to (every store WRITE
+     * takes a required scope), so a caller that forgets it resolves NOTHING
+     * rather than reading every other client's items.
+     */
+    itemScope: string = UNSCOPED_ITEM_SCOPE
 ): PreparedGrokUpstreamBody {
     try {
         const parsed = SafeJSON.parse(bodyText, { strict: true });
@@ -759,7 +770,8 @@ export function prepareGrokUpstreamBody(
 
         applyGrokImageTurnPolicy(next, target, currentTurnHasImages);
 
-        const prepared = target === "responses" ? ensureResponsesInput(next) : next;
+        const prepared =
+            target === "responses" ? inlineResponsesItemReferences(itemScope, ensureResponsesInput(next)) : next;
 
         return {
             bodyText: SafeJSON.stringify(prepared),

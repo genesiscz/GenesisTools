@@ -76,6 +76,9 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
+/** An arbitrary client partition of the item store; see wham-item-store.ts. */
+const ITEM_SCOPE = "test-client";
+
 describe("buildWhamResponsesBody", () => {
     it("extracts system→instructions, maps messages→input, forces stream", async () => {
         const { buildWhamResponsesBody } = await import("./openai-subscription");
@@ -88,7 +91,8 @@ describe("buildWhamResponsesBody", () => {
                 ],
                 max_tokens: 64,
             },
-            "gpt-5.5"
+            "gpt-5.5",
+            { itemScope: ITEM_SCOPE }
         );
 
         expect(body.model).toBe("gpt-5.5");
@@ -114,7 +118,8 @@ describe("buildWhamResponsesBody", () => {
                     },
                 ],
             },
-            "gpt-5.5"
+            "gpt-5.5",
+            { itemScope: ITEM_SCOPE }
         );
 
         expect(body.tools).toEqual([
@@ -131,7 +136,8 @@ describe("buildWhamResponsesBody", () => {
                 top_p: 0.9,
                 tools: [{ type: "web_search" }, { type: "function", function: { name: "f", parameters: {} } }],
             },
-            "gpt-5.5"
+            "gpt-5.5",
+            { itemScope: ITEM_SCOPE }
         );
 
         expect(dropped).toContain("temperature");
@@ -145,13 +151,15 @@ describe("buildWhamResponsesBody", () => {
 
         const passthrough = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning: { effort: "high" } },
-            "gpt-5.5"
+            "gpt-5.5",
+            { itemScope: ITEM_SCOPE }
         );
         expect(passthrough.body.reasoning).toEqual({ effort: "high" });
 
         const clamped = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning: { effort: "ultra-max" } },
-            "gpt-5.5"
+            "gpt-5.5",
+            { itemScope: ITEM_SCOPE }
         );
         expect(clamped.body.reasoning).toEqual({ effort: "low" });
     });
@@ -161,15 +169,19 @@ describe("buildWhamResponsesBody", () => {
 
         const highDefault = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5", {
             defaultReasoningEffort: "high",
+            itemScope: ITEM_SCOPE,
         });
         expect(highDefault.body.reasoning).toEqual({ effort: "high" });
 
         const omitted = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5", {
             defaultReasoningEffort: "none",
+            itemScope: ITEM_SCOPE,
         });
         expect(omitted.body.reasoning).toBeUndefined();
 
-        const fallback = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5");
+        const fallback = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-5.5", {
+            itemScope: ITEM_SCOPE,
+        });
         expect(fallback.body.reasoning).toEqual({ effort: "low" });
     });
 
@@ -182,14 +194,15 @@ describe("buildWhamResponsesBody", () => {
         const stamped = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning_effort: "xhigh" },
             "gpt-5.5",
-            { defaultReasoningEffort: "low" }
+            { defaultReasoningEffort: "low", itemScope: ITEM_SCOPE }
         );
         expect(stamped.body.reasoning).toEqual({ effort: "xhigh" });
 
         // An explicit nested reasoning.effort still wins over the suffix.
         const explicit = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning_effort: "xhigh", reasoning: { effort: "medium" } },
-            "gpt-5.5"
+            "gpt-5.5",
+            { itemScope: ITEM_SCOPE }
         );
         expect(explicit.body.reasoning).toEqual({ effort: "medium" });
 
@@ -199,7 +212,7 @@ describe("buildWhamResponsesBody", () => {
         const max = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning_effort: "max" },
             "gpt-5.5",
-            { defaultReasoningEffort: "low" }
+            { defaultReasoningEffort: "low", itemScope: ITEM_SCOPE }
         );
         expect(max.body.reasoning).toEqual({ effort: "xhigh" });
 
@@ -207,7 +220,7 @@ describe("buildWhamResponsesBody", () => {
         const bogus = buildWhamResponsesBody(
             { messages: [{ role: "user", content: "x" }], reasoning_effort: "ultra-max" },
             "gpt-5.5",
-            { defaultReasoningEffort: "high" }
+            { defaultReasoningEffort: "high", itemScope: ITEM_SCOPE }
         );
         expect(bogus.body.reasoning).toEqual({ effort: "high" });
     });

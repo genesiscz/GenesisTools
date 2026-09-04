@@ -4,6 +4,7 @@ import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import type { OpenAiModel, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
+import { harvestResponsesOutput, whamItemScope } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import {
     braveSearchFn,
@@ -412,7 +413,8 @@ export class GrokSubscriptionProvider implements ProxyProvider {
 
     private async forward(path: string, upstreamModel: string, bodyText: string, req: Request): Promise<Response> {
         const target = path.includes("responses") ? "responses" : "chat";
-        const prepared = prepareGrokUpstreamBody(bodyText, upstreamModel, target);
+        // Stored items are private to the presenting client; see wham-item-store.ts.
+        const prepared = prepareGrokUpstreamBody(bodyText, upstreamModel, target, whamItemScope(req));
 
         return this.dispatch({
             path,
@@ -510,7 +512,12 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 "ai-proxy: upstream request ok"
             );
 
-            return new Response(upstream.body, {
+            // Responses clients chain the next turn by item_reference id, which
+            // xAI cannot resolve; the proxy is the store (see wham-item-store.ts).
+            const body =
+                path === "/responses" ? await harvestResponsesOutput(whamItemScope(req), upstream) : upstream.body;
+
+            return new Response(body, {
                 status: upstream.status,
                 headers: relayHeaders(upstream),
             });

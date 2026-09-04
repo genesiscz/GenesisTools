@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "bun:test";
 import { GrokSubscriptionProvider } from "@app/ai-proxy/lib/providers/grok-subscription";
+import { resetWhamItemStore } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { TOOL_ROUTING_TAG } from "@app/ai-proxy/lib/translators/formats/anthropic/tool-routing-tag";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { GrokSubscriptionClient } from "@genesiscz/utils/ai/grok";
@@ -402,5 +403,76 @@ describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
         const parsed = SafeJSON.parse(await res.text(), { strict: true }) as Record<string, unknown>;
         expect(parsed.type).toBe("error");
         expect((parsed.error as Record<string, unknown>).message).toContain("some other problem");
+    });
+});
+
+describe("GrokSubscriptionProvider.responses item_reference chaining", () => {
+    afterEach(() => {
+        resetWhamItemStore();
+    });
+
+    const reasoning = { id: "rs_1", type: "reasoning", summary: [], encrypted_content: "opaque" };
+    const call = { id: "fc_1", type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{}" };
+
+    function stubbedProvider(respond: (path: string) => Response): {
+        provider: GrokSubscriptionProvider;
+        sent: Array<Record<string, unknown>>;
+    } {
+        const provider = makeProvider();
+        const client = provider as unknown as {
+            client: { fetch: (path: string, init: { body?: unknown }) => Promise<Response> };
+        };
+        const sent: Array<Record<string, unknown>> = [];
+        client.client.fetch = async (path, init) => {
+            sent.push(SafeJSON.parse(String(init.body), { strict: true }) as Record<string, unknown>);
+            return respond(path);
+        };
+
+        return { provider, sent };
+    }
+
+    async function send(provider: GrokSubscriptionProvider, input: unknown[]): Promise<Response> {
+        const body = SafeJSON.stringify({ model: "grok-4.6", input, stream: false });
+
+        return provider.responses(new Request("http://proxy/v1/responses", { method: "POST", body }), "grok-4.6", body);
+    }
+
+    it("inlines turn-1 output items where turn 2 sends item_reference pointers (JSON reply)", async () => {
+        const envelope = SafeJSON.stringify({ id: "resp_1", object: "response", output: [reasoning, call] });
+        const { provider, sent } = stubbedProvider(
+            () => new Response(envelope, { status: 200, headers: { "content-type": "application/json" } })
+        );
+
+        const first = await send(provider, [{ role: "user", content: "weather?" }]);
+        expect(await first.text()).toBe(envelope);
+
+        await send(provider, [
+            { role: "user", content: "weather?" },
+            { type: "item_reference", id: "rs_1" },
+            { type: "item_reference", id: "fc_1" },
+            { type: "function_call_output", call_id: "call_1", output: "sunny" },
+        ]);
+
+        expect(sent).toHaveLength(2);
+        expect(sent[1].input).toEqual([
+            { role: "user", content: "weather?" },
+            reasoning,
+            call,
+            { type: "function_call_output", call_id: "call_1", output: "sunny" },
+        ]);
+    });
+
+    it("harvests items from a streamed reply without changing the bytes", async () => {
+        const sse = `data: {"type":"response.output_item.done","item":${SafeJSON.stringify(call)}}\n\ndata: [DONE]\n\n`;
+        const { provider, sent } = stubbedProvider(
+            () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } })
+        );
+
+        const first = await send(provider, [{ role: "user", content: "weather?" }]);
+        expect(await first.text()).toBe(sse);
+
+        await send(provider, [{ type: "item_reference", id: "fc_1" }]);
+
+        expect(sent[1].input).toEqual([call]);
     });
 });

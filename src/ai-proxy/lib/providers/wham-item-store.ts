@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -13,33 +14,69 @@ import { logger } from "@genesiscz/utils/logger";
  * (streaming or accumulated) is remembered here, and incoming references are
  * inlined back into full items, which WHAM accepts even unstored (verified
  * live: a replayed full function_call with its id returns 200).
+ *
+ * xAI's Responses API (grok subscription and API key) has the same gap from
+ * the other side: it knows no `item_reference` at all (422 "unknown item type
+ * item_reference", verified live 2026-09-03) and takes the full items back,
+ * reasoning included, so the grok providers share this store.
+ *
+ * Every entry is SCOPED to the client that produced it. The proxy fronts
+ * several separately billed clients, and a lookup by id alone let client B
+ * inline client A's function_call — tool name and full arguments — into its own
+ * upstream request, and read it back in its own turn, just by sending an id it
+ * had seen or guessed.
  */
 
 const MAX_ITEMS = 4096;
 
-const itemsById = new Map<string, Record<string, unknown>>();
+/** Keyed `<scope>\u0000<item id>`; one LRU budget across all clients. */
+const itemsByScopedId = new Map<string, Record<string, unknown>>();
+
+/** No Authorization header at all: a direct/unauthenticated caller, its own partition. */
+const ANONYMOUS_SCOPE = "anonymous";
+
+/**
+ * The store partition for one proxy client, taken from the presented bearer.
+ * Hashed, so no key material sits in a process-global map key. Every client has
+ * its own key (`resolveClient`), so this separates exactly the identities the
+ * ledger bills separately.
+ */
+export function whamItemScope(req: Request): string {
+    const presented = req.headers.get("authorization") ?? req.headers.get("x-api-key");
+
+    if (!presented) {
+        return ANONYMOUS_SCOPE;
+    }
+
+    return createHash("sha256").update(presented).digest("hex").slice(0, 32);
+}
+
+function scopedKey(scope: string, id: string): string {
+    return `${scope}\u0000${id}`;
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function rememberWhamOutputItem(item: unknown): void {
+export function rememberWhamOutputItem(scope: string, item: unknown): void {
     if (!isObject(item) || typeof item.id !== "string" || item.id.length === 0) {
         return;
     }
 
+    const key = scopedKey(scope, item.id);
     // Refresh insertion order so busy conversations aren't evicted mid-flight.
-    itemsById.delete(item.id);
-    itemsById.set(item.id, item);
+    itemsByScopedId.delete(key);
+    itemsByScopedId.set(key, item);
 
-    while (itemsById.size > MAX_ITEMS) {
-        const oldest = itemsById.keys().next().value;
+    while (itemsByScopedId.size > MAX_ITEMS) {
+        const oldest = itemsByScopedId.keys().next().value;
 
         if (oldest === undefined) {
             break;
         }
 
-        itemsById.delete(oldest);
+        itemsByScopedId.delete(oldest);
     }
 }
 
@@ -59,7 +96,7 @@ export interface ResolvedInput {
  * call output with call_id ..."), and a model that re-issues the call recovers,
  * while a hard-failed turn does not.
  */
-export function resolveWhamItemReferences(input: unknown[]): ResolvedInput {
+export function resolveWhamItemReferences(scope: string, input: unknown[]): ResolvedInput {
     const unresolved: string[] = [];
     const resolved: unknown[] = [];
 
@@ -69,7 +106,7 @@ export function resolveWhamItemReferences(input: unknown[]): ResolvedInput {
             continue;
         }
 
-        const cached = itemsById.get(item.id);
+        const cached = itemsByScopedId.get(scopedKey(scope, item.id));
         if (cached === undefined) {
             unresolved.push(item.id);
             continue;
@@ -111,7 +148,7 @@ export function resolveWhamItemReferences(input: unknown[]): ResolvedInput {
  * Byte-transparent SSE passthrough that harvests `response.output_item.done`
  * items into the store as they stream to the client.
  */
-export function createWhamItemHarvestTransform(): TransformStream<Uint8Array, Uint8Array> {
+export function createWhamItemHarvestTransform(scope: string): TransformStream<Uint8Array, Uint8Array> {
     const decoder = new TextDecoder();
     let pending = "";
 
@@ -136,7 +173,7 @@ export function createWhamItemHarvestTransform(): TransformStream<Uint8Array, Ui
             }
 
             if (isObject(event) && event.type === "response.output_item.done" && isObject(event.item)) {
-                rememberWhamOutputItem(event.item);
+                rememberWhamOutputItem(scope, event.item);
             }
         }
     }
@@ -152,10 +189,80 @@ export function createWhamItemHarvestTransform(): TransformStream<Uint8Array, Ui
     });
 }
 
+/**
+ * Inline `item_reference` pointers in a Responses body's `input`. Unresolved
+ * references (and their orphaned outputs) are dropped and logged, as in the
+ * WHAM path.
+ */
+export function inlineResponsesItemReferences<T extends Record<string, unknown>>(scope: string, body: T): T {
+    if (!Array.isArray(body.input)) {
+        return body;
+    }
+
+    const resolved = resolveWhamItemReferences(scope, body.input);
+
+    if (resolved.unresolved.length > 0) {
+        logger.warn(
+            { unresolved: resolved.unresolved, orphanedOutputs: resolved.orphanedOutputs },
+            "ai-proxy: dropped item_reference input items with no stored record (proxy restarted mid-conversation?)"
+        );
+    }
+
+    return { ...body, input: resolved.input };
+}
+
+export function inlineResponsesItemReferencesInBodyText(scope: string, bodyText: string): string {
+    try {
+        const parsed = SafeJSON.parse(bodyText, { strict: true });
+
+        if (!isObject(parsed) || !Array.isArray(parsed.input)) {
+            return bodyText;
+        }
+
+        return SafeJSON.stringify(inlineResponsesItemReferences(scope, parsed));
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: item_reference inline skipped — body is not JSON");
+        return bodyText;
+    }
+}
+
+/**
+ * The body of an upstream /responses reply with its output items remembered:
+ * an SSE stream is harvested as it passes through, a JSON envelope is read
+ * once and returned verbatim.
+ */
+export async function harvestResponsesOutput(scope: string, upstream: Response): Promise<BodyInit | null> {
+    if (!upstream.ok || upstream.body === null) {
+        return upstream.body;
+    }
+
+    const contentType = upstream.headers.get("content-type") ?? "";
+
+    if (contentType.includes("text/event-stream")) {
+        return upstream.body.pipeThrough(createWhamItemHarvestTransform(scope));
+    }
+
+    const text = await upstream.text();
+
+    try {
+        const envelope = SafeJSON.parse(text, { strict: true });
+
+        if (isObject(envelope) && Array.isArray(envelope.output)) {
+            for (const item of envelope.output) {
+                rememberWhamOutputItem(scope, item);
+            }
+        }
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: /responses envelope parse failed — no output items harvested");
+    }
+
+    return text;
+}
+
 export function whamItemStoreSize(): number {
-    return itemsById.size;
+    return itemsByScopedId.size;
 }
 
 export function resetWhamItemStore(): void {
-    itemsById.clear();
+    itemsByScopedId.clear();
 }

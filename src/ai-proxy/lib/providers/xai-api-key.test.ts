@@ -1,7 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { resetWhamItemStore } from "@app/ai-proxy/lib/providers/wham-item-store";
+import { XaiApiKeyProvider } from "@app/ai-proxy/lib/providers/xai-api-key";
 import { resolveXaiApiKey } from "@app/ai-proxy/lib/providers/xai-api-key-auth";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const account: AiProxyAccountConfig = {
     name: "work",
@@ -57,5 +60,55 @@ describe("resolveXaiApiKey", () => {
         env.testing.unset("X_AI_API_KEY");
 
         expect(resolveXaiApiKey(account)).toBeUndefined();
+    });
+});
+
+describe("XaiApiKeyProvider.responses item_reference chaining", () => {
+    afterEach(() => {
+        resetWhamItemStore();
+    });
+
+    const call = { id: "fc_1", type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{}" };
+
+    it("inlines turn-1 output items where turn 2 sends item_reference pointers", async () => {
+        const seen: Array<Record<string, unknown>> = [];
+        const envelope = SafeJSON.stringify({ id: "resp_1", object: "response", output: [call] });
+        const server = Bun.serve({
+            port: 0,
+            fetch: async (req) => {
+                seen.push(SafeJSON.parse(await req.text(), { strict: true }) as Record<string, unknown>);
+                return new Response(envelope, { headers: { "content-type": "application/json" } });
+            },
+        });
+
+        try {
+            const provider = new XaiApiKeyProvider(
+                { ...account, baseUrl: `http://127.0.0.1:${server.port}` },
+                "xai-test"
+            );
+            const send = (input: unknown[]) => {
+                const body = SafeJSON.stringify({ model: "work/xai/grok-4.6", input });
+
+                return provider.responses(
+                    new Request("http://proxy/v1/responses", { method: "POST", body }),
+                    "grok-4.6",
+                    body
+                );
+            };
+
+            const first = await send([{ role: "user", content: "weather?" }]);
+            expect(await first.text()).toBe(envelope);
+
+            await send([
+                { type: "item_reference", id: "fc_1" },
+                { type: "function_call_output", call_id: "call_1", output: "sunny" },
+            ]);
+
+            expect(seen).toHaveLength(2);
+            expect(seen[1].model).toBe("grok-4.6");
+            expect(seen[1].input).toEqual([call, { type: "function_call_output", call_id: "call_1", output: "sunny" }]);
+        } finally {
+            server.stop(true);
+        }
     });
 });

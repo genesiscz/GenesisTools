@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { rememberWhamOutputItem, resetWhamItemStore } from "@app/ai-proxy/lib/providers/wham-item-store";
 import {
     applyReasoningEffortToBody,
     findInvalidImageDataPayload,
@@ -639,5 +640,89 @@ describe("AI SDK image part variants", () => {
             mediaType: "application/pdf",
             data: JPEG_B64,
         });
+    });
+});
+
+describe("prepareGrokUpstreamBody item_reference inlining", () => {
+    afterEach(() => {
+        resetWhamItemStore();
+    });
+
+    const call = { id: "fc_1", type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{}" };
+    const scope = "test-client";
+
+    it("inlines a remembered item on the responses target, as xAI knows no item_reference", () => {
+        rememberWhamOutputItem(scope, call);
+
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "genesiscz/grok/grok-4.6",
+                input: [
+                    { role: "user", content: "weather?" },
+                    { type: "item_reference", id: "fc_1" },
+                    { type: "function_call_output", call_id: "call_1", output: "sunny" },
+                ],
+            }),
+            "grok-4.6",
+            "responses",
+            scope
+        );
+
+        const parsed = SafeJSON.parse(rewritten.bodyText) as { input: unknown[] };
+        expect(parsed.input[1]).toEqual(call);
+        expect(parsed.input).toHaveLength(3);
+    });
+
+    it("leaves the chat target alone", () => {
+        const rewritten = prepareGrokUpstreamBody(
+            SafeJSON.stringify({
+                model: "genesiscz/grok/grok-4.6",
+                messages: [{ role: "user", content: "hi" }],
+            }),
+            "grok-4.6",
+            "chat",
+            scope
+        );
+
+        const parsed = SafeJSON.parse(rewritten.bodyText) as { messages: unknown[]; input?: unknown };
+        expect(parsed.messages).toHaveLength(1);
+        expect(parsed.input).toBeUndefined();
+    });
+});
+
+describe("prepareGrokUpstreamBody item_reference scoping", () => {
+    afterEach(() => {
+        resetWhamItemStore();
+    });
+
+    const call = { id: "fc_2", type: "function_call", call_id: "call_2", name: "get_weather", arguments: "{}" };
+
+    function prepare(scope?: string): { input: unknown[] } {
+        const body = SafeJSON.stringify({
+            model: "genesiscz/grok/grok-4.6",
+            input: [
+                { role: "user", content: "weather?" },
+                { type: "item_reference", id: "fc_2" },
+            ],
+        });
+        const rewritten =
+            scope === undefined
+                ? prepareGrokUpstreamBody(body, "grok-4.6", "responses")
+                : prepareGrokUpstreamBody(body, "grok-4.6", "responses", scope);
+
+        return SafeJSON.parse(rewritten.bodyText) as { input: unknown[] };
+    }
+
+    it("another client's scope resolves nothing, so no item crosses clients", () => {
+        rememberWhamOutputItem("client-a", call);
+
+        expect(prepare("client-a").input).toEqual([{ role: "user", content: "weather?" }, call]);
+        expect(prepare("client-b").input).toEqual([{ role: "user", content: "weather?" }]);
+    });
+
+    it("omitting the scope resolves nothing rather than reading every client's items", () => {
+        rememberWhamOutputItem("client-a", call);
+
+        expect(prepare().input).toEqual([{ role: "user", content: "weather?" }]);
     });
 });

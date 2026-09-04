@@ -11,6 +11,7 @@ import {
     createWhamItemHarvestTransform,
     rememberWhamOutputItem,
     resolveWhamItemReferences,
+    whamItemScope,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
@@ -205,8 +206,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         }
 
         const wantStream = parsed.stream === true;
+        // Stored items are private to the presenting client; see wham-item-store.ts.
+        const itemScope = whamItemScope(req);
         const { body: whamBody, dropped } = buildWhamResponsesBody(parsed, concreteModel, {
             defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
+            itemScope,
         });
         warnDroppedParamsOnce(dropped);
         const whamBodyText = SafeJSON.stringify(whamBody);
@@ -359,7 +363,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const droppedHeader = dropped.length > 0 ? { "x-ai-proxy-dropped": dropped.join(",") } : undefined;
 
         if (wantStream) {
-            return new Response(upstream.body.pipeThrough(createWhamItemHarvestTransform()), {
+            return new Response(upstream.body.pipeThrough(createWhamItemHarvestTransform(itemScope)), {
                 status: 200,
                 headers: {
                     "Content-Type": "text/event-stream; charset=utf-8",
@@ -380,7 +384,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         // output on WHAM, so text is reassembled from output_text deltas.
         let accumulated: Awaited<ReturnType<typeof accumulateResponsesJson>>;
         try {
-            accumulated = await accumulateResponsesJson(upstream.body);
+            accumulated = await accumulateResponsesJson(upstream.body, itemScope);
         } catch (err) {
             const aborted = clientAbortResponse(err, { err, account: this.account.name });
             if (aborted) {
@@ -567,7 +571,9 @@ export function warnDroppedParamsOnce(dropped: string[]): void {
 export function buildWhamResponsesBody(
     parsed: Record<string, unknown>,
     model: string,
-    options?: { defaultReasoningEffort?: "none" | "low" | "medium" | "high" }
+    // `itemScope` is required, not optional: a caller that forgot it would share
+    // one store partition with every other client, which is the bug this fixes.
+    options: { defaultReasoningEffort?: "none" | "low" | "medium" | "high"; itemScope: string }
 ): WhamBodyBuildResult {
     const body: Record<string, unknown> = {
         model,
@@ -584,7 +590,7 @@ export function buildWhamResponsesBody(
     if (Array.isArray(parsed.input)) {
         // Already a Responses body. Inline any item_reference pointers — WHAM
         // has no store to resolve them against (see wham-item-store.ts).
-        const resolved = resolveWhamItemReferences(parsed.input);
+        const resolved = resolveWhamItemReferences(options.itemScope, parsed.input);
         body.input = resolved.input;
 
         if (resolved.unresolved.length > 0) {
@@ -676,7 +682,7 @@ export function buildWhamResponsesBody(
         // A `:<effort>` model-id suffix arrives here as a top-level
         // `reasoning_effort` (applyReasoningEffortToBody only fills
         // `reasoning.effort` when the client already sent that object). Reading
-        // it is what makes `account/openai/gpt-5.5:xhigh` actually run at xhigh
+        // it is what makes `account/openai/gpt-5.6-sol:xhigh` actually run at xhigh
         // instead of silently falling back to the account default.
         //
         // `max` is a documented proxy suffix that WHAM does not accept. Dropping
@@ -691,7 +697,7 @@ export function buildWhamResponsesBody(
         }
 
         const effort =
-            requested && WHAM_REASONING_EFFORTS.has(requested) ? requested : (options?.defaultReasoningEffort ?? "low");
+            requested && WHAM_REASONING_EFFORTS.has(requested) ? requested : (options.defaultReasoningEffort ?? "low");
 
         if (effort !== "none") {
             body.reasoning = { effort };
@@ -702,7 +708,8 @@ export function buildWhamResponsesBody(
 }
 
 async function accumulateResponsesJson(
-    stream: ReadableStream<Uint8Array>
+    stream: ReadableStream<Uint8Array>,
+    itemScope: string
 ): Promise<{ failed: false; body: string } | { failed: true; error: string; errorCode?: string }> {
     const raw = await new Response(stream).text();
     let text = "";
@@ -806,7 +813,7 @@ async function accumulateResponsesJson(
     for (const item of output) {
         // Responses clients chain the next turn by item_reference id; the proxy
         // is the store those references resolve against.
-        rememberWhamOutputItem(item);
+        rememberWhamOutputItem(itemScope, item);
     }
 
     return { failed: false, body: SafeJSON.stringify({ ...completed, object: "response", output }) };
