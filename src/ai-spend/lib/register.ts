@@ -6,14 +6,15 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";
-import { findTranscriptFiles, readEvents } from "./discover";
 import { AGENT_IDS, type AgentId } from "./drivers";
 import { buildMonitorReport, type MonitorReport } from "./monitor";
 import { renderSessions, renderSummary, renderToday } from "./render";
 import { registerCcusageCommands } from "./reports/commands";
+import { loadEvents } from "./reports/load";
+import type { SpendEvent } from "./reports/types";
 import { buildSpendSeries, type TranscriptGrain } from "./series";
 import { resolveSince } from "./since";
-import type { Report } from "./types";
+import type { Report, UsageEvent } from "./types";
 
 /** Grains `buildSpendSeries` accepts. `minute` is call-log only. */
 const TRANSCRIPT_GRAINS: readonly TranscriptGrain[] = ["hour", "day", "week"];
@@ -30,11 +31,31 @@ export type SpendView = "summary" | "sessions" | "today";
 
 const DEFAULT_SINCE = "30d";
 
+/**
+ * `aggregate` predates the ccusage reports and speaks its own event shape. The
+ * two differ only in the name of the id field, so bridging beats forking the
+ * aggregator — which is what kept `discover.ts` alive as a second discovery
+ * stack that missed `~/.config/claude/projects` and `CLAUDE_CONFIG_DIR`.
+ */
+function toUsageEvent(event: SpendEvent): UsageEvent {
+    return {
+        messageId: event.id,
+        model: event.model,
+        timestamp: event.timestamp,
+        project: event.project,
+        sessionId: event.sessionId,
+        inputTokens: event.inputTokens,
+        outputTokens: event.outputTokens,
+        cacheCreationTokens: event.cacheCreationTokens,
+        cacheReadTokens: event.cacheReadTokens,
+    };
+}
+
 async function buildReport(opts: SpendOpts, view: SpendView): Promise<Report> {
     const now = new Date();
     const storage = new Storage("ai-spend");
     const pricing = await loadPricing(storage);
-    const events = readEvents(findTranscriptFiles(homedir()));
+    const events = loadEvents({ home: homedir(), sources: ["claude"] }).map(toUsageEvent);
 
     let sinceDay: string | undefined;
     if (view === "today") {
