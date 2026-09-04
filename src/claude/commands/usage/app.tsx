@@ -1,18 +1,19 @@
 import { POLL_INTERVALS, type PollInterval } from "@app/claude/lib/usage/constants";
 import { loadDashboardConfig, type UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
+import { AlertBanner } from "@genesiscz/utils/ink/usage-dashboard/components/alert-banner";
+import { HelpOverlay } from "@genesiscz/utils/ink/usage-dashboard/components/help-overlay";
+import { StatusBar } from "@genesiscz/utils/ink/usage-dashboard/components/status-bar";
+import { TabBar } from "@genesiscz/utils/ink/usage-dashboard/components/tab-bar";
+import { useKeybindings } from "@genesiscz/utils/ink/usage-dashboard/hooks/use-keybindings";
+import { useTabNavigation } from "@genesiscz/utils/ink/usage-dashboard/hooks/use-tab-navigation";
 import { Box } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertBanner } from "./components/alert-banner";
-import { HelpOverlay } from "./components/help-overlay";
 import { HistoryView } from "./components/history/history-view";
 import { type OverviewSortMode, OverviewView } from "./components/overview/overview-view";
 import { SessionsView } from "./components/sessions/sessions-view";
-import { StatusBar } from "./components/status-bar";
-import { TabBar } from "./components/tab-bar";
-import { useKeybindings } from "./hooks/use-keybindings";
-import { useTabNavigation } from "./hooks/use-tab-navigation";
 import { useUsagePoller } from "./hooks/use-usage-poller";
+import { TABS } from "./types";
 
 interface AppProps {
     accountFilter?: string;
@@ -39,7 +40,7 @@ interface DashboardProps {
 
 function Dashboard({ config, accountFilter }: DashboardProps) {
     const { rows } = useTerminalSize({ clearOnResize: true });
-    const { activeTab, tabs, activeIndex } = useTabNavigation(config.defaultTab);
+    const { activeTab, tabs, activeIndex } = useTabNavigation(TABS, config.defaultTab);
 
     const [pollInterval, setPollInterval] = useState<PollInterval>(
         (POLL_INTERVALS.includes(config.refreshInterval as PollInterval) ? config.refreshInterval : 60) as PollInterval

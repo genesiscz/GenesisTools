@@ -6,8 +6,8 @@ import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
 import { formatCoarseSpan, formatRenewsAt, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
+import { UsageBar } from "@genesiscz/utils/ink/usage-dashboard/components/usage-bar";
 import { Box, Text } from "ink";
-import { UsageBar } from "./usage-bar";
 
 function shortStaleReason(reason: string): string {
     // 403 permission_error from an org whose subscription lapsed — the OAuth

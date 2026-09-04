@@ -1,13 +1,14 @@
 import { useInput } from "ink";
 import { useState } from "react";
-import { TABS, type TabId } from "../types";
+import type { TabDefinition } from "../types";
 import { isModalOpen } from "./input-scope";
 
-export function useTabNavigation(defaultTab: number = 0) {
+/** The tab list is injected: `tools claude usage` adds Sessions, the others do not. */
+export function useTabNavigation(tabs: TabDefinition[], defaultTab: number = 0) {
     // `defaultTab` is a PERSISTED index: a config written when the dashboard had
-    // five tabs can point past the end, and TABS[activeIndex].id would throw.
+    // five tabs can point past the end, and tabs[activeIndex].id would throw.
     const [activeIndex, setActiveIndex] = useState(() =>
-        Math.min(Math.max(0, Math.trunc(defaultTab) || 0), TABS.length - 1)
+        Math.min(Math.max(0, Math.trunc(defaultTab) || 0), tabs.length - 1)
     );
 
     useInput((input, key) => {
@@ -18,24 +19,24 @@ export function useTabNavigation(defaultTab: number = 0) {
         }
 
         if (key.leftArrow) {
-            setActiveIndex((i) => (i > 0 ? i - 1 : TABS.length - 1));
+            setActiveIndex((i) => (i > 0 ? i - 1 : tabs.length - 1));
         }
 
         if (key.rightArrow) {
-            setActiveIndex((i) => (i < TABS.length - 1 ? i + 1 : 0));
+            setActiveIndex((i) => (i < tabs.length - 1 ? i + 1 : 0));
         }
 
         const num = parseInt(input, 10);
 
-        if (num >= 1 && num <= TABS.length) {
+        if (num >= 1 && num <= tabs.length) {
             setActiveIndex(num - 1);
         }
     });
 
     return {
-        activeTab: TABS[activeIndex].id as TabId,
+        activeTab: tabs[Math.min(activeIndex, tabs.length - 1)].id,
         activeIndex,
-        tabs: TABS,
+        tabs,
         setActiveIndex,
     };
 }

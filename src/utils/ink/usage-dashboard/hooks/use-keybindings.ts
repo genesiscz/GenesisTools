@@ -7,6 +7,10 @@ interface KeybindingsOptions {
     onCycleInterval: () => void;
     onTogglePause: () => void;
     onToggleSort: () => void;
+    /** `P` cycles the provider filter. Absent on a single-provider dashboard. */
+    onCycleProvider?: () => void;
+    /** `a` opens the account checklist. */
+    onOpenAccountFilter?: () => void;
 }
 
 export function useKeybindings({
@@ -15,6 +19,8 @@ export function useKeybindings({
     onCycleInterval,
     onTogglePause,
     onToggleSort,
+    onCycleProvider,
+    onOpenAccountFilter,
 }: KeybindingsOptions) {
     const { exit } = useApp();
     const [showHelp, setShowHelp] = useState(false);
@@ -42,6 +48,14 @@ export function useKeybindings({
 
         if (input === "s") {
             onToggleSort();
+        }
+
+        if (input === "P" && onCycleProvider) {
+            onCycleProvider();
+        }
+
+        if (input === "a" && onOpenAccountFilter) {
+            onOpenAccountFilter();
         }
 
         if (input === "?") {
