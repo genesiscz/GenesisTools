@@ -110,6 +110,8 @@ export function registerWorkerCommand(program: Command): void {
         .option("--prompt-file <path>", "Read the prompt from a file")
         .option("-m, --model <model>", "Model for the session")
         .option("--safe-mode", "Launch with claude --safe-mode (skip CLAUDE.md, hooks, skills, MCP)")
+        .option("--no-skills", "same as --safe-mode: claude cannot drop skills without dropping rules too")
+        .option("--no-rules", "same as --safe-mode: claude cannot drop rules without dropping skills too")
         .action(
             async (options: {
                 name: string;
@@ -119,7 +121,21 @@ export function registerWorkerCommand(program: Command): void {
                 promptFile?: string;
                 model?: string;
                 safeMode?: boolean;
+                skills?: boolean;
+                rules?: boolean;
             }) => {
+                // The one switch claude -p has is --safe-mode, all or nothing. A
+                // trivial turn cost $0.11 with the surfaces on and $0.06 without
+                // (2026-09-01); the default follows the other backends: on.
+                const safeMode = options.safeMode === true || options.skills === false || options.rules === false;
+                if (safeMode && !options.safeMode) {
+                    out.printlnErr(
+                        pc.yellow(
+                            "claude has no separate skills/rules switch; --no-skills or --no-rules means --safe-mode."
+                        )
+                    );
+                }
+
                 const account = await resolvePinnedAccount(options.account);
                 const result = await spawnWorker({
                     name: options.name,
@@ -127,7 +143,7 @@ export function registerWorkerCommand(program: Command): void {
                     cwd: options.cwd,
                     prompt: readPrompt(options),
                     model: options.model,
-                    safeMode: options.safeMode,
+                    safeMode,
                 });
                 printTurn(result);
             }

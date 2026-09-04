@@ -7,6 +7,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
+import { surfacesFromFlags } from "@genesiscz/utils/worker/isolation";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
 import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import { Command } from "commander";
@@ -63,6 +64,10 @@ program
         "--auth <mode>",
         "subscription (your `grok login` in ~/.grok, the default when it exists) or api-key (XAI_API_KEY, metered)"
     )
+    .option("--skills", "load your personal skills (~/.agents, ~/.claude); the default")
+    .option("--no-skills", "hide your personal skills from the worker (sticky across steers)")
+    .option("--rules", "load your personal rules (~/.claude rules and CLAUDE.md); the default")
+    .option("--no-rules", "hide your personal rules from the worker (sticky across steers)")
     .option("-r, --resume [query]", "Resume a grok TUI session by id, title, or transcript (not the headless worker)")
     .option("-l, --list", "With --resume, list matching TUI sessions")
     .option("-a, --all", "With --resume, search every project")
@@ -95,6 +100,7 @@ program
             readOnly: options.readonly,
             workerHome: options.workerHome,
             auth: options.auth,
+            surfaces: surfacesFromFlags({ skills: options.skills, rules: options.rules }),
         });
         printTurn(result);
     });
@@ -107,6 +113,10 @@ program
     .option("--prompt <text>", "inline instruction")
     .option("--readonly", "switch the session to read-only from this turn on")
     .option("--writable", "switch the session back to the default project-jail mode")
+    .option("--skills", "load your personal skills from this turn on")
+    .option("--no-skills", "hide your personal skills from this turn on")
+    .option("--rules", "load your personal rules from this turn on")
+    .option("--no-rules", "hide your personal rules from this turn on")
     .action(async (options) => {
         let readOnly: boolean | undefined;
         if (options.readonly) {
@@ -120,6 +130,7 @@ program
             prompt: options.prompt,
             promptFile: options.promptFile,
             readOnly,
+            surfaces: { skills: options.skills, rules: options.rules },
         });
         printTurn(result);
     });
