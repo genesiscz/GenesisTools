@@ -1,3 +1,4 @@
+import { spendBucketKey } from "@genesiscz/utils/ai/usage";
 import type { PeriodGrain } from "./types";
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -64,23 +65,7 @@ export function zonedDay(timestamp: string, timeZone: string): string {
  * turn-level records is noise, not signal.
  */
 export function hourKey(timestamp: string, timeZone: string): string {
-    const date = new Date(timestamp);
-
-    if (Number.isNaN(date.getTime())) {
-        return "";
-    }
-
-    const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        hourCycle: "h23",
-    }).formatToParts(date);
-    const get = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
-
-    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}`;
+    return spendBucketKey(timestamp, "hour", timeZone);
 }
 
 export function addDays(ymd: string, days: number): string {

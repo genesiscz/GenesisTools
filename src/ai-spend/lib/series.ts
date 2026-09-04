@@ -9,6 +9,8 @@ import {
     type SpendGrain,
     type SpendSeriesBucket,
     type SpendSeriesPoint,
+    spendBucketKey,
+    systemTimeZone,
     UNBOUND_ACCOUNT_ID,
 } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
@@ -17,7 +19,6 @@ import { loadPricing } from "./config";
 import { AGENT_IDS, type AgentId, type MonitorDriver } from "./drivers";
 import { type CompactEvent, collectSeriesEvents } from "./events-cache";
 import type { readTail } from "./monitor";
-import { hourKey, mondayOf, systemTimeZone, zonedDay } from "./reports/dates";
 
 /**
  * Transcript spend over time, bucketed, split by account.
@@ -80,20 +81,6 @@ export class UnsupportedGrainError extends Error {
         );
         this.name = "UnsupportedGrainError";
     }
-}
-
-function bucketKey(timestamp: string, grain: TranscriptGrain, timeZone: string): string {
-    if (grain === "hour") {
-        return hourKey(timestamp, timeZone);
-    }
-
-    const day = zonedDay(timestamp, timeZone);
-
-    if (grain === "week") {
-        return day === "" ? "" : mondayOf(day);
-    }
-
-    return day;
 }
 
 /**
@@ -199,7 +186,7 @@ export async function buildSpendSeries(
             continue;
         }
 
-        const key = bucketKey(event.t, grain, timeZone);
+        const key = spendBucketKey(event.t, grain, timeZone);
 
         if (key === "") {
             continue;
