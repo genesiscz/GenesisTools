@@ -16,12 +16,15 @@ import { grokUsage } from "./usage";
  */
 const resolver = new GrokSubResolver();
 
-/** xAI reports one window: the monthly billing credit (`used` against `monthlyLimit`). */
+/**
+ * xAI reports the subscription allowance as whole percent over a rolling week, split by
+ * product. The pay-as-you-go credit only appears when the account has on-demand spend.
+ */
 const presentation: AccountFeatures["presentation"] = {
     displayName: "Grok",
     alias: "grok",
-    limitOrder: ["monthly"],
-    prominentLimits: ["monthly"],
+    limitOrder: ["weekly", "product:grokbuild", "product:grokchat", "credit"],
+    prominentLimits: ["weekly"],
 };
 
 export const grokSubPlugin: ProviderPlugin = {
