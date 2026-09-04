@@ -138,8 +138,141 @@ export interface ReplayDerivation {
 // `tools cc run -- --resume <id>` and the original command was lost. The policy
 // is that a non-Claude command replays verbatim, so an embedded mention is not
 // a launcher.
-const CLAUDE_LAUNCHER = /^(tools cc run|tools claude run|claude)\b/;
-const CC_RUN_LAUNCHER = /^tools (?:cc|claude) run\b/;
+// `tools claude start` is here because agent-replay emits exactly that form for
+// an account-pinned Claude resume. While it was missing, isAgentLauncher said
+// false for a command this code had itself written, so the saved command was
+// returned verbatim forever: never re-pinned to the session that ran there
+// later, and never discarded when the tab turned into a grok tab.
+// `(?![\w-])` rather than `\b`: a word boundary sits between "x" and "-", so
+// `/^codex\b/` also matched `codex-gateway serve`, and that pane was then
+// rewritten into `codex resume <uuid>` on restore.
+const CLAUDE_LAUNCHER = /^(tools cc run|tools claude run|tools (?:cc|claude) start|claude)(?![\w-])/;
+const CC_RUN_LAUNCHER = /^tools (?:cc|claude) run(?![\w-])/;
+const GROK_LAUNCHER = /^grok(?![\w-])/;
+const CODEX_LAUNCHER = /^codex(?![\w-])/;
+
+export function isAgentLauncher(command: string): boolean {
+    const trimmed = command.trim();
+
+    return CLAUDE_LAUNCHER.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed);
+}
+
+export function agentKindFromLauncher(command: string): "claude" | "grok" | "codex" | undefined {
+    const trimmed = command.trim();
+    if (GROK_LAUNCHER.test(trimmed)) {
+        return "grok";
+    }
+    if (CODEX_LAUNCHER.test(trimmed)) {
+        return "codex";
+    }
+    if (CLAUDE_LAUNCHER.test(trimmed)) {
+        return "claude";
+    }
+
+    return undefined;
+}
+
+interface CommandToken {
+    value: string;
+    start: number;
+    end: number;
+}
+
+/**
+ * Split a command line on top-level whitespace, treating a quoted span as one
+ * opaque unit. Quotes are kept in the token so a rewrite can splice the exact
+ * original bytes back.
+ */
+export function tokenizeCommand(command: string): CommandToken[] {
+    const tokens: CommandToken[] = [];
+    let index = 0;
+
+    while (index < command.length) {
+        while (index < command.length && /\s/.test(command[index])) {
+            index++;
+        }
+
+        if (index >= command.length) {
+            break;
+        }
+
+        const start = index;
+        let quote: string | undefined;
+
+        while (index < command.length) {
+            const char = command[index];
+
+            if (quote) {
+                if (char === quote) {
+                    quote = undefined;
+                }
+
+                index++;
+                continue;
+            }
+
+            if (char === '"' || char === "'") {
+                quote = char;
+                index++;
+                continue;
+            }
+
+            if (/\s/.test(char)) {
+                break;
+            }
+
+            index++;
+        }
+
+        tokens.push({ value: command.slice(start, index), start, end: index });
+    }
+
+    return tokens;
+}
+
+interface ResumeFlagMatch {
+    flag: string;
+    /** The value exactly as written, quotes included. Undefined for a bare flag. */
+    value?: string;
+    start: number;
+    end: number;
+}
+
+/**
+ * Find a resume flag at the TOP LEVEL of the command, never inside a quoted
+ * argument. A regex over the raw string rewrote `grok -p "explain the -r flag"`
+ * into `grok -p "explain the -r <id>` — a mangled command with an unterminated
+ * quote, typed straight into the restored pane.
+ */
+function findResumeFlag(command: string, flags: readonly string[]): ResumeFlagMatch | undefined {
+    const tokens = tokenizeCommand(command);
+
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        const flag = flags.find((candidate) => token.value === candidate || token.value.startsWith(`${candidate}=`));
+
+        if (!flag) {
+            continue;
+        }
+
+        if (token.value.length > flag.length) {
+            return { flag, value: token.value.slice(flag.length + 1), start: token.start, end: token.end };
+        }
+
+        const next = tokens[i + 1];
+        if (next && !next.value.startsWith("-")) {
+            return { flag, value: next.value, start: token.start, end: next.end };
+        }
+
+        return { flag, start: token.start, end: token.end };
+    }
+
+    return undefined;
+}
+
+function spliceFlag(original: string, match: ResumeFlagMatch, replacement: string): string {
+    return original.slice(0, match.start) + replacement + original.slice(match.end);
+}
 
 /**
  * Pin the resume target inside the original command without touching anything
@@ -147,29 +280,108 @@ const CC_RUN_LAUNCHER = /^tools (?:cc|claude) run\b/;
  */
 function replaceResumeInPlace(original: string, sessionId: string): ReplayDerivation {
     const drift: string[] = [];
-    const match = original.match(/--resume(?:[= ]("[^"]*"|\S+))?/);
+    const match = findResumeFlag(original, ["--resume"]);
 
     if (!match) {
         drift.push(`--resume ${sessionId} added (session that was active in this pane)`);
         return { command: `${original} --resume ${sessionId}`, drift };
     }
 
-    if (match[1]) {
-        if (match[1].replace(/"/g, "") === sessionId) {
+    if (match.value !== undefined) {
+        if (match.value.replace(/"/g, "") === sessionId) {
             return { command: original, drift };
         }
 
-        drift.push(`resume target "${match[1]}" replaced with the session that was active here`);
+        drift.push(`resume target "${match.value}" replaced with the session that was active here`);
     } else {
         drift.push(`bare --resume (interactive picker) replaced with the concrete session id`);
     }
 
-    return { command: original.replace(match[0], `--resume ${sessionId}`), drift };
+    return { command: spliceFlag(original, match, `--resume ${sessionId}`), drift };
+}
+
+/**
+ * Pin a grok resume target. Grok accepts `-r` and `--resume`; keep whichever
+ * spelling the original used, and default to `-r` (what cmux-agent-resume types).
+ */
+function replaceGrokResume(original: string, sessionId: string): ReplayDerivation {
+    const drift: string[] = [];
+    const match = findResumeFlag(original, ["-r", "--resume"]);
+
+    if (!match) {
+        drift.push(`-r ${sessionId} added (session that was active in this pane)`);
+
+        return { command: `${original} -r ${sessionId}`, drift };
+    }
+
+    const current = match.value?.replace(/"/g, "");
+
+    if (current === sessionId) {
+        return { command: original, drift };
+    }
+
+    if (current !== undefined) {
+        drift.push(`resume target "${current}" replaced with the session that was active here`);
+    } else {
+        drift.push(`bare ${match.flag} (interactive picker) replaced with the concrete session id`);
+    }
+
+    return { command: spliceFlag(original, match, `${match.flag} ${sessionId}`), drift };
+}
+
+/**
+ * Pin a codex resume target. Codex resumes through a `resume <id>` SUBCOMMAND
+ * rather than a flag, so splice that subcommand in right after the launcher and
+ * leave every other flag as typed. Returning a bare `codex resume <id>` dropped
+ * `--model`, `--cd` and `--full-auto` from every restored pane.
+ */
+function replaceCodexResume(original: string, sessionId: string): ReplayDerivation {
+    const tokens = tokenizeCommand(original);
+    const launcher = tokens[0];
+    const next = tokens[1];
+
+    if (!launcher) {
+        return { command: original, drift: [] };
+    }
+
+    if (next?.value === "resume") {
+        const idToken = tokens[2];
+
+        if (!idToken || idToken.value.startsWith("-")) {
+            return {
+                command: `${original.slice(0, next.end)} ${sessionId}${original.slice(next.end)}`,
+                drift: ["bare resume (interactive picker) replaced with the concrete session id"],
+            };
+        }
+
+        if (idToken.value.replace(/"/g, "") === sessionId) {
+            return { command: original, drift: [] };
+        }
+
+        return {
+            command: original.slice(0, idToken.start) + sessionId + original.slice(idToken.end),
+            drift: [`resume target "${idToken.value}" replaced with the session that was active here`],
+        };
+    }
+
+    if (next && !next.value.startsWith("-")) {
+        // Another subcommand (`codex exec`, `codex mcp`): a resume target has no
+        // place inside it, so replay the resume on its own.
+        return {
+            command: `codex resume ${sessionId}`,
+            drift: [`codex resume ${sessionId} (session that was active in this pane)`],
+        };
+    }
+
+    return {
+        command: `${original.slice(0, launcher.end)} resume ${sessionId}${original.slice(launcher.end)}`,
+        drift: [`resume ${sessionId} added (session that was active in this pane)`],
+    };
 }
 
 /**
  * Derive the replay command from the captured original plus what we know about
- * the session that ran in the pane. Non-claude commands pass through untouched.
+ * the session that ran in the pane. Non-agent commands pass through untouched.
  */
 export function deriveReplayCommand(input: {
     original: string;
@@ -177,7 +389,19 @@ export function deriveReplayCommand(input: {
     account?: string;
 }): ReplayDerivation {
     const original = input.original.trim();
-    if (!input.sessionId || !CLAUDE_LAUNCHER.test(original)) {
+    if (!input.sessionId) {
+        return { command: original, drift: [] };
+    }
+
+    if (GROK_LAUNCHER.test(original)) {
+        return replaceGrokResume(original, input.sessionId);
+    }
+
+    if (CODEX_LAUNCHER.test(original)) {
+        return replaceCodexResume(original, input.sessionId);
+    }
+
+    if (!CLAUDE_LAUNCHER.test(original)) {
         return { command: original, drift: [] };
     }
 
@@ -187,39 +411,129 @@ export function deriveReplayCommand(input: {
         return replaceResumeInPlace(original, input.sessionId);
     }
 
+    return replaceCcRunResume(original, input.sessionId, input.account);
+}
+
+/**
+ * The concrete session id an agent command already resumes, or undefined when
+ * the launcher carries no pinned target.
+ *
+ * This is how a save-time journal lookup survives into the profile file. The
+ * journal is keyed by cmux surface uuid, which a saved profile does not store,
+ * so on restore the id inside the command IS the journal record for that pane.
+ */
+export function resumeTargetFromCommand(command: string): string | undefined {
+    const original = command.trim();
+    const kind = agentKindFromLauncher(original);
+
+    if (!kind) {
+        return undefined;
+    }
+
+    if (kind === "codex") {
+        const tokens = tokenizeCommand(original);
+
+        if (tokens[1]?.value !== "resume") {
+            return undefined;
+        }
+
+        const target = tokens[2]?.value.replace(/"/g, "");
+
+        return target && !target.startsWith("-") ? target : undefined;
+    }
+
+    const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
+
+    if (!match?.value) {
+        return undefined;
+    }
+
+    // cc run's OWN `--resume` takes a search query that can prompt, so only the
+    // pass-through flag after `--` names a session id.
+    if (CC_RUN_LAUNCHER.test(original)) {
+        const separator = passthroughStart(original);
+
+        if (separator === undefined || match.start < separator) {
+            return undefined;
+        }
+    }
+
+    return match.value.replace(/"/g, "");
+}
+
+/** Offset just past a top-level `--` separator, or undefined when there is none. */
+function passthroughStart(command: string): number | undefined {
+    const separator = tokenizeCommand(command).find((token) => token.value === "--");
+
+    return separator?.end;
+}
+
+/**
+ * Pin a `tools cc run` resume target IN PLACE, keeping every other flag the
+ * user typed. Rebuilding the command as `tools cc run <account> -- --resume
+ * <id>` dropped `--model opus`, `--verbose` and the launcher spelling from
+ * every restored pane — the same defect `replaceCodexResume` was fixed for.
+ *
+ * The resume target still lands AFTER `--`, where claude itself reads it: cc
+ * run's own `--resume <query>` runs a local search that can prompt, so it is
+ * not a deterministic replay target. A cc-run-level `--resume` in the original
+ * is therefore removed rather than spliced, and only that flag.
+ */
+function replaceCcRunResume(original: string, sessionId: string, pinnedAccount?: string): ReplayDerivation {
     const drift: string[] = [];
     // Both launcher spellings, or `tools claude run personal` would lose the
     // explicit account and replay under the journal's one (or none) while the
     // drift line claimed the original had no account.
-    const accountInOriginal = original.match(/^tools (?:cc|claude) run\s+(?!-)(\S+)/)?.[1];
-    const account = accountInOriginal ?? input.account;
+    const accountMatch = original.match(/^tools (?:cc|claude) run\s+(?!-)(\S+)/);
+    const account = accountMatch?.[1] ?? pinnedAccount;
+    let command = original;
 
-    if (!accountInOriginal && input.account) {
+    if (!accountMatch && pinnedAccount) {
+        const runToken = tokenizeCommand(command)[2];
         drift.push(
-            `account "${input.account}" added from the session pin journal — the original had none (it may have been picked interactively)`
+            `account "${pinnedAccount}" added from the session pin journal — the original had none (it may have been picked interactively)`
         );
+        command = runToken
+            ? `${command.slice(0, runToken.end)} ${pinnedAccount}${command.slice(runToken.end)}`
+            : `${command} ${pinnedAccount}`;
     }
-
-    const originalResume = original.match(/--resume(?:[= ]("[^"]*"|\S+))?/);
-    if (originalResume?.[1] && originalResume[1].replace(/"/g, "") !== input.sessionId) {
-        drift.push(`resume target "${originalResume[1]}" replaced with the session that was active here`);
-    } else if (!originalResume) {
-        drift.push(`-- --resume ${input.sessionId} added (session that was active in this pane)`);
-    } else if (originalResume && !originalResume[1]) {
-        drift.push(`bare --resume (interactive picker) replaced with the concrete session id`);
-    }
-
-    const command = account
-        ? `tools cc run ${account} -- --resume ${input.sessionId}`
-        : `tools cc run -- --resume ${input.sessionId}`;
 
     if (!account) {
         drift.push("no account recorded for this session — cc run will ask for one");
     }
 
-    if (command !== original && drift.length === 0) {
-        drift.push("command rewritten to the deterministic pass-through resume form");
+    const match = findResumeFlag(command, ["--resume"]);
+    const separator = passthroughStart(command);
+
+    if (match && separator !== undefined && match.start >= separator) {
+        const current = match.value?.replace(/"/g, "");
+
+        if (current === sessionId) {
+            return { command, drift };
+        }
+
+        drift.push(
+            current === undefined
+                ? "bare --resume (interactive picker) replaced with the concrete session id"
+                : `resume target "${current}" replaced with the session that was active here`
+        );
+
+        return { command: spliceFlag(command, match, `--resume ${sessionId}`), drift };
     }
 
-    return { command, drift };
+    if (match) {
+        // cc run's own --resume: drop just that flag, keep everything else.
+        drift.push(
+            match.value === undefined
+                ? "bare --resume (interactive picker) replaced with the concrete session id"
+                : `resume target "${match.value}" replaced with the session that was active here`
+        );
+        command = `${command.slice(0, match.start).trimEnd()}${command.slice(match.end)}`;
+    } else {
+        drift.push(`-- --resume ${sessionId} added (session that was active in this pane)`);
+    }
+
+    const tail = passthroughStart(command) === undefined ? "-- " : "";
+
+    return { command: `${command.trimEnd()} ${tail}--resume ${sessionId}`, drift };
 }

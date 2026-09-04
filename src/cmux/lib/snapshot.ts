@@ -1,10 +1,11 @@
-import { panelsById, readAutosaveSession } from "@app/cmux/lib/autosave";
 import {
-    collectTtyLaunchCommands,
-    deriveReplayCommand,
-    loadSurfaceSessions,
-    type SurfaceSessionInfo,
-} from "@app/cmux/lib/command-capture";
+    loadGrokCatalog,
+    type ReplayCatalog,
+    type ReplayCatalogSession,
+    replayCommandForSurface,
+} from "@app/cmux/lib/agent-replay";
+import { panelsById, readAutosaveSession } from "@app/cmux/lib/autosave";
+import { collectTtyLaunchCommands, loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/command-capture";
 import { captureSurfaceState, cwdFromTitle } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
@@ -42,12 +43,14 @@ interface CommandCaptureContext {
     ttyCommands: Map<string, string>;
     panelTty: Map<string, string>;
     surfaceSessions: Map<string, SurfaceSessionInfo>;
+    replayCatalog: ReplayCatalog;
 }
 
 export async function buildCommandCaptureContext(): Promise<CommandCaptureContext> {
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
 
     const panelTty = new Map<string, string>();
+    const grokCwds: string[] = [];
     try {
         const session = readAutosaveSession();
         for (const [id, panel] of panelsById(session)) {
@@ -55,11 +58,25 @@ export async function buildCommandCaptureContext(): Promise<CommandCaptureContex
                 panelTty.set(id, panel.ttyName);
             }
         }
+
+        for (const window of session.windows) {
+            for (const workspace of window.tabManager.workspaces) {
+                if (workspace.currentDirectory) {
+                    grokCwds.push(workspace.currentDirectory);
+                }
+
+                for (const panel of workspace.panels) {
+                    if (panel.directory) {
+                        grokCwds.push(panel.directory);
+                    }
+                }
+            }
+        }
     } catch (error) {
         logger.debug({ error }, "[snapshot] autosave unavailable — foreground command capture degraded");
     }
 
-    return { ttyCommands, panelTty, surfaceSessions };
+    return { ttyCommands, panelTty, surfaceSessions, replayCatalog: { sessions: loadGrokCatalog(grokCwds) } };
 }
 
 interface ListPaneSurfacesResponse {
@@ -334,19 +351,35 @@ async function captureSurface(
     const foreground = tty ? capture?.ttyCommands.get(tty) : undefined;
     const original = foreground ?? captured.command.value;
     const session = capture && entry.id ? capture.surfaceSessions.get(entry.id) : undefined;
-
-    if (!original) {
+    // Always "claude": this id comes from the Claude cmux-refs journal and
+    // nowhere else. Typing it from the tab title made any pane whose title ends
+    // in the word "grok" (including a shell in a directory named grok) replay
+    // `grok -r <claude uuid>`, a session grok has never seen.
+    const preferred: ReplayCatalogSession | undefined = session
+        ? {
+              kind: "claude",
+              sessionId: session.sessionId,
+              cwd: cwd ?? "",
+              title,
+              account: session.account,
+          }
+        : undefined;
+    const derived = replayCommandForSurface(
+        { title, cwd, command: original },
+        capture?.replayCatalog ?? { sessions: [] },
+        preferred
+    );
+    if (!derived.command) {
         return { type: "terminal", title, cwd, screen: captured.screen };
     }
 
-    const derived = deriveReplayCommand({ original, sessionId: session?.sessionId, account: session?.account });
     return {
         type: "terminal",
         title,
         cwd,
         screen: captured.screen,
         command: derived.command,
-        command_source: foreground ? "foreground" : captured.command.source,
+        command_source: foreground ? "foreground" : derived.command !== original ? "inferred" : captured.command.source,
         command_original: derived.command !== original ? original : undefined,
         drift: derived.drift.length > 0 ? derived.drift : undefined,
     };

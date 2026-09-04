@@ -1,3 +1,4 @@
+import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
 import { renderProfileCommandDetail } from "@app/cmux/lib/format";
 import { buildPlan, type RestoreOptions, reportWaitingPrompts, restoreProfile } from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
@@ -58,7 +59,8 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         out.log.warn("--enter has no effect with --no-replay; commands are not typed at all.");
     }
 
-    const plan = buildPlan(profile, opts);
+    const playable = await prepareProfileForRestore(profile);
+    const plan = buildPlan(playable, opts);
 
     p.intro(pc.bgCyan(pc.black(" cmux profiles restore ")));
     const planLines = plan.workspaces.map((ws) => {
@@ -66,7 +68,7 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
     });
     p.note(planLines.join("\n") || "(empty profile)", `Restore plan for ${pc.cyan(name)}`);
 
-    const detail = renderProfileCommandDetail(profile);
+    const detail = renderProfileCommandDetail(playable);
     if (detail.length > 0) {
         p.note(detail.join("\n"), "Panes · commands · drift");
     }
@@ -100,7 +102,7 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
     const startedAt = Date.now();
 
     try {
-        const outcome = await restoreProfile(profile, opts, {
+        const outcome = await restoreProfile(playable, opts, {
             onWorkspaceStart: ({ title, index, total }) => {
                 spinner.message(`Restoring ${index}/${total}: ${title}`);
             },

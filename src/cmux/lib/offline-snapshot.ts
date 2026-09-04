@@ -1,15 +1,11 @@
+import { loadGrokCatalog, type ReplayCatalogSession, replayCommandForSurface } from "@app/cmux/lib/agent-replay";
 import {
     type AutosaveSession,
     type AutosaveWorkspace,
     flattenLayout,
     readAutosaveSession,
 } from "@app/cmux/lib/autosave";
-import {
-    collectTtyLaunchCommands,
-    deriveReplayCommand,
-    loadSurfaceSessions,
-    type SurfaceSessionInfo,
-} from "@app/cmux/lib/command-capture";
+import { collectTtyLaunchCommands, loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/command-capture";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -30,6 +26,7 @@ const DEFAULT_CELL_HEIGHT_PX = 17;
 export interface OfflineCaptureDeps {
     ttyCommands: Map<string, string>;
     surfaceSessions: Map<string, SurfaceSessionInfo>;
+    grokSessions?: ReplayCatalogSession[];
 }
 
 export interface OfflineCaptureOptions {
@@ -39,8 +36,18 @@ export interface OfflineCaptureOptions {
 
 export async function captureOfflineProfile(options: OfflineCaptureOptions): Promise<Profile> {
     const session = readAutosaveSession();
+    const cwds = [
+        ...session.windows.flatMap((window) =>
+            window.tabManager.workspaces.flatMap((workspace) => [
+                workspace.currentDirectory ?? "",
+                ...workspace.panels.map((panel) => panel.directory ?? ""),
+            ])
+        ),
+    ];
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
-    return buildOfflineProfile(session, { ttyCommands, surfaceSessions }, options);
+    const grokSessions = loadGrokCatalog(cwds);
+
+    return buildOfflineProfile(session, { ttyCommands, surfaceSessions, grokSessions }, options);
 }
 
 export function buildOfflineProfile(
@@ -109,18 +116,34 @@ export function buildOfflinePanes(
 
             const original = panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined;
             const session = deps.surfaceSessions.get(panel.id);
-            const derived = original
-                ? deriveReplayCommand({ original, sessionId: session?.sessionId, account: session?.account })
+            // Always "claude": the surface-session journal only records Claude
+            // sessions, so typing the kind from the tab title turned a claude
+            // uuid into a `grok -r` argument on any pane whose title ends in
+            // the word "grok".
+            const preferred: ReplayCatalogSession | undefined = session
+                ? {
+                      kind: "claude",
+                      sessionId: session.sessionId,
+                      cwd: panel.directory ?? "",
+                      title: panel.title ?? "",
+                      account: session.account,
+                  }
                 : undefined;
+
+            const derived = replayCommandForSurface(
+                { title: panel.title ?? "", cwd: panel.directory, command: original },
+                { sessions: deps.grokSessions ?? [] },
+                preferred
+            );
 
             surfaces.push({
                 type: "terminal",
                 title: panel.title ?? "",
                 cwd: panel.directory,
-                command: derived?.command,
-                command_source: derived ? "offline" : undefined,
-                command_original: derived && derived.command !== original ? original : undefined,
-                drift: derived && derived.drift.length > 0 ? derived.drift : undefined,
+                command: derived.command,
+                command_source: derived.command ? "offline" : undefined,
+                command_original: derived.command && derived.command !== original ? original : undefined,
+                drift: derived.drift.length > 0 ? derived.drift : undefined,
             });
         }
 

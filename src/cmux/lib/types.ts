@@ -2,7 +2,7 @@ export const PROFILE_VERSION = 1;
 
 export type ProfileScope = "all" | "window" | "workspace";
 
-export type CommandSource = "scrollback" | "foreground" | "offline" | "manual" | "none";
+export type CommandSource = "scrollback" | "foreground" | "offline" | "manual" | "inferred" | "none";
 
 export interface ScreenSnapshot {
     /** Raw rendered text returned by `cmux capture-pane` at save time. ANSI-stripped. */

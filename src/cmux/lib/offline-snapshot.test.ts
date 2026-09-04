@@ -95,4 +95,33 @@ describe("buildOfflinePanes", () => {
             expect(fourth.cwd).toBe("/tmp/four");
         }
     });
+
+    test("infers grok -r from the tab title when the process table is empty", () => {
+        const ws = workspaceFixture();
+        ws.panels[4] = {
+            id: "e",
+            type: "terminal",
+            title: "PRs merged into release/2026-09-03 - grok",
+            directory: "/tmp/four",
+        };
+        const panes = buildOfflinePanes(ws, FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            grokSessions: [
+                {
+                    kind: "grok",
+                    sessionId: "01a05cc5-0ecf-7d40-945e-977e45b3f935",
+                    cwd: "/tmp/four",
+                    title: "PRs merged into release/2026-09-03",
+                },
+            ],
+        });
+
+        const surface = panes[2].surfaces[0];
+        expect(surface.type).toBe("terminal");
+        if (surface.type === "terminal") {
+            expect(surface.command).toBe("grok -r 01a05cc5-0ecf-7d40-945e-977e45b3f935");
+            expect(surface.command_source).toBe("offline");
+        }
+    });
 });

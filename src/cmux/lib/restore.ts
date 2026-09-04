@@ -66,16 +66,25 @@ export function buildPlan(profile: Profile, opts: RestoreOptions): RestorePlan {
     return { workspaces };
 }
 
+/**
+ * Restore an ALREADY prepared profile (see `prepareProfileForRestore`).
+ *
+ * Preparing again here re-ran the whole inference over its own output: the
+ * synthetic `claude --resume '<id>'` from pass 1 became pass 2's "original", so
+ * the command typed differed from the plan the user had just confirmed and the
+ * drift note described a replacement that never happened. It also paid for a
+ * second Claude session-listing scan and a second grok directory walk.
+ */
 export async function restoreProfile(
-    profile: Profile,
+    playable: Profile,
     opts: RestoreOptions,
     events: RestoreEvents = {}
 ): Promise<RestoreOutcome> {
     const outcome: RestoreOutcome = { workspaces: [] };
-    const totalWorkspaces = profile.windows.reduce((acc, w) => acc + w.workspaces.length, 0);
+    const totalWorkspaces = playable.windows.reduce((acc, w) => acc + w.workspaces.length, 0);
     let visited = 0;
 
-    for (const window of profile.windows) {
+    for (const window of playable.windows) {
         for (const ws of window.workspaces) {
             visited += 1;
             const targetTitle = `${opts.prefix}${ws.title}`;
