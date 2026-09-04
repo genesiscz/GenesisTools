@@ -163,6 +163,69 @@ function projectFromFile(file: string, source: SourceId): string {
     return "";
 }
 
+export interface NativeChunkOptions {
+    driver: MonitorDriver;
+    source: SourceId;
+    /** Absolute path, for the session id and the project name. */
+    file: string;
+    /** Complete lines only — a chunk cut mid-line loses that line in both halves. */
+    chunk: string;
+    /** Codex's sticky model and cumulative totals, from the previous chunk. */
+    state?: unknown;
+}
+
+export interface NativeChunkResult {
+    events: SpendEvent[];
+    /** Feed back as `state` for the next chunk of the same file. */
+    state: unknown;
+}
+
+/**
+ * Turn one chunk of ONE native transcript into events.
+ *
+ * Split out of the whole-file loader so the incremental series cache
+ * (`events-cache.ts`) parses appended bytes with exactly this code. Two
+ * parsers for the same dialect would drift, and the drift would show up as a
+ * series and a report disagreeing about the same file.
+ */
+export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult {
+    const { driver, source, file, chunk } = options;
+    const events: SpendEvent[] = [];
+
+    if (source === "claude") {
+        for (const line of chunk.split("\n")) {
+            events.push(...parseClaudeLine(line, file));
+        }
+
+        return { events, state: undefined };
+    }
+
+    const parser = driver.createParser({ file, state: options.state });
+    const sessionId = sessionFromFile(file, source);
+    const project = projectFromFile(file, source);
+
+    for (const line of chunk.split("\n")) {
+        parser.parseLine(line, (event: DriverUsageEvent) => {
+            events.push({
+                source,
+                id: event.id,
+                model: event.model,
+                timestamp: event.timestamp,
+                sessionId,
+                project,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cacheCreationTokens: event.cacheCreationTokens,
+                cacheReadTokens: event.cacheReadTokens,
+                recordedCostUsd: event.recordedCostUsd,
+                reasoningOutputTokens: event.reasoningOutputTokens,
+            });
+        });
+    }
+
+    return { events, state: parser.snapshot() };
+}
+
 function loadDriverFiles(driver: MonitorDriver, home: string, source: SourceId, minMtimeMs = MIN_MTIME): SpendEvent[] {
     const files = findRecentTranscripts(driver.roots(home), minMtimeMs, driver);
     const events: SpendEvent[] = [];
@@ -174,36 +237,7 @@ function loadDriverFiles(driver: MonitorDriver, home: string, source: SourceId, 
             continue;
         }
 
-        if (source === "claude") {
-            for (const line of content.split("\n")) {
-                events.push(...parseClaudeLine(line, file));
-            }
-
-            continue;
-        }
-
-        const parser = driver.createParser({ file, state: undefined });
-        const sessionId = sessionFromFile(file, source);
-        const project = projectFromFile(file, source);
-
-        for (const line of content.split("\n")) {
-            parser.parseLine(line, (event: DriverUsageEvent) => {
-                events.push({
-                    source,
-                    id: event.id,
-                    model: event.model,
-                    timestamp: event.timestamp,
-                    sessionId,
-                    project,
-                    inputTokens: event.inputTokens,
-                    outputTokens: event.outputTokens,
-                    cacheCreationTokens: event.cacheCreationTokens,
-                    cacheReadTokens: event.cacheReadTokens,
-                    recordedCostUsd: event.recordedCostUsd,
-                    reasoningOutputTokens: event.reasoningOutputTokens,
-                });
-            });
-        }
+        events.push(...parseNativeChunk({ driver, source, file, chunk: content }).events);
     }
 
     return events;
