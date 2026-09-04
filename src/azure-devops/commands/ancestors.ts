@@ -44,6 +44,13 @@ export function registerAncestorsCommand(parent: Command): void {
                             parent: parseRelations(item.relations ?? []).parent,
                         };
                     } catch (err) {
+                        // Only an ancestor may be swallowed: a truncated chain is still an answer.
+                        // Swallowing the item the user asked for turns an auth or transport failure
+                        // into "work item not found", which sends them hunting the wrong problem.
+                        if (workItemId === id) {
+                            throw err;
+                        }
+
                         logFetchFailure(workItemId, err);
 
                         return null;
