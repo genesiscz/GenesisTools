@@ -9,6 +9,7 @@ import { registerMeetingsCommand } from "@app/ms-teams/commands/meetings";
 import { registerMembersCommand } from "@app/ms-teams/commands/members";
 import { registerMentionsCommand } from "@app/ms-teams/commands/mentions";
 import { registerPeopleCommand } from "@app/ms-teams/commands/people";
+import { registerRepairCommand } from "@app/ms-teams/commands/repair";
 import { registerSearchCommand } from "@app/ms-teams/commands/search";
 import { registerShowCommand } from "@app/ms-teams/commands/show";
 import { registerSyncCommand } from "@app/ms-teams/commands/sync";
@@ -23,12 +24,13 @@ handleReadmeFlag(import.meta.url);
 const program = new Command();
 program
     .name("ms-teams")
-    .description("Read Microsoft Teams chats from the local desktop cache")
+    .description("Read Microsoft Teams chats from the local desktop cache, and repair a stale live IndexedDB")
     .version("1.0.0")
     .showHelpAfterError(true);
 
 registerSyncCommand(program);
 registerDoctorCommand(program);
+registerRepairCommand(program);
 registerConversationsCommand(program);
 registerShowCommand(program);
 registerSearchCommand(program);

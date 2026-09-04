@@ -24,18 +24,28 @@ export function venvPython(): string {
     return join(venvDir(), "bin", "python");
 }
 
+export function liveMsTeamsRoot(home = homedir()): string {
+    return join(home, "Library/Containers/com.microsoft.teams2/Data/Library/Application Support/Microsoft/MSTeams");
+}
+
+export function liveEbWebView(home = homedir()): string {
+    return join(liveMsTeamsRoot(home), "EBWebView");
+}
+
+export function liveWorkProfile(home = homedir()): string {
+    return join(liveEbWebView(home), "WV2Profile_tfw");
+}
+
+export function liveIndexedDbParent(home = homedir()): string {
+    return join(liveWorkProfile(home), "IndexedDB");
+}
+
 export function liveIdbDir(): string {
-    return join(
-        homedir(),
-        "Library/Containers/com.microsoft.teams2/Data/Library/Application Support/Microsoft/MSTeams/EBWebView/WV2Profile_tfw/IndexedDB/https_teams.microsoft.com_0.indexeddb.leveldb"
-    );
+    return join(liveIndexedDbParent(), "https_teams.microsoft.com_0.indexeddb.leveldb");
 }
 
 export function liveBlobDir(): string {
-    return join(
-        homedir(),
-        "Library/Containers/com.microsoft.teams2/Data/Library/Application Support/Microsoft/MSTeams/EBWebView/WV2Profile_tfw/IndexedDB/https_teams.microsoft.com_0.indexeddb.blob"
-    );
+    return join(liveIndexedDbParent(), "https_teams.microsoft.com_0.indexeddb.blob");
 }
 
 export function dumpIdbScript(): string {

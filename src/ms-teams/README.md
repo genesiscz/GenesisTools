@@ -8,6 +8,7 @@ This is the client cache of threads you have opened. It is not a server-complete
 
 ```bash
 tools ms-teams doctor
+tools ms-teams repair probe "Weekly planning"
 tools ms-teams sync
 tools ms-teams conversations --with "Ada"
 tools ms-teams show "conversation with Ada Lovelace from 2026-08-06 to 2026-08-06"
@@ -23,6 +24,12 @@ Needs Full Disk Access for your terminal (same as `tools macos messages`).
 |---|---|
 | `sync` | Snapshot IndexedDB and ingest into `~/.genesis-tools/ms-teams/cache.db` |
 | `doctor` | Read-only path / cache / venv check. Never writes. |
+| `repair status` | Live profile sizes and auth dirs. Never writes. |
+| `repair probe <text>` | Search live IndexedDB files for a title (not the SQLite cache) |
+| `repair quit` | Quit the app. Ignores `MSTeamsAudioDevice.driver`. Not logout. |
+| `repair idb --yes` | Move `teams.microsoft.com` IndexedDB aside. Conversation store. Keeps login. |
+| `repair cache --yes` | Move Service Worker + GPU caches. Did not restore vanished chats. |
+| `repair restore <dest> --yes` | Put a `/tmp/teams-{idb,cache}-*` backup back |
 | `conversations` (`chats`, `list`) | Inventory table |
 | `show [query]` | Resolve one thread and export `md` / `json` / `html` |
 | `search <text>` | FTS over message text |

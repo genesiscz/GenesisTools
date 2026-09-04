@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { cacheDbPath, liveBlobDir, liveIdbDir, venvPython } from "./paths";
+import { teamsAppIsUp } from "./process";
 import { TeamsCache } from "./store";
 
 const log = logger.scoped("ms-teams").log;
@@ -68,16 +69,7 @@ export function inspectDoctor(): DoctorReport {
         cacheIngestedAt,
         counts,
         venvPythonExists: existsSync(venvPython()),
-        teamsProcess: isTeamsRunning(),
+        teamsProcess: teamsAppIsUp(),
         readable,
     };
-}
-
-function isTeamsRunning(): boolean {
-    try {
-        const proc = Bun.spawnSync(["pgrep", "-fl", "Microsoft Teams"], { stdout: "pipe", stderr: "pipe" });
-        return proc.exitCode === 0 && new TextDecoder().decode(proc.stdout).trim().length > 0;
-    } catch {
-        return false;
-    }
 }
