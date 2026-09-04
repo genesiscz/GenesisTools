@@ -1,5 +1,6 @@
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { generatePkcePair } from "../oauth/pkce";
@@ -42,6 +43,12 @@ export interface CodexTokens {
     refreshToken: string;
     expiresAt: number; // Unix timestamp in ms (0 if unknown — will trigger refresh)
     accountId?: string;
+    /**
+     * The OIDC id token when the server issued one. It carries the email and the
+     * plan claims the access token does not always have, which is what home
+     * discovery reads to name a profile without a network call.
+     */
+    idToken?: string;
 }
 
 /** Default path for Codex CLI's auth cache */
@@ -84,6 +91,7 @@ export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise
                 refreshToken: data.tokens.refresh_token,
                 expiresAt,
                 accountId: data.tokens.account_id,
+                idToken: data.tokens.id_token,
             };
         }
 
@@ -102,6 +110,32 @@ export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise
     } catch {
         return null;
     }
+}
+
+/**
+ * Write an auth file in the shape the official Codex CLI reads, so the CLI, the
+ * ChatGPT app and GenesisTools share ONE token per profile (decision D3).
+ *
+ * Mode 0600: this file is the whole subscription grant, and the CLI writes it
+ * the same way. `mkdir` is recursive because `--home <dir>` may name a profile
+ * directory that does not exist yet.
+ */
+export async function writeCodexAuthJson(path: string, tokens: CodexTokens): Promise<void> {
+    const payload: CodexAuthJsonOfficial = {
+        auth_mode: "chatgpt",
+        tokens: {
+            ...(tokens.idToken ? { id_token: tokens.idToken } : {}),
+            access_token: tokens.accessToken,
+            refresh_token: tokens.refreshToken,
+            ...(tokens.accountId ? { account_id: tokens.accountId } : {}),
+        },
+        last_refresh: new Date().toISOString(),
+    };
+
+    mkdirSync(dirname(path), { recursive: true });
+    await Bun.write(path, SafeJSON.stringify(payload, null, 2));
+    chmodSync(path, 0o600);
+    logger.info({ path }, "codex: wrote auth.json in the official CLI shape");
 }
 
 /**
@@ -220,6 +254,7 @@ export class CodexOAuthClient {
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + expiresIn * 1000,
             accountId: extractAccountId(data.id_token ?? accessToken),
+            idToken: data.id_token,
         };
     }
 

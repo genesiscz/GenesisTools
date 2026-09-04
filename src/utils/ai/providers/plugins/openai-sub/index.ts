@@ -1,7 +1,10 @@
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { extractAccountId, extractEmail, extractPlanType, readCodexAuthJson } from "../../../openai/codex-auth";
 import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
+import { discoverCodexHomes } from "./discover";
+import { codexLogin } from "./login";
 
 /**
  * Codex (ChatGPT plan) subscription over the WHAM endpoint.
@@ -59,5 +62,24 @@ export const openAiSubPlugin: ProviderPlugin = {
     accounts: {
         presentation,
         logoutTargets: ["oauth", "authFile"],
+        login: codexLogin,
+        discoverHomes: () => discoverCodexHomes(),
+
+        /** JWT claims from the auth file or the stored token. Decode only, no network. */
+        async identityOf(account) {
+            const authFile = account.credentials.authFile;
+            const tokens = authFile ? await readCodexAuthJson(authFile) : null;
+            const claims = tokens?.idToken ?? tokens?.accessToken;
+
+            if (!claims) {
+                return account.accountUuid ? { accountUuid: account.accountUuid, plan: account.label } : undefined;
+            }
+
+            return {
+                email: extractEmail(claims),
+                accountUuid: tokens?.accountId ?? extractAccountId(claims),
+                plan: extractPlanType(claims) ?? account.label,
+            };
+        },
     },
 };

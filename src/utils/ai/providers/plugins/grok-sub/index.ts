@@ -1,7 +1,10 @@
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { decodeJwtClaims, getActiveAuthEntry, readAuthFileAsync } from "../../../grok/auth";
+import { grokAuthPath, resolveGrokHome } from "../../../grok/paths";
 import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
+import { discoverGrokHomes } from "./discover";
 
 /**
  * SuperGrok subscription through the Grok CLI chat proxy.
@@ -62,5 +65,41 @@ export const grokSubPlugin: ProviderPlugin = {
     accounts: {
         presentation,
         logoutTargets: ["authFile"],
+        discoverHomes: () => discoverGrokHomes(),
+
+        /**
+         * No `login`: xAI has no in-process flow, so the Grok CLI does the browser
+         * round-trip and we bind the file it writes.
+         */
+        externalLogin(ctx) {
+            const home = ctx.home ?? resolveGrokHome();
+
+            return {
+                command: ["grok", "login"],
+                env: { GROK_HOME: home },
+                authFile: ctx.authFile ?? grokAuthPath(home),
+            };
+        },
+
+        /** Claims out of the auth file the account references. Decode only, no OIDC grant. */
+        async identityOf(account) {
+            const authFile = account.credentials.authFile;
+
+            if (!authFile) {
+                return undefined;
+            }
+
+            const active = getActiveAuthEntry(await readAuthFileAsync(authFile));
+            const claims = active ? decodeJwtClaims(active.key) : null;
+
+            if (!claims) {
+                return undefined;
+            }
+
+            return {
+                accountUuid: claims.sub,
+                ...(claims.tier === undefined ? {} : { plan: `tier ${claims.tier}` }),
+            };
+        },
     },
 };
