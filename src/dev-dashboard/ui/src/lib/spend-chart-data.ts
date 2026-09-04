@@ -22,6 +22,33 @@ export interface SpendChartData {
 
 export const TOTAL_KEY = "total";
 
+/** `YYYY-MM-DD`, optionally `THH` or `THH:mm`. Anything else falls through to `Date`. */
+const BUCKET_KEY = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})(?::(\d{2}))?)?$/;
+
+/**
+ * Bucket keys from `spendBucketKey` are LOCAL wall-clock and truncated, so
+ * `2026-09-04T20` is 8pm here, not a UTC instant. `new Date()` rejects the hour
+ * form outright and reads the day form as UTC midnight, which drops every
+ * hour-grain point and shifts every day-grain point by the offset. Parse the
+ * shape ourselves and let a real ISO instant take the native path.
+ */
+export function parseBucketTime(key: string): number {
+    const parts = BUCKET_KEY.exec(key);
+
+    if (!parts) {
+        return new Date(key).getTime();
+    }
+
+    const [, year, month, day, hour, minute] = parts;
+    return new Date(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        hour ? Number(hour) : 0,
+        minute ? Number(minute) : 0
+    ).getTime();
+}
+
 function visibleBuckets(point: SpendSeriesPoint, hidden: ReadonlySet<string>): Array<[string, SpendBucket]> {
     return Object.entries(point.byAccount).filter(([accountId]) => !hidden.has(accountId));
 }
@@ -41,7 +68,7 @@ export function buildSpendChartData(
     const partial: Array<{ t: number; values: Record<string, number> }> = [];
 
     for (const point of points) {
-        const t = new Date(point.t).getTime();
+        const t = parseBucketTime(point.t);
 
         if (Number.isNaN(t)) {
             continue;

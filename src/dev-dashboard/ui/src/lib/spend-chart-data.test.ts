@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
-import { buildSpendChartData, formatUsd, sumVisible } from "./spend-chart-data";
+import { buildSpendChartData, formatUsd, parseBucketTime, sumVisible } from "./spend-chart-data";
 
 const POINTS: SpendSeriesPoint[] = [
     {
@@ -59,6 +59,49 @@ describe("buildSpendChartData", () => {
 
         expect(rows.map((r) => r.t)).toEqual([...rows.map((r) => r.t)].sort((a, b) => a - b));
         expect(rows).toHaveLength(2);
+    });
+});
+
+describe("parseBucketTime", () => {
+    test("an hour bucket key is local wall-clock, not Invalid Date", () => {
+        const parsed = parseBucketTime("2026-09-04T20");
+
+        expect(Number.isNaN(parsed)).toBe(false);
+        expect(new Date(parsed).getHours()).toBe(20);
+        expect(new Date(parsed).getDate()).toBe(4);
+    });
+
+    test("a day bucket key is local midnight, so it does not shift across the zone", () => {
+        const parsed = parseBucketTime("2026-09-04");
+
+        expect(new Date(parsed).getHours()).toBe(0);
+        expect(new Date(parsed).getDate()).toBe(4);
+    });
+
+    test("a minute bucket key keeps its minute", () => {
+        expect(new Date(parseBucketTime("2026-09-04T20:37")).getMinutes()).toBe(37);
+    });
+
+    test("a full ISO instant still parses as an instant", () => {
+        expect(parseBucketTime("2026-09-04T20:00:00.000Z")).toBe(Date.parse("2026-09-04T20:00:00.000Z"));
+    });
+
+    test("junk stays NaN so the chart drops it", () => {
+        expect(Number.isNaN(parseBucketTime("nope"))).toBe(true);
+    });
+});
+
+describe("buildSpendChartData with hour buckets", () => {
+    test("hour-grain points are plotted rather than discarded", () => {
+        const hourly: SpendSeriesPoint[] = [
+            { t: "2026-09-04T19", costUsd: 1, tokens: 10, byAccount: { acc_work: { costUsd: 1, tokens: 10 } } },
+            { t: "2026-09-04T20", costUsd: 2, tokens: 20, byAccount: { acc_work: { costUsd: 2, tokens: 20 } } },
+        ];
+        const { rows, keys } = buildSpendChartData(hourly, { mode: "stacked", hiddenAccountIds: new Set() });
+
+        expect(keys).toEqual(["acc_work"]);
+        expect(rows).toHaveLength(2);
+        expect(rows[1].t - rows[0].t).toBe(3_600_000);
     });
 });
 
