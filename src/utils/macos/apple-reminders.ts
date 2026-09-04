@@ -326,13 +326,18 @@ export async function runDarwinkitGuarded<T>(
                 /^Disconnected$/.test(message) ||
                 /^Server exited$/.test(message) ||
                 /exited with code .* before ready/.test(message) ||
-                /^Transport not connected$/.test(message)
+                /^Transport not connected$/.test(message) ||
+                /^Transport already started$/.test(message)
             ) {
                 const diagnostics: DarwinkitDiagnostics = {
                     reportPath: findRecentDiagnosticReport(),
                     stderrTail: readStderrTail(dk),
                 };
 
+                // The shared client is unusable after any of these (its child is gone or
+                // its transport is wedged); drop it so the next call spawns a fresh one
+                // instead of failing the same way forever.
+                closeDarwinKit();
                 const wrapped = new DarwinkitCrashError(operation, null, diagnostics);
 
                 if (err instanceof Error) {
@@ -371,7 +376,7 @@ export class RemindersPermissionError extends Error {
 
     constructor(status: string) {
         super(
-            `Reminders access not authorized (status: ${status}). Use “Allow Reminders Access” in the dashboard, or run \`tools macos reminders list-lists\` in Terminal so macOS can show the permission dialog. If the dialog never appears (e.g. launchd background), run \`tools dev-dashboard ui up --foreground\` once. Toggle **bun** (and **DarwinKit** if listed) under System Settings → Privacy & Security → Reminders.`
+            `Reminders access not authorized (status: ${status}). Use “Allow Reminders Access” in the dashboard, or run \`tools macos reminders list-lists\` in Terminal so macOS can show the permission dialog. If the dialog never appears (e.g. launchd background), run \`tools dev-dashboard ui up --foreground\` once. Toggle **GenesisTools** (the app that owns the grants; \`tools macos permissions\` shows it) under System Settings → Privacy & Security → Reminders.`
         );
         this.status = status;
     }
@@ -397,16 +402,27 @@ export class MacReminders {
         );
     }
 
-    /** Triggers the macOS Reminders permission sheet when status is notDetermined (no manual “+” in Settings). */
+    /**
+     * Triggers the macOS Reminders permission sheet when status is notDetermined (no manual “+” in Settings).
+     *
+     * The helper that showed the sheet is retired afterwards, whatever the answer: EventKit
+     * caches the authorization a process saw at launch, so a long-lived helper born before
+     * the grant keeps answering "denied" after the user clicked Allow (observed 2026-09-04 in
+     * the dashboard). The next call spawns a fresh helper that reads the current grant.
+     */
     static async requestAccess(options?: GuardOptions): Promise<RemindersAuthResult> {
         const timeoutMs = options?.timeoutMs ?? 120_000;
 
-        return runDarwinkitGuarded(
-            getDarwinKit(),
-            "reminders.request_full_access",
-            (dk) => (dk.reminders as RemindersClient).requestFullAccess({ timeout: timeoutMs }),
-            { ...options, timeoutMs }
-        );
+        try {
+            return await runDarwinkitGuarded(
+                getDarwinKit(),
+                "reminders.request_full_access",
+                (dk) => (dk.reminders as RemindersClient).requestFullAccess({ timeout: timeoutMs }),
+                { ...options, timeoutMs }
+            );
+        } finally {
+            closeDarwinKit();
+        }
     }
 
     static async ensureAuthorized(options?: GuardOptions & { requestIfNeeded?: boolean }): Promise<void> {
