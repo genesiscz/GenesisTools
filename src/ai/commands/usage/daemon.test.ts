@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseInterval } from "@app/daemon/lib/interval";
 import type { RegisterTaskOptions } from "@app/daemon/lib/register";
 import {
     type DaemonRegistry,
@@ -28,11 +29,18 @@ function fakeRegistry(registered: string[]): {
                 unregistered.push(name);
                 return known.delete(name);
             },
+            // Mirrors the real `registerTask`: with `overwrite: true` it answers `true`
+            // for an update as well as for a create, and it validates the interval first.
             registerTask: async (opts: RegisterTaskOptions) => {
+                parseInterval(opts.every);
                 registeredWith.push(opts);
-                const created = !known.has(opts.name);
+
+                if (known.has(opts.name) && !opts.overwrite) {
+                    return false;
+                }
+
                 known.add(opts.name);
-                return created;
+                return true;
             },
         },
     };
@@ -94,5 +102,38 @@ describe("registerUsagePollTask", () => {
 
         expect(result).toEqual({ created: false, migratedFromLegacy: false });
         expect(unregistered).toEqual([]);
+    });
+    // The interval reaches `parseInterval` inside `registerTask`, i.e. AFTER the legacy
+    // task is gone. Validating first is what keeps a typo from leaving no task at all.
+    test("rejects an invalid interval without removing the legacy task", async () => {
+        const { registry, registeredWith, unregistered } = fakeRegistry([LEGACY_USAGE_TASK_NAME]);
+
+        await expect(registerUsagePollTask({ ...ARGS, interval: "every fortnight", registry })).rejects.toThrow(
+            /Invalid interval/
+        );
+        expect(unregistered).toEqual([]);
+        expect(registeredWith).toEqual([]);
+    });
+
+    // Negative control: a valid interval still migrates and registers.
+    test("a valid interval still removes the legacy task and registers", async () => {
+        const { registry, registeredWith, unregistered } = fakeRegistry([LEGACY_USAGE_TASK_NAME]);
+
+        const result = await registerUsagePollTask({ ...ARGS, registry });
+
+        expect(result).toEqual({ created: true, migratedFromLegacy: true });
+        expect(unregistered).toEqual([LEGACY_USAGE_TASK_NAME]);
+        expect(registeredWith).toHaveLength(1);
+    });
+
+    // `overwrite: true` makes the real `registerTask` answer `true` either way, so
+    // "Updated task" can only come from asking whether the task was there first.
+    test("reports an overwrite as an update, not as a creation", async () => {
+        const { registry, registeredWith } = fakeRegistry([USAGE_TASK_NAME]);
+
+        const result = await registerUsagePollTask({ ...ARGS, registry });
+
+        expect(result.created).toBe(false);
+        expect(registeredWith[0].overwrite).toBe(true);
     });
 });
