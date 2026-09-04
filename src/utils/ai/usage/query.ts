@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { dayFilePath, daysInRange, parseBound } from "./paths";
-import { spendBucketKey } from "./series-keys";
+import { isValidTimeZone, spendBucketKey } from "./series-keys";
 import type {
     SpendSeriesBucket,
     SpendSeriesPoint,
@@ -21,6 +21,15 @@ import type {
  * one truncated tail must not hide every other row.
  */
 export function queryUsage(query: UsageQuery): UsageQueryResult {
+    // Up here rather than in `bucketPoints`: there the throw would come from
+    // `Intl.DateTimeFormat` on the first event, so a query over an empty window
+    // would accept the same zone a populated one rejects.
+    if (query.timeZone !== undefined && !isValidTimeZone(query.timeZone)) {
+        throw new Error(
+            `queryUsage: unknown timeZone "${query.timeZone}". Pass an IANA identifier such as "Europe/Prague", or omit it for the system zone.`
+        );
+    }
+
     const from = parseBound(query.from);
     const to = parseBound(query.to);
     const apps = toSet(query.app);
