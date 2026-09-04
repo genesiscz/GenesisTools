@@ -1,6 +1,7 @@
 import { type BoardEvent, subscribeBoard } from "@app/dev-dashboard/lib/boards/events";
 import { createRunLogTail } from "@app/dev-dashboard/lib/daemon-run-tail";
 import { classifyLogLine } from "@app/dev-dashboard/lib/daemon-view/classify";
+import { createAiUsageProducer } from "@app/dev-dashboard/lib/live/ai-usage-producer";
 import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
 import { classifyListeningPorts, listListeningPorts } from "@app/dev-dashboard/lib/ports/scanner";
@@ -22,6 +23,7 @@ export function startLiveProducers(hub: LiveHub): { stop: () => void } {
     let portsBusy = false;
     let pulseTimer: ReturnType<typeof setInterval> | null = null;
     let qaStream: ReturnType<typeof createQaStream> | null = null;
+    const aiUsage = createAiUsageProducer(hub);
     const boardUnsubs = new Map<string, () => void>();
     const daemonTails = new Map<string, { close: () => void }>();
 
@@ -210,6 +212,18 @@ export function startLiveProducers(hub: LiveHub): { stop: () => void } {
             return;
         }
 
+        if (channel === "ai-usage") {
+            if (delta === 1 && hub.subscriberCount("ai-usage") === 1) {
+                aiUsage.start();
+            }
+
+            if (delta === -1 && hub.subscriberCount("ai-usage") === 0) {
+                aiUsage.stop();
+            }
+
+            return;
+        }
+
         if (channel.startsWith("boards:")) {
             const slug = channel.slice("boards:".length);
             if (delta === 1) {
@@ -242,6 +256,7 @@ export function startLiveProducers(hub: LiveHub): { stop: () => void } {
             stopPorts();
             stopPulse();
             stopQa();
+            aiUsage.stop();
             for (const slug of [...boardUnsubs.keys()]) {
                 stopBoard(slug);
             }
