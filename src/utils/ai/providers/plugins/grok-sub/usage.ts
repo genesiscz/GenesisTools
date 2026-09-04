@@ -1,3 +1,4 @@
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
 import { resolveGrokSubToken } from "../../../grok/account";
@@ -27,6 +28,13 @@ import type {
  */
 
 const MIN_INTERVAL_MS = 300_000;
+
+/**
+ * Ceiling on the two reads one poll makes. `GrokSubscriptionClient.fetch` hands its
+ * request straight to `fetch()` with no signal, so a hung proxy would otherwise keep
+ * `Promise.all` (and with it the whole daemon round) pending forever.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
 
 const GROK_SUB = "grok-sub";
 
@@ -164,7 +172,11 @@ export async function pollGrokAccount(
         ((args: { token: string; authPath: string; probe: boolean }) => new GrokSubscriptionClient(args));
     const client = create({ token: resolved.token, authPath: resolved.authPath, probe: opts.probe ?? false });
 
-    const [credits, settings] = await Promise.all([client.getCredits(), client.getSettings()]);
+    const [credits, settings] = await withTimeout(
+        Promise.all([client.getCredits(), client.getSettings()]),
+        REQUEST_TIMEOUT_MS,
+        new Error(`grok usage read timed out after ${REQUEST_TIMEOUT_MS}ms`)
+    );
     logger.debug(
         {
             account: account.name,

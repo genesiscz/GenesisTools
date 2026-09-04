@@ -189,6 +189,14 @@ export function isUsageBucket(value: unknown): value is UsageBucket {
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
+/**
+ * Ceiling on ONE usage request. `signal` is optional and the poll never passes one, so
+ * without a deadline a stalled TCP connection holds the whole round: the daemon awaits
+ * `Promise.allSettled` over every account, and the poll gate stays unwritten meanwhile.
+ * Well under the daemon task's own 60s timeout.
+ */
+const USAGE_TIMEOUT_MS = 20_000;
+
 export async function fetchUsage(
     accessToken: string,
     signal?: AbortSignal,
@@ -198,13 +206,14 @@ export async function fetchUsage(
 
     logger.debug(`${tag} fetching ${USAGE_URL}`);
 
+    const deadline = AbortSignal.timeout(USAGE_TIMEOUT_MS);
     const res = await fetch(USAGE_URL, {
         headers: {
             Authorization: `Bearer ${accessToken}`,
             "anthropic-beta": "oauth-2025-04-20",
             Accept: "application/json",
         },
-        signal,
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
     });
 
     if (res.status === 401 || res.status === 429) {
