@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
 import { MacContactsDatabase } from "./MacContactsDatabase";
 import { MacDatabase } from "./MacDatabase";
 
@@ -67,12 +68,36 @@ export interface SearchMessagesOptions {
     page?: number;
 }
 
+/**
+ * Ceiling for a whole-conversation load. `loadAllMessages` pages 1000 rows at a
+ * time and keeps every row, attachments included, so a multi-year group chat
+ * with half a million messages otherwise exhausts memory. At this cap one
+ * export holds roughly 50 000 message records.
+ */
+export const EXPORT_MESSAGE_LIMIT = 50_000;
+
+/** A whole-conversation load plus whether the cap dropped anything. */
+export interface LoadedConversation {
+    messages: MessageInfo[];
+    truncated: boolean;
+}
+
 export interface ExportConversationOptions {
     from?: Date;
     to?: Date;
+    /** Ceiling on messages loaded. Default {@link EXPORT_MESSAGE_LIMIT}. */
+    maxMessages?: number;
     format?: "text" | "markdown";
     resolveContacts?: boolean;
     groupByTime?: boolean;
+    /** Override the `[name #id]` fragment written for each attachment. */
+    formatAttachment?: (att: AttachmentInfo) => string;
+    /**
+     * Messages already paged for this chat, from {@link iMessagesDatabase.loadConversation}.
+     * A caller that walked the conversation for another reason (an attachment
+     * export) passes them back here instead of paging the whole chat twice.
+     */
+    preloaded?: LoadedConversation;
 }
 
 // --- Blob Parsing ---
@@ -87,7 +112,10 @@ const ATTRIBUTED_BODY_MARKER = Buffer.from([0x84, 0x01, 0x2b]);
  *
  * Length encoding:
  *   - byte < 0x80: single-byte length (up to 127 bytes)
- *   - byte >= 0x80: next 2 bytes are big-endian uint16 length
+ *   - 0x81 + 2-byte little-endian uint16: long NSString (data detectors, pastes)
+ *
+ * Reading 0x81 as big-endian over-reads into the following NSDictionary /
+ * NSKeyedArchiver bplist attribute runs and dumps them as message text.
  */
 export function extractTextFromAttributedBody(blob: Buffer): string | null {
     const idx = blob.indexOf(ATTRIBUTED_BODY_MARKER);
@@ -109,20 +137,64 @@ export function extractTextFromAttributedBody(blob: Buffer): string | null {
     if (firstByte < 0x80) {
         textLength = firstByte;
         textStart = lengthStart + 1;
-    } else {
+    } else if (firstByte === 0x81) {
         if (lengthStart + 2 >= blob.length) {
             return null;
         }
 
-        textLength = (blob[lengthStart + 1] << 8) | blob[lengthStart + 2];
+        textLength = blob[lengthStart + 1] | (blob[lengthStart + 2] << 8);
         textStart = lengthStart + 3;
+    } else {
+        return null;
     }
 
     if (textStart + textLength > blob.length) {
         return null;
     }
 
-    return blob.subarray(textStart, textStart + textLength).toString("utf-8");
+    const sliced = blob.subarray(textStart, textStart + textLength).toString("utf-8");
+
+    return sanitizeExtractedText(sliced);
+}
+
+const EXTRACT_CUT_MARKERS = ["\0", "bplist00", "NSKeyedArchiver"] as const;
+
+function sanitizeExtractedText(text: string): string {
+    let end = text.length;
+
+    for (const marker of EXTRACT_CUT_MARKERS) {
+        const at = text.indexOf(marker);
+
+        if (at >= 0 && at < end) {
+            end = at;
+        }
+    }
+
+    if (end === text.length) {
+        return text;
+    }
+
+    return text.slice(0, end);
+}
+
+/**
+ * The message body: the plain `text` column VERBATIM, and only otherwise the
+ * decoded attributedBody blob.
+ *
+ * The cut markers exist to trim an over-read blob. Running them over the text
+ * column truncated any ordinary message containing one of those words, e.g.
+ * "the blob starts with bplist00 magic" came back as "the blob starts with ".
+ */
+export function messageTextFromRow(row: { text: string | null; attributedBody: Buffer | null }): string | null {
+    if (row.text) {
+        return row.text;
+    }
+
+    if (row.attributedBody) {
+        return extractTextFromAttributedBody(Buffer.from(row.attributedBody));
+    }
+
+    return row.text;
 }
 
 // --- Helpers ---
@@ -455,18 +527,25 @@ export class iMessagesDatabase extends MacDatabase {
 
     /**
      * Export a conversation as formatted text for AI context or display.
+     * Capped at `maxMessages`; a truncated export says so in its first lines.
      */
     exportConversation(chatIdentifier: string, options?: ExportConversationOptions): string {
         const format = options?.format ?? "text";
         const resolveContacts = options?.resolveContacts ?? true;
         const groupByTime = options?.groupByTime ?? true;
 
-        const messages = this.getMessages(chatIdentifier, {
-            from: options?.from,
-            to: options?.to,
-            limit: 10_000,
-            includeAttachments: true,
-        });
+        const maxMessages = options?.maxMessages ?? EXPORT_MESSAGE_LIMIT;
+        const { messages, truncated } =
+            options?.preloaded ??
+            this.loadAllMessages(
+                chatIdentifier,
+                {
+                    from: options?.from,
+                    to: options?.to,
+                    includeAttachments: true,
+                },
+                maxMessages
+            );
 
         if (messages.length === 0) {
             return "No messages found.";
@@ -492,6 +571,17 @@ export class iMessagesDatabase extends MacDatabase {
 
         const isMarkdown = format === "markdown";
         const lines: string[] = [];
+
+        if (truncated) {
+            // Messages come back oldest first, so what is missing is the RECENT
+            // end. Say so rather than writing a silently partial transcript.
+            lines.push(
+                `> Truncated: only the OLDEST ${maxMessages} messages of this conversation are here.`,
+                "> Narrow it with a date range, or raise maxMessages.",
+                ""
+            );
+        }
+
         let prevSender = "";
         let prevDateStr = "";
 
@@ -534,7 +624,11 @@ export class iMessagesDatabase extends MacDatabase {
 
             if (hasAttachments) {
                 const attLabels = msg
-                    .attachments!.map((a) => `${a.transferName ?? a.filename ?? "attachment"} #${a.rowid}`)
+                    .attachments!.map((a) =>
+                        options?.formatAttachment
+                            ? options.formatAttachment(a)
+                            : `${a.transferName ?? a.filename ?? "attachment"} #${a.rowid}`
+                    )
                     .join(", ");
 
                 if (content) {
@@ -565,6 +659,30 @@ export class iMessagesDatabase extends MacDatabase {
         }
 
         return lines.join("\n");
+    }
+
+    /**
+     * Load every message in a chat (paginated), up to `maxMessages`. Used by
+     * disk export / attachment dumps.
+     */
+    getAllMessages(
+        chatIdentifier: string,
+        options?: GetMessagesOptions,
+        maxMessages: number = EXPORT_MESSAGE_LIMIT
+    ): MessageInfo[] {
+        return this.loadAllMessages(chatIdentifier, options, maxMessages).messages;
+    }
+
+    /**
+     * Same load as {@link getAllMessages}, keeping the truncation flag so the
+     * result can be handed to `exportConversation({ preloaded })`.
+     */
+    loadConversation(
+        chatIdentifier: string,
+        options?: GetMessagesOptions,
+        maxMessages: number = EXPORT_MESSAGE_LIMIT
+    ): LoadedConversation {
+        return this.loadAllMessages(chatIdentifier, options, maxMessages);
     }
 
     /**
@@ -605,16 +723,55 @@ export class iMessagesDatabase extends MacDatabase {
 
     // --- Private helpers ---
 
-    private rawToMessageInfo(row: RawMessageRow): MessageInfo {
-        let text = row.text;
+    /**
+     * Page a whole chat, stopping once the feed is exhausted or the cap is
+     * proven to have dropped a row.
+     *
+     * Truncation needs an OVERFLOW, not a hit: `length >= maxMessages` called a
+     * conversation of exactly the cap truncated, so a complete export carried
+     * the "only the OLDEST N messages" banner and the warn log fired for a run
+     * that lost nothing. Reading past the cap is what tells the two apart.
+     */
+    private loadAllMessages(
+        chatIdentifier: string,
+        options?: GetMessagesOptions,
+        maxMessages: number = EXPORT_MESSAGE_LIMIT
+    ): { messages: MessageInfo[]; truncated: boolean } {
+        const pageSize = 1_000;
+        const messages: MessageInfo[] = [];
+        let page = 1;
 
-        if (!text && row.attributedBody) {
-            text = extractTextFromAttributedBody(Buffer.from(row.attributedBody));
+        for (;;) {
+            const batch = this.getMessages(chatIdentifier, {
+                ...options,
+                limit: pageSize,
+                page,
+            });
+            messages.push(...batch);
+
+            if (messages.length > maxMessages) {
+                logger.warn(
+                    { chatIdentifier, maxMessages, loaded: messages.length },
+                    "[iMessages] conversation hit the load cap; the result is truncated"
+                );
+
+                return { messages: messages.slice(0, maxMessages), truncated: true };
+            }
+
+            if (batch.length < pageSize) {
+                break;
+            }
+
+            page++;
         }
 
+        return { messages, truncated: false };
+    }
+
+    private rawToMessageInfo(row: RawMessageRow): MessageInfo {
         return {
             rowid: row.rowid,
-            text,
+            text: messageTextFromRow(row),
             sender: row.isFromMe ? "me" : (row.handleIdentifier ?? "unknown"),
             isFromMe: row.isFromMe === 1,
             date: appleTimestampToDate(row.date),
