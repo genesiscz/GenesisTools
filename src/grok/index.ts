@@ -8,6 +8,7 @@ import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
+import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
 import { registerGrokLoginCommand } from "./commands/login";
@@ -30,50 +31,22 @@ const program = new Command();
 program.name("grok").description("Drive an isolated headless grok worker: run, steer between turns, read transcripts");
 
 function printTurn(result: TurnResult): void {
-    if (result.summary.toolCalls.length > 0) {
-        out.log.info(`tool calls (turn ${result.turn}):`);
-        for (const call of result.summary.toolCalls) {
-            out.log.message(`  ${call.tool}${call.target ? ` :: ${call.target}` : ""}`);
-        }
-    }
-
-    out.print(result.summary.report.trim());
-
-    if (!result.summary.ended) {
-        out.log.error(`turn ${result.turn} died mid-flight (no end event, exit ${result.exitCode})`);
-        if (result.stderr.trim()) {
-            out.log.error(result.stderr.trim());
-        }
-
-        process.exitCode = 1;
-        return;
-    }
-
-    // A turn can end cleanly and still have written warnings to stderr (a
-    // deprecated flag, a failed tool). Dropping those on success meant the only
-    // way to see them was to know the .err file existed (PR #330 review t7).
-    if (result.stderr.trim()) {
-        out.log.warn(`turn ${result.turn} wrote to stderr:`);
-        out.log.message(result.stderr.trim());
-    }
-
-    // "The turn ended" is not "the task got done": a worker that stops cleanly having
-    // written nothing prints the same success line as one that finished the job.
-    if (result.worktree !== null && !result.meta.readOnly) {
-        if (result.worktree.changedThisTurn === 0) {
-            out.log.warn(
-                `turn ${result.turn} changed NOTHING in ${result.meta.cwd} — the turn ended, but the task may be unfinished. Check, then steer to continue.`
-            );
-        } else {
-            out.log.info(
-                `turn ${result.turn} changed ${result.worktree.changedThisTurn} path(s); ${result.worktree.dirtyTotal} dirty in total`
-            );
-        }
-    }
-
-    out.log.success(
-        `turn ${result.turn} completed — verify yourself before trusting this report (log: ${result.logPath})`
-    );
+    printWorkerTurn({
+        backend: "grok",
+        name: result.meta.name,
+        turn: result.turn,
+        ended: result.summary.ended,
+        exitCode: result.exitCode,
+        report: result.summary.report,
+        stderr: result.stderr,
+        errPath: result.errPath,
+        toolCalls: result.summary.toolCalls,
+        // A read-only turn changes nothing by design; a replay has no snapshot to compare.
+        worktree:
+            result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
+        logPath: result.logPath,
+        transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+    });
 }
 
 program

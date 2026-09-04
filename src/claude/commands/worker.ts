@@ -7,10 +7,12 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
+import { isToolCall } from "@genesiscz/utils/worker/events";
 import { runningTurnPids as findRunningTurns, type RunningTurn } from "@genesiscz/utils/worker/ps";
+import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { workerTurnLogPath } from "../lib/worker/paths";
+import { workerTurnErrPath, workerTurnLogPath } from "../lib/worker/paths";
 import { ClaudeWorkerStore } from "../lib/worker/store";
 import { type ClaudeTurnResult, type PinnedAccount, spawnWorker, steerWorker } from "../lib/worker/worker";
 import { launchGateForVerdict } from "./exec";
@@ -67,23 +69,21 @@ function readPrompt(options: { prompt?: string; promptFile?: string }): string {
 }
 
 function printTurn(result: ClaudeTurnResult): void {
-    out.printlnErr(
-        pc.dim(
-            `turn ${result.turn} · exit ${result.exitCode} · ${result.completed ? "completed" : "did NOT complete"} · ${result.events.length} events · log ${result.logPath}`
-        )
-    );
-
-    if (result.stderr.trim()) {
-        out.printlnErr(pc.yellow(result.stderr.trim()));
-    }
-
-    if (result.report) {
-        out.print(`${result.report}\n`);
-    }
-
-    if (!result.completed) {
-        process.exitCode = 1;
-    }
+    printWorkerTurn({
+        backend: "claude",
+        name: result.meta.name,
+        turn: result.turn,
+        ended: result.completed,
+        exitCode: result.exitCode,
+        report: result.report,
+        stderr: result.stderr,
+        errPath: workerTurnErrPath(result.meta.name, result.turn),
+        toolCalls: result.events.filter(isToolCall),
+        // No git snapshot is taken around a claude turn; the brief plus a git status check hold policy.
+        worktree: null,
+        logPath: result.logPath,
+        transcriptHint: `tools claude worker read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+    });
 }
 
 /** Live claude processes belonging to this worker's session uuid, via ps. */
