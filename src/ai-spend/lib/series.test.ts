@@ -242,6 +242,32 @@ describe("buildSpendSeries", () => {
         expect(result.points[0].tokens).toBe(600_000);
     });
 
+    test('an account id of "__proto__" gets its own bucket rather than Object.prototype', async () => {
+        const evil = "__proto__";
+        const result = await buildSpendSeries(
+            { ...window(), grain: "day" },
+            {
+                storage,
+                accounts: [account(evil, "work")],
+                drivers: [
+                    {
+                        ...codexDriver,
+                        roots: () => [join(homes.work, "sessions")],
+                        rootsForAccounts: (): DriverRoot[] => [
+                            { path: join(homes.work, "sessions"), accountId: evil, home: homes.work },
+                        ],
+                    },
+                ],
+            }
+        );
+
+        expect(Object.keys(result.points[0].byAccount)).toEqual([evil]);
+        expect(result.points[0].byAccount[evil].tokens).toBe(100_000);
+        // The canary: on a plain object the running totals land here instead.
+        expect(Object.prototype).not.toHaveProperty("tokens");
+        expect(Object.prototype).not.toHaveProperty("costUsd");
+    });
+
     test("a file whose mtime predates the window is never opened", async () => {
         const stale = join(homes.work, "sessions", "rollout-stale.jsonl");
         writeFileSync(stale, codexRollout(new Date(Date.now() - 30 * 86_400_000).toISOString(), 500_000));

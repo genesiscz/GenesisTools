@@ -108,10 +108,10 @@ function bucketPoints(events: UsageEvent[], query: UsageQuery): SpendSeriesPoint
         let point = buckets.get(key);
 
         if (!point) {
-            point = { t: key, costUsd: 0, tokens: 0, byAccount: {} };
+            point = { t: key, costUsd: 0, tokens: 0, byAccount: emptyBuckets<SpendSeriesBucket>() };
 
             if (query.byModel) {
-                point.byModel = {};
+                point.byModel = emptyBuckets<SpendSeriesBucket>();
             }
 
             buckets.set(key, point);
@@ -194,6 +194,19 @@ function isUsageEvent(value: unknown): value is UsageEvent {
     );
 }
 
+/**
+ * A prototype-free map for buckets keyed by DATA rather than by code.
+ *
+ * Account ids, app names and model ids are opaque strings read back out of the
+ * corpus. On a plain object a key of `"__proto__"` resolves to
+ * `Object.prototype` instead of an own slot, so the running total accumulates
+ * onto the shared prototype and that row then disappears from the result. With
+ * no prototype there is nothing to inherit and every key is an ordinary one.
+ */
+export function emptyBuckets<T>(): Record<string, T> {
+    return Object.create(null) as Record<string, T>;
+}
+
 export function emptyAggregate(): UsageAggregate {
     return { events: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, unpricedEvents: 0 };
 }
@@ -215,7 +228,7 @@ function fold(events: UsageEvent[], into: UsageAggregate = emptyAggregate()): Us
 }
 
 function groupBy(events: UsageEvent[], key: (event: UsageEvent) => string): Record<string, UsageAggregate> {
-    const groups: Record<string, UsageAggregate> = {};
+    const groups = emptyBuckets<UsageAggregate>();
 
     for (const event of events) {
         const bucket = key(event);

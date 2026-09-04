@@ -6,6 +6,7 @@ import {
     type AccountRef,
     CLAUDE_ALL_ACCOUNT_ID,
     CLAUDE_ALL_ACCOUNT_NAME,
+    emptyBuckets,
     isValidTimeZone,
     type SpendGrain,
     type SpendSeriesBucket,
@@ -202,10 +203,10 @@ export async function buildSpendSeries(
         let point = buckets.get(key);
 
         if (!point) {
-            point = { t: key, costUsd: 0, tokens: 0, byAccount: {} };
+            point = { t: key, costUsd: 0, tokens: 0, byAccount: emptyBuckets<SpendSeriesBucket>() };
 
             if (query.byModel) {
-                point.byModel = {};
+                point.byModel = emptyBuckets<SpendSeriesBucket>();
             }
 
             buckets.set(key, point);
