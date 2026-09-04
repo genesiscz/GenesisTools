@@ -4,6 +4,7 @@ import { startLiveProducers } from "@app/dev-dashboard/lib/live/producers";
 import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
 import { configureRetention, startPulsePolling } from "@app/dev-dashboard/lib/system/poller";
 import { Router } from "@app/dev-dashboard/server/router";
+import { aiRoutes } from "@app/dev-dashboard/server/routes/ai";
 import { attentionRoutes } from "@app/dev-dashboard/server/routes/attention";
 import { boardsRoutes } from "@app/dev-dashboard/server/routes/boards";
 import { boardsAnnotationsRoutes } from "@app/dev-dashboard/server/routes/boards-annotations";
@@ -54,6 +55,7 @@ export function createDashboardRouter(): Router {
         ...cmuxRoutes(),
         ...commandsRoutes(),
         ...weatherRoutes(),
+        ...aiRoutes(),
         ...claudeRoutes(),
         ...daemonRoutes(),
         ...timelineRoutes(),

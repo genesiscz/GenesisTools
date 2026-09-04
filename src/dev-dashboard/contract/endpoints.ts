@@ -1,3 +1,5 @@
+import type { SpendGrain, SpendSource } from "@app/dev-dashboard/contract/ai-accounts";
+import { AI_ACCOUNTS_API } from "@app/dev-dashboard/contract/ai-accounts";
 import type {
     AttentionItem,
     BoardDocDto,
@@ -27,6 +29,11 @@ import type {
 } from "@app/dev-dashboard/contract/dto";
 
 export const QA_STREAM_PATH = "/api/qa/stream" as const;
+
+/** A comma list, or `undefined` when there is nothing to filter by. */
+function list(values: string[] | undefined): string | undefined {
+    return values?.length ? values.join(",") : undefined;
+}
 
 /** Build a `?a=b&c=d` suffix from defined string params (undefined keys dropped). */
 function qs(params: Record<string, string | undefined>): string {
@@ -78,7 +85,46 @@ export const paths = {
     cmuxRemoveSession: () => "/api/cmux/remove-session",
     cmuxAttach: () => "/api/cmux/attach",
     cmuxRename: () => "/api/cmux/rename",
-    // claude usage
+    // ai accounts (multi-provider). Paths come from AI_ACCOUNTS_API so the UI,
+    // the server and these builders can never disagree on a string.
+    aiAccounts: () => AI_ACCOUNTS_API.accounts,
+    aiUsage: (q: { providers?: string[]; accounts?: string[] } = {}) =>
+        `${AI_ACCOUNTS_API.usage}${qs({ providers: list(q.providers), accounts: list(q.accounts) })}`,
+    aiUsageRefresh: () => AI_ACCOUNTS_API.usageRefresh,
+    aiUsageSeries: (q: {
+        providers?: string[];
+        accounts?: string[];
+        keys?: string[];
+        from: string;
+        to: string;
+        step?: number;
+    }) =>
+        `${AI_ACCOUNTS_API.usageSeries}${qs({
+            providers: list(q.providers),
+            accounts: list(q.accounts),
+            keys: list(q.keys),
+            from: q.from,
+            to: q.to,
+            step: q.step === undefined ? undefined : String(q.step),
+        })}`,
+    aiSpendTotals: (q: { from: string; to: string; accounts?: string[]; source?: SpendSource }) =>
+        `${AI_ACCOUNTS_API.spendTotals}${qs({
+            from: q.from,
+            to: q.to,
+            accounts: list(q.accounts),
+            source: q.source,
+        })}`,
+    aiSpendSeries: (q: { from: string; to: string; grain?: SpendGrain; accounts?: string[]; source?: SpendSource }) =>
+        `${AI_ACCOUNTS_API.spendSeries}${qs({
+            from: q.from,
+            to: q.to,
+            grain: q.grain,
+            accounts: list(q.accounts),
+            source: q.source,
+        })}`,
+    aiDaemon: () => AI_ACCOUNTS_API.daemon,
+    aiDaemonRegister: () => AI_ACCOUNTS_API.daemonRegister,
+    // claude usage — aliases over the ai routes above, pinned to anthropic-sub
     claudeUsage: () => "/api/claude/usage",
     claudeUsageHistory: (q: { account?: string; buckets?: string[]; bucket?: string; minutes?: number } = {}) =>
         `/api/claude/usage/history${qs({

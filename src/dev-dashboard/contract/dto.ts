@@ -6,9 +6,39 @@
 // the React Native app.
 
 // Deferred-feature return types live outside dev-dashboard/lib; type-only re-export.
+// `AccountUsage` is the claude-only shape the old /claude page consumed. The
+// multi-provider replacement is `AccountUsageSnapshot` below; both are exported
+// for one release so a mobile client can migrate on its own schedule.
 export type { AccountUsage } from "@app/claude/lib/usage/api";
 export type { LogEntry, RunSummary } from "@app/daemon/lib/types";
 export type { PublishedNote } from "@app/dev-dashboard/config";
+// The /ai/accounts wire contract. Declared in its own file (no imports at all,
+// so the RN bundle stays clean) and re-exported here — never redeclared.
+export type {
+    AccountAuthHealth,
+    AccountPlan,
+    AccountRef,
+    AccountUsageSnapshot,
+    AiAccountListItem,
+    AiAccountsResult,
+    AiDaemonProviderStatus,
+    AiDaemonStatus,
+    AiSpendSeriesResult,
+    AiSpendTotalsResult,
+    AiUsageResult,
+    AiUsageSeriesResult,
+    LimitKind,
+    LimitMoney,
+    LimitSeries,
+    LimitSeriesPoint,
+    LimitSeverity,
+    LimitWindow,
+    SpendAccountTotals,
+    SpendBucket,
+    SpendGrain,
+    SpendSeriesPoint,
+    SpendSource,
+} from "@app/dev-dashboard/contract/ai-accounts";
 export type {
     AttentionDeepLink,
     AttentionItem,
