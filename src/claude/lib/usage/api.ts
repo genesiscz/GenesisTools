@@ -2,7 +2,15 @@ import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { applyPollGateOutcomes, blockedEntry, loadPollGate, type PollGate, pruneGate } from "./poll-gate";
+import {
+    applyPollGateOutcomes,
+    blockedEntry,
+    failureStreak,
+    isTransportFailure,
+    loadPollGate,
+    type PollGate,
+    pruneGate,
+} from "./poll-gate";
 import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile, revalidateStalePlan } from "./subscription";
 
 export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";
@@ -418,7 +426,7 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
     );
 
     const gateSuccesses: string[] = [];
-    const gateFailures: Array<{ account: string; reason: string }> = [];
+    const gateFailures: Array<{ account: string; reason: string; transport?: boolean }> = [];
 
     const usages = results.map((r, i) => {
         const account = accounts[i];
@@ -438,13 +446,19 @@ export async function fetchAllAccountsUsage(opts: FetchAllAccountsOptions = {}):
         if (suppressed) {
             logger.debug(`[usage:${account.name}] not polled: ${reason}`);
         } else {
-            gateFailures.push({ account: account.name, reason: String(r.reason) });
+            // Classified from the thrown Error, not the string: a dropped wifi
+            // must not ratchet an account-level block (see poll-gate).
+            gateFailures.push({
+                account: account.name,
+                reason: String(r.reason),
+                transport: isTransportFailure(r.reason),
+            });
             gateDirty = true;
 
             // Only the FIRST failure in a streak is worth a console line. After
             // that the backoff is doing its job and repeating the same error
             // every minute just pollutes whatever TUI happens to be running.
-            const repeat = (gate[account.name]?.failures ?? 0) > 0;
+            const repeat = failureStreak(gate[account.name]) > 0;
             const line = `[usage:${account.name}] fetch failed: ${reason}`;
 
             if (repeat) {

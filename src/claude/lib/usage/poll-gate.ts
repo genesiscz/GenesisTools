@@ -23,8 +23,14 @@ const GATE_KEY = "poll-gate";
 const GATE_TTL = "365 days" as const;
 
 export interface GateEntry {
-    /** Consecutive failed polls. Any success resets it to 0. */
+    /** Consecutive failed polls that REACHED Anthropic. Any success resets it to 0. */
     failures: number;
+    /**
+     * Consecutive failures that never reached Anthropic, counted on their own
+     * ladder. Sharing `failures` let a five-minute wifi drop pre-load the ladder,
+     * so the first routine 429 after recovery earned the 6h block instead of none.
+     */
+    transportFailures?: number;
     /** Epoch ms before which this account must not be polled at all. */
     blockedUntil: number;
     /** Why it is blocked — surfaced as the account's error row while suppressed. */
@@ -50,6 +56,72 @@ export function backoffMs(failures: number): number {
     return BACKOFF_LADDER_MS[Math.min(failures - 2, BACKOFF_LADDER_MS.length - 1)];
 }
 
+/**
+ * Ceiling for a failure that never reached Anthropic at all.
+ *
+ * The ladder above exists to stop hammering the SERVER with requests that are
+ * guaranteed to fail — an expired token, a dead org. A transport failure is a
+ * different animal: the laptop slept, the wifi dropped, a VPN came up. No
+ * request was ever sent, so there is nothing to protect, and the error says
+ * nothing about the account — it hits every account in the same round.
+ *
+ * Left on the shared ladder, a blip ratchets to the 6h ceiling and then keeps
+ * every account dark for six hours AFTER connectivity returns, because nothing
+ * retries to discover the network is back. That is exactly what happened on
+ * 2026-08-30: an outage starting 07:23Z pinned all seven live accounts until
+ * 15:58Z, and the dashboard read "stale 7h ago / fetch failing" on a machine
+ * that had been online for hours.
+ *
+ * Five minutes keeps a genuinely offline machine from retrying every minute,
+ * while bounding how long a recovered network goes unnoticed.
+ */
+const TRANSPORT_MAX_BACKOFF_MS = 5 * 60_000;
+
+/**
+ * Codes set when the request never got a response. Verified against Bun 1.3.13:
+ * a refused connection AND an unresolvable host both surface as
+ * `ConnectionRefused`, and a bad certificate as an OpenSSL code — none of which
+ * an account can influence.
+ */
+const TRANSPORT_ERROR_CODES = new Set([
+    "ConnectionRefused",
+    "ConnectionClosed",
+    "FailedToOpenSocket",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ECONNABORTED",
+    "EHOSTUNREACH",
+    "ENETDOWN",
+    "ENETUNREACH",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "ETIMEDOUT",
+    "EPIPE",
+]);
+
+/** Fallback for an error that was stringified before it reached the gate. */
+const TRANSPORT_MESSAGE_RE =
+    /unable to connect|failed to fetch|network (?:is )?(?:down|unreachable)|socket connection was closed|getaddrinfo|dns lookup failed/i;
+
+/** True when the poll failed below HTTP, so no request reached Anthropic. */
+export function isTransportFailure(err: unknown): boolean {
+    if (typeof err === "object" && err !== null) {
+        const code = (err as { code?: unknown }).code;
+
+        if (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) {
+            return true;
+        }
+
+        const causeCode = (err as { cause?: { code?: unknown } }).cause?.code;
+
+        if (typeof causeCode === "string" && TRANSPORT_ERROR_CODES.has(causeCode)) {
+            return true;
+        }
+    }
+
+    return TRANSPORT_MESSAGE_RE.test(String(err));
+}
+
 /** The blocking entry for an account, or null when it is due to be polled. */
 export function blockedEntry(gate: PollGate, account: string, now: number): GateEntry | null {
     const entry = gate[account];
@@ -61,14 +133,52 @@ export function blockedEntry(gate: PollGate, account: string, now: number): Gate
     return entry;
 }
 
-/** Record a failed poll and extend the backoff. Returns a new gate. */
-export function recordFailure(gate: PollGate, account: string, reason: string, now: number): PollGate {
-    const failures = (gate[account]?.failures ?? 0) + 1;
+/** Length of the current failure streak, whatever kind of failure it is. */
+export function failureStreak(entry: GateEntry | undefined): number {
+    return (entry?.failures ?? 0) + (entry?.transportFailures ?? 0);
+}
+
+/**
+ * Record a failed poll and extend the backoff. Returns a new gate.
+ *
+ * `transport` marks a failure that never reached Anthropic. It runs its own
+ * counter, capped at `TRANSPORT_MAX_BACKOFF_MS` — see that constant for why a
+ * local network blip must not earn an account-level 6h block. It must not
+ * advance `failures` either: a five-minute outage climbed the shared ladder to
+ * five, so the first routine 429 after connectivity returned was blocked for the
+ * full six hours the ladder's own comment promises it never would be.
+ */
+export function recordFailure(
+    gate: PollGate,
+    account: string,
+    reason: string,
+    now: number,
+    transport = false
+): PollGate {
+    const previous = gate[account];
+
+    if (transport) {
+        const transportFailures = (previous?.transportFailures ?? 0) + 1;
+
+        return {
+            ...gate,
+            [account]: {
+                failures: previous?.failures ?? 0,
+                transportFailures,
+                blockedUntil: now + Math.min(backoffMs(transportFailures), TRANSPORT_MAX_BACKOFF_MS),
+                reason,
+            },
+        };
+    }
+
+    const failures = (previous?.failures ?? 0) + 1;
 
     return {
         ...gate,
         [account]: {
             failures,
+            // The request reached Anthropic, so the network is demonstrably fine.
+            transportFailures: 0,
             blockedUntil: now + backoffMs(failures),
             reason,
         },
@@ -162,7 +272,7 @@ async function mutatePollGate(mutate: (gate: PollGate) => PollGate | null): Prom
  */
 export async function applyPollGateOutcomes(args: {
     successes: readonly string[];
-    failures: readonly { account: string; reason: string }[];
+    failures: readonly { account: string; reason: string; transport?: boolean }[];
     now: number;
     /** Configured account names, for pruning. Omit on a FILTERED poll — it knows nothing
      * about the accounts it excluded and pruning would wipe their backoff. */
@@ -175,8 +285,8 @@ export async function applyPollGateOutcomes(args: {
             next = recordSuccess(next, account);
         }
 
-        for (const { account, reason } of args.failures) {
-            next = recordFailure(next, account, reason, args.now);
+        for (const { account, reason, transport } of args.failures) {
+            next = recordFailure(next, account, reason, args.now, transport);
         }
 
         return next;
