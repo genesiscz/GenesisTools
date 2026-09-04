@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { AiConfigStore } from "../../../config/AiConfigStore";
 import type { AccountEntry } from "../../../config/schema";
@@ -39,9 +39,15 @@ function codexHomesIn(root: string): string[] {
     return homes.sort();
 }
 
-/** The account already pointing into this home, matched on `authFile` or `dataDir`. */
+/**
+ * The account already pointing into this home, matched on `authFile` or `dataDir`.
+ *
+ * The prefix is built with `sep`, not a literal `/`: `resolve()` returns
+ * backslashes on Windows, so a hard-coded slash matched nothing there and every
+ * bound Codex home was reported as unbound (PR #360 review t15).
+ */
 function boundAccountId(home: string, accounts: AccountEntry[]): string | undefined {
-    const prefix = `${resolve(home)}/`;
+    const prefix = `${resolve(home)}${sep}`;
 
     return accounts.find((account) => {
         const authFile = account.credentials.authFile;

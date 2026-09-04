@@ -1,4 +1,5 @@
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { extractAccountId, extractEmail, extractPlanType, readCodexAuthJson } from "../../../openai/codex-auth";
 import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
@@ -69,7 +70,12 @@ export const openAiSubPlugin: ProviderPlugin = {
         async identityOf(account) {
             const authFile = account.credentials.authFile;
             const tokens = authFile ? await readCodexAuthJson(authFile) : null;
-            const claims = tokens?.idToken ?? tokens?.accessToken;
+            // The stored access token is the last resort, and it is a `MaybeSecret`:
+            // an account whose credential lives in the vault holds a `SecureRef`
+            // object here, which the JWT decoders cannot read. Resolving it first
+            // is a READ, so this stays a diagnostic (PR #360 review t16).
+            const claims =
+                tokens?.idToken ?? tokens?.accessToken ?? (await resolveSecret(account.credentials.accessToken));
 
             if (!claims) {
                 return account.accountUuid ? { accountUuid: account.accountUuid, plan: account.label } : undefined;
