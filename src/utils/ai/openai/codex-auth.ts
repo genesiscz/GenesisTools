@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { generatePkcePair } from "../oauth/pkce";
 
 // OpenAI Codex OAuth constants (reverse-engineered from Codex CLI)
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -161,9 +162,7 @@ export class CodexOAuthClient {
      * Returns the URL to open in the user's browser.
      */
     async startLogin(): Promise<string> {
-        const verifier = this.generateRandomString(43);
-        const challenge = await this.sha256Base64Url(verifier);
-        const state = this.generateRandomString(32);
+        const { verifier, challenge, state } = await generatePkcePair({ verifierBytes: 43 });
 
         this.pendingSession = { verifier, state };
 
@@ -264,24 +263,6 @@ export class CodexOAuthClient {
      */
     needsRefresh(expiresAt: number, bufferMs: number = 30_000): boolean {
         return Date.now() + bufferMs >= expiresAt;
-    }
-
-    private generateRandomString(length: number): string {
-        const bytes = new Uint8Array(length);
-        crypto.getRandomValues(bytes);
-        return btoa(String.fromCharCode(...bytes))
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=+$/, "");
-    }
-
-    private async sha256Base64Url(input: string): Promise<string> {
-        const encoded = new TextEncoder().encode(input);
-        const hash = await crypto.subtle.digest("SHA-256", encoded);
-        return btoa(String.fromCharCode(...new Uint8Array(hash)))
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=+$/, "");
     }
 }
 
