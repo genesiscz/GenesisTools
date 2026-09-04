@@ -157,6 +157,7 @@ describe("generic account section", () => {
 describe("history rows", () => {
     const series: SeriesEntry[] = [
         {
+            provider: "openai-sub",
             account: "work",
             key: "primary",
             points: [
@@ -164,7 +165,12 @@ describe("history rows", () => {
                 { t: "2026-09-04T17:30:00.000Z", percent: 25 },
             ],
         },
-        { account: "personal", key: "monthly", points: [{ t: "2026-09-04T17:10:00.000Z", percent: 5 }] },
+        {
+            provider: "grok-sub",
+            account: "personal",
+            key: "monthly",
+            points: [{ t: "2026-09-04T17:10:00.000Z", percent: 5 }],
+        },
     ];
 
     test("computes a per-series delta and sorts newest first inside an account", () => {
