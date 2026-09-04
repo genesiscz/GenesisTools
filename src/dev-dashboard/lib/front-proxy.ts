@@ -66,10 +66,32 @@ const SLOW_UPSTREAM_PATHS = new Set([
     "/api/tmux/sessions",
 ]);
 
+/**
+ * Bound for the recorded-spend routes, which rebuild cost by walking every
+ * coding-agent transcript on disk. A cold 30-day scan measures about 20s and a
+ * cold 7-day one about 4s, and the answer is cached for 15s afterwards. Under
+ * the 15s default the cold scan was killed at exactly 15.0s and the browser got
+ * a 502 `upstream-timeout`; only a retry that landed inside the cache succeeded
+ * (sweep 2026-09-04). The work is off the request thread now, so a long wait
+ * here costs this one request and nothing else.
+ */
+export const SCAN_UPSTREAM_TIMEOUT_MS = 120_000;
+
+const SCAN_UPSTREAM_PATHS = new Set([
+    "/api/ai/spend/totals",
+    "/api/ai/spend/series",
+    // The legacy alias reaches the same handler.
+    "/api/claude/usage/totals",
+]);
+
 /** Upstream fetch deadline for a path. `undefined` means no deadline (a stream). */
 export function upstreamTimeoutMs(pathname: string): number | undefined {
     if (isLongLivedProxiedStream(pathname)) {
         return undefined;
+    }
+
+    if (SCAN_UPSTREAM_PATHS.has(pathname)) {
+        return SCAN_UPSTREAM_TIMEOUT_MS;
     }
 
     if (SLOW_UPSTREAM_PATHS.has(pathname)) {
