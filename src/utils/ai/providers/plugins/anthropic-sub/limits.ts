@@ -29,8 +29,20 @@ const KIND_TO_BUCKET: Record<string, string> = {
     weekly_all: "seven_day",
 };
 
+/**
+ * Model families that have canonical bucket metadata (a label, a period, a kind) in
+ * `buckets.ts`. The live API answers a bare `"Sonnet"`, which already lowercases onto the
+ * canonical key, but the field is a DISPLAY name: a fuller `"Claude Opus 4.1"` would key
+ * a bucket nothing knows, so the window would lose its period and its configured place in
+ * `prominentBuckets` while still rendering.
+ */
+const SCOPED_MODEL_FAMILIES = ["opus", "sonnet"] as const;
+
 function scopedBucketKey(modelDisplayName: string): string {
-    return `seven_day_${modelDisplayName.toLowerCase()}`;
+    const lowered = modelDisplayName.toLowerCase();
+    const family = SCOPED_MODEL_FAMILIES.find((name) => lowered.includes(name));
+
+    return `seven_day_${family ?? lowered}`;
 }
 
 function normalizeSeverity(s: string): Severity {

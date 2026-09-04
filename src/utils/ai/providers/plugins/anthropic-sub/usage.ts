@@ -90,8 +90,13 @@ export function toLimitWindows(usage: UsageResponse): LimitWindow[] {
 function snapshotBase(account: AccountEntry, usage: AccountUsage, fetchedAt: string): AccountUsageSnapshot {
     const auth: AccountUsageSnapshot["auth"] = {};
 
-    if (usage.refreshExpiresAt !== undefined) {
-        auth.refreshExpiresAt = new Date(usage.refreshExpiresAt).toISOString();
+    // Built once and range-checked: `refreshExpiresAt` reaches here straight off the
+    // account file, and `toISOString()` throws RangeError on a value a Date cannot hold.
+    // The inverse projection below already guards the same field.
+    const refreshExpiresAt = usage.refreshExpiresAt === undefined ? null : new Date(usage.refreshExpiresAt);
+
+    if (refreshExpiresAt && !Number.isNaN(refreshExpiresAt.getTime())) {
+        auth.refreshExpiresAt = refreshExpiresAt.toISOString();
     }
 
     if (usage.orgBlocked) {
