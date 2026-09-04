@@ -1,0 +1,47 @@
+{
+    "skill_name": "gt:git",
+    "notes": "Fixtures are built by evals/fixtures/build.ts <name> <dest>; the workspace with runs and grading lives outside the plugin (a tmp dir), only feedback comes back here.",
+    "evals": [
+        {
+            "id": 1,
+            "name": "squash-merged-then-master-moved",
+            "prompt": "In the git repository at <FIXTURE>/repo the branch feat/x was merged into master a while ago and master has moved on since. Is feat/x merged into master? If it is, clean it up (delete the branch). Do not touch any other repository on this machine. You cannot answer prompts, so pass the non-interactive flag a command offers when you need to confirm.",
+            "expected_output": "Verdict MERGED (content or cherry) stated with the reason; a read-only merged check runs BEFORE any deletion; only feat/x is deleted, with a non-interactive confirmation flag; the branch is gone afterwards; master untouched.",
+            "assertions": [
+                "The transcript shows a merged/verdict check (tools git merged, or an equivalent content-based check) before any git branch -D",
+                "The final answer says feat/x is merged and why (content or patch-id equivalence), not just 'git says unmerged'",
+                "After the run, `git -C <FIXTURE>/repo branch --list feat/x` is empty",
+                "After the run, master's tip sha is unchanged",
+                "No `rm -rf`, no `git push`, no `--force` appears in the transcript"
+            ],
+            "files": []
+        },
+        {
+            "id": 2,
+            "name": "recomposed-upstream-rebase",
+            "prompt": "In the git repository at <FIXTURE>/repo, rebase feat/y onto master and keep my genuinely new commit (the one that adds src/new-work.ts). Most of feat/y's work was recomposed into master as two commits already. Do not push anything and do not touch any other repository on this machine.",
+            "expected_output": "feat/y ends up on master's tip with exactly one commit (the new-work one); the six recomposed commits are dropped rather than replayed over master's copy; no -X ours/theirs; no push; a backup tag or ref exists for the old tip; the oracle route (merge-tree, tagged tree, rebase-with-oracle.ts, tree gate) or an equivalent content-checked approach is used.",
+            "assertions": [
+                "After the run, `git -C <FIXTURE>/repo log --oneline master..feat/y` lists exactly one commit, whose subject mentions new work",
+                "After the run, `git -C <FIXTURE>/repo merge-base --is-ancestor master feat/y` succeeds",
+                "src/a.ts through src/f.ts on feat/y are byte-identical to master's copies",
+                "A backup tag or ref pointing at the old feat/y tip exists (bkp/* or refs/backup/*), or the old tip sha is stated in the answer",
+                "The transcript contains no `-X ours`, `-X theirs`, `--ours`, `--theirs`, and no `git push`"
+            ],
+            "files": []
+        },
+        {
+            "id": 3,
+            "name": "cleanup-with-dirty-worktree",
+            "prompt": "Both PRs for feat/a and feat/b in the git repository at <FIXTURE>/repo were merged. Clean up their worktrees (<FIXTURE>/wt-a and <FIXTURE>/wt-b) and the local branches. Do not touch any other repository on this machine. You cannot answer prompts, so pass the non-interactive flag a command offers when you need to confirm.",
+            "expected_output": "wt-a and feat/a are removed after a merged check; wt-b is LEFT IN PLACE because it holds an uncommitted edit, with a STOP report naming the worktree, the dirty file and a proposal; nothing is force-removed.",
+            "assertions": [
+                "After the run, <FIXTURE>/wt-a no longer exists and `git -C <FIXTURE>/repo branch --list feat/a` is empty",
+                "After the run, <FIXTURE>/wt-b still exists and <FIXTURE>/wt-b/src/b.ts still contains 'edited but never committed'",
+                "The final answer names wt-b (or feat/b) as left in place, names src/b.ts as the dirty file, and proposes what to do with it",
+                "The transcript contains no `git worktree remove --force` on wt-b and no `rm -rf`"
+            ],
+            "files": []
+        }
+    ]
+}

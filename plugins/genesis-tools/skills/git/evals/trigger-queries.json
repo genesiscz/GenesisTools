@@ -1,0 +1,22 @@
+[
+    { "query": "is feat/clarity-fill merged into master yet? git says 13 commits ahead but the PR is closed", "should_trigger": true },
+    { "query": "can I delete these three worktrees under .worktrees/? their PRs were merged last week", "should_trigger": true },
+    { "query": "clean up after the merge: remove the worktree and the local branch, but stop if anything is unpushed", "should_trigger": true },
+    { "query": "rebase feat/monitor onto origin/master and push it with a lease", "should_trigger": true },
+    { "query": "master absorbed a batch of PRs, restack my 12 open branches onto it", "should_trigger": true },
+    { "query": "the rebase conflicts on every commit but master already has most of this branch's work from squashed PRs, what now", "should_trigger": true },
+    { "query": "I rebased the parent branch and now my two child branches are orphaned, fix the stack", "should_trigger": true },
+    { "query": "recommit this branch into 4 clean commits before I open the PR", "should_trigger": true },
+    { "query": "split feat/big into three separate PRs by directory", "should_trigger": true },
+    { "query": "land PR 355 the rebase way, no merge commit", "should_trigger": true },
+    { "query": "which of my local branches are actually done and safe to remove?", "should_trigger": true },
+    { "query": "cascade rebase feat/parent with feat/child-1 and feat/child-2 onto develop", "should_trigger": true },
+    { "query": "git blame src/utils/git/core.ts and tell me who added the executor", "should_trigger": false },
+    { "query": "why is CI red on PR 349?", "should_trigger": false },
+    { "query": "write a commit message for the staged changes", "should_trigger": false },
+    { "query": "create a worktree for the new feature I am about to start", "should_trigger": false },
+    { "query": "merge these two JSON config files into one", "should_trigger": false },
+    { "query": "show me the git log of the last week grouped by author", "should_trigger": false },
+    { "query": "explain the difference between git rebase and git merge conceptually", "should_trigger": false },
+    { "query": "undo my last commit but keep the changes in the working tree", "should_trigger": false }
+]
