@@ -150,7 +150,14 @@ interface MonitorOpts {
 
 const SERIES_DEFAULT_DAYS = 7;
 
-function parseSources(raw: string | undefined): AgentId[] | undefined {
+/**
+ * `null` means "rejected, diagnostic already printed" and the action returns.
+ *
+ * Throwing instead would reach `runTool`'s uncaught `program.parseAsync()`, so a
+ * mistyped `--sources` printed a Bun stack trace with a source excerpt where a
+ * one-line flag diagnostic belongs.
+ */
+function parseSources(raw: string | undefined): AgentId[] | undefined | null {
     if (!raw) {
         return undefined;
     }
@@ -162,7 +169,15 @@ function parseSources(raw: string | undefined): AgentId[] | undefined {
     const unknown = wanted.filter((value) => !AGENT_IDS.includes(value as AgentId));
 
     if (unknown.length > 0) {
-        throw new Error(`unknown --sources value(s): ${unknown.join(", ")}. Known: ${AGENT_IDS.join(", ")}`);
+        out.error(
+            suggestEnumFlag("tools ai-spend series", "--sources", AGENT_IDS, {
+                subcommand: ["series"],
+                given: unknown.join(", "),
+            })
+        );
+        process.exitCode = 1;
+
+        return null;
     }
 
     return wanted as AgentId[];
@@ -175,8 +190,19 @@ async function resolveGrain(raw: string | true | undefined): Promise<TranscriptG
 
     // Enumerated flag: commander's own "argument missing" never lists the values,
     // so the flag is declared optional and the empty case is handled here.
-    if (!isInteractive()) {
-        out.error(suggestEnumFlag("tools ai-spend series", "--grain", TRANSCRIPT_GRAINS, { subcommand: ["series"] }));
+    //
+    // A value that is PRESENT but wrong is not a missing value. Prompting for it
+    // would swallow the typo and then exit 0 as though `--grain bad` had been
+    // honoured, so only an omitted or bare `--grain` reaches the prompt.
+    const given = typeof raw === "string" && raw.length > 0 ? raw : undefined;
+
+    if (given !== undefined || !isInteractive()) {
+        out.error(
+            suggestEnumFlag("tools ai-spend series", "--grain", TRANSCRIPT_GRAINS, {
+                subcommand: ["series"],
+                given,
+            })
+        );
         process.exitCode = 1;
 
         return null;
@@ -227,6 +253,14 @@ function registerSeriesCommand(program: Command): Command {
 
     addAccountFlags(series).action(async (_opts: SeriesOpts, cmd: Command) => {
         const opts = cmd.optsWithGlobals() as SeriesOpts;
+        // Ahead of the grain prompt: a mistyped --sources must not sit behind an
+        // interactive question the user then answers for nothing.
+        const sources = parseSources(opts.sources);
+
+        if (sources === null) {
+            return;
+        }
+
         const grain = await resolveGrain(opts.grain);
 
         if (!grain) {
@@ -241,7 +275,7 @@ function registerSeriesCommand(program: Command): Command {
                 from,
                 to: opts.to ?? now.toISOString(),
                 grain,
-                sources: parseSources(opts.sources),
+                sources,
                 accountIds: opts.account,
                 byModel: opts.byModel,
             },
