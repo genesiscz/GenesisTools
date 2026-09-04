@@ -52,6 +52,48 @@ function storeDeps(store: CacheStore, fetchAll: () => Promise<AccountUsageSnapsh
 }
 
 describe("pollAccounts cache, per provider", () => {
+    // The cache file holds the whole provider. A filtered poll fetches one account, so
+    // writing the fetched list alone erased everyone else until the next full round.
+    test("a filtered poll keeps the accounts it never fetched in the cache", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:openai-sub", {
+            fetchedAt: Date.now() - 300_000,
+            accounts: [snapshot("openai-sub", "work", 11), snapshot("openai-sub", "personal", 22)],
+        });
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => [snapshot("openai-sub", "work", 44)])
+        );
+
+        const returned = await get({ force: true, accountFilter: "work" });
+
+        expect(returned.map((a) => a.accountName)).toEqual(["work"]);
+        const cached = store.get("snapshots:openai-sub");
+        expect(cached?.accounts.map((a) => a.accountName).sort()).toEqual(["personal", "work"]);
+        expect(cached?.accounts.find((a) => a.accountName === "work")?.limits[0].percentUsed).toBe(44);
+        expect(cached?.accounts.find((a) => a.accountName === "personal")?.limits[0].percentUsed).toBe(22);
+    });
+
+    // Negative control: an unfiltered poll still replaces the whole set, so an account
+    // that was removed from the config does not linger in the cache forever.
+    test("an unfiltered poll replaces the whole account set", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:openai-sub", {
+            fetchedAt: Date.now() - 300_000,
+            accounts: [snapshot("openai-sub", "work", 11), snapshot("openai-sub", "gone", 22)],
+        });
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => [snapshot("openai-sub", "work", 44)])
+        );
+
+        await get({ force: true });
+
+        expect(store.get("snapshots:openai-sub")?.accounts.map((a) => a.accountName)).toEqual(["work"]);
+    });
+
     test("serves cache inside the freshness window without polling", async () => {
         const store: CacheStore = new Map();
         store.set("snapshots:openai-sub", {
