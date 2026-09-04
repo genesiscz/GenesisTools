@@ -16,7 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
  * bill" — session files and statusline state do not record it.
  */
 
-export type ClaudeProcessKind = "tui" | "sdk";
+export type ClaudeProcessKind = "tui" | "sdk" | "mcp";
 
 export interface PsProcessRow {
     pid: number;
@@ -212,17 +212,21 @@ export function parsePsLine(line: string): PsProcessRow | null {
     };
 }
 
-/** The real claude binary is a session; bun launchers and MCP children are not. */
+/**
+ * The real claude binary is a session; bun launchers are not. The gt-claude wrapper is an
+ * SDK process, except when its last arg is `mcp`: that is the `tools claude mcp` stdio
+ * server (the command takes no arguments), which any MCP host may spawn with no tty.
+ */
 export function classifyClaudeArgs(args: string): ClaudeProcessKind | null {
-    const exe = args.split(/\s+/)[0] ?? "";
-    const base = exe.split("/").pop() ?? "";
+    const tokens = args.split(/\s+/);
+    const base = (tokens[0] ?? "").split("/").pop() ?? "";
 
     if (base === "claude") {
         return "tui";
     }
 
     if (base === "gt-claude") {
-        return "sdk";
+        return tokens[tokens.length - 1] === "mcp" ? "mcp" : "sdk";
     }
 
     return null;
@@ -548,15 +552,21 @@ export function parseLsofCwd(output: string): Map<number, string> {
 }
 
 /**
- * An SDK/MCP child that shares a tty with a TUI session is that session's own helper
- * (`tools claude mcp`), not a separate agent. It bills the same account and adds a row that
- * reads like an unidentified session, so it is hidden unless asked for. A headless agent
- * with no TUI on its tty is a real, separately billable session and always shows.
+ * A `tools claude mcp` server is never a session, whatever its tty says: Grok and Cursor
+ * spawn it with no controlling tty, and it used to read as a dead headless Claude session.
+ * An SDK child that shares a tty with a TUI session is that session's own launcher, not a
+ * separate agent. Both bill the same account and add a row that reads like an unidentified
+ * session, so they are hidden unless asked for. A headless SDK agent with no TUI on its tty
+ * is a real, separately billable session and always shows.
  */
 export function isHelperChild(
     proc: { kind: ClaudeProcessKind; tty: string },
     all: Array<{ kind: ClaudeProcessKind; tty: string }>
 ): boolean {
+    if (proc.kind === "mcp") {
+        return true;
+    }
+
     if (proc.kind !== "sdk" || proc.tty === "??") {
         return false;
     }

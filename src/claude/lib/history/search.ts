@@ -42,6 +42,7 @@ import { Executor } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { glob } from "glob";
 import type {
@@ -497,11 +498,10 @@ export function extractCommitHashes(messages: ConversationMessage[]): string[] {
 
 interface CommitInfo {
     fullHash: string;
-    date: Date;
 }
 
 /**
- * Use git log to resolve a commit hash prefix to full hash + date.
+ * Use git log to resolve a commit hash prefix to the full hash.
  * Returns null if the hash can't be resolved (e.g., not in a git repo).
  */
 async function getCommitInfo(hashPrefix: string): Promise<CommitInfo | null> {
@@ -509,25 +509,19 @@ async function getCommitInfo(hashPrefix: string): Promise<CommitInfo | null> {
         const exec = new Executor({ prefix: "git" });
 
         // Try git log first (works for reachable commits)
-        const result = await exec.exec(["log", "--format=%H|%cI", "-1", hashPrefix]);
+        const result = await exec.exec(["log", "--format=%H", "-1", hashPrefix]);
+        const fullHash = result.success ? result.stdout.trim() : "";
 
-        if (result.success && result.stdout.trim()) {
-            const [fullHash, dateStr] = result.stdout.trim().split("|");
-
-            if (fullHash && dateStr) {
-                return { fullHash, date: new Date(dateStr) };
-            }
+        if (fullHash) {
+            return { fullHash };
         }
 
         // Fallback: git show works for dangling objects (post-rebase, pre-gc)
-        const showResult = await exec.exec(["show", "--format=%H|%cI", "--no-patch", hashPrefix]);
+        const showResult = await exec.exec(["show", "--format=%H", "--no-patch", hashPrefix]);
+        const shownHash = showResult.success ? showResult.stdout.trim() : "";
 
-        if (showResult.success && showResult.stdout.trim()) {
-            const [fullHash, dateStr] = showResult.stdout.trim().split("|");
-
-            if (fullHash && dateStr) {
-                return { fullHash, date: new Date(dateStr) };
-            }
+        if (shownHash) {
+            return { fullHash: shownHash };
         }
 
         return null;
@@ -646,13 +640,27 @@ async function processFileForCommit(
 }
 
 /**
- * Fast commit hash search: uses git log + SQLite cache + raw text scanning
- * to avoid parsing all JSONL files.
+ * The needle ripgrep narrows the corpus with, capped at 8 characters.
+ *
+ * Transcripts hold whatever `git log --oneline` printed, which is an
+ * ABBREVIATED hash. A full 40-char SHA pasted from GitHub matched no file at
+ * all, so the command answered "nothing found" for a commit that was in the
+ * history. Eight characters is the same prefilter `processFileForCommit` uses,
+ * so every file it would accept is in the candidate set; it re-checks each hit
+ * against the full hash, so a shared prefix costs a parse, never a wrong match.
+ */
+export function commitRgNeedle(hashLower: string, fullHash: string | undefined): string {
+    return (fullHash ?? hashLower).slice(0, 8);
+}
+
+/**
+ * Fast commit hash search: git log resolves the prefix to a full hash, ripgrep
+ * narrows the corpus to files that mention it, and only those get parsed.
  */
 async function searchCommitHashFast(hashPrefix: string, filters: SearchFilters): Promise<SearchResult[]> {
     const hashLower = hashPrefix.toLowerCase();
 
-    // Step 1: Resolve full hash + date via git log
+    // Step 1: Resolve the full hash via git log
     const commitInfo = await getCommitInfo(hashPrefix);
     const fullHash = commitInfo?.fullHash?.toLowerCase();
     // Use full hash for text matching when available, otherwise the prefix
@@ -660,51 +668,36 @@ async function searchCommitHashFast(hashPrefix: string, filters: SearchFilters):
     // Only early-exit on exact 40-char hashes (prefixes could match across repos)
     const canEarlyExit = hashLower.length === 40 || (fullHash !== undefined && fullHash.length === 40);
 
-    // Step 2: Get candidate files — use cache when we have a commit date
+    // Step 2: candidate files via ripgrep. Reading every transcript into memory
+    // took 31s over 11 GB / 11.8k files (profiling log, 2026-09-03); rg -l over
+    // the same corpus takes 0.3s. Word boundaries stay off: the needle sits
+    // inside longer hashes.
+    const project = filters.project && filters.project !== "all" ? filters.project : undefined;
+    const needle = commitRgNeedle(hashLower, fullHash);
+    const { files: rgFiles, failed } = await hist().measureAsync("commit.rg-candidates", () =>
+        rgSearchFilesDetailed(needle, { project, noWordBoundary: true })
+    );
+
     let candidateFiles: string[];
 
-    if (commitInfo?.date) {
-        // Narrow to ±2 days around commit date using SQLite cache
-        const dateMs = commitInfo.date.getTime();
-        const dayMs = 24 * 60 * 60 * 1000;
-        const from = new Date(dateMs - 2 * dayMs);
-        const to = new Date(dateMs + 2 * dayMs);
-
-        const projectFilter = filters.project && filters.project !== "all" ? filters.project.toLowerCase() : undefined;
-        const allMetadata = projectFilter
-            ? getAllSessionMetadata().filter((s) => s.project?.toLowerCase().includes(projectFilter))
-            : getAllSessionMetadata();
-
-        // Filter by date range, exclusions, and agent scope
-        const candidates = allMetadata.filter((s) => {
-            if (filters.excludeCurrentSession && s.sessionId === filters.excludeCurrentSession) {
-                return false;
-            }
-
-            if (filters.excludeAgents && s.isSubagent) {
-                return false;
-            }
-
-            if (filters.agentsOnly && !s.isSubagent) {
-                return false;
-            }
-
-            if (!s.firstTimestamp) {
-                return true; // Include files without timestamps (can't filter)
-            }
-
-            const ts = new Date(s.firstTimestamp).getTime();
-            return ts >= from.getTime() && ts <= to.getTime();
-        });
-
-        candidateFiles = candidates.map((s) => s.filePath);
-        logger.debug(
-            `Commit search: narrowed to ${candidateFiles.length} files from cache (±2 days of ${commitInfo.date.toISOString()})`
-        );
-    } else {
-        // No git info — fall back to all files (but still use raw text filter)
+    if (failed) {
         candidateFiles = await findConversationFiles(filters);
-        logger.debug(`Commit search: no git date info, scanning ${candidateFiles.length} files`);
+        logger.debug(`Commit search: rg unavailable, scanning ${candidateFiles.length} files`);
+    } else {
+        candidateFiles = rgFiles.filter((filePath) => {
+            const isSubagent = filePath.includes(`${sep}subagents${sep}`) || basename(filePath).startsWith("agent-");
+
+            if (filters.excludeAgents && isSubagent) {
+                return false;
+            }
+
+            return !(filters.agentsOnly && !isSubagent);
+        });
+        logger.debug(`Commit search: rg narrowed ${needle} to ${candidateFiles.length} candidate files`);
+
+        if (candidateFiles.length === 0) {
+            logger.debug(`Commit search: no transcript mentions ${needle} — nothing to parse`);
+        }
     }
 
     const results: SearchResult[] = [];
@@ -723,36 +716,6 @@ async function searchCommitHashFast(hashPrefix: string, filters: SearchFilters):
             }
 
             results.push(result);
-        }
-    }
-
-    if (results.length > 0) {
-        return filters.limit ? results.slice(0, filters.limit) : results;
-    }
-
-    // If cache-narrowed search found nothing, retry with all files as fallback
-    if (commitInfo?.date) {
-        logger.debug("Commit search: cache-narrowed search found nothing, retrying with all files");
-        const allFiles = await findConversationFiles(filters);
-        const checked = new Set(candidateFiles);
-        const remaining = allFiles.filter((f) => !checked.has(f));
-
-        const remainingTotal = remaining.length;
-        let remainingProcessed = 0;
-
-        for (const filePath of remaining) {
-            remainingProcessed++;
-            filters.onProgress?.(remainingProcessed, remainingTotal, basename(filePath, ".jsonl"));
-
-            const result = await processFileForCommit(filePath, hashLower, searchHash, fullHash, filters);
-
-            if (result) {
-                if (canEarlyExit) {
-                    return [result];
-                }
-
-                results.push(result);
-            }
         }
     }
 
@@ -2308,7 +2271,7 @@ async function rgSearchFilesDetailed(
         : options.project
           ? resolveProjectDir(options.project) || PROJECTS_DIR
           : PROJECTS_DIR;
-    const rg = new Executor({ prefix: "rg" });
+    const rg = new Executor({ prefix: ripgrepBinary() ?? "rg" });
     const args = options.count
         ? ["-c", "--glob", "*.jsonl", "-i", "--max-count", String(RELEVANCE_MATCH_COUNT_CAP)]
         : ["-l", "--glob", "*.jsonl", "-i", "--max-count", "1"];
@@ -2372,7 +2335,7 @@ async function rgSearchFilesUnprofiled(
  */
 export async function rgExtractSnippet(query: string, filePath: string): Promise<string | undefined> {
     try {
-        const rg = new Executor({ prefix: "rg" });
+        const rg = new Executor({ prefix: ripgrepBinary() ?? "rg" });
         const { stdout, exitCode } = await rg.exec([
             "-i",
             "-F",

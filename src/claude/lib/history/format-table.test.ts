@@ -36,9 +36,9 @@ describe("history TTY table", () => {
             })
         );
 
-        expect(playground[0]).toBe("cb09c025");
+        expect(playground[0]).toBe("cb09c025-0657-4f49-bae6-b5aa23b8e37b");
         expect(playground[projectCol]).toBe("GenesisPlayground");
-        expect(tools[0]).toBe("e68d8436");
+        expect(tools[0]).toBe("e68d8436-3fa0-44b3-8526-1d8435af7e3b");
         expect(tools[projectCol]).toBe("GenesisTools");
     });
 });

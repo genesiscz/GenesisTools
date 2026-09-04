@@ -40,7 +40,8 @@ function optionExists(command: Command, flag: string): boolean {
 }
 
 export function getArgvVerbosity(argv: readonly string[] = process.argv.slice(2)): Verbosity {
-    let count = 0;
+    // DEBUG=1 / DEBUG=* in the env means the same as one -v.
+    let count = env.log.isDebugEnabled() ? 1 : 0;
     let sawDoubleDash = false;
 
     for (const arg of argv) {

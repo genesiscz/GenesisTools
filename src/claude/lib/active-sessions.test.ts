@@ -49,6 +49,15 @@ describe("classifyClaudeArgs", () => {
 
     test("gt-claude wrapper is an sdk session", () => {
         expect(classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude --preload /x/y.ts")).toBe("sdk");
+        expect(
+            classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude /x/src/claude/index.ts start work -- --resume a1")
+        ).toBe("sdk");
+    });
+
+    test("gt-claude running the stdio mcp server is an mcp helper", () => {
+        expect(
+            classifyClaudeArgs("/Users/x/.genesis-tools/bin/gt-claude --preload /x/y.ts /x/src/claude/index.ts mcp")
+        ).toBe("mcp");
     });
 
     test("launchers and children are not sessions", () => {
@@ -425,8 +434,13 @@ describe("assignSessionIds with hook hints", () => {
 describe("isHelperChild", () => {
     const tui = { kind: "tui" as const, tty: "ttys020" };
 
-    test("an MCP child sharing a TUI's tty is a helper", () => {
+    test("an SDK launcher sharing a TUI's tty is a helper", () => {
         expect(isHelperChild({ kind: "sdk", tty: "ttys020" }, [tui])).toBe(true);
+    });
+
+    test("an mcp server is a helper even with no tty (Grok/Cursor host)", () => {
+        expect(isHelperChild({ kind: "mcp", tty: "??" }, [tui])).toBe(true);
+        expect(isHelperChild({ kind: "mcp", tty: "ttys020" }, [tui])).toBe(true);
     });
 
     test("a headless agent with no tty is a real session", () => {

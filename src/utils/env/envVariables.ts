@@ -265,7 +265,10 @@ export const env = {
         shouldIncludePid: () => isFlag("LOG_PID") || isFlag("DEBUG"),
         getDashboardPort: () => parseIntEnv("LOG_DASHBOARD_PORT", 7243),
         // Generic DEBUG flag used outside logging (azure-devops stack traces, mcp-tsc, etc.)
-        isDebugEnabled: () => Boolean(getTrimmed("DEBUG")),
+        isDebugEnabled: () => {
+            const raw = getTrimmed("DEBUG");
+            return Boolean(raw) && !/^(0|false|off|no)$/i.test(raw ?? "");
+        },
     },
 
     test: {

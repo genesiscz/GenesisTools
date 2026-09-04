@@ -2,7 +2,7 @@
 //   PROFILE=1                 enable ALL scopes (config.profiling.enabled is ignored)
 //   PROFILE=du,engine         enable only those scopes (substring match)
 //   PROFILE=0                 force off even if config enabled
-//   PROFILE_TO_STDERR=1       also print each line to stderr (off by default)
+//   PROFILE_TO_STDERR=0|1     echo each line to stderr (default: on when PROFILE is set, off for config-enabled)
 //   PROFILE_TO_FILE=/path     write to this path instead of ~/.genesis-tools/logs/<date>-profiling.log
 //
 // Durable defaults live in ~/.genesis-tools/GenesisTools/config.json under `profiling`.
@@ -79,8 +79,11 @@ function resolveGate(): ProfilerGate {
         scopes = null;
     }
 
+    // PROFILE in the env is a per-run request to see the numbers, so it echoes
+    // to stderr unless PROFILE_TO_STDERR says otherwise; config-enabled
+    // profiling keeps the configured stderr setting.
     const stderrOverride = parseOnOff(env.profiling.getToStderr());
-    const stderr = stderrOverride === undefined ? cfg.stderr : stderrOverride;
+    const stderr = stderrOverride === undefined ? (profileRaw !== undefined && on) || cfg.stderr : stderrOverride;
 
     const fileOverride = env.profiling.getToFile();
     let file = cfg.file;

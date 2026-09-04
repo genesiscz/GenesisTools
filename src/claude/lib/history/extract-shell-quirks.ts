@@ -16,6 +16,7 @@ import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { escapeShellArg } from "@genesiscz/utils/string";
 
 // =============================================================================
@@ -367,7 +368,7 @@ interface RgResult {
 }
 
 async function runRg(args: string[]): Promise<RgResult> {
-    const proc = Bun.spawn(["rg", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = Bun.spawn([ripgrepBinary() ?? "rg", ...args], { stdio: ["ignore", "pipe", "pipe"] });
     const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -388,10 +389,10 @@ let ripgrepPresent: boolean | undefined;
 
 function hasRipgrep(): boolean {
     if (ripgrepPresent === undefined) {
-        ripgrepPresent = Bun.which("rg") !== null;
+        ripgrepPresent = ripgrepBinary() !== null;
 
         if (!ripgrepPresent) {
-            logger.info("extractShellQuirks: ripgrep not on PATH — falling back to the in-process scan");
+            logger.info("extractShellQuirks: no ripgrep on PATH or vendored — falling back to the in-process scan");
         }
     }
 

@@ -102,7 +102,7 @@ function renderTable(sessions: ActiveClaudeSession[]): void {
         table.push([
             accountCell(session),
             String(session.pid),
-            session.kind === "tui" ? "tui" : pc.dim("sdk"),
+            session.kind === "tui" ? "tui" : pc.dim(session.kind),
             sessionCell(session),
             nameCell(session),
             surfaceCell(session),
@@ -153,7 +153,10 @@ export function registerWhoCommand(program: Command): void {
                 "(read from TOOLS_CLAUDE_ACCOUNT in the process env; 'keychain?' = launched outside tools claude run)"
         )
         .option("--json", "Machine-readable output")
-        .option("--all", "Include MCP/SDK helper processes that serve a TUI session on the same tty")
+        .option(
+            "--all",
+            "Include helper processes: `tools claude mcp` servers (any tty) and SDK launchers sharing a TUI's tty"
+        )
         .action(async (opts: WhoOptions) => {
             const all = await listActiveClaudeSessions();
             const sessions = (opts.all ? all : all.filter((s) => !isHelperChild(s, all))).sort((a, b) =>
@@ -175,7 +178,9 @@ export function registerWhoCommand(program: Command): void {
 
             if (hidden > 0) {
                 out.println(
-                    pc.dim(`  ${hidden} MCP helper process${hidden === 1 ? "" : "es"} hidden — show with --all.`)
+                    pc.dim(
+                        `  ${hidden} helper process${hidden === 1 ? "" : "es"} (mcp servers, launchers) hidden — show with --all.`
+                    )
                 );
             }
         });

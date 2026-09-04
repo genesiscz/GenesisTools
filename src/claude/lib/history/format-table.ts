@@ -9,7 +9,7 @@ export function historyTablePlainRow(result: SearchResult): string[] {
     const project = result.project.trim();
 
     return [
-        result.sessionId.slice(0, 8),
+        result.sessionId,
         project ? truncateText(project, 18) : "—",
         truncateText(title, 36),
         result.gitBranch ? truncateText(result.gitBranch, 18) : "—",
