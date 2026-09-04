@@ -273,6 +273,12 @@ describe("applyLoginOutcome", () => {
         expect(result.account.credentials.accessToken).toBeUndefined();
         expect(result.account.credentials.authFile).toBe("/tmp/other/auth.json");
         expect(result.account.billing.mode).toBe("subscription");
+
+        // PR #360 review t11: asserting only the config fields passed while the
+        // old vendor's tokens stayed in the vault forever, unreachable because
+        // `clearCredentials` works off the config that no longer names them.
+        const vault = await secrets();
+        expect(await vault.list(`ai/${result.account.id}/`)).toEqual([]);
     });
 
     test("an empty app default is filled once and never overwritten", async () => {
