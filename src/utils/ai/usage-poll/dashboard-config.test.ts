@@ -93,4 +93,30 @@ describe("loadDashboardConfig", () => {
         expect(config.notifications.thresholds.weekly).toEqual([20, 40, 60, 80]);
         expect(config.notifications.enabled).toBe(true);
     });
+    // Every load must be detached from the module constants. A caller that edits what it
+    // got back used to edit DEFAULTS, and the next load in the process inherited it.
+    test("a mutated config does not leak into the next load", async () => {
+        useTempHome();
+
+        const first = await loadDashboardConfig();
+        first.hiddenAccounts.push("work");
+        first.notifications.thresholds.weekly.push(99);
+        prominentFor(first, "anthropic-sub").push("invented");
+
+        const second = await loadDashboardConfig();
+
+        expect(second.hiddenAccounts).toEqual([]);
+        expect(second.notifications.thresholds.weekly).toEqual([20, 40, 60, 80]);
+        expect(prominentFor(second, "anthropic-sub")).toEqual(["five_hour", "seven_day", "seven_day_sonnet"]);
+    });
+
+    test("a saved config is detached from the defaults too", async () => {
+        useTempHome();
+        await new Storage("ai-usage-dashboard").setConfig({ refreshInterval: 90 });
+
+        const first = await loadDashboardConfig();
+        first.notifications.thresholds.session.push(99);
+
+        expect((await loadDashboardConfig()).notifications.thresholds.session).toEqual([80]);
+    });
 });
