@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AccountCredentials, AiConfigData } from "@genesiscz/utils/ai/config/schema";
+import type { AccountCredentials, AccountEntry, AiConfigData } from "@genesiscz/utils/ai/config/schema";
 import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
+import { anthropicLoginLong } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/login-long";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -204,5 +205,121 @@ describe("the credential write barrier", () => {
         expect(wrote).toBe(true);
         expect(reached).toBe(true);
         expect(await resolveSecret(data.accounts[0].credentials.longLivedToken)).toBe("sk-ant-oat01-fresh");
+    });
+});
+
+/**
+ * PR #360 review t9. The block above proves the DECISION and the WRITE
+ * separately, through a helper that mirrors the command. This one runs the real
+ * production steps — `anthropicLoginLong` (which owns the identity probe) into
+ * `applyLongLivedToken` under `AiConfigStore.mutate`, exactly as `runLoginLong`
+ * composes them — so a regression in either step turns this red.
+ *
+ * The refusal branch is reachable here only because it now THROWS instead of
+ * calling `process.exit(1)` (review t12); the mismatch branch still ends in a
+ * clack confirm, and `mock.module` is process-global in Bun, so stubbing
+ * `@clack/prompts` would break `src/utils/logger/out.test.ts`.
+ */
+describe("the production identity-to-write boundary", () => {
+    const MESSAGES = "https://api.anthropic.com/v1/messages";
+    const COUNT_TOKENS = "https://api.anthropic.com/v1/messages/count_tokens";
+    const TOKEN = `sk-ant-oat01-${"x".repeat(95)}`;
+
+    let realFetch: typeof fetch;
+
+    /** 200 for the liveness ping; the probe answers with (or without) the org header. */
+    function stubApi(probeOrg?: string): void {
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+
+            if (url === COUNT_TOKENS) {
+                return new Response("{}", {
+                    status: 200,
+                    headers: probeOrg ? { "anthropic-organization-id": probeOrg } : {},
+                });
+            }
+
+            if (url === MESSAGES) {
+                return new Response("{}", { status: 200 });
+            }
+
+            throw new Error(`unexpected fetch to ${url}`);
+        }) as typeof fetch;
+    }
+
+    function identifiedAccount(): AccountEntry {
+        return {
+            id: "acc_personal",
+            name: "personal",
+            provider: "anthropic-sub",
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: {},
+            useEnvApiKey: false,
+            organizationUuid: "org-invented-stored",
+        };
+    }
+
+    beforeEach(() => {
+        realFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    test("an unprovable owner on an identified account never reaches the mutator", async () => {
+        // 200 with no org header: the token WORKS but the API did not say whose
+        // it is, and there is nobody on a pipe to take that risk knowingly.
+        stubApi(undefined);
+
+        const data = configWith({ longLivedToken: "sk-ant-oat01-EXISTING" });
+        let reachedMutator = false;
+
+        const attempt = async (): Promise<void> => {
+            const outcome = await anthropicLoginLong({
+                account: identifiedAccount(),
+                requestedName: "personal",
+                interactive: false,
+                pastedToken: TOKEN,
+            });
+
+            reachedMutator = true;
+            await applyLongLivedToken(data, {
+                accountName: "personal",
+                token: outcome.credentials.longLivedToken as string,
+                organizationUuid: outcome.accountFields?.organizationUuid,
+            });
+        };
+
+        await expect(attempt()).rejects.toThrow(/Refusing to overwrite an identified account/);
+        expect(reachedMutator).toBe(false);
+        expect(data.accounts[0].credentials.longLivedToken).toBe("sk-ant-oat01-EXISTING");
+        expect(data.accounts[0].organizationUuid).toBeUndefined();
+    });
+
+    test("NEGATIVE CONTROL: a proven matching owner does reach the mutator and writes", async () => {
+        stubApi("org-invented-stored");
+
+        const data = configWith({});
+        data.accounts[0].organizationUuid = "org-invented-stored";
+
+        const outcome = await anthropicLoginLong({
+            account: identifiedAccount(),
+            requestedName: "personal",
+            interactive: false,
+            pastedToken: TOKEN,
+        });
+
+        expect(outcome.accountFields?.organizationUuid).toBe("org-invented-stored");
+
+        await applyLongLivedToken(data, {
+            accountName: "personal",
+            token: outcome.credentials.longLivedToken as string,
+            organizationUuid: outcome.accountFields?.organizationUuid,
+        });
+
+        expect(await resolveSecret(data.accounts[0].credentials.longLivedToken)).toBe(TOKEN);
+        expect(data.accounts[0].organizationUuid).toBe("org-invented-stored");
     });
 });
