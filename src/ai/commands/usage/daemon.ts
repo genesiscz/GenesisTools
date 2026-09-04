@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { parseInterval } from "@app/daemon/lib/interval";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import * as p from "@clack/prompts";
@@ -68,13 +69,22 @@ export interface RegisterUsagePollResult {
  */
 export async function registerUsagePollTask(args: RegisterUsagePollArgs): Promise<RegisterUsagePollResult> {
     const registry = args.registry ?? REAL_REGISTRY;
+    // Before the migration, not inside it: `registerTask` parses the interval as its very
+    // first act, so a typo used to delete `claude-usage-poll` and then throw, leaving the
+    // machine with no usage task at all.
+    parseInterval(args.interval);
+
     let migratedFromLegacy = false;
 
     if (await registry.isTaskRegistered(LEGACY_USAGE_TASK_NAME)) {
         migratedFromLegacy = await registry.unregisterTask(LEGACY_USAGE_TASK_NAME);
     }
 
-    const created = await registry.registerTask({
+    // `registerTask` answers `true` for a create AND for an overwrite, so the create/update
+    // wording has to come from asking first.
+    const created = !(await registry.isTaskRegistered(USAGE_TASK_NAME));
+
+    await registry.registerTask({
         name: USAGE_TASK_NAME,
         command: `${bunPath()} run ${args.script ?? POLL_SCRIPT}`,
         every: args.interval,
