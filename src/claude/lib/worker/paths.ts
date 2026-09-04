@@ -1,10 +1,7 @@
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { workersDir } from "@genesiscz/utils/claude/worker-paths";
 import { safeNamedPath } from "@genesiscz/utils/worker/safe-path";
 
-export function workersDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "claude", "workers");
-}
+export { workersDir };
 
 function safeWorkerPath(name: string, suffix: string): string {
     return safeNamedPath({ root: workersDir(), name, suffix, label: "worker name" });
