@@ -6,6 +6,7 @@ import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverGrokHomes } from "./discover";
+import { grokUsage } from "./usage";
 
 /**
  * SuperGrok subscription through the Grok CLI chat proxy.
@@ -66,6 +67,7 @@ export const grokSubPlugin: ProviderPlugin = {
     accounts: {
         presentation,
         logoutTargets: ["authFile"],
+        usage: grokUsage,
         discoverHomes: () => discoverGrokHomes(),
 
         /**

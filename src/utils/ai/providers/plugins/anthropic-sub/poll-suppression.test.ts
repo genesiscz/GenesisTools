@@ -26,7 +26,7 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
     },
 }));
 
-mock.module("@app/claude/lib/usage/subscription", () => ({
+mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", () => ({
     isAnchorDue: (account: { name: string }) => anchorDueFor.has(account.name),
     planAllowsClaudeCode: (entry: { subscriptionPlan?: string; planContradictedAt?: number }) =>
         Boolean(entry.planContradictedAt) || entry.subscriptionPlan !== "claude_free",
@@ -62,8 +62,13 @@ mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     },
 }));
 
-const { fetchAllAccountsUsage } = await import("@app/claude/lib/usage/api");
-const { blockedEntry, loadPollGate, recordFailure, savePollGate } = await import("@app/claude/lib/usage/poll-gate");
+const { fetchAllAccountsUsage } = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/api");
+const { blockedEntry, loadPollGate, recordFailure, savePollGate } = await import(
+    "@genesiscz/utils/ai/usage-poll/poll-gate"
+);
+
+/** Every gate read and write in this file is the anthropic one, as `api.ts` does. */
+const PROVIDER = "anthropic-sub";
 
 const originalHome = env.get("GENESIS_TOOLS_HOME");
 const originalFetch = globalThis.fetch;
@@ -112,7 +117,7 @@ describe("poll suppression never spends a refresh token", () => {
         accounts = [account("blocked")];
 
         const gate = recordFailure(recordFailure({}, "blocked", "boom", Date.now()), "blocked", "boom", Date.now());
-        await savePollGate(gate);
+        await savePollGate(PROVIDER, gate);
         expect(blockedEntry(gate, "blocked", Date.now())).not.toBeNull();
 
         const [usage] = await fetchAllAccountsUsage();
@@ -164,6 +169,7 @@ describe("poll suppression never spends a refresh token", () => {
         ];
         const now = Date.now();
         await savePollGate(
+            PROVIDER,
             recordFailure(
                 recordFailure({}, "shop", "Token expired (invalid_grant)", now),
                 "shop",
@@ -197,6 +203,7 @@ describe("poll suppression never spends a refresh token", () => {
 
         const now = Date.now();
         await savePollGate(
+            PROVIDER,
             recordFailure(
                 recordFailure({}, "revived", "Token expired (invalid_grant)", now),
                 "revived",
@@ -230,7 +237,7 @@ describe("poll suppression never spends a refresh token", () => {
 
         await fetchAllAccountsUsage();
 
-        expect((await loadPollGate()).free).toBeUndefined();
+        expect((await loadPollGate(PROVIDER)).free).toBeUndefined();
         expect(usageFetches).toBe(0);
     });
 });
