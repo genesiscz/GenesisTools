@@ -79,6 +79,8 @@ export interface SeriesPoint {
 }
 
 export interface SeriesEntry {
+    /** Plugin id the rows came from. Set even when the query did not name one. */
+    provider: string;
     account: string;
     key: string;
     points: SeriesPoint[];
@@ -276,7 +278,10 @@ export class UsageLimitsDb {
     }
 
     recordIfChangedV2(accountName: string, bucket: string, utilization: number, extras: SnapshotV2Extras): boolean {
-        const latest = this.getLatest(accountName, bucket, extras.provider);
+        // The provider the INSERT will write, not the caller's optional one: an omitted
+        // provider means "any provider" to the readers, so a matching row belonging to
+        // another provider used to suppress this write.
+        const latest = this.getLatest(accountName, bucket, extras.provider ?? DEFAULT_LIMITS_PROVIDER);
 
         if (
             latest &&
@@ -369,12 +374,13 @@ export class UsageLimitsDb {
         }
 
         const stmt = this.claudeDb.getDb().prepare(`
-            SELECT account_name, bucket, timestamp, utilization
+            SELECT provider, account_name, bucket, timestamp, utilization
             FROM usage_snapshots
             WHERE ${where.join(" AND ")}
-            ORDER BY account_name, bucket, timestamp ASC
+            ORDER BY provider, account_name, bucket, timestamp ASC
         `);
         const rows = stmt.all(...params) as Array<{
+            provider: string | null;
             account_name: string;
             bucket: string;
             timestamp: string;
@@ -384,11 +390,15 @@ export class UsageLimitsDb {
         const byKey = new Map<string, SeriesEntry>();
 
         for (const row of rows) {
-            const mapKey = `${row.account_name}\u0000${row.bucket}`;
+            // Provider belongs in the key: an unscoped query reads every provider, and two
+            // providers that happen to share an account name and a window key would
+            // otherwise have their points interleaved into one line.
+            const provider = row.provider ?? DEFAULT_LIMITS_PROVIDER;
+            const mapKey = `${provider}\u0000${row.account_name}\u0000${row.bucket}`;
             let entry = byKey.get(mapKey);
 
             if (!entry) {
-                entry = { account: row.account_name, key: row.bucket, points: [] };
+                entry = { provider, account: row.account_name, key: row.bucket, points: [] };
                 byKey.set(mapKey, entry);
             }
 
@@ -441,7 +451,8 @@ export class UsageLimitsDb {
     }
 
     recordSpendIfChanged(accountName: string, spend: SpendInput, provider?: string): boolean {
-        const latest = this.getLatestSpend(accountName, provider);
+        // Same rule as `recordIfChangedV2`: compare against the provider being written.
+        const latest = this.getLatestSpend(accountName, provider ?? DEFAULT_LIMITS_PROVIDER);
 
         if (
             latest &&

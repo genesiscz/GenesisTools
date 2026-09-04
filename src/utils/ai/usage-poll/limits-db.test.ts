@@ -363,6 +363,47 @@ describe("UsageLimitsDb", () => {
         });
     });
 
+    describe("provider-scoped change detection", () => {
+        // The INSERT always writes a provider; a read that matched any provider let a
+        // foreign row with the same numbers stand in for the one about to be written.
+        test("an anthropic write is not suppressed by an identical openai row", () => {
+            db.recordSnapshotV2("work", "five_hour", 42, recentTimestamp(10), {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "openai-sub",
+            });
+
+            expect(db.recordIfChanged("work", "five_hour", 42, null)).toBe(true);
+            expect(db.getLatest("work", "five_hour", "anthropic-sub")?.utilization).toBe(42);
+        });
+
+        // Negative control: a repeat of the SAME provider's row is still deduped.
+        test("an unchanged anthropic row is still suppressed", () => {
+            expect(db.recordIfChanged("work", "five_hour", 42, null)).toBe(true);
+            expect(db.recordIfChanged("work", "five_hour", 42, null)).toBe(false);
+        });
+
+        test("a spend write is not suppressed by another provider's identical spend", () => {
+            const spend = {
+                used_minor: 100,
+                used_currency: "USD",
+                used_exponent: 2,
+                limit_minor: 1000,
+                limit_exponent: 2,
+                percent: 10,
+                severity: "normal",
+                enabled: true,
+                cap_minor: null,
+                cap_currency: null,
+            };
+
+            expect(db.recordSpendIfChanged("work", spend, "grok-sub")).toBe(true);
+            expect(db.recordSpendIfChanged("work", spend)).toBe(true);
+            expect(db.recordSpendIfChanged("work", spend)).toBe(false);
+        });
+    });
+
     describe("getSeries", () => {
         test("returns one entry per account and window key, points in time order", () => {
             db.recordSnapshot("work", "five_hour", 10, recentTimestamp(30));
@@ -397,8 +438,31 @@ describe("UsageLimitsDb", () => {
             });
 
             expect(series).toEqual([
-                { account: "work", key: "primary", points: [{ t: expect.any(String), percent: 44 }] },
+                {
+                    provider: "openai-sub",
+                    account: "work",
+                    key: "primary",
+                    points: [{ t: expect.any(String), percent: 44 }],
+                },
             ]);
+        });
+
+        // Two providers CAN carry the same account name and window key. Keyed on the pair
+        // alone, their points landed on one line and the chart drew a sawtooth.
+        test("an unscoped query keeps two providers' identical keys apart", () => {
+            db.recordSnapshot("work", "five_hour", 10, recentTimestamp(30));
+            db.recordSnapshotV2("work", "five_hour", 90, recentTimestamp(20), {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "openai-sub",
+            });
+
+            const series = db.getSeries({ from: recentTimestamp(60), to: recentTimestamp(0) });
+
+            expect(series).toHaveLength(2);
+            expect(series.find((s) => s.provider === "anthropic-sub")?.points.map((p) => p.percent)).toEqual([10]);
+            expect(series.find((s) => s.provider === "openai-sub")?.points.map((p) => p.percent)).toEqual([90]);
         });
 
         test("accounts and keys narrow the result", () => {
@@ -414,7 +478,7 @@ describe("UsageLimitsDb", () => {
             });
 
             expect(series).toHaveLength(1);
-            expect(series[0]).toMatchObject({ account: "work", key: "five_hour" });
+            expect(series[0]).toMatchObject({ provider: "anthropic-sub", account: "work", key: "five_hour" });
         });
 
         test("step keeps the last sample of each bucket", () => {
