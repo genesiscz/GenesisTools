@@ -1,5 +1,5 @@
 import { registerUsagePollTask, USAGE_TASK_NAME } from "@app/ai/commands/usage/daemon";
-import { buildSpendSeries } from "@app/ai-spend/lib/series";
+import type { SpendSeriesResult } from "@app/ai-spend/lib/series";
 import { getTask } from "@app/daemon/lib/config";
 import { computeNextRunAt, parseInterval } from "@app/daemon/lib/interval";
 import type {
@@ -28,6 +28,11 @@ import {
     type SnapshotFilter,
     spendAccountIds,
 } from "@app/dev-dashboard/lib/ai-accounts/snapshots";
+import type {
+    TranscriptScanInput,
+    TranscriptScanOutput,
+} from "@app/dev-dashboard/lib/ai-accounts/transcript-scan-worker";
+import { callWorker } from "@app/dev-dashboard/lib/ai-accounts/worker-call";
 import { getRecentRuns } from "@app/dev-dashboard/lib/daemon-view/aggregator";
 import { publishAiUsage } from "@app/dev-dashboard/lib/live/ai-usage-producer";
 import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
@@ -217,6 +222,11 @@ export function transcriptScanKey(query: SpendTotalsQuery, grain: SpendGrain): s
 /** Long enough to cover the two requests of one page load, short enough that a poll still shows up. */
 const TRANSCRIPT_SCAN_TTL_MS = 15_000;
 
+/** A month of transcripts takes about 20s. Past a minute, something is wrong rather than slow. */
+const TRANSCRIPT_SCAN_TIMEOUT_MS = 60_000;
+
+const TRANSCRIPT_SCAN_WORKER = new URL("./transcript-scan-worker.ts", import.meta.url);
+
 /** Points per limit series a response may carry before it is downsampled. */
 const MAX_SERIES_POINTS = 600;
 
@@ -305,17 +315,24 @@ export function createAiAggregator(): AiAggregator {
 
     const transcriptScans = new Map<string, { at: number; scan: ReturnType<typeof runTranscriptScan> }>();
 
-    async function runTranscriptScan(query: SpendTotalsQuery, grain: SpendGrain) {
-        return buildSpendSeries(
+    async function runTranscriptScan(query: SpendTotalsQuery, grain: SpendGrain): Promise<SpendSeriesResult> {
+        const output = await callWorker<TranscriptScanInput, TranscriptScanOutput>(
+            TRANSCRIPT_SCAN_WORKER,
             {
                 from: query.from,
                 to: query.to,
                 grain: transcriptGrain(grain),
-                byModel: true,
                 ...(query.accounts?.length ? { accountIds: [...query.accounts] } : {}),
+                accounts: await enabledAccounts(),
             },
-            { accounts: await enabledAccounts() }
+            { timeoutMs: TRANSCRIPT_SCAN_TIMEOUT_MS, label: "transcript spend scan" }
         );
+
+        if (!output.ok) {
+            throw new Error(output.error);
+        }
+
+        return output.result;
     }
 
     /**
