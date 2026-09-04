@@ -27,6 +27,7 @@ import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
 import { registerSessionsCommands } from "./commands/sessions";
 import { registerUsageDaemonCommands } from "./commands/usage/daemon";
+import { registerAiUsageCommand } from "./commands/usage/index";
 
 // Without this, `referrersOf` in this process cannot see the accounts the
 // ai-proxy config bills, so `account rm` would delete an account (and its vault
@@ -576,9 +577,10 @@ registerAccountsCommands(program);
 registerConfigCommands(program);
 registerSessionsCommands(program);
 
-// `tools ai usage` grows the TUI and the filters in Plan-Usage phase 7; the daemon
-// subcommands are mounted here now so `ai-usage-poll` has a home (spec section 6.5).
+// `tools ai usage` opens the dashboard across every provider that reports quota; its
+// `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).
 const usageCmd = program.command("usage").description("Usage limits for every AI provider");
+registerAiUsageCommand(usageCmd);
 registerUsageDaemonCommands(usageCmd);
 
 async function main(): Promise<void> {

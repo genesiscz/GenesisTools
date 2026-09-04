@@ -27,6 +27,28 @@ export async function recordSnapshots(snapshots: readonly AccountUsageSnapshot[]
                 continue;
             }
 
+            // A credit window is also a spend row. `spend_snapshots` predates the
+            // provider-neutral windows and is still the money series; recording only the
+            // percentage would leave it frozen at whatever the claude-only path last wrote.
+            if (window.kind === "credit" && window.money) {
+                store.recordSpendIfChanged(
+                    snapshot.accountName,
+                    {
+                        used_minor: window.money.usedMinor,
+                        used_currency: window.money.currency,
+                        used_exponent: window.money.exponent,
+                        limit_minor: window.money.limitMinor ?? null,
+                        limit_exponent: window.money.limitMinor === undefined ? null : window.money.exponent,
+                        percent: window.percentUsed,
+                        severity: window.severity ?? "ok",
+                        enabled: window.isActive ?? true,
+                        cap_minor: null,
+                        cap_currency: null,
+                    },
+                    snapshot.provider
+                );
+            }
+
             const changed = store.recordIfChangedV2(snapshot.accountName, window.key, window.percentUsed, {
                 resetsAt: window.resetsAt ?? null,
                 severity: window.severity ?? null,

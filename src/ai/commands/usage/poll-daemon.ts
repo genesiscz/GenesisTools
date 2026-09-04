@@ -1,28 +1,61 @@
-import { isUsageBucket } from "@app/claude/lib/usage/api";
-import { BUCKET_LABELS, bucketKind } from "@app/claude/lib/usage/constants";
-import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
-import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
-import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
-import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
-import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
+import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
+import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
+import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
+import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
+import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
+import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
 import { logger, out } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage/storage";
+
+const ANTHROPIC_SUB = "anthropic-sub";
 
 /**
- * Providers already polled by the claude-only accessor above. `getSharedAccountsUsage`
- * still owns `snapshots:anthropic-sub`, so polling anthropic through `pollAccounts` in the
- * same run would fetch twice AND write two different payload shapes to one cache key.
- * Plan-Usage phase 3 gives `anthropic-sub` an `accounts.usage`; phase 7 then deletes this
- * set together with the `getSharedAccountsUsage` call above it.
+ * Every window worth a threshold notification, flattened out of a round.
+ *
+ * Stale snapshots replay an older fetch and error rows carry nothing, so both are skipped:
+ * notifying on a replay re-fires a threshold that was already handled once.
  */
-const PROVIDERS_ON_THE_LEGACY_PATH = new Set(["anthropic-sub"]);
+export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]) {
+    const out: Array<{
+        accountName: string;
+        key: string;
+        kind: AccountUsageSnapshot["limits"][number]["kind"];
+        label: string;
+        utilization: number;
+        resetsAt: string | null;
+    }> = [];
 
-/** Every provider whose usage the poll core owns today. Empty until phase 3 lands. */
-function coreProviders(): string[] {
-    return pluginsWithUsage()
-        .map((plugin) => plugin.id)
-        .filter((id) => !PROVIDERS_ON_THE_LEGACY_PATH.has(id));
+    for (const snapshot of snapshots) {
+        if (snapshot.stale || snapshot.error) {
+            continue;
+        }
+
+        for (const window of snapshot.limits) {
+            if (typeof window.percentUsed !== "number" || !Number.isFinite(window.percentUsed)) {
+                continue;
+            }
+
+            out.push({
+                accountName: snapshot.accountName,
+                key: window.key,
+                kind: window.kind,
+                label: window.label,
+                utilization: window.percentUsed,
+                resetsAt: window.resetsAt ?? null,
+            });
+        }
+    }
+
+    return out;
+}
+
+/**
+ * Anthropic rows in the shape the claude-only consumers still take: the extra-usage
+ * notifier and the warmup rules, neither of which is provider-neutral.
+ */
+export function anthropicRows(snapshots: readonly AccountUsageSnapshot[]) {
+    return snapshots.filter((s) => s.provider === ANTHROPIC_SUB).map(snapshotToAccountUsage);
 }
 
 async function main(): Promise<void> {
@@ -30,56 +63,31 @@ async function main(): Promise<void> {
     logger.info("[ai-usage] daemon poll starting");
 
     const dashConfig = await loadDashboardConfig();
-
-    const db = new UsageHistoryDb();
+    const db = new UsageLimitsDb();
     const notifManager = new NotificationManager(dashConfig.notifications);
-    const storage = new Storage("claude-usage");
+    const storage = usagePollStorage();
 
     await storage.ensureDirs();
     await notifManager.loadState(storage);
 
     try {
-        // force:true → poll-daemon stays the every-1-min source of truth; the
-        // shared accessor refreshes the cache so consumers in the next 30s read
-        // free. History rows are written by the accessor's write-through
-        // (recordHistory → recordAll) on every live fetch, whichever consumer
-        // wins it — the daemon no longer records separately.
-        const results = await getSharedAccountsUsage({ force: true });
+        // `force: true` — the daemon is the every-minute driver, so every other consumer
+        // reads its cache for free. Per-provider floors (`usage.minIntervalMs`) still
+        // apply inside the shared cache, which is why codex and grok are not refetched on
+        // every tick even under force.
+        const snapshots = await pollAccounts({ force: true });
 
-        if (results.length === 0) {
+        if (snapshots.length === 0) {
             logger.warn("[ai-usage] daemon poll found no configured accounts");
             out.error("No accounts configured. Run: tools claude login");
             process.exit(1);
         }
 
-        for (const account of results) {
-            // Stale entries replay an older fetch — feeding them to the
-            // notification manager could re-fire thresholds after a restart.
-            if (!account.usage || account.stale) {
-                continue;
-            }
-
-            for (const [bucket, data] of Object.entries(account.usage)) {
-                if (!isUsageBucket(data)) {
-                    continue;
-                }
-
-                if (data.utilization === null || data.utilization === undefined) {
-                    continue;
-                }
-
-                try {
-                    await notifManager.processUsage({
-                        accountName: account.accountName,
-                        key: bucket,
-                        kind: bucketKind(bucket),
-                        label: BUCKET_LABELS[bucket] ?? bucket,
-                        utilization: data.utilization,
-                        resetsAt: data.resets_at,
-                    });
-                } catch (err) {
-                    logger.warn({ err, account: account.accountName, bucket }, "[ai-usage] usage notification failed");
-                }
+        for (const window of notifiableWindows(snapshots)) {
+            try {
+                await notifManager.processUsage(window);
+            } catch (err) {
+                logger.warn({ err, account: window.accountName, key: window.key }, "[ai-usage] notification failed");
             }
         }
 
@@ -87,50 +95,41 @@ async function main(): Promise<void> {
 
         try {
             await notifManager.saveState(storage);
-        } catch {
-            // Persistence failure should not fail the poll
+        } catch (err) {
+            logger.warn({ err }, "[ai-usage] notification state save failed");
         }
 
-        // Warmup hook: check rules against fresh usage data (stale replays excluded)
+        const anthropic = anthropicRows(snapshots);
+
+        // Extra-usage (the paid overflow credit) has its own tracker and its own message,
+        // and it is anthropic-only: no other provider reports a spend cap on the usage
+        // endpoint. It runs here rather than inside the poll core so `src/utils` keeps no
+        // dependency on the claude config.
+        try {
+            await processExtraUsageNotifications(anthropic.filter((row) => !row.stale));
+        } catch (err) {
+            logger.warn({ err }, "[ai-usage] extra-usage notification pass failed");
+        }
+
         try {
             const { processWarmupRules } = await import("@app/claude/lib/warmup/service");
-            await processWarmupRules(results.filter((r) => !r.stale));
+            await processWarmupRules(anthropic.filter((row) => !row.stale));
         } catch (err) {
             out.warn(`Warmup check failed: ${err}`);
         }
 
         db.pruneOlderThan(dashConfig.dataRetentionDays);
 
-        const accountNames = results.map((r) => r.accountName).join(", ");
-        const errorCount = results.filter((r) => r.error).length;
+        const errorCount = snapshots.filter((s) => s.error).length;
         logger.info(
-            { accounts: results.length, accountNames, errorCount, duration_ms: Date.now() - startedAt },
+            { accounts: snapshots.length, errorCount, duration_ms: Date.now() - startedAt },
             "[ai-usage] daemon poll completed"
         );
-        out.println(
-            `Polled ${results.length} account(s): ${accountNames}${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`
-        );
+        out.println(`Polled ${snapshots.length} account(s)${errorCount > 0 ? ` (${errorCount} error(s))` : ""}`);
 
-        for (const account of results) {
-            const status = account.error ?? account.stale?.reason ?? "ok";
-            out.println(`  ${account.accountName}: ${status}${account.stale ? " [stale]" : ""}`);
-        }
-
-        // Every other provider goes through the poll core, which enforces its own
-        // per-provider floor (`AccountFeatures.usage.minIntervalMs`, default 30s for
-        // anthropic, 120s for codex, 300s for grok) inside the shared cache. `force` is
-        // deliberately NOT set here: the daemon ticks faster than those floors.
-        const providers = coreProviders();
-
-        if (providers.length > 0) {
-            const snapshots = await pollAccounts({ providers });
-            const failed = snapshots.filter((s) => s.error).length;
-            logger.info({ providers, snapshots: snapshots.length, failed }, "[ai-usage] provider poll completed");
-
-            for (const snapshot of snapshots) {
-                const status = snapshot.error ?? snapshot.stale?.reason ?? "ok";
-                out.println(`  ${snapshot.provider}/${snapshot.accountName}: ${status}`);
-            }
+        for (const snapshot of snapshots) {
+            const status = snapshot.error ?? snapshot.stale?.reason ?? "ok";
+            out.println(`  ${snapshot.provider}/${snapshot.accountName}: ${status}${snapshot.stale ? " [stale]" : ""}`);
         }
     } finally {
         db.close();

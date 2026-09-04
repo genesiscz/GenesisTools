@@ -158,7 +158,7 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
                         accountFilter={filters.accounts ?? undefined}
                     />
                 )}
-                {extraTab ? <extraTab.View /> : null}
+                {extraTab ? <extraTab.View notifications={notifications} /> : null}
             </Box>
             <AlertBanner
                 alerts={notifications?.alerts ?? []}

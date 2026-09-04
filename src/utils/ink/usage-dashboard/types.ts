@@ -1,6 +1,7 @@
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import type { UsageDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import type { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import type { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
 import type { ComponentType } from "react";
 
 export interface TabDefinition {
@@ -33,7 +34,16 @@ export interface UsageDataSource {
     config: UsageDashboardConfig;
     /** By plugin id. A provider without a presenter renders the generic bars. */
     presenters: Record<string, UsagePresenters | undefined>;
-    extraTabs?: Array<TabDefinition & { View: ComponentType<Record<string, never>> }>;
+    extraTabs?: Array<TabDefinition & { View: ComponentType<ExtraTabProps> }>;
+}
+
+/**
+ * What an extra tab is handed. The notification manager is the shell's, not a second one:
+ * the claude Sessions tab feeds it prompt-cache rows, and two managers would each keep
+ * their own "already notified" state and double-fire every threshold.
+ */
+export interface ExtraTabProps {
+    notifications: NotificationManager | null;
 }
 
 /** One completed poll round, as the views consume it. */
@@ -59,4 +69,12 @@ export function formatTimeRange(minutes: number): string {
     }
 
     return `${minutes / 1440}d`;
+}
+
+/** What `--range` accepts, in the same order the `f` key cycles through. */
+export const RANGE_VALUES = TIME_RANGES.map(formatTimeRange);
+
+/** `--range 6h` to minutes, or null when the value is not one of `RANGE_VALUES`. */
+export function parseTimeRange(raw: string): TimeRange | null {
+    return TIME_RANGES.find((minutes) => formatTimeRange(minutes) === raw) ?? null;
 }

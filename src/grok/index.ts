@@ -12,6 +12,7 @@ import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
 import { registerGrokLoginCommand } from "./commands/login";
 import { registerGrokResumeCommand } from "./commands/resume";
+import { registerUsageCommand } from "./commands/usage";
 import { turnErrPath, turnLogPath } from "./lib/paths";
 import { GrokSessionStore } from "./lib/store";
 import { parseTurnLog } from "./lib/stream";
@@ -286,5 +287,6 @@ for (const [verb, reason] of Object.entries(WORKER_CAPABILITIES.grok.absentVerbs
 registerGrokHistoryCommand(program);
 registerGrokLoginCommand(program);
 registerGrokResumeCommand(program);
+registerUsageCommand(program);
 
 await runTool(program, { tool: "grok" });
