@@ -64,8 +64,10 @@ function entry(name: string): AccountEntry {
     return { id: `acc_${name}`, name, provider: "anthropic-sub", credentials: {} } as AccountEntry;
 }
 
-function useAccount(name: string): void {
-    legacyAccounts = [{ name, provider: "anthropic-sub", tokens: { accessToken: "at", refreshToken: "rt" } }];
+function useAccount(name: string, tokens: Record<string, unknown> = {}): void {
+    legacyAccounts = [
+        { name, provider: "anthropic-sub", tokens: { accessToken: "at", refreshToken: "rt", ...tokens } },
+    ];
 }
 
 /** Answers 429 for the first `failures` calls, then the usage payload. */
@@ -177,5 +179,34 @@ describe("toLimitWindows", () => {
 
         expect(kinds).not.toContain("weekly_all");
         expect(kinds).not.toContain("weekly_scoped");
+    });
+});
+
+describe("anthropic-sub refresh expiry", () => {
+    // `refreshExpiresAt` arrives straight off the account file. A value a Date cannot
+    // hold made `toISOString()` throw RangeError, which failed the whole poll.
+    it("skips an out-of-range refresh expiry instead of throwing", async () => {
+        useAccount("work", { refreshExpiresAt: 8.64e15 + 1 });
+        stubFetch(0);
+
+        const snapshot = await pollAnthropicAccount(entry("work"));
+
+        expect(snapshot.auth?.refreshExpiresAt).toBeUndefined();
+        expect(snapshot.limits).toHaveLength(3);
+    });
+
+    it("skips a NaN refresh expiry", async () => {
+        useAccount("work", { refreshExpiresAt: Number.NaN });
+        stubFetch(0);
+
+        expect((await pollAnthropicAccount(entry("work"))).auth?.refreshExpiresAt).toBeUndefined();
+    });
+
+    // Negative control: an ordinary expiry is still reported.
+    it("reports a valid refresh expiry as an ISO string", async () => {
+        useAccount("work", { refreshExpiresAt: Date.parse("2026-10-01T12:00:00.000Z") });
+        stubFetch(0);
+
+        expect((await pollAnthropicAccount(entry("work"))).auth?.refreshExpiresAt).toBe("2026-10-01T12:00:00.000Z");
     });
 });
