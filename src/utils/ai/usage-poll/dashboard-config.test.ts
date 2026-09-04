@@ -38,7 +38,7 @@ describe("loadDashboardConfig", () => {
 
         expect(prominentFor(config, "anthropic-sub")).toEqual(["five_hour", "seven_day", "seven_day_sonnet"]);
         expect(prominentFor(config, "openai-sub")).toEqual(["primary"]);
-        expect(prominentFor(config, "grok-sub")).toEqual(["monthly"]);
+        expect(prominentFor(config, "grok-sub")).toEqual(["weekly"]);
         expect(hiddenFor(config, "openai-sub")).toEqual([]);
     });
 
@@ -58,7 +58,7 @@ describe("loadDashboardConfig", () => {
         expect(hiddenFor(config, "anthropic-sub")).toEqual(["seven_day_opus"]);
         expect(config.hiddenAccounts).toEqual(["shop"]);
         // Other providers keep their own defaults rather than inheriting the claude list.
-        expect(prominentFor(config, "grok-sub")).toEqual(["monthly"]);
+        expect(prominentFor(config, "grok-sub")).toEqual(["weekly"]);
 
         const copied = await new Storage("ai-usage-dashboard").getConfig<{ refreshInterval: number }>();
         expect(copied?.refreshInterval).toBe(15);
