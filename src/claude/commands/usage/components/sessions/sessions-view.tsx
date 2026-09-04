@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
-import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import type { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime, formatTokens } from "@genesiscz/utils/format";
@@ -66,8 +66,9 @@ type PingState = "idle" | "pinging" | "done" | "error";
 
 const PING_TIMEOUT_MS = 15_000;
 
+/** `ExtraTabProps` from the dashboard shell: the tab is handed the shell's own manager. */
 interface SessionsViewProps {
-    notifications?: NotificationManager | null;
+    notifications: NotificationManager | null;
 }
 
 export function SessionsView({ notifications }: SessionsViewProps) {

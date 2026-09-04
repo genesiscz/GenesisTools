@@ -165,6 +165,39 @@ export async function pollAnthropicAccount(
     };
 }
 
+/**
+ * The inverse of `snapshotBase`: a snapshot back into the `AccountUsage` row every
+ * claude-only reader still speaks (`tools claude start`, the doctor, the dev-dashboard
+ * aggregator, the TUI presenter). `native` carries the untouched `UsageResponse`, so this
+ * is a re-wrap rather than a re-derivation from `LimitWindow[]`.
+ */
+export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountUsage {
+    const refreshExpiresAt = snapshot.auth?.refreshExpiresAt
+        ? new Date(snapshot.auth.refreshExpiresAt).getTime()
+        : undefined;
+
+    return {
+        accountName: snapshot.accountName,
+        ...(snapshot.label === undefined ? {} : { label: snapshot.label }),
+        ...(snapshot.plan?.createdAt === undefined ? {} : { subscriptionCreatedAt: snapshot.plan.createdAt }),
+        ...(snapshot.plan?.name === undefined ? {} : { subscriptionPlan: snapshot.plan.name }),
+        ...(snapshot.plan?.status === undefined ? {} : { subscriptionStatus: snapshot.plan.status }),
+        ...(snapshot.plan?.contradictedAt === undefined ? {} : { planContradictedAt: snapshot.plan.contradictedAt }),
+        ...(refreshExpiresAt === undefined || Number.isNaN(refreshExpiresAt) ? {} : { refreshExpiresAt }),
+        ...(snapshot.native === undefined ? {} : { usage: snapshot.native as UsageResponse }),
+        ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
+        ...(snapshot.stale === undefined
+            ? {}
+            : {
+                  stale: {
+                      lastSuccessAt: new Date(snapshot.stale.lastSuccessAt).getTime(),
+                      reason: snapshot.stale.reason,
+                  },
+              }),
+        ...(snapshot.auth?.orgBlocked === undefined ? {} : { orgBlocked: snapshot.auth.orgBlocked }),
+    };
+}
+
 export const anthropicUsage: AccountUsageFeature = {
     poll: pollAnthropicAccount,
     minIntervalMs: MIN_INTERVAL_MS,

@@ -15,6 +15,7 @@ import { registerStatusCommand } from "./commands/status";
 import { registerSteerCommand } from "./commands/steer";
 import { registerStopCommand } from "./commands/stop";
 import { registerTailCommand } from "./commands/tail";
+import { registerUsageCommand } from "./commands/usage";
 
 const program = new Command();
 
@@ -33,5 +34,6 @@ registerSessionsCommand(program);
 registerLogsCommand(program);
 registerTailCommand(program);
 registerStopCommand(program);
+registerUsageCommand(program);
 
 await runTool(program, { tool: "codex" });

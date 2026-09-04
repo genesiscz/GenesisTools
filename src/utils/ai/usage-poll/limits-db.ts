@@ -384,7 +384,7 @@ export class UsageLimitsDb {
         const byKey = new Map<string, SeriesEntry>();
 
         for (const row of rows) {
-            const mapKey = `${row.account_name} ${row.bucket}`;
+            const mapKey = `${row.account_name}\u0000${row.bucket}`;
             let entry = byKey.get(mapKey);
 
             if (!entry) {
