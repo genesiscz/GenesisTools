@@ -119,6 +119,11 @@ export function AiAccountsRoute() {
     // poll of a 30-day window re-ran a scan that could not have a different answer.
     const spendRefetchMs = windowStepMs(range.minutes);
 
+    // A cold scan is slow, not broken, so one retry rides out a hiccup without
+    // showing an error. React Query's default of three would queue up to four
+    // scans of a window whose answer cannot change between them.
+    const spendRetry = 1;
+
     // The provider chips narrow spend too: without them the widget kept reporting
     // claude money while the grid said "no accounts match the filters".
     const totalsQuery = useQuery({
@@ -134,6 +139,7 @@ export function AiAccountsRoute() {
                 })}`
             ),
         refetchInterval: spendRefetchMs,
+        retry: spendRetry,
     });
     const spendSeriesQuery = useQuery({
         queryKey: ["ai", "spend", "series", fromIso, toIso, grain, source, providersParam, accountsParam],
@@ -149,6 +155,7 @@ export function AiAccountsRoute() {
                 })}`
             ),
         refetchInterval: spendRefetchMs,
+        retry: spendRetry,
     });
     const limitsSeriesQuery = useQuery({
         queryKey: ["ai", "usage", "series", fromIso, toIso, providersParam, accountsParam],
