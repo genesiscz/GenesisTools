@@ -156,6 +156,15 @@ export function AiAccountsRoute() {
         [accountsQuery.data]
     );
     const colors = useMemo(() => assignAccountColors(accountRefs.map((a) => a.accountId)), [accountRefs]);
+    const accountCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+
+        for (const account of accountsQuery.data?.accounts ?? []) {
+            counts[account.provider] = (counts[account.provider] ?? 0) + 1;
+        }
+
+        return counts;
+    }, [accountsQuery.data]);
 
     const snapshots = useMemo(
         () =>
@@ -262,6 +271,7 @@ export function AiAccountsRoute() {
                         loading={daemonQuery.isLoading}
                         refreshing={refresh.isPending}
                         registering={register.isPending}
+                        accountCounts={accountCounts}
                         onRefresh={() => refresh.mutate()}
                         onRegister={() => register.mutate()}
                     />
