@@ -161,6 +161,49 @@ describe("paceFor", () => {
         expect(result?.basis).toBe("active");
     });
 
+    // The limits store is shared with codex and grok now. A pooled claude pace that
+    // reads every provider's rows would call another vendor's window "your rhythm".
+    test("pooled scope ignores rows from another provider", () => {
+        for (const [minutesAgo, value] of [
+            [40, 10],
+            [30, 20],
+            [20, 30],
+            [10, 40],
+        ] as const) {
+            db.recordSnapshotV2("other", "five_hour", value, recentTimestamp(minutesAgo), {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "openai-sub",
+            });
+        }
+
+        expect(
+            paceFor(db, { accountName: "personal", bucket: "five_hour", utilizationPct: 50, scope: "pooled" })
+        ).toBeUndefined();
+    });
+
+    // Negative control: the same rows written as anthropic still feed the pooled pace.
+    test("pooled scope still borrows anthropic rows", () => {
+        for (const [minutesAgo, value] of [
+            [40, 10],
+            [30, 20],
+            [20, 30],
+            [10, 40],
+        ] as const) {
+            db.recordSnapshotV2("other", "five_hour", value, recentTimestamp(minutesAgo), {
+                resetsAt: null,
+                severity: null,
+                scopeModel: null,
+                provider: "anthropic-sub",
+            });
+        }
+
+        expect(
+            paceFor(db, { accountName: "personal", bucket: "five_hour", utilizationPct: 50, scope: "pooled" })?.basis
+        ).toBe("active");
+    });
+
     test("pooled scope does not mix bucket kinds", () => {
         for (const [minutesAgo, value] of [
             [40, 10],
