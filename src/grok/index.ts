@@ -2,8 +2,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { runTool } from "@genesiscz/utils/cli";
+import { parseTurnEvents } from "@genesiscz/utils/grok/stream";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
+import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
+import { formatWorkerEvent } from "@genesiscz/utils/worker/events";
+import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
 import { registerGrokResumeCommand } from "./commands/resume";
@@ -12,6 +16,12 @@ import { GrokSessionStore } from "./lib/store";
 import { parseTurnLog } from "./lib/stream";
 import { parseResumeLimit, runGrokTuiResume } from "./lib/tui-resume";
 import { runSession, steerSession, type TurnResult } from "./lib/worker";
+
+function runningTurnPids(sessionId: string) {
+    // The grok child carries the session uuid as --session-id (turn 1) or
+    // --resume (later turns), and only grok processes carry this uuid.
+    return findRunningTurns(sessionId, /grok/);
+}
 
 const program = new Command();
 
@@ -43,6 +53,20 @@ function printTurn(result: TurnResult): void {
     if (result.stderr.trim()) {
         out.log.warn(`turn ${result.turn} wrote to stderr:`);
         out.log.message(result.stderr.trim());
+    }
+
+    // "The turn ended" is not "the task got done": a worker that stops cleanly having
+    // written nothing prints the same success line as one that finished the job.
+    if (result.worktree !== null && !result.meta.readOnly) {
+        if (result.worktree.changedThisTurn === 0) {
+            out.log.warn(
+                `turn ${result.turn} changed NOTHING in ${result.meta.cwd} — the turn ended, but the task may be unfinished. Check, then steer to continue.`
+            );
+        } else {
+            out.log.info(
+                `turn ${result.turn} changed ${result.worktree.changedThisTurn} path(s); ${result.worktree.dirtyTotal} dirty in total`
+            );
+        }
     }
 
     out.log.success(
@@ -121,6 +145,7 @@ program
     .description("Re-print a finished turn's report and tool calls from its log")
     .requiredOption("--name <name>", "session name")
     .option("--turn <n>", "turn number (default: latest)")
+    .option("--events", "print normalized worker events instead of the report")
     .action((options) => {
         const store = new GrokSessionStore();
         const meta = store.readMeta(options.name);
@@ -134,6 +159,17 @@ program
             throw new Error(`No log for turn ${turn} of '${meta.name}' (${logPath})`);
         }
 
+        if (options.events) {
+            for (const event of parseTurnEvents(readFileSync(logPath, "utf8"), meta.sessionId)) {
+                const line = formatWorkerEvent(event);
+                if (line) {
+                    out.println(line);
+                }
+            }
+
+            return;
+        }
+
         const summary = parseTurnLog(readFileSync(logPath, "utf8"));
         const errPath = turnErrPath(meta.name, turn);
         const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
@@ -145,7 +181,49 @@ program
             stderr,
             logPath,
             errPath,
+            // A replay has no before/after snapshot, so it cannot honestly claim one.
+            worktree: null,
         });
+    });
+
+program
+    .command("status")
+    .description("Show a session's metadata, last turn, and whether a turn is running right now")
+    .requiredOption("--name <name>", "session name")
+    .action(async (options) => {
+        const store = new GrokSessionStore();
+        const meta = store.readMeta(options.name);
+        if (!meta) {
+            throw new Error(`Grok session not found: ${options.name}`);
+        }
+
+        const running = await runningTurnPids(meta.sessionId);
+        out.result({ ...meta, running: running.length > 0, runningPids: running.map((r) => r.pid) });
+    });
+
+program
+    .command("stop")
+    .description("Kill the currently running turn (the session survives; the next steer resumes it)")
+    .requiredOption("--name <name>", "session name")
+    .action(async (options) => {
+        const store = new GrokSessionStore();
+        const meta = store.readMeta(options.name);
+        if (!meta) {
+            throw new Error(`Grok session not found: ${options.name}`);
+        }
+
+        const running = await runningTurnPids(meta.sessionId);
+        if (running.length === 0) {
+            out.log.info(`No running turn for '${options.name}'. Nothing to stop.`);
+            return;
+        }
+
+        for (const target of running) {
+            // pid-verified: runningTurnPids matched this pid's live `ps` command line against the session id and the binary just above; a recycled pid does not carry that marker
+            process.kill(target.pid, "SIGTERM");
+        }
+
+        out.log.info(`Sent SIGTERM to ${running.length} process(es). The next 'tools grok steer' resumes the session.`);
     });
 
 program
@@ -181,6 +259,19 @@ program
 
         out.println(table.toString());
     });
+
+// Verbs other backends have and this one deliberately lacks: name the
+// capability matrix instead of pretending commander never heard of them.
+for (const [verb, reason] of Object.entries(WORKER_CAPABILITIES.grok.absentVerbs)) {
+    program
+        .command(verb, { hidden: true })
+        .description(`Not available: ${reason}`)
+        .action(() => {
+            out.log.error(`'tools grok ${verb}' does not exist by design: ${reason}`);
+            out.log.info("See WORKER_CAPABILITIES.grok in @genesiscz/utils/worker/capabilities.");
+            process.exitCode = 1;
+        });
+}
 
 registerGrokHistoryCommand(program);
 registerGrokResumeCommand(program);

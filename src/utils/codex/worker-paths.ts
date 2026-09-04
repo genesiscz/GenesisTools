@@ -1,5 +1,6 @@
-import { join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { safeNamedPath } from "@genesiscz/utils/worker/safe-path";
 
 export function codexRoot(): string {
     return join(env.tools.getHome(), ".genesis-tools", "codex");
@@ -10,14 +11,7 @@ export function sessionsDir(): string {
 }
 
 function safeSessionPath(name: string, suffix: string): string {
-    const root = sessionsDir();
-    const candidate = resolve(root, `${name}${suffix}`);
-    const validName = /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
-    if (!validName || !candidate.startsWith(`${root}${sep}`)) {
-        throw new Error(`Invalid session name: ${name}`);
-    }
-
-    return candidate;
+    return safeNamedPath({ root: sessionsDir(), name, suffix, label: "session name" });
 }
 
 export function sessionMetaPath(name: string): string {

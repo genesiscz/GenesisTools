@@ -2,6 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { env as appEnv } from "@genesiscz/utils/env";
+// The env argument is typed as what `getProcessEnv()` actually returns, rather than as
+// NodeJS.ProcessEnv. React Native's declaration of that interface marks NODE_ENV required, so
+// the old annotation made this file fail to typecheck from any project using RN's lib — the
+// DevDashboard mobile app reached it through a type-only import chain.
+import type { EnvSnapshot } from "@genesiscz/utils/env/env-testing";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -15,7 +20,7 @@ export interface ObsidianVault {
 }
 
 /** obsidian.json candidate paths, research-confirmed. OBSIDIAN_CONFIG_DIR wins. */
-export function configCandidates(env: NodeJS.ProcessEnv): string[] {
+export function configCandidates(env: EnvSnapshot): string[] {
     const home = env.HOME ?? homedir();
     const out: string[] = [];
     if (env.OBSIDIAN_CONFIG_DIR) {
@@ -36,7 +41,7 @@ export function configCandidates(env: NodeJS.ProcessEnv): string[] {
     return out;
 }
 
-export function discoverVaults(env: NodeJS.ProcessEnv = appEnv.getProcessEnv()): ObsidianVault[] {
+export function discoverVaults(env: EnvSnapshot = appEnv.getProcessEnv()): ObsidianVault[] {
     for (const candidate of configCandidates(env)) {
         if (!existsSync(candidate)) {
             continue;
@@ -60,7 +65,7 @@ export function discoverVaults(env: NodeJS.ProcessEnv = appEnv.getProcessEnv()):
     return [];
 }
 
-export function resolveActiveVault(env: NodeJS.ProcessEnv = appEnv.getProcessEnv()): string | null {
+export function resolveActiveVault(env: EnvSnapshot = appEnv.getProcessEnv()): string | null {
     const vaults = discoverVaults(env);
     if (vaults.length === 0) {
         return null;

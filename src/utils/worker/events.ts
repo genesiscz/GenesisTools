@@ -1,0 +1,85 @@
+/**
+ * The shared event vocabulary for external AI workers (codex, grok, claude).
+ *
+ * Rule: the TRANSPORT is unified here; the PERMISSION MODEL is not. Backends
+ * differ on approvals and sandboxing on purpose — those differences live in
+ * `./capabilities` and callers must branch on them, never paper over them.
+ *
+ * Fields are backend-neutral: `sessionId` is whatever identity the backend
+ * keys a conversation by (codex thread id, grok session uuid, claude session
+ * uuid). Backend-specific ids appear only where a variant exists to carry
+ * them (`approval_request.requestId` feeds `tools codex approve`).
+ */
+
+export interface WorkerUsage {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    reasoningTokens?: number;
+    totalCostUsd?: number;
+}
+
+export type WorkerEvent =
+    | { kind: "turn.started"; sessionId: string; turn?: number; ts?: string }
+    | { kind: "text"; sessionId: string; text: string; delta: boolean; ts?: string }
+    | { kind: "reasoning"; sessionId: string; text: string; delta: boolean; ts?: string }
+    | { kind: "tool_call"; sessionId: string; tool: string; target?: string; callId?: string; ts?: string }
+    | {
+          kind: "tool_result";
+          sessionId: string;
+          tool?: string;
+          callId?: string;
+          output?: string;
+          ok?: boolean;
+          ts?: string;
+      }
+    | { kind: "approval_request"; sessionId: string; requestId: string; method: string; detail?: string; ts?: string }
+    | { kind: "turn.completed"; sessionId: string; turn?: number; usage?: WorkerUsage; ts?: string }
+    | { kind: "turn.failed"; sessionId: string; reason?: string; ts?: string }
+    | { kind: "error"; sessionId: string; message: string; ts?: string }
+    | { kind: "session.closed"; sessionId: string; ts?: string };
+
+export type WorkerEventKind = WorkerEvent["kind"];
+
+function is<K extends WorkerEventKind>(kind: K) {
+    return (event: WorkerEvent): event is Extract<WorkerEvent, { kind: K }> => event.kind === kind;
+}
+
+export const isTurnStarted = is("turn.started");
+export const isText = is("text");
+export const isReasoning = is("reasoning");
+export const isToolCall = is("tool_call");
+export const isToolResult = is("tool_result");
+export const isApprovalRequest = is("approval_request");
+export const isTurnCompleted = is("turn.completed");
+export const isTurnFailed = is("turn.failed");
+export const isWorkerError = is("error");
+export const isSessionClosed = is("session.closed");
+
+/** One-line human rendering, shared so every backend's `--events` view reads the same. */
+export function formatWorkerEvent(event: WorkerEvent): string {
+    switch (event.kind) {
+        case "turn.started":
+            return `▶ turn ${event.turn ?? "?"} started`;
+        case "text":
+            return event.delta ? event.text : `💬 ${event.text}`;
+        case "reasoning":
+            return event.delta ? "" : `🧠 ${event.text}`;
+        case "tool_call":
+            return `🔧 ${event.tool}${event.target ? ` ${event.target}` : ""}`;
+        case "tool_result":
+            return `↩ ${event.tool ?? event.callId ?? "tool"}${event.ok === false ? " FAILED" : ""}`;
+        case "approval_request":
+            return `⏸ approval needed [${event.requestId}] ${event.method}${event.detail ? ` — ${event.detail}` : ""}`;
+        case "turn.completed":
+            return `✔ turn ${event.turn ?? "?"} completed${
+                event.usage?.totalCostUsd !== undefined ? ` ($${event.usage.totalCostUsd.toFixed(4)})` : ""
+            }`;
+        case "turn.failed":
+            return `✖ turn failed${event.reason ? `: ${event.reason}` : ""}`;
+        case "error":
+            return `✖ error: ${event.message}`;
+        case "session.closed":
+            return "■ session closed";
+    }
+}
