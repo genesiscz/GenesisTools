@@ -203,6 +203,39 @@ function transcriptGrain(grain: SpendGrain): Exclude<SpendGrain, "minute"> {
     return grain === "minute" ? "hour" : grain;
 }
 
+/**
+ * Two spend requests describing the same scan. The totals and the series
+ * endpoints fire together on every page load with the same window, and each one
+ * used to walk every transcript on disk: 21.8 s and 11.8 s respectively over 30
+ * days, measured 2026-09-04, both synchronous and both on the request thread.
+ * Sharing one scan halves that.
+ */
+export function transcriptScanKey(query: SpendTotalsQuery, grain: SpendGrain): string {
+    return [query.from, query.to, transcriptGrain(grain), [...(query.accounts ?? [])].sort().join(",")].join("|");
+}
+
+/** Long enough to cover the two requests of one page load, short enough that a poll still shows up. */
+const TRANSCRIPT_SCAN_TTL_MS = 15_000;
+
+/** Points per limit series a response may carry before it is downsampled. */
+const MAX_SERIES_POINTS = 600;
+
+/**
+ * A `step` for `UsageLimitsDb.getSeries` when the caller named none, so the
+ * response cannot grow without bound as the window widens. A 30-day window
+ * already sits under the cap, so this changes nothing a reader can see today; it
+ * exists so a 6-month custom range does not return a megabyte of JSON.
+ */
+export function defaultSeriesStep(from: string, to: string): number | undefined {
+    const span = Date.parse(to) - Date.parse(from);
+
+    if (!Number.isFinite(span) || span <= 0) {
+        return undefined;
+    }
+
+    return Math.max(1, Math.floor(span / MAX_SERIES_POINTS));
+}
+
 export function createAiAggregator(): AiAggregator {
     registerBuiltInPlugins();
 
@@ -270,7 +303,9 @@ export function createAiAggregator(): AiAggregator {
         });
     }
 
-    async function spendFromTranscripts(query: SpendTotalsQuery, grain: SpendGrain) {
+    const transcriptScans = new Map<string, { at: number; scan: ReturnType<typeof runTranscriptScan> }>();
+
+    async function runTranscriptScan(query: SpendTotalsQuery, grain: SpendGrain) {
         return buildSpendSeries(
             {
                 from: query.from,
@@ -281,6 +316,38 @@ export function createAiAggregator(): AiAggregator {
             },
             { accounts: await enabledAccounts() }
         );
+    }
+
+    /**
+     * The transcript scan is synchronous and walks every session log, so a second
+     * identical one blocks the whole server for as long again. Callers share the
+     * in-flight promise; the result is read-only to both.
+     */
+    function spendFromTranscripts(query: SpendTotalsQuery, grain: SpendGrain) {
+        const key = transcriptScanKey(query, grain);
+        const now = Date.now();
+
+        for (const [old, entry] of transcriptScans) {
+            if (now - entry.at > TRANSCRIPT_SCAN_TTL_MS) {
+                transcriptScans.delete(old);
+            }
+        }
+
+        const hit = transcriptScans.get(key);
+
+        if (hit) {
+            logger.debug({ key }, "[ai-dashboard] transcript scan reused");
+            return hit.scan;
+        }
+
+        const scan = runTranscriptScan(query, grain);
+        transcriptScans.set(key, { at: now, scan });
+        void scan.catch((err: unknown) => {
+            logger.debug({ err, key }, "[ai-dashboard] transcript scan failed, not cached");
+            transcriptScans.delete(key);
+        });
+
+        return scan;
     }
 
     return {
@@ -343,12 +410,13 @@ export function createAiAggregator(): AiAggregator {
                 )
             );
             const db = new UsageLimitsDb();
+            const step = query.step ?? defaultSeriesStep(query.from, query.to);
             const entries = db.getSeries({
                 ...(names ? { accounts: names } : {}),
                 ...(query.keys?.length ? { keys: [...query.keys] } : {}),
                 from: query.from,
                 to: query.to,
-                ...(query.step !== undefined ? { step: query.step } : {}),
+                ...(step !== undefined ? { step } : {}),
             });
 
             const series: LimitSeries[] = entries.map((entry) => {
