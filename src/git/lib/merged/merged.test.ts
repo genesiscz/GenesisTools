@@ -378,11 +378,112 @@ describe("prune", () => {
         expect(plans[1].warnings[0]).toContain("push policy is never");
 
         const outcomes = await executePrune(ctx, plans);
-        expect(outcomes.map((o) => o.deletedRemote)).toEqual([null, null, "feat/ok"]);
+        expect(outcomes.map((o) => o.deletedRemote?.name ?? null)).toEqual([null, null, "feat/ok"]);
+        expect(outcomes[2].deletedRemote?.sha).toMatch(/^[0-9a-f]{40}$/);
         const remoteHeads = await r.git(["ls-remote", "--heads", "origin"]);
         expect(remoteHeads).toContain("feat/open");
         expect(remoteHeads).toContain("feat/never");
         expect(remoteHeads).not.toContain("feat/ok");
+    });
+
+    it("deletes a remote-only origin/<branch> whose local copy is already gone", async () => {
+        const r = await repo();
+        await feature(r, "feat/gone");
+        await r.addOrigin(["feat/gone"]);
+        await r.squashMerge("feat/gone");
+        await r.git(["branch", "-D", "feat/gone"]);
+
+        const driver: OriginDriver = { kind: "github", prForHead: async () => ({ pr: null, error: null }) };
+        const ctx = await pruneCtxFor(r, {
+            remote: true,
+            driver,
+            policyFor: () => ({ push: "allowed", matchedBy: "catchAll" }),
+        });
+        const { plans, refusals } = await planPrune(ctx, ["origin/feat/gone"]);
+
+        expect(refusals).toEqual([]);
+        expect(plans[0]).toMatchObject({ remoteOnly: true, branch: null, remoteBranch: "feat/gone" });
+        expect(plans[0].remoteSha).toMatch(/^[0-9a-f]{40}$/);
+
+        const outcomes = await executePrune(ctx, plans);
+        expect(outcomes[0].deletedRemote?.name).toBe("feat/gone");
+        expect(outcomes[0].failures).toEqual([]);
+        expect(await r.git(["ls-remote", "--heads", "origin"])).not.toContain("feat/gone");
+    });
+
+    it("refuses a remote-only ref without --remote, and never reports success having done nothing", async () => {
+        const r = await repo();
+        await feature(r, "feat/gone");
+        await r.addOrigin(["feat/gone"]);
+        await r.squashMerge("feat/gone");
+        await r.git(["branch", "-D", "feat/gone"]);
+
+        const ctx = await pruneCtxFor(r, { remote: false });
+        const { plans, refusals } = await planPrune(ctx, ["origin/feat/gone"]);
+
+        expect(plans).toEqual([]);
+        expect(refusals[0].reason).toContain("--remote");
+        expect(await r.git(["ls-remote", "--heads", "origin"])).toContain("feat/gone");
+    });
+
+    it("refuses a remote-only ref with an OPEN PR, a failed PR lookup, or a never push policy", async () => {
+        const r = await repo();
+        await feature(r, "feat/open");
+        await feature(r, "feat/blind");
+        await feature(r, "feat/never");
+        await r.addOrigin(["feat/open", "feat/blind", "feat/never"]);
+        await r.squashMerge("feat/open");
+        await r.squashMerge("feat/blind");
+        await r.squashMerge("feat/never");
+        await r.git(["branch", "-D", "feat/open", "feat/blind", "feat/never"]);
+
+        const driver: OriginDriver = {
+            kind: "github",
+            prForHead: async (branch) => {
+                if (branch === "feat/open") {
+                    return { pr: { number: 12, state: "OPEN", target: "master", url: "u" }, error: null };
+                }
+
+                return branch === "feat/blind"
+                    ? { pr: null, error: "gh: command not found" }
+                    : { pr: null, error: null };
+            },
+        };
+        const ctx = await pruneCtxFor(r, {
+            remote: true,
+            driver,
+            policyFor: (branch) =>
+                branch === "feat/never"
+                    ? { push: "never", matchedBy: "name" }
+                    : { push: "allowed", matchedBy: "catchAll" },
+        });
+        const { plans, refusals } = await planPrune(ctx, [
+            "origin/feat/open",
+            "origin/feat/blind",
+            "origin/feat/never",
+        ]);
+
+        expect(plans).toEqual([]);
+        expect(refusals.map((x) => x.ref)).toEqual(["origin/feat/open", "origin/feat/blind", "origin/feat/never"]);
+        expect(refusals[0].reason).toContain("OPEN PR #12");
+        expect(refusals[1].reason).toContain("PR lookup failed");
+        expect(refusals[2].reason).toContain("push policy is never");
+
+        const heads = await r.git(["ls-remote", "--heads", "origin"]);
+        expect(heads).toContain("feat/open");
+        expect(heads).toContain("feat/blind");
+        expect(heads).toContain("feat/never");
+    });
+
+    it("refuses origin/<base> even with --remote", async () => {
+        const r = await repo();
+        await r.addOrigin();
+        const driver: OriginDriver = { kind: "github", prForHead: async () => ({ pr: null, error: null }) };
+        const ctx = await pruneCtxFor(r, { remote: true, driver });
+        const { plans, refusals } = await planPrune(ctx, ["origin/master"]);
+
+        expect(plans).toEqual([]);
+        expect(refusals[0].reason).toBe("is the base branch");
     });
 
     it("refuses to force-remove a worktree holding real edits, but clears deletion debris", async () => {

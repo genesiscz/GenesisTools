@@ -114,6 +114,8 @@ tools git merged --prune feat/x --prune .worktrees/feat-y   # remove only the na
 
 STALE refs are listed in their own section and are never folded into the "safe to remove" line: whether an older draft is worth keeping is the reader's call, so `--prune` has to name each one. They do not fail the exit code.
 
+`--prune origin/<branch>` deletes a REMOTE-ONLY branch, the case where the local copy is already gone (`--remote` alone cannot reach it: that flag only follows a local branch to its upstream). It needs `--remote` explicitly, and every gate that merely drops the remote step for a local branch REFUSES the whole ref here, because there is nothing else to delete: an open PR, a failed PR lookup (pass `--pr` so the lookup runs at all), a `push: never` policy, or the base branch itself. The success line prints `git push origin <sha>:refs/heads/<branch>`, which is the only way back — a deleted remote branch has no reflog.
+
 ### `rebase-cascade`
 
 Rebase a parent branch onto its target and transplant every child stacked on it. Children are detected by merge-base (a child carries parent-only commits the target lacks), fork points are saved before the parent moves, a child checked out in another worktree is rebased there, every branch gets a backup ref (`refs/backup/cascade/<branch>`) and tag (`bkp/cascade/<branch>-<ts>`), and nothing is pushed.

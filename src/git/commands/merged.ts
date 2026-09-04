@@ -316,7 +316,12 @@ async function pruneRefs({
         }
 
         if (o.deletedRemote) {
-            out.log.success(`deleted origin/${o.deletedRemote}`);
+            // A remote branch has no reflog to fall back on, so the restore push is the only
+            // way back; print it even when the local branch was deleted in the same step.
+            const restore = o.deletedRemote.sha
+                ? ` ${pc.dim(`(restore: git push origin ${o.deletedRemote.sha}:refs/heads/${o.deletedRemote.name})`)}`
+                : "";
+            out.log.success(`deleted origin/${o.deletedRemote.name}${restore}`);
         }
 
         for (const f of o.failures) {

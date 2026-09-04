@@ -14,7 +14,23 @@ export interface PrunePlan {
     worktreePath: string | null;
     /** `origin/<branch>` deletion, only with `--remote` and only when the upstream is exactly that. */
     remoteBranch: string | null;
+    /** The ref names origin/<branch> and has no local branch: the remote IS the deletion. */
+    remoteOnly: boolean;
+    /** Sha of `origin/<remoteBranch>` before deletion. Not the local tip: an unpushed branch differs. */
+    remoteSha: string | null;
     warnings: string[];
+}
+
+const REMOTE_PREFIX = "origin/";
+
+/** `origin/<name>` with no local branch behind it, else null. */
+function remoteOnlyName(report: RefReport): string | null {
+    if (report.branch !== null || report.kind !== "ref" || !report.ref.startsWith(REMOTE_PREFIX)) {
+        return null;
+    }
+
+    const name = report.ref.slice(REMOTE_PREFIX.length);
+    return name.length > 0 ? name : null;
 }
 
 export interface PruneRefusal {
@@ -64,7 +80,14 @@ export async function planPrune(
             continue;
         }
 
+        const remoteOnly = remoteOnlyName(report);
+
         if (report.branch && (report.branch === ctx.base.ref || report.branch === baseBranch)) {
+            refusals.push({ ref, reason: "is the base branch" });
+            continue;
+        }
+
+        if (remoteOnly !== null && (remoteOnly === baseBranch || report.ref === ctx.base.ref)) {
             refusals.push({ ref, reason: "is the base branch" });
             continue;
         }
@@ -95,7 +118,7 @@ export async function planPrune(
             continue;
         }
 
-        if (!report.branch && !worktree) {
+        if (!report.branch && !worktree && remoteOnly === null) {
             refusals.push({ ref, reason: "not a branch and not a worktree, nothing to remove" });
             continue;
         }
@@ -113,6 +136,53 @@ export async function planPrune(
         }
 
         let remoteBranch: string | null = null;
+
+        if (remoteOnly !== null) {
+            // Nothing local to fall back on: every gate that only DROPS the remote step for a
+            // local branch has to refuse the whole ref here, or the run would report success
+            // having done nothing.
+            if (!ctx.remote) {
+                refusals.push({
+                    ref,
+                    reason: `names a remote branch and there is no local one; pass --remote to delete origin/${remoteOnly}`,
+                });
+                continue;
+            }
+
+            const policy = ctx.policyFor(remoteOnly);
+            const lookup = ctx.driver ? await ctx.driver.prForHead(remoteOnly) : null;
+
+            if (lookup?.error) {
+                refusals.push({
+                    ref,
+                    reason: `PR lookup failed (${lookup.error}); an open PR would close with its head, so this is not safe to delete unattended`,
+                });
+                continue;
+            }
+
+            if (lookup?.pr?.state === "OPEN") {
+                refusals.push({ ref, reason: `OPEN PR #${lookup.pr.number} still targets ${lookup.pr.target}` });
+                continue;
+            }
+
+            if (policy.push === "never") {
+                refusals.push({ ref, reason: `push policy is never for ${remoteOnly} (${policy.matchedBy})` });
+                continue;
+            }
+
+            plans.push({
+                ref,
+                report,
+                branch: null,
+                tipSha: await git.getSha(report.ref),
+                worktreePath: null,
+                remoteBranch: remoteOnly,
+                remoteOnly: true,
+                remoteSha: await git.getSha(report.ref),
+                warnings,
+            });
+            continue;
+        }
 
         if (ctx.remote && report.branch && report.upstream === `origin/${report.branch}`) {
             remoteBranch = report.branch;
@@ -143,6 +213,8 @@ export async function planPrune(
             tipSha,
             worktreePath: worktree?.path ?? null,
             remoteBranch,
+            remoteOnly: false,
+            remoteSha: remoteBranch ? await git.getSha(`origin/${remoteBranch}`) : null,
             warnings,
         });
     }
@@ -154,7 +226,8 @@ export interface PruneOutcome {
     ref: string;
     removedWorktree: string | null;
     deletedBranch: { name: string; sha: string } | null;
-    deletedRemote: string | null;
+    /** The deleted `origin/<name>`, with the sha it pointed at so the restore push is printable. */
+    deletedRemote: { name: string; sha: string } | null;
     failures: string[];
 }
 
@@ -218,7 +291,7 @@ export async function executePrune(ctx: PruneContext, plans: PrunePlan[]): Promi
             const res = await git.executor.exec(["push", "origin", "--delete", plan.remoteBranch], { timeout: 60_000 });
 
             if (res.success) {
-                outcome.deletedRemote = plan.remoteBranch;
+                outcome.deletedRemote = { name: plan.remoteBranch, sha: plan.remoteSha ?? "" };
             } else {
                 outcome.failures.push(`push origin --delete ${plan.remoteBranch}: ${res.stderr}`);
             }
