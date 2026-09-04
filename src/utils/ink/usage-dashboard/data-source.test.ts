@@ -152,6 +152,33 @@ describe("generic account section", () => {
     test("a percent window has no money line", () => {
         expect(formatMoney(codex("work", 30).limits[0])).toBeNull();
     });
+
+    // Three-decimal currencies exist (KWD, BHD, JOD). Formatting them at two digits
+    // silently drops a minor unit.
+    test("a three-decimal currency keeps all three digits", () => {
+        const window = {
+            key: "credit",
+            label: "Credit",
+            kind: "credit" as const,
+            percentUsed: 12,
+            money: { usedMinor: 1234, limitMinor: 10_000, currency: "KWD", exponent: 3 },
+        };
+
+        expect(formatMoney(window)).toBe("1.234 / 10.000 KWD");
+    });
+
+    // Negative control: a zero-exponent currency still shows no decimals.
+    test("a zero-decimal currency shows no decimals", () => {
+        const window = {
+            key: "credit",
+            label: "Credit",
+            kind: "credit" as const,
+            percentUsed: 12,
+            money: { usedMinor: 1234, currency: "JPY", exponent: 0 },
+        };
+
+        expect(formatMoney(window)).toBe("1234 JPY");
+    });
 });
 
 describe("history rows", () => {
