@@ -1,3 +1,5 @@
+import type { LimitKind } from "@genesiscz/utils/ai/providers/account-features";
+
 export const BUCKET_LABELS: Record<string, string> = {
     five_hour: "Session (5h)",
     seven_day: "Weekly (all)",
@@ -14,6 +16,24 @@ export const BUCKET_PERIODS_MS: Record<string, number> = {
     seven_day_sonnet: 7 * 24 * 60 * 60 * 1000,
     seven_day_oauth_apps: 7 * 24 * 60 * 60 * 1000,
 };
+
+/**
+ * `LimitWindow.kind` for a claude bucket (orchestrator amendment 3). The scoped weekly
+ * windows keep their model in `scopeModel`; only the legacy projection still speaks
+ * `weekly_all` / `five_hour`.
+ */
+export const BUCKET_KIND_MAP: Record<string, LimitKind> = {
+    five_hour: "session",
+    seven_day: "weekly",
+    seven_day_opus: "scoped",
+    seven_day_sonnet: "scoped",
+    seven_day_oauth_apps: "weekly",
+    extra_usage: "credit",
+};
+
+export function bucketKind(bucket: string): LimitKind {
+    return BUCKET_KIND_MAP[bucket] ?? "weekly";
+}
 
 export const BUCKET_THRESHOLD_MAP: Record<string, "session" | "weekly"> = {
     five_hour: "session",

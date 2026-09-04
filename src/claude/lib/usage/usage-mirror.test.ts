@@ -61,7 +61,7 @@ afterEach(() => {
 
 describe("recordAll → shared usage layer", () => {
     test("mirrors each changed bucket as a bucket-snapshot event", async () => {
-        await recordAll([account("martin-max", 42)]);
+        await recordAll([account("work", 42)]);
 
         const events = queryUsage({ ...todayWindow(), app: "claude" }).events;
         const fiveHour = events.find((event) => event.meta?.bucket === "five_hour");
@@ -77,7 +77,7 @@ describe("recordAll → shared usage layer", () => {
     });
 
     test("carries no tokens — a limit bucket is a percentage, not spend", async () => {
-        await recordAll([account("martin-max", 42)]);
+        await recordAll([account("work", 42)]);
 
         const total = queryUsage({ ...todayWindow(), app: "claude" }).total;
 
@@ -86,33 +86,31 @@ describe("recordAll → shared usage layer", () => {
     });
 
     test("emits only on change, so a 30s poll loop cannot flood the log", async () => {
-        await recordAll([account("martin-max", 42)]);
+        await recordAll([account("work", 42)]);
         const afterFirst = queryUsage({ ...todayWindow(), app: "claude" }).total.events;
 
-        await recordAll([account("martin-max", 42)]);
+        await recordAll([account("work", 42)]);
         const afterRepeat = queryUsage({ ...todayWindow(), app: "claude" }).total.events;
 
         expect(afterFirst).toBeGreaterThan(0);
         expect(afterRepeat).toBe(afterFirst);
 
-        await recordAll([account("martin-max", 43)]);
+        await recordAll([account("work", 43)]);
 
         expect(queryUsage({ ...todayWindow(), app: "claude" }).total.events).toBe(afterFirst + 1);
     });
 
     test("skips stale entries, exactly as the history write does", async () => {
-        await recordAll([
-            { ...account("martin-max", 42), stale: { lastSuccessAt: Date.now() - 60_000, reason: "429" } },
-        ]);
+        await recordAll([{ ...account("work", 42), stale: { lastSuccessAt: Date.now() - 60_000, reason: "429" } }]);
 
         expect(queryUsage({ ...todayWindow(), app: "claude" }).total.events).toBe(0);
     });
 
     test("keys events by account name when no matching account id exists", async () => {
-        await recordAll([account("martin-max", 42)]);
+        await recordAll([account("work", 42)]);
 
         const events = queryUsage({ ...todayWindow(), app: "claude" }).events;
 
-        expect(events[0].accountId).toBe("martin-max");
+        expect(events[0].accountId).toBe("work");
     });
 });

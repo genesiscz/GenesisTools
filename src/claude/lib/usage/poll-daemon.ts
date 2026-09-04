@@ -1,4 +1,5 @@
 import { isUsageBucket } from "@app/claude/lib/usage/api";
+import { BUCKET_LABELS, bucketKind } from "@app/claude/lib/usage/constants";
 import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
@@ -50,7 +51,14 @@ async function main(): Promise<void> {
                 }
 
                 try {
-                    await notifManager.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
+                    await notifManager.processUsage({
+                        accountName: account.accountName,
+                        key: bucket,
+                        kind: bucketKind(bucket),
+                        label: BUCKET_LABELS[bucket] ?? bucket,
+                        utilization: data.utilization,
+                        resetsAt: data.resets_at,
+                    });
                 } catch (err) {
                     logger.warn(
                         { err, account: account.accountName, bucket },

@@ -1,6 +1,6 @@
 import type { PollResult } from "@app/claude/commands/usage/types";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
+import { prominentFor, type UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
@@ -91,7 +91,7 @@ export function OverviewView({ results, config, sortMode = "urgency" }: Overview
 
     const singleColumnWidth = termWidth - 2;
     const totalHeight = accounts.reduce(
-        (sum, a) => sum + estimateAccountHeight(a, config.prominentBuckets, singleColumnWidth),
+        (sum, a) => sum + estimateAccountHeight(a, prominentFor(config, "anthropic-sub"), singleColumnWidth),
         0
     );
     const availableRows = termHeight - CHROME_LINES - (results.error ? 1 : 0);
@@ -106,14 +106,14 @@ export function OverviewView({ results, config, sortMode = "urgency" }: Overview
                     <AccountSection
                         key={account.accountName}
                         account={account}
-                        prominentBuckets={config.prominentBuckets}
+                        prominentBuckets={prominentFor(config, "anthropic-sub")}
                     />
                 ))}
             </Box>
         );
     }
 
-    const [leftAccounts, rightAccounts] = splitByHeight(accounts, config.prominentBuckets, columnWidth);
+    const [leftAccounts, rightAccounts] = splitByHeight(accounts, prominentFor(config, "anthropic-sub"), columnWidth);
 
     return (
         <Box flexDirection="column" flexShrink={0} paddingX={1} paddingY={1}>
@@ -124,7 +124,7 @@ export function OverviewView({ results, config, sortMode = "urgency" }: Overview
                         <AccountSection
                             key={account.accountName}
                             account={account}
-                            prominentBuckets={config.prominentBuckets}
+                            prominentBuckets={prominentFor(config, "anthropic-sub")}
                             width={columnWidth}
                         />
                     ))}
@@ -134,7 +134,7 @@ export function OverviewView({ results, config, sortMode = "urgency" }: Overview
                         <AccountSection
                             key={account.accountName}
                             account={account}
-                            prominentBuckets={config.prominentBuckets}
+                            prominentBuckets={prominentFor(config, "anthropic-sub")}
                             width={columnWidth}
                         />
                     ))}
