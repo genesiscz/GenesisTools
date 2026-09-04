@@ -5,7 +5,6 @@ import {
     loadConfig,
     updateConfig,
 } from "@app/claude/lib/config";
-import { identityMismatch } from "@app/claude/lib/identity-guard";
 import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
@@ -13,6 +12,7 @@ import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { identityMismatch } from "@genesiscz/utils/ai/providers/identity-guard";
 import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";

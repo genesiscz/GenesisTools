@@ -1,6 +1,6 @@
-import { identityMismatch } from "@app/claude/lib/identity-guard";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { identityMismatch } from "@genesiscz/utils/ai/providers/identity-guard";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry, AISecondaryLogin } from "@genesiscz/utils/config/ai.types";
 import { out } from "@genesiscz/utils/logger";
