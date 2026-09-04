@@ -15,14 +15,13 @@ import { AccountCard } from "@/components/ai-accounts/AccountCard";
 import { DaemonStatus } from "@/components/ai-accounts/DaemonStatus";
 import { FilterBar } from "@/components/ai-accounts/FilterBar";
 import { LimitsChart } from "@/components/ai-accounts/LimitsChart";
-import { MosaicBlocks } from "@/components/ai-accounts/MosaicBlocks";
 import { RecordedSpend } from "@/components/ai-accounts/RecordedSpend";
+import { SortableBlockGrid } from "@/components/ai-accounts/SortableBlockGrid";
 import { SortableBlocks } from "@/components/ai-accounts/SortableBlocks";
 import "@/components/ai-accounts/ai-accounts.css";
 import { useAiAccountsFilters, useSpendHiddenAccounts } from "@/hooks/useAiAccountsFilters";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLive } from "@/hooks/useLive";
-import { useMosaicLayout } from "@/hooks/useMosaicLayout";
 import { useSectionLayout } from "@/hooks/useSectionLayout";
 import { assignAccountColors } from "@/lib/account-color";
 import { grainForMinutes, resolveRange } from "@/lib/ai-accounts-filters";
@@ -39,7 +38,6 @@ const BLOCK_LABELS: Record<string, string> = {
     daemon: "Polling",
 };
 const LAYOUT_KEY = "dd:ai-accounts:layout";
-const MOSAIC_KEY = "dd:ai-accounts:mosaic";
 
 function query(params: Record<string, string | undefined>): string {
     const search = new URLSearchParams();
@@ -56,10 +54,9 @@ function query(params: Record<string, string | undefined>): string {
 
 /**
  * /ai/accounts: every provider's accounts, their limit windows, recorded spend and polling
- * health. Desktop lays the blocks out as react-mosaic tiles (drag to move, drag splits to
- * resize, hide from the toolbar), the same mechanism as the ttyd and cmux pages; the focused
- * mode used on mobile stacks them with move and hide buttons. Not yet registered in the
- * router: the server routes it calls land with Plan-Dashboard.
+ * health. Desktop lays the blocks out as a reorderable two-column grid (drag a block by its
+ * grip, hide it from the same toolbar); the focused mode used on mobile stacks them with
+ * move and hide buttons. Both modes read one persisted order, so switching keeps it.
  */
 export function AiAccountsRoute() {
     // A poll started by the daemon happens in another process, so the server
@@ -72,7 +69,6 @@ export function AiAccountsRoute() {
     const { hiddenSet, toggleHidden, showAll } = useSpendHiddenAccounts();
     const { mode, isMobile, setMode } = useLayoutMode("ai-accounts");
     const list = useSectionLayout(LAYOUT_KEY, BLOCKS);
-    const mosaic = useMosaicLayout(MOSAIC_KEY, BLOCKS, 2);
     const [source, setSource] = useState<SpendSource>("transcripts");
     const [chartMode, setChartMode] = useState<SpendChartMode>("stacked");
 
@@ -278,7 +274,7 @@ export function AiAccountsRoute() {
     const tiled = mode === "mosaic";
 
     return (
-        <div className={tiled ? "flex h-[calc(100vh-2rem)] flex-col gap-3" : "flex flex-col gap-4"}>
+        <div className="flex flex-col gap-4">
             <div className="flex items-baseline justify-between">
                 <h2 className="dd-accent-text text-xl font-bold">AI accounts</h2>
                 <div className="flex items-center gap-3">
@@ -293,20 +289,19 @@ export function AiAccountsRoute() {
                             className="dd-ai-action-ghost"
                             onClick={() => setMode(tiled ? "focused" : "mosaic")}
                         >
-                            {tiled ? "Focused" : "Mosaic"}
+                            {tiled ? "Focused" : "Grid"}
                         </button>
                     ) : null}
                 </div>
             </div>
             {tiled ? (
-                <MosaicBlocks
-                    node={mosaic.node}
-                    onChange={mosaic.setNode}
+                <SortableBlockGrid
+                    layout={list.layout}
                     labels={BLOCK_LABELS}
-                    hidden={mosaic.hidden}
-                    onHide={mosaic.hide}
-                    onShow={mosaic.show}
-                    onReset={mosaic.reset}
+                    onReorder={list.reorder}
+                    onHide={list.hide}
+                    onShow={list.show}
+                    onReset={list.reset}
                     render={renderBlock}
                 />
             ) : (

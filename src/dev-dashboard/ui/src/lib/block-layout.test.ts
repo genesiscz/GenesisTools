@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { moveById, moveItem, parseBlockEntries, reconcileLayout, reconcileOrder, setVisible } from "./block-layout";
+import {
+    assignBlockSpans,
+    moveById,
+    moveItem,
+    parseBlockEntries,
+    reconcileLayout,
+    reconcileOrder,
+    setVisible,
+} from "./block-layout";
 
 describe("reconcileOrder", () => {
     test("keeps the stored order and appends routes added later", () => {
@@ -62,5 +70,48 @@ describe("setVisible and parseBlockEntries", () => {
         expect(parseBlockEntries([{ id: "a", visible: true }])).toEqual([{ id: "a", visible: true }]);
         expect(parseBlockEntries([{ id: 1, visible: true }])).toBeNull();
         expect(parseBlockEntries("x")).toBeNull();
+    });
+});
+
+describe("assignBlockSpans", () => {
+    const options = { fullWidth: ["filters"], wideWhenAlone: ["accounts", "spend"] };
+
+    test("a full-width id takes its own row, the rest pair up", () => {
+        expect(assignBlockSpans(["filters", "accounts", "spend", "limits", "daemon"], options)).toEqual([
+            { id: "filters", span: 2 },
+            { id: "accounts", span: 1 },
+            { id: "spend", span: 1 },
+            { id: "limits", span: 1 },
+            { id: "daemon", span: 1 },
+        ]);
+    });
+
+    test("an id alone in its row stretches only when wideWhenAlone names it", () => {
+        expect(assignBlockSpans(["filters", "accounts", "spend", "limits"], options)).toEqual([
+            { id: "filters", span: 2 },
+            { id: "accounts", span: 1 },
+            { id: "spend", span: 1 },
+            { id: "limits", span: 1 },
+        ]);
+        expect(assignBlockSpans(["filters", "accounts"], options)).toEqual([
+            { id: "filters", span: 2 },
+            { id: "accounts", span: 2 },
+        ]);
+    });
+
+    test("a full-width id closes the row before it", () => {
+        expect(assignBlockSpans(["accounts", "filters", "spend"], options)).toEqual([
+            { id: "accounts", span: 2 },
+            { id: "filters", span: 2 },
+            { id: "spend", span: 2 },
+        ]);
+    });
+
+    test("no options means every block keeps one column", () => {
+        expect(assignBlockSpans(["a", "b", "c"])).toEqual([
+            { id: "a", span: 1 },
+            { id: "b", span: 1 },
+            { id: "c", span: 1 },
+        ]);
     });
 });

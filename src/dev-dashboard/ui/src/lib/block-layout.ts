@@ -53,6 +53,64 @@ export function setVisible(list: readonly BlockEntry[], id: string, visible: boo
     return list.map((entry) => (entry.id === id ? { ...entry, visible } : entry));
 }
 
+export interface BlockSpan {
+    id: string;
+    /** How many of the two desktop columns the block occupies. */
+    span: 1 | 2;
+}
+
+interface SpanOptions {
+    /** Ids that always take a row of their own. */
+    fullWidth?: readonly string[];
+    /** Ids that stretch across both columns when they end a row on their own. */
+    wideWhenAlone?: readonly string[];
+}
+
+/**
+ * Lay visible blocks into rows of two columns and decide which ones stretch across
+ * both. A `fullWidth` id closes the row before it and takes the next row alone. Any
+ * other id fills the row two at a time; when one ends up alone in its row it stretches
+ * only if `wideWhenAlone` names it, so hiding a neighbour never leaves a hole.
+ */
+export function assignBlockSpans(ids: readonly string[], options: SpanOptions = {}): BlockSpan[] {
+    const fullWidth = new Set(options.fullWidth ?? []);
+    const wideWhenAlone = new Set(options.wideWhenAlone ?? []);
+    const rows: string[][] = [];
+    let row: string[] = [];
+
+    for (const id of ids) {
+        if (fullWidth.has(id)) {
+            if (row.length > 0) {
+                rows.push(row);
+                row = [];
+            }
+
+            rows.push([id]);
+            continue;
+        }
+
+        row.push(id);
+
+        if (row.length === 2) {
+            rows.push(row);
+            row = [];
+        }
+    }
+
+    if (row.length > 0) {
+        rows.push(row);
+    }
+
+    return rows.flatMap((entries) =>
+        entries.map((id): BlockSpan => {
+            const alone = entries.length === 1;
+            const stretches = alone && (fullWidth.has(id) || wideWhenAlone.has(id));
+
+            return { id, span: stretches ? 2 : 1 };
+        })
+    );
+}
+
 export function parseBlockEntries(raw: unknown): BlockEntry[] | null {
     if (!Array.isArray(raw)) {
         return null;
