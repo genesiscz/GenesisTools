@@ -1,7 +1,8 @@
+import { unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import {
     CODEX_AUTH_PATH,
     type CodexTokens,
@@ -82,10 +83,38 @@ export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome>
 
     const authFile = ctx.authFile ?? join(ctx.home ?? dirname(CODEX_AUTH_PATH), "auth.json");
 
+    // Read the file BEFORE replacing it. The identity guard runs in the CLI layer,
+    // after this function has returned, so a refused re-login has to be able to put
+    // the previous credential back (PR #360 review t17).
+    const previous = await Bun.file(authFile)
+        .arrayBuffer()
+        .catch(() => undefined);
+
     await writeCodexAuthJson(authFile, tokens);
     out.println(`  Wrote ${authFile}`);
 
-    return codexLoginOutcome({ tokens, authFile });
+    return {
+        ...codexLoginOutcome({ tokens, authFile }),
+        rollback: () => restoreCodexAuthFile(authFile, previous),
+    };
+}
+
+/**
+ * Put `auth.json` back the way it was, or remove the one this login created.
+ *
+ * Leaving a brand-new file behind would be harmless (no account points at it),
+ * but leaving a REPLACED one is the bug: `OpenAISubResolver` reads the path the
+ * old account still stores, so the refused identity would keep serving requests.
+ */
+export async function restoreCodexAuthFile(authFile: string, previous: ArrayBuffer | undefined): Promise<void> {
+    if (previous === undefined) {
+        await unlink(authFile);
+        logger.info({ authFile }, "codex login refused: removed the auth file this login created");
+        return;
+    }
+
+    await Bun.write(authFile, previous);
+    logger.info({ authFile }, "codex login refused: restored the previous auth file");
 }
 
 /**

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { AccountFeatures, LoginOutcome } from "@genesiscz/utils/ai/providers/account-features";
 import type { BindContext, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
+import { restoreCodexAuthFile } from "@genesiscz/utils/ai/providers/plugins/openai-sub/login";
 import { _resetPluginsForTest, registerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -265,5 +266,131 @@ describe("listing is a diagnostic", () => {
         expect(serialised).toContain("longLivedToken");
         expect(serialised).not.toContain("sk-fake-SECRET");
         expect(serialised).not.toContain("sk-fake-LONG");
+    });
+});
+
+/**
+ * PR #360 review t17. `codexLogin` writes the vendor's `auth.json` BEFORE the
+ * identity guard can compare anything, so a refused re-login left the config
+ * bound to the old identity while `OpenAISubResolver` read the new credentials
+ * out of that same file. `LoginOutcome.rollback` is what undoes it.
+ */
+describe("writeLoginOutcome undoes the flow's on-disk write when the identity is refused", () => {
+    async function seedContradictedAccount(): Promise<void> {
+        await seed({
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    id: "acc_work",
+                    name: "work",
+                    provider: "fake-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: { accessToken: "sk-fake-EXISTING" },
+                    useEnvApiKey: false,
+                    accountUuid: "acct-stored",
+                },
+            ],
+            defaults: {},
+        });
+    }
+
+    test("a refused identity runs the rollback", async () => {
+        await seedContradictedAccount();
+        const account = (await AiConfigStore.load()).account("work");
+        let rolledBack = 0;
+
+        const written = await writeLoginOutcome({
+            name: "work",
+            outcome: {
+                ...outcome(),
+                rollback: async () => {
+                    rolledBack += 1;
+                },
+            },
+            interactive: false,
+            account,
+        });
+
+        expect(written).toBeNull();
+        expect(rolledBack).toBe(1);
+    });
+
+    test("NEGATIVE CONTROL: an accepted identity never rolls back", async () => {
+        await seed({
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    id: "acc_work",
+                    name: "work",
+                    provider: "fake-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: { accessToken: "sk-fake-EXISTING" },
+                    useEnvApiKey: false,
+                    accountUuid: "acct-incoming",
+                },
+            ],
+            defaults: {},
+        });
+
+        const account = (await AiConfigStore.load()).account("work");
+        let rolledBack = 0;
+
+        const written = await writeLoginOutcome({
+            name: "work",
+            outcome: {
+                ...outcome(),
+                rollback: async () => {
+                    rolledBack += 1;
+                },
+            },
+            interactive: false,
+            account,
+        });
+
+        expect(written).not.toBeNull();
+        expect(rolledBack).toBe(0);
+    });
+
+    test("a rollback that throws still refuses cleanly instead of crashing", async () => {
+        await seedContradictedAccount();
+        const account = (await AiConfigStore.load()).account("work");
+
+        const written = await writeLoginOutcome({
+            name: "work",
+            outcome: {
+                ...outcome(),
+                rollback: async () => {
+                    throw new Error("disk full");
+                },
+            },
+            interactive: false,
+            account,
+        });
+
+        expect(written).toBeNull();
+    });
+});
+
+describe("restoreCodexAuthFile", () => {
+    test("puts the previous auth file back byte for byte", async () => {
+        const authFile = join(home, "auth.json");
+        const original = SafeJSON.stringify({ tokens: { access_token: "sk-invented-OLD" } });
+        writeFileSync(authFile, original);
+
+        writeFileSync(authFile, SafeJSON.stringify({ tokens: { access_token: "sk-invented-NEW" } }));
+        await restoreCodexAuthFile(authFile, new TextEncoder().encode(original).buffer as ArrayBuffer);
+
+        expect(readFileSync(authFile, "utf8")).toBe(original);
+    });
+
+    test("removes a file the login created where there was none", async () => {
+        const authFile = join(home, "fresh-auth.json");
+        writeFileSync(authFile, SafeJSON.stringify({ tokens: { access_token: "sk-invented-NEW" } }));
+
+        await restoreCodexAuthFile(authFile, undefined);
+
+        expect(existsSync(authFile)).toBe(false);
     });
 });
