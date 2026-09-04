@@ -35,8 +35,12 @@ const defaultExternalRunner: ExternalLoginRunner = {
     async confirm() {
         const answer = await p.confirm({ message: "Run it now?", initialValue: true });
 
+        // Ctrl-C is a decline, not a crash: throwing here escaped `runLogin`'s
+        // own `!outcome` path and surfaced as a top-level error. Returning false
+        // routes it through the declined branch, which prints where to run the
+        // command by hand and still exits 1 (PR #360 review t5).
         if (p.isCancel(answer)) {
-            throw new Error("Cancelled");
+            return false;
         }
 
         return answer;

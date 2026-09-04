@@ -26,7 +26,7 @@ async function interactiveConfig(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" claude config ")));
 
     const config = await loadConfig();
-    const aiConfig = await AIConfig.load();
+    let aiConfig = await AIConfig.load();
 
     while (true) {
         const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
@@ -48,6 +48,10 @@ async function interactiveConfig(): Promise<void> {
 
         if (action === "accounts") {
             await manageAccounts(aiConfig);
+            // `AIConfig.invalidate()` drops the STATIC cache; this loop still
+            // holds the instance it loaded before the login, so the next screen
+            // would render the pre-login account list (PR #360 review t8).
+            aiConfig = await AIConfig.load();
         } else if (action === "notifications") {
             await manageNotifications(config);
         } else if (action === "warmup") {
