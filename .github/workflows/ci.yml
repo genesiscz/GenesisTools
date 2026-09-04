@@ -229,21 +229,6 @@ jobs:
         timeout-minutes: 1
         run: bash scripts/ci/pid-safety-guard.sh
 
-      # Reads its value list from PLACEHOLDER_MARKERS_FILE. Without the secret
-      # (forks, and any checkout that has not configured one) it reports
-      # "not configured" and passes, rather than pretending it checked.
-      - name: Placeholder consistency check
-        if: runner.os == 'Linux'
-        timeout-minutes: 1
-        env:
-            MARKERS: ${{ secrets.PLACEHOLDER_MARKERS }}
-        run: |
-            if [ -n "${MARKERS}" ]; then
-                printf '%s\n' "${MARKERS}" > "${RUNNER_TEMP}/placeholder-markers.txt"
-                export PLACEHOLDER_MARKERS_FILE="${RUNNER_TEMP}/placeholder-markers.txt"
-            fi
-            bash scripts/ci/placeholder-check.sh
-
       - name: Package boundary guard
         if: runner.os == 'Linux'
         timeout-minutes: 1

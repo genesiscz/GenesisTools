@@ -24,6 +24,12 @@ fi
 # (e.g. scripts/_dump-*.ts from a parallel session) must not block a push.
 # --diff-filter=ACMR skips deletes; the empty-list guard matters because
 # biome exits 1 when given no files.
+# The personal-data probe runs here and ONLY here. It reads a needle list that
+# lives outside the repo, so a runner could only get it as a secret, and a hit
+# would echo the matched values into a public log. Sub-second on 800 needles.
+echo "▶ placeholder-check (local needle list)..."
+bash scripts/ci/placeholder-check.sh
+
 echo "▶ biome (push-range files)..."
 if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
     range_base=$(git merge-base "$local_sha" origin/master 2>/dev/null || echo "")

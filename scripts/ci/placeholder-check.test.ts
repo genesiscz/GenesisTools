@@ -144,6 +144,90 @@ describe("placeholder check", () => {
         expect(output).toContain("no usable entries");
     });
 
+    /**
+     * The scan is ONE `git grep` over every needle, so nothing below can differ
+     * from a per-needle loop unless more than one needle is in play. These are
+     * the cases that loop never had to get right.
+     */
+    test("names every needle that fired when two match in different files", async () => {
+        const { code, output } = await run({
+            "a.md": "met Wile E. Coyote on Tuesday\n",
+            "b.ts": 'const base = "https://acme-corp.example/api";\n',
+        });
+
+        expect(code).toBe(1);
+        expect(output).toContain("2 line(s) in 2 tracked file(s)");
+        expect(output).toContain("needle(s): real name, internal host");
+        expect(output).toContain("a.md:1:");
+        expect(output).toContain("b.ts:1:");
+    });
+
+    test("prints a line once and names both needles when two match the same line", async () => {
+        const { code, output } = await run({ "a.md": "Wile E. Coyote @ acme-corp.example\n" });
+
+        expect(code).toBe(1);
+        expect(output).toContain("1 line(s) in 1 tracked file(s)");
+        expect(output).toContain("needle(s): real name, internal host");
+        expect(output.split("a.md:1:").length - 1).toBe(1);
+    });
+
+    /**
+     * An empty pattern must not be counted as a scan that happened. `git grep -f`
+     * would drop it silently; `-e ""` would match every line in the tree. Both
+     * make the count lie, in opposite directions.
+     */
+    test("skips an empty pattern by name and leaves it out of the count", async () => {
+        const markers = ["real name\t\\bWile E\\. Coyote\\b", "empty one\t", "trailing tab\t"].join("\n");
+        const { code, output } = await run({ "notes.md": "Reviewed with Jane Doe.\n" }, { markers });
+
+        expect(code).toBe(0);
+        expect(output).toContain("'empty one': empty pattern, skipped");
+        expect(output).toContain("'trailing tab': empty pattern, skipped");
+        expect(output).toContain("1 pattern(s) checked, no matches in tracked files (2 empty pattern(s) skipped)");
+    });
+
+    test("a list of only empty patterns counts as no usable entry", async () => {
+        const { code, output } = await run({ "leak.md": "Wile E. Coyote\n" }, { markers: "a\t\nb\t" });
+
+        expect(code).toBe(1);
+        expect(output).toContain("no usable entries");
+        expect(output).not.toContain("no matches in tracked files");
+    });
+
+    /**
+     * A broken scan must exit ABOVE 1 (1 means "a hit") and must say which
+     * needle broke it, by label — with hundreds of harvested needles, a line
+     * number into a filtered temp file is not an answer.
+     */
+    test("a pattern that will not compile exits above 1 and is named by its label", async () => {
+        const markers = ["good\tclean", "broken one\t[unclosed", "also fine\tx"].join("\n");
+        const { code, output } = await run({ "notes.md": "nothing here\n" }, { markers });
+
+        expect(code).toBeGreaterThan(1);
+        expect(output).toContain("this check checked nothing");
+        expect(output).toContain("do not compile as PCRE");
+        expect(output).toContain("    broken one");
+        expect(output).not.toContain("    good");
+        expect(output).not.toContain("    also fine");
+    });
+
+    /**
+     * Pre-push budget. A per-needle loop costs ~7 ms of process start per
+     * needle, so 800 needles alone would take ~5.6 s even on this tiny fixture;
+     * the single-pass scan finishes in a fraction of a second. The bound is
+     * loose on purpose so a busy machine does not flake it.
+     */
+    test("800 needles finish inside the 3 s pre-push budget", async () => {
+        const markers = Array.from({ length: 800 }, (_, i) => `needle ${i}\tplaceholder-needle-${i}-\\d+`).join("\n");
+        const started = performance.now();
+        const { code, output } = await run({ "notes.md": "Reviewed with Jane Doe.\n" }, { markers });
+        const elapsedMs = performance.now() - started;
+
+        expect(code).toBe(0);
+        expect(output).toContain("800 pattern(s) checked");
+        expect(elapsedMs).toBeLessThan(3000);
+    });
+
     test("refuses to run outside a git work tree rather than reporting clean", async () => {
         const { code, output } = await run({ "leak.md": "Wile E. Coyote\n" }, { asRepo: false });
 
