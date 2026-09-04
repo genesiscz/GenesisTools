@@ -122,6 +122,16 @@ export interface UsageQuery {
     to: string;
     app?: string | string[];
     accountId?: string | string[];
+    /**
+     * Bucket width. When set, the result carries `points` as well as the
+     * folded totals. `minute` is honoured here: each row is timestamped to the
+     * millisecond, unlike the transcript store.
+     */
+    grain?: SpendGrain;
+    /** Also split each point by `provider/modelId`. Ignored without `grain`. */
+    byModel?: boolean;
+    /** Bucketing zone. Defaults to the system zone; the day-files stay UTC-keyed. */
+    timeZone?: string;
 }
 
 /** Folded totals for a set of events. */
@@ -142,6 +152,11 @@ export interface UsageQueryResult {
     byModel: Record<string, UsageAggregate>;
     /** The matching rows, oldest first. */
     events: UsageEvent[];
+    /**
+     * Present only when the query named a `grain`, so a caller that did not ask
+     * for a series cannot mistake an empty array for "no spend".
+     */
+    points?: SpendSeriesPoint[];
 }
 
 /**
