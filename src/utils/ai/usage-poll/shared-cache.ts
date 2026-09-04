@@ -90,6 +90,34 @@ function backfillFromLastGood<T>(ops: UsageEntryOps<T>, fresh: T[], prev: Cached
     });
 }
 
+/**
+ * What one poll should WRITE to a cache file that holds the whole provider.
+ *
+ * An unfiltered round is authoritative and replaces the set, so an account dropped from
+ * the config stops being served. A FILTERED round fetched only the accounts it was asked
+ * about, so writing its list alone made every other account vanish until the next full
+ * round; those are carried over from the previous entry with whatever staleness they had.
+ */
+function cacheableSet<T>(
+    ops: UsageEntryOps<T>,
+    fresh: T[],
+    prev: Cached<T> | null,
+    filter: string | string[] | undefined
+): T[] {
+    if (filter === undefined || !prev) {
+        return fresh;
+    }
+
+    const fetched = new Set(fresh.map((account) => ops.nameOf(account)));
+    const carried = prev.accounts.filter((account) => !fetched.has(ops.nameOf(account)));
+
+    if (carried.length === 0) {
+        return fresh;
+    }
+
+    return [...fresh, ...carried];
+}
+
 /** Mark every data-bearing account in a cache entry stale with the given reason. */
 function markAllStale<T>(ops: UsageEntryOps<T>, entry: Cached<T>, reason: string): T[] {
     return entry.accounts.map((account) => {
@@ -132,7 +160,10 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
                     previous
                 );
                 const fetchedAt = Date.now();
-                await deps.putCache(cacheKey, { fetchedAt, accounts: fresh });
+                await deps.putCache(cacheKey, {
+                    fetchedAt,
+                    accounts: cacheableSet(ops, fresh, previous, opts.accountFilter),
+                });
 
                 if (deps.recordHistory) {
                     try {

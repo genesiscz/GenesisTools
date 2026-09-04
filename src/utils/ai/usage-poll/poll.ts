@@ -8,7 +8,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
 import type { SnapshotsCacheProvider } from "./legacy-cache";
-import { writeSnapshotsCache } from "./legacy-cache";
+import { readSnapshotsCache, writeSnapshotsCache } from "./legacy-cache";
 import {
     applyPollGateOutcomes,
     blockedEntry,
@@ -85,6 +85,10 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
 
     const store = await AiConfigStore.load();
     const results = await Promise.all(plugins.map((entry) => pollProvider(entry, store.accounts(), opts)));
+    // A filtered poll knows about its own accounts only. The writer merges per PROVIDER,
+    // which does not help inside the slice being replaced, so the accounts this round
+    // never asked about are carried over from the file itself.
+    const existing = opts.accountFilter ? await readSnapshotsCache() : null;
     const out: AccountUsageSnapshot[] = [];
     const byProvider: Record<string, SnapshotsCacheProvider> = {};
 
@@ -95,7 +99,7 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
             alias: features.presentation.alias,
             displayName: features.presentation.displayName,
             prominent: [...features.presentation.prominentLimits],
-            accounts: results[i],
+            accounts: mergeAccountSlice(existing?.providers[plugin.id]?.accounts, results[i]),
         };
     }
 
@@ -104,6 +108,20 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
     await writeSnapshotsCache(byProvider);
 
     return out;
+}
+
+/** Fresh rows first, then the accounts the previous file held that this round skipped. */
+export function mergeAccountSlice(
+    previous: readonly AccountUsageSnapshot[] | undefined,
+    fresh: AccountUsageSnapshot[]
+): AccountUsageSnapshot[] {
+    if (!previous || previous.length === 0) {
+        return fresh;
+    }
+
+    const fetched = new Set(fresh.map((snapshot) => snapshot.accountName));
+
+    return [...fresh, ...previous.filter((snapshot) => !fetched.has(snapshot.accountName))];
 }
 
 function visibleAccounts(all: readonly AccountEntry[], providerId: string, filter?: string[]): AccountEntry[] {
