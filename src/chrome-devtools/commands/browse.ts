@@ -2,37 +2,9 @@
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { makeMatcher, targets } from "../lib/cdp.ts";
-import {
-    BROWSER_APPS,
-    BROWSERS,
-    browserById,
-    freshProfileDir,
-    launchBrowser,
-    listRunningBrowsers,
-    quitBrowser,
-    waitForCdp,
-} from "../lib/resolve-attach.ts";
-import { portOf, probe, resolvePort, suggest, withPort } from "./shared.ts";
-
-/** Chromium launch flags. Exported for tests: the --user-data-dir rule is what keeps `open` off the real profile. */
-export function launchArgs(port: number, opts: { fresh?: boolean; extension?: string }): string[] {
-    const args = [`--remote-debugging-port=${port}`, "--no-first-run", "--no-default-browser-check"];
-
-    if (opts.fresh || opts.extension) {
-        args.push(`--user-data-dir=${freshProfileDir(port)}`);
-        // Local/private-network access checks block CDP-driven fetches to dev
-        // servers, so throwaway profiles disable them. The user's REAL profile
-        // (plain open / restart) keeps every protection — a normal browsing
-        // session must never run security-downgraded.
-        args.push("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
-    }
-
-    if (opts.extension) {
-        args.push(`--load-extension=${opts.extension}`, `--disable-extensions-except=${opts.extension}`);
-    }
-
-    return args;
-}
+import { CdpLaunchError, launchCdpBrowser } from "../lib/launch.ts";
+import { BROWSER_APPS, BROWSERS, browserById, listRunningBrowsers, quitBrowser } from "../lib/resolve-attach.ts";
+import { portOf, resolvePort, suggest, withPort } from "./shared.ts";
 
 /**
  * Strict: an unknown --browser value must ERROR, never fall back to Chrome —
@@ -89,26 +61,34 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
-            const launch = launchBrowser({
-                browser: def,
-                args: launchArgs(port, { fresh: opts.fresh === true, extension: opts.extension }),
-                url,
-            });
+            let up = false;
+            try {
+                const result = await launchCdpBrowser({
+                    port,
+                    browser: id,
+                    url,
+                    fresh: opts.fresh === true,
+                    extension: opts.extension,
+                });
+                up = true;
+                out.log.info(`up: ${result.browser} on ${port} (${result.pages} pages)`);
+            } catch (err) {
+                if (!(err instanceof CdpLaunchError)) {
+                    throw err;
+                }
 
-            if (!launch.ok) {
-                out.log.error(launch.message);
-                process.exit(1);
+                if (err.stage === "spawn") {
+                    out.log.error(err.message);
+                    process.exit(1);
+                }
+
+                out.log.info(
+                    `launched but no CDP on ${port} yet. Do not raw-curl /json/version — re-run: ${suggest(["attach"])}`
+                );
             }
 
-            const up = await waitForCdp({ port, probe, timeoutMs: 20000 });
-            const result = up ? await probe(port) : null;
-            out.log.info(
-                result
-                    ? `up: ${result.browser} on ${port} (${result.pages.length} pages)`
-                    : `launched but no CDP on ${port} yet. Do not raw-curl /json/version — re-run: ${suggest(["attach"])}`
-            );
             out.log.info(`  next: ${suggest(["attach", "--port", String(port)])}`);
-            process.exit(result ? 0 : 1);
+            process.exit(up ? 0 : 1);
         });
 
     withPort(program.command("restart"))
@@ -136,18 +116,18 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
-            const launch = launchBrowser({ browser: def, args: launchArgs(port, {}), url });
-            if (!launch.ok) {
-                out.log.error(launch.message);
-                process.exit(1);
-            }
+            let result: { browser: string; pages: number };
+            try {
+                result = await launchCdpBrowser({ port, browser: id, url });
+            } catch (err) {
+                if (!(err instanceof CdpLaunchError)) {
+                    throw err;
+                }
 
-            const up = await waitForCdp({ port, probe, timeoutMs: 20000 });
-            const result = up ? await probe(port) : null;
-
-            if (!result) {
                 out.log.error(
-                    `relaunched but no CDP on ${port}. Chrome ≥136 refuses the flag on the DEFAULT profile dir (anti-automation).`
+                    err.stage === "spawn"
+                        ? err.message
+                        : `relaunched but no CDP on ${port}. Chrome ≥136 refuses the flag on the DEFAULT profile dir (anti-automation).`
                 );
                 out.log.info(
                     `  fallback with a separate profile: ${suggest(["open", "--browser", id, "--port", String(port), "--fresh", url])}`
@@ -155,7 +135,7 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
-            out.log.info(`up: ${result.browser} on ${port} (${result.pages.length} pages)`);
+            out.log.info(`up: ${result.browser} on ${port} (${result.pages} pages)`);
             out.log.info(`  next: ${suggest(["attach", "--port", String(port)])}`);
             process.exit(0);
         });

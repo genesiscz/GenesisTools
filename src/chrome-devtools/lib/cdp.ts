@@ -364,6 +364,29 @@ export async function targets(port = 9222, opts: { signal?: AbortSignal } = {}):
     return (await r.json()) as Target[];
 }
 
+export interface CdpProbe {
+    port: number;
+    browser: string;
+    pages: { title?: string; url: string }[];
+}
+
+/** Is this port a live CDP endpoint, and what is open on it? null when nothing answers. */
+export async function probe(port: number): Promise<CdpProbe | null> {
+    try {
+        const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
+        const v = (await r.json()) as { Browser?: string };
+        // The list fetch needs its own timeout: /json/version answering while
+        // /json/list stalls would otherwise hang every inventory-based command.
+        const list = (await targets(port, { signal: AbortSignal.timeout(1200) })).filter((t) => t.type === "page");
+
+        return { port, browser: v.Browser ?? "unknown", pages: list };
+    } catch (err) {
+        log.debug({ err, port }, "CDP probe found nothing on this port");
+
+        return null;
+    }
+}
+
 /**
  * Why an eval threw: did the script navigate the page, or did the call fail?
  *

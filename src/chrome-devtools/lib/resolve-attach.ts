@@ -505,6 +505,58 @@ const defaultSpawnDetached: SpawnDetachedFn = (cmd) => {
 };
 
 /**
+ * The real executable for a browser, or null when it is not installed here.
+ *
+ * darwin resolves the binary INSIDE the .app bundle (Chromium apps name it
+ * exactly like the app). `launchBrowser` does not need that — `open -na`
+ * takes the app name — but a caller that must own the browser's stdio does:
+ * `open` cannot pipe it, and an all-ignore stdio stalls Chrome before the CDP
+ * port opens (see lib/launch.ts).
+ */
+export function browserExecutable(opts: {
+    browser: BrowserKind;
+    platform?: Platform;
+    exec?: ExecFn;
+    fileExists?: (path: string) => boolean;
+    home?: string;
+}): string | null {
+    const platform = opts.platform ?? currentPlatform();
+    const fileExists = opts.fileExists ?? existsSync;
+
+    if (platform === "darwin") {
+        const home = opts.home ?? env.paths.getHome();
+        for (const root of ["/Applications", join(home, "Applications")]) {
+            const bin = join(root, `${opts.browser.app}.app`, "Contents", "MacOS", opts.browser.app);
+            if (fileExists(bin)) {
+                return bin;
+            }
+        }
+
+        return null;
+    }
+
+    if (platform === "linux") {
+        const exec = opts.exec ?? defaultExec;
+
+        return (opts.browser.linuxBins ?? []).find((b) => exec(["which", b]).exitCode === 0) ?? null;
+    }
+
+    const exe = opts.browser.winExes?.[0];
+    if (!exe) {
+        return null;
+    }
+
+    const rel = WIN_EXE_RELPATHS[exe];
+    const full = rel
+        ? WIN_INSTALL_ROOTS()
+              .map((root) => join(root, rel))
+              .find((p) => fileExists(p))
+        : undefined;
+
+    return full ?? exe;
+}
+
+/**
  * Launch a browser with the given args, per platform. darwin: `open -na` (the
  * only way that respects app bundles); linux: first bin on PATH, detached;
  * win32: known install path or the exe name.
@@ -528,8 +580,9 @@ export function launchBrowser(opts: {
         return { ok: r.exitCode === 0, message: r.exitCode === 0 ? `launched ${opts.browser.app}` : r.stderr.trim() };
     }
 
+    const bin = browserExecutable({ browser: opts.browser, platform, exec, fileExists: opts.fileExists });
+
     if (platform === "linux") {
-        const bin = (opts.browser.linuxBins ?? []).find((b) => exec(["which", b]).exitCode === 0);
         if (!bin) {
             return {
                 ok: false,
@@ -542,21 +595,13 @@ export function launchBrowser(opts: {
         return { ok: true, message: `launched ${bin}` };
     }
 
-    const exe = opts.browser.winExes?.[0];
-    if (!exe) {
+    if (!bin) {
         return { ok: false, message: `${opts.browser.id} has no Windows executable mapping` };
     }
 
-    const fileExists = opts.fileExists ?? existsSync;
-    const rel = WIN_EXE_RELPATHS[exe];
-    const full = rel
-        ? WIN_INSTALL_ROOTS()
-              .map((root) => join(root, rel))
-              .find((p) => fileExists(p))
-        : undefined;
-    spawnDetached([full ?? exe, ...opts.args, opts.url]);
+    spawnDetached([bin, ...opts.args, opts.url]);
 
-    return { ok: true, message: `launched ${full ?? exe}` };
+    return { ok: true, message: `launched ${bin}` };
 }
 
 /** The isolated profile dir `open --fresh` / `--extension` uses. */

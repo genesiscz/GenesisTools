@@ -1,45 +1,16 @@
-// Copied from the chrome-extension-dev skill's devtools-browser.ts
-// at 2026-07-17T19:10:00Z, commit 376aa1d59e451bcca57bee553220a1eae08e4b00.
-// Moved into the package so src/youtube doesn't import from a dotfile
-// directory outside the repo's shipped source tree.
+/**
+ * The YouTube-flavored door to the chrome-devtools launcher: build THIS
+ * extension, prove the build is complete, then hand the launch to
+ * `@app/chrome-devtools/lib/launch`. Every browser/CDP mechanic (executable
+ * lookup, piped stdio, cold-profile wait, log tail on failure) lives there.
+ */
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { launchCdpBrowser } from "@app/chrome-devtools/lib/launch";
 import { buildExtension } from "@app/youtube/commands/extension";
-import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_PORT = 9333;
-const CHROME_CANDIDATES = [
-    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-];
-
-async function findChrome(): Promise<string> {
-    for (const path of CHROME_CANDIDATES) {
-        if (await Bun.file(path).exists()) {
-            return path;
-        }
-    }
-
-    throw new Error(`No Chrome/Brave binary found at any of: ${CHROME_CANDIDATES.join(", ")}`);
-}
-
-async function waitForDevtools(port: number, timeoutMs: number): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        try {
-            const res = await fetch(`http://127.0.0.1:${port}/json/version`);
-            if (res.ok) {
-                return;
-            }
-        } catch (error) {
-            logger.debug({ error }, "devtools-browser: devtools port not ready yet, retrying");
-        }
-        await Bun.sleep(200);
-    }
-
-    throw new Error(`Chrome remote debugging port ${port} never came up within ${timeoutMs}ms`);
-}
 
 export interface LaunchDevtoolsBrowserResult {
     pid: number;
@@ -69,45 +40,31 @@ export async function launchDevtoolsBrowser(port = DEFAULT_PORT): Promise<Launch
     // hides those, which is right for production but wrong for a test browser
     // you're specifically trying to poke at.
     const dist = await buildExtension({ devReload: true });
+    // A partial build makes Chrome raise a BLOCKING GUI "failed to load
+    // extension" dialog; until someone clicks it the browser never finishes
+    // starting, which looks exactly like a hung CDP port from the outside.
+    // Catch it here, before launch, rather than after a 30s timeout.
     for (const required of ["manifest.json", "background.js", "content-script.js", "popup/popup.html"]) {
         if (!(await Bun.file(`${dist}/${required}`).exists())) {
             throw new Error(`${dist} is missing ${required} — the build did not produce a complete extension.`);
         }
     }
 
-    const chromeBin = await findChrome();
+    // A fresh dir per launch, not the shared /tmp/cdp-profile-<port>: a zombie
+    // browser from an earlier run still holds its own profile, and two Chromes
+    // on one --user-data-dir is its own failure mode.
     const userDataDir = await mkdtemp(join(tmpdir(), "genesis-yt-devtools-chrome-"));
     const logPath = join(userDataDir, "..", `${userDataDir.split("/").pop()}.log`);
+    const launched = await launchCdpBrowser({
+        port,
+        url: "https://www.youtube.com",
+        extension: dist,
+        userDataDir,
+        // logPath makes the launcher spawn the binary itself and keep its
+        // stdio: an all-ignore stdio stalls Chrome before the CDP port opens,
+        // and the log is the only account of a failed launch.
+        logPath,
+    });
 
-    const proc = Bun.spawn(
-        [
-            chromeBin,
-            `--remote-debugging-port=${port}`,
-            `--user-data-dir=${userDataDir}`,
-            `--load-extension=${dist}`,
-            `--disable-extensions-except=${dist}`,
-            "--no-first-run",
-            "--no-default-browser-check",
-            "https://www.youtube.com",
-        ],
-        // stdio "ignore" on all three streams was observed to make Chrome/Brave
-        // stall before opening the CDP port (never spawned renderer helpers,
-        // just sat on the GPU process) — piping to a real file avoids that.
-        { stdio: ["ignore", Bun.file(logPath), Bun.file(logPath)] }
-    );
-
-    try {
-        // Cold profile first-run (cert store parsing, extension validation) can
-        // take well over 15s — 30s gives it headroom without hanging forever on
-        // a genuinely broken launch.
-        await waitForDevtools(port, 30_000);
-    } catch (error) {
-        const log = await Bun.file(logPath)
-            .text()
-            .catch(() => "(log unreadable)");
-        proc.kill();
-        throw new Error(`${(error as Error).message}\n--- ${logPath} ---\n${log}`);
-    }
-
-    return { pid: proc.pid, port, userDataDir, dist };
+    return { pid: launched.pid, port: launched.port, userDataDir, dist };
 }

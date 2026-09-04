@@ -2,9 +2,8 @@ import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { captureFrameGrid } from "@app/chrome-devtools/lib/frame-grid";
 import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
-import { withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
+import { devtoolsCdpUrl, withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
 import * as p from "@clack/prompts";
-import { env } from "@genesiscz/utils/env.client";
 import { createWatcher } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -21,7 +20,7 @@ const DEV_RELOAD_PORT = 9877;
  * chain as mcp-client.ts: explicit flag, then $CDP_URL, then 9333.
  */
 function cdpPortFrom(cdpUrl: string | undefined): number {
-    const raw = cdpUrl ?? env.extension.getCdpUrl() ?? "http://127.0.0.1:9333";
+    const raw = devtoolsCdpUrl(cdpUrl);
 
     try {
         const port = Number(new URL(raw).port);

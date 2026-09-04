@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
 import {
     browserById,
+    browserExecutable,
     browsersWithEmptyDebugFlag,
     classifyProcessName,
     discoverListeningCdpPorts,
@@ -691,5 +692,50 @@ describe("launchBrowser", () => {
         });
         expect(r.ok).toBe(false);
         expect(r.message).toContain("no Windows executable mapping");
+    });
+});
+
+describe("browserExecutable", () => {
+    const brave = browserById("brave");
+    if (!brave) {
+        throw new Error("brave missing from BROWSERS");
+    }
+
+    test("darwin: the binary inside the .app bundle, so a caller can own its stdio", () => {
+        const bin = browserExecutable({
+            browser: brave,
+            platform: "darwin",
+            home: "/Users/tester",
+            fileExists: (p) => p === "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        });
+        expect(bin).toBe("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
+    });
+
+    test("darwin: falls back to a per-user ~/Applications install", () => {
+        const bin = browserExecutable({
+            browser: brave,
+            platform: "darwin",
+            home: "/Users/tester",
+            fileExists: (p) => p.startsWith("/Users/tester/Applications/"),
+        });
+        expect(bin).toBe("/Users/tester/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
+    });
+
+    test("darwin: null when the app is not installed — never a guessed path", () => {
+        expect(
+            browserExecutable({ browser: brave, platform: "darwin", home: "/Users/tester", fileExists: () => false })
+        ).toBeNull();
+    });
+
+    test("linux: the first linuxBin that `which` finds", () => {
+        const bin = browserExecutable({
+            browser: brave,
+            platform: "linux",
+            exec: (argv) =>
+                argv[0] === "which" && argv[1] === "brave"
+                    ? { exitCode: 0, stdout: "", stderr: "" }
+                    : { exitCode: 1, stdout: "", stderr: "" },
+        });
+        expect(bin).toBe("brave");
     });
 });

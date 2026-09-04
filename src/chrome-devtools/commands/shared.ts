@@ -4,7 +4,7 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
-import { attach, NoMatchingTabError, type Page, targets } from "../lib/cdp.ts";
+import { attach, NoMatchingTabError, type Page, probe } from "../lib/cdp.ts";
 import { DEFAULT_CAPTURE_CHANNELS } from "../lib/channels.ts";
 import { captureDir, ensureCaptureDir, readLastPort, recorderPidPath } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
@@ -71,22 +71,7 @@ export function suggest(command: string[]): string {
 }
 
 export { ignoreSigpipe } from "../lib/platform.ts";
-
-export async function probe(
-    port: number
-): Promise<{ port: number; browser: string; pages: { title?: string; url: string }[] } | null> {
-    try {
-        const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
-        const v = (await r.json()) as { Browser?: string };
-        // The list fetch needs its own timeout: /json/version answering while
-        // /json/list stalls would otherwise hang every inventory-based command.
-        const list = (await targets(port, { signal: AbortSignal.timeout(1200) })).filter((t) => t.type === "page");
-
-        return { port, browser: v.Browser ?? "unknown", pages: list };
-    } catch {
-        return null;
-    }
-}
+export { probe };
 
 /**
  * Is one specific port answering CDP right now?

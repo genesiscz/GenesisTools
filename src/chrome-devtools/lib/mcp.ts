@@ -9,6 +9,8 @@ import type { Client } from "@modelcontextprotocol/client";
 export interface McpOpts {
     cdpUrl?: string;
     port?: number;
+    /** How this client names itself to the server. Other tools' doors pass their own. */
+    clientName?: string;
 }
 
 export function urlOf(opts: McpOpts): string {
@@ -16,7 +18,10 @@ export function urlOf(opts: McpOpts): string {
 }
 
 export async function withMcp<T>(fn: (client: Client) => Promise<T>, opts: McpOpts = {}): Promise<T> {
-    return withDevtoolsClient(fn, { cdpUrl: urlOf(opts), clientName: "genesis-chrome-devtools" });
+    return withDevtoolsClient(fn, {
+        cdpUrl: urlOf(opts),
+        clientName: opts.clientName ?? "genesis-chrome-devtools",
+    });
 }
 
 export async function callTool(name: string, args: Record<string, unknown> = {}, opts: McpOpts = {}) {
