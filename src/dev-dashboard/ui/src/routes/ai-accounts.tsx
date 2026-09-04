@@ -21,6 +21,7 @@ import { SortableBlocks } from "@/components/ai-accounts/SortableBlocks";
 import "@/components/ai-accounts/ai-accounts.css";
 import { useAiAccountsFilters, useSpendHiddenAccounts } from "@/hooks/useAiAccountsFilters";
 import { useLayoutMode } from "@/hooks/useLayoutMode";
+import { useLive } from "@/hooks/useLive";
 import { useMosaicLayout } from "@/hooks/useMosaicLayout";
 import { useSectionLayout } from "@/hooks/useSectionLayout";
 import { assignAccountColors } from "@/lib/account-color";
@@ -61,6 +62,11 @@ function query(params: Record<string, string | undefined>): string {
  * router: the server routes it calls land with Plan-Dashboard.
  */
 export function AiAccountsRoute() {
+    // A poll started by the daemon happens in another process, so the server
+    // learns about it from the cache file and forwards it here. Subscribing is
+    // also what STARTS that producer: it is refcounted on demand.
+    useLive(["ai-usage"]);
+
     const queryClient = useQueryClient();
     const { filters, toggleProvider, toggleAccount, setAccounts, setRange, reset } = useAiAccountsFilters();
     const { hiddenSet, toggleHidden, showAll } = useSpendHiddenAccounts();
