@@ -51,6 +51,7 @@ interface StartOptions {
     continue?: boolean;
     keychain?: boolean;
     cmux?: boolean;
+    tmux?: boolean;
 }
 
 /** Same bound findClaudeCommand uses — an rc file that blocks must not hang the launch. */
@@ -150,8 +151,17 @@ export function buildLaunchArgs(input: {
 }
 
 /** Headless launch (`-p`/`--print`): claude prints a result and exits, no TUI. */
-function isHeadlessPassthrough(passthrough: string[]): boolean {
+export function isHeadlessPassthrough(passthrough: string[]): boolean {
     return passthrough.some((arg) => arg === "-p" || arg === "--print");
+}
+
+/** Detached `--tmux` returns before Claude reads the injected keychain. */
+export function tmuxKeychainPrintConflict(
+    tmux: boolean | undefined,
+    keychain: boolean | undefined,
+    passthrough: string[]
+): boolean {
+    return Boolean(tmux && keychain && isHeadlessPassthrough(passthrough));
 }
 
 /**
@@ -769,17 +779,20 @@ async function offerLimitKilledResume(): Promise<string[]> {
     return picked ? ["--resume", picked] : [];
 }
 
-async function resolveResumeArgs(opts: StartOptions, passthrough: string[]): Promise<string[]> {
+async function resolveResumeArgs(
+    opts: StartOptions,
+    passthrough: string[]
+): Promise<{ args: string[]; title?: string }> {
     if (opts.continue) {
         if (opts.resume) {
             out.printlnErr(pc.dim("Both --continue and --resume given; using --continue."));
         }
 
-        return ["--continue"];
+        return { args: ["--continue"] };
     }
 
     if (opts.resume === true) {
-        return ["--resume"];
+        return { args: ["--resume"] };
     }
 
     if (typeof opts.resume === "string") {
@@ -788,16 +801,16 @@ async function resolveResumeArgs(opts: StartOptions, passthrough: string[]): Pro
             throw new Error(`Invalid session ID: ${session.sessionId}`);
         }
 
-        return ["--resume", session.sessionId];
+        return { args: ["--resume", session.sessionId], title: session.name };
     }
 
     // The user said nothing about sessions. Offer the limit-killed one, if the
     // passthrough has not already told claude what to open.
     if (!passthroughHandlesSession(passthrough)) {
-        return offerLimitKilledResume();
+        return { args: await offerLimitKilledResume() };
     }
 
-    return [];
+    return { args: [] };
 }
 
 async function main(nameArg: string | undefined, opts: StartOptions, passthrough: string[]): Promise<never> {
@@ -830,7 +843,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // --model always wins.
     const modelId =
         explicitModelId ??
-        (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? "claude-fable-5[1m]" : undefined);
+        (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? FABLE_MODEL_OPTION : undefined);
 
     let accountName: string;
 
@@ -852,12 +865,21 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         await warnKeychainLimits(accountName, aiConfig, modelId);
     }
 
-    const resumeArgs = await resolveResumeArgs(opts, passthrough);
+    const resume = await resolveResumeArgs(opts, passthrough);
+    const resumeArgs = resume.args;
 
     await guardFableHeadroom(accountName, modelId, resumeArgs.length > 0);
 
     let injectedUuid: string | undefined;
     let foreignBackupPath: string | undefined;
+
+    if (tmuxKeychainPrintConflict(opts.tmux, opts.keychain, passthrough)) {
+        out.error(
+            "--tmux --keychain cannot be combined with --print/-p. The detached tmux session would race keychain restore."
+        );
+        await out.flush();
+        process.exit(1);
+    }
 
     if (opts.keychain) {
         const { preSync, foreign } = await inspectKeychainBeforeInject(aiConfig);
@@ -929,7 +951,10 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         out.printlnErr(pc.dim(`Starting Claude as ${pc.cyan(accountName)} (${mode})${detail ? ` ${detail}` : ""}...`));
     }
 
-    logger.debug({ cmd, accountName, modelId, resumeArgs, passthrough, extraArgs, mode, headless }, "Spawning claude");
+    logger.debug(
+        { cmd, accountName, modelId, resumeArgs, passthrough, extraArgs, mode, headless, tmux: opts.tmux },
+        "Spawning claude"
+    );
 
     let launchEnv: Record<string, string | undefined>;
 
@@ -978,17 +1003,58 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     let exitCode: number;
 
     try {
-        const proc = Bun.spawn({
-            cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
-            stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
-            env: launchEnv,
-        });
+        if (opts.tmux) {
+            const {
+                currentTmuxSessionName,
+                launchCommandInTmux,
+                renameTargetForCurrentSession,
+                renameTmuxAndBoundTtyd,
+                tmuxNameFromResumeTitle,
+            } = await import("../lib/tmux-launch");
+            const desiredName = tmuxNameFromResumeTitle(resume.title, `claude-${accountName}`);
+            const currentName = await currentTmuxSessionName();
 
-        const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
+            if (currentName) {
+                const target = await renameTargetForCurrentSession(currentName, desiredName);
+                await renameTmuxAndBoundTtyd(currentName, target);
+                const proc = Bun.spawn({
+                    cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
+                    stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
+                    env: launchEnv,
+                });
+                const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
+                exitCode = await proc.exited;
+                if (stderrPump) {
+                    await stderrPump;
+                }
+            } else {
+                const launched = await launchCommandInTmux({
+                    sessionName: desiredName,
+                    cwd: process.cwd(),
+                    argv: [shell, "-ic", `exec ${cmd}${suffix}`],
+                    env: launchEnv,
+                    attach: !headless,
+                });
+                if (launched.name !== desiredName && resume.title) {
+                    await renameTmuxAndBoundTtyd(launched.name, desiredName).catch((error) => {
+                        logger.debug({ error, from: launched.name, to: desiredName }, "[start] tmux rename skipped");
+                    });
+                }
+                exitCode = launched.exitCode;
+            }
+        } else {
+            const proc = Bun.spawn({
+                cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
+                stdio: ["inherit", "inherit", headless ? "pipe" : "inherit"],
+                env: launchEnv,
+            });
 
-        exitCode = await proc.exited;
-        if (stderrPump) {
-            await stderrPump;
+            const stderrPump = headless && proc.stderr ? forwardStderrDroppingZleNoise(proc.stderr) : null;
+
+            exitCode = await proc.exited;
+            if (stderrPump) {
+                await stderrPump;
+            }
         }
 
         if (opts.keychain) {
@@ -1043,6 +1109,11 @@ export function registerStartCommand(program: Command): void {
                 "Claude's tmux calls become cmux splits); all other args forward unchanged. Adds " +
                 "--dangerously-skip-permissions to match the shell wrapper cmux bypasses, unless you pass " +
                 "your own permission flag"
+        )
+        .option(
+            "--tmux",
+            "Create a tmux session and launch Claude inside it. Already inside tmux (ttyd): rename " +
+                "that session (and the bound ttyd tab) from the resumed session title, then launch here."
         )
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
             const operands = command.args;

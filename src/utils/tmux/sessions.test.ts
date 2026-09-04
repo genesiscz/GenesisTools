@@ -4,6 +4,7 @@ import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin
 import {
     buildTmuxSpawnEnv,
     createTmuxSession,
+    createTmuxSessionRunning,
     getTmuxScrollState,
     listTmuxSessionActivePanes,
     listTmuxSessionCommands,
@@ -286,6 +287,27 @@ describe("tmux sessions", () => {
                     cmd.includes("truecolor")
             )
         ).toBe(true);
+    });
+
+    test("createTmuxSessionRunning puts argv after -- instead of a login shell", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+            return { exitCode: 0, stdout: "" };
+        });
+
+        await createTmuxSessionRunning("claude-auth", "/tmp", ["claude", "--resume", "abc"], {
+            CLAUDE_CODE_OAUTH_TOKEN: "tok",
+        });
+
+        const created = calls.find((cmd) => cmd.includes("new-session"));
+        expect(created).toBeDefined();
+        const dash = created?.indexOf("--") ?? -1;
+        expect(created?.slice(dash)?.[0]).toBe("--");
+        expect(created?.slice(dash)).toContain("/usr/bin/env");
+        expect(created?.some((token) => token === "CLAUDE_CODE_OAUTH_TOKEN=tok")).toBe(true);
+        expect(created?.slice(-3)).toEqual(["claude", "--resume", "abc"]);
     });
 
     test("getTmuxScrollState parses display-message output", async () => {

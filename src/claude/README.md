@@ -33,7 +33,13 @@ tools claude migrate-to codex
 
 # Reopen recent sessions as cmux panes
 tools claude cmux
+
+# Anthropic start inside tmux (alias: run). On --resume <query>, the tmux
+# session is named from the conversation title. A bound ttyd is renamed too.
+tools claude start work --tmux --resume "auth callback"
 ```
+
+`--tmux` applies to `tools claude start` / `run` for Anthropic accounts. A slash target (`account/provider`) still goes to `proxy` and ignores `--tmux`. If you are already inside tmux, this renames the current session instead of nesting a new one.
 
 ---
 

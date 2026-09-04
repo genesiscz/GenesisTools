@@ -372,6 +372,53 @@ export async function createTmuxSession(sessionName: string, cwd: string, comman
 }
 
 /**
+ * Detached tmux session whose first pane runs `argv` (not a login shell).
+ * Used by `tools claude run --tmux` so Claude is the session process.
+ */
+export async function createTmuxSessionRunning(
+    sessionName: string,
+    cwd: string,
+    argv: string[],
+    extraEnv: Record<string, string | undefined> = {}
+): Promise<void> {
+    if (argv.length === 0) {
+        throw new Error("createTmuxSessionRunning needs a command");
+    }
+
+    const envArgv = ["/usr/bin/env"];
+    const merged: Record<string, string | undefined> = { ...buildTmuxSpawnEnv(), ...extraEnv };
+    for (const [key, value] of Object.entries(merged)) {
+        if (typeof value === "string" && value.length > 0 && !key.includes("=") && !key.includes("\n")) {
+            envArgv.push(`${key}=${value}`);
+        }
+    }
+
+    const tmuxBin = resolveTmuxBin();
+    const result = await runTmux(
+        [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...envArgv, ...argv],
+        { cwd }
+    );
+
+    if (result.exitCode !== 0) {
+        throw new Error(`Failed to create tmux session ${sessionName}${tmuxErrorDetail(result.stderr)}`);
+    }
+
+    await Promise.all([ensureTmuxSessionEnvironment(sessionName), ensureTmuxServerPersists(tmuxBin)]);
+}
+
+/** Live tmux session name for this process, or undefined when not attached. */
+export async function currentTmuxSessionName(): Promise<string | undefined> {
+    if (!env.get("TMUX")) {
+        return undefined;
+    }
+
+    const tmuxBin = resolveTmuxBin();
+    const result = await runTmux([tmuxBin, "display-message", "-p", "#{session_name}"]);
+    const name = result.stdout.trim();
+    return result.exitCode === 0 && name.length > 0 ? name : undefined;
+}
+
+/**
  * Pin the tmux server so sessions survive detach/teardown instead of dying,
  * AND scrub the server's global environment of color-killing inheritance from
  * whichever process happened to bootstrap it.
