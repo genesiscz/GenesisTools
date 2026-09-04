@@ -7,7 +7,7 @@ import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { Command } from "commander";
 import { registerConfigureCommand } from "./commands/configure.js";
 import { registerFillCommand } from "./commands/fill.js";
-import { registerLinkCommand } from "./commands/link-workitems.js";
+import { registerMappingsCommand } from "./commands/mappings.js";
 import { registerTasksCommand } from "./commands/tasks.js";
 import { registerTimesheetCommand } from "./commands/timesheet.js";
 import { runClarityPreflight } from "./lib/preflight.js";
@@ -20,7 +20,7 @@ const program = new Command()
 registerConfigureCommand(program);
 registerTimesheetCommand(program);
 registerFillCommand(program);
-registerLinkCommand(program);
+registerMappingsCommand(program);
 registerTasksCommand(program);
 
 const uiDir = resolve(import.meta.dirname, "ui");

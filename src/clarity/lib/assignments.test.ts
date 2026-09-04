@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { WorkItemNode } from "@app/azure-devops/lib/ancestors";
 import type { ClarityMapping } from "@app/clarity/config";
-import { applyAssignments, buildAssignmentRows, removeAssignments } from "@app/clarity/lib/assignments";
+import {
+    applyAssignments,
+    buildAssignmentRows,
+    recommendedPairsFor,
+    removeAssignments,
+} from "@app/clarity/lib/assignments";
 import type { ClarityTask } from "@app/clarity/lib/types";
 
 function task(taskId: number, taskName: string): ClarityTask {
@@ -12,6 +17,7 @@ function task(taskId: number, taskName: string): ClarityTask {
         investmentName: "Sample",
         investmentCode: "P100001",
         timeEntryId: 1,
+        totalActuals: 0,
     };
 }
 
@@ -175,5 +181,75 @@ describe("removeAssignments", () => {
 
         expect(removed).toEqual([]);
         expect(mappings).toHaveLength(1);
+    });
+});
+
+describe("recommendedPairsFor", () => {
+    // The safety property behind `--apply-recommended`: it creates mappings, it never repoints one
+    // the operator made by hand. A drifted row is reported, not corrected.
+    test("skips a work item that is already mapped, even when the tree disputes the mapping", () => {
+        const rows = buildAssignmentRows({
+            minutesByWorkItem: new Map([[100001, 600]]),
+            mappings: [mapping(100001, 700004, "Incidenty_Opex_Sample_EXT")],
+            chains: CHAINS,
+            tasks: TASKS,
+        });
+
+        expect(rows.assigned[0].drifted).toBe(true);
+        expect(recommendedPairsFor(rows)).toEqual([]);
+    });
+
+    test("pairs an unmapped work item with the task its ancestor names", () => {
+        const rows = buildAssignmentRows({
+            minutesByWorkItem: new Map([[100001, 600]]),
+            mappings: [],
+            chains: CHAINS,
+            tasks: TASKS,
+        });
+
+        expect(recommendedPairsFor(rows)).toEqual([
+            { workItemId: 100001, task: TASKS[0], title: "Tech debt task", type: "Task" },
+        ]);
+    });
+
+    test("skips an unmapped work item whose chain names no task", () => {
+        const rows = buildAssignmentRows({
+            minutesByWorkItem: new Map([[100002, 300]]),
+            mappings: [],
+            chains: CHAINS,
+            tasks: TASKS,
+        });
+
+        expect(recommendedPairsFor(rows)).toEqual([]);
+    });
+});
+
+describe("applyAssignments with repeated pairs", () => {
+    // A duplicate entry would not be visible in the output, but getMappingForWorkItem returns the
+    // FIRST match, so the stale one would win and the user's later choice would be lost.
+    test("leaves one mapping when the same work item is assigned twice in one call", () => {
+        const result = applyAssignments({
+            mappings: [],
+            pairs: [
+                { workItemId: 100001, task: TASKS[1] },
+                { workItemId: 100001, task: TASKS[2] },
+            ],
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0].clarityTaskId).toBe(700005);
+    });
+});
+
+describe("removeAssignments matches the work item, not the Clarity task", () => {
+    // `--unlink 700004` is a plausible slip: 700004 is a Clarity task id, and every mapping that
+    // bills it would go at once if the filter matched either id.
+    test("removes nothing when the id names a Clarity task rather than a work item", () => {
+        const mappings = [mapping(100001, 700004, "Incidenty_Opex_Sample_EXT")];
+
+        const result = removeAssignments({ mappings, workItemIds: [700004] });
+
+        expect(result.removed).toEqual([]);
+        expect(result.mappings).toEqual(mappings);
     });
 });

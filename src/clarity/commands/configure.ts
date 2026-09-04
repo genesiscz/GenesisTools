@@ -7,7 +7,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import type { ClarityConfig } from "../config.js";
 import { getConfig, saveConfig } from "../config.js";
-import { runInteractiveLinking } from "./link-workitems.js";
+import { runInteractiveLinking } from "../lib/interactive-linking.js";
 
 /**
  * Read multiline cURL input from stdin.

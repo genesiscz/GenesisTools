@@ -3,6 +3,7 @@ import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import type { TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
+import { suggestCommand } from "@genesiscz/utils/cli";
 import { addDay, getDaysInPeriodInclusive, isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -20,8 +21,11 @@ type TimesheetRecordLike = Awaited<ReturnType<ClarityApi["getTimesheet"]>>["time
 interface WeekPlan {
     timesheetId: number;
     periodStart: string;
-    /** Clarity's timePeriodFinish: the LAST day of the period, inclusive. */
-    periodFinish: string;
+    /**
+     * Clarity's `timePeriodFinish`: the LAST day of the period. The dashboard's `WeekPreview`
+     * carries an EXCLUSIVE end under a similar name, so both spell out which one they mean.
+     */
+    periodFinishInclusive: string;
     /** Notes already on the timesheet, so a re-run does not append a duplicate. */
     existingNotes: number;
     entries: Array<{
@@ -32,9 +36,28 @@ interface WeekPlan {
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
 }
 
-function renderWeekPreview(plan: WeekPlan): void {
+/**
+ * The note the week would get if every planned write succeeded. The executed run rebuilds it from
+ * what actually wrote, so a failed entry never shows up in the posted note.
+ */
+function plannedNote(plan: WeekPlan): string {
+    return buildPeriodComment({
+        entries: plan.entries.flatMap((entry) =>
+            (entry.fill.timelogEntries ?? []).map((source) => ({
+                workItemId: source.workItemId,
+                timeTypeDescription: source.timeTypeDescription ?? "",
+                comment: source.comment ?? null,
+                date: source.date,
+            }))
+        ),
+        periodStart: plan.periodStart,
+        periodFinishInclusive: plan.periodFinishInclusive,
+    });
+}
+
+function renderWeekPreview(plan: WeekPlan, noteText: string): void {
     const start = plan.periodStart.split("T")[0];
-    const end = plan.periodFinish.split("T")[0];
+    const end = plan.periodFinishInclusive.split("T")[0];
 
     out.println(`\n${pc.bold(`Week: ${start} to ${end}`)} (Timesheet: ${plan.timesheetId})`);
 
@@ -46,19 +69,10 @@ function renderWeekPreview(plan: WeekPlan): void {
     // timePeriodFinish names the LAST day of the period, so the range is inclusive. The shared
     // helper parses as UTC; building Dates locally and then reading getUTCDay() shifted every day
     // back one in CEST, which turned a one-day period into a Sunday and dropped it entirely.
-    const days = getDaysInPeriodInclusive(plan.periodStart, plan.periodFinish);
-    const dayLabels = days.map((day) => day.label);
-    const dayDates = days.map((day) => day.date);
-
-    // Only show Mon-Fri
-    const workDayIndices = dayDates
-        .map((_, i) => i)
-        .filter((i) => {
-            const dow = new Date(`${dayDates[i]}T00:00:00Z`).getUTCDay();
-            return dow >= 1 && dow <= 5;
-        });
-
-    const workLabels = workDayIndices.map((i) => dayLabels[i]);
+    const workDays = getDaysInPeriodInclusive(plan.periodStart, plan.periodFinishInclusive).filter(
+        (day) => day.dow >= 1 && day.dow <= 5
+    );
+    const workLabels = workDays.map((day) => day.label);
 
     const table = new Table({
         head: ["Clarity Task", ...workLabels, "Total"],
@@ -69,9 +83,8 @@ function renderWeekPreview(plan: WeekPlan): void {
         const dayValues: string[] = [];
         let total = 0;
 
-        for (const idx of workDayIndices) {
-            const date = dayDates[idx];
-            const mins = entry.fill.dayMinutes[date] ?? 0;
+        for (const day of workDays) {
+            const mins = entry.fill.dayMinutes[day.date] ?? 0;
             total += mins;
             dayValues.push(mins > 0 ? `${(mins / 60).toFixed(2)}h` : pc.dim("-"));
         }
@@ -93,7 +106,19 @@ function renderWeekPreview(plan: WeekPlan): void {
             out.println(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
         }
 
-        out.println(pc.yellow("  Run 'tools clarity link-workitems' to create mappings"));
+        out.println(pc.yellow("  Run 'tools clarity mappings' to create mappings"));
+    }
+
+    if (noteText) {
+        out.println(pc.dim("\n  Timesheet note:"));
+
+        for (const line of noteText.split("\n")) {
+            out.println(pc.dim(`    ${line}`));
+        }
+
+        if (plan.existingNotes > 0) {
+            out.println(pc.yellow(`  Not posted: the timesheet already carries ${plan.existingNotes} note(s).`));
+        }
     }
 }
 
@@ -183,8 +208,8 @@ export function registerFillCommand(program: Command): void {
 
             if (unmapped.blocked) {
                 out.error("Refusing to fill an incomplete month. Map these work items first:");
-                out.error("  tools clarity tasks --date <YYYY-MM>");
-                out.error("  tools clarity link-workitems --azure-devops-workitem <id> --clarity-task-id <id>");
+                out.error("  tools clarity mappings --date <YYYY-MM> --unassigned");
+                out.error("  tools clarity mappings --date <YYYY-MM> --assign <workItemId>:<clarityTaskId>");
                 out.error("Pass --allow-unmapped to fill the mapped work items anyway.");
                 process.exit(1);
             }
@@ -200,15 +225,14 @@ export function registerFillCommand(program: Command): void {
             const allDates = [...allDatesSet].sort();
 
             if (allDates.length === 0 && unmappedByWi.size > 0) {
-                out.println(pc.yellow("\nAll entries are unmapped. Run 'tools clarity link-workitems' first."));
+                out.println(pc.yellow("\nAll entries are unmapped. Run 'tools clarity mappings' first."));
                 return;
             }
 
             out.println("Loading Clarity timesheet data...");
 
-            const { weeks, unresolvedDates, userId } = await resolveFillWeeks({
+            const { weeks, unresolvedDates, userId, records } = await resolveFillWeeks({
                 api: clarityApi,
-                mappings: clarityConfig.mappings,
                 dates: allDates,
                 month: options.month,
                 year,
@@ -235,10 +259,12 @@ export function registerFillCommand(program: Command): void {
             }> = [];
 
             for (const week of weeks) {
-                let ts: TimesheetRecordLike | undefined;
+                // Discovery already read most of these while counting entries; refetching them
+                // here doubled the request count for every fill.
+                let ts: TimesheetRecordLike | undefined = records.get(week.timesheetId);
 
                 try {
-                    ts = (await clarityApi.getTimesheet(week.timesheetId)).timesheets._results[0];
+                    ts ??= (await clarityApi.getTimesheet(week.timesheetId)).timesheets._results[0];
                 } catch (err) {
                     out.error(
                         pc.red(`  Could not read timesheet ${week.timesheetId} for week ${week.startDate}: ${err}`)
@@ -256,7 +282,7 @@ export function registerFillCommand(program: Command): void {
                 const plan: WeekPlan = {
                     timesheetId: ts._internalId,
                     periodStart: ts.timePeriodStart,
-                    periodFinish: ts.timePeriodFinish,
+                    periodFinishInclusive: ts.timePeriodFinish,
                     existingNotes: ts.numberOfNotes ?? 0,
                     entries: [],
                     unmappedWorkItems: unmappedEntries
@@ -321,7 +347,7 @@ export function registerFillCommand(program: Command): void {
 
             // Preview
             for (const plan of weekPlans) {
-                renderWeekPreview(plan);
+                renderWeekPreview(plan, options.comments === false ? "" : plannedNote(plan));
             }
 
             if (isDryRun) {
@@ -337,12 +363,12 @@ export function registerFillCommand(program: Command): void {
             let noteErrorCount = 0;
 
             for (const plan of weekPlans) {
-                const weekLabel = `${plan.periodStart.split("T")[0]} to ${plan.periodFinish.split("T")[0]}`;
+                const weekLabel = `${plan.periodStart.split("T")[0]} to ${plan.periodFinishInclusive.split("T")[0]}`;
                 out.println(`\n${pc.dim(`TS#${plan.timesheetId} (${weekLabel})`)}`);
 
                 for (const entry of plan.entries) {
                     // periodFinish is inclusive (last day) — add 1 day for exclusive loop bound
-                    const exclusiveEnd = `${addDay(plan.periodFinish.split("T")[0])}T00:00:00`;
+                    const exclusiveEnd = `${addDay(plan.periodFinishInclusive.split("T")[0])}T00:00:00`;
                     const segments = buildTimeSegments(plan.periodStart, exclusiveEnd, entry.fill.dayMinutes);
                     const totalSeconds = segments.reduce((sum, s) => sum + s.value, 0);
 
@@ -358,7 +384,7 @@ export function registerFillCommand(program: Command): void {
                         dataType: "numeric",
                         _type: "tsv",
                         start: plan.periodStart,
-                        finish: plan.periodFinish,
+                        finish: plan.periodFinishInclusive,
                         segmentList: {
                             total: totalSeconds,
                             defaultValue: 0,
@@ -435,7 +461,7 @@ export function registerFillCommand(program: Command): void {
                     const noteText = buildPeriodComment({
                         entries: bookedEntries.filter((entry) => entry.timesheetId === plan.timesheetId),
                         periodStart: plan.periodStart,
-                        periodFinishInclusive: plan.periodFinish,
+                        periodFinishInclusive: plan.periodFinishInclusive,
                     });
 
                     if (!noteText) {
@@ -469,6 +495,31 @@ export function registerFillCommand(program: Command): void {
                     `${unreadableWeeks > 0 ? `, ${pc.red(`${unreadableWeeks} week(s) unreadable`)}` : ""}` +
                     `${noteErrorCount > 0 ? `, ${pc.red(`${noteErrorCount} note(s) failed`)}` : ""}`
             );
+
+            out.println(
+                pc.dim(
+                    `  A fill REPLACES the hours on each row, so there is no undo. Review with: ${suggestCommand(
+                        "tools clarity",
+                        { replaceCommand: ["timesheet", "--month", String(options.month), "--year", String(year)] }
+                    )}`
+                )
+            );
+
+            if (missingRowCount > 0) {
+                out.println(
+                    pc.dim(
+                        `  Add the missing rows with: ${suggestCommand("tools clarity", {
+                            replaceCommand: [
+                                "tasks",
+                                "--date",
+                                `${year}-${String(options.month).padStart(2, "0")}`,
+                                "--add-from",
+                                "<a week that has them>",
+                            ],
+                        })}`
+                    )
+                );
+            }
 
             if (errorCount + missingRowCount + unreadableWeeks > 0) {
                 out.error("Some hours were not booked. Fix the causes above and re-run.");

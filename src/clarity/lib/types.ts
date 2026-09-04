@@ -5,6 +5,8 @@ export interface ClarityTask {
     investmentName: string;
     investmentCode: string;
     timeEntryId: number;
+    /** Seconds already booked on the row. `undefined` means the server did not report it. */
+    totalActuals: number | undefined;
 }
 
 export interface AdoWorkItem {

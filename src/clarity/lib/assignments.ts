@@ -67,6 +67,61 @@ export function buildAssignmentRows({
     return { assigned: assigned.sort(byHours), unassigned: unassigned.sort(byHours) };
 }
 
+/**
+ * The mappings `--apply-recommended` may create. Only UNMAPPED work items qualify: a stored mapping
+ * is an operator decision, so a drifted row is reported rather than corrected.
+ */
+export function recommendedPairsFor(rows: AssignmentRows): AssignmentPair[] {
+    return rows.unassigned
+        .filter((row) => row.recommendation)
+        .map((row) => ({
+            workItemId: row.workItemId,
+            task: row.recommendation!.task,
+            title: row.title,
+            type: row.type,
+        }));
+}
+
+export interface SerialisedAssignmentRow {
+    workItemId: number;
+    title?: string;
+    type?: string;
+    hours: number;
+    clarityTaskId?: number;
+    clarityTaskName?: string;
+    drifted: boolean;
+    recommendation?: {
+        clarityTaskId: number;
+        clarityTaskName: string;
+        matchedWorkItemId: number;
+        matchedWorkItemTitle: string;
+    };
+}
+
+/**
+ * The wire shape of an assignment row. The CLI's `--format json` and the dashboard's
+ * `/api/assignment-view` both go through this, so the two doors cannot drift apart.
+ */
+export function serialiseAssignmentRow(row: AssignmentRow): SerialisedAssignmentRow {
+    return {
+        workItemId: row.workItemId,
+        title: row.title,
+        type: row.type,
+        hours: row.minutes / 60,
+        clarityTaskId: row.mapping?.clarityTaskId,
+        clarityTaskName: row.mapping?.clarityTaskName,
+        drifted: row.drifted,
+        recommendation: row.recommendation
+            ? {
+                  clarityTaskId: row.recommendation.task.taskId,
+                  clarityTaskName: row.recommendation.task.taskName,
+                  matchedWorkItemId: row.recommendation.matched.id,
+                  matchedWorkItemTitle: row.recommendation.matched.title,
+              }
+            : undefined,
+    };
+}
+
 /** Add or replace mappings for the given pairs, leaving every other mapping untouched. */
 export function applyAssignments({
     mappings,

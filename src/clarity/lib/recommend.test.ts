@@ -10,6 +10,7 @@ function task(taskId: number, taskName: string): ClarityTask {
         investmentName: "Sample",
         investmentCode: "P100001",
         timeEntryId: 1,
+        totalActuals: 0,
     };
 }
 

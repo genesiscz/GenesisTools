@@ -8,8 +8,6 @@ const MappingSchema = z.object({
     clarityTaskCode: z.string(),
     clarityInvestmentName: z.string(),
     clarityInvestmentCode: z.string(),
-    clarityTimesheetId: z.number().optional(),
-    clarityTimeEntryId: z.number().optional(),
     adoWorkItemId: z.number(),
     adoWorkItemTitle: z.string(),
     adoWorkItemType: z.string().optional(),

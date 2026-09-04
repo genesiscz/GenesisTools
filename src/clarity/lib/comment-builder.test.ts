@@ -42,24 +42,14 @@ describe("buildPeriodComment", () => {
         );
     });
 
-    test("excludes the day after the finish date", () => {
+    test("keeps the finish day itself, which is the boundary an exclusive filter drops", () => {
         const text = buildPeriodComment({
             entries: ENTRIES,
-            periodStart: "2026-08-24T00:00:00",
+            periodStart: "2026-08-30T00:00:00",
             periodFinishInclusive: "2026-08-30T00:00:00",
         });
 
-        expect(text).not.toContain("#333333");
-    });
-
-    test("excludes the day before the start date", () => {
-        const text = buildPeriodComment({
-            entries: ENTRIES,
-            periodStart: "2026-08-24T00:00:00",
-            periodFinishInclusive: "2026-08-30T00:00:00",
-        });
-
-        expect(text).not.toContain("#444444");
+        expect(text).toBe("Ne, 30.8.:\n - #111111 - Development - druhý den");
     });
 
     test("returns an empty string when no entry falls in the period", () => {

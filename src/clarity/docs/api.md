@@ -101,6 +101,51 @@ Fetch a specific timesheet with all time entries.
 - `timesheets._results[0].timeentries._results[]` - All time entry rows
 - Each entry has `actuals.segmentList.segments[]` with per-day values
 
+### GET `/timesheets/{timesheetId}/timeEntries`
+
+List the task rows of a timesheet.
+
+**🛑 The collection returns `_internalId` and nothing else**, whatever `x-api-full-response` says:
+
+```json
+{"_totalCount":8,"_results":[{"_internalId":11110541,"_parent":"…","_self":"…"}]}
+```
+
+Learning a row's `taskId` therefore costs one `GET /timesheets/{id}/timeEntries/{_internalId}` per
+row. Use `GET /private/timesheet?filter=(timesheetId = N)` for reading instead: it returns the full
+rows in a single call. This collection is only worth using for writing.
+
+### POST `/timesheets/{timesheetId}/timeEntries`
+
+Add a task row to a timesheet.
+
+**Body:** `{ "taskId": 8902005 }`
+
+`taskId` is the only field the caller supplies. The server fills `assignmentId`, `resourceId`,
+`role`, `investmentId` and `phaseId` from the resource's assignment.
+
+An empty body answers `400` with
+`TMA-1011: Chybějící nebo nulová hodnota požadovaného atributu "taskId"`, error code
+`timeadmin.timeentry.api.NULL_TASK`. That is the cheap way to confirm the verb exists without
+creating anything.
+
+Posting a `taskId` the timesheet already carries is NOT verified; read the collection first and post
+only the missing ids, which is what `addTaskRows` does.
+
+Observed 2026-09-04: a successful POST answers with a JSON body, not an empty one. An expired
+session answers **200 with an HTML login page**, so neither verb may trust the status code alone.
+
+### DELETE `/timesheets/{timesheetId}/timeEntries/{timeEntryId}`
+
+Remove a task row. Answers `200` with an empty body, so it must not be parsed as JSON.
+
+An unknown id answers `404` with `API-1004 : Neplatný identifikátor zdroje {id}`, error code
+`api.invalidResourceId`. Verified 2026-09-04.
+
+**🛑 Clarity asks for no confirmation and deletes a row that carries actuals along with its hours.**
+`removeTaskRows` refuses any row whose `totalActuals` is above zero, absent, `null` or `NaN`.
+Only a real, finite zero proves a row is empty.
+
 ### PUT `/timesheets/{timesheetId}/timeEntries/{timeEntryId}`
 
 Update hours for a specific time entry (project row).
