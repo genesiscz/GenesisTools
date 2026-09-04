@@ -61,6 +61,27 @@ describe("resolveSession", () => {
         );
     });
 
+    test("falls back to COPILOT_AGENT_SESSION_ID when the others are unset", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-agents-sess-"));
+
+        await env.testing.withOverrides(
+            {
+                GENESIS_TOOLS_HOME: home,
+                GENESIS_AGENTS_SESSION: undefined,
+                GT_RENDEZVOUS_SESSION: undefined,
+                CLAUDE_CODE_SESSION_ID: undefined,
+                CODEX_THREAD_ID: undefined,
+                GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: "from-copilot",
+            },
+            () => {
+                const resolved = resolveSession(undefined);
+                expect(resolved.session).toBe("from-copilot");
+                expect(resolved.source).toBe("host-new");
+            }
+        );
+    });
+
     test("falls back to CODEX_THREAD_ID when the others are unset", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-agents-sess-"));
 
@@ -72,6 +93,7 @@ describe("resolveSession", () => {
                 CLAUDE_CODE_SESSION_ID: undefined,
                 CODEX_THREAD_ID: "from-codex",
                 GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: undefined,
             },
             () => {
                 const resolved = resolveSession(undefined);
@@ -92,6 +114,7 @@ describe("resolveSession", () => {
                 CLAUDE_CODE_SESSION_ID: undefined,
                 CODEX_THREAD_ID: "from-codex",
                 GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: undefined,
             },
             () => {
                 const resolved = resolveSession(undefined);
@@ -116,6 +139,7 @@ describe("resolveSession", () => {
                 CLAUDE_CODE_SESSION_ID: "parent-session",
                 CODEX_THREAD_ID: "own-thread",
                 GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: undefined,
             },
             () => {
                 const resolved = resolveSession(undefined);
@@ -137,6 +161,7 @@ describe("resolveSession", () => {
                 CLAUDE_CODE_SESSION_ID: "stale-parent",
                 CODEX_THREAD_ID: "own-thread",
                 GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: undefined,
             },
             () => {
                 const resolved = resolveSession(undefined);
@@ -160,6 +185,7 @@ describe("resolveSession", () => {
                 CLAUDE_CODE_SESSION_ID: undefined,
                 CODEX_THREAD_ID: undefined,
                 GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: undefined,
             },
             () => {
                 const resolved = resolveSession(undefined);

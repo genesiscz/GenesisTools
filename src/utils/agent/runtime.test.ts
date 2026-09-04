@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentRuntimeContext, gitCommonRoot } from "./agent-runtime";
+import { getAgentRuntimeContext, gitCommonRoot } from "./runtime";
 
 function git(args: string[], cwd: string): void {
     const r = Bun.spawnSync(["git", "-c", "user.email=t@t.t", "-c", "user.name=t", ...args], {
@@ -76,6 +76,15 @@ describe("getAgentRuntimeContext", () => {
         const ctx = getAgentRuntimeContext({}, { GROK_SESSION_ID: "01a048de-25a9-7052-bbb8-46f8ae503f43" });
         expect(ctx.agent).toBe("grok");
         expect(ctx.sessionId).toBe("01a048de-25a9-7052-bbb8-46f8ae503f43");
+        expect(ctx.isInAgent).toBe(true);
+    });
+
+    it("detects GitHub Copilot CLI from COPILOT_AGENT_SESSION_ID", () => {
+        // Copilot puts its own --session-id into every child's environment; the
+        // uuid below is the one observed live in the MCP server on 2026-08-31.
+        const ctx = getAgentRuntimeContext({}, { COPILOT_AGENT_SESSION_ID: "3bf1c496-8e82-4cb6-b688-bf65fd3d250a" });
+        expect(ctx.agent).toBe("copilot");
+        expect(ctx.sessionId).toBe("3bf1c496-8e82-4cb6-b688-bf65fd3d250a");
         expect(ctx.isInAgent).toBe(true);
     });
 

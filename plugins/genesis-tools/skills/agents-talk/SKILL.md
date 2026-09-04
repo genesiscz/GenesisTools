@@ -206,11 +206,11 @@ The CLI auto-detects the session in this order:
 
 1. `--session <id>` explicit
 2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok run` — the parent saying which swarm to join)
-3. The host session id: `$CLAUDE_CODE_SESSION_ID`, `$CODEX_THREAD_ID`, `$GROK_SESSION_ID`. When several are set (a worker inherits its parent's), the one whose swarm ALREADY EXISTS wins, so a worker joins its parent instead of starting an orphan swarm. If none exists, the first present id creates one.
+3. The host session id: `$CLAUDE_CODE_SESSION_ID`, `$CODEX_THREAD_ID`, `$GROK_SESSION_ID`, `$COPILOT_AGENT_SESSION_ID`. When several are set (a worker inherits its parent's), the one whose swarm ALREADY EXISTS wins, so a worker joins its parent instead of starting an orphan swarm. If none exists, the first present id creates one.
 4. Single session active (feed touched) in the last 60 seconds
 5. Otherwise: a friendly error asking for `--session` or one of those env vars
 
-Every host publishes a session id and subagent shells inherit it: Claude Code `$CLAUDE_CODE_SESSION_ID`, Codex `$CODEX_THREAD_ID`, grok `$GROK_SESSION_ID` (grok has always set it; the resolver ignored it until 2026-08-29). Passing `--session` explicitly is still the surest thing in a worker brief, and exporting `GENESIS_AGENTS_SESSION` in the parent pins the whole swarm.
+Every host publishes a session id and subagent shells inherit it: Claude Code `$CLAUDE_CODE_SESSION_ID`, Codex `$CODEX_THREAD_ID`, grok `$GROK_SESSION_ID` (grok has always set it; the resolver ignored it until 2026-08-29), GitHub Copilot CLI `$COPILOT_AGENT_SESSION_ID` (mirrors the CLI's own `--session-id`; the resolver ignored it until 2026-08-31, which is why a Copilot session could not claim a handoff). Passing `--session` explicitly is still the surest thing in a worker brief, and exporting `GENESIS_AGENTS_SESSION` in the parent pins the whole swarm.
 
 ## Common pitfalls
 

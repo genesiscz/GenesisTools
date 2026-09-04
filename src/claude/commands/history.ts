@@ -16,7 +16,7 @@ import {
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";

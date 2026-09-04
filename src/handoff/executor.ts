@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import type { AgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";

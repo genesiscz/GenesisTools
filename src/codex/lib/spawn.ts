@@ -1,6 +1,6 @@
 import { closeSync, openSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent-host";
+import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";

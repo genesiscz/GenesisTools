@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { agentSessionIds, assignedSessionId } from "@genesiscz/utils/agent-host";
+import { agentSessionIds, assignedSessionId } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { FriendlyError } from "./errors";
@@ -130,7 +130,7 @@ export function resolveSession(explicit: string | undefined): SessionResolveResu
     }
 
     throw new FriendlyError(
-        "could not resolve a session: --session was not given, $GENESIS_AGENTS_SESSION / $GT_RENDEZVOUS_SESSION / $CLAUDE_CODE_SESSION_ID / $CODEX_THREAD_ID / $GROK_SESSION_ID are unset, and no other session has been active in the last 60s",
-        "Pass --session <id> explicitly, OR set GENESIS_AGENTS_SESSION, OR run from a Claude Code / Codex / grok session, OR start a fresh swarm by running a login command with --session <id> first."
+        "could not resolve a session: --session was not given, $GENESIS_AGENTS_SESSION / $GT_RENDEZVOUS_SESSION / $CLAUDE_CODE_SESSION_ID / $CODEX_THREAD_ID / $GROK_SESSION_ID / $COPILOT_AGENT_SESSION_ID are unset, and no other session has been active in the last 60s",
+        "Pass --session <id> explicitly, OR set GENESIS_AGENTS_SESSION, OR run from a Claude Code / Codex / grok / GitHub Copilot session, OR start a fresh swarm by running a login command with --session <id> first."
     );
 }

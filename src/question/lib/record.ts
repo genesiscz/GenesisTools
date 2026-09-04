@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRuntimeContext, getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { type AgentRuntimeContext, getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { logger } from "@genesiscz/utils/logger";
 import { loadConfig, type QuestionConfig } from "./config";
 import { appendEntry } from "./log-store";

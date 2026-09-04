@@ -1,4 +1,4 @@
-import type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 
 /**
  * Grok CLI runtime detection.

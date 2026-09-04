@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { runTool } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";

@@ -89,6 +89,7 @@ describe("resolveSessionOption", () => {
                 CODEX_THREAD_ID: undefined,
                 CODEX_CI: undefined,
                 GROK_SESSION_ID: undefined,
+                COPILOT_AGENT_SESSION_ID: undefined,
             },
             () => {
                 expect(() => resolveSessionOption("current")).toThrow(/No current agent session/);

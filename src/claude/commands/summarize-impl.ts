@@ -13,7 +13,7 @@ import type { SummarizeOptions, SummarizeResult } from "@app/claude/lib/history/
 import { listTemplates, SummarizeEngine } from "@app/claude/lib/history/summarize/engine.ts";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import * as p from "@clack/prompts";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent-runtime";
+import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { encodedProjectDir } from "@genesiscz/utils/claude";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { formatCost } from "@genesiscz/utils/format";

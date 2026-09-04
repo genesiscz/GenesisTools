@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { resolveAgentHost } from "@genesiscz/utils/agent-host";
+import { resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import type { GitContext, TodoContext } from "./types";

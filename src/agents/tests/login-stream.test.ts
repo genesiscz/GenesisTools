@@ -18,6 +18,7 @@ function spawnAgents(home: string, args: string[]): Bun.Subprocess<"ignore", "pi
             GENESIS_AGENTS_SESSION: "",
             CLAUDE_CODE_SESSION_ID: "",
             GROK_SESSION_ID: "",
+            COPILOT_AGENT_SESSION_ID: "",
         },
     });
 }

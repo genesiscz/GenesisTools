@@ -1,13 +1,13 @@
 import { realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { resolveAgentHost } from "@genesiscz/utils/agent-host";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { getSessionMetadataBySessionId } from "@genesiscz/utils/claude/history-cache";
-import type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
 import { env as appEnv } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
 
-export type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
+export type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 
 function gitSync(args: string[], cwd: string): string | null {
     const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });

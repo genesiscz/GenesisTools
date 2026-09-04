@@ -2,20 +2,23 @@
  * Which agent host is running this process, and under what session id.
  *
  * Every host publishes its session id through the environment, and every child
- * it spawns inherits it. Three of them do it today, and each used to be read in
+ * it spawns inherits it. Four of them do it today, and each used to be read in
  * a different place with its own hardcoded key list — which is how grok ended up
  * with no identity at all until 2026-08-29, even though `GROK_SESSION_ID` had
- * been sitting in the environment the whole time.
+ * been sitting in the environment the whole time. GitHub Copilot CLI repeated the
+ * bug exactly, with `COPILOT_AGENT_SESSION_ID`, until 2026-08-31. Adding a host
+ * is now one entry here plus one `runtime-context.ts`.
  *
  * This module is env-only on purpose. `getAgentRuntimeContext` adds git and
  * process-tree work on top; callers that only need "who am I" (the agents bus,
  * record-plan, todo defaults) must not pay for that.
  */
 
-import type { AgentRuntimeContext } from "@genesiscz/utils/claude/runtime-context";
-import { resolveClaudeContext } from "@genesiscz/utils/claude/runtime-context";
-import { isCodex, resolveCodexContext } from "@genesiscz/utils/codex/runtime-context";
-import { isGrok, resolveGrokContext } from "@genesiscz/utils/grok/runtime-context";
+import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+import { resolveClaudeContext } from "@genesiscz/utils/agent/hosts/claude";
+import { isCodex, resolveCodexContext } from "@genesiscz/utils/agent/hosts/codex";
+import { isCopilot, resolveCopilotContext } from "@genesiscz/utils/agent/hosts/copilot";
+import { isGrok, resolveGrokContext } from "@genesiscz/utils/agent/hosts/grok";
 
 export type AgentHostKind = AgentRuntimeContext["agent"];
 
@@ -37,6 +40,7 @@ export const AGENT_SESSION_KEYS = [
     { agent: "claude-code", key: "CLAUDE_CODE_SESSION_ID" },
     { agent: "codex", key: "CODEX_THREAD_ID" },
     { agent: "grok", key: "GROK_SESSION_ID" },
+    { agent: "copilot", key: "COPILOT_AGENT_SESSION_ID" },
 ] as const satisfies readonly { agent: AgentHostKind; key: string }[];
 
 /**
@@ -73,6 +77,10 @@ export function resolveAgentHost(env: NodeJS.ProcessEnv): Partial<AgentRuntimeCo
 
     if (isGrok(env)) {
         return resolveGrokContext(env);
+    }
+
+    if (isCopilot(env)) {
+        return resolveCopilotContext(env);
     }
 
     return { agent: "unknown", sessionId: null, isInAgent: false };
