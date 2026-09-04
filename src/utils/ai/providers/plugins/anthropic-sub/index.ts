@@ -2,6 +2,9 @@ import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { AnthropicSubResolver } from "../../../resolvers/AnthropicSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
+import { anthropicLogin } from "./login";
+import { anthropicLoginLong } from "./login-long";
+import { anthropicLoginSecondary } from "./login-secondary";
 
 /**
  * Claude Max/Pro subscription.
@@ -69,5 +72,25 @@ export const anthropicSubPlugin: ProviderPlugin = {
     accounts: {
         presentation,
         logoutTargets: ["oauth", "longLived", "secondary"],
+        login: anthropicLogin,
+        loginLong: anthropicLoginLong,
+        loginSecondary: anthropicLoginSecondary,
+
+        /**
+         * Stored fields only, never a profile fetch. Resolving an access token to
+         * call the profile endpoint can refresh a single-use grant, and every
+         * caller of `identityOf` is a diagnostic (`list`, `show`, the identity
+         * guard before a write).
+         */
+        async identityOf(account) {
+            const secondary = account.credentials.secondary;
+
+            return {
+                email: secondary?.emailAddress,
+                accountUuid: account.accountUuid ?? secondary?.accountUuid,
+                organizationUuid: account.organizationUuid ?? secondary?.organizationUuid,
+                plan: account.label ?? account.subscriptionPlan,
+            };
+        },
     },
 };

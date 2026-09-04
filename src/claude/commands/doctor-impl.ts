@@ -1,4 +1,3 @@
-import { type FingerprintResult, findDuplicateAccounts, fingerprintToken } from "@app/claude/lib/account-fingerprint";
 import {
     accountOwningKeychain,
     billsKeychain,
@@ -13,6 +12,11 @@ import {
 } from "@app/claude/lib/doctor";
 import { peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import {
+    type FingerprintResult,
+    findDuplicateAccounts,
+    fingerprintToken,
+} from "@genesiscz/utils/claude/account-fingerprint";
 import {
     type ClaudeAiOauthCredentials,
     keychainOwnerUuidOffline,

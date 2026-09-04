@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { secrets } from "@genesiscz/utils/security";
+import type { LoginOutcome } from "../providers/account-features";
 import { describeCredential } from "../providers/credentials";
 import type { ProviderBinding } from "../providers/plugin-types";
 import { providerPlugin, tryProviderPlugin } from "../providers/registry";
@@ -7,7 +8,7 @@ import { AiConfigStore } from "./AiConfigStore";
 import { slugifyAccountId } from "./migrations/2026-08-configV4";
 import { vaultPathFor } from "./migrations/2026-08-secretsToVault";
 import type { Referrer } from "./refs";
-import { referrersOf } from "./refs";
+import { accountRef, referrersOf } from "./refs";
 import type { AccountBilling, AccountEntry, AiConfigData, UseEnvApiKey } from "./schema";
 
 /**
@@ -166,6 +167,180 @@ export async function addAccount(input: AddAccountInput): Promise<AccountEntry> 
     });
 }
 
+/** Credential fields a login flow can produce whose values are secrets. */
+const LOGIN_SECRET_FIELDS = ["apiKey", "accessToken", "refreshToken", "longLivedToken"] as const;
+const LOGIN_PATH_FIELDS = ["authFile", "dataDir"] as const;
+const LOGIN_EXPIRY_FIELDS = ["expiresAt", "refreshExpiresAt", "longLivedTokenExpiresAt"] as const;
+const SECONDARY_SECRET_FIELDS = ["accessToken", "refreshToken"] as const;
+
+export interface ApplyLoginOutcomeInput {
+    /** Account to write. An existing account of this name is merged, not replaced. */
+    name: string;
+    outcome: LoginOutcome;
+    /** Apps to record on an account that lists none yet. */
+    apps?: string[];
+    /**
+     * Apps whose `chat.model` default should point at this account when they have
+     * none. Mirrors `addAccountWithDefaults` (`AIConfig.ts:180-196`), which is how
+     * a first `tools claude login` made itself the default for `claude` and `ask`.
+     */
+    defaultForApps?: string[];
+}
+
+export interface ApplyLoginOutcomeResult {
+    account: AccountEntry;
+    created: boolean;
+    /** Apps whose empty default this login filled. */
+    defaultsSet: string[];
+}
+
+/**
+ * Write what a login obtained, merging onto an account of the same name.
+ *
+ * `addAccount` throws on a duplicate name and `editAccount` cannot set secrets,
+ * so a re-login could use neither. A plain overwrite is not an option either:
+ * a flow returns only the credentials it obtained, so writing them wholesale
+ * dropped `longLivedToken`, `secondary`, `label` and `apps` — the bug
+ * `mergeAccountEntry` (`AIConfig.ts:64-73`) exists to prevent. A provider switch
+ * still replaces the credentials outright, since the stored ones mean nothing to
+ * the new vendor.
+ */
+export async function applyLoginOutcome(input: ApplyLoginOutcomeInput): Promise<ApplyLoginOutcomeResult> {
+    // Fail before any write when the provider is unknown, exactly as `addAccount` does.
+    providerPlugin(input.outcome.provider);
+
+    const store = await AiConfigStore.load();
+
+    return store.withLock(async (config) => {
+        const existing = config.accounts.find((entry) => entry.name === input.name);
+        const created = existing === undefined;
+        const providerChanged = existing !== undefined && existing.provider !== input.outcome.provider;
+
+        const account: AccountEntry = existing ?? {
+            id: slugifyAccountId(input.name, new Set(config.accounts.map((entry) => entry.id))),
+            name: input.name,
+            provider: input.outcome.provider,
+            enabled: true,
+            billing: { mode: defaultBilling(input.outcome.provider) },
+            credentials: {},
+            useEnvApiKey: false,
+        };
+
+        if (created) {
+            config.accounts.push(account);
+        }
+
+        if (providerChanged) {
+            account.provider = input.outcome.provider;
+            account.billing = { mode: defaultBilling(input.outcome.provider) };
+            account.credentials = {};
+        }
+
+        if (input.apps?.length && !account.apps?.length) {
+            account.apps = [...input.apps];
+        }
+
+        const vault = await secrets();
+        const incoming = input.outcome.credentials;
+
+        for (const field of LOGIN_SECRET_FIELDS) {
+            const value = incoming[field];
+
+            if (value === undefined) {
+                continue;
+            }
+
+            account.credentials[field] =
+                typeof value === "string" ? await vault.set(vaultPathFor(account.id, field), value) : value;
+        }
+
+        for (const field of LOGIN_PATH_FIELDS) {
+            if (incoming[field] !== undefined) {
+                account.credentials[field] = incoming[field];
+            }
+        }
+
+        for (const field of LOGIN_EXPIRY_FIELDS) {
+            if (incoming[field] !== undefined) {
+                account.credentials[field] = incoming[field];
+            }
+        }
+
+        if (incoming.secondary) {
+            const merged = { ...account.credentials.secondary, ...incoming.secondary };
+
+            for (const field of SECONDARY_SECRET_FIELDS) {
+                const value = incoming.secondary[field];
+
+                if (typeof value === "string") {
+                    merged[field] = await vault.set(vaultPathFor(account.id, `secondary.${field}`), value);
+                }
+            }
+
+            account.credentials.secondary = merged;
+        }
+
+        applyAccountFields(account, input.outcome.accountFields);
+
+        const defaultsSet: string[] = [];
+
+        for (const app of input.defaultForApps ?? []) {
+            if (config.defaults.app?.[app]?.chat?.model) {
+                continue;
+            }
+
+            config.defaults.app = { ...(config.defaults.app ?? {}) };
+            config.defaults.app[app] = {
+                ...(config.defaults.app[app] ?? {}),
+                chat: { model: accountRef(account.id) },
+            };
+            defaultsSet.push(app);
+        }
+
+        logger.info(
+            { id: account.id, provider: account.provider, created, providerChanged, defaultsSet },
+            "applied AI account login outcome"
+        );
+
+        return { account, created, defaultsSet };
+    });
+}
+
+/** Spelled out rather than looped, so a new top-level field cannot be written by accident. */
+function applyAccountFields(account: AccountEntry, fields: LoginOutcome["accountFields"]): void {
+    if (!fields) {
+        return;
+    }
+
+    if (fields.label !== undefined) {
+        account.label = fields.label;
+    }
+
+    if (fields.organizationUuid !== undefined) {
+        account.organizationUuid = fields.organizationUuid;
+    }
+
+    if (fields.accountUuid !== undefined) {
+        account.accountUuid = fields.accountUuid;
+    }
+
+    if (fields.subscriptionPlan !== undefined) {
+        account.subscriptionPlan = fields.subscriptionPlan;
+    }
+
+    if (fields.subscriptionStatus !== undefined) {
+        account.subscriptionStatus = fields.subscriptionStatus;
+    }
+
+    if (fields.subscriptionCreatedAt !== undefined) {
+        account.subscriptionCreatedAt = fields.subscriptionCreatedAt;
+    }
+
+    if (fields.subscriptionCheckedAt !== undefined) {
+        account.subscriptionCheckedAt = fields.subscriptionCheckedAt;
+    }
+}
+
 export async function editAccount(idOrName: string, patch: EditAccountPatch): Promise<AccountEntry> {
     const store = await AiConfigStore.load();
 
@@ -256,12 +431,35 @@ export async function removeAccount(idOrName: string, options: { force?: boolean
 }
 
 /** Credential fields a caller may clear without deleting the account. */
-export type ClearableCredential = "apiKey" | "accessToken" | "refreshToken" | "longLivedToken";
+export type ClearableCredential =
+    | "apiKey"
+    | "accessToken"
+    | "refreshToken"
+    | "longLivedToken"
+    | "secondary"
+    | "authFile";
 
 const EXPIRY_OF: Partial<Record<ClearableCredential, string[]>> = {
     accessToken: ["expiresAt"],
     refreshToken: ["refreshExpiresAt"],
     longLivedToken: ["longLivedTokenExpiresAt"],
+};
+
+/**
+ * Vault entries a cleared field owns.
+ *
+ * Not derivable from the field name: the secondary grant keeps two secrets under
+ * a dotted path while the `secondary` config key itself holds none, and
+ * `authFile` is a filesystem path with nothing in the vault at all. Deleting
+ * `ai/<id>/secondary` would therefore have left both real secrets behind.
+ */
+const VAULT_PATHS_OF: Record<ClearableCredential, readonly string[]> = {
+    apiKey: ["apiKey"],
+    accessToken: ["accessToken"],
+    refreshToken: ["refreshToken"],
+    longLivedToken: ["longLivedToken"],
+    secondary: ["secondary.accessToken", "secondary.refreshToken"],
+    authFile: [],
 };
 
 /**
@@ -289,8 +487,10 @@ export async function clearCredentials(
         const secretsDeleted: string[] = [];
 
         for (const field of fields) {
-            if (await vault.delete(vaultPathFor(account.id, field))) {
-                secretsDeleted.push(vaultPathFor(account.id, field));
+            for (const owned of VAULT_PATHS_OF[field]) {
+                if (await vault.delete(vaultPathFor(account.id, owned))) {
+                    secretsDeleted.push(vaultPathFor(account.id, owned));
+                }
             }
 
             delete account.credentials[field];

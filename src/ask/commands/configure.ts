@@ -379,7 +379,7 @@ async function addViaOAuthFlow(): Promise<void> {
     p.note(infoLines.join("\n"), "Account Authorized");
 
     // Determine label and name
-    const { determineAccountLabel } = await import("@app/claude/lib/config");
+    const { determineAccountLabel } = await import("@genesiscz/utils/claude/account-label");
     const label = determineAccountLabel(profile ?? undefined);
     const accountName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "subscription";
 

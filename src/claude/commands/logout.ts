@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
-import { type ClearableCredential, clearCredentials } from "@genesiscz/utils/ai/config/account-ops";
+import { clearCredentials } from "@genesiscz/utils/ai/config/account-ops";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -262,7 +262,10 @@ export function registerLogoutCommand(program: Command): void {
             // does not revoke anything: `applyV3Tokens` skips absent fields (it
             // cannot tell a deliberate deletion from a vault read that failed),
             // so the credentials survived while this command printed success.
-            const cleared: ClearableCredential[] = [];
+            // The narrow union, not `ClearableCredential`: the summary below deletes
+            // these keys from a v3 `tokens` projection, which has no `secondary` or
+            // `authFile` member to index.
+            const cleared: Array<"accessToken" | "refreshToken" | "longLivedToken"> = [];
 
             if (scope === "oauth" || scope === "both") {
                 cleared.push("accessToken", "refreshToken");
