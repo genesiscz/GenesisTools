@@ -5,9 +5,12 @@ import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
+import { registerGrokHistoryCommand } from "./commands/history";
+import { registerGrokResumeCommand } from "./commands/resume";
 import { turnErrPath, turnLogPath } from "./lib/paths";
 import { GrokSessionStore } from "./lib/store";
 import { parseTurnLog } from "./lib/stream";
+import { parseResumeLimit, runGrokTuiResume } from "./lib/tui-resume";
 import { runSession, steerSession, type TurnResult } from "./lib/worker";
 
 const program = new Command();
@@ -49,15 +52,33 @@ function printTurn(result: TurnResult): void {
 
 program
     .command("run")
-    .description("Start a new worker session and run turn 1 (blocking; can take minutes)")
-    .requiredOption("--name <name>", "session name (the steering handle)")
-    .requiredOption("--cwd <path>", "project directory the worker may touch")
+    .description("Start a new headless worker (--name/--cwd) or resume a grok TUI session (--resume)")
+    .option("--name <name>", "worker session name (the steering handle)")
+    .option("--cwd <path>", "project directory the worker may touch")
     .option("--prompt-file <path>", "brief file (preferred; inline prompts break on backticks)")
     .option("--prompt <text>", "inline brief")
     .option("--model <model>", "grok model id", "grok-4.6")
     .option("--readonly", "review mode: worker gets read_file,list_dir,grep only (sticky across steers)", false)
     .option("--worker-home <path>", "override the isolated GROK_HOME (default ~/.genesis-tools/grok/worker-home)")
+    .option("-r, --resume [query]", "Resume a grok TUI session by id, title, or transcript (not the headless worker)")
+    .option("-l, --list", "With --resume, list matching TUI sessions")
+    .option("-a, --all", "With --resume, search every project")
+    .option("-n, --limit <n>", "With --resume, number of sessions to show", "20")
     .action(async (options) => {
+        if (options.resume !== undefined || options.list) {
+            await runGrokTuiResume({
+                query: typeof options.resume === "string" ? options.resume : undefined,
+                list: Boolean(options.list),
+                all: Boolean(options.all),
+                limit: parseResumeLimit(options.limit),
+            });
+            return;
+        }
+
+        if (!options.name || !options.cwd) {
+            throw new Error("Worker mode needs --name and --cwd. To resume a TUI session, pass --resume [query].");
+        }
+
         const result = await runSession({
             name: options.name,
             cwd: options.cwd,
@@ -160,5 +181,8 @@ program
 
         out.println(table.toString());
     });
+
+registerGrokHistoryCommand(program);
+registerGrokResumeCommand(program);
 
 await runTool(program, { tool: "grok" });
