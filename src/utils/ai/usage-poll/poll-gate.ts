@@ -279,11 +279,6 @@ async function mutatePollGate(provider: string, mutate: (gate: PollGate) => Poll
 }
 
 /**
- * Clear the backoff for one account (or all of them). Called after a re-login,
- * so a recovered account is polled on the very next run instead of waiting out
- * a 6h block earned while it was dead.
- */
-/**
  * Apply ONE poll's outcomes to the gate, re-reading it inside the lock.
  *
  * The poll loads the gate, then spends seconds on the network. Writing the whole
@@ -316,6 +311,11 @@ export async function applyPollGateOutcomes(args: {
     });
 }
 
+/**
+ * Clear the backoff for one account (or all of them). Called after a re-login,
+ * so a recovered account is polled on the very next run instead of waiting out
+ * a 6h block earned while it was dead.
+ */
 export async function clearPollGate(provider: string, account?: string): Promise<void> {
     await mutatePollGate(provider, (gate) => {
         if (!account) {
