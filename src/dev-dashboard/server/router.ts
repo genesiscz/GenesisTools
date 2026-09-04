@@ -38,6 +38,11 @@ export class Router {
         return this;
     }
 
+    /** Every registered route, in match order. */
+    list(): RouteDef[] {
+        return this.routes.map((route) => route.def);
+    }
+
     addAll(defs: RouteDef[]): this {
         for (const def of defs) {
             this.add(def);

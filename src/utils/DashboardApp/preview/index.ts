@@ -4,6 +4,7 @@ export {
     createPreviewReloadSseMiddleware,
     notifyPreviewReload,
 } from "./reload";
+export { isPreviewRestarting, setPreviewRestarting } from "./restartState";
 export { runDashboardPreviewUiServer } from "./runPreviewUiServer";
 export type { PreviewServerWatchGlobsOptions } from "./serverHot";
 export { buildPreviewServerWatchGlobs, watchPreviewServerFiles } from "./serverHot";

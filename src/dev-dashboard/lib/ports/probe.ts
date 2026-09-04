@@ -21,10 +21,15 @@ export async function probeHttp(port: number): Promise<HttpProbeResult> {
     const timeout = setTimeout(() => controller.abort(), HTTP_PROBE_TIMEOUT_MS);
 
     try {
+        // `Connection: close` is load-bearing. Bun pools the socket otherwise, and an
+        // idle client socket to a foreign port lists this whole process in
+        // `lsof -ti:<port>`. browsermcp reclaims its port 9009 with exactly that
+        // list piped to `xargs kill -9`; the pooled probe socket got the dashboard
+        // SIGKILLed 4500 times under launchd before the header was added.
         const res = await fetch(`http://127.0.0.1:${port}/`, {
             signal: controller.signal,
             redirect: "manual",
-            headers: { Accept: "text/html, application/json, text/plain, */*" },
+            headers: { Accept: "text/html, application/json, text/plain, */*", Connection: "close" },
         });
 
         const contentType = (res.headers.get("content-type") ?? "").toLowerCase();

@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { Connect } from "vite";
 
-const RELOAD_PATH = "/__preview_reload";
+/**
+ * SSE endpoint the injected snippet listens on. Exported because the dev
+ * dashboard's front proxy must exempt it from the upstream fetch deadline, or
+ * the stream is torn down and reconnected every 15 s.
+ */
+export const RELOAD_PATH = "/__preview_reload";
 const RELOAD_SNIPPET = `<script>(()=>{const es=new EventSource("${RELOAD_PATH}");es.onmessage=()=>location.reload();})();</script>`;
 
 const reloadClients = new Set<ServerResponse>();

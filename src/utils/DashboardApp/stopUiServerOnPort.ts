@@ -75,7 +75,11 @@ export function stopUiServerOnPort(publicPort: number, opts: StopUiServerOptions
             continue;
         }
 
-        logger.info({ pid, publicPort }, "stopping previous dashboard ui-server");
+        // warn, not info: under launchd KeepAlive this kill is answered by an
+        // immediate respawn, so a second starter takes the public port down for a
+        // full rebuild. When that is the cause of a 502, this line is the only
+        // evidence, and it has to be findable at the default console level.
+        logger.warn({ pid, publicPort, command }, "stopping previous dashboard ui-server");
 
         const children = childPids(pid);
 

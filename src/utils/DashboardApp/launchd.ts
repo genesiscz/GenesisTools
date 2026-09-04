@@ -9,6 +9,10 @@
  * reboots and respawns on crash. The DashboardApp `down` verb explicitly
  * unloads the plist before SIGTERM so the user's intent to stop isn't
  * defeated by launchd respawning the process immediately.
+ *
+ * `ThrottleInterval` is 10s, matching the other launchd generators in this repo.
+ * At the old 2s a dashboard that died during startup respawned faster than it
+ * could finish a Vite build, so the public port stayed down for the whole storm.
  */
 import { chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -164,7 +168,7 @@ ${cwdBlock}    <key>RunAtLoad</key>
     <key>KeepAlive</key>
     <true/>
     <key>ThrottleInterval</key>
-    <integer>2</integer>
+    <integer>10</integer>
     <key>StandardOutPath</key>
     <string>${escapeXml(opts.logFile)}</string>
     <key>StandardErrorPath</key>
@@ -243,6 +247,12 @@ export async function startLaunchd(label: string): Promise<void> {
         throw new Error(`launchd plist missing: ${path}`);
     }
 
+    // `load` is not idempotent: on an already-loaded job it exits non-zero with
+    // "service already loaded". That is the NORMAL post-boot state (RunAtLoad
+    // loads the plist, the process then crashes and sits in its throttle
+    // window), and `up` used to error out on it instead of kickstarting the job
+    // it had just found. `installLaunchd` unloads first for the same reason.
+    await launchctl(["unload", path]).catch(() => undefined);
     const loaded = await launchctl(["load", path]);
 
     if (loaded.exitCode !== 0) {
@@ -266,11 +276,28 @@ export async function uninstallLaunchd(label: string): Promise<void> {
     }
 }
 
-async function launchctl(args: readonly string[]): Promise<{ exitCode: number; stderr: string }> {
+export type LaunchctlRunner = (args: readonly string[]) => Promise<{ exitCode: number; stderr: string }>;
+
+const spawnLaunchctl: LaunchctlRunner = async (args) => {
     const proc = Bun.spawn(["launchctl", ...args], { stdout: "pipe", stderr: "pipe" });
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
     return { exitCode, stderr };
+};
+
+let launchctlRunner: LaunchctlRunner = spawnLaunchctl;
+
+/**
+ * Swap the `launchctl` runner. Tests only: loading a real agent to assert the
+ * load sequence would leave a job on the developer's machine when they abort.
+ * Pass `null` to restore.
+ */
+export function _setLaunchctlRunnerForTests(runner: LaunchctlRunner | null): void {
+    launchctlRunner = runner ?? spawnLaunchctl;
+}
+
+function launchctl(args: readonly string[]): Promise<{ exitCode: number; stderr: string }> {
+    return launchctlRunner(args);
 }
 
 function escapeXml(s: string): string {

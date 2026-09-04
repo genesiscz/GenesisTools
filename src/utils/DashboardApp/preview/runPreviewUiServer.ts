@@ -8,6 +8,7 @@ import { build, loadConfigFromFile, mergeConfig, preview } from "vite";
 import { waitForUrlReady } from "../readiness";
 import type { DashboardBindHost } from "../types";
 import { openBrowserWhenDashboardEnv } from "./openBrowserWhenEnv";
+import { isPreviewRestarting, setPreviewRestarting } from "./restartState";
 import { watchPreviewServerFiles } from "./serverHot";
 import type { DashboardPreviewPublicProxy, DashboardPreviewUiOptions } from "./types";
 
@@ -28,7 +29,7 @@ function resolveBindHost(opts: DashboardPreviewUiOptions): DashboardBindHost {
 export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOptions): Promise<void> {
     const configRoot = opts.configRoot ?? PROJECT_ROOT;
     const publicPort = await opts.resolvePublicPort();
-    const internalPort = await opts.resolveInternalPort();
+    let internalPort = await opts.resolveInternalPort();
     const url = opts.publicUrl?.(publicPort) ?? `http://localhost:${publicPort}`;
     const uiDir = opts.uiDir ?? resolve(opts.viteConfigPath, "..");
 
@@ -66,7 +67,8 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
     let publicProxy: DashboardPreviewPublicProxy | undefined;
     let buildWatcher: RolldownWatcher | undefined;
     let stopServerWatch: (() => void) | undefined;
-    let restartingPreview = false;
+    /** A server/API save seen while a restart was already in flight. */
+    let restartPending = false;
 
     const closePreview = async () => {
         if (previewServer) {
@@ -89,11 +91,11 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
         publicProxy = undefined;
     };
 
-    const startPreviewServer = async () => {
-        previewServer = await preview(
+    const startPreviewServerOn = async (port: number) => {
+        return preview(
             mergeConfig(viteConfig, {
                 preview: {
-                    port: internalPort,
+                    port,
                     host: "127.0.0.1",
                     strictPort: true,
                 },
@@ -101,30 +103,68 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
         );
     };
 
-    const restartPreviewForServerChange = async () => {
-        if (restartingPreview) {
+    const startPreviewServer = async () => {
+        previewServer = await startPreviewServerOn(internalPort);
+    };
+
+    // Make-before-break. The front proxy reads `internalPort` per request, so the
+    // old preview keeps answering until the replacement is proven ready on a fresh
+    // port. Closing first (the previous behaviour) left the proxy pointing at a
+    // dead port for the whole Vite boot, and every request in that window became a
+    // public 502 once the 2.5s upstream retry budget ran out.
+    const swapInReplacementPreview = async () => {
+        logger.info("preview: restarting Vite preview after server/API file change");
+        const nextPort = await opts.resolveInternalPort();
+        const nextServer = await startPreviewServerOn(nextPort);
+        const ready = await waitForUrlReady(`http://127.0.0.1:${nextPort}/`, 30_000);
+
+        if (!ready.ready) {
+            logger.warn(
+                { detail: ready.detail, nextPort, internalPort },
+                "preview: replacement Vite preview never became ready — keeping the running one"
+            );
+            await nextServer.close();
             return;
         }
 
-        restartingPreview = true;
+        const previous = previewServer;
+        previewServer = nextServer;
+        internalPort = nextPort;
+        logger.info({ internalPort: nextPort }, "preview: swapped to the replacement Vite preview");
+        await previous?.close();
+    };
+
+    const restartPreviewForServerChange = async (): Promise<void> => {
+        // A save landing inside the restart window used to be dropped outright,
+        // and make-before-break made that silent: the swapped-in server kept
+        // serving stale code with no later trigger, where the old close-first
+        // behaviour at least showed 502s. Remember it and restart once more.
+        if (isPreviewRestarting()) {
+            restartPending = true;
+            return;
+        }
+
+        setPreviewRestarting(true);
 
         try {
-            logger.info("preview: restarting Vite preview after server/API file change");
-            await closePreview();
-            await startPreviewServer();
-            const ready = await waitForUrlReady(`http://127.0.0.1:${internalPort}/`, 30_000);
-
-            if (!ready.ready) {
-                logger.warn({ detail: ready.detail }, "preview: API server slow after restart");
-            }
+            await swapInReplacementPreview();
         } catch (err) {
             logger.error({ err }, "preview: failed to restart Vite preview");
         } finally {
-            restartingPreview = false;
+            setPreviewRestarting(false);
+        }
+
+        if (restartPending) {
+            restartPending = false;
+            await restartPreviewForServerChange();
         }
     };
 
+    // Every exit path logs why. Under launchd (KeepAlive) a silent exit is
+    // indistinguishable from a crash after the fact: the restart storm that
+    // motivated this left 4151 respawns in the log with no recoverable cause.
     const shutdown = async (signal: NodeJS.Signals) => {
+        logger.warn({ signal, publicPort, internalPort }, `${opts.toolLabel} preview: signal received, shutting down`);
         stopServerWatch?.();
         stopPublicProxy();
         buildWatcher?.close();
@@ -140,6 +180,13 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
     });
     process.on("SIGHUP", () => {
         void shutdown("SIGHUP");
+    });
+    process.on("uncaughtException", (err) => {
+        logger.error({ err, publicPort, internalPort }, `${opts.toolLabel} preview: uncaught exception, exiting`);
+        process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+        logger.error({ err: reason, publicPort, internalPort }, `${opts.toolLabel} preview: unhandled rejection`);
     });
 
     try {
@@ -189,12 +236,18 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
         const internalUrl = `http://127.0.0.1:${internalPort}/`;
         const previewReady = await waitForUrlReady(internalUrl, 30_000);
 
+        // A slow preview is not a reason to die. Exiting here handed the process
+        // straight back to launchd's KeepAlive, which restarted it into the same
+        // slow build — a loop that took the public port down far longer than the
+        // slow start ever would. The proxy retries its upstream, so bind anyway.
         if (!previewReady.ready) {
-            logger.error({ internalUrl, detail: previewReady.detail }, "preview server did not become ready");
-            process.exit(1);
+            logger.error(
+                { internalUrl, detail: previewReady.detail },
+                "preview server did not become ready — binding the public proxy anyway"
+            );
         }
 
-        const proxy = opts.startPublicProxy({ publicPort, internalPort, bindHost });
+        const proxy = opts.startPublicProxy({ publicPort, internalPort: () => internalPort, bindHost });
 
         if (proxy) {
             publicProxy = proxy;

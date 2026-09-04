@@ -41,13 +41,29 @@ export function parseDockerPsJsonl(stdout: string): ContainerInfo[] {
     return containers;
 }
 
+/**
+ * `docker ps` against a wedged daemon never returns, and /api/containers is a
+ * public route: without this the front proxy's own deadline turned it into a
+ * 15 s 502 with a `docker` process left behind on every reload.
+ */
+const DOCKER_PS_TIMEOUT_MS = 8_000;
+
 export async function listContainers(): Promise<ContainersResult> {
     try {
         const proc = Bun.spawn(["docker", "ps", "-a", "--format", "{{json .}}"], {
             stdout: "pipe",
             stderr: "pipe",
         });
-        await proc.exited;
+        const killer = setTimeout(() => {
+            logger.warn({ timeoutMs: DOCKER_PS_TIMEOUT_MS }, "docker ps timed out; killing it");
+            proc.kill();
+        }, DOCKER_PS_TIMEOUT_MS);
+
+        try {
+            await proc.exited;
+        } finally {
+            clearTimeout(killer);
+        }
 
         if (proc.exitCode !== 0) {
             const stderr = await new Response(proc.stderr).text();

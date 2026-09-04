@@ -18,7 +18,11 @@ export interface DashboardPreviewUiOptions {
     beforeListen?: (publicPort: number) => void | Promise<void>;
     startPublicProxy: (opts: {
         publicPort: number;
-        internalPort: number;
+        /**
+         * Read per request, never captured: a make-before-break preview restart
+         * swaps the upstream to a fresh port while the proxy keeps serving.
+         */
+        internalPort: () => number;
         bindHost: DashboardBindHost;
     }) => DashboardPreviewPublicProxy | undefined;
     /** Fired after each watch-build `BUNDLE_END` (browser reload hook). */

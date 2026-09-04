@@ -8,6 +8,10 @@ import {
 } from "@app/dev-dashboard/lib/auth";
 import { getTtydPort } from "@app/dev-dashboard/lib/ttyd/manager";
 import { injectTtydMobileShell, shouldInjectTtydMobileShell } from "@app/dev-dashboard/lib/ttyd/mobile-shell";
+// Leaf imports on purpose: the preview barrel pulls in Vite, which has no place
+// in the request path of the public proxy.
+import { RELOAD_PATH as PREVIEW_RELOAD_PATH } from "@genesiscz/utils/DashboardApp/preview/reload";
+import { isPreviewRestarting } from "@genesiscz/utils/DashboardApp/preview/restartState";
 import { logger } from "@genesiscz/utils/logger";
 import type { Server, ServerWebSocket } from "bun";
 
@@ -20,46 +24,315 @@ import type { Server, ServerWebSocket } from "bun";
 
 const TTYD_PATH = /^\/ttyd\/([0-9a-fA-F-]{36})(?:\/|$)/;
 
-/** SSE and other streaming routes must not use the short upstream fetch timeout. */
+/**
+ * SSE and other streaming routes must not use the short upstream fetch timeout.
+ *
+ * Every `longLived: true` route in the dashboard router belongs here, plus the
+ * preview reload stream, which is not a router route. `front-proxy.test.ts`
+ * derives the router's list and fails when one is missing: while
+ * /api/daemon/runs/tail and /__preview_reload were absent, AbortSignal.timeout
+ * tore their bodies down every 15 s mid-stream.
+ */
 export function isLongLivedProxiedStream(pathname: string): boolean {
     if (
         pathname === "/api/qa/stream" ||
         pathname === "/api/boards/work/wait" ||
         pathname === "/api/ports/classify" ||
-        pathname === "/api/live"
+        pathname === "/api/daemon/runs/tail" ||
+        pathname === "/api/live" ||
+        pathname === PREVIEW_RELOAD_PATH
     ) {
         return true;
     }
     return pathname.startsWith("/api/boards/") && pathname.endsWith("/events");
 }
 
+/** Default bound for a plain proxied request. */
+export const UPSTREAM_TIMEOUT_MS = 15_000;
+
+/**
+ * Bound for APIs that legitimately run long: /api/ports rescans and probes every
+ * listener, and the macOS pulse endpoints read system counters. They are not
+ * streams, so they keep a timeout — just one they can actually finish inside.
+ * Measured from `dev-dashboard.bg.log`: 36 TimeoutError on /api/ports, 22 on the
+ * pulse pair, 1 on /api/tmux/sessions, every one of them a public 502.
+ */
+export const SLOW_UPSTREAM_TIMEOUT_MS = 60_000;
+
+const SLOW_UPSTREAM_PATHS = new Set([
+    "/api/ports",
+    "/api/system/pulse",
+    "/api/system/pulse/history",
+    "/api/tmux/sessions",
+]);
+
+/** Upstream fetch deadline for a path. `undefined` means no deadline (a stream). */
+export function upstreamTimeoutMs(pathname: string): number | undefined {
+    if (isLongLivedProxiedStream(pathname)) {
+        return undefined;
+    }
+
+    if (SLOW_UPSTREAM_PATHS.has(pathname)) {
+        return SLOW_UPSTREAM_TIMEOUT_MS;
+    }
+
+    return UPSTREAM_TIMEOUT_MS;
+}
+
 const UPSTREAM_RETRY_ATTEMPTS = 10;
 const UPSTREAM_RETRY_MS = 250;
+
+/**
+ * Methods a 502/503/504 RESPONSE may be replayed for.
+ *
+ * A response means the request reached a handler, so a replay re-runs whatever
+ * that handler already did. A POST/PATCH/DELETE that mutated state and then
+ * answered 503 was executed up to ten times. Only methods with no side effect
+ * of their own are replayed here. PUT and DELETE are idempotent on paper, but
+ * this proxy fronts arbitrary dashboard routes, so they stay out.
+ *
+ * A refused connection is different: nothing reached a handler, so THAT retry
+ * stays on for every method (it is the make-before-break preview swap).
+ */
+const RESPONSE_RETRY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+export function isResponseRetryableMethod(method: string): boolean {
+    return RESPONSE_RETRY_METHODS.has(method.toUpperCase());
+}
+
+/**
+ * How much of a request body the proxy holds in memory so a refused attempt can
+ * be replayed. A body that fits is buffered and stays retryable; a bigger one
+ * streams through with the retries switched off. Buffering unconditionally
+ * turned a 500 MB upload into a 500 MB allocation, and made the upstream wait
+ * for the whole upload before it saw a single byte.
+ */
+const MAX_REPLAYABLE_BODY_BYTES = 8 * 1024 * 1024;
+
+/** `duplex: "half"` is required to send a streaming body; the DOM lib types omit it. */
+type StreamingRequestInit = RequestInit & { duplex?: "half" };
+
+interface PreparedBody {
+    body: ArrayBuffer | ReadableStream<Uint8Array> | undefined;
+    /** False once the body is a stream: sending it consumes it, so one attempt only. */
+    replayable: boolean;
+}
+
+/** Emits what was already read, then hands the rest of the client's stream through. */
+function streamRemainder(
+    buffered: Uint8Array[],
+    reader: ReadableStreamDefaultReader<Uint8Array>
+): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            const next = buffered.shift();
+
+            if (next) {
+                controller.enqueue(next);
+
+                return;
+            }
+
+            const { done, value } = await reader.read();
+
+            if (done) {
+                controller.close();
+
+                return;
+            }
+
+            controller.enqueue(value);
+        },
+        cancel(reason) {
+            return reader.cancel(reason);
+        },
+    });
+}
+
+/**
+ * Read the body up to the cap. Content-Length is not consulted: a chunked
+ * upload carries none, and neither does a Request built in a test.
+ */
+async function prepareUpstreamBody(request: Request): Promise<PreparedBody> {
+    if (request.body === null) {
+        return { body: undefined, replayable: true };
+    }
+
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+
+    while (size <= MAX_REPLAYABLE_BODY_BYTES) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+            const buffer = new Uint8Array(size);
+            let offset = 0;
+
+            for (const chunk of chunks) {
+                buffer.set(chunk, offset);
+                offset += chunk.byteLength;
+            }
+
+            return { body: buffer.buffer, replayable: true };
+        }
+
+        chunks.push(value);
+        size += value.byteLength;
+    }
+
+    return { body: streamRemainder(chunks, reader), replayable: false };
+}
 
 function isConnectionRefused(err: unknown): boolean {
     const code = (err as { code?: string })?.code;
     return code === "ConnectionRefused" || code === "ECONNREFUSED";
 }
 
-export async function fetchProxiedUpstream(forwarded: Request, longLived: boolean): Promise<Response> {
+export class UpstreamRetriesExhausted extends Error {
+    constructor(readonly attempts: number) {
+        super(`fetchProxiedUpstream exhausted ${attempts} attempts without a response`);
+        this.name = "UpstreamRetriesExhausted";
+    }
+}
+
+/** Filled in by `fetchProxiedUpstream` so a 502 log line can state the retry count. */
+export interface UpstreamAttemptStats {
+    attempts: number;
+}
+
+export type ProxyFailureReason =
+    | "client-abort"
+    | "upstream-timeout"
+    | "upstream-refused"
+    | "retries-exhausted"
+    | "upstream-error"
+    | "ttyd-missing";
+
+/**
+ * Name the 502 so the log can be counted by cause. `TimeoutError` must be tested
+ * before `AbortError`: both are DOMExceptions, and an upstream that blew the
+ * deadline is a server fault while a client closing its tab is not.
+ */
+export function classifyUpstreamFailure(err: unknown): ProxyFailureReason {
+    if (err instanceof UpstreamRetriesExhausted) {
+        return "retries-exhausted";
+    }
+
+    if (isConnectionRefused(err)) {
+        return "upstream-refused";
+    }
+
+    const name = (err as { name?: string })?.name;
+
+    if (name === "TimeoutError") {
+        return "upstream-timeout";
+    }
+
+    if (name === "AbortError") {
+        return "client-abort";
+    }
+
+    return "upstream-error";
+}
+
+/** A refused upstream is the benign startup race; a client abort is a closed tab. */
+export function proxyFailureLogLevel(reason: ProxyFailureReason): "debug" | "warn" {
+    return reason === "upstream-refused" || reason === "client-abort" ? "debug" : "warn";
+}
+
+function logProxyGatewayError(args: {
+    reason: ProxyFailureReason;
+    httpTarget: string;
+    err?: unknown;
+    attempts?: number;
+    timeoutMs?: number;
+}): void {
+    const { reason, httpTarget, err, attempts, timeoutMs } = args;
+
+    logger[proxyFailureLogLevel(reason)](
+        {
+            reason,
+            httpTarget,
+            attempts,
+            timeoutMs,
+            errName: (err as { name?: string })?.name,
+            errCode: (err as { code?: string | number })?.code,
+            previewRestarting: isPreviewRestarting(),
+            err,
+        },
+        "front proxy: returning 502"
+    );
+}
+
+export async function fetchProxiedUpstream(
+    forwarded: Request,
+    timeoutMs: number | undefined,
+    stats: UpstreamAttemptStats = { attempts: 0 }
+): Promise<Response> {
+    // Retrying the SAME Request object throws `ERR_BODY_ALREADY_USED` on attempt
+    // 2, and that is not a ConnectionRefused, so every request WITH a body got
+    // one attempt and an immediate 502 blaming `upstream-error`. Buffer the body
+    // once and rebuild the request per attempt — but only up to
+    // MAX_REPLAYABLE_BODY_BYTES.
+    const target = forwarded.url;
+    const method = forwarded.method;
+    const headers = forwarded.headers;
+    const clientSignal = forwarded.signal;
+    const { body, replayable } = await prepareUpstreamBody(forwarded);
+    const replayResponses = isResponseRetryableMethod(method) && replayable;
+
+    if (!replayable) {
+        logger.debug(
+            { httpTarget: target, method },
+            "front proxy: body over the buffer cap, streaming without retries"
+        );
+    }
+
     for (let attempt = 0; attempt < UPSTREAM_RETRY_ATTEMPTS; attempt++) {
+        stats.attempts = attempt + 1;
+
         try {
-            const upstream = await fetch(forwarded, {
+            // AbortSignal.timeout alone REPLACED the client's own signal, so a
+            // closed tab left the upstream work running for the whole deadline —
+            // five reloads of the ports page stacked five 60 s rescans.
+            const signal =
+                timeoutMs === undefined
+                    ? clientSignal
+                    : AbortSignal.any([clientSignal, AbortSignal.timeout(timeoutMs)]);
+            const init: StreamingRequestInit = {
+                method,
+                headers,
+                ...(body === undefined ? {} : { body }),
                 redirect: "manual",
-                ...(longLived ? {} : { signal: AbortSignal.timeout(15_000) }),
-            });
+                signal,
+            };
+
+            if (body instanceof ReadableStream) {
+                // Required to send a streaming body; the DOM lib types omit it.
+                init.duplex = "half";
+            }
+
+            const upstream = await fetch(target, init);
 
             if (
+                replayResponses &&
                 (upstream.status === 502 || upstream.status === 503 || upstream.status === 504) &&
                 attempt < UPSTREAM_RETRY_ATTEMPTS - 1
             ) {
+                // Discarding a response without reading it keeps its socket
+                // checked out of the pool until GC: up to nine leaked streams
+                // per request during a preview restart storm.
+                await upstream.body?.cancel().catch((cancelError) => {
+                    logger.debug({ cancelError, httpTarget: target }, "front proxy: discarded body cancel failed");
+                });
                 await Bun.sleep(UPSTREAM_RETRY_MS);
                 continue;
             }
 
             return upstream;
         } catch (err) {
-            if (isConnectionRefused(err) && attempt < UPSTREAM_RETRY_ATTEMPTS - 1) {
+            if (isConnectionRefused(err) && replayable && attempt < UPSTREAM_RETRY_ATTEMPTS - 1) {
                 await Bun.sleep(UPSTREAM_RETRY_MS);
                 continue;
             }
@@ -68,7 +341,7 @@ export async function fetchProxiedUpstream(forwarded: Request, longLived: boolea
         }
     }
 
-    throw new Error("fetchProxiedUpstream exhausted retries without a response");
+    throw new UpstreamRetriesExhausted(stats.attempts);
 }
 
 // LOCAL_ORIGIN_HEADER is the single source of truth in auth.ts (set/stripped
@@ -179,13 +452,17 @@ const MAX_WS_QUEUE = 256;
 
 export function startFrontProxy(opts: {
     publicPort: number;
-    internalPort: number;
+    /**
+     * A function when the preview can swap upstreams under the proxy
+     * (make-before-break restart) — read per request, never captured.
+     */
+    internalPort: number | (() => number);
     hostname?: string;
 }): Server<BridgeData> {
-    const { publicPort, internalPort } = opts;
+    const { publicPort } = opts;
+    const port = opts.internalPort;
+    const resolveInternalPort = typeof port === "function" ? port : () => port;
     const hostname = opts.hostname ?? "0.0.0.0";
-    const viteHttp = `http://127.0.0.1:${internalPort}`;
-    const viteWs = `ws://127.0.0.1:${internalPort}`;
 
     const server = Bun.serve<BridgeData>({
         port: publicPort,
@@ -226,17 +503,23 @@ export function startFrontProxy(opts: {
             let wsTarget: string;
 
             if (ttyd) {
-                const port = await resolveTtydPort(ttyd[1]);
+                const ttydPort = await resolveTtydPort(ttyd[1]);
 
-                if (!port) {
+                if (!ttydPort) {
+                    logProxyGatewayError({
+                        reason: "ttyd-missing",
+                        httpTarget: `${url.pathname}${url.search}`,
+                    });
+
                     return new Response("ttyd session not found", { status: 502 });
                 }
 
-                httpTarget = `http://127.0.0.1:${port}${url.pathname}${url.search}`;
-                wsTarget = `ws://127.0.0.1:${port}${url.pathname}${url.search}`;
+                httpTarget = `http://127.0.0.1:${ttydPort}${url.pathname}${url.search}`;
+                wsTarget = `ws://127.0.0.1:${ttydPort}${url.pathname}${url.search}`;
             } else {
-                httpTarget = `${viteHttp}${url.pathname}${url.search}`;
-                wsTarget = `${viteWs}${url.pathname}${url.search}`;
+                const internalPort = resolveInternalPort();
+                httpTarget = `http://127.0.0.1:${internalPort}${url.pathname}${url.search}`;
+                wsTarget = `ws://127.0.0.1:${internalPort}${url.pathname}${url.search}`;
             }
 
             if (isUpgrade) {
@@ -271,18 +554,16 @@ export function startFrontProxy(opts: {
             }
 
             let upstream: Response;
+            const timeoutMs = upstreamTimeoutMs(url.pathname);
+            const stats: UpstreamAttemptStats = { attempts: 0 };
 
             try {
-                upstream = await fetchProxiedUpstream(forwarded, isLongLivedProxiedStream(url.pathname));
+                upstream = await fetchProxiedUpstream(forwarded, timeoutMs, stats);
             } catch (err) {
-                // A refused connection is almost always the benign startup race
-                // (upstream Vite/ttyd not listening yet) — log it at debug so it
-                // doesn't look like an error. A sustained real outage is still
-                // visible (the 502 below) and any non-refused failure stays warn.
-                const code = (err as { code?: string })?.code;
-                const refused = code === "ConnectionRefused" || code === "ECONNREFUSED";
-                logger[refused ? "debug" : "warn"]({ err, httpTarget }, "front proxy: upstream fetch failed");
-                return new Response("Bad Gateway: upstream unavailable", { status: 502 });
+                const reason = classifyUpstreamFailure(err);
+                logProxyGatewayError({ reason, httpTarget, err, attempts: stats.attempts, timeoutMs });
+
+                return new Response(`Bad Gateway: upstream unavailable (${reason})`, { status: 502 });
             }
 
             // Bun's fetch transparently decodes the upstream body (ttyd gzips its
@@ -426,7 +707,7 @@ export function startFrontProxy(opts: {
         },
     });
 
-    logger.info({ publicPort, internalPort }, "dev-dashboard front proxy started");
+    logger.info({ publicPort, internalPort: resolveInternalPort() }, "dev-dashboard front proxy started");
 
     return server;
 }

@@ -65,3 +65,27 @@ tools dev-dashboard share /absolute/path/in/vault/Note.md --no-clipboard
 ```
 
 Host-specific values (domain, allowed email, tunnel name) live in `~/.genesis-tools/dev-dashboard/config.json`, not in this repo.
+
+## Front-proxy upstream timeouts
+
+Cloudflare turns any front-proxy 502 into a public "Bad Gateway", so the deadline the proxy
+puts on an upstream fetch is a user-visible setting. `upstreamTimeoutMs()` in
+`lib/front-proxy.ts` gives three tiers:
+
+| Tier | Deadline | Paths |
+|---|---|---|
+| stream | none | `isLongLivedProxiedStream()` — `/api/qa/stream`, `/api/live`, `/api/boards/work/wait`, `/api/ports/classify`, `/api/boards/*/events` |
+| slow | 60s | `/api/ports`, `/api/system/pulse`, `/api/system/pulse/history`, `/api/tmux/sessions` |
+| default | 15s | everything else |
+
+The slow tier is measured, not guessed. Every `TimeoutError` in
+`~/.genesis-tools/logs/dev-dashboard.bg.log` up to 2026-08-31 12:30 was one of those four
+paths: `/api/ports` 36, `/api/system/pulse/history` 18, `/api/system/pulse` 4,
+`/api/tmux/sessions` 1. Each one was a 502 on the public hostname. They stay bounded rather
+than joining the stream tier, because none of them streams and an unbounded fetch holds the
+proxy connection open forever when the upstream wedges.
+
+The other 23193 warnings in that log were `AbortError` on `/api/live` and `/api/qa/stream` —
+a browser closing an SSE tab, not a gateway fault. `classifyUpstreamFailure()` now separates
+the two, and every 502 the proxy returns logs one `front proxy: returning 502` line carrying
+`reason`, `httpTarget`, `attempts`, `timeoutMs`, `errName`, `errCode` and `previewRestarting`.

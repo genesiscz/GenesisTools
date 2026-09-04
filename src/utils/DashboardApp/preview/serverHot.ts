@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import type { Stats } from "node:fs";
+import { resolve, sep } from "node:path";
 import { debounce } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import chokidar from "chokidar";
@@ -36,6 +37,32 @@ export function buildPreviewServerWatchGlobs(opts: PreviewServerWatchGlobsOption
     return globs;
 }
 
+const IGNORED_WATCH_DIRS = new Set(["node_modules", "dist", ".git", "__snapshots__"]);
+const SERVER_SOURCE_FILE = /\.(?:ts|tsx|mts|cts)$/;
+
+/**
+ * The watched entries are whole directories, so without this every fixture,
+ * markdown file and build artefact under them restarts the Vite preview. Only
+ * non-test TypeScript can change the preview's server behaviour.
+ */
+export function isWatchedPreviewServerPath(path: string, stats?: Stats): boolean {
+    if (path.endsWith(".test.ts") || path.endsWith(".test.tsx")) {
+        return false;
+    }
+
+    if (path.split(sep).some((segment) => IGNORED_WATCH_DIRS.has(segment))) {
+        return false;
+    }
+
+    // Directories must stay watched or nothing under them is ever seen; only
+    // files are filtered by extension.
+    if (stats?.isFile() && !SERVER_SOURCE_FILE.test(path)) {
+        return false;
+    }
+
+    return true;
+}
+
 export function watchPreviewServerFiles(opts: {
     globs: string[];
     onChange: () => void | Promise<void>;
@@ -47,7 +74,7 @@ export function watchPreviewServerFiles(opts: {
 
     const watcher = chokidar.watch(opts.globs, {
         ignoreInitial: true,
-        ignored: (path) => path.endsWith(".test.ts") || path.endsWith(".test.tsx"),
+        ignored: (path, stats) => !isWatchedPreviewServerPath(path, stats),
     });
 
     const onFsEvent = (path: string) => {
