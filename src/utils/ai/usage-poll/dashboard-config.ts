@@ -107,8 +107,13 @@ function toPerProvider(value: PerProviderKeys | string[] | undefined, fallback: 
     return { ...fallback, ...value };
 }
 
+/**
+ * Every returned config is detached from `DEFAULTS`. The spreads below are shallow, so
+ * without the clone a caller that pushed onto `hiddenAccounts` or edited a threshold list
+ * would be editing the module constant, and every later load in the process would see it.
+ */
 function merge(saved: StoredConfig): UsageDashboardConfig {
-    return {
+    return structuredClone({
         ...DEFAULTS,
         ...saved,
         prominentBuckets: toPerProvider(saved.prominentBuckets, DEFAULTS.prominentBuckets),
@@ -121,7 +126,7 @@ function merge(saved: StoredConfig): UsageDashboardConfig {
                 ...saved.notifications?.thresholds,
             },
         },
-    };
+    });
 }
 
 /**
@@ -140,7 +145,7 @@ export async function loadDashboardConfig(): Promise<UsageDashboardConfig> {
     const legacy = await legacyStore().getConfig<StoredConfig>();
 
     if (!legacy) {
-        return { ...DEFAULTS };
+        return structuredClone(DEFAULTS);
     }
 
     const migrated = merge(legacy);
@@ -156,9 +161,11 @@ export async function saveDashboardConfig(config: UsageDashboardConfig): Promise
 
 /** Windows shown by default for one provider, falling back to that provider's defaults. */
 export function prominentFor(config: UsageDashboardConfig, provider: string): string[] {
-    return config.prominentBuckets[provider] ?? DEFAULT_PROMINENT_LIMITS[provider] ?? [];
+    // Copied, not handed out: the fallback is a module constant and a caller that sorts
+    // or splices the result would reorder the defaults for the rest of the process.
+    return [...(config.prominentBuckets[provider] ?? DEFAULT_PROMINENT_LIMITS[provider] ?? [])];
 }
 
 export function hiddenFor(config: UsageDashboardConfig, provider: string): string[] {
-    return config.hiddenBuckets[provider] ?? [];
+    return [...(config.hiddenBuckets[provider] ?? [])];
 }
