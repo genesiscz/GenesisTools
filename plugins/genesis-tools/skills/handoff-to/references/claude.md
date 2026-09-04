@@ -18,9 +18,10 @@ There are two ways to hand work to a Claude model, and they are not interchangea
 
 ```bash
 tools claude worker spawn  --name <task> -a <account> --cwd <abs path> \
-  --prompt-file /tmp/claude-<task>-brief.md [-m sonnet] [--safe-mode]
+  --prompt-file /tmp/claude-<task>-brief.md [-m sonnet] [--safe-mode | --no-skills | --no-rules]
 tools claude worker steer  --name <task> --prompt '<correction>'     # blocking, resumes the same session
-tools claude worker read   --name <task> [--turn N] [--events]
+tools claude worker read   --name <task> [--turn N] [--format compact|json|jsonl|events|raw]
+tools claude worker tail   --name <task> [--format compact]   # follow the running turn; exits when it ends
 tools claude worker status --name <task>
 tools claude worker stop   --name <task>      # kill a running turn; steer resumes the session
 tools claude worker sessions
@@ -32,11 +33,12 @@ The worker layer owns everything the hand-rolled form gets wrong, each one hit f
 - **The session id is chosen at spawn** (`--session-id <uuid>`) and every steer resumes it, so resumption never depends on scraping an id back out. Verified: turn 2 recalled turn 1's content.
 - **It strips the parent's `CLAUDECODE`/session markers** — the claude CLI otherwise refuses to start inside a Claude Code session, which is exactly where a handoff runs from.
 - **It resolves the user's real `claude` install**, not the repo-vendored `@anthropic-ai/claude-code` CLI (2.1.45) that `node_modules/.bin` puts first on PATH under `bun run` and that rejects current flags.
-- **Turns are NDJSON** (`--output-format stream-json`) parsed into the shared worker-event stream; `read --events` renders it in the same vocabulary as `tools codex logs --events` and `tools grok read --events`.
+- **Turns are NDJSON** (`--output-format stream-json`) and go through the one transcript door every backend shares: `read --format compact` (one block per step, tool results folded in), `jsonl`, `events` (the shared worker-event vocabulary, same as `tools codex logs --format events` and `tools grok read --format events`), `json`, `raw`. `tools ai sessions tail <task> --provider claude` is the same door by name.
+- **Every turn carries the shared worker contract** as `--append-system-prompt` (`src/utils/worker/contract.ts`): checkpoints, the `RESULT/AT/CHANGED/VERIFY/OPEN` report shape, and a note that interactive rituals in the user's rules do not apply to a worker.
 
-`--safe-mode` launches the child with CLAUDE.md, hooks, skills and MCP disabled. Prefer it plus a scratch `--cwd` for bounded work: a trivial haiku turn launched from a config-heavy repo cost **$0.11** in config cache-writes alone, and $0.06 with `--safe-mode` (both measured 2026-09-01).
+The user's skills and rules load by default, like the other backends. `--no-skills` or `--no-rules` maps to `--safe-mode`, because `claude -p` has one switch that drops CLAUDE.md, hooks, skills and MCP together; the CLI says so when you pass either. Prefer `--safe-mode` plus a scratch `--cwd` for bounded work: a trivial haiku turn launched from a config-heavy repo cost **$0.11** in config cache-writes alone, and $0.06 with `--safe-mode` (both measured 2026-09-01).
 
-Capabilities are declared in `WORKER_CAPABILITIES.claude` (`src/utils/worker/capabilities.ts`); a verb this backend lacks (approve, deny, tail) errors naming that entry.
+Capabilities are declared in `WORKER_CAPABILITIES.claude` (`src/utils/worker/capabilities.ts`); a verb this backend lacks (approve, deny) errors naming that entry.
 
 ## The primitive underneath: `tools claude exec`
 
@@ -96,14 +98,12 @@ Pick the model from `gt:handoff-to` § Model rankings. Note the taste/intelligen
 
 ## Brief and checkpoints
 
-The readiness gate in `gt:handoff-to` applies unchanged. A `claude -p` run is **one shot with no approvals**, so it behaves like the grok resume loop rather than the Codex daemon: there is no mid-turn steering and nothing to approve. Slice the work so a single turn ends at a checkpoint, and put this in the brief, filled in:
+The readiness gate in `gt:handoff-to` applies unchanged. A `claude -p` run is **one shot with no approvals**, so it behaves like the grok resume loop rather than the Codex daemon: there is no mid-turn steering and nothing to approve. The generic contract (honour Stop-and-report, real verify output only, stop after two failed verifies, paths character for character, the five report lines) is injected by the harness on every turn (`src/utils/worker/contract.ts`). Slice the work so a single turn ends at a checkpoint, and put only the task-specific part in the brief, filled in:
 
 ```markdown
 ## Stop and report — do not continue past these
 - This turn: <single milestone> ONLY. Report what changed + the verify output, then STOP.
 - Do NOT create new files, do NOT commit or push, do NOT touch <paths>.
-- If the verify command fails twice in a row: STOP and report both outputs. Do not keep patching.
-- Copy every file path from this brief CHARACTER FOR CHARACTER. Do not retype or normalize them.
 ```
 
 ⚠️ **A `-p` worker inherits the target repo's project configuration.** It runs as a real Claude Code in whatever directory you launch it from, so that repo's `CLAUDE.md`, hooks and permission rules all apply. Point it at a scratch directory or a worktree when that is not what you want.

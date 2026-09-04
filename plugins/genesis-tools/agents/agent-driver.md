@@ -110,7 +110,7 @@ So send one in every exit path, including the ugly ones:
 
 ## The other backends share the verb set
 
-What each backend can and cannot do (approvals, sandbox, readonly mode, steering, whether an account must be named, which verbs exist and which are absent by design) lives in ONE place: `WORKER_CAPABILITIES` in `src/utils/worker/capabilities.ts` in the GenesisTools repo, pinned by its test. Read it instead of trusting prose; a verb a backend lacks errors at the CLI naming its entry. Every backend's `read`/`logs` takes `--events` to print the shared normalized event stream (`src/utils/worker/events.ts`) instead of raw output.
+What each backend can and cannot do (approvals, sandbox, readonly mode, steering, whether an account must be named, which verbs exist and which are absent by design) lives in ONE place: `WORKER_CAPABILITIES` in `src/utils/worker/capabilities.ts` in the GenesisTools repo, pinned by its test. Read it instead of trusting prose; a verb a backend lacks errors at the CLI naming its entry. Every backend's `read`/`logs`/`tail` takes `--format compact|json|jsonl|events|raw` to render the transcript through the one shared door (`src/utils/ai/transcripts/door.ts`); `compact` is the view built for a driver (one block per step, tool results folded in, a totals footer), and `--events` is the alias of `--format events`. Every backend also injects the same worker contract (`src/utils/worker/contract.ts`), so a worker's final message ends with `RESULT: / AT: / CHANGED: / VERIFY: / OPEN:` lines and the finished-turn printer puts `RESULT:` on its first status line.
 
 ## BACKEND: grok
 
@@ -119,7 +119,7 @@ A **resume loop**: each turn is one blocking headless `grok` invocation, steerin
 | Codex step above | Grok equivalent |
 |---|---|
 | §3 spawn | `tools grok run --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
-| §4 watch | `tools grok status --name <NAME>` (metadata + whether a turn is running); `tools grok read --name <NAME> [--turn N] [--events]` re-prints any finished turn |
+| §4 watch | `tools grok tail --name <NAME>` follows the running turn and exits when it ends; `tools grok status --name <NAME>` (metadata + whether a turn is running); `tools grok read --name <NAME> [--turn N] [--format compact]` re-prints any finished turn |
 | §5 steer | `tools grok steer --name <NAME> --prompt '<correction>'`; between turns only — `tools grok stop --name <NAME>` kills a running turn (the session survives and the next steer resumes it) |
 | §6 approvals | none (see the capability matrix). `WRITE_POLICY: deny` → `--readonly` (sticky across steers); `ask` → refuse the spawn and report that grok cannot do supervised writes (the orchestrator must pick `deny` or `allow`, or route to Codex); `allow` → default Auto-mode cwd jail (full trust is not exposed — ask for a disposable worktree instead) |
 | §7 verify | unchanged: run `VERIFY_CMD` yourself, read `git diff` |
@@ -132,7 +132,7 @@ A second Claude account driven headlessly through the worker layer: `tools claud
 | Codex step above | Claude equivalent |
 |---|---|
 | §3 spawn | `tools claude worker spawn --name <NAME> -a <ACCOUNT> --cwd <CWD> --prompt-file <BRIEF_FILE> [-m <model>] [--safe-mode]` — background Bash, wait for completion |
-| §4 watch | `tools claude worker status --name <NAME>`; `tools claude worker read --name <NAME> [--turn N] [--events]` |
+| §4 watch | `tools claude worker tail --name <NAME>` follows the running turn; `tools claude worker status --name <NAME>`; `tools claude worker read --name <NAME> [--turn N] [--format compact]` |
 | §5 steer | `tools claude worker steer --name <NAME> --prompt '<correction>'`; between turns only — `worker stop` kills a running turn |
 | §6 approvals | none, and no sandbox (see the capability matrix). Enforce `WRITE_POLICY` through the brief and the location you launch in — see below |
 | §7 verify | unchanged: run `VERIFY_CMD` yourself, read `git diff` |
