@@ -13,4 +13,15 @@
 export { dayFilePath, usageDir, utcDayOf } from "./paths";
 export { emptyAggregate, queryUsage } from "./query";
 export { recordUsage } from "./record";
-export type { UsageAggregate, UsageEvent, UsageEventInput, UsageQuery, UsageQueryResult } from "./types";
+export type {
+    AccountRef,
+    SpendGrain,
+    SpendSeriesBucket,
+    SpendSeriesPoint,
+    UsageAggregate,
+    UsageEvent,
+    UsageEventInput,
+    UsageQuery,
+    UsageQueryResult,
+} from "./types";
+export { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME, UNBOUND_ACCOUNT_ID } from "./types";

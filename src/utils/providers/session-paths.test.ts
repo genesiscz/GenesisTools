@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
-import { isNativeTranscript, nativeSessionRoots, nativeTranscriptMaxDepth } from "./session-paths";
+import {
+    isNativeTranscript,
+    nativeSessionRoots,
+    nativeSessionRootsForHome,
+    nativeTranscriptMaxDepth,
+} from "./session-paths";
 
 describe("nativeSessionRoots", () => {
     test("claude lists the default projects dirs plus CLAUDE_CONFIG_DIR", async () => {
@@ -54,6 +59,50 @@ describe("nativeSessionRoots", () => {
             "/home/u/.codex/sessions",
             "/home/u/.codex/archived_sessions",
         ]);
+        await env.testing.withOverrides({ CODEX_HOME: "/a/codex, /b/codex" }, () => {
+            expect(nativeSessionRoots("codex", "/home/u")).toEqual([
+                "/a/codex/sessions",
+                "/a/codex/archived_sessions",
+                "/b/codex/sessions",
+                "/b/codex/archived_sessions",
+            ]);
+        });
+    });
+});
+
+describe("nativeSessionRootsForHome", () => {
+    test("codex is sessions + archived_sessions under the given home", () => {
+        expect(nativeSessionRootsForHome("codex", "/a/work")).toEqual([
+            "/a/work/sessions",
+            "/a/work/archived_sessions",
+        ]);
+    });
+
+    test("grok is sessions only, and never appends the headless worker home", async () => {
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: "/gt" }, () => {
+            expect(nativeSessionRootsForHome("grok", "/a/grok-work")).toEqual(["/a/grok-work/sessions"]);
+        });
+    });
+
+    test("claude is the projects dir of that home", () => {
+        expect(nativeSessionRootsForHome("claude", "/a/claude")).toEqual(["/a/claude/projects"]);
+    });
+
+    test("the ambient home overrides are ignored — the caller already named the home", async () => {
+        await env.testing.withOverrides(
+            { CODEX_HOME: "/elsewhere/codex", GROK_HOME: "/elsewhere/grok", CLAUDE_CONFIG_DIR: "/elsewhere/claude" },
+            () => {
+                expect(nativeSessionRootsForHome("codex", "/a/work")).toEqual([
+                    "/a/work/sessions",
+                    "/a/work/archived_sessions",
+                ]);
+                expect(nativeSessionRootsForHome("grok", "/a/grok")).toEqual(["/a/grok/sessions"]);
+                expect(nativeSessionRootsForHome("claude", "/a/claude")).toEqual(["/a/claude/projects"]);
+            }
+        );
+    });
+
+    test("negative control: nativeSessionRoots still honours the CODEX_HOME comma list", async () => {
         await env.testing.withOverrides({ CODEX_HOME: "/a/codex, /b/codex" }, () => {
             expect(nativeSessionRoots("codex", "/home/u")).toEqual([
                 "/a/codex/sessions",

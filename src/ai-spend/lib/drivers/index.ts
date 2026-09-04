@@ -6,7 +6,14 @@ import type { MonitorDriver } from "./types";
 export { claudeDriver } from "./claude";
 export { codexDriver } from "./codex";
 export { grokDriver } from "./grok";
-export type { AgentId, CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
+export type {
+    AgentId,
+    CreateParserOptions,
+    DriverLineParser,
+    DriverRoot,
+    DriverUsageEvent,
+    MonitorDriver,
+} from "./types";
 export { AGENT_IDS } from "./types";
 
 /** Walk order is the report order. Claude first: it is the biggest tree. */
