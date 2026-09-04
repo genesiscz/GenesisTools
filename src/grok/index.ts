@@ -6,7 +6,7 @@ import { parseTurnEvents } from "@genesiscz/utils/grok/stream";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
-import { formatWorkerEvent } from "@genesiscz/utils/worker/events";
+import { coalesceWorkerEvents, formatWorkerEvent } from "@genesiscz/utils/worker/events";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
@@ -171,7 +171,7 @@ program
         }
 
         if (options.events) {
-            for (const event of parseTurnEvents(readFileSync(logPath, "utf8"), meta.sessionId)) {
+            for (const event of coalesceWorkerEvents(parseTurnEvents(readFileSync(logPath, "utf8"), meta.sessionId))) {
                 const line = formatWorkerEvent(event);
                 if (line) {
                     out.println(line);

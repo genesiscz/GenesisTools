@@ -5,7 +5,7 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
-import { formatWorkerEvent } from "@genesiscz/utils/worker/events";
+import { coalesceWorkerEvents, formatWorkerEvent } from "@genesiscz/utils/worker/events";
 import { runningTurnPids as findRunningTurns, type RunningTurn } from "@genesiscz/utils/worker/ps";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -178,7 +178,7 @@ export function registerWorkerCommand(program: Command): void {
                 return;
             }
 
-            for (const event of parseTurnEvents(text, meta.sessionId)) {
+            for (const event of coalesceWorkerEvents(parseTurnEvents(text, meta.sessionId))) {
                 const line = formatWorkerEvent(event);
                 if (line) {
                     out.println(line);
