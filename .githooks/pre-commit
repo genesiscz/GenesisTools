@@ -1,19 +1,55 @@
 #!/bin/sh
 
 # Pre-commit hook — mirrors CI checks (biome + tsgo typecheck).
-# Biome's --staged flag processes only staged files and re-stages the fixes.
 # Activate: git config core.hooksPath .githooks
 
 set -e
 
+# Biome's --staged flag only SELECTS staged files; --write fixes them in the
+# working tree and leaves the index alone. Until 2026-09-02 this hook believed
+# biome re-staged its fixes, so a commit carried the unfixed copy and CI's
+# biome step went red on an import order the hook had already corrected
+# (PR #346, run 33681440922). So the index is formatted on its own: every
+# staged blob biome touched goes through biome on stdin and the result is
+# written back as a blob. The commit gets biome(staged copy) and nothing else.
+# A bare `git add` here would also sweep in the file's unstaged hunks and
+# whatever an editor or a parallel agent wrote while biome was running.
+biome_staged() {
+    bunx biome check --write --staged --no-errors-on-unmatched
+
+    fixed=$(mktemp)
+    git diff --cached --name-only --diff-filter=d --relative | while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        # Neither biome nor anyone else touched it: the index is already right.
+        # A file that differs only by its own unstaged hunks gets one biome run
+        # below and comes out with the same blob, so nothing is written.
+        git diff --quiet -- "$f" && continue
+        entry=$(git ls-files --stage --full-name -- "$f")
+        mode=$(printf '%s\n' "$entry" | cut -d' ' -f1)
+        full=$(printf '%s\n' "$entry" | cut -f2)
+        case "$mode" in 100644|100755) ;; *) continue ;; esac
+        # A binary blob (git: a NUL early in the file, numstat prints "-  -")
+        # is nothing biome can take, so its index entry is left as it is.
+        # Files outside biome's includes come back unchanged with exit 0. Any
+        # other failure, a parse error in the staged copy or a broken config,
+        # aborts the commit through set -e.
+        case "$(git diff --cached --numstat -- "$f")" in -*) continue ;; esac
+        git show ":./$f" | bunx biome check --write --stdin-file-path="$f" > "$fixed"
+        blob=$(git hash-object -w -- "$fixed")
+        case "$entry" in *" $blob "*) continue ;; esac
+        git update-index --cacheinfo "$mode,$blob,$full"
+    done
+    rm -f "$fixed"
+}
+
 echo "▶ biome check --write --staged..."
-bunx biome check --write --staged --no-errors-on-unmatched
+biome_staged
 
 # Check if any dashboard files are staged
 if git diff --cached --name-only --diff-filter=d | grep -q '^src/claude-history-dashboard/'; then
     echo "▶ biome check dashboard --staged..."
     cd src/claude-history-dashboard
-    bunx biome check --write --staged --no-errors-on-unmatched
+    biome_staged
     cd ../..
 fi
 
