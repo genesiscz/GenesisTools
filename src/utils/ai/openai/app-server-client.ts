@@ -58,6 +58,8 @@ export class AppServerClient {
     private readonly options: AppServerClientOptions;
     private nextId = 1;
     private closed = false;
+    /** Serialises `onNotification` off the stdout reader; see `queueNotification`. */
+    private notificationQueue: Promise<void> = Promise.resolve();
 
     constructor(
         readonly process: AppServerProcess,
@@ -237,8 +239,24 @@ export class AppServerClient {
         }
 
         if (typeof method === "string") {
-            await this.options.onNotification?.({ method, params: message.params });
+            this.queueNotification({ method, params: message.params });
         }
+    }
+
+    /**
+     * Notifications leave the reader loop here. Awaiting the handler inline made the
+     * stdout reader wait on it, so a slow handler delayed every later response line and
+     * a rejecting one tore down the loop and rejected every in-flight request. The chain
+     * keeps the handlers in arrival order without the reader ever waiting for one.
+     */
+    private queueNotification(notification: RpcNotification): void {
+        this.notificationQueue = this.notificationQueue.then(async () => {
+            try {
+                await this.options.onNotification?.(notification);
+            } catch (err) {
+                log.error({ err, method: notification.method }, "app-server notification handler failed");
+            }
+        });
     }
 
     private async handleServerRequest(request: RpcServerRequest): Promise<void> {
