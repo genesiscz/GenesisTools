@@ -35,6 +35,7 @@ describe("columns", () => {
             "to",
             "toEmail",
             "cc",
+            "ccEmail",
             "subject",
             "mailbox",
             "account",
@@ -79,10 +80,11 @@ describe("columns", () => {
     });
 
     describe("RECIPIENT_COLUMNS", () => {
-        it("contains to, toEmail, cc", () => {
+        it("contains to, toEmail, cc, ccEmail", () => {
             expect(RECIPIENT_COLUMNS).toContain("to");
             expect(RECIPIENT_COLUMNS).toContain("toEmail");
             expect(RECIPIENT_COLUMNS).toContain("cc");
+            expect(RECIPIENT_COLUMNS).toContain("ccEmail");
         });
     });
 

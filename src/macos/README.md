@@ -28,7 +28,7 @@
 ```bash
 # Mail
 tools macos mail search "invoice"
-tools macos mail list INBOX --limit 20 --from 14h
+tools macos mail list INBOX --limit 20 --from 14h        # INBOX = every account's inbox (Gmail All Mail, EWS "Doručená pošta" included)
 tools macos mail list INBOX --unread --has-attachment --from 2026-08-01
 tools macos mail download 12345 --output-dir ./out
 

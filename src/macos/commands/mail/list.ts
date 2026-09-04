@@ -36,7 +36,7 @@ interface ListOptions {
 export function registerListCommand(program: Command): void {
     program
         .command("list [mailbox]")
-        .description("List recent emails from a mailbox (default: INBOX)")
+        .description("List recent emails from a mailbox (default: INBOX, which means every account's inbox)")
         .option("--limit <n>", "Max emails to return after filters (default 20)", "20")
         .option("--offset <n>", "Skip the first N matching emails", "0")
         .option("--from <date>", "Only emails sent at or after this instant (14h, 7d, YYYY-MM-DD, ISO, now)")

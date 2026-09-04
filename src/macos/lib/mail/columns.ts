@@ -85,6 +85,10 @@ export const MAIL_COLUMNS = {
         label: "CC",
         get: (m: MailMessage) => formatRecipients(m, "cc"),
     },
+    ccEmail: {
+        label: "CC Email",
+        get: (m: MailMessage) => formatRecipientEmails(m, "cc"),
+    },
     subject: {
         label: "Subject",
         get: (m: MailMessage) => m.subject,
@@ -155,4 +159,4 @@ export const MAIL_COLUMNS = {
 export type MailColumnKey = keyof typeof MAIL_COLUMNS;
 export const DEFAULT_LIST_COLUMNS: MailColumnKey[] = ["id", "date", "from", "subject", "attachments"];
 export const ALL_COLUMN_KEYS = Object.keys(MAIL_COLUMNS) as MailColumnKey[];
-export const RECIPIENT_COLUMNS: MailColumnKey[] = ["to", "toEmail", "cc"];
+export const RECIPIENT_COLUMNS: MailColumnKey[] = ["to", "toEmail", "cc", "ccEmail"];

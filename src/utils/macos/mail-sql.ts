@@ -66,6 +66,9 @@ function normalizeMailboxText(s: string): string {
  * ASCII-only and `mailboxes.url` is percent-encoded UTF-8 NFD, so this
  * resolve is the only way to match non-ASCII names like "Doručená pošta".
  *
+ * The mailbox name `INBOX` (any case) is an alias for every account's inbox;
+ * see `resolveInboxRowids`.
+ *
  * Returns `undefined` when neither filter is set (caller should leave
  * `mailboxRowids` unset). Returns `[]` when both filters are set but no
  * mailbox satisfies them — callers should treat that as "no match".
@@ -75,12 +78,14 @@ export function resolveMailboxRowids(db: Database, mailbox?: string, account?: s
         return undefined;
     }
 
-    const rows = db.query("SELECT ROWID, url FROM mailboxes WHERE url IS NOT NULL").all() as Array<{
-        ROWID: number;
-        url: string;
-    }>;
     const ml = mailbox ? normalizeMailboxText(mailbox) : undefined;
     const al = account ? normalizeMailboxText(account) : undefined;
+
+    if (ml === "inbox") {
+        return resolveInboxRowids(db, al);
+    }
+
+    const rows = listMailboxes(db);
 
     return rows
         .filter((r) => {
@@ -97,6 +102,86 @@ export function resolveMailboxRowids(db: Database, mailbox?: string, account?: s
             return true;
         })
         .map((r) => r.ROWID);
+}
+
+type MailboxRow = { ROWID: number; url: string };
+
+function listMailboxes(db: Database): MailboxRow[] {
+    return db.query("SELECT ROWID, url FROM mailboxes WHERE url IS NOT NULL").all() as MailboxRow[];
+}
+
+/** Localized names Mail.app uses for an account's inbox (last URL segment, decoded + lowercased). */
+const INBOX_SEGMENTS = new Set(["inbox", "doručená pošta", "doručené", "posteingang", "boîte de réception"]);
+
+function urlAccount(decodedUrl: string): string {
+    const match = decodedUrl.match(/^[a-z]+:\/\/([^/]+)\//);
+    return match ? match[1] : "";
+}
+
+function urlLastSegment(decodedUrl: string): string {
+    const slash = decodedUrl.lastIndexOf("/");
+    return slash < 0 ? decodedUrl : decodedUrl.slice(slash + 1);
+}
+
+/**
+ * The inbox of EVERY account, not just the mailboxes whose URL contains "INBOX".
+ *
+ * Two things make a plain substring match miss most mail on a multi-account Mac:
+ * EWS accounts name the inbox in the account language ("Doručená pošta"), and
+ * Mail.app keeps a Gmail account's INBOX row empty, storing every message once
+ * under the localized `[Gmail]/All Mail` box. So an account whose inbox rows
+ * hold no messages falls back to its largest `[Gmail]/` mailbox (All Mail is a
+ * superset of every other Gmail label except Spam and Trash, so it is always the
+ * largest). Callers listing All Mail should expect the account's own sent mail in
+ * the result.
+ */
+export function resolveInboxRowids(db: Database, accountNeedle?: string): number[] {
+    const counts = new Map<number, number>();
+
+    for (const row of db
+        .query("SELECT mailbox, COUNT(*) AS c FROM messages WHERE deleted = 0 GROUP BY mailbox")
+        .all() as Array<{
+        mailbox: number;
+        c: number;
+    }>) {
+        counts.set(row.mailbox, row.c);
+    }
+
+    const perAccount = new Map<string, { inbox: number[]; gmail: number[] }>();
+
+    for (const row of listMailboxes(db)) {
+        const decoded = normalizeMailboxText(row.url);
+
+        if (accountNeedle && !decoded.includes(accountNeedle)) {
+            continue;
+        }
+
+        const account = urlAccount(decoded);
+        const entry = perAccount.get(account) ?? { inbox: [], gmail: [] };
+        perAccount.set(account, entry);
+
+        if (INBOX_SEGMENTS.has(urlLastSegment(decoded))) {
+            entry.inbox.push(row.ROWID);
+        } else if (decoded.includes("/[gmail]/")) {
+            entry.gmail.push(row.ROWID);
+        }
+    }
+
+    const result: number[] = [];
+
+    for (const { inbox, gmail } of perAccount.values()) {
+        const live = inbox.filter((id) => (counts.get(id) ?? 0) > 0);
+
+        if (live.length > 0) {
+            result.push(...live);
+        } else if (gmail.length > 0) {
+            result.push(gmail.reduce((best, id) => ((counts.get(id) ?? 0) > (counts.get(best) ?? 0) ? id : best)));
+        } else {
+            result.push(...inbox);
+        }
+    }
+
+    return result;
 }
 
 /** Escape LIKE metacharacters so user input is treated as literal text. */
