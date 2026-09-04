@@ -176,12 +176,14 @@ export async function runLogout(opts: RunLogoutOptions): Promise<void> {
     // Straight to the v4 store, NOT through the legacy token projection: deleting
     // fields from a `toV3Account` snapshot and writing it back does not revoke
     // anything, because `applyV3Tokens` skips absent fields.
+    // By ID, never by name: `requireAccount` refuses an ambiguous name, so two
+    // accounts sharing one could not be logged out at all (PR #360 review t6).
     const fields = [...new Set(targets.flatMap((target) => FIELDS_OF[target]))];
-    await clearCredentials(account.name, fields);
+    await clearCredentials(account.id, fields);
 
     p.log.success(`Removed ${targets.join(" + ")} from "${account.name}".`);
 
-    const remaining = availableTargets((await AiConfigStore.load()).account(account.name) ?? account, declared);
+    const remaining = availableTargets((await AiConfigStore.load()).account(account.id) ?? account, declared);
     p.log.info(
         pc.dim(`Remaining: ${remaining.length > 0 ? remaining.join(" + ") : "nothing"}. Account entry kept in config.`)
     );
@@ -209,7 +211,7 @@ async function offerToRemoveEmptyAccount(account: AccountEntry, interactive: boo
         return;
     }
 
-    await removeAccount(account.name);
+    await removeAccount(account.id);
     logger.info(`[logout] removed credential-less account entry "${account.name}" from the AI config`);
     out.println(pc.green(`Account "${account.name}" removed from the config.`));
 }
