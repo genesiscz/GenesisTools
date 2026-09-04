@@ -1,9 +1,12 @@
 import { basename, dirname } from "node:path";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { accountIdForFile, resolveDriverRoots } from "../account-roots";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import type { DriverUsageEvent, MonitorDriver } from "../drivers/types";
+import type { DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
 import type { SourceId, SpendEvent } from "./types";
@@ -226,8 +229,33 @@ export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult
     return { events, state: parser.snapshot() };
 }
 
-function loadDriverFiles(driver: MonitorDriver, home: string, source: SourceId, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    const files = findRecentTranscripts(driver.roots(home), minMtimeMs, driver);
+/**
+ * Which trees to read, and who owns each one.
+ *
+ * The reports resolve roots through the SAME `resolveDriverRoots` the monitor
+ * and the series cache use, so `daily`, `monitor` and `series` cannot disagree
+ * about which account a transcript belongs to.
+ */
+export interface LoadNativeOptions {
+    home: string;
+    minMtimeMs?: number;
+    accounts?: readonly AccountEntry[];
+    discoveredHomes?: readonly DiscoveredHome[];
+}
+
+function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadNativeOptions): SpendEvent[] {
+    const roots = resolveDriverRoots({
+        driver,
+        userHome: options.home,
+        accounts: options.accounts,
+        discoveredHomes: options.discoveredHomes,
+    });
+    const files = findRecentTranscripts(
+        roots.map((root) => root.path),
+        options.minMtimeMs ?? MIN_MTIME,
+        driver
+    );
+    const byPath = new Map(roots.map((root) => [root.path, root]));
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -237,22 +265,48 @@ function loadDriverFiles(driver: MonitorDriver, home: string, source: SourceId, 
             continue;
         }
 
-        events.push(...parseNativeChunk({ driver, source, file, chunk: content }).events);
+        const accountId = accountIdForFile(file, roots);
+        const home = byPath.get(rootOfFile(file, roots))?.home;
+
+        for (const event of parseNativeChunk({ driver, source, file, chunk: content }).events) {
+            if (accountId !== undefined) {
+                event.accountId = accountId;
+            }
+
+            if (home !== undefined) {
+                event.home = home;
+            }
+
+            events.push(event);
+        }
     }
 
     return events;
 }
 
-export function loadClaudeEvents(home: string, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    return loadDriverFiles(claudeDriver, home, "claude", minMtimeMs);
+/** The longest root the file sits under, so `home` comes from the same row `accountId` did. */
+function rootOfFile(file: string, roots: readonly DriverRoot[]): string {
+    let best = "";
+
+    for (const root of roots) {
+        if ((file.startsWith(`${root.path}/`) || file === root.path) && root.path.length > best.length) {
+            best = root.path;
+        }
+    }
+
+    return best;
 }
 
-export function loadCodexEvents(home: string, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    return loadDriverFiles(codexDriver, home, "codex", minMtimeMs);
+export function loadClaudeEvents(options: LoadNativeOptions): SpendEvent[] {
+    return loadDriverFiles(claudeDriver, "claude", options);
 }
 
-export function loadGrokEvents(home: string, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    return loadDriverFiles(grokDriver, home, "grok", minMtimeMs);
+export function loadCodexEvents(options: LoadNativeOptions): SpendEvent[] {
+    return loadDriverFiles(codexDriver, "codex", options);
+}
+
+export function loadGrokEvents(options: LoadNativeOptions): SpendEvent[] {
+    return loadDriverFiles(grokDriver, "grok", options);
 }
 
 export function nativePriceCandidates(source: SourceId, model: string): string[] {

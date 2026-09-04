@@ -1,4 +1,8 @@
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
+import type { AgentId } from "../drivers";
 import type { PricingTable } from "../types";
 import { priceCandidates as defaultCandidates, eventCost } from "./cost";
 import { inDayWindow, zonedDay } from "./dates";
@@ -12,6 +16,10 @@ export interface LoadOptions {
     sources?: readonly SourceId[];
     /** Skip transcripts whose mtime is before this instant (append-only files). */
     minMtimeMs?: number;
+    /** Enabled accounts, so native events carry the account whose home they sat in. */
+    accounts?: readonly AccountEntry[];
+    /** Homes from `--all-homes`; the caller already awaited `discoverHomes()`. */
+    discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
 }
 
 function appendAll(into: SpendEvent[], extra: SpendEvent[]): void {
@@ -26,16 +34,23 @@ export function loadEvents(options: LoadOptions): SpendEvent[] {
 
     const minMtimeMs = options.minMtimeMs ?? 0;
 
+    const native = (agent: AgentId) => ({
+        home: options.home,
+        minMtimeMs,
+        accounts: options.accounts,
+        discoveredHomes: options.discoveredHomes?.[agent],
+    });
+
     if (wanted.has("claude")) {
-        appendAll(events, loadClaudeEvents(options.home, minMtimeMs));
+        appendAll(events, loadClaudeEvents(native("claude")));
     }
 
     if (wanted.has("codex")) {
-        appendAll(events, loadCodexEvents(options.home, minMtimeMs));
+        appendAll(events, loadCodexEvents(native("codex")));
     }
 
     if (wanted.has("grok")) {
-        appendAll(events, loadGrokEvents(options.home, minMtimeMs));
+        appendAll(events, loadGrokEvents(native("grok")));
     }
 
     for (const source of SOURCE_IDS) {
@@ -85,12 +100,38 @@ export function pricedEventCost(event: SpendEvent, pricing: PricingTable, mode: 
     return eventCost(event, pricing, mode, candidatesFor(event));
 }
 
+/**
+ * The account row an event reports under, in the same vocabulary the monitor
+ * and the series use: every Claude transcript is `claude-all` (decision D6), and
+ * anything no account claims is `(unbound)` rather than being dropped.
+ */
+export function spendEventAccountId(event: SpendEvent): string {
+    if (event.source === "claude") {
+        return CLAUDE_ALL_ACCOUNT_ID;
+    }
+
+    return event.accountId ?? UNBOUND_ACCOUNT_ID;
+}
+
 export function filterEvents(
     events: SpendEvent[],
-    options: { timezone: string; sinceDay?: string; untilDay?: string; sessionId?: string }
+    options: {
+        timezone: string;
+        sinceDay?: string;
+        untilDay?: string;
+        sessionId?: string;
+        /** `"(unbound)"` and `"claude-all"` are valid entries. */
+        accountIds?: readonly string[];
+    }
 ): SpendEvent[] {
+    const wantedAccounts = options.accountIds ? new Set(options.accountIds) : undefined;
+
     return events.filter((event) => {
         if (options.sessionId && event.sessionId !== options.sessionId) {
+            return false;
+        }
+
+        if (wantedAccounts && !wantedAccounts.has(spendEventAccountId(event))) {
             return false;
         }
 
