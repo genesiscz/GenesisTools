@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
+import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
+import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { runTool } from "@genesiscz/utils/cli";
-import { parseTurnEvents } from "@genesiscz/utils/grok/stream";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
-import { coalesceWorkerEvents, formatWorkerEvent } from "@genesiscz/utils/worker/events";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
@@ -153,11 +153,13 @@ program
 
 program
     .command("read")
-    .description("Re-print a finished turn's report and tool calls from its log")
+    .description("Re-print a finished turn: its report (default), or the transcript in a chosen --format")
     .requiredOption("--name <name>", "session name")
     .option("--turn <n>", "turn number (default: latest)")
-    .option("--events", "print normalized worker events instead of the report")
-    .action((options) => {
+    .option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")}`)
+    .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+    .option("--events", "alias of --format events")
+    .action(async (options) => {
         const store = new GrokSessionStore();
         const meta = store.readMeta(options.name);
         if (!meta) {
@@ -170,14 +172,17 @@ program
             throw new Error(`No log for turn ${turn} of '${meta.name}' (${logPath})`);
         }
 
-        if (options.events) {
-            for (const event of coalesceWorkerEvents(parseTurnEvents(readFileSync(logPath, "utf8"), meta.sessionId))) {
-                const line = formatWorkerEvent(event);
-                if (line) {
-                    out.println(line);
-                }
-            }
-
+        if (options.format !== undefined || options.events) {
+            await runTranscriptDoor({
+                tool: "tools grok",
+                subcommand: ["read"],
+                provider: "grok",
+                query: meta.name,
+                format: options.format,
+                thoughts: options.thoughts,
+                events: options.events,
+                turnFile: logPath,
+            });
             return;
         }
 
@@ -194,6 +199,31 @@ program
             errPath,
             // A replay has no before/after snapshot, so it cannot honestly claim one.
             worktree: null,
+        });
+    });
+
+program
+    .command("tail")
+    .description("Follow the running turn's transcript as it is written; stops when the turn ends")
+    .requiredOption("--name <name>", "session name")
+    .option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")} (default compact)`)
+    .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+    .action(async (options) => {
+        const store = new GrokSessionStore();
+        const meta = store.readMeta(options.name);
+        if (!meta) {
+            throw new Error(`Grok session not found: ${options.name}`);
+        }
+
+        await runTranscriptDoor({
+            tool: "tools grok",
+            subcommand: ["tail"],
+            provider: "grok",
+            query: meta.name,
+            format: options.format,
+            thoughts: options.thoughts,
+            follow: true,
+            stillRunning: async () => (await runningTurnPids(meta.sessionId)).length > 0,
         });
     });
 

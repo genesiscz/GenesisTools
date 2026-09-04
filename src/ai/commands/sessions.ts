@@ -1,23 +1,9 @@
-import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
-import {
-    defaultRenderContext,
-    isThoughtMode,
-    isTranscriptFormat,
-    rendererFor,
-    THOUGHT_MODES,
-    type ThoughtMode,
-    TRANSCRIPT_FORMATS,
-    type TranscriptFormat,
-} from "@genesiscz/utils/ai/transcripts/render";
-import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
-import { followTranscript } from "@genesiscz/utils/ai/transcripts/tail";
+import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
+import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { DEFAULT_TURN_LIMIT, type TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
-import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
-import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
 
-const TOOL = "tools ai sessions tail";
 const PROVIDERS = new Set<TranscriptProvider>(["claude", "grok", "codex"]);
 
 function parseProvider(value: string | undefined): TranscriptProvider | undefined {
@@ -28,48 +14,6 @@ function parseProvider(value: string | undefined): TranscriptProvider | undefine
         throw new Error(`--provider must be claude, grok, or codex (got "${value}")`);
     }
     return value as TranscriptProvider;
-}
-
-/**
- * An enumerated flag declared `--flag [value]`: absent → the default; bare in a
- * TTY → a picker; bare elsewhere, or an unknown value → the possible values and
- * a filled-in command line, exit 1 (CLAUDE.md "Enumerated flags").
- */
-async function pickEnum<T extends string>(input: {
-    flag: string;
-    given: string | boolean | undefined;
-    values: readonly T[];
-    fallback: T;
-    accepts: (value: string) => value is T;
-    sessionId: string;
-}): Promise<T | null> {
-    const { flag, given, values, fallback, accepts } = input;
-    if (given === undefined || given === false) {
-        return fallback;
-    }
-
-    if (typeof given === "string" && accepts(given)) {
-        return given;
-    }
-
-    if (given === true && isInteractive()) {
-        const picked = String(
-            await p.select({
-                message: `${flag} value`,
-                options: values.map((value) => ({ value, label: value })),
-            })
-        );
-        return accepts(picked) ? picked : null;
-    }
-
-    out.printlnErr(
-        suggestEnumFlag(TOOL, flag, values, {
-            subcommand: ["sessions", "tail"],
-            given: typeof given === "string" ? given : undefined,
-        })
-    );
-    process.exitCode = 1;
-    return null;
 }
 
 export function registerSessionsCommands(program: Command): void {
@@ -120,53 +64,17 @@ export function registerSessionsCommands(program: Command): void {
                     return;
                 }
 
-                const format = await pickEnum<TranscriptFormat>({
-                    flag: "--format",
-                    given: opts.format,
-                    values: TRANSCRIPT_FORMATS,
-                    fallback: opts.json ? "json" : "compact",
-                    accepts: isTranscriptFormat,
-                    sessionId,
+                await runTranscriptDoor({
+                    tool: "tools ai",
+                    subcommand: ["sessions", "tail"],
+                    provider,
+                    query: sessionId,
+                    format: opts.format,
+                    thoughts: opts.thoughts,
+                    json: opts.json,
+                    slice: { offset, limit },
+                    follow: opts.follow === true,
                 });
-                const thoughts = await pickEnum<ThoughtMode>({
-                    flag: "--thoughts",
-                    given: opts.thoughts,
-                    values: THOUGHT_MODES,
-                    fallback: "short",
-                    accepts: isThoughtMode,
-                    sessionId,
-                });
-                if (format === null || thoughts === null) {
-                    return;
-                }
-
-                const follow = opts.follow === true;
-                const slice = { offset, limit };
-                const renderer = rendererFor(format);
-                const ctx = defaultRenderContext({ thoughts, follow });
-
-                try {
-                    const resolved = await resolveTranscript(sessionId, {}, provider);
-                    renderer.open(ctx);
-
-                    if (!follow) {
-                        renderer.envelope(await transcriptEnvelope(resolved, slice), ctx);
-                        renderer.close(ctx);
-                        return;
-                    }
-
-                    const ac = new AbortController();
-                    process.once("SIGINT", () => ac.abort());
-                    await followTranscript(resolved, {
-                        slice,
-                        signal: ac.signal,
-                        onEnvelope: (envelope) => renderer.envelope(envelope, ctx),
-                    });
-                    renderer.close(ctx);
-                } catch (error) {
-                    process.exitCode = 1;
-                    out.printlnErr(error instanceof Error ? error.message : String(error));
-                }
             }
         );
 }

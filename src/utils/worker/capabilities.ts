@@ -60,11 +60,10 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["streaming-json (flat NDJSON)"],
         steering: "between-turns",
         accountRequired: false,
-        verbs: ["run", "steer", "read", "status", "stop", "sessions"],
+        verbs: ["run", "steer", "read", "tail", "status", "stop", "sessions"],
         absentVerbs: {
             approve: "grok has no approval channel (approvals: none) — the cwd jail and the brief are the only brakes",
             deny: "grok has no approval channel (approvals: none)",
-            tail: "turns block until they finish; there is no live stream to follow — use read after the turn",
         },
     },
     claude: {
@@ -74,12 +73,19 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["stream-json (NDJSON)", "json"],
         steering: "between-turns",
         accountRequired: true,
-        verbs: ["worker spawn", "worker steer", "worker read", "worker status", "worker stop", "worker sessions"],
+        verbs: [
+            "worker spawn",
+            "worker steer",
+            "worker read",
+            "worker tail",
+            "worker status",
+            "worker stop",
+            "worker sessions",
+        ],
         absentVerbs: {
             approve:
                 "claude -p has no approval channel (approvals: none) and no sandbox — hold policy via the brief plus a git-status check",
             deny: "claude -p has no approval channel (approvals: none)",
-            tail: "turns block until they finish; there is no live stream to follow — use worker read after the turn",
         },
     },
 };
