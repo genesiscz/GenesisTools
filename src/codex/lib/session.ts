@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import type {
     InitializeParams,
     ReviewStartParams,
@@ -116,16 +117,19 @@ export class CodexSessionRuntime {
             sandbox: this.meta.sandbox,
             approvalPolicy: this.meta.approvalPolicy,
             ...(this.meta.model ? { model: this.meta.model } : {}),
-            ...(this.meta.agentsEnabled
-                ? {
-                      developerInstructions: buildAgentInstructions({
-                          agentName: this.meta.agentName,
-                          rendezvousSession: this.meta.rendezvousSession,
-                          leadName: "lead",
-                          sandbox: this.meta.sandbox,
-                      }),
-                  }
-                : {}),
+            // Every worker gets the shared contract (checkpoints, report shape);
+            // the bus identity and commands only when the swarm is enabled.
+            developerInstructions: this.meta.agentsEnabled
+                ? buildAgentInstructions({
+                      agentName: this.meta.agentName,
+                      rendezvousSession: this.meta.rendezvousSession,
+                      leadName: "lead",
+                      sandbox: this.meta.sandbox,
+                  })
+                : buildWorkerContract({
+                      backend: "codex",
+                      sandbox: this.meta.sandbox === "read-only" ? "read-only" : "workspace-write",
+                  }),
         };
         const thread = await this.client.request<ThreadStartResult>("thread/start", threadParams);
         await this.updateMeta({ threadId: thread.thread.id, status: "ready" });
