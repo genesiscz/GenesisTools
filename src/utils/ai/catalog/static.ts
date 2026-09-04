@@ -221,6 +221,18 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         flags: { cli: { id: "claude-haiku-4-5", label: "Haiku 4.5" } },
     }),
     anthropic({
+        id: "claude-3-5-haiku",
+        family: "haiku",
+        displayName: "Claude 3.5 Haiku",
+        contextWindow: 200_000,
+        thinking: "none",
+        pricing: { inputPer1M: 0.8, outputPer1M: 4, cachedCreatePer1M: 1.0, cachedReadPer1M: 0.08 },
+        // Retired from the pickers, kept for id resolution: `tools ai-spend`
+        // still prices historical Claude Code transcripts that name it, and
+        // those rates used to be a literal table in `ai-spend/lib/pricing.ts`.
+        flags: { hidden: true },
+    }),
+    anthropic({
         id: "claude-sonnet-4-5-20250929",
         family: "sonnet",
         displayName: "Claude Sonnet 4.5",
