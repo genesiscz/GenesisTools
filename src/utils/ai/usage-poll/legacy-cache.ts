@@ -166,18 +166,28 @@ function stripNative(snapshot: AccountUsageSnapshot): AccountUsageSnapshot {
     return rest;
 }
 
+/**
+ * Merges per provider: a caller that polled one provider (`tools claude usage` polls
+ * anthropic only) replaces that provider's slice and keeps every other slice the file
+ * already holds. Without the merge, the first anthropic-only poll after a daemon round
+ * wiped codex and grok out of the file the dashboard and the Genesis app read.
+ */
 export async function writeSnapshotsCache(
     providers: Record<string, SnapshotsCacheProvider>,
     fetchedAt: Date = new Date()
 ): Promise<SnapshotsCache> {
+    const existing = await readSnapshotsCache();
     const payload: SnapshotsCache = {
         fetchedAt: fetchedAt.toISOString(),
-        providers: Object.fromEntries(
-            Object.entries(providers).map(([id, slice]) => [
-                id,
-                { ...slice, accounts: slice.accounts.map(stripNative) },
-            ])
-        ),
+        providers: {
+            ...existing?.providers,
+            ...Object.fromEntries(
+                Object.entries(providers).map(([id, slice]) => [
+                    id,
+                    { ...slice, accounts: slice.accounts.map(stripNative) },
+                ])
+            ),
+        },
     };
 
     await usagePollStorage().putCacheFile(SNAPSHOTS_CACHE_KEY, payload, USAGE_CACHE_TTL);

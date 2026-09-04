@@ -158,6 +158,41 @@ describe("writeSnapshotsCache", () => {
         expect(cache?.providers["grok-sub"].accounts[0].accountName).toBe("work");
     });
 
+    test("a write for one provider keeps the slices the file already holds", async () => {
+        useTempHome();
+
+        await writeSnapshotsCache({
+            "grok-sub": {
+                alias: "grok",
+                displayName: "Grok",
+                prominent: ["monthly"],
+                accounts: [snapshot("grok-sub", "work")],
+            },
+        });
+        await writeSnapshotsCache({
+            "anthropic-sub": {
+                alias: "claude",
+                displayName: "Claude",
+                prominent: ["five_hour"],
+                accounts: [snapshot("anthropic-sub", "personal")],
+            },
+        });
+        await writeSnapshotsCache({
+            "grok-sub": {
+                alias: "grok",
+                displayName: "Grok",
+                prominent: ["monthly"],
+                accounts: [snapshot("grok-sub", "shop")],
+            },
+        });
+
+        const cache = await readSnapshotsCache();
+
+        expect(Object.keys(cache?.providers ?? {}).sort()).toEqual(["anthropic-sub", "grok-sub"]);
+        expect(cache?.providers["anthropic-sub"].accounts[0].accountName).toBe("personal");
+        expect(cache?.providers["grok-sub"].accounts.map((s) => s.accountName)).toEqual(["shop"]);
+    });
+
     test("strips native — a provider-private payload never crosses a file boundary", async () => {
         useTempHome();
 

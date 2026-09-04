@@ -99,8 +99,8 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
         };
     }
 
-    // The all-provider file is what Plan-Dashboard and the Genesis app read. Writing it
-    // here (rather than per provider) keeps every provider's slice from the same round.
+    // The all-provider file is what Plan-Dashboard and the Genesis app read. The writer
+    // merges per provider, so a call that polled one provider never drops the others.
     await writeSnapshotsCache(byProvider);
 
     return out;
