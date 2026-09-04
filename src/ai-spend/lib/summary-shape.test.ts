@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { agentHomeEnvPatch } from "./drivers/test-env";
 import type { Report } from "./types";
 
 /**
@@ -15,7 +16,8 @@ import type { Report } from "./types";
  * the leaderboard shapes and the numbers, not an internal function signature.
  * The fixture HOME carries only `~/.claude/projects`, so the wider native
  * discovery stack (`~/.config/claude/projects`, `CLAUDE_CONFIG_DIR`) finds
- * nothing extra and the two stacks are comparable.
+ * nothing extra and the two stacks are comparable. The three provider-home
+ * overrides are cleared from the child's environment for the same reason.
  */
 
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -45,7 +47,10 @@ function runView(home: string, toolsHome: string, view: string): Report {
     const proc = Bun.spawnSync({
         cmd: ["bun", "run", ...argv],
         cwd: REPO_ROOT,
-        env: { ...process.env, HOME: home, GENESIS_TOOLS_HOME: toolsHome },
+        // The patch comes AFTER the spread: a developer with CODEX_HOME or
+        // GROK_HOME set would otherwise have the child walk a real transcript
+        // tree, which moves total.cost and projectCount and fails the run.
+        env: { ...process.env, ...agentHomeEnvPatch(), HOME: home, GENESIS_TOOLS_HOME: toolsHome },
     });
 
     const stdout = proc.stdout.toString();
