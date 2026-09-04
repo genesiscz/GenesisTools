@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+    findPeriodForDate,
     findWeekForDate,
     parseTimesheetArg,
     selectWeeksForDateArg,
     type TimesheetWeek,
     taskSourceWeekOrder,
+    weeksTouchingMonth,
 } from "@app/clarity/lib/timesheet-weeks";
 
 // Clarity carousel periods share a boundary date: one ends 2026-08-24 and the next starts
@@ -84,12 +86,19 @@ describe("periods Clarity has not opened a timesheet for", () => {
         },
     ];
 
-    test("are not returned for a month that only they cover", () => {
-        expect(selectWeeksForDateArg(WITH_FUTURE, "2026-09")).toEqual([]);
+    // selectWeeksForDateArg keeps them so a writer can report "Clarity has not opened this period
+    // yet" instead of silently doing less than the month it was asked for. Narrowing is the
+    // caller's job, and findWeekForDate still refuses them.
+    test("are listed for a month that only they cover", () => {
+        expect(selectWeeksForDateArg(WITH_FUTURE, "2026-09").map((w) => w.timePeriodId)).toEqual([400004]);
     });
 
-    test("are not returned for a date inside them", () => {
+    test("are not returned by findWeekForDate for a date inside them", () => {
         expect(findWeekForDate(WITH_FUTURE, "2026-09-03")).toBeUndefined();
+    });
+
+    test("are returned by findPeriodForDate for a date inside them", () => {
+        expect(findPeriodForDate(WITH_FUTURE, "2026-09-03")?.timePeriodId).toBe(400004);
     });
 });
 
@@ -136,5 +145,30 @@ describe("parseTimesheetArg", () => {
     test("a positive whole id parses", () => {
         expect(parseTimesheetArg("555004")).toEqual({ supplied: true, id: 555004 });
         expect(parseTimesheetArg(" 555004 ")).toEqual({ supplied: true, id: 555004 });
+    });
+});
+
+describe("weeksTouchingMonth", () => {
+    test("keeps a period that only reaches into the month by one day", () => {
+        expect(weeksTouchingMonth(WEEKS, 2026, 8).map((w) => w.timePeriodId)).toEqual([400001, 400002, 400003]);
+    });
+
+    // A period finishing on the first of a month ends the evening before it, because the finish
+    // date is exclusive. Counting it would put the previous month's hours in this one.
+    test("drops a period whose exclusive finish is the first day of the month", () => {
+        expect(weeksTouchingMonth(WEEKS, 2026, 9)).toEqual([]);
+    });
+
+    test("handles a 31-day month's last day", () => {
+        const week: TimesheetWeek = {
+            timesheetId: 555009,
+            timePeriodId: 400009,
+            startDate: "2026-08-31",
+            finishDate: "2026-09-07",
+            totalHours: 0,
+            status: "Open",
+        };
+
+        expect(weeksTouchingMonth([week], 2026, 8).map((w) => w.timePeriodId)).toEqual([400009]);
     });
 });

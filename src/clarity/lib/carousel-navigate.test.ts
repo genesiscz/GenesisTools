@@ -82,6 +82,32 @@ describe("navigateToPeriodForDate", () => {
         expect(api.asked.length).toBeGreaterThan(1);
     });
 
+    // A window whose span contains the date but whose entries do not cover it has a hole in it.
+    // Walking on would leave the target behind and spend every remaining hop for nothing.
+    test("stops on a carousel gap rather than walking past the target", async () => {
+        let calls = 0;
+        const api = {
+            // biome-ignore lint/suspicious/noExplicitAny: window with a missing middle week
+            getTimesheetApp: async (): Promise<any> => {
+                calls++;
+
+                return {
+                    tscarousel: {
+                        _results: [
+                            { id: 5000034, start_date: "2026-09-07T00:00:00", finish_date: "2026-09-14T00:00:00" },
+                            { id: 5000036, start_date: "2026-09-21T00:00:00", finish_date: "2026-09-28T00:00:00" },
+                        ],
+                    },
+                };
+            },
+        };
+
+        expect(
+            await navigateToPeriodForDate({ api, seedTimePeriodId: 5000034, date: "2026-09-16", maxHops: 12 })
+        ).toBeUndefined();
+        expect(calls).toBe(1);
+    });
+
     test("gives up instead of looping when the date is unreachable", async () => {
         const api = {
             // biome-ignore lint/suspicious/noExplicitAny: a carousel that never moves

@@ -1,6 +1,6 @@
-import type { ClarityMapping } from "@app/clarity/config";
-import type { ClarityApi } from "@genesiscz/utils/clarity";
+import type { TimesheetAppResponse, TimesheetResponse } from "@genesiscz/utils/clarity";
 import { isDateInHalfOpenRange } from "@genesiscz/utils/date";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface TimesheetWeek {
@@ -16,6 +16,14 @@ export interface TimesheetWeek {
     status: string;
     entryCount?: number;
 }
+
+/** The two Clarity reads the week walk needs, so callers and tests need no concrete api class. */
+export interface TimesheetWeekReader {
+    getTimesheetApp(timePeriodId?: number): Promise<TimesheetAppResponse>;
+    getTimesheet(timesheetId: number): Promise<TimesheetResponse>;
+}
+
+export type TimesheetRecord = TimesheetResponse["timesheets"]["_results"][number];
 
 /**
  * Resolve an explicit `--timesheet` argument. A flag that was passed at all must name a real
@@ -43,9 +51,6 @@ export function hasTimesheetId(week: TimesheetWeek): week is IdentifiedTimesheet
     return week.timesheetId !== undefined;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Clarity carousel entries have inconsistent shapes
-type CarouselEntry = any;
-
 interface NestedTimesheet {
     _results: Array<{
         timesheet_id: number;
@@ -54,14 +59,30 @@ interface NestedTimesheet {
     }>;
 }
 
+interface CarouselEntry {
+    id?: number;
+    start_date?: string;
+    finish_date?: string;
+    timesheet_id?: number;
+    total?: string | number;
+    is_active?: boolean;
+    prstatus?: { displayValue?: string };
+    tpTimesheet?: NestedTimesheet;
+}
+
+/** A carousel entry that carries everything a week needs, so parsing it cannot throw. */
+type DatedCarouselEntry = CarouselEntry & { id: number; start_date: string; finish_date: string };
+
+function isDated(entry: CarouselEntry | undefined): entry is DatedCarouselEntry {
+    return Boolean(entry?.id !== undefined && entry?.start_date && entry?.finish_date);
+}
+
 /**
  * Parse a single carousel entry into a TimesheetWeek.
  * Handles two response shapes: flat (with filter) and nested (tpTimesheet._results[0]).
  */
-function parseCarouselEntry(entry: CarouselEntry, entryCountMap: Map<number, number>): TimesheetWeek {
-    const raw = entry as Record<string, unknown>;
-    const nested = raw.tpTimesheet as NestedTimesheet | undefined;
-    const tp = nested?._results?.[0];
+function parseCarouselEntry(entry: DatedCarouselEntry, entryCountMap: Map<number, number>): TimesheetWeek {
+    const tp = entry.tpTimesheet?._results?.[0];
 
     const timesheetId = entry.timesheet_id ?? tp?.timesheet_id;
     const totalRaw: unknown = entry.total ?? tp?.total;
@@ -80,27 +101,34 @@ function parseCarouselEntry(entry: CarouselEntry, entryCountMap: Map<number, num
         finishDate: entry.finish_date.split("T")[0],
         totalHours: total,
         status,
-        entryCount: entryCountMap.get(timesheetId),
+        entryCount: timesheetId === undefined ? undefined : entryCountMap.get(timesheetId),
     };
 }
 
+function parseCarouselEntries(entries: CarouselEntry[], entryCountMap: Map<number, number>): TimesheetWeek[] {
+    const weeks: TimesheetWeek[] = [];
+
+    for (const entry of entries) {
+        if (!isDated(entry)) {
+            logger.debug(`[clarity] carousel entry without an id or dates skipped: ${SafeJSON.stringify(entry)}`);
+            continue;
+        }
+
+        weeks.push(parseCarouselEntry(entry, entryCountMap));
+    }
+
+    return weeks;
+}
+
 /**
- * Pick the period id the carousel walk starts from. Without one, `getTimesheetApp` returns only the
- * window around today and any month further back is unreachable, so a fill for an older month found
- * no periods and silently booked nothing. A mapping's cached period is used when present; otherwise
- * the server is asked for its current one.
+ * The period id the carousel walk starts from: whichever period the server calls current. An older
+ * month is then reached by walking, not by trusting a stored id that may name a stale window.
  */
 export async function resolveCarouselSeed({
     api,
-    cachedTimePeriodId,
 }: {
     api: { getTimesheetApp: (timePeriodId?: number) => Promise<TimesheetAppLike> };
-    cachedTimePeriodId: number | undefined;
 }): Promise<number | undefined> {
-    if (cachedTimePeriodId !== undefined) {
-        return cachedTimePeriodId;
-    }
-
     const app = await api.getTimesheetApp();
 
     const carousel = app.tscarousel?._results ?? [];
@@ -157,7 +185,17 @@ export async function navigateToPeriodForDate({
         const sorted = [...entries].sort((a, b) => (a.start_date ?? "").localeCompare(b.start_date ?? ""));
         const first = sorted[0];
         const last = sorted[sorted.length - 1];
-        const next = date < (first.start_date ?? "").split("T")[0] ? first.id : last.id;
+        const windowStart = (first.start_date ?? "").split("T")[0];
+        const windowFinish = (last.finish_date ?? "").split("T")[0];
+
+        // The date sits inside this window's span yet no entry claims it, so the carousel has a
+        // gap there. Walking on would leave the target behind and burn every remaining hop.
+        if (date >= windowStart && date < windowFinish) {
+            logger.debug(`[clarity] carousel gap: ${date} lies inside ${windowStart}..${windowFinish} uncovered`);
+            return undefined;
+        }
+
+        const next = date < windowStart ? first.id : last.id;
 
         if (next === undefined) {
             return undefined;
@@ -173,19 +211,122 @@ interface CarouselWindowLike {
     tscarousel?: { _results?: Array<{ id?: number; start_date?: string; finish_date?: string }> };
 }
 
+function monthBounds(year: number, month: number): { monthStart: string; monthEnd: string } {
+    const prefix = `${year}-${String(month).padStart(2, "0")}`;
+    const lastDay = new Date(year, month, 0).getDate();
+
+    return { monthStart: `${prefix}-01`, monthEnd: `${prefix}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/**
+ * The periods that reach into a month. A period's finish date is exclusive, so one ending on the
+ * first of the month belongs to the month before it.
+ */
+export function weeksTouchingMonth<T extends { startDate: string; finishDate: string }>(
+    weeks: T[],
+    year: number,
+    month: number
+): T[] {
+    const { monthStart, monthEnd } = monthBounds(year, month);
+
+    return weeks.filter((week) => week.startDate <= monthEnd && week.finishDate > monthStart);
+}
+
+function coversDate(weeks: TimesheetWeek[], date: string): boolean {
+    return weeks.some((week) => isDateInHalfOpenRange(date, week.startDate, week.finishDate));
+}
+
+function nearestPeriodId(weeks: TimesheetWeek[], date: string): number | undefined {
+    let best: TimesheetWeek | undefined;
+
+    for (const week of weeks) {
+        if (
+            !best ||
+            Math.abs(Date.parse(week.startDate) - Date.parse(date)) <
+                Math.abs(Date.parse(best.startDate) - Date.parse(date))
+        ) {
+            best = week;
+        }
+    }
+
+    return best?.timePeriodId;
+}
+
+/**
+ * One carousel window spans about nine weeks, which usually covers a month but not always. Reach
+ * the ends of the month through the same walk the rest of the tool uses, rather than guessing a
+ * period-id offset: ids are only consecutive by convention, and an offset cannot report a miss.
+ */
+async function widenToCoverMonth({
+    api,
+    weeks,
+    entryCountMap,
+    monthStart,
+    monthEnd,
+    seedTimePeriodId,
+}: {
+    api: TimesheetWeekReader;
+    weeks: TimesheetWeek[];
+    entryCountMap: Map<number, number>;
+    monthStart: string;
+    monthEnd: string;
+    seedTimePeriodId?: number;
+}): Promise<TimesheetWeek[]> {
+    const merged = [...weeks];
+
+    for (const target of [monthStart, monthEnd]) {
+        if (coversDate(merged, target)) {
+            continue;
+        }
+
+        const seed = nearestPeriodId(merged, target) ?? seedTimePeriodId;
+
+        if (seed === undefined) {
+            continue;
+        }
+
+        try {
+            const reached = await navigateToPeriodForDate({ api, seedTimePeriodId: seed, date: target });
+
+            if (reached === undefined) {
+                logger.debug(`[clarity] carousel could not reach ${target} from period ${seed}`);
+                continue;
+            }
+
+            const window = await api.getTimesheetApp(reached);
+
+            for (const week of parseCarouselEntries(window.tscarousel?._results ?? [], entryCountMap)) {
+                if (!merged.some((known) => known.timePeriodId === week.timePeriodId)) {
+                    merged.push(week);
+                }
+            }
+        } catch (err) {
+            logger.debug(`[clarity] carousel widening to ${target} failed, keeping the window we have: ${err}`);
+        }
+    }
+
+    merged.sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+    return merged;
+}
+
+export interface TimesheetWeeks {
+    weeks: TimesheetWeek[];
+    userId?: number;
+    /**
+     * The timesheet records already read while counting entries. Passing them on saves the caller
+     * a second `getTimesheet` for the same weeks.
+     */
+    records: Map<number, TimesheetRecord>;
+}
+
 export async function getTimesheetWeeks(
-    api: ClarityApi,
-    mappings: ClarityMapping[],
+    api: TimesheetWeekReader,
     month?: number,
     year?: number
-): Promise<{ weeks: TimesheetWeek[]; userId?: number }> {
-    // Try to find a valid timePeriodId to seed the carousel.
-    // When a specific month/year is requested, try to navigate to a period covering that month
-    // so the carousel window is anchored correctly.
-    const seedTimePeriodId = await resolveCarouselSeed({
-        api,
-        cachedTimePeriodId: await findValidTimePeriodId(api, mappings),
-    });
+): Promise<TimesheetWeeks> {
+    // When a month is requested, navigate to a period covering it so the window is anchored there.
+    const seedTimePeriodId = await resolveCarouselSeed({ api });
     let timePeriodId = seedTimePeriodId;
 
     if (month !== undefined && year !== undefined && seedTimePeriodId !== undefined) {
@@ -216,8 +357,10 @@ export async function getTimesheetWeeks(
         }
     }
 
+    const records = new Map<number, TimesheetRecord>();
+
     if (!carousel?.length) {
-        return { weeks: [], userId };
+        return { weeks: [], userId, records };
     }
 
     // Build a map of timesheetId → numberOfEntries from the timesheets section (current period)
@@ -227,61 +370,12 @@ export async function getTimesheetWeeks(
         entryCountMap.set(ts._internalId, ts.numberOfEntries ?? 0);
     }
 
-    let weeks: TimesheetWeek[] = carousel.map((entry: CarouselEntry) => parseCarouselEntry(entry, entryCountMap));
+    let weeks = parseCarouselEntries(carousel, entryCountMap);
 
-    // If a specific month is requested and the carousel doesn't cover it fully,
-    // fetch additional carousel pages by navigating to earlier/later timePeriodIds
     if (month !== undefined && year !== undefined) {
-        const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
-        const lastDay = new Date(year, month, 0).getDate();
-        const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-
-        // Check if we need earlier weeks
-        const firstStart = weeks[0]?.startDate;
-
-        if (firstStart && firstStart > monthStart) {
-            const firstId = weeks[0].timePeriodId;
-
-            try {
-                const earlier = await api.getTimesheetApp(firstId - 4);
-
-                for (const entry of earlier.tscarousel?._results ?? []) {
-                    const sd = entry.start_date.split("T")[0];
-
-                    if (!weeks.some((w) => w.timePeriodId === entry.id) && sd < firstStart) {
-                        weeks.unshift(parseCarouselEntry(entry, entryCountMap));
-                    }
-                }
-
-                weeks.sort((a, b) => a.startDate.localeCompare(b.startDate));
-            } catch (err) {
-                logger.debug(`[clarity] carousel edge hop failed, returning the window we have: ${err}`);
-            }
-        }
-
-        // Check if we need later weeks (last finishDate doesn't cover month end)
-        const lastFinish = weeks[weeks.length - 1]?.finishDate;
-
-        if (lastFinish && lastFinish <= monthEnd) {
-            const lastId = weeks[weeks.length - 1].timePeriodId;
-            try {
-                const later = await api.getTimesheetApp(lastId + 1);
-
-                for (const entry of later.tscarousel?._results ?? []) {
-                    const sd = entry.start_date.split("T")[0];
-
-                    if (!weeks.some((w) => w.timePeriodId === entry.id) && sd >= lastFinish) {
-                        weeks.push(parseCarouselEntry(entry, entryCountMap));
-                    }
-                }
-
-                weeks.sort((a, b) => a.startDate.localeCompare(b.startDate));
-            } catch (err) {
-                logger.debug(`[clarity] carousel edge hop failed, returning the window we have: ${err}`);
-            }
-        }
-
-        weeks = weeks.filter((w) => w.startDate <= monthEnd && w.finishDate > monthStart);
+        const { monthStart, monthEnd } = monthBounds(year, month);
+        weeks = await widenToCoverMonth({ api, weeks, entryCountMap, monthStart, monthEnd, seedTimePeriodId });
+        weeks = weeksTouchingMonth(weeks, year, month);
     }
 
     // Fetch entry counts for weeks that don't have them yet (not in current period's timesheets section)
@@ -294,80 +388,58 @@ export async function getTimesheetWeeks(
             needsCount.map(async (w) => {
                 const ts = await api.getTimesheet(w.timesheetId);
                 const record = ts.timesheets._results[0];
-                return { timesheetId: w.timesheetId, count: record?.numberOfEntries ?? 0 };
+                return { timesheetId: w.timesheetId, record };
             })
         );
 
         for (const result of results) {
-            if (result.status === "fulfilled") {
-                const week = weeks.find((w) => w.timesheetId === result.value.timesheetId);
+            if (result.status !== "fulfilled") {
+                logger.debug(`[clarity] entry count fetch failed: ${result.reason}`);
+                continue;
+            }
 
-                if (week) {
-                    week.entryCount = result.value.count;
-                }
+            const week = weeks.find((w) => w.timesheetId === result.value.timesheetId);
+
+            if (week) {
+                week.entryCount = result.value.record?.numberOfEntries ?? 0;
+            }
+
+            if (result.value.record) {
+                records.set(result.value.timesheetId, result.value.record);
             }
         }
     }
 
-    return { weeks, userId };
-}
-
-/** Check if an error indicates a "not found" condition (vs auth/transport failure) */
-function isNotFoundError(err: unknown): boolean {
-    if (err instanceof Error) {
-        const msg = err.message.toLowerCase();
-        return msg.includes("not found") || msg.includes("404") || msg.includes("no results");
-    }
-
-    return false;
-}
-
-async function findValidTimePeriodId(api: ClarityApi, mappings: ClarityMapping[]): Promise<number | undefined> {
-    // Strategy 1: Use an existing mapping's clarityTimesheetId to get a timePeriodId
-    for (const mapping of mappings) {
-        if (!mapping.clarityTimesheetId) {
-            continue;
-        }
-
-        try {
-            const ts = await api.getTimesheet(mapping.clarityTimesheetId);
-            const record = ts.timesheets._results[0];
-
-            if (record?.timePeriodId) {
-                return record.timePeriodId;
-            }
-        } catch (err) {
-            // Only continue to next mapping if timesheet was not found;
-            // rethrow auth/permission/transport errors so they surface to the caller
-            if (!isNotFoundError(err)) {
-                throw err;
-            }
-        }
-    }
-
-    // Strategy 2: Fall back to undefined (no filter = current period)
-    return undefined;
+    return { weeks, userId, records };
 }
 
 /**
- * Pick the period covering a date. Clarity periods share a boundary date, so the range is
- * half-open: the finish date belongs to the next period, not this one. Future periods carry no
- * timesheet id yet and are skipped, because the API rejects `timesheetId=undefined`.
+ * Pick the period covering a date, opened or not. Clarity periods share a boundary date, so the
+ * range is half-open: the finish date belongs to the next period, not this one.
+ */
+export function findPeriodForDate(weeks: TimesheetWeek[], date: string): TimesheetWeek | undefined {
+    return weeks.find((week) => isDateInHalfOpenRange(date, week.startDate, week.finishDate));
+}
+
+/**
+ * Pick the period covering a date, skipping future periods that carry no timesheet id yet, because
+ * the API rejects `timesheetId=undefined`. Use `findPeriodForDate` when an unopened period should
+ * be reported rather than dropped.
  */
 export function findWeekForDate(weeks: TimesheetWeek[], date: string): IdentifiedTimesheetWeek | undefined {
-    return weeks.find(
-        (week): week is IdentifiedTimesheetWeek =>
-            hasTimesheetId(week) && isDateInHalfOpenRange(date, week.startDate, week.finishDate)
-    );
+    const week = findPeriodForDate(weeks, date);
+
+    return week && hasTimesheetId(week) ? week : undefined;
 }
 
 /**
  * Select periods for a `--date` argument. A full `YYYY-MM-DD` picks the single covering period;
- * a `YYYY-MM` picks every period that reaches into that month.
+ * a `YYYY-MM` picks every period that reaches into that month. Periods Clarity has not opened yet
+ * are included, so a caller that writes can report them instead of silently doing less.
  */
 export function selectWeeksForDateArg(weeks: TimesheetWeek[], dateArg: string): TimesheetWeek[] {
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateArg)) {
-        const week = findWeekForDate(weeks, dateArg);
+        const week = findPeriodForDate(weeks, dateArg);
 
         return week ? [week] : [];
     }
@@ -377,10 +449,8 @@ export function selectWeeksForDateArg(weeks: TimesheetWeek[], dateArg: string): 
     }
 
     const [year, month] = dateArg.split("-").map(Number);
-    const monthStart = `${dateArg}-01`;
-    const monthEnd = `${dateArg}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
 
-    return weeks.filter((week) => week.timesheetId && week.startDate <= monthEnd && week.finishDate > monthStart);
+    return weeksTouchingMonth(weeks, year, month);
 }
 
 /**

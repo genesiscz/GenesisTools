@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ClarityMapping } from "@app/clarity/config";
 import { resolveFillWeeks } from "@app/clarity/lib/fill-weeks";
-import type { ClarityApi } from "@genesiscz/utils/clarity";
 
 function carouselEntry({
     id,
@@ -44,20 +42,6 @@ const CAROUSEL = [
     carouselEntry({ id: 400005, start: "2026-08-31", finish: "2026-09-07", timesheetId: 555005 }),
 ];
 
-// Mirrors the mappings this machine actually stores: a task link with no cached timesheet id.
-const MAPPINGS_WITHOUT_TIMESHEET_ID = [
-    {
-        clarityTaskId: 700042,
-        clarityTaskName: "SampleTask_Release_External_Capex",
-        clarityTaskCode: "00070705",
-        clarityInvestmentName: "Sample Project",
-        clarityInvestmentCode: "P100001",
-        adoWorkItemId: 111111,
-        adoWorkItemTitle: "Sample work item",
-        adoWorkItemType: "Task",
-    },
-] as ClarityMapping[];
-
 function fakeApi() {
     const timesheetAppCalls: Array<number | undefined> = [];
     const openPeriods = new Set(CAROUSEL.map((entry) => entry.id));
@@ -91,12 +75,11 @@ function fakeApi() {
 }
 
 describe("resolveFillWeeks", () => {
-    test("resolves dates to their timesheets when no mapping carries a cached timesheet id", async () => {
+    test("resolves each date to the timesheet whose period covers it", async () => {
         const api = fakeApi();
 
         const result = await resolveFillWeeks({
-            api: api as unknown as ClarityApi,
-            mappings: MAPPINGS_WITHOUT_TIMESHEET_ID,
+            api,
             dates: ["2026-08-04", "2026-08-26"],
             month: 8,
             year: 2026,
@@ -109,8 +92,7 @@ describe("resolveFillWeeks", () => {
         const api = fakeApi();
 
         const result = await resolveFillWeeks({
-            api: api as unknown as ClarityApi,
-            mappings: MAPPINGS_WITHOUT_TIMESHEET_ID,
+            api,
             dates: ["2026-08-24", "2026-08-26", "2026-08-28"],
             month: 8,
             year: 2026,
@@ -126,8 +108,7 @@ describe("resolveFillWeeks", () => {
         api.openPeriods.delete(400002);
 
         const result = await resolveFillWeeks({
-            api: api as unknown as ClarityApi,
-            mappings: MAPPINGS_WITHOUT_TIMESHEET_ID,
+            api,
             dates: ["2026-08-12", "2026-08-26"],
             month: 8,
             year: 2026,
@@ -141,8 +122,7 @@ describe("resolveFillWeeks", () => {
         const api = fakeApi();
 
         const result = await resolveFillWeeks({
-            api: api as unknown as ClarityApi,
-            mappings: MAPPINGS_WITHOUT_TIMESHEET_ID,
+            api,
             dates: ["2026-08-26", "2026-12-24"],
             month: 8,
             year: 2026,
@@ -157,8 +137,7 @@ describe("resolveFillWeeks carousel use", () => {
         const api = fakeApi();
 
         await resolveFillWeeks({
-            api: api as unknown as ClarityApi,
-            mappings: MAPPINGS_WITHOUT_TIMESHEET_ID,
+            api,
             dates: ["2026-08-26"],
             month: 8,
             year: 2026,

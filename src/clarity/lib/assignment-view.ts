@@ -35,9 +35,8 @@ export function parseMonthArg(date: string): { month: number; year: number } {
 }
 
 /**
- * Assemble everything the assignment surfaces need: the month's work items split into mapped and
- * unmapped, the Clarity task catalogue, and a tree-based recommendation per work item. Shared by
- * the CLI and the dashboard so both answer identically.
+ * The first period in the given order that actually carries task rows. A month's own timesheet can
+ * exist with no catalogue yet, so the search has to fall through to another period.
  */
 async function firstNonEmptyCatalogue(api: ClarityApi, candidates: TimesheetWeek[]): Promise<ClarityTask[]> {
     for (const candidate of candidates) {
@@ -55,6 +54,11 @@ async function firstNonEmptyCatalogue(api: ClarityApi, candidates: TimesheetWeek
     return [];
 }
 
+/**
+ * Assemble everything the assignment surfaces need: the month's work items split into mapped and
+ * unmapped, the Clarity task catalogue, and a tree-based recommendation per work item. Shared by
+ * the CLI and the dashboard so both answer identically.
+ */
 export async function buildAssignmentView(date: string): Promise<AssignmentView> {
     const clarityConfig = await requireConfig();
     const adoConfig = requireTimeLogConfig();
@@ -76,14 +80,14 @@ export async function buildAssignmentView(date: string): Promise<AssignmentView>
         minutesByWorkItem.set(entry.workItemId, (minutesByWorkItem.get(entry.workItemId) ?? 0) + entry.minutes);
     }
 
-    const { weeks } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings, month, year);
+    const { weeks } = await getTimesheetWeeks(clarityApi, month, year);
     const preferred = findWeekForDate(weeks, `${year}-${String(month).padStart(2, "0")}-15`);
     let tasks = await firstNonEmptyCatalogue(clarityApi, taskSourceWeekOrder(weeks, preferred));
 
     if (tasks.length === 0) {
         // A month whose timesheets exist but carry no rows yet has no catalogue of its own.
         // Widen past the month filter and take the newest period that does have rows.
-        const { weeks: anyWeek } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings);
+        const { weeks: anyWeek } = await getTimesheetWeeks(clarityApi);
         tasks = await firstNonEmptyCatalogue(clarityApi, taskSourceWeekOrder(anyWeek, undefined));
     }
 

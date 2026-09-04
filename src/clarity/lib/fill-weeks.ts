@@ -1,32 +1,36 @@
-import type { ClarityMapping } from "@app/clarity/config";
-import { findWeekForDate, getTimesheetWeeks, type IdentifiedTimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
-import type { ClarityApi } from "@genesiscz/utils/clarity";
+import {
+    findWeekForDate,
+    getTimesheetWeeks,
+    type IdentifiedTimesheetWeek,
+    type TimesheetRecord,
+    type TimesheetWeekReader,
+} from "@app/clarity/lib/timesheet-weeks";
 
 export interface ResolvedFillWeeks {
     weeks: IdentifiedTimesheetWeek[];
     unresolvedDates: string[];
     /** Clarity user id, needed as the author of a timesheet note. */
     userId?: number;
+    /** Timesheets already read during discovery, so the caller need not fetch them again. */
+    records: Map<number, TimesheetRecord>;
 }
 
 /**
- * Resolve the timesheets covering the dates a fill touches. Discovery runs through the shared
- * carousel walk, so a mapping without a cached timesheet id is not a precondition.
+ * Resolve the timesheets covering the dates a fill touches. Periods are discovered per run through
+ * the shared carousel walk; nothing has to be stored on a mapping first.
  */
 export async function resolveFillWeeks({
     api,
-    mappings,
     dates,
     month,
     year,
 }: {
-    api: ClarityApi;
-    mappings: ClarityMapping[];
+    api: TimesheetWeekReader;
     dates: string[];
     month?: number;
     year?: number;
 }): Promise<ResolvedFillWeeks> {
-    const { weeks: available, userId } = await getTimesheetWeeks(api, mappings, month, year);
+    const { weeks: available, userId, records } = await getTimesheetWeeks(api, month, year);
 
     const weeks: IdentifiedTimesheetWeek[] = [];
     const unresolvedDates: string[] = [];
@@ -44,5 +48,5 @@ export async function resolveFillWeeks({
         }
     }
 
-    return { weeks, unresolvedDates, userId };
+    return { weeks, unresolvedDates, userId, records };
 }
