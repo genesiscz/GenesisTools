@@ -55,7 +55,7 @@ export function resolveDriverRoots(options: ResolveDriverRootsOptions): DriverRo
     const accounts = options.accounts ?? [];
 
     if (accounts.length > 0 && options.driver.rootsForAccounts) {
-        for (const root of options.driver.rootsForAccounts([...accounts])) {
+        for (const root of options.driver.rootsForAccounts([...accounts], options.userHome)) {
             add(root);
         }
     }

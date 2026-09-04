@@ -3,10 +3,11 @@ import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
+import { loadSpendAccountsContext } from "../accounts-context";
 import { loadPricing } from "../config";
 import { buildBlocksReport } from "./blocks";
 import { isValidTimeZone, parseCostMode, parseDayArg, parseLast, resolveRelativeSince, systemTimeZone } from "./dates";
-import { loadEvents } from "./load";
+import { filterEvents, loadEvents } from "./load";
 import { buildPeriodReport } from "./period";
 import { renderBlocksTable, renderPeriodTable, renderSessionTable } from "./render";
 import { buildSessionReport } from "./session";
@@ -74,6 +75,20 @@ export function addReportFlags(
     }
 
     cmd.option("--by-agent", "Include per-agent JSON breakdowns in unified rows");
+    addAccountFlags(cmd);
+    return cmd;
+}
+
+/**
+ * The account dimension, on every door that reads transcripts.
+ *
+ * `monitor` and `series` declare the same two flags. A behaviour reachable
+ * through one command and not another is the defect this campaign exists to
+ * remove, so these are added in one place and used in three.
+ */
+export function addAccountFlags(cmd: Command): Command {
+    cmd.option("--all-homes", "Also read provider homes on disk that no account is bound to");
+    cmd.option("--account <id...>", 'Report only these account ids ("(unbound)" and "claude-all" allowed)');
     return cmd;
 }
 
@@ -153,7 +168,18 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
         minMtimeMs = now.getTime() - 2 * 24 * 60 * 60 * 1000;
     }
 
-    const events = loadEvents({ home, sources, minMtimeMs: Number.isFinite(minMtimeMs) ? minMtimeMs : 0 });
+    const context = await loadSpendAccountsContext({ allHomes: flags.allHomes });
+    const loaded = loadEvents({
+        home,
+        sources,
+        minMtimeMs: Number.isFinite(minMtimeMs) ? minMtimeMs : 0,
+        accounts: context.accounts,
+        discoveredHomes: context.discoveredHomes,
+    });
+    // Filtering here rather than inside each report builder: `--account` means
+    // the same thing for daily, session and blocks, and the builders each own a
+    // frozen ccusage-compatible row shape that must not learn a new dimension.
+    const events = flags.account ? filterEvents(loaded, { timezone, accountIds: flags.account }) : loaded;
 
     if (kind === "statusline") {
         const stdin = await readStdin();

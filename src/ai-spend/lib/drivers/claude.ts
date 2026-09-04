@@ -1,11 +1,13 @@
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import {
     isNativeTranscript,
     nativeSessionRoots,
     nativeTranscriptMaxDepth,
 } from "@genesiscz/utils/providers/session-paths";
 import { parseTranscriptLine } from "../parse";
-import type { DriverUsageEvent, MonitorDriver } from "./types";
+import { spendScopeRoots } from "./account-scope";
+import type { DriverRoot, DriverUsageEvent, MonitorDriver } from "./types";
 
 /**
  * Claude Code transcripts: `~/.claude/projects/**\/*.jsonl`, one JSON object per
@@ -21,6 +23,23 @@ export const claudeDriver: MonitorDriver = {
 
     roots(home: string): string[] {
         return nativeSessionRoots("claude", home);
+    },
+
+    /**
+     * ONE unbound entry per root, however many Anthropic accounts exist
+     * (decision D6). `~/.claude/projects` records no login, so a per-account
+     * split here would be invented, and emitting the shared tree once per
+     * account would bill the same transcripts several times over. The transcript
+     * report groups these under "claude (all accounts)"; the per-account split
+     * lives in the call log.
+     */
+    rootsForAccounts(accounts: AccountEntry[], userHome: string): DriverRoot[] {
+        return spendScopeRoots({
+            agent: "claude",
+            accounts,
+            shared: true,
+            within: nativeSessionRoots("claude", userHome),
+        });
     },
 
     isTranscript(name: string): boolean {
