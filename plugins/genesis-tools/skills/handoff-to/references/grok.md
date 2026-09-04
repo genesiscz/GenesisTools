@@ -7,15 +7,31 @@ The harness is **`tools grok`** (`src/grok/`) — the grok counterpart of `tools
 ## Drive loop
 
 ```bash
-tools grok run   --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly]
-tools grok steer --name <task> --prompt '<correction + the negative constraints restated>'
-tools grok read  --name <task> [--turn N]
+tools grok run    --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly]
+tools grok steer  --name <task> --prompt-file <correction file>   # preferred
+tools grok steer  --name <task> --prompt '<correction + the negative constraints restated>'
+tools grok read   --name <task> [--turn N] [--events]
+tools grok status --name <task>      # metadata + whether a turn is running right now
+tools grok stop   --name <task>      # kill the running turn; the session survives, steer resumes it
 tools grok sessions
 ```
 
+`--events` renders the turn as the shared worker-event stream (`src/utils/worker/events.ts`) instead of the report — the same vocabulary `tools codex logs --events` and `tools claude worker read --events` use. What this backend can and cannot do is declared in `WORKER_CAPABILITIES.grok` (`src/utils/worker/capabilities.ts`); a verb it lacks (approve, deny, tail) errors naming that entry.
+
 - **`run` and `steer` block for the whole turn (minutes).** Run them with Bash `run_in_background: true` and wait for the completion notification. A foreground call is killed at the Bash timeout cap mid-turn.
 - Write the brief to a file (session scratchpad) and pass `--prompt-file`. Inside single quotes a backtick and `$(...)` stay literal, so those are safe; what breaks is an **apostrophe** in the brief, which closes the quote and leaves the shell parsing the rest as arguments. A file has no quoting rules at all.
-- On completion the harness prints the worker's report (stdout) and its tool calls (stderr), and **exits 1 when the turn died mid-flight** (the raw grok CLI exits 0 even then). Turn transcripts live at `~/.genesis-tools/grok/sessions/<task>.turn<N>.jsonl` (+ `.err`); `tools grok read` re-prints them.
+- **`steer` takes `--prompt-file` too**, and should use it for the same reason. A steering message is prose restating constraints, so it is *more* likely to contain an apostrophe than the original brief.
+- On completion the harness prints the worker's report (stdout) and its tool calls (stderr), and **exits 1 when the turn died mid-flight** (the raw grok CLI exits 0 even then).
+- 🛑 **"The turn ended" is not "the task got done".** A worker that stops cleanly halfway prints the same success line and exits 0 as one that finished — the mid-flight check only catches a missing end event. Observed 2026-09-04: a worker ended turn 1 after writing its sweep script but before running it, and the untouched worktree was found by a separate grader, not by the harness. So the harness now prints a worktree delta after each writable turn:
+
+  ```
+  ● turn 2 changed 1 path(s); 1 dirty in total
+  ▲ turn 1 changed NOTHING in <cwd> — the turn ended, but the task may be unfinished.
+  ```
+
+  Treat that warning as "steer it to continue", not as a failure. It is suppressed for `--readonly` sessions, which change nothing by design, and absent when `--cwd` is not a git repo or when you are replaying a past turn with `read` (a replay has no before/after snapshot to compare).
+- **Slice the work per turn.** The checkpoint contract below is not optional politeness: one turn is one blocking invocation, and a brief that asks for recon plus a sweep plus verification plus a written report in a single turn is likely to end somewhere in the middle.
+- Turn transcripts live at `~/.genesis-tools/grok/sessions/<task>.turn<N>.jsonl` (+ `.err`); `tools grok read` re-prints them.
 - `--name` is the session handle: `run` refuses an existing name, so pick a fresh one per handoff and use `steer` for every later turn.
 - To abort a running turn, kill it by its **session uuid**, which is on the child's command line as `--session-id` (first turn) or `--resume` (every later turn) and is unique to that session:
 
@@ -58,7 +74,8 @@ The read-only worker gets `read_file,list_dir,grep` and **no terminal tool at al
 
 So for a read-only grok review, plan for it up front:
 
-- Make **inline output the deliverable**. Say so in the brief; do not ask for a file.
+- If the deliverable is a file (Obsidian vault, report.md), do **not** pass `--readonly`. Use the default jail with `--cwd` at the note folder, or write `/tmp` and let the orchestrator copy. Same class of miss as Codex `--write deny` on 2026-08-31.
+- Make **inline output the deliverable** only when the review is actually inline. Say so in the brief; do not ask for a file.
 - Expect **zero executed verification**. If the worker reports on test quality or runtime behavior, it inferred that from reading. Say so when you relay it, or re-run the claim yourself.
 - If the review genuinely needs to run something, do not reach for `--writable`. Give the worker a disposable worktree and let it run in the default Auto-mode jail there.
 
@@ -76,14 +93,14 @@ The readiness gate in `gt:handoff-to` applies unchanged. Because there are no ap
 
 Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message.
 
-## The raw CLI has more than the harness exposes
+## What the raw CLI still has that the harness does not
 
-`tools grok` drives the blocking text loop above, which is what most handoffs need. The `grok` CLI underneath has two capabilities the harness does not surface yet, worth knowing before you conclude something is impossible:
+The harness already consumes `--output-format streaming-json` — every turn log is flat NDJSON (`{"type":"text","data":…}`; despite the CLI help, it is NOT ACP-nested), which is what `read --events` renders from. Two raw-CLI capabilities remain unwired:
 
-- **Structured output.** `--output-format` accepts `json`, `streaming-json` (NDJSON of the agent's native ACP session updates), and `streaming-messages-json` (NDJSON in the Anthropic Messages wire format). `--json-schema '<schema>'` constrains the final answer to a validated shape. `grok agent` runs headless without the interactive UI.
+- **`--json-schema '<schema>'`** constrains the final answer to a validated shape, and `streaming-messages-json` emits the Anthropic Messages wire format instead.
 - **A leader process.** `grok leader list | info | kill` manages running leader processes over a socket at `~/.grok/leader.sock` (`--leader-socket` overrides it). This is the closest grok analog to the Codex app-server daemon.
 
-Neither is wired into `tools grok` today, so reaching for them means going around the harness and losing the isolation and sticky-`--readonly` guarantees above. Do not do that casually. Flag it as a harness gap instead.
+Reaching for either means going around the harness and losing the isolation and sticky-`--readonly` guarantees above. Do not do that casually. Flag it as a harness gap instead.
 
 ## Verify, then integrate
 

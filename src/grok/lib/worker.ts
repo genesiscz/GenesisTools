@@ -1,11 +1,12 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent-host";
+import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { defaultWorkerHome, turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
+import { type WorktreeDelta, worktreeDelta, worktreeState } from "./worktree";
 
 const log = logger.child({ component: "grok:worker" });
 
@@ -50,6 +51,8 @@ export interface TurnResult {
     stderr: string;
     logPath: string;
     errPath: string;
+    /** What the turn changed in cwd. Null when cwd is not a git repo. */
+    worktree: WorktreeDelta | null;
 }
 
 /**
@@ -217,6 +220,9 @@ async function runTurn(
         throw err;
     }
 
+    // Snapshot before the spawn so the report can say whether the turn did anything.
+    const worktreeBefore = worktreeState(meta.cwd);
+
     let exitCode: number | null = null;
     try {
         const proc = Bun.spawn({
@@ -233,6 +239,7 @@ async function runTurn(
         closeSync(errFd);
     }
 
+    const worktree = worktreeDelta(worktreeBefore, worktreeState(meta.cwd));
     const summary = parseTurnLog(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
     const stderr = existsSync(errPath) ? readFileSync(errPath, "utf8") : "";
     const updated = store.updateMeta(meta.name, {
@@ -240,11 +247,18 @@ async function runTurn(
         lastTurn: { turn, ended: summary.ended, exitCode, at: new Date().toISOString() },
     });
     log.info(
-        { name: meta.name, turn, exitCode, ended: summary.ended, toolCalls: summary.toolCalls.length },
+        {
+            name: meta.name,
+            turn,
+            exitCode,
+            ended: summary.ended,
+            toolCalls: summary.toolCalls.length,
+            changedThisTurn: worktree?.changedThisTurn ?? null,
+        },
         "grok turn finished"
     );
 
-    return { meta: updated, turn, summary, exitCode, stderr, logPath, errPath };
+    return { meta: updated, turn, summary, exitCode, stderr, logPath, errPath, worktree };
 }
 
 export async function runSession(options: RunSessionOptions): Promise<TurnResult> {
