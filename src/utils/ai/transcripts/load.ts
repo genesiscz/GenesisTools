@@ -5,7 +5,14 @@ import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
-import { type SliceOptions, sliceTurns, type TranscriptEnvelope, type TranscriptTurn } from "./types";
+import {
+    type SliceOptions,
+    sliceTurns,
+    type TranscriptEnvelope,
+    type TranscriptTurn,
+    terminatedOf,
+    totalsOf,
+} from "./types";
 
 function readRecords(path: string): unknown[] {
     if (!existsSync(path)) {
@@ -75,5 +82,7 @@ export async function transcriptEnvelope(
         truncated: sliced.truncated,
         nextOffset: sliced.nextOffset,
         turns: sliced.turns,
+        totals: totalsOf(turns),
+        terminated: terminatedOf(turns),
     };
 }
