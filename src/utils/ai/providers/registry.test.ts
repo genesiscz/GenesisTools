@@ -22,6 +22,31 @@ function isPlugin(value: unknown): value is ProviderPlugin {
     );
 }
 
+/** Flat plugin files plus each plugin folder's `index.ts`, never their siblings. */
+async function scanPluginIds(): Promise<string[]> {
+    const found: string[] = [];
+
+    for (const pattern of ["*.ts", "*/index.ts"]) {
+        for await (const file of new Bun.Glob(pattern).scan({ cwd: `${import.meta.dir}/plugins` })) {
+            if (file.endsWith(".test.ts")) {
+                continue;
+            }
+
+            const module: Record<string, unknown> = await import(`${import.meta.dir}/plugins/${file}`);
+
+            for (const exported of Object.values(module)) {
+                for (const candidate of Array.isArray(exported) ? exported : [exported]) {
+                    if (isPlugin(candidate)) {
+                        found.push(candidate.id);
+                    }
+                }
+            }
+        }
+    }
+
+    return found;
+}
+
 function fakePlugin(id: string): ProviderPlugin {
     return {
         id,
@@ -139,29 +164,30 @@ describe("built-in plugins", () => {
         registerBuiltInPlugins();
         const registered = new Set(registeredProviderIds());
 
-        const glob = new Bun.Glob("*.ts");
-        const found: string[] = [];
-
-        for await (const file of glob.scan({ cwd: `${import.meta.dir}/plugins` })) {
-            if (file.endsWith(".test.ts")) {
-                continue;
-            }
-
-            const module: Record<string, unknown> = await import(`${import.meta.dir}/plugins/${file}`);
-
-            for (const exported of Object.values(module)) {
-                for (const candidate of Array.isArray(exported) ? exported : [exported]) {
-                    if (isPlugin(candidate)) {
-                        found.push(candidate.id);
-                    }
-                }
-            }
-        }
+        const found = await scanPluginIds();
 
         expect(found.length).toBeGreaterThan(0);
 
         for (const id of found) {
             expect(registered.has(id)).toBe(true);
         }
+    });
+
+    /**
+     * A plugin that outgrew one file becomes a FOLDER with an `index.ts`
+     * (anthropic-sub, openai-sub, grok-sub carry login and discovery modules
+     * beside the plugin). Two explicit scans rather than `**\/*.ts`: the siblings
+     * export helpers, not plugins, and importing them would only be work.
+     */
+    test("a plugin folder's index.ts is scanned like a flat plugin file", async () => {
+        registerBuiltInPlugins();
+
+        const found = await scanPluginIds();
+
+        expect(found).toContain("anthropic-sub");
+        expect(found).toContain("openai-sub");
+        expect(found).toContain("grok-sub");
+        // The flat files must not have been dropped by the second pattern.
+        expect(found).toContain("openrouter");
     });
 });

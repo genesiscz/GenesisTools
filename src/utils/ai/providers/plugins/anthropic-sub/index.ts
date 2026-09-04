@@ -1,6 +1,7 @@
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
-import { AnthropicSubResolver } from "../../resolvers/AnthropicSubResolver";
-import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-types";
+import { AnthropicSubResolver } from "../../../resolvers/AnthropicSubResolver";
+import type { AccountFeatures } from "../../account-features";
+import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 
 /**
  * Claude Max/Pro subscription.
@@ -11,6 +12,19 @@ import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-typ
  * rewriting that during a storage migration would be two risky changes at once.
  */
 const resolver = new AnthropicSubResolver();
+
+/**
+ * `limitOrder` is `VISIBLE_BUCKETS` (`src/claude/lib/usage/constants.ts`) plus
+ * `extra_usage`, copied rather than imported: `src/utils/` must not depend on a
+ * tool folder. `prominentLimits` are the keys the usage mapper emits for the
+ * compact views (TUI overview, menubar).
+ */
+const presentation: AccountFeatures["presentation"] = {
+    displayName: "Claude",
+    alias: "claude",
+    limitOrder: ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps", "extra_usage"],
+    prominentLimits: ["five_hour", "seven_day", "seven_day_sonnet"],
+};
 
 export const anthropicSubPlugin: ProviderPlugin = {
     id: "anthropic-sub",
@@ -50,5 +64,10 @@ export const anthropicSubPlugin: ProviderPlugin = {
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
         }
+    },
+
+    accounts: {
+        presentation,
+        logoutTargets: ["oauth", "longLived", "secondary"],
     },
 };

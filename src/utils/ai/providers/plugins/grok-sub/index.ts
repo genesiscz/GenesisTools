@@ -1,6 +1,7 @@
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
-import { GrokSubResolver } from "../../resolvers/GrokSubResolver";
-import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-types";
+import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
+import type { AccountFeatures } from "../../account-features";
+import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 
 /**
  * SuperGrok subscription through the Grok CLI chat proxy.
@@ -9,6 +10,14 @@ import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-typ
  * and sends the CLI identification headers the proxy 426s without.
  */
 const resolver = new GrokSubResolver();
+
+/** xAI reports one window: the monthly billing credit (`used` against `monthlyLimit`). */
+const presentation: AccountFeatures["presentation"] = {
+    displayName: "Grok",
+    alias: "grok",
+    limitOrder: ["monthly"],
+    prominentLimits: ["monthly"],
+};
 
 export const grokSubPlugin: ProviderPlugin = {
     id: "grok-sub",
@@ -48,5 +57,10 @@ export const grokSubPlugin: ProviderPlugin = {
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
         }
+    },
+
+    accounts: {
+        presentation,
+        logoutTargets: ["authFile"],
     },
 };

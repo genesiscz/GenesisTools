@@ -1,6 +1,7 @@
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
-import { OpenAISubResolver } from "../../resolvers/OpenAISubResolver";
-import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-types";
+import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
+import type { AccountFeatures } from "../../account-features";
+import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 
 /**
  * Codex (ChatGPT plan) subscription over the WHAM endpoint.
@@ -10,6 +11,14 @@ import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-typ
  * behaviour that must not change while storage moves under it.
  */
 const resolver = new OpenAISubResolver();
+
+/** The two windows the Codex app-server reports: a 5h `primary` and a weekly `secondary`. */
+const presentation: AccountFeatures["presentation"] = {
+    displayName: "Codex",
+    alias: "codex",
+    limitOrder: ["primary", "secondary"],
+    prominentLimits: ["primary", "secondary"],
+};
 
 export const openAiSubPlugin: ProviderPlugin = {
     id: "openai-sub",
@@ -45,5 +54,10 @@ export const openAiSubPlugin: ProviderPlugin = {
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
         }
+    },
+
+    accounts: {
+        presentation,
+        logoutTargets: ["oauth", "authFile"],
     },
 };
