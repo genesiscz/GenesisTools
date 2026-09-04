@@ -41,13 +41,17 @@ export function isRunningUnderGenesisApp(): boolean {
     return env.tools.getAppBundleId() === GENESIS_APP_BUNDLE_ID;
 }
 
-/** The launcher to prepend to a command, or null when the tree is already covered or the app is absent. */
-export function genesisAppLauncher(): string | null {
-    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isRunningUnderGenesisApp()) {
-        return null;
-    }
-
-    if (isGenesisAppDisabledByMarker()) {
+/**
+ * The installed launcher, or null when there is none to use: not macOS, the app was never built,
+ * or routing is switched off by env var or marker.
+ *
+ * Deliberately blind to whether THIS process already runs under the app. Anything that records the
+ * launcher for a *later* execution — a launchd plist, or the check for whether one still needs
+ * migrating — must ask this question, because the answer has to be the same whether the writing
+ * command happened to be launched through the app or not.
+ */
+export function installedGenesisAppLauncher(): string | null {
+    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
         return null;
     }
 
@@ -55,8 +59,24 @@ export function genesisAppLauncher(): string | null {
     return existsSync(launcher) ? launcher : null;
 }
 
+/**
+ * The launcher to prepend to a command this process is about to spawn, or null when there is
+ * nothing to add — including the case where this process ALREADY runs under the app, since
+ * re-wrapping would add a second pair of launcher stages for no gain.
+ */
+export function genesisAppLauncher(): string | null {
+    return isRunningUnderGenesisApp() ? null : installedGenesisAppLauncher();
+}
+
+/**
+ * Put the launcher in front of a command that will be executed later, by launchd.
+ *
+ * Uses the installed launcher rather than `genesisAppLauncher()`: `tools` itself runs under the
+ * app, so asking the spawn-time question here wrote plists with the bare command and silently
+ * disabled the whole feature.
+ */
 export function wrapWithGenesisApp(command: readonly string[]): string[] {
-    const launcher = genesisAppLauncher();
+    const launcher = installedGenesisAppLauncher();
     return launcher ? [launcher, ...command] : [...command];
 }
 
@@ -78,7 +98,7 @@ export function launchdProgramArgumentsXml(command: readonly string[], indent = 
  * user-triggered start; nothing rewrites a live job behind the user's back.
  */
 export function launchdPlistNeedsGenesisApp(plistPath: string): boolean {
-    const launcher = genesisAppLauncher();
+    const launcher = installedGenesisAppLauncher();
 
     if (!launcher || !existsSync(plistPath)) {
         return false;
