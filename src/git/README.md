@@ -94,7 +94,8 @@ tools git merged --prune feat/x --prune .worktrees/feat-y   # remove only the na
 | `MERGED` | `ancestor` | plain merge or fast-forward |
 | `MERGED` | `cherry` | rebased or cherry-picked; every patch-id exists upstream |
 | `MERGED` | `content` | squashed, recomposed or a snapshot: every touched file's final blob exists in the base's history since the fork |
-| `UNMERGED` | `none` | the listed files hold content the base never had |
+| `STALE` | `superseded` | nothing of the branch landed as-is, but the base itself rewrote EVERY file it touches: an older draft of work that moved on (a pre-review snapshot of a squash-merged PR, a `backup/*` cut before a rebase, an agent scratch branch) |
+| `UNMERGED` | `none` | the listed files hold content the base never had, including at least one path the base never touched again after the fork |
 
 | Option | Description |
 |---|---|
@@ -110,6 +111,8 @@ tools git merged --prune feat/x --prune .worktrees/feat-y   # remove only the na
 | `-C, --cwd <path>` | Repository path |
 
 `--prune` refuses UNMERGED refs, dirty worktrees, the current branch, the base and the main checkout; an unpushed MERGED branch is a warning (the remote holds an older copy). Exit 0 when every ref is MERGED or EMPTY and clean, 1 otherwise, 2 on usage.
+
+STALE refs are listed in their own section and are never folded into the "safe to remove" line: whether an older draft is worth keeping is the reader's call, so `--prune` has to name each one. They do not fail the exit code.
 
 ### `rebase-cascade`
 

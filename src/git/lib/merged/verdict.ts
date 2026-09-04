@@ -6,6 +6,7 @@
  *   MERGED    ancestor   merge-base --is-ancestor         plain merge / fast-forward (ahead == 0)
  *   MERGED    cherry     git cherry has no "+"            rebased or cherry-picked (patch-ids match)
  *   MERGED    content    blob containment                 squashed, RECOMPOSED, or a snapshot
+ *   STALE     superseded every unlanded file was rewritten on the base after the fork
  *   UNMERGED  none       files whose branch blob never existed on the base
  *
  * `how` is reported so the reader learns why git's own tests would have lied.
@@ -15,8 +16,8 @@
 
 import type { NameStatusEntry, RawChange } from "@genesiscz/utils/git";
 
-export type Verdict = "MERGED" | "EMPTY" | "UNMERGED";
-export type How = "ancestor" | "cherry" | "content" | "none" | "-";
+export type Verdict = "MERGED" | "EMPTY" | "STALE" | "UNMERGED";
+export type How = "ancestor" | "cherry" | "content" | "superseded" | "none" | "-";
 
 export interface QuickFacts {
     ahead: number;
@@ -29,6 +30,18 @@ export interface VerdictResult {
     verdict: Verdict;
     how: How;
     unmerged: NameStatusEntry[];
+}
+
+/**
+ * Did the base rewrite this path itself after the fork? Then the branch holds an
+ * OLDER draft of a file that moved on without it, which is a different thing from
+ * work nobody ever landed. A pre-review snapshot of a squash-merged PR lands here:
+ * its blobs are nowhere in the base, yet every one of its files was rewritten
+ * upstream. Reporting that as plain UNMERGED made ten such branches unanswerable
+ * without hand-diffing each file.
+ */
+function isSupersededPath(path: string, historicBlobs: Map<string, Set<string>>): boolean {
+    return historicBlobs.has(path);
 }
 
 /** The cheap tiers. Null means the content tier has to decide. */
@@ -110,6 +123,10 @@ export function contentVerdict(evidence: ContentEvidence): VerdictResult {
 
     if (unmerged.length === 0) {
         return { verdict: "MERGED", how: "content", unmerged };
+    }
+
+    if (unmerged.every((change) => isSupersededPath(change.path, evidence.historicBlobs))) {
+        return { verdict: "STALE", how: "superseded", unmerged };
     }
 
     return { verdict: "UNMERGED", how: "none", unmerged };

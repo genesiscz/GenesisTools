@@ -111,7 +111,7 @@ describe("verdict ladder", () => {
         expect(report).toMatchObject({ verdict: "MERGED", how: "content", ahead: 3 });
     });
 
-    it("UNMERGED listing the one file whose snapshot version never landed", async () => {
+    it("STALE when the base rewrote every file the snapshot still holds an older copy of", async () => {
         const r = await repo();
         await r.checkout("feat/pr", { create: true });
         await r.commit({ file: "a.txt", content: "v1\n", message: "a v1" });
@@ -125,9 +125,24 @@ describe("verdict ladder", () => {
         expect(pr.verdict).toBe("MERGED");
 
         const snapshot = await collectRefReport(await ctxFor(r), "backup/snapshot");
-        expect(snapshot).toMatchObject({ verdict: "UNMERGED", how: "none", touched: 2 });
+        expect(snapshot).toMatchObject({ verdict: "STALE", how: "superseded", touched: 2 });
         expect(snapshot.unmerged).toEqual([{ path: "a.txt", status: "A", insertions: 1, deletions: 1 }]);
+        // STALE never auto-suggests removal: the reader decides whether an older
+        // draft is worth keeping, so --prune has to name it.
         expect(snapshot.commands).toEqual([]);
+    });
+
+    it("UNMERGED when a file the branch changed was never touched again on the base", async () => {
+        const r = await repo();
+        await r.checkout("feat/orphan", { create: true });
+        await r.commit({ file: "only-here.txt", content: "mine\n", message: "add only-here" });
+        await r.checkout("master");
+        await r.commit({ file: "elsewhere.txt", content: "other\n", message: "unrelated work" });
+
+        const report = await collectRefReport(await ctxFor(r), "feat/orphan");
+        expect(report).toMatchObject({ verdict: "UNMERGED", how: "none" });
+        expect(report.unmerged.map((u) => u.path)).toEqual(["only-here.txt"]);
+        expect(report.commands).toEqual([]);
     });
 
     it("treats a deleted path as merged only when the base no longer has it", async () => {

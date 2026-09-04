@@ -52,6 +52,10 @@ function collectRepeatable(value: string, previous: string[]): string[] {
 }
 
 function verdictColor(verdict: RefReport["verdict"]): (s: string) => string {
+    if (verdict === "STALE") {
+        return pc.magenta;
+    }
+
     if (verdict === "MERGED") {
         return pc.green;
     }
@@ -178,6 +182,26 @@ async function reportRefs({
 
         for (const e of errors) {
             out.println(pc.red(`error: ${e}`));
+        }
+
+        const stale = reports.filter((r) => r.verdict === "STALE" && r.dirty === 0);
+
+        if (stale.length > 0) {
+            out.println(
+                "\nstale drafts (nothing of theirs landed as-is, but the base rewrote EVERY file they touch — an older copy of work that moved on):"
+            );
+
+            for (const r of stale) {
+                out.println(`  ${r.label}  ${r.unmerged.length} file(s), all superseded on ${r.base.ref}`);
+            }
+
+            out.println(
+                `  ${suggestCommand("tools git merged", {
+                    subcommand: ["merged"],
+                    remove: ["--all", "--pr", "--json", ...stale.map((r) => r.ref)],
+                    add: stale.flatMap((r) => ["--prune", r.ref]),
+                })}`
+            );
         }
 
         const removable = reports.filter((r) => r.commands.length > 0);

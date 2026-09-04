@@ -202,7 +202,10 @@ export async function buildPlan(opts: BuildPlanOptions): Promise<BuiltPlan> {
     let parentRoute: ParentRoute = "rebase";
     let parentEvidence: CascadePlan["parentEvidence"] = null;
 
-    if (parentReport.verdict !== "UNMERGED") {
+    // Only a real landing skips the rebase. STALE means the base rewrote every file
+    // the parent still holds an older copy of, which is NOT "already landed": the
+    // parent's own commits still have to be replayed or judged by the oracle route.
+    if (parentReport.verdict === "MERGED" || parentReport.verdict === "EMPTY") {
         parentRoute = "merged";
     } else if (
         parentReport.touched !== null &&

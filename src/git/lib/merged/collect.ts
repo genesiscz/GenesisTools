@@ -202,7 +202,10 @@ export async function collectRefReport(ctx: CollectContext, ref: string): Promis
     const pr = ctx.wantPr && ctx.driver && branch ? (await ctx.driver.prForHead(branch)).pr : null;
     const commands: string[] = [];
 
-    if (decision.verdict !== "UNMERGED" && dirty === 0) {
+    // STALE is deliberately NOT auto-listed as removable: "every file moved on
+    // without you" is a judgement the reader makes, so it gets its own section
+    // and has to be named explicitly on --prune.
+    if ((decision.verdict === "MERGED" || decision.verdict === "EMPTY") && dirty === 0) {
         if (worktree && !isMainWorktree(worktree, ctx.repoRoot)) {
             commands.push(`git worktree remove ${SafeJSON.stringify(worktree.path)}`);
         }
