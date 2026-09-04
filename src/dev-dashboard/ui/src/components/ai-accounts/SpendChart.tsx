@@ -1,9 +1,8 @@
 import type { AccountRef, SpendGrain, SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
-import { formatClock } from "@genesiscz/utils/format";
 import { ChartBox } from "@ui/components/chart-box";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { ACCOUNT_PALETTE, hashString } from "@/lib/account-color";
-import { buildSpendChartData, formatUsd, type SpendChartMode, TOTAL_KEY } from "@/lib/spend-chart-data";
+import { bucketLabel, buildSpendChartData, formatUsd, type SpendChartMode, TOTAL_KEY } from "@/lib/spend-chart-data";
 import { ChartLegend } from "./ChartLegend";
 
 interface SpendChartProps {
@@ -20,11 +19,6 @@ interface SpendChartProps {
 }
 
 const TICK_COUNT = 6;
-
-function tickFormatter(rangeStartMs: number, rangeEndMs: number): (ms: number) => string {
-    const spanMinutes = (rangeEndMs - rangeStartMs) / 60_000;
-    return (ms: number) => formatClock(ms, spanMinutes <= 1440 ? {} : { date: "numeric" });
-}
 
 const TOOLTIP_STYLE = {
     backgroundColor: "var(--dd-bg-panel)",
@@ -54,7 +48,9 @@ export function SpendChart({
         { length: TICK_COUNT },
         (_, i) => rangeStartMs + ((rangeEndMs - rangeStartMs) * i) / (TICK_COUNT - 1)
     );
-    const format = tickFormatter(rangeStartMs, rangeEndMs);
+    // One formatter for the axis and the tooltip, in the same local zone the
+    // bucket keys were parsed in, so a point cannot be labelled two ways.
+    const format = bucketLabel(grain, (rangeEndMs - rangeStartMs) / 60_000);
 
     const nameOf = (key: string): string => {
         if (key === TOTAL_KEY) {

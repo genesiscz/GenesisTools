@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
-import { buildSpendChartData, formatUsd, parseBucketTime, sumVisible } from "./spend-chart-data";
+import { bucketLabel, buildSpendChartData, formatUsd, parseBucketTime, sumVisible } from "./spend-chart-data";
 
 const POINTS: SpendSeriesPoint[] = [
     {
@@ -62,24 +62,56 @@ describe("buildSpendChartData", () => {
     });
 });
 
+/**
+ * `spendBucketKey` emits four shapes, all LOCAL wall-clock by design: a day and
+ * a week as `YYYY-MM-DD` (the week being its Monday), an hour as
+ * `YYYY-MM-DDTHH`, a minute as `YYYY-MM-DDTHH:mm`. One test per shape, each
+ * asserting the local fields rather than an epoch number, so the suite passes in
+ * any zone and still fails if a shape goes back through `new Date(string)`.
+ */
 describe("parseBucketTime", () => {
-    test("an hour bucket key is local wall-clock, not Invalid Date", () => {
-        const parsed = parseBucketTime("2026-09-04T20");
+    test("minute: `2026-09-04T20:37` keeps its local hour and minute", () => {
+        const at = new Date(parseBucketTime("2026-09-04T20:37"));
 
-        expect(Number.isNaN(parsed)).toBe(false);
-        expect(new Date(parsed).getHours()).toBe(20);
-        expect(new Date(parsed).getDate()).toBe(4);
+        expect(at.getFullYear()).toBe(2026);
+        expect(at.getMonth()).toBe(8);
+        expect(at.getDate()).toBe(4);
+        expect(at.getHours()).toBe(20);
+        expect(at.getMinutes()).toBe(37);
     });
 
-    test("a day bucket key is local midnight, so it does not shift across the zone", () => {
-        const parsed = parseBucketTime("2026-09-04");
+    test("hour: `2026-09-04T20` is 8pm local, where `new Date` gives Invalid Date", () => {
+        const at = new Date(parseBucketTime("2026-09-04T20"));
 
-        expect(new Date(parsed).getHours()).toBe(0);
-        expect(new Date(parsed).getDate()).toBe(4);
+        expect(Number.isNaN(at.getTime())).toBe(false);
+        expect(Number.isNaN(new Date("2026-09-04T20").getTime())).toBe(true);
+        expect(at.getDate()).toBe(4);
+        expect(at.getHours()).toBe(20);
+        expect(at.getMinutes()).toBe(0);
     });
 
-    test("a minute bucket key keeps its minute", () => {
-        expect(new Date(parseBucketTime("2026-09-04T20:37")).getMinutes()).toBe(37);
+    test("day: `2026-09-04` is local midnight, not UTC midnight", () => {
+        const at = new Date(parseBucketTime("2026-09-04"));
+
+        expect(at.getDate()).toBe(4);
+        expect(at.getHours()).toBe(0);
+        expect(at.getMinutes()).toBe(0);
+    });
+
+    test("week: the Monday shares the day shape and lands on that local Monday", () => {
+        const at = new Date(parseBucketTime("2026-08-31"));
+
+        expect(at.getDay()).toBe(1);
+        expect(at.getDate()).toBe(31);
+        expect(at.getHours()).toBe(0);
+    });
+
+    test("a day key differs from the naive parse by exactly the zone offset", () => {
+        const ours = new Date(parseBucketTime("2026-09-04"));
+        const naive = new Date("2026-09-04");
+
+        expect(ours.getHours()).toBe(0);
+        expect(ours.getTime() - ours.getTimezoneOffset() * 60_000).toBe(naive.getTime());
     });
 
     test("a full ISO instant still parses as an instant", () => {
@@ -88,6 +120,33 @@ describe("parseBucketTime", () => {
 
     test("junk stays NaN so the chart drops it", () => {
         expect(Number.isNaN(parseBucketTime("nope"))).toBe(true);
+    });
+});
+
+describe("bucketLabel", () => {
+    test("an hour bucket is labelled with the local hour it names", () => {
+        const label = bucketLabel("hour", 360)(parseBucketTime("2026-09-04T20"));
+
+        expect(label).toContain("20:00");
+    });
+
+    test("a minute bucket is labelled with the local minute it names", () => {
+        expect(bucketLabel("minute", 60)(parseBucketTime("2026-09-04T20:37"))).toContain("20:37");
+    });
+
+    test("a day bucket prints a date, never a midnight time", () => {
+        const label = bucketLabel("day", 10080)(parseBucketTime("2026-09-04"));
+
+        expect(label).not.toContain("00:00");
+        expect(label).toContain("4");
+    });
+
+    test("a week bucket prints a date too", () => {
+        expect(bucketLabel("week", 200000)(parseBucketTime("2026-08-31"))).not.toContain("00:00");
+    });
+
+    test("a long window keeps the date beside the time for hour buckets", () => {
+        expect(bucketLabel("hour", 4320)(parseBucketTime("2026-09-04T20"))).toContain("9/4");
     });
 });
 
