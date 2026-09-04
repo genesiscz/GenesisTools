@@ -65,25 +65,56 @@ export function autosaveDir(): string {
     return join(homedir(), "Library", "Application Support", "cmux");
 }
 
-/** Newest `session-*.json` in the autosave dir, parsed. Throws when none exists. */
-export function readAutosaveSession(dir: string = autosaveDir()): AutosaveSession {
-    const candidates = readdirSync(dir)
-        .filter((name) => name.startsWith("session-") && name.endsWith(".json") && !name.includes("-previous"))
+export function listAutosaveFiles(
+    dir: string = autosaveDir(),
+    which: "current" | "previous"
+): Array<{ path: string; mtimeMs: number }> {
+    return readdirSync(dir)
+        .filter((name) => name.startsWith("session-") && name.endsWith(".json"))
+        .filter((name) => {
+            const previous = name.endsWith("-previous.json");
+            return which === "previous" ? previous : !previous;
+        })
         .map((name) => {
             const path = join(dir, name);
             return { path, mtimeMs: statSync(path).mtimeMs };
         })
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
 
-    const newest = candidates[0];
+export function readAutosaveFile(path: string, mtimeMs?: number): AutosaveSession {
+    const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+    const savedAtMs = mtimeMs ?? statSync(path).mtimeMs;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        logger.warn({ path }, "[cmux-autosave] ignored non-object autosave");
+        return { path, savedAtMs, windows: [] };
+    }
+
+    const windows = Array.isArray((raw as { windows?: unknown }).windows)
+        ? (raw as { windows: AutosaveWindow[] }).windows
+        : [];
+    logger.debug({ path, windows: windows.length }, "[cmux-autosave] loaded");
+    return { path, savedAtMs, windows };
+}
+
+/** Newest `session-*.json` in the autosave dir, parsed. Throws when none exists. */
+export function readAutosaveSession(dir: string = autosaveDir()): AutosaveSession {
+    const newest = listAutosaveFiles(dir, "current")[0];
     if (!newest) {
         throw new Error(`No cmux autosave session file found in ${dir}`);
     }
 
-    const raw = SafeJSON.parse(readFileSync(newest.path, "utf8"), { strict: true }) as { windows?: AutosaveWindow[] };
-    const windows = raw.windows ?? [];
-    logger.debug({ path: newest.path, windows: windows.length }, "[cmux-autosave] loaded");
-    return { path: newest.path, savedAtMs: newest.mtimeMs, windows };
+    return readAutosaveFile(newest.path, newest.mtimeMs);
+}
+
+/** The file cmux renamed aside on last launch (`*-previous.json`). */
+export function readPreviousAutosaveSession(dir: string = autosaveDir()): AutosaveSession {
+    const newest = listAutosaveFiles(dir, "previous")[0];
+    if (!newest) {
+        throw new Error(`No cmux previous-autosave file found in ${dir}`);
+    }
+
+    return readAutosaveFile(newest.path, newest.mtimeMs);
 }
 
 /** panel id (== live surface uuid == CMUX_SURFACE_ID) → panel, across all windows/workspaces. */

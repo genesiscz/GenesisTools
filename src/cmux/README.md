@@ -11,6 +11,7 @@ Crash recovery and repeatable layouts for cmux. A profile captures the workspace
 | Command | Description |
 |---------|-------------|
 | `profiles` | Manage saved workspace profiles |
+| `restore-after-restart` | Guided (or `--source`/`--list`/`--dry-run`) restore of the pre-restart layout with Claude, Grok, and Codex resume commands |
 | `doctor` | Read-only health probe: is cmux running, does its socket answer, is the UI thread starved |
 | `rescue [name]` | Guided recovery from a livelocked cmux — offline capture, confirmed kill, clean relaunch, command replay |
 | `send-self <text>` | Type text into the terminal surface this process is running in, then press Enter |
@@ -71,6 +72,30 @@ Three capture behaviours are **on by default**, and they are what makes a restor
 Pre-typing rather than auto-running is deliberate. Restoring a layout should not silently re-execute commands.
 
 `restore` is always non-destructive: it creates workspaces, it never closes yours.
+
+## `restore-after-restart`
+
+After a cmux app restart, rebuild the previous panes as new workspaces and pre-type Claude, Grok, and Codex resume commands. Always non-destructive. Default workspace prefix is `restart-`.
+
+```bash
+tools cmux restore-after-restart --source previous --dry-run
+tools cmux restore-after-restart --source previous --agents grok,claude --enter -y
+tools cmux restore-after-restart --list --source previous
+```
+
+| Flag | Description |
+|------|-------------|
+| `--source [source]` | `previous` (autosave `*-previous.json`), `live` (socket, then current autosave), or `profile` |
+| `--profile <name>` | Named profile. Required with `--source profile` off TTY |
+| `--agents [list]` | `claude`, `grok`, `codex`. Default is all three |
+| `--enter` | Press Enter after typing each resume command |
+| `--no-replay` | Only `cd` into cwd |
+| `--prefix <str>` | Workspace name prefix (default `restart-`) |
+| `--list` | Print the layout and inferred commands, then exit |
+| `--dry-run` | Print the restore plan without modifying cmux |
+| `-y, --yes` | Skip confirmation. Required off TTY |
+
+`previous` is the file cmux renamed aside on last launch, not the live layout.
 
 `restore --enter` opts into **executing** each captured command instead of pre-typing it.
 That reverses the safe default above, so it is opt-in and never implied.
