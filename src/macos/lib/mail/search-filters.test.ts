@@ -147,6 +147,7 @@ describe("resolveMailboxRowids", () => {
     function freshDb(): Database {
         const db = new Database(":memory:");
         db.run("CREATE TABLE mailboxes (ROWID INTEGER PRIMARY KEY, url TEXT)");
+        db.run("CREATE TABLE messages (ROWID INTEGER PRIMARY KEY, mailbox INTEGER, deleted INTEGER DEFAULT 0)");
         // Real-world Mail.app stores URL-encoded UTF-8 in mailboxes.url.
         db.run(
             "INSERT INTO mailboxes (ROWID, url) VALUES " +
@@ -184,10 +185,17 @@ describe("resolveMailboxRowids", () => {
         expect(resolveMailboxRowids(db, "Doručená pošta")).toEqual([1]);
     });
 
-    it("matches plain ASCII names (no regression)", () => {
+    it("INBOX (any case) is the all-inboxes alias: every inbox-named box of every account", () => {
         const db = freshDb();
-        expect(resolveMailboxRowids(db, "INBOX")).toEqual([1]);
-        expect(resolveMailboxRowids(db, "inbox")).toEqual([1]);
+        // ROWID 2 is "Doručená pošta", the EWS/localized inbox name, so it belongs to the alias too.
+        expect(resolveMailboxRowids(db, "INBOX")).toEqual([1, 2]);
+        expect(resolveMailboxRowids(db, "inbox")).toEqual([1, 2]);
+    });
+
+    it("matches plain ASCII names other than INBOX by substring (no regression)", () => {
+        const db = freshDb();
+        expect(resolveMailboxRowids(db, "Archive")).toEqual([4]);
+        expect(resolveMailboxRowids(db, "archive")).toEqual([4]);
     });
 
     it("returns empty array when nothing matches", () => {

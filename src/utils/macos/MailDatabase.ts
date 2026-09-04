@@ -223,13 +223,23 @@ export class MailDatabase extends MacDatabase {
      * applicable. Idempotent: re-resolving an already-resolved opts is a
      * no-op.
      */
-    resolveMailboxFilter<T extends MailFilterOptions>(opts: T): T {
+    async resolveMailboxFilter<T extends MailFilterOptions>(opts: T): Promise<T> {
         if (opts.mailboxRowids !== undefined) {
             return opts;
         }
 
-        const rowids = resolveMailboxRowids(this.getDb(), opts.mailbox, opts.account);
+        // Mailbox URLs carry the account UUID, never its address, so an email
+        // needle has to go through the accounts table first.
+        const account = opts.account?.includes("@") ? await this.accountUuidForEmail(opts.account) : opts.account;
+        const rowids = resolveMailboxRowids(this.getDb(), opts.mailbox, account);
         return rowids === undefined ? opts : { ...opts, mailboxRowids: rowids };
+    }
+
+    /** Falls back to the needle itself when no account carries that address, so the filter still matches nothing. */
+    private async accountUuidForEmail(email: string): Promise<string> {
+        const wanted = email.trim().toLowerCase();
+        const accounts = await this.listAccounts();
+        return accounts.find((a) => a.email.toLowerCase() === wanted)?.uuid ?? wanted;
     }
 
     async searchMessages(opts: SearchOptions): Promise<MailMessageRow[]> {
@@ -241,7 +251,7 @@ export class MailDatabase extends MacDatabase {
 
         const ordered = buildOrderedLikePattern(tokens);
         const escapedTokens = tokens.map((t) => `%${escapeLike(t)}%`);
-        const filterExpressions = buildMailFilterExpressions(this.resolveMailboxFilter(opts));
+        const filterExpressions = buildMailFilterExpressions(await this.resolveMailboxFilter(opts));
 
         logger.debug(`Running search query (wildcard) with ${tokens.length} token(s): ${tokens.join(", ")}`);
 
@@ -285,7 +295,7 @@ export class MailDatabase extends MacDatabase {
         }
 
         const results: MailMessageRow[] = [];
-        const filterExpressions = opts ? buildMailFilterExpressions(this.resolveMailboxFilter(opts)) : [];
+        const filterExpressions = opts ? buildMailFilterExpressions(await this.resolveMailboxFilter(opts)) : [];
 
         for (let offset = 0; offset < rowids.length; offset += SQL_BIND_BATCH) {
             const batch = rowids.slice(offset, offset + SQL_BIND_BATCH);
@@ -314,7 +324,7 @@ export class MailDatabase extends MacDatabase {
         limit: number,
         opts: MailFilterOptions & { offset?: number } = {}
     ): Promise<MailMessageRow[]> {
-        const resolved = this.resolveMailboxFilter({ ...opts, mailbox: opts.mailbox ?? mailbox });
+        const resolved = await this.resolveMailboxFilter({ ...opts, mailbox: opts.mailbox ?? mailbox });
 
         if (resolved.mailboxRowids !== undefined && resolved.mailboxRowids.length === 0) {
             return [];

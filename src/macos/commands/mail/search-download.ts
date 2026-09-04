@@ -56,7 +56,7 @@ export function registerSearchDownloadCommand(program: Command): void {
                         process.exit(1);
                     }
 
-                    const searchOpts = db.resolveMailboxFilter({
+                    const searchOpts = await db.resolveMailboxFilter({
                         query,
                         withoutBody: options.withoutBody,
                         receiver: options.receiver,

@@ -125,7 +125,7 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                const searchOpts: SearchOptions = db.resolveMailboxFilter({
+                const searchOpts: SearchOptions = await db.resolveMailboxFilter({
                     query,
                     withoutBody: options.withoutBody,
                     receiver: options.receiver,

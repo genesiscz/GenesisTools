@@ -43,7 +43,7 @@ export function registerListCommand(program: Command): void {
         .option("--to <date>", "Only emails sent at or before this instant (date-only is end of that local day)")
         .option("--sender <text>", "Filter by sender address or name (substring)")
         .option("--receiver <email>", "Filter by recipient address (substring)")
-        .option("--account <id>", "Filter by account (email address or UUID prefix)")
+        .option("--account <id>", "Filter by account (email address as shown by `accounts`, or UUID prefix)")
         .option("--unread", "Only unread emails")
         .option("--read", "Only read emails")
         .option("--flagged", "Only flagged emails")
