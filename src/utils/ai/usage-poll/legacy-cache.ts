@@ -171,26 +171,32 @@ function stripNative(snapshot: AccountUsageSnapshot): AccountUsageSnapshot {
  * anthropic only) replaces that provider's slice and keeps every other slice the file
  * already holds. Without the merge, the first anthropic-only poll after a daemon round
  * wiped codex and grok out of the file the dashboard and the Genesis app read.
+ *
+ * The read, the merge and the write run as ONE critical section under the storage file
+ * lock. Two writers used to read the same `existing`, merge their own slice onto it and
+ * write in turn, so the loser's slice was dropped from the merged result: the 30s daemon
+ * racing a `tools claude usage` made the provider count alternate. `atomicUpdate` also
+ * writes through a temp file and a rename, which `putCacheFile` does not, so a reader can
+ * no longer catch a half-written file.
+ *
+ * The lock is NOT reentrant. Never call this from inside a lock on the same file.
  */
 export async function writeSnapshotsCache(
     providers: Record<string, SnapshotsCacheProvider>,
     fetchedAt: Date = new Date()
 ): Promise<SnapshotsCache> {
-    const existing = await readSnapshotsCache();
-    const payload: SnapshotsCache = {
-        fetchedAt: fetchedAt.toISOString(),
-        providers: {
-            ...existing?.providers,
-            ...Object.fromEntries(
-                Object.entries(providers).map(([id, slice]) => [
-                    id,
-                    { ...slice, accounts: slice.accounts.map(stripNative) },
-                ])
-            ),
-        },
-    };
+    const fresh = Object.fromEntries(
+        Object.entries(providers).map(([id, slice]) => [id, { ...slice, accounts: slice.accounts.map(stripNative) }])
+    );
 
-    await usagePollStorage().putCacheFile(SNAPSHOTS_CACHE_KEY, payload, USAGE_CACHE_TTL);
+    // `atomicUpdate` reads the file with no TTL gate, unlike `readSnapshotsCache`.
+    // Immaterial at USAGE_CACHE_TTL of 365 days, and the payload carries its own
+    // `fetchedAt` for any reader that wants to judge age for itself.
+    const payload = await usagePollStorage().atomicUpdate<SnapshotsCache>(SNAPSHOTS_CACHE_KEY, (current) => ({
+        fetchedAt: fetchedAt.toISOString(),
+        providers: { ...current?.providers, ...fresh },
+    }));
+
     logger.debug({ providers: Object.keys(payload.providers) }, "[usage] all-provider snapshots cache written");
 
     return payload;

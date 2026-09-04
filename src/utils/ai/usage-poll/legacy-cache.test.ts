@@ -193,6 +193,55 @@ describe("writeSnapshotsCache", () => {
         expect(cache?.providers["grok-sub"].accounts.map((s) => s.accountName)).toEqual(["shop"]);
     });
 
+    function slice(provider: string, alias: string, name: string) {
+        return {
+            [provider]: {
+                alias,
+                displayName: alias,
+                prominent: ["monthly"],
+                accounts: [snapshot(provider, name)],
+            },
+        };
+    }
+
+    /**
+     * The 30s daemon and an interactive `tools claude usage` write this file at the same
+     * time. Unlocked, both read the same state, merged their own slice onto it and wrote
+     * in turn, so the loser's provider vanished from the merged result and the observed
+     * provider count alternated. The lock is not reentrant, so two concurrent callers in
+     * ONE process serialize exactly as two processes do.
+     */
+    test("two concurrent writes for different providers both survive", async () => {
+        useTempHome();
+
+        await Promise.all([
+            writeSnapshotsCache(slice("grok-sub", "grok", "work")),
+            writeSnapshotsCache(slice("anthropic-sub", "claude", "personal")),
+        ]);
+
+        const cache = await readSnapshotsCache();
+
+        expect(Object.keys(cache?.providers ?? {}).sort()).toEqual(["anthropic-sub", "grok-sub"]);
+        expect(cache?.providers["grok-sub"].accounts[0].accountName).toBe("work");
+        expect(cache?.providers["anthropic-sub"].accounts[0].accountName).toBe("personal");
+    });
+
+    test("three concurrent writers all survive, and a later one still replaces its own slice", async () => {
+        useTempHome();
+
+        await Promise.all([
+            writeSnapshotsCache(slice("grok-sub", "grok", "work")),
+            writeSnapshotsCache(slice("anthropic-sub", "claude", "personal")),
+            writeSnapshotsCache(slice("openai-sub", "codex", "shop")),
+        ]);
+        await writeSnapshotsCache(slice("grok-sub", "grok", "side"));
+
+        const cache = await readSnapshotsCache();
+
+        expect(Object.keys(cache?.providers ?? {}).sort()).toEqual(["anthropic-sub", "grok-sub", "openai-sub"]);
+        expect(cache?.providers["grok-sub"].accounts.map((entry) => entry.accountName)).toEqual(["side"]);
+    });
+
     test("strips native — a provider-private payload never crosses a file boundary", async () => {
         useTempHome();
 
