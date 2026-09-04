@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getMainRepoRootSync } from "@genesiscz/utils/git/worktree";
+import { getMainRepoRootSync, listWorktrees } from "@genesiscz/utils/git/worktree";
 
 /** `getMainRepoRootSync` answers "which checkout owns this directory" for two
  *  consumers that resolve durable state from it: the clones daemon registers
@@ -55,6 +55,17 @@ describe("getMainRepoRootSync", () => {
 
     it("returns the MAIN checkout root from a subdirectory of a linked worktree", () => {
         expect(getMainRepoRootSync(join(worktree, "src", "deep"))).toBe(main);
+    });
+
+    it("listWorktrees keeps a newline inside a worktree path", async () => {
+        const path = join(outer, "wt\nline");
+        git(main, "worktree", "add", "-b", "newline", path);
+        const listed = await listWorktrees(main);
+        expect(listed.map((w) => [w.path, w.branch, w.isMain])).toEqual([
+            [main, "main", true],
+            [worktree, "side", false],
+            [path, "newline", false],
+        ]);
     });
 
     it("returns the directory unchanged outside any repository", () => {

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Executor } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
+import { porcelain } from "./porcelain";
 
 // =============================================================================
 // Types
@@ -64,49 +65,26 @@ export function formatWorktreeName(prNumber: number, branch: string): string {
 // =============================================================================
 
 /**
- * Parse `git worktree list --porcelain` into structured data.
+ * `git worktree list --porcelain -z` as structured data. The NUL form keeps a
+ * newline inside a worktree path intact; the parser lives in ./porcelain.ts.
+ * `-z` needs git 2.30; an older git rejects the flag, the call fails, and this
+ * returns an empty list, so callers see "no worktrees" rather than a crash.
  */
 export async function listWorktrees(cwd?: string): Promise<WorktreeInfo[]> {
     const g = git(cwd);
-    const result = await g.exec(["worktree", "list", "--porcelain"]);
+    const result = await g.exec(porcelain.worktrees.args());
 
     if (!result.success) {
         return [];
     }
 
-    const worktrees: WorktreeInfo[] = [];
-    let current: Partial<WorktreeInfo> = {};
-
-    const pushIfComplete = () => {
-        if (current.path && current.head !== undefined) {
-            worktrees.push(current as WorktreeInfo);
-        }
-        current = {};
-    };
-
-    for (const line of result.stdout.split("\n")) {
-        if (line.startsWith("worktree ")) {
-            if (current.path) {
-                pushIfComplete();
-            }
-            current = { path: line.slice(9), isBare: false, isMain: worktrees.length === 0 };
-        } else if (line.startsWith("HEAD ")) {
-            current.head = line.slice(5);
-        } else if (line.startsWith("branch ")) {
-            // branch refs/heads/feat/foo → feat/foo
-            current.branch = line.slice(7).replace(/^refs\/heads\//, "");
-        } else if (line === "bare") {
-            current.isBare = true;
-        } else if (line === "detached") {
-            current.branch = null;
-        } else if (line.trim() === "") {
-            pushIfComplete();
-        }
-    }
-
-    pushIfComplete();
-
-    return worktrees;
+    return porcelain.worktrees.parse(result.stdout).map((w) => ({
+        path: w.path,
+        head: w.head,
+        branch: w.branch,
+        isBare: w.isBare,
+        isMain: w.isMain,
+    }));
 }
 
 /**

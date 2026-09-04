@@ -1,6 +1,25 @@
 import type { ExecResult } from "@genesiscz/utils/cli";
 import { Executor } from "@genesiscz/utils/cli";
-import { logger } from "@genesiscz/utils/logger";
+import {
+    type AheadBehind,
+    type CherryEntry,
+    type CommitInfo,
+    type DiffRangeArgs,
+    type LogArgs,
+    type LsTreeArgs,
+    type MergeTreeResult,
+    type NameStatusEntry,
+    type NumstatEntry,
+    parseLeftRightCount,
+    porcelain,
+    type RawChange,
+    type RawChangesArgs,
+    type RefInfo,
+    type StatusArgs,
+    type StatusSummary,
+    type TreeEntry,
+    type WorktreeEntry,
+} from "./porcelain";
 import type { BranchInfo, DetailedCommitInfo } from "./types";
 
 export interface GitOptions {
@@ -368,37 +387,6 @@ export function createGit(options?: GitOptions) {
             return result.success;
         },
 
-        /**
-         * Find potential child branches of a parent branch
-         */
-        async findPotentialChildren(parentBranch: string): Promise<Array<{ name: string; commitsAhead: number }>> {
-            const branches = await this.getBranches();
-            const parentSha = await this.getSha(parentBranch);
-            const children: Array<{ name: string; commitsAhead: number }> = [];
-
-            for (const branch of branches) {
-                if (branch.name === parentBranch) {
-                    continue;
-                }
-
-                try {
-                    const parentIsAncestor = await this.isAncestor(parentSha, branch.sha);
-                    if (!parentIsAncestor) {
-                        continue;
-                    }
-
-                    const commitsAhead = await this.countCommits(parentSha, branch.name);
-                    if (commitsAhead > 0) {
-                        children.push({ name: branch.name, commitsAhead });
-                    }
-                } catch (err) {
-                    logger.debug({ branch: branch.name, parentBranch, err }, "getChildBranches: ancestry check failed");
-                }
-            }
-
-            return children.sort((a, b) => a.name.localeCompare(b.name));
-        },
-
         // === NEW methods ===
 
         /**
@@ -497,108 +485,135 @@ export function createGit(options?: GitOptions) {
          * Ahead/behind vs base via `rev-list --left-right --count base...branch`
          * (left=behind, right=ahead).
          */
-        async aheadBehind(base: string, branch: string): Promise<{ ahead: number; behind: number }> {
+        async aheadBehind(base: string, branch: string): Promise<AheadBehind> {
             const { stdout, success } = await executor.exec([
                 "rev-list",
                 "--left-right",
                 "--count",
                 `${base}...${branch}`,
             ]);
-            if (!success) {
-                return { ahead: 0, behind: 0 };
+            return success ? parseLeftRightCount(stdout) : { ahead: 0, behind: 0 };
+        },
+
+        // === Typed porcelain readers (parsers in ./porcelain.ts) ===
+
+        /**
+         * `git status --porcelain=v2 -z --branch`, typed. Untracked files are
+         * listed individually. Runs with `GIT_OPTIONAL_LOCKS=0`, so a status
+         * never takes the index lock or rewrites the index as a side effect.
+         */
+        async status(opts: StatusArgs & { cwd?: string } = {}): Promise<StatusSummary> {
+            const res = await executor.exec(porcelain.status.args(opts), {
+                cwd: opts.cwd,
+                env: { GIT_OPTIONAL_LOCKS: "0" },
+            });
+
+            if (!res.success) {
+                throw new Error(`git status failed: ${res.stderr}`);
             }
 
-            const [behindStr, aheadStr] = stdout.split(/\s+/);
-            const behind = Number.parseInt(behindStr ?? "0", 10);
-            const ahead = Number.parseInt(aheadStr ?? "0", 10);
-            return { ahead: Number.isNaN(ahead) ? 0 : ahead, behind: Number.isNaN(behind) ? 0 : behind };
+            return porcelain.status.parse(res.stdout);
         },
 
         /**
-         * Resolve a base branch: honour `explicit` if given, else prefer local
-         * `master`, then `main`. Verifies the chosen base exists locally; throws
-         * BaseNotFoundError otherwise.
+         * `git for-each-ref` over the given patterns (default: local heads),
+         * typed with upstream tracking. `LC_ALL=C` keeps the `[ahead N]`,
+         * `[behind N]` and `[gone]` markers in the form the parser reads.
          */
-        async detectBase(explicit?: string): Promise<string> {
-            if (explicit) {
-                if (await this.branchExists(explicit)) {
-                    return explicit;
-                }
+        async refs(patterns?: string[]): Promise<RefInfo[]> {
+            const res = await executor.exec(porcelain.refs.args(patterns), { env: { LC_ALL: "C" } });
 
-                throw new BaseNotFoundError(`Base branch "${explicit}" does not exist locally.`);
+            if (!res.success) {
+                throw new Error(`git for-each-ref failed: ${res.stderr}`);
             }
 
-            for (const candidate of ["master", "main"]) {
-                if (await this.branchExists(candidate)) {
-                    return candidate;
-                }
-            }
+            return porcelain.refs.parse(res.stdout);
+        },
 
-            throw new BaseNotFoundError(
-                "Could not auto-detect a base branch (no local master/main). Pass --base <branch>."
+        /** `git log -z` over a range, typed; `paths` limits it, `limit` caps the count. */
+        async log(opts: LogArgs): Promise<CommitInfo[]> {
+            const res = await executor.execOrThrow(porcelain.log.args(opts), `git log ${opts.range} failed`);
+            return porcelain.log.parse(res.stdout);
+        },
+
+        /** `git diff --name-status -z` between two trees; renames are only detected when asked. */
+        async nameStatus(opts: DiffRangeArgs): Promise<NameStatusEntry[]> {
+            const res = await executor.execOrThrow(
+                porcelain.nameStatus.args(opts),
+                `git diff --name-status ${opts.from} ${opts.to} failed`
             );
+            return porcelain.nameStatus.parse(res.stdout);
+        },
+
+        /** `git ls-tree -r -z --full-tree <ref>`, typed. */
+        async lsTree(opts: LsTreeArgs): Promise<TreeEntry[]> {
+            const res = await executor.execOrThrow(porcelain.lsTree.args(opts), `git ls-tree ${opts.ref} failed`);
+            return porcelain.lsTree.parse(res.stdout);
+        },
+
+        /** `git log --raw -z --no-abbrev` over a range: every blob every commit gave every path. */
+        async rawChanges(opts: RawChangesArgs): Promise<RawChange[]> {
+            const res = await executor.execOrThrow(
+                porcelain.rawChanges.args(opts),
+                `git log --raw ${opts.range} failed`
+            );
+            return porcelain.rawChanges.parse(res.stdout);
+        },
+
+        /** `git diff --numstat -z` between two trees, typed; binary files carry `binary: true`. */
+        async numstat(opts: DiffRangeArgs): Promise<NumstatEntry[]> {
+            const res = await executor.execOrThrow(
+                porcelain.numstat.args(opts),
+                `git diff --numstat ${opts.from} ${opts.to} failed`
+            );
+            return porcelain.numstat.parse(res.stdout);
+        },
+
+        /** `git cherry -v <upstream> <head>`: which of head's commits have an equivalent patch upstream. */
+        async cherry(upstream: string, head: string): Promise<CherryEntry[]> {
+            const res = await executor.execOrThrow(
+                porcelain.cherry.args(upstream, head),
+                `git cherry ${upstream} ${head} failed`
+            );
+            return porcelain.cherry.parse(res.stdout);
         },
 
         /**
-         * Squash-merge detection via tree synthesis (NOT per-commit `git cherry`, which
-         * misses squashes):
-         *   mb       = merge-base base branch
-         *   squashed = commit-tree branch^{tree} -p mb -m _
-         *   cherry   = git cherry base squashed  →  leading "-" means base already
-         *              contains the combined patch.
-         * Returns false on unrelated histories or when the branch has no commits ahead of mb.
+         * `git merge-tree --write-tree`: the merge result without touching the
+         * index or the worktree. Exit 1 means conflicts, anything above 1 is
+         * an error (an old git without `--write-tree` lands here).
          */
-        async isSquashMerged(base: string, branch: string): Promise<boolean> {
-            const mbRes = await executor.exec(["merge-base", base, branch]);
-            if (!mbRes.success) {
-                return false;
+        async mergeTree(base: string, branch: string): Promise<MergeTreeResult> {
+            const res = await executor.exec(porcelain.mergeTree.args(base, branch), { env: { LC_ALL: "C" } });
+
+            if (res.exitCode > 1) {
+                throw new Error(`git merge-tree ${base} ${branch} failed: ${res.stderr}`);
             }
 
-            const mb = mbRes.stdout;
-            if (!mb) {
-                return false;
-            }
+            return porcelain.mergeTree.parse(res.stdout, res.exitCode);
+        },
 
-            const countRes = await executor.exec(["rev-list", "--count", `${mb}..${branch}`]);
-            if (!countRes.success || Number.parseInt(countRes.stdout, 10) === 0) {
-                return false;
-            }
+        /** `git worktree list --porcelain -z`, typed, including locked/prunable reasons; paths keep any newline. */
+        async worktrees(): Promise<WorktreeEntry[]> {
+            const res = await executor.execOrThrow(porcelain.worktrees.args(), "git worktree list failed");
+            return porcelain.worktrees.parse(res.stdout);
+        },
 
-            const treeRes = await executor.exec(["rev-parse", `${branch}^{tree}`]);
-            if (!treeRes.success) {
-                return false;
-            }
-
-            const tree = treeRes.stdout;
-
-            // Synthesize a commit of the branch's full tree on top of the merge-base,
-            // then ask `git cherry` whether base already contains the equivalent patch
-            // (leading "-"). This catches squash-merges that per-commit `git cherry`
-            // misses. The synthetic commit is unreachable and pruned by routine `git gc`.
-            // A fixed identity keeps `commit-tree` deterministic on machines/CI that
-            // have no configured git user (otherwise the result is environment-dependent).
-            const identityEnv: Record<string, string> = {
-                GIT_AUTHOR_NAME: "branch-gc",
-                GIT_AUTHOR_EMAIL: "branch-gc@local",
-                GIT_COMMITTER_NAME: "branch-gc",
-                GIT_COMMITTER_EMAIL: "branch-gc@local",
-            };
-
-            const squashRes = await executor.exec(["commit-tree", tree, "-p", mb, "-m", "_"], { env: identityEnv });
-            if (!squashRes.success) {
-                return false;
-            }
-
-            const squashed = squashRes.stdout;
-            const cherryRes = await executor.exec(["cherry", base, squashed]);
-            const firstLine = cherryRes.stdout
-                .split("\n")
-                .find((l) => l.trim().length > 0)
-                ?.trim();
-            return firstLine?.startsWith("-") ?? false;
+        /**
+         * Absolute paths of the repo root and the git common dir (shared by every worktree).
+         * `--path-format=absolute` needs git 2.31; an older git fails the whole call rather
+         * than returning a relative path, so the error names the requirement.
+         */
+        async layout(): Promise<{ repoRoot: string; commonDir: string }> {
+            const res = await executor.execOrThrow(
+                ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+                "Not in a git repository (or git is older than 2.31, which lacks --path-format)"
+            );
+            const [repoRoot, commonDir] = res.stdout.split("\n").map((l) => l.trim());
+            return { repoRoot, commonDir };
         },
     };
 }
 
-/** Convenience: create a default git instance (verbose=true for backward compat with git-rebase-multiple) */
+/** Convenience: a default verbose git instance bound to the process cwd. */
 export const git = createGit({ verbose: true });
