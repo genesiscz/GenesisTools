@@ -5,6 +5,8 @@ import {
     _resetPluginsForTest,
     allProviderPlugins,
     pluginsByCapability,
+    pluginsWithAccounts,
+    pluginsWithUsage,
     providerPlugin,
     registeredProviderIds,
     registerPlugin,
@@ -72,6 +74,33 @@ describe("provider registry", () => {
         expect(pluginsByCapability("chat").map((p) => p.id)).toEqual(["alpha"]);
         expect(pluginsByCapability("tts").map((p) => p.id)).toEqual(["tts-only"]);
         expect(pluginsByCapability("video")).toEqual([]);
+    });
+
+    // Presence of the member is the capability declaration, so these two filters
+    // are the whole feature gate: no parallel enum, nothing to keep in sync.
+    test("filters by account features, and usage separately from accounts", () => {
+        const presentation = { displayName: "Alpha", alias: "alpha", limitOrder: [], prominentLimits: [] };
+
+        registerPlugin(fakePlugin("plain"));
+        registerPlugin({
+            ...fakePlugin("with-accounts"),
+            accounts: { presentation, logoutTargets: ["oauth"] },
+        });
+        registerPlugin({
+            ...fakePlugin("with-usage"),
+            accounts: {
+                presentation,
+                logoutTargets: ["oauth"],
+                usage: {
+                    poll: async () => {
+                        throw new Error("not used");
+                    },
+                },
+            },
+        });
+
+        expect(pluginsWithAccounts().map((p) => p.id)).toEqual(["with-accounts", "with-usage"]);
+        expect(pluginsWithUsage().map((p) => p.id)).toEqual(["with-usage"]);
     });
 });
 

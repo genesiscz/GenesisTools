@@ -48,6 +48,22 @@ export function pluginsByCapability(capability: Capability): ProviderPlugin[] {
     return allProviderPlugins().filter((plugin) => plugin.capabilities.has(capability));
 }
 
+/**
+ * Plugins that own an account lifecycle (login, logout, home discovery).
+ *
+ * Presence of the member IS the declaration, so there is no parallel feature
+ * enum to keep in sync: `tools ai accounts` lists exactly these, and a provider
+ * gains the whole command group by attaching `accounts` in its folder.
+ */
+export function pluginsWithAccounts(): ProviderPlugin[] {
+    return allProviderPlugins().filter((plugin) => plugin.accounts !== undefined);
+}
+
+/** Plugins whose accounts report live quota. The usage daemon iterates these. */
+export function pluginsWithUsage(): ProviderPlugin[] {
+    return allProviderPlugins().filter((plugin) => plugin.accounts?.usage !== undefined);
+}
+
 export function registeredProviderIds(): string[] {
     return [...plugins.keys()].sort();
 }
