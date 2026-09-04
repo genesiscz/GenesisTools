@@ -1,9 +1,10 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountIdentity } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
 import { suggestCommand } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
     formatDotStatus,
@@ -47,7 +48,15 @@ export async function collectAccountRows(providerId?: string): Promise<AccountLi
 
     for (const plugin of plugins) {
         for (const account of store.accounts({ provider: plugin.id })) {
-            const identity = await plugin.accounts?.identityOf?.(account, { probe: true });
+            // A corrupt or unreadable auth file belongs to ONE account; listing
+            // the others must still work (PR #360 review t4).
+            let identity: AccountIdentity | undefined;
+
+            try {
+                identity = await plugin.accounts?.identityOf?.(account, { probe: true });
+            } catch (err) {
+                logger.warn({ err, account: account.id }, "identity decode failed — listing stored fields only");
+            }
 
             rows.push({
                 id: account.id,
