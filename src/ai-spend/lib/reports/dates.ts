@@ -58,6 +58,31 @@ export function zonedDay(timestamp: string, timeZone: string): string {
     return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/**
+ * Local hour bucket, `YYYY-MM-DDTHH`. The finest grain the transcript series
+ * offers: agents stamp events to the second, but a per-minute line drawn from
+ * turn-level records is noise, not signal.
+ */
+export function hourKey(timestamp: string, timeZone: string): string {
+    const date = new Date(timestamp);
+
+    if (Number.isNaN(date.getTime())) {
+        return "";
+    }
+
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        hourCycle: "h23",
+    }).formatToParts(date);
+    const get = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
+
+    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}`;
+}
+
 export function addDays(ymd: string, days: number): string {
     const [year, month, day] = ymd.split("-").map(Number);
     const next = new Date(Date.UTC(year, month - 1, day + days));
