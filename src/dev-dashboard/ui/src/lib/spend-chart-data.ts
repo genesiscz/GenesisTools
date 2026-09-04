@@ -1,4 +1,5 @@
-import type { SpendBucket, SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
+import type { SpendBucket, SpendGrain, SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
+import { formatClock } from "@genesiscz/utils/format";
 
 export type SpendChartMode = "stacked" | "lines" | "total" | "byModel";
 
@@ -26,11 +27,16 @@ export const TOTAL_KEY = "total";
 const BUCKET_KEY = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})(?::(\d{2}))?)?$/;
 
 /**
- * Bucket keys from `spendBucketKey` are LOCAL wall-clock and truncated, so
- * `2026-09-04T20` is 8pm here, not a UTC instant. `new Date()` rejects the hour
- * form outright and reads the day form as UTC midnight, which drops every
- * hour-grain point and shifts every day-grain point by the offset. Parse the
- * shape ourselves and let a real ISO instant take the native path.
+ * Read a `spendBucketKey` as the LOCAL wall-clock time it names.
+ *
+ * The server buckets in local time on purpose: "what did I spend yesterday
+ * evening" is a wall-clock question, not a UTC one. It emits `YYYY-MM-DD` for a
+ * day, the Monday in the same shape for a week, `YYYY-MM-DDTHH` for an hour and
+ * `YYYY-MM-DDTHH:mm` for a minute. None of those may go through
+ * `new Date(string)`: the browser rejects the hour form outright, and reads the
+ * two date forms as UTC midnight, which shifts every point by the zone offset.
+ * Build the date from its parts instead, which is what makes the axis, the
+ * tooltip and the bucket agree.
  */
 export function parseBucketTime(key: string): number {
     const parts = BUCKET_KEY.exec(key);
@@ -47,6 +53,19 @@ export function parseBucketTime(key: string): number {
         hour ? Number(hour) : 0,
         minute ? Number(minute) : 0
     ).getTime();
+}
+
+/**
+ * Axis and tooltip labels for a bucket, in the same local zone `parseBucketTime`
+ * read it in. A day or week bucket prints as a date: it names a whole day, and
+ * a trailing "00:00" would read as midnight spend.
+ */
+export function bucketLabel(grain: SpendGrain, spanMinutes: number): (ms: number) => string {
+    if (grain === "day" || grain === "week") {
+        return (ms) => new Date(ms).toLocaleDateString([], { month: "numeric", day: "numeric" });
+    }
+
+    return (ms) => formatClock(ms, spanMinutes <= 1440 ? {} : { date: "numeric" });
 }
 
 function visibleBuckets(point: SpendSeriesPoint, hidden: ReadonlySet<string>): Array<[string, SpendBucket]> {
