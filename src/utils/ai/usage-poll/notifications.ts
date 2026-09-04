@@ -173,13 +173,26 @@ export class NotificationManager {
                 });
             }
 
-            await dispatchNotification({
-                app: "claude",
-                title: "AI Usage Alert",
-                message,
-                group: "ai-usage",
-            });
+            await this.dispatchDesktop({ title: "AI Usage Alert", message, group: "ai-usage" });
         }
+    }
+
+    /**
+     * The one desktop-notification door. `macos: false` means the user asked for no
+     * banner, and the system channel is enabled by default, so the switch has to be
+     * honoured here rather than left to the channel config. `sound` is the dashboard's
+     * own preference and outranks the global channel sound.
+     */
+    private async dispatchDesktop(event: { title: string; message: string; group?: string }): Promise<void> {
+        if (!this.config.macos) {
+            return;
+        }
+
+        await dispatchNotification({
+            app: "claude",
+            ...event,
+            ...(this.config.sound ? { sound: this.config.sound } : {}),
+        });
     }
 
     markFirstPollDone(): void {
@@ -293,11 +306,7 @@ export class NotificationManager {
                     });
                 }
 
-                dispatchNotification({
-                    app: "claude",
-                    title: "Claude Cache Cooling",
-                    message,
-                });
+                void this.dispatchDesktop({ title: "Claude Cache Cooling", message });
             } else if (status === "CRITICAL" && (tracker.lastThreshold === null || tracker.lastThreshold < 5)) {
                 tracker.lastThreshold = 5;
                 tracker.lastCacheAt = session.lastCacheAt;
@@ -317,11 +326,7 @@ export class NotificationManager {
                     });
                 }
 
-                dispatchNotification({
-                    app: "claude",
-                    title: "Claude Cache Critical",
-                    message,
-                });
+                void this.dispatchDesktop({ title: "Claude Cache Critical", message });
             }
         }
     }
