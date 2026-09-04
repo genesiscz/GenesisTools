@@ -103,9 +103,16 @@ export function mondayOfWeek(date: Date): Date {
     return midnight;
 }
 
-/** All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test. */
+/**
+ * All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test.
+ *
+ * A Set, because roots NEST: `resolveDriverRoots` dedupes by exact path, so a
+ * discovered home and an account's `spendScope` can contribute one tree and a
+ * subtree of it. Returning the same transcript twice makes every caller add its
+ * events twice, which doubles the reported cost and tokens instead of failing.
+ */
 export function findRecentTranscripts(roots: string[], minMtimeMs: number, driver: MonitorDriver): string[] {
-    const out: string[] = [];
+    const found = new Set<string>();
 
     const walk = (dir: string, depth: number): void => {
         let entries: import("node:fs").Dirent[];
@@ -134,7 +141,7 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number, drive
 
             try {
                 if (statSync(full).mtimeMs >= minMtimeMs) {
-                    out.push(full);
+                    found.add(full);
                 }
             } catch (err) {
                 logger.debug({ err, file: full }, "ai-spend monitor: stat failed");
@@ -148,7 +155,7 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number, drive
         }
     }
 
-    return out;
+    return [...found];
 }
 
 interface DaySums {

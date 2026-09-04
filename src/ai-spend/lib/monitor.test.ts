@@ -214,6 +214,17 @@ describe("monitor report", () => {
         expect(files.some((f) => f.endsWith("old.jsonl"))).toBe(false);
     });
 
+    test("nested roots yield each transcript once, so its events are never counted twice", () => {
+        const outer = join(home, ".claude", "projects");
+        const inner = join(outer, "p1");
+        const files = findRecentTranscripts([outer, inner], Date.now() - 60_000, claudeDriver);
+
+        expect(files.length).toBe(new Set(files).size);
+        expect(files.filter((f) => f.startsWith(inner)).length).toBe(
+            findRecentTranscripts([inner], Date.now() - 60_000, claudeDriver).length
+        );
+    });
+
     test("a timestamp-less record does not burn its id for the real record that follows", () => {
         const iso = new Date().toISOString();
         // Claude Code rewrites a streaming message in place, so the same id can appear
