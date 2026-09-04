@@ -4,6 +4,111 @@ All notable changes to GenesisTools will be documented in this file.
 
 Version format: `YYYY.MM.DD.revision` (e.g., `2026.02.18.1`)
 
+## 2026.09.04.1
+
+174 commits since 2026.08.20.1. User-visible changes only.
+
+### git (rewritten)
+
+- Added `tools git merged`, which decides whether a branch or worktree is already in the base by content, so squash, rebase and recompose merges stop reading as unmerged; `--prune` removes only what it proved safe
+- Added `tools git rebase-cascade` to move a parent branch and restack its children, with backup refs, an abort path, and an oracle route when the parent's work already landed upstream in another form
+- Added `tools git base` and `tools git config`, naming the base branch plus the rule that chose it, and reading the per-repo `genesis-tools.config.json`
+- Added typed git porcelain readers under `src/utils/git`, so tools stop re-parsing `status` and `for-each-ref` by hand
+- Removed `tools git-rebase-multiple` and `tools git branch-gc`, superseded by rebase-cascade and merged
+
+### monitor (new)
+
+- Added `tools monitor`: watchers for http, tcp, dns, tls, json and command checks, with a wizard, notifications with delivery retries, uptime, silences, an HTTP server and a dashboard
+
+### artifact (new)
+
+- Added `tools artifact` to serve and build folders of loose HTML, TSX and Markdown, with a chart kit
+- Fixed path containment and symlink escapes, and stopped the dev server serving the checkout itself
+
+### chrome-devtools (new)
+
+- Added `tools chrome-devtools` as a first-class cross-platform CDP debugging tool, including a zero-dependency chrome-har port pinned to upstream parity goldens
+- Added one launcher shared by every CDP browser, used by the youtube devtools commands and the chrome-extension-dev skill
+
+### grok (new)
+
+- Added `tools grok`: a worker harness, history search, and TUI `--resume` through the shared session adapter
+- Added a report when a turn changed nothing, so "turn completed" stops meaning "task done"
+
+### ai-proxy
+
+- Added pass-through for `/v1/messages` when the upstream speaks Anthropic natively, `:<effort>` suffixes on proxy model ids, per-client thinking rules, and Grok web search
+- Added a launchd agent so the proxy survives reboot, scoped to the configured port
+- Fixed grok's Anthropic spec gaps in SSE indices, tool calls, system hoisting and errors, and streamed replies faithfully from first content to true usage
+- Fixed usage booking, transcripts, and catalog and model advertising
+
+### claude
+
+- Added `tools claude who`, listing live sessions with the account each one bills, plus account identity rename, a journal reader, and `doctor --identity`
+- Added cmux `send`, `tree` and `open-session` to resume a session at any hierarchy level, and `--tmux` wrapping for start and run
+- Added JSON transcript replay for Session Details, live sidechain transcripts, and Teams HTML-to-Markdown export
+- Improved history search with ripgrep, search waves and prefiltering
+- Fixed transport blips no longer feeding the usage-polling backoff ladder
+
+### macos
+
+- Added GenesisTools.app as the owner of the macOS privacy grants, with every service plist routed through it
+- Added iMessage thread export to markdown with attachments, capped and validated
+- Added SQL-level Mail filtering by date, sender and flags, an INBOX that lists every account, and `--account` that accepts the account email
+- Added `calendar doctor`; calendar reads now fail loudly on Add Only or denied access instead of returning an empty list
+- Improved clone detection to match duplicates across many roots, discover install trees, sibling worktrees and package-manager stores, and reclaim through a plan, apply and preset flow
+
+### azure-devops
+
+- Added sprint and iteration backlog commands with team scoping, and parent-chain walking for work items, singly and in batches
+- Fixed settings being preserved within a project rather than across a switch, and a configure step that destroyed the Functions key
+
+### clarity
+
+- Added `tasks` and `mappings` with tree-backed recommendations, `--add` and `--remove`, and a receipt on every write
+- Added dashboard recommendations backed by the same tree, with a hardened write path
+- Fixed timesheet discovery to walk the carousel instead of a cached mapping id, and made `fill` refuse an incomplete month while posting a truthful weekly note
+
+### cmux
+
+- Added livelock rescue tooling: `doctor`, offline save, and a guided rescue
+- Added restore-after-restart from a previous autosave, a live session or a profile, and resume inference for grok, claude and Codex
+- Fixed a recycled pid reading as a surviving cmux, unbounded calls that never returned, and a stale workspace making `send` reject a real terminal
+
+### ai and ai-spend
+
+- Added `tools ai sessions tail` for Claude, Grok and Codex JSONL
+- Added Claude Fable 5.1 to the catalog, made it the Fable launch default, and recommended it in handoff-to and ai-proxy
+- Added an ai-spend monitor showing today and week spend in local time in under a second, a driver layer for codex and grok, and every ccusage report
+
+### agents and workers
+
+- Added one session-identity resolver across claude, codex, grok and GitHub Copilot CLI
+- Added a unified worker event schema and verb set with a hardened pid and turn lifecycle
+- Added handoff proof previews, the agents-talk protocol, and a main login stream that acts as the swarm inbox
+
+### dev-dashboard
+
+- Added a share command for public Obsidian note URLs
+- Fixed public 502s on the tunnel origin, made proxied bodies retry safely, and hardened the DashboardApp launchd and preview lifecycle
+
+### ms-teams
+
+- Added live Teams IndexedDB repair without logout
+
+### Plugin skills
+
+- Added `gt:git`, `gt:tdd`, `gt:artifact` and `gt:chrome-devtools`
+- Removed `git-rebaser` and `handoff-to-codex`, folded into `gt:git` and the handoff-to router
+
+### Core, utils and CI
+
+- Added a config-gated profiler with scopes and detail levels
+- Added a placeholder consistency check that blocks a push on personal data, scanned in one `git grep` rather than one per needle
+- Added CI guards that fail the run when a test imports a CLI entrypoint, and when the suite never terminates
+- Improved startup with a lazy logger, a getattrlistbulk probe and deferred CLI imports
+- Fixed four real bugs behind the Linux test failures, and sandboxed the real genesis-tools home for every test process
+
 ## 2026.08.20.1
 
 1064 commits since 2026.05.18.2. User-visible changes only.
