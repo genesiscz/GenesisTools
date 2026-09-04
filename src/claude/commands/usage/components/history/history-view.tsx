@@ -1,6 +1,6 @@
-import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import { BUCKET_INK_COLORS, colorForPct } from "@app/claude/lib/usage/constants";
 import type { UsageHistoryDb, UsageSnapshot } from "@app/claude/lib/usage/history-db";
+import { useScroll } from "@genesiscz/utils/ink/usage-dashboard/hooks/use-scroll";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState } from "react";
 

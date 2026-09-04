@@ -418,7 +418,10 @@ describe("UsageLimitsDb", () => {
         });
 
         test("step keeps the last sample of each bucket", () => {
-            const base = Date.parse(recentTimestamp(60));
+            // Aligned to the step so the two early samples always share one bucket:
+            // an unaligned base splits them whenever the wall clock lands near a
+            // boundary, which is a flake, not a behaviour change.
+            const base = Math.floor(Date.parse(recentTimestamp(60)) / 60_000) * 60_000;
             db.recordSnapshot("work", "five_hour", 1, new Date(base).toISOString());
             db.recordSnapshot("work", "five_hour", 2, new Date(base + 10_000).toISOString());
             db.recordSnapshot("work", "five_hour", 3, new Date(base + 70_000).toISOString());

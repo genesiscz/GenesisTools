@@ -1,4 +1,4 @@
-import type { UsageAlert } from "@app/claude/lib/usage/notification-manager";
+import type { UsageAlert } from "@genesiscz/utils/ai/usage-poll/notifications";
 import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
 

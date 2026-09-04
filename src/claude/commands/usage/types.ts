@@ -1,12 +1,9 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
+import type { TabDefinition } from "@genesiscz/utils/ink/usage-dashboard/types";
 
 export type TabId = "overview" | "history" | "sessions";
 
-export interface TabDefinition {
-    id: TabId;
-    label: string;
-    shortcut: string;
-}
+export type { TabDefinition };
 
 export const TABS: TabDefinition[] = [
     { id: "overview", label: "Overview", shortcut: "1" },

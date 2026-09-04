@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { setModalOpen } from "@app/claude/commands/usage/hooks/input-scope";
-import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
 import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime, formatTokens } from "@genesiscz/utils/format";
+import { setModalOpen } from "@genesiscz/utils/ink/usage-dashboard/hooks/input-scope";
+import { useScroll } from "@genesiscz/utils/ink/usage-dashboard/hooks/use-scroll";
 import { logger } from "@genesiscz/utils/logger";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";

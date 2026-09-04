@@ -1,17 +1,23 @@
 import { Box, Text, useInput } from "ink";
 
+export type HelpLine = [key: string, description: string];
+
 interface HelpOverlayProps {
     onClose: () => void;
+    /** Appended under the shared bindings; a provider presenter supplies its own. */
+    extraLines?: HelpLine[];
 }
 
-const KEYBINDINGS = [
+export const SHELL_KEYBINDINGS: HelpLine[] = [
     ["q", "Quit dashboard"],
     ["←/→", "Navigate tabs"],
-    ["1-3", "Jump to tab"],
+    ["1-9", "Jump to tab"],
     ["r", "Force refresh now"],
     ["p", "Pause/resume polling"],
     ["i", "Cycle poll interval (5/10/15/30/60s)"],
-    ["s", "Overview: urgency (cc run) ↔ config order"],
+    ["s", "Overview: urgency ↔ config order"],
+    ["P", "Cycle provider filter"],
+    ["a", "Account filter checklist"],
     ["?", "Toggle this help"],
     ["", ""],
     ["", "History tab:"],
@@ -21,18 +27,12 @@ const KEYBINDINGS = [
     ["l", "Toggle stacked/side-by-side"],
     ["f", "Cycle time range filter"],
     ["", ""],
-    ["", ""],
-    ["", "Sessions tab:"],
-    ["↑/↓", "Select session"],
-    ["Enter", "Open action menu (ping / resume)"],
-    ["f", "Cycle time filter (1h/6h/24h/7d/all)"],
-    ["j/k", "Scroll list"],
-    ["g/G", "Top/bottom"],
-    ["", ""],
     ["x", "Dismiss alert banner"],
 ];
 
-export function HelpOverlay({ onClose }: HelpOverlayProps) {
+export function HelpOverlay({ onClose, extraLines }: HelpOverlayProps) {
+    const KEYBINDINGS: HelpLine[] = extraLines ? [...SHELL_KEYBINDINGS, ["", ""], ...extraLines] : SHELL_KEYBINDINGS;
+
     useInput((input, key) => {
         if (input === "?" || key.escape) {
             onClose();
