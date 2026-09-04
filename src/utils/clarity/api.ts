@@ -3,6 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type {
     ApiDebugInfo,
     CarouselEntry,
+    CreateTimeEntryRequest,
     CreateTimesheetNoteRequest,
     TimesheetAppResponse,
     TimesheetResponse,
@@ -25,10 +26,12 @@ export class ClarityApi {
         this.config = config;
     }
 
-    private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    /** The one place headers and TLS are set, so an auth change cannot land in half the verbs. */
+    private async send(path: string, options: RequestInit = {}): Promise<Response> {
         const url = `${this.config.baseUrl}/ppm/rest/v1${path}`;
         const signal = options.signal ?? AbortSignal.timeout(30_000);
-        const response = await fetch(url, {
+
+        return fetch(url, {
             ...options,
             signal,
             tls: { rejectUnauthorized: false },
@@ -43,11 +46,18 @@ export class ClarityApi {
                 ...(options.headers as Record<string, string>),
             },
         });
+    }
 
+    private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+        const response = await this.send(path, options);
         const text = await response.text();
 
         if (!response.ok) {
             throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+        }
+
+        if (text.trim() === "") {
+            return undefined as T;
         }
 
         try {
@@ -56,6 +66,22 @@ export class ClarityApi {
             const isHtml = text.trimStart().startsWith("<");
             const hint = isHtml ? "Session expired — re-authenticate in Settings" : text.slice(0, 300);
             throw new Error(`Clarity API returned non-JSON (${response.status}): ${hint}`);
+        }
+    }
+
+    /** Same request, for verbs whose success body is empty and would fail a JSON parse. */
+    private async requestVoid(path: string, options: RequestInit = {}): Promise<void> {
+        const response = await this.send(path, options);
+        const text = await response.text();
+
+        if (!response.ok) {
+            throw new Error(`Clarity API error ${response.status}: ${text.slice(0, 500)}`);
+        }
+
+        // An expired session answers 200 with an HTML login page. Trusting `response.ok` alone
+        // would report a write that never reached Clarity as a success.
+        if (text.trimStart().startsWith("<")) {
+            throw new Error(`Clarity API returned a login page (${response.status}): session expired`);
         }
     }
 
@@ -82,6 +108,23 @@ export class ClarityApi {
         }
 
         return null;
+    }
+
+    /**
+     * Add a task row to a timesheet. `taskId` is the only field the caller supplies; the server
+     * fills assignmentId, resourceId, role, investmentId and phaseId from the assignment.
+     */
+    async createTimeEntry(timesheetId: number, taskId: number): Promise<unknown> {
+        const body: CreateTimeEntryRequest = { taskId };
+        return this.request(`/timesheets/${timesheetId}/timeEntries`, {
+            method: "POST",
+            body: SafeJSON.stringify(body),
+        });
+    }
+
+    /** Remove a task row from a timesheet. Answers 200 with an empty body. */
+    async deleteTimeEntry(timesheetId: number, timeEntryId: number): Promise<void> {
+        await this.requestVoid(`/timesheets/${timesheetId}/timeEntries/${timeEntryId}`, { method: "DELETE" });
     }
 
     /** Update time entry hours (segments in seconds: 3600 = 1h) */

@@ -5,6 +5,10 @@ export interface UpdateTimeEntryRequest {
     actuals: TimeSeriesValue;
 }
 
+export interface CreateTimeEntryRequest {
+    taskId: number;
+}
+
 export interface CreateTimesheetNoteRequest {
     noteText: string;
     author: number;

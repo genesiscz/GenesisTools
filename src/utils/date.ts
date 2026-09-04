@@ -376,11 +376,6 @@ export function subtractDay(date: string): string {
 }
 
 /**
- * Get all days in a date range as labeled entries.
- * Start is inclusive, finish is exclusive (standard half-open interval).
- * Format: "YYYY-MM-DD".
- */
-/**
  * Test a date against a reporting period whose finish is EXCLUSIVE.
  *
  * Clarity timesheet periods and similar calendars share a boundary date: one period ends on
@@ -397,15 +392,27 @@ export function isDateInHalfOpenRange(date: string, start: string, finish: strin
     return day >= start.split("T")[0] && day < finish.split("T")[0];
 }
 
-export function getDaysInPeriod(periodStart: string, periodFinish: string): Array<{ label: string; date: string }> {
+export interface PeriodDay {
+    label: string;
+    date: string;
+    /** Day of week as JS reports it: 0 = Sunday, 1 = Monday. */
+    dow: number;
+}
+
+/**
+ * Get all days in a date range as labeled entries.
+ * Start is inclusive, finish is exclusive (standard half-open interval).
+ * Format: "YYYY-MM-DD".
+ */
+export function getDaysInPeriod(periodStart: string, periodFinish: string): PeriodDay[] {
     const start = parseUTCDate(periodStart);
     const finish = parseUTCDate(periodFinish);
-    const days: Array<{ label: string; date: string }> = [];
+    const days: PeriodDay[] = [];
     const current = new Date(start);
 
     while (current < finish) {
         const dow = current.getUTCDay();
-        days.push({ label: `${DAY_NAMES[dow]} ${current.getUTCDate()}`, date: formatDate(current) });
+        days.push({ label: `${DAY_NAMES[dow]} ${current.getUTCDate()}`, date: formatDate(current), dow });
         current.setUTCDate(current.getUTCDate() + 1);
     }
 
@@ -417,10 +424,7 @@ export function getDaysInPeriod(periodStart: string, periodFinish: string): Arra
  * the last day of a week. Use `getDaysInPeriod` for an exclusive end such as the carousel's
  * `finish_date`; mixing the two silently drops or adds a day of hours.
  */
-export function getDaysInPeriodInclusive(
-    periodStart: string,
-    periodFinishInclusive: string
-): Array<{ label: string; date: string }> {
+export function getDaysInPeriodInclusive(periodStart: string, periodFinishInclusive: string): PeriodDay[] {
     return getDaysInPeriod(periodStart, `${addDay(periodFinishInclusive.split("T")[0])}T00:00:00`);
 }
 
