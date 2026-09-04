@@ -22,6 +22,19 @@ function mergeClassify(prev: PortsResult | undefined, updates: PortInfo[]): Port
 }
 
 /**
+ * Identity-free description of a subscription. Every caller passes a fresh array
+ * literal, so the array itself changes on every render; the effect must key off
+ * this string instead or it tears the stream down and rebuilds it each time.
+ */
+export function liveChannelsKey(channels: readonly LiveChannel[]): string {
+    return channels.slice().sort().join(",");
+}
+
+export function channelsFromKey(key: string): LiveChannel[] {
+    return key.split(",").filter(Boolean) as LiveChannel[];
+}
+
+/**
  * Single multiplexed EventSource to `/api/live`. Merges frames into React Query.
  * Mid-session channel changes: POST /api/live/subscribe (SSE cannot receive).
  */
@@ -34,17 +47,10 @@ export function useLive(channels: LiveChannel[]): {
     const [connId, setConnId] = useState<string | null>(null);
     const [lastError, setLastError] = useState<string | null>(null);
     const connIdRef = useRef<string | null>(null);
-    const channelsKey = channels.slice().sort().join(",");
-    const activeKey = useRef<string | null>(null);
+    const channelsKey = liveChannelsKey(channels);
 
     useEffect(() => {
-        if (activeKey.current === channelsKey) {
-            return;
-        }
-
-        activeKey.current = channelsKey;
-        const url = paths.live(channels);
-        const es = new EventSource(url);
+        const es = new EventSource(paths.live(channelsFromKey(channelsKey)));
 
         es.onmessage = (ev) => {
             try {
@@ -116,14 +122,13 @@ export function useLive(channels: LiveChannel[]): {
 
         return () => {
             es.close();
-            if (activeKey.current === channelsKey) {
-                activeKey.current = null;
-            }
-
             connIdRef.current = null;
             setConnId(null);
         };
-    }, [channelsKey, qc, channels]); // channels used in EventSource URL via paths.live(channels)
+        // `channels` is deliberately absent: the array identity changes every
+        // render, and depending on it reopened the stream about eight times a
+        // second. `channelsKey` carries the same information and is stable.
+    }, [channelsKey, qc]);
 
     const setChannels = useCallback(async (ch: LiveChannel[]) => {
         const id = connIdRef.current;
