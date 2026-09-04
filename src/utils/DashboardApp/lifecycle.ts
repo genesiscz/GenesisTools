@@ -228,6 +228,17 @@ async function preparePort(ctx: LifecycleContext, port: number, opts: UpOptions)
     }
 
     if (conflict.state === "stale") {
+        // A launchd-managed service comes straight back after its pid dies, so killing the port
+        // owner alone never frees the port — `up` on a running agent failed here every time, which
+        // also blocked migrating one to GenesisTools.app. Unload the agent first; the launchd
+        // branch below reinstalls and reloads it. `down()` has always done this; this path had not.
+        if (config.launchd?.available && isLaunchdInstalled(ctx.plistLabel)) {
+            out.log.step(`Unloading launchd agent ${ctx.plistLabel} before reclaiming port ${port}…`);
+            await bootoutLaunchd(ctx.plistLabel).catch((err) => {
+                logger.warn({ err }, `[${config.key}] launchd bootout before port reclaim failed`);
+            });
+        }
+
         out.log.step(`Reclaiming port ${port} from stale pid ${conflict.owner.pid} (${conflict.owner.command})`);
         await killPortOwner(conflict.owner);
         clearPid(config.key);
