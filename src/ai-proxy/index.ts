@@ -16,6 +16,7 @@ import { runCallsCommand } from "@app/ai-proxy/commands/calls";
 import { clientsAdd, clientsList, clientsSecure, clientsUsage } from "@app/ai-proxy/commands/clients";
 import { runConfigDetect, runConfigInit, runConfigSet, runConfigShow } from "@app/ai-proxy/commands/config";
 import { runConfigMenu, runSetupCloudflaredTunnel } from "@app/ai-proxy/commands/config-wizard";
+import { runInstallCommand, runUninstallCommand } from "@app/ai-proxy/commands/daemon";
 import { runDownCommand } from "@app/ai-proxy/commands/down";
 import { runUpdateModelsCommand } from "@app/ai-proxy/commands/internal/update-models";
 import { runIntrospectCommand } from "@app/ai-proxy/commands/introspect";
@@ -73,6 +74,22 @@ program
     .description("Stop ai-proxy only (never stops shared cloudflared tunnel)")
     .action(async () => {
         await runDownCommand();
+    });
+
+program
+    .command("install")
+    .description("Install the launchd agent so ai-proxy starts at login and respawns on crash (macOS)")
+    .option("--json", "Machine-readable output")
+    .action(async (options) => {
+        await runInstallCommand(options);
+    });
+
+program
+    .command("uninstall")
+    .description("Unload and remove the launchd agent (the proxy stops)")
+    .option("--json", "Machine-readable output")
+    .action(async (options) => {
+        await runUninstallCommand(options);
     });
 
 program

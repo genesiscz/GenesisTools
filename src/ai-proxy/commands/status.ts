@@ -12,6 +12,11 @@ export async function runStatusCommand(options: { json?: boolean }): Promise<voi
     out.log.info(`Config:       ${status.configPath}`);
     out.log.info(`Exposure:     ${status.exposureMode}`);
     out.log.info(`Proxy:        ${status.proxyRunning ? `running (pid ${status.proxyPid})` : "stopped"}`);
+    out.log.info(
+        status.launchdInstalled
+            ? `Launchd:      installed (${status.launchdLabel}) — survives reboot`
+            : "Launchd:      not installed — run `tools ai-proxy install` so it survives reboot"
+    );
     out.log.info(`Local health: ${status.localHealth ? "ok" : "fail"} — ${status.localUrl}`);
 
     if (status.staleWarning) {

@@ -43,6 +43,37 @@ export function writeProxyPid(pid: number): void {
     writeFileSync(path, String(pid));
 }
 
+/**
+ * Record THIS process as the serving proxy. Returns false when it declined.
+ *
+ * `up` records the pid of the child it spawns, but on the launchd path there is
+ * no such parent: launchd runs `serve` directly. Without this, `status` and
+ * `down` would find no pid and report a healthy launchd-managed proxy as
+ * stopped. Call it only once the listener is actually up, so a `serve` that
+ * dies on a bound port never overwrites the live proxy's record.
+ *
+ * Both ports are required so no caller can register by accident. Only the
+ * instance on the CONFIGURED port owns the record: a `serve --port <other>` used
+ * to overwrite the launchd-managed proxy's pid, after which `status` reported
+ * the debug pid while health-probing the real port, and a single `down` booted
+ * out launchd and then SIGTERMed both.
+ */
+export async function registerServingProcess(ports: { serving: number; configured: number }): Promise<boolean> {
+    if (ports.serving !== ports.configured) {
+        logger.info(ports, "ai-proxy: not the configured port — leaving the proxy pid record alone");
+
+        return false;
+    }
+
+    writeProxyPid(process.pid);
+
+    const runtime = await readRuntimeState();
+    runtime.proxy = { pid: process.pid, startedAt: new Date().toISOString() };
+    await writeRuntimeState(runtime);
+
+    return true;
+}
+
 export function readProxyPid(): number | null {
     const path = getAiProxyStorage().proxyPidPath();
 

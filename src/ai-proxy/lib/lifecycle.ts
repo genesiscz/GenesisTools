@@ -1,11 +1,23 @@
-import { join } from "node:path";
 import { getAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import { ensurePublicExposure, verifyPublicExposure } from "@app/ai-proxy/lib/exposure";
+import {
+    AI_PROXY_LAUNCHD_LABEL,
+    aiProxyPlistPath,
+    installAiProxyLaunchd,
+    isAiProxyLaunchdInstalled,
+    proxyEntryPath,
+    startAiProxyLaunchd,
+    stopAiProxyLaunchd,
+    toolsRoot,
+    uninstallAiProxyLaunchd,
+} from "@app/ai-proxy/lib/launchd";
 import { buildLocalBaseUrl, buildPublicBaseUrl, resolveCursorBaseUrl } from "@app/ai-proxy/lib/public-url";
 import {
     clearRuntimeState,
     inspectProxyPid,
+    isAiProxyServeCommand,
     type ProxyPidState,
+    readProxyPid,
     readRuntimeState,
     writeProxyPid,
     writeRuntimeState,
@@ -19,14 +31,6 @@ import { waitForUrlReady } from "@genesiscz/utils/DashboardApp/readiness";
 import { logger, out } from "@genesiscz/utils/logger";
 import { getPortOwner } from "@genesiscz/utils/network";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-
-function proxyEntryPath(): string {
-    return join(import.meta.dir, "..", "index.ts");
-}
-
-function toolsRoot(): string {
-    return join(import.meta.dir, "..", "..", "..");
-}
 
 async function spawnProxy(config: AiProxyConfig): Promise<number> {
     const storage = getAiProxyStorage();
@@ -97,24 +101,48 @@ export async function runAiProxyUp(): Promise<UpResult> {
 
     const portOwner = await getPortOwner(config.listen.port);
     if (portOwner?.pid && isProcessAlive(portOwner.pid)) {
+        // A launchd respawn writes its own pid file, so between the crash and the
+        // restart the recorded pid can be stale while the port is already ours
+        // again. Identify the owner rather than calling every listener a stranger.
+        const ours = isAiProxyServeCommand(portOwner.command);
+
         return {
             started: false,
             pid: portOwner.pid,
-            message: `Port ${config.listen.port} already in use by pid ${portOwner.pid} — not ai-proxy managed`,
+            message: ours
+                ? `ai-proxy already running (pid ${portOwner.pid})`
+                : `Port ${config.listen.port} already in use by pid ${portOwner.pid} — not ai-proxy managed`,
             localUrl,
             cursorUrl,
         };
     }
 
-    const pid = await spawnProxy(config);
+    const launchdManaged = isAiProxyLaunchdInstalled();
+    let pid: number | undefined;
+
+    if (launchdManaged) {
+        // The agent owns the process. Spawning our own would put a second proxy
+        // on the port, and launchd would keep restarting the one we then killed.
+        out.log.step(`Starting launchd agent ${AI_PROXY_LAUNCHD_LABEL}…`);
+        await startAiProxyLaunchd();
+    } else {
+        pid = await spawnProxy(config);
+    }
+
     const healthy = await waitForLocalHealth(config);
+
+    if (launchdManaged) {
+        pid = readProxyPid() ?? undefined;
+    }
+
+    const managedNote = launchdManaged ? " · launchd" : "";
 
     if (!healthy) {
         out.log.warn(
             `Local health check failed — proxy may still be starting. Logs: ${getAiProxyStorage().proxyLogPath()}`
         );
     } else {
-        out.log.success(`ai-proxy listening on ${localUrl} (pid ${pid})`);
+        out.log.success(`ai-proxy listening on ${localUrl}${pid ? ` (pid ${pid})` : ""}${managedNote}`);
     }
 
     const exposure = await ensurePublicExposure(config);
@@ -135,7 +163,7 @@ export async function runAiProxyUp(): Promise<UpResult> {
 
     out.log.info(`Cursor Base URL: ${cursorUrl}`);
     scheduleBillingSyncForConfig(config);
-    logger.info({ pid, localUrl, cursorUrl, exposure: config.public?.mode }, "ai-proxy up");
+    logger.info({ pid, localUrl, cursorUrl, exposure: config.public?.mode, launchdManaged }, "ai-proxy up");
 
     return {
         started: true,
@@ -156,6 +184,27 @@ export async function runAiProxyDown(): Promise<DownResult> {
     const store = getAiProxyConfigStore();
     const config = await store.load();
 
+    // The tunnel is shared with dev-dashboard and every other route on the same
+    // hostname. `down` stops the proxy and nothing else, on both paths.
+    const tunnelNote =
+        config.public?.mode === "cloudflared"
+            ? " (cloudflared tunnel left running — dev-dashboard and other routes on the same hostname stay up)"
+            : "";
+
+    const launchdManaged = isAiProxyLaunchdInstalled();
+    let bootedOut = false;
+
+    if (launchdManaged) {
+        // Bootout BEFORE any signal: with KeepAlive true, launchd answers a
+        // SIGTERM by restarting the proxy a couple of seconds later, so killing
+        // first would look like it worked and then silently undo itself.
+        out.log.step(`Unloading launchd agent ${AI_PROXY_LAUNCHD_LABEL}…`);
+        await stopAiProxyLaunchd();
+        bootedOut = true;
+        await Bun.sleep(500);
+    }
+
+    const launchdNote = bootedOut ? ` (launchd agent ${AI_PROXY_LAUNCHD_LABEL} unloaded)` : "";
     const pidState = inspectProxyPid();
 
     if (pidState.status === "foreign") {
@@ -165,16 +214,25 @@ export async function runAiProxyDown(): Promise<DownResult> {
         await clearRuntimeState();
 
         return {
-            stopped: false,
+            // The bootout above IS the stop on the launchd path; the recorded pid
+            // provably belongs to something else, so there is nothing left to kill.
+            stopped: bootedOut,
             pid: pidState.pid,
             message:
-                `ai-proxy is not running — recorded pid ${pidState.pid} belongs to another process ` +
+                `ai-proxy is not running${launchdNote} — recorded pid ${pidState.pid} belongs to another process ` +
                 `(${pidState.command}). Left it alone and cleared the stale record.`,
         };
     }
 
     if (pidState.status === "none" || pidState.status === "dead") {
         await clearRuntimeState();
+
+        // The bootout above is what stopped it — reporting "not running" here
+        // would hide the fact that `down` did the work.
+        if (bootedOut) {
+            return { stopped: true, message: `Stopped ai-proxy${launchdNote}${tunnelNote}` };
+        }
+
         return { stopped: false, message: "ai-proxy is not running" };
     }
 
@@ -188,7 +246,7 @@ export async function runAiProxyDown(): Promise<DownResult> {
             stopped: false,
             pid: pidState.pid,
             message:
-                `Refusing to stop pid ${pidState.pid}: it is running but could not be identified ` +
+                `Refusing to stop pid ${pidState.pid}${launchdNote}: it is running but could not be identified ` +
                 `(reading its command line failed). Check it yourself with \`ps -p ${pidState.pid} -o command=\` ` +
                 `and, if it is the proxy, stop it with \`kill ${pidState.pid}\`.`,
         };
@@ -226,17 +284,12 @@ export async function runAiProxyDown(): Promise<DownResult> {
 
     await clearRuntimeState();
 
-    const tunnelNote =
-        config.public?.mode === "cloudflared"
-            ? " (cloudflared tunnel left running — dev-dashboard and other routes on the same hostname stay up)"
-            : "";
-
-    logger.info({ pid: targetPid }, "ai-proxy down");
+    logger.info({ pid: targetPid, bootedOut }, "ai-proxy down");
 
     return {
         stopped: true,
         pid: targetPid,
-        message: `Stopped ai-proxy (pid ${targetPid})${tunnelNote}`,
+        message: `Stopped ai-proxy (pid ${targetPid})${launchdNote}${tunnelNote}`,
     };
 }
 
@@ -256,6 +309,10 @@ export interface StatusResult {
     tunnelPid?: number;
     configPath: string;
     logPath: string;
+    /** True when a launchd agent owns the proxy (survives reboot, respawns on crash). */
+    launchdInstalled: boolean;
+    launchdLabel: string;
+    plistPath: string;
 }
 
 export async function runAiProxyStatus(): Promise<StatusResult> {
@@ -294,5 +351,123 @@ export async function runAiProxyStatus(): Promise<StatusResult> {
         tunnelPid: runtime.tunnel?.pid,
         configPath: store.where(),
         logPath: getAiProxyStorage().proxyLogPath(),
+        launchdInstalled: isAiProxyLaunchdInstalled(),
+        launchdLabel: AI_PROXY_LAUNCHD_LABEL,
+        plistPath: aiProxyPlistPath(),
+    };
+}
+
+export interface LaunchdInstallResult {
+    installed: boolean;
+    label: string;
+    plistPath: string;
+    port: number;
+    healthy: boolean;
+    message: string;
+}
+
+/**
+ * Install the launchd agent so the proxy survives reboot and respawns on crash.
+ *
+ * This is the fix for the 2026-08-31 outage: the proxy had been down for ten
+ * days, and the only symptom was `ECONNREFUSED 127.0.0.1:8317` inside two MCP
+ * servers whose plain API tools kept working.
+ */
+export async function runAiProxyInstallLaunchd(): Promise<LaunchdInstallResult> {
+    if (process.platform !== "darwin") {
+        throw new Error("Launchd integration is macOS-only.");
+    }
+
+    const store = getAiProxyConfigStore();
+    const config = await store.load();
+    const port = config.listen.port;
+
+    // A hand-spawned proxy already owns the port; the agent's first start would
+    // die on EADDRINUSE and KeepAlive would then respawn it in a loop. The port
+    // is asked, not the pid file: a cleared or stale record says nothing about
+    // who holds the socket right now.
+    if (!isAiProxyLaunchdInstalled()) {
+        const owner = await getPortOwner(port);
+
+        if (owner?.pid && isProcessAlive(owner.pid)) {
+            if (!isAiProxyServeCommand(owner.command)) {
+                throw new Error(
+                    `Port ${port} is held by pid ${owner.pid} (${owner.command}), which is not ai-proxy. ` +
+                        "Stop it or change listen.port before installing the launchd agent."
+                );
+            }
+
+            out.log.step(`Stopping the manually started proxy (pid ${owner.pid}) first…`);
+            const stopped = await runAiProxyDown();
+
+            if (!stopped.stopped && isProcessAlive(owner.pid)) {
+                // `down` works from the pid file, so with that record gone it had
+                // nothing to signal while the proxy still holds the port.
+                // pid-verified: owner.pid is a live lsof result whose command matched isAiProxyServeCommand just above
+                process.kill(owner.pid, "SIGTERM");
+            }
+
+            const deadline = Date.now() + 3000;
+            while (isProcessAlive(owner.pid) && Date.now() < deadline) {
+                await Bun.sleep(100);
+            }
+
+            // Installing over a proxy that ignored SIGTERM would start the very
+            // EADDRINUSE respawn loop this block exists to prevent.
+            if (isProcessAlive(owner.pid)) {
+                throw new Error(
+                    `The manually started proxy (pid ${owner.pid}) still holds port ${port} after SIGTERM. ` +
+                        "Stop it yourself, then install the launchd agent."
+                );
+            }
+        }
+    }
+
+    await installAiProxyLaunchd(port);
+    const healthy = await waitForLocalHealth(config);
+
+    logger.info({ label: AI_PROXY_LAUNCHD_LABEL, port, healthy }, "ai-proxy launchd installed");
+
+    return {
+        installed: true,
+        label: AI_PROXY_LAUNCHD_LABEL,
+        plistPath: aiProxyPlistPath(),
+        port,
+        healthy,
+        message: healthy
+            ? `Launchd agent ${AI_PROXY_LAUNCHD_LABEL} installed and answering on ${buildLocalBaseUrl(config)}`
+            : `Launchd agent ${AI_PROXY_LAUNCHD_LABEL} installed but not answering yet — check ${getAiProxyStorage().proxyLogPath()}`,
+    };
+}
+
+export interface LaunchdUninstallResult {
+    removed: boolean;
+    label: string;
+    plistPath: string;
+    message: string;
+}
+
+export async function runAiProxyUninstallLaunchd(): Promise<LaunchdUninstallResult> {
+    const plistPath = aiProxyPlistPath();
+
+    if (!isAiProxyLaunchdInstalled()) {
+        return {
+            removed: false,
+            label: AI_PROXY_LAUNCHD_LABEL,
+            plistPath,
+            message: `No launchd agent installed (${plistPath} does not exist)`,
+        };
+    }
+
+    await uninstallAiProxyLaunchd();
+    await clearRuntimeState();
+
+    logger.info({ label: AI_PROXY_LAUNCHD_LABEL }, "ai-proxy launchd uninstalled");
+
+    return {
+        removed: true,
+        label: AI_PROXY_LAUNCHD_LABEL,
+        plistPath,
+        message: `Launchd agent ${AI_PROXY_LAUNCHD_LABEL} unloaded and ${plistPath} removed — start the proxy again with \`tools ai-proxy up\``,
     };
 }

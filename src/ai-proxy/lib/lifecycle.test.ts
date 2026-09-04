@@ -16,6 +16,34 @@ const originalHome = env.get("GENESIS_TOOLS_HOME");
 let pidState: ProxyPidState = { status: "none" };
 let clearedRuntime = 0;
 
+/**
+ * The launchd module talks to the REAL `~/Library/LaunchAgents` and the REAL
+ * `launchctl`. Left unmocked, running this suite on a machine where the agent
+ * is installed would boot out the developer's own proxy. It is mocked in full,
+ * and `bootouts` is the spy that proves ordering: `down` must unload the agent
+ * BEFORE it signals, or KeepAlive restarts what we just killed.
+ */
+let launchdInstalled = false;
+let installs = 0;
+const bootouts: string[] = [];
+
+mock.module("@app/ai-proxy/lib/launchd", () => ({
+    AI_PROXY_LAUNCHD_LABEL: "com.genesis-tools.ai-proxy",
+    aiProxyPlistPath: () => "/tmp/test-com.genesis-tools.ai-proxy.plist",
+    isAiProxyLaunchdInstalled: () => launchdInstalled,
+    installAiProxyLaunchd: async () => {
+        installs += 1;
+        return "/tmp/test-com.genesis-tools.ai-proxy.plist";
+    },
+    uninstallAiProxyLaunchd: async () => true,
+    startAiProxyLaunchd: async () => {},
+    stopAiProxyLaunchd: async () => {
+        bootouts.push("bootout");
+    },
+    proxyEntryPath: () => "/tmp/ai-proxy/index.ts",
+    toolsRoot: () => "/tmp",
+}));
+
 mock.module("@app/ai-proxy/lib/runtime", () => ({
     inspectProxyPid: () => pidState,
     clearRuntimeState: async () => {
@@ -27,10 +55,24 @@ mock.module("@app/ai-proxy/lib/runtime", () => ({
     writeProxyPid: () => {},
     clearProxyPid: () => {},
     resolveLiveProxyPid: () => (pidState.status === "live" ? pidState.pid : null),
-    isAiProxyServeCommand: () => true,
+    isAiProxyServeCommand: () => ownerIsProxy,
 }));
 
-const { runAiProxyDown } = await import("@app/ai-proxy/lib/lifecycle");
+/**
+ * install-launchd asks the port who owns it. The owner is faked here; the pid
+ * inside it is a REAL child of the test, so isProcessAlive and the SIGTERM
+ * stay real.
+ */
+let ownerIsProxy = true;
+let portOwner: { pid: number; command: string } | null = null;
+const network = await import("@genesiscz/utils/network");
+
+mock.module("@genesiscz/utils/network", () => ({
+    ...network,
+    getPortOwner: async () => portOwner,
+}));
+
+const { runAiProxyDown, runAiProxyInstallLaunchd } = await import("@app/ai-proxy/lib/lifecycle");
 
 interface KillSpy {
     signals: Array<{ pid: number; signal: unknown }>;
@@ -77,6 +119,11 @@ afterEach(() => {
     resetAiProxyStorage();
     pidState = { status: "none" };
     clearedRuntime = 0;
+    launchdInstalled = false;
+    installs = 0;
+    ownerIsProxy = true;
+    portOwner = null;
+    bootouts.length = 0;
 
     if (originalHome === undefined) {
         env.testing.unset("GENESIS_TOOLS_HOME");
@@ -154,4 +201,144 @@ describe("runAiProxyDown", () => {
             kill.restore();
         }
     });
+});
+
+describe("runAiProxyDown — launchd path", () => {
+    // The regression this guards: KeepAlive answers a bare SIGTERM by restarting
+    // the proxy, so a `down` that only signals reports success and undoes itself.
+    it("unloads the agent BEFORE it signals the process", async () => {
+        useTempHome();
+        launchdInstalled = true;
+        pidState = { status: "live", pid: 5101, command: "tools ai-proxy serve" };
+        const kill = spyOnKill();
+
+        try {
+            await runAiProxyDown();
+
+            expect(bootouts).toEqual(["bootout"]);
+            expect(kill.signals[0]).toEqual({ pid: 5101, signal: "SIGTERM" });
+        } finally {
+            kill.restore();
+        }
+    });
+
+    // The bootout is what stopped it, so "not running" would hide the work done.
+    it("reports stopped when the bootout already killed the process", async () => {
+        useTempHome();
+        launchdInstalled = true;
+        pidState = { status: "dead", pid: 5102 };
+        const kill = spyOnKill();
+
+        try {
+            const result = await runAiProxyDown();
+
+            expect(bootouts).toEqual(["bootout"]);
+            expect(kill.signals).toEqual([]);
+            expect(result.stopped).toBe(true);
+            expect(result.message).toContain("com.genesis-tools.ai-proxy");
+        } finally {
+            kill.restore();
+        }
+    });
+
+    // The negative control: no agent installed means launchctl is never touched.
+    it("never touches launchctl when no agent is installed", async () => {
+        useTempHome();
+        launchdInstalled = false;
+        pidState = { status: "live", pid: 5103, command: "tools ai-proxy serve" };
+        const kill = spyOnKill();
+
+        try {
+            const result = await runAiProxyDown();
+
+            expect(bootouts).toEqual([]);
+            expect(kill.signals[0]).toEqual({ pid: 5103, signal: "SIGTERM" });
+            expect(result.message).not.toContain("launchd");
+        } finally {
+            kill.restore();
+        }
+    });
+
+    // Guarding a real refusal must not start booting out on the way past it.
+    it("still refuses a foreign pid, and does not leave the agent loaded", async () => {
+        useTempHome();
+        launchdInstalled = true;
+        pidState = { status: "foreign", pid: 5104, command: "vim notes.md" };
+        const kill = spyOnKill();
+
+        try {
+            const result = await runAiProxyDown();
+
+            expect(kill.signals).toEqual([]);
+            expect(bootouts).toEqual(["bootout"]);
+            expect(result.message).toContain("another process");
+            // The bootout IS the stop here, and the caller must be told it happened:
+            // reporting `stopped: false` with no mention of the unload read as
+            // "down did nothing" while the launchd proxy was in fact gone.
+            expect(result.stopped).toBe(true);
+            expect(result.message).toContain("com.genesis-tools.ai-proxy");
+        } finally {
+            kill.restore();
+        }
+    });
+
+    // The unverified branch signals nothing, so the unload is the only thing that
+    // happened, and the message is the only place the user can learn it.
+    it("names the unloaded agent when it refuses an unverifiable pid", async () => {
+        useTempHome();
+        launchdInstalled = true;
+        pidState = { status: "unverified", pid: 5105 };
+        const kill = spyOnKill();
+
+        try {
+            const result = await runAiProxyDown();
+
+            expect(kill.signals).toEqual([]);
+            expect(bootouts).toEqual(["bootout"]);
+            expect(result.stopped).toBe(false);
+            expect(result.message).toContain("com.genesis-tools.ai-proxy");
+        } finally {
+            kill.restore();
+        }
+    });
+});
+
+// runAiProxyInstallLaunchd refuses to run anywhere but macOS before it looks at the port.
+describe.skipIf(process.platform !== "darwin")("runAiProxyInstallLaunchd — port owner gate", () => {
+    it("refuses to install over a listener that is not ai-proxy, and signals nothing", async () => {
+        useTempHome();
+        const holder = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        portOwner = { pid: holder.pid, command: "node something-else serve" };
+        ownerIsProxy = false;
+        const spy = spyOnKill();
+
+        try {
+            await expect(runAiProxyInstallLaunchd()).rejects.toThrow(/not ai-proxy/);
+            expect(spy.signals).toEqual([]);
+            expect(installs).toBe(0);
+        } finally {
+            spy.restore();
+            holder.kill();
+        }
+    });
+
+    it("aborts instead of installing when the manual proxy survives SIGTERM", async () => {
+        useTempHome();
+        // The pid record is gone, so `down` has nothing to signal; the owner
+        // itself ignores SIGTERM the way a wedged proxy would.
+        const holder = Bun.spawn(["bun", "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], {
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+        await Bun.sleep(400);
+        portOwner = { pid: holder.pid, command: "bun src/ai-proxy/index.ts serve" };
+        pidState = { status: "none" };
+
+        try {
+            await expect(runAiProxyInstallLaunchd()).rejects.toThrow(/still holds port/);
+            expect(installs).toBe(0);
+        } finally {
+            holder.kill("SIGKILL");
+        }
+    }, 10_000);
 });

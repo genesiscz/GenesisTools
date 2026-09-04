@@ -1,6 +1,7 @@
 import { ensureProxyAccountRefs } from "@app/ai-proxy/lib/account-refs";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { buildPublicBaseUrl, buildPublicHealthUrl } from "@app/ai-proxy/lib/public-url";
+import { registerServingProcess } from "@app/ai-proxy/lib/runtime";
 import { createRuntime, startAiProxyServer } from "@app/ai-proxy/lib/server";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import type { CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
@@ -41,6 +42,9 @@ export async function runServeCommand(options: {
     keepServingThroughUpstreamFaults();
 
     const config = await ensureProxyAccountRefs({ load: loadConfig, save: saveConfig });
+    // The port `status` health-probes and `down` acts on. A serve on any other
+    // port is a second instance, not this one.
+    const managedPort = config.listen.port;
 
     if (options.port !== undefined) {
         config.listen.port = options.port;
@@ -57,6 +61,18 @@ export async function runServeCommand(options: {
     });
 
     const server = startAiProxyServer(runtime);
+    // Bun types `port` as optional (a unix-socket server has none); the port we
+    // asked to listen on is the effective one either way.
+    const servingPort = server.port ?? config.listen.port;
+
+    const registered = await registerServingProcess({ serving: servingPort, configured: managedPort });
+
+    if (!registered) {
+        out.log.warn(
+            `Serving on ${servingPort}, not the configured ${managedPort} — this instance is not registered, so 'tools ai-proxy status/down' still act on the configured proxy.`
+        );
+    }
+
     const localUrl = `http://${config.listen.host}:${server.port}/v1`;
     const publicUrl = buildPublicBaseUrl(config);
 

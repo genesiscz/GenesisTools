@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inspectProxyPid, isAiProxyServeCommand, writeProxyPid } from "@app/ai-proxy/lib/runtime";
+import {
+    inspectProxyPid,
+    isAiProxyServeCommand,
+    readProxyPid,
+    registerServingProcess,
+    writeProxyPid,
+} from "@app/ai-proxy/lib/runtime";
 import { getAiProxyStorage, resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { env } from "@genesiscz/utils/env";
 
@@ -60,6 +66,25 @@ describe("isAiProxyServeCommand", () => {
 
     it("rejects an empty command line", () => {
         expect(isAiProxyServeCommand("")).toBe(false);
+    });
+});
+
+describe("registerServingProcess", () => {
+    it("records the pid when serving the configured port", async () => {
+        useTempHome();
+
+        expect(await registerServingProcess({ serving: 8317, configured: 8317 })).toBe(true);
+        expect(readProxyPid()).toBe(process.pid);
+    });
+
+    it("leaves the live proxy's record alone when serving a debug port", async () => {
+        // `serve --port 8318` beside a launchd-managed 8317 used to overwrite the
+        // record, after which one `down` stopped both proxies.
+        useTempHome();
+        writeProxyPid(NEVER_ALLOCATED_PID);
+
+        expect(await registerServingProcess({ serving: 8318, configured: 8317 })).toBe(false);
+        expect(readProxyPid()).toBe(NEVER_ALLOCATED_PID);
     });
 });
 
