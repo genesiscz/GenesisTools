@@ -2,10 +2,9 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
 import type { UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
-import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
-import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
+import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import { logger } from "@genesiscz/utils/logger";
 import type { UsageDataSource } from "./types";
 
@@ -31,7 +30,7 @@ export interface BuildUsageDataSourceOptions {
  */
 export async function buildUsageDataSource(opts: BuildUsageDataSourceOptions = {}): Promise<UsageDataSource> {
     const providers = (
-        opts.providers?.map((p) => resolveProviderAlias(p)) ?? pluginsWithUsage().map((p) => p.id)
+        opts.providers?.map((p) => resolveProviderAlias(p)) ?? usagePlugins().map((entry) => entry.plugin.id)
     ).sort();
     const config = await loadDashboardConfig();
     const hidden = new Set(config.hiddenAccounts);

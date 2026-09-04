@@ -4,6 +4,7 @@ import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
 import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
+import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
 import type { SnapshotsCacheProvider } from "./legacy-cache";
@@ -29,11 +30,19 @@ export interface UsagePlugin {
 }
 
 /**
- * The registry decides who has usage (`pluginsWithUsage`); this only narrows the optional
- * members so the rest of the file can read `entry.usage` without a guard per line. The
- * filter is redundant to TypeScript but not to the reader: it is the same predicate.
+ * Every provider that reports live quota, with its optional members narrowed so callers
+ * can read `entry.usage` without a guard per line.
+ *
+ * 🛑 `registerBuiltInPlugins()` is called HERE, not left to the caller. The registry is
+ * per-process and starts empty, so a fresh process that only imports the poll core —
+ * the launchd `ai-usage-poll` daemon, the dev-dashboard producer — read an empty registry
+ * and silently polled nothing, with no error to notice. `tools ai usage` happened to work
+ * only because registering the `config` commands registers the plugins as a side effect.
+ * The call is idempotent, so doing it at the one place that reads the registry costs
+ * nothing and cannot be forgotten by the next caller.
  */
-function usagePlugins(): UsagePlugin[] {
+export function usagePlugins(): UsagePlugin[] {
+    registerBuiltInPlugins();
     const out: UsagePlugin[] = [];
 
     for (const plugin of pluginsWithUsage()) {

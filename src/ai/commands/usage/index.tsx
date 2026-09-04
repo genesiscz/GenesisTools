@@ -1,6 +1,5 @@
 import { PROVIDER_ALIASES, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
-import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
-import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
+import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { parseTimeRange, RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -19,7 +18,7 @@ export interface AiUsageOptions {
 
 /** Aliases plus plugin ids, so `--provider claude` and `--provider anthropic-sub` both work. */
 function providerValues(): string[] {
-    return [...new Set([...Object.keys(PROVIDER_ALIASES), ...pluginsWithUsage().map((plugin) => plugin.id)])].sort();
+    return [...new Set([...Object.keys(PROVIDER_ALIASES), ...usagePlugins().map((entry) => entry.plugin.id)])].sort();
 }
 
 /**
