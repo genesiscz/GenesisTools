@@ -1,4 +1,5 @@
 import type { AccountUsageSnapshot, AiUsageResult } from "@app/dev-dashboard/contract/ai-accounts";
+import { CLAUDE_ALL_ACCOUNT_ID } from "@app/dev-dashboard/contract/ai-accounts";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 
@@ -53,4 +54,40 @@ export function filterSnapshots(
         // Ids are what the UI sends; names are what a hand-typed query carries.
         return !accounts || accounts.has(snapshot.accountId) || accounts.has(snapshot.accountName);
     });
+}
+
+/**
+ * The account ids a spend query may report. Both spend stores filter by account
+ * id alone, so a provider filter must become a list of ids here or it does
+ * nothing at all: the page read "0 accounts" while the spend widget still showed
+ * every provider's money (sweep 2026-09-04, defect 10).
+ *
+ * `undefined` means "no filter". An EMPTY array means "the filter matched
+ * nothing", which is a different answer and must not be read as "everything".
+ */
+export function spendAccountIds(
+    filter: SnapshotFilter,
+    enabled: ReadonlyArray<{ id: string; provider: string }>
+): readonly string[] | undefined {
+    const explicit = filter.accounts?.length ? [...filter.accounts] : undefined;
+
+    if (!filter.providers?.length) {
+        return explicit;
+    }
+
+    const wanted = new Set(filter.providers.map(resolveProviderFilter));
+    const ids = enabled.filter((account) => wanted.has(account.provider)).map((account) => account.id);
+
+    // Claude transcripts carry no account marker, so a whole provider's spend
+    // arrives under one pseudo account that belongs to anthropic.
+    if (wanted.has("anthropic-sub")) {
+        ids.push(CLAUDE_ALL_ACCOUNT_ID);
+    }
+
+    if (!explicit) {
+        return ids;
+    }
+
+    const allowed = new Set(explicit);
+    return ids.filter((id) => allowed.has(id));
 }
