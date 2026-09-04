@@ -1,6 +1,7 @@
 import { refreshAccountLabels } from "@app/claude/lib/config";
 import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { isUsageBucket } from "@app/claude/lib/usage/api";
+import { BUCKET_LABELS, bucketKind } from "@app/claude/lib/usage/constants";
 import type { UsageDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
@@ -100,7 +101,14 @@ export function useUsagePoller({ config, accountFilter, paused, pollIntervalSeco
                     // writers kept inserting flat-value rows forever.
 
                     try {
-                        notifRef.current?.processUsage(account.accountName, bucket, data.utilization, data.resets_at);
+                        notifRef.current?.processUsage({
+                            accountName: account.accountName,
+                            key: bucket,
+                            kind: bucketKind(bucket),
+                            label: BUCKET_LABELS[bucket] ?? bucket,
+                            utilization: data.utilization,
+                            resetsAt: data.resets_at,
+                        });
                     } catch (err) {
                         logger.warn(
                             { error: err, account: account.accountName, bucket },

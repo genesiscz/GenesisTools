@@ -1,75 +1,14 @@
-import { Storage } from "@genesiscz/utils/storage/storage";
-import type { PaceScope } from "./burn-pace";
-
-export interface UsageDashboardConfig {
-    refreshInterval: number;
-    prominentBuckets: string[];
-    hiddenBuckets: string[];
-    hiddenAccounts: string[];
-    defaultTab: number;
-    historyLayout: "stacked" | "side-by-side";
-    notifications: {
-        enabled: boolean;
-        inTui: boolean;
-        macos: boolean;
-        sound: string;
-        thresholds: {
-            session: number[];
-            weekly: number[];
-        };
-    };
-    dataRetentionDays: number;
-    /**
-     * Whose history the "at pace" estimate is built from. `pooled` reads every
-     * account's samples (your working rhythm, survives a fresh account);
-     * `per-account` uses only the account in question.
-     */
-    paceScope: PaceScope;
-}
-
-const DEFAULTS: UsageDashboardConfig = {
-    refreshInterval: 60,
-    prominentBuckets: ["five_hour", "seven_day", "seven_day_sonnet"],
-    hiddenBuckets: [],
-    hiddenAccounts: [],
-    defaultTab: 0,
-    historyLayout: "stacked",
-    notifications: {
-        enabled: true,
-        inTui: true,
-        macos: true,
-        sound: "Purr",
-        thresholds: {
-            session: [80],
-            weekly: [20, 40, 60, 80],
-        },
-    },
-    dataRetentionDays: 30,
-    paceScope: "pooled",
-};
-
-const storage = new Storage("claude-usage-dashboard");
-
-export async function loadDashboardConfig(): Promise<UsageDashboardConfig> {
-    const saved = await storage.getConfig<Partial<UsageDashboardConfig>>();
-    if (!saved) {
-        return { ...DEFAULTS };
-    }
-
-    return {
-        ...DEFAULTS,
-        ...saved,
-        notifications: {
-            ...DEFAULTS.notifications,
-            ...saved.notifications,
-            thresholds: {
-                ...DEFAULTS.notifications.thresholds,
-                ...saved.notifications?.thresholds,
-            },
-        },
-    };
-}
-
-export async function saveDashboardConfig(config: UsageDashboardConfig): Promise<void> {
-    await storage.setConfig(config);
-}
+/**
+ * Dashboard preferences moved to `@genesiscz/utils/ai/usage-poll/dashboard-config` and
+ * became per-provider maps under `Storage("ai-usage-dashboard")`, with a one-time copy of
+ * the old claude-only store (spec 2026-09-04 section 7.4).
+ */
+export {
+    DEFAULT_PROMINENT_LIMITS,
+    hiddenFor,
+    loadDashboardConfig,
+    type PerProviderKeys,
+    prominentFor,
+    saveDashboardConfig,
+    type UsageDashboardConfig,
+} from "@genesiscz/utils/ai/usage-poll/dashboard-config";

@@ -1,14 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import {
     backoffMs,
     blockedEntry,
     isTransportFailure,
+    loadPollGate,
     MAX_BACKOFF_MS,
     type PollGate,
     pruneGate,
     recordFailure,
     recordSuccess,
+    savePollGate,
 } from "./poll-gate";
+import { __resetUsagePollStorage } from "./storage";
 
 const NOW = 1_800_000_000_000;
 
@@ -190,5 +197,42 @@ describe("recordFailure with a transport failure", () => {
         }
 
         expect(gate.a.blockedUntil - NOW).toBe(MAX_BACKOFF_MS);
+    });
+});
+
+describe("per-provider gate files", () => {
+    const cleanups: Array<() => void> = [];
+
+    afterEach(() => {
+        for (const cleanup of cleanups.splice(0)) {
+            cleanup();
+        }
+
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        __resetUsagePollStorage();
+    });
+
+    function useTempHome(): void {
+        const home = mkdtempSync(join(tmpdir(), "ai-usage-gate-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        __resetUsagePollStorage();
+        cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    }
+
+    test("a blocked openai-sub account does not block the same name under anthropic-sub", async () => {
+        useTempHome();
+        const now = Date.now();
+        const blocked = recordFailure(recordFailure({}, "work", "app-server timeout", now), "work", "again", now);
+
+        await savePollGate("openai-sub", blocked);
+
+        expect(blockedEntry(await loadPollGate("openai-sub"), "work", now)).not.toBeNull();
+        expect(blockedEntry(await loadPollGate("anthropic-sub"), "work", now)).toBeNull();
+    });
+
+    test("an unreadable or missing gate treats every account as due", async () => {
+        useTempHome();
+
+        expect(await loadPollGate("grok-sub")).toEqual({});
     });
 });
