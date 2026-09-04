@@ -82,8 +82,17 @@ export interface AiAccountListItem {
     credentialKinds: string[];
 }
 
+/** Per-provider display rules, from the plugin's `AccountPresentation`. */
+export interface AiProviderPresentation {
+    /** Plugin id: `anthropic-sub`, `openai-sub`, `grok-sub`. */
+    provider: string;
+    /** `LimitWindow.key` values a compact card shows first. Empty means "show every window". */
+    prominentLimits: string[];
+}
+
 export interface AiAccountsResult {
     accounts: AiAccountListItem[];
+    providers: AiProviderPresentation[];
 }
 
 export interface AiUsageResult {

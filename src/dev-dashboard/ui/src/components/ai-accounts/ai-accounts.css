@@ -98,6 +98,49 @@
     flex: none;
 }
 
+/* One spend account per row: the dot is the checkbox, hollow once the row is unchecked. */
+.dd-ai-spend-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 8px;
+    padding: 0.25rem 0.375rem;
+    text-align: left;
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        opacity 0.15s ease;
+}
+
+.dd-ai-spend-row:hover {
+    background: color-mix(in srgb, var(--chip-color, var(--dd-accent-from)) 10%, transparent);
+}
+
+.dd-ai-spend-row[aria-pressed="false"] {
+    opacity: 0.5;
+}
+
+.dd-ai-spend-row[aria-pressed="false"] .dd-ai-dot {
+    background: transparent !important;
+}
+
+/* Share of the window's cost, as a proportion of the largest account. */
+.dd-ai-share {
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--dd-border);
+    flex: none;
+}
+
+.dd-ai-share > span {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.3s ease;
+}
+
 /* Block toolbar shown on hover or focus of a reorderable block. */
 .dd-ai-block-tools {
     opacity: 0;
@@ -279,6 +322,8 @@
 
     .dd-ai-card,
     .dd-ai-chip,
+    .dd-ai-spend-row,
+    .dd-ai-share > span,
     .dd-ai-bar > span,
     .dd-ai-tool-btn,
     .dd-ai-action,

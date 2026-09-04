@@ -8,6 +8,7 @@ import type {
     AiAccountsResult,
     AiDaemonProviderStatus,
     AiDaemonStatus,
+    AiProviderPresentation,
     AiSpendSeriesResult,
     AiSpendTotalsResult,
     AiUsageResult,
@@ -278,8 +279,13 @@ export function createAiAggregator(): AiAggregator {
                 };
             });
 
-            logger.debug({ accounts: accounts.length }, "[ai-dashboard] account list");
-            return { accounts };
+            const providers: AiProviderPresentation[] = [...features.entries()].map(([provider, plugin]) => ({
+                provider,
+                prominentLimits: [...plugin.presentation.prominentLimits],
+            }));
+
+            logger.debug({ accounts: accounts.length, providers: providers.length }, "[ai-dashboard] account list");
+            return { accounts, providers };
         },
 
         async getCurrentSnapshots(filter: SnapshotFilter): Promise<AiUsageResult> {

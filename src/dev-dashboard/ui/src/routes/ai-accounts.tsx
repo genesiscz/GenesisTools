@@ -156,6 +156,10 @@ export function AiAccountsRoute() {
         [accountsQuery.data]
     );
     const colors = useMemo(() => assignAccountColors(accountRefs.map((a) => a.accountId)), [accountRefs]);
+    const prominentByProvider = useMemo(
+        () => new Map((accountsQuery.data?.providers ?? []).map((p) => [p.provider, p.prominentLimits])),
+        [accountsQuery.data]
+    );
     const accountCounts = useMemo(() => {
         const counts: Record<string, number> = {};
 
@@ -226,6 +230,7 @@ export function AiAccountsRoute() {
                                 snapshot={snapshot}
                                 color={colors[snapshot.accountId] ?? "var(--dd-accent-from)"}
                                 nowMs={rangeEndMs}
+                                prominentKeys={prominentByProvider.get(snapshot.provider)}
                                 index={index}
                             />
                         ))}
