@@ -10,7 +10,7 @@ import {
     type SpendSource,
 } from "@app/dev-dashboard/contract/ai-accounts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AccountCard } from "@/components/ai-accounts/AccountCard";
 import { DaemonStatus } from "@/components/ai-accounts/DaemonStatus";
 import { FilterBar } from "@/components/ai-accounts/FilterBar";
@@ -24,7 +24,7 @@ import { useLayoutMode } from "@/hooks/useLayoutMode";
 import { useLive } from "@/hooks/useLive";
 import { useSectionLayout } from "@/hooks/useSectionLayout";
 import { assignAccountColors } from "@/lib/account-color";
-import { grainForMinutes, resolveRange } from "@/lib/ai-accounts-filters";
+import { grainForMinutes, resolveStableRange, windowStepMs } from "@/lib/ai-accounts-filters";
 import { fetchJson } from "@/lib/api";
 import { providerOrder } from "@/lib/provider-meta";
 import type { SpendChartMode } from "@/lib/spend-chart-data";
@@ -38,6 +38,21 @@ const BLOCK_LABELS: Record<string, string> = {
     daemon: "Polling",
 };
 const LAYOUT_KEY = "dd:ai-accounts:layout";
+
+/** How often the page re-reads the clock. The window itself only moves on its own step. */
+const CLOCK_TICK_MS = 30_000;
+
+/** A clock the render can depend on: countdowns stay live without a render loop. */
+function useClockTick(everyMs: number): number {
+    const [now, setNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), everyMs);
+        return () => clearInterval(id);
+    }, [everyMs]);
+
+    return now;
+}
 
 function query(params: Record<string, string | undefined>): string {
     const search = new URLSearchParams();
@@ -89,13 +104,20 @@ export function AiAccountsRoute() {
         refetchInterval: 60000,
     });
 
-    // One window end shared by every query and chart so their axes align; it moves
-    // on a filter change or a usage tick, not on every render.
-    const rangeEndMs = useMemo(() => Date.now(), [filters.range, usageQuery.dataUpdatedAt]);
-    const range = useMemo(() => resolveRange(filters.range, rangeEndMs), [filters.range, rangeEndMs]);
+    // One window end shared by every query and chart so their axes align. It is
+    // snapped to a step (a minute on an hour of data, fifteen on a month), so a
+    // re-render and a refetch ask for the SAME window and hit the cache. Tying it
+    // to `Date.now()` cost six spend requests over four windows a minute on an
+    // idle page, each one a fresh transcript scan.
+    const nowMs = useClockTick(CLOCK_TICK_MS);
+    const range = useMemo(() => resolveStableRange(filters.range, nowMs), [filters.range, nowMs]);
     const grain = grainForMinutes(range.minutes);
     const fromIso = new Date(range.fromMs).toISOString();
     const toIso = new Date(range.toMs).toISOString();
+
+    // Spend refetches at the cadence its window can actually move. A minute-by-minute
+    // poll of a 30-day window re-ran a scan that could not have a different answer.
+    const spendRefetchMs = windowStepMs(range.minutes);
 
     // The provider chips narrow spend too: without them the widget kept reporting
     // claude money while the grid said "no accounts match the filters".
@@ -111,7 +133,7 @@ export function AiAccountsRoute() {
                     accounts: accountsParam,
                 })}`
             ),
-        refetchInterval: 60000,
+        refetchInterval: spendRefetchMs,
     });
     const spendSeriesQuery = useQuery({
         queryKey: ["ai", "spend", "series", fromIso, toIso, grain, source, providersParam, accountsParam],
@@ -126,7 +148,7 @@ export function AiAccountsRoute() {
                     accounts: accountsParam,
                 })}`
             ),
-        refetchInterval: 60000,
+        refetchInterval: spendRefetchMs,
     });
     const limitsSeriesQuery = useQuery({
         queryKey: ["ai", "usage", "series", fromIso, toIso, providersParam, accountsParam],
@@ -244,7 +266,7 @@ export function AiAccountsRoute() {
                                 key={snapshot.accountId}
                                 snapshot={snapshot}
                                 color={colors[snapshot.accountId] ?? "var(--dd-accent-from)"}
-                                nowMs={rangeEndMs}
+                                nowMs={nowMs}
                                 prominentKeys={prominentByProvider.get(snapshot.provider)}
                                 index={index}
                             />

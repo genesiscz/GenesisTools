@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
-import { channelsFromKey, liveChannelsKey } from "./useLive";
+import { AI_USAGE_KEYS, channelsFromKey, liveChannelsKey } from "./useLive";
 
 /**
  * The reconnect storm (sweep 2026-09-04) was an effect that depended on the
@@ -31,6 +31,33 @@ describe("liveChannelsKey", () => {
         liveChannelsKey(channels);
 
         expect(channels).toEqual(["ports", "ai-usage"]);
+    });
+});
+
+/** React Query matches a query key by prefix, which is the whole point here. */
+function invalidatedBy(prefix: readonly string[], key: readonly unknown[]): boolean {
+    return prefix.every((part, i) => key[i] === part);
+}
+
+function invalidatedByPoll(key: readonly unknown[]): boolean {
+    return AI_USAGE_KEYS.some((prefix) => invalidatedBy(prefix, key));
+}
+
+describe("AI_USAGE_KEYS", () => {
+    test("a poll refreshes the limit windows, the account list and the poller", () => {
+        expect(invalidatedByPoll(["ai", "usage", "openai-sub", ""])).toBe(true);
+        expect(invalidatedByPoll(["ai", "usage", "series", "from", "to"])).toBe(true);
+        expect(invalidatedByPoll(["ai", "accounts"])).toBe(true);
+        expect(invalidatedByPoll(["ai", "daemon"])).toBe(true);
+    });
+
+    test("a poll does NOT refresh recorded spend, which costs a transcript scan", () => {
+        expect(invalidatedByPoll(["ai", "spend", "totals", "from", "to"])).toBe(false);
+        expect(invalidatedByPoll(["ai", "spend", "series", "from", "to"])).toBe(false);
+    });
+
+    test("no prefix is the bare `ai`, which would match everything again", () => {
+        expect(AI_USAGE_KEYS.every((prefix) => prefix.length > 1)).toBe(true);
     });
 });
 

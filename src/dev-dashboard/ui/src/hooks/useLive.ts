@@ -22,6 +22,17 @@ function mergeClassify(prev: PortsResult | undefined, updates: PortInfo[]): Port
 }
 
 /**
+ * What an `ai-usage` poll actually changes. `["ai"]` would also match
+ * `["ai", "spend", …]`, whose answer comes from a transcript scan a poll cannot
+ * affect (sweep 2026-09-04, N1).
+ */
+export const AI_USAGE_KEYS: ReadonlyArray<readonly string[]> = [
+    ["ai", "usage"],
+    ["ai", "accounts"],
+    ["ai", "daemon"],
+];
+
+/**
  * Identity-free description of a subscription. Every caller passes a fresh array
  * literal, so the array itself changes on every render; the effect must key off
  * this string instead or it tears the stream down and rebuilds it each time.
@@ -84,9 +95,14 @@ export function useLive(channels: LiveChannel[]): {
                 }
 
                 if (frame.channel === "ai-usage" && frame.type === "snapshot") {
-                    // Every ai query shares the window and the account list, so a
-                    // fresh poll re-reads all of them rather than patching one key.
-                    void qc.invalidateQueries({ queryKey: ["ai"] });
+                    // A poll refreshes rate-limit windows and poller health, and
+                    // says nothing about recorded spend. Invalidating all of `ai`
+                    // sent the spend queries out a second time every cycle, and
+                    // each of those is a transcript scan.
+                    for (const key of AI_USAGE_KEYS) {
+                        void qc.invalidateQueries({ queryKey: key });
+                    }
+
                     return;
                 }
 
