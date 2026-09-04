@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
 import { parseObsidianSearch } from "@/lib/obsidian-url-state";
 import { Shell } from "@/routes/__root";
 import { ActivityTimelineRoute } from "@/routes/activity-timeline";
+import { AiAccountsRoute } from "@/routes/ai-accounts";
 import { BoardRoute } from "@/routes/board";
 import { BoardsRoute } from "@/routes/boards";
 import { BuildLogTailRoute } from "@/routes/build-log-tail";
-import { ClaudeRoute } from "@/routes/claude";
 import { CmuxRoute } from "@/routes/cmux";
 import { ContainersRoute } from "@/routes/containers";
 import { DaemonRoute } from "@/routes/daemon";
@@ -76,10 +76,20 @@ const obsidianRoute = createRoute({
     component: ObsidianRoute,
 });
 
+const aiAccountsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/ai/accounts",
+    component: AiAccountsRoute,
+});
+
+// The Claude-only usage page became the multi-provider /ai/accounts page. The old
+// path stays as a redirect so bookmarks and pinned tabs keep working.
 const claudeRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/claude",
-    component: ClaudeRoute,
+    beforeLoad: () => {
+        throw redirect({ to: "/ai/accounts" });
+    },
 });
 
 const daemonRoute = createRoute({
@@ -174,6 +184,7 @@ const boardRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
     indexRoute,
+    aiAccountsRoute,
     claudeRoute,
     daemonRoute,
     buildLogTailRoute,

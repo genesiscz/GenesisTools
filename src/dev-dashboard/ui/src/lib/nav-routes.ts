@@ -33,7 +33,7 @@ export interface NavRoute {
 export const NAV_ROUTES: NavRoute[] = [
     // Original features — kept in their pre-port order.
     { to: "/", label: "pulse", Icon: Activity, exact: true },
-    { to: "/claude", label: "claude usage", Icon: Bot },
+    { to: "/ai/accounts", label: "ai accounts", Icon: Bot },
     { to: "/daemon", label: "daemon", Icon: Timer },
     { to: "/containers", label: "containers", Icon: Container },
     { to: "/todos", label: "todos", Icon: ListTodo },
