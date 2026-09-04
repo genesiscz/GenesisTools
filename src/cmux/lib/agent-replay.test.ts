@@ -17,7 +17,7 @@ function grokSession(overrides: Partial<ReplayCatalogSession> = {}): ReplayCatal
     return {
         kind: "grok",
         sessionId: GROK_ID,
-        cwd: "/Users/me/Projects/col-fe",
+        cwd: "/Users/me/Projects/shop-fe",
         title: "PRs merged into release/2026-09-03",
         ...overrides,
     };
@@ -29,7 +29,7 @@ function claudeSession(overrides: Partial<ReplayCatalogSession> = {}): ReplayCat
         sessionId: CLAUDE_ID,
         cwd: "/Users/me/Projects/App",
         title: "Continue",
-        account: "foltyn",
+        account: "work",
         ...overrides,
     };
 }
@@ -42,7 +42,7 @@ function terminal(title: string, extra: Partial<TerminalSurface> = {}): Terminal
     return {
         type: "terminal",
         title,
-        cwd: extra.cwd ?? "/Users/me/Projects/col-fe",
+        cwd: extra.cwd ?? "/Users/me/Projects/shop-fe",
         ...extra,
     };
 }
@@ -85,7 +85,7 @@ describe("matchGrokSession", () => {
     test("matches an exact generated title in the same cwd", () => {
         const hit = matchGrokSession(
             "PRs merged into release/2026-09-03 - grok",
-            "/Users/me/Projects/col-fe",
+            "/Users/me/Projects/shop-fe",
             sessions
         );
         expect(hit?.sessionId).toBe(GROK_ID);
@@ -94,7 +94,7 @@ describe("matchGrokSession", () => {
     test("matches a truncated cmux title against the longer generated title", () => {
         const hit = matchGrokSession(
             "Worktree bun installs: Skia copy costs 1… - grok",
-            "/Users/me/Projects/col-fe",
+            "/Users/me/Projects/shop-fe",
             sessions
         );
         expect(hit?.sessionId).toBe("01a05d17-c512-7dd2-abb6-e62d8c7d612a");
@@ -107,7 +107,7 @@ describe("matchGrokSession", () => {
 
     test("returns nothing for an idle shell title", () => {
         expect(
-            matchGrokSession("Martin@MacBook-Pro:~/Tresors/Projects/col-fe", "/Users/me/Projects/col-fe", sessions)
+            matchGrokSession("Martin@MacBook-Pro:~/Tresors/Projects/shop-fe", "/Users/me/Projects/shop-fe", sessions)
         ).toBeUndefined();
     });
 });
@@ -169,7 +169,7 @@ describe("replayCommandForSurface", () => {
         const sessions = catalog([grokSession(), claudeSession()]);
         expect(replayCommandForSurface(terminal("ncdu /root/security/"), sessions)?.command).toBeUndefined();
         expect(
-            replayCommandForSurface(terminal("Martin@MacBook-Pro:~/Tresors/Projects/col-fe"), sessions)?.command
+            replayCommandForSurface(terminal("Martin@MacBook-Pro:~/Tresors/Projects/shop-fe"), sessions)?.command
         ).toBeUndefined();
         expect(
             replayCommandForSurface(terminal("-=*[ROOT]*=- | root@de:~ | 125x25 | pts/0"), sessions)?.command
