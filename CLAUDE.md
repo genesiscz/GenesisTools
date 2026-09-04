@@ -120,6 +120,8 @@ Never read `process.env` directly in application code — use `import { env } fr
 
 When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
 
+**🛑 `src/utils/**` is the `@genesiscz/utils` package and can NEVER import `@app/*`.** That includes every subfolder (`src/utils/claude/`, `src/utils/ai/`, …); there is no exception for a folder named after a tool. If code you are writing under `src/utils/` needs an `@app/<tool>/...` module, that module belongs in `src/utils/**` too: move it there (with its tests) and import it via `@genesiscz/utils/...`. Never solve it by moving YOUR file out to the tool directory, and never by a relative `../../<tool>/` path. `scripts/ci/check-package-boundaries.ts` fails CI on any `@app/*` import under `src/utils/**`; run it before you commit a move.
+
 - `src/utils/format.ts` - Formatting: `formatDuration()`, `formatBytes()`, `formatTokens()`, `formatNumber()`, `formatList()`, `formatTimestamp()`, `createStopwatch()`
 - `src/utils/Stopwatch.ts` - High-res stopwatch class: `elapsed()`, `lap()`, `stamp()` (wall-clock + elapsed), `now()` (HH:MM:SS.mmm)
 - `src/utils/table.ts` - CLI tables: `formatTable()` (plain padded), **`createBoxTable()` / `renderCliHeader()` / `formatDotStatus()`** (port-style boxed inventories via `cli-table3`)
