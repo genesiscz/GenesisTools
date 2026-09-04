@@ -18,6 +18,8 @@ export interface GrokSessionMeta {
     workerHome: string;
     model?: string;
     readOnly: boolean;
+    /** Credential the worker runs under; absent means "subscription when ~/.grok/auth.json exists". */
+    auth?: "subscription" | "api-key";
     turns: number;
     createdAt: string;
     /** The agents-bus swarm of the session that started this worker, if any. */

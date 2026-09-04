@@ -84,6 +84,10 @@ program
     .option("--model <model>", "grok model id", "grok-4.6")
     .option("--readonly", "review mode: worker gets read_file,list_dir,grep only (sticky across steers)", false)
     .option("--worker-home <path>", "override the isolated GROK_HOME (default ~/.genesis-tools/grok/worker-home)")
+    .option(
+        "--auth <mode>",
+        "subscription (your `grok login` in ~/.grok, the default when it exists) or api-key (XAI_API_KEY, metered)"
+    )
     .option("-r, --resume [query]", "Resume a grok TUI session by id, title, or transcript (not the headless worker)")
     .option("-l, --list", "With --resume, list matching TUI sessions")
     .option("-a, --all", "With --resume, search every project")
@@ -103,6 +107,10 @@ program
             throw new Error("Worker mode needs --name and --cwd. To resume a TUI session, pass --resume [query].");
         }
 
+        if (options.auth !== undefined && options.auth !== "subscription" && options.auth !== "api-key") {
+            throw new Error(`--auth must be subscription or api-key, got '${options.auth}'.`);
+        }
+
         const result = await runSession({
             name: options.name,
             cwd: options.cwd,
@@ -111,6 +119,7 @@ program
             model: options.model,
             readOnly: options.readonly,
             workerHome: options.workerHome,
+            auth: options.auth,
         });
         printTurn(result);
     });

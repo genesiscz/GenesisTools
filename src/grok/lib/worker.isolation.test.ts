@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
-import { buildRunArgs, buildSteerArgs, buildTurnEnv, resolveGrokBinary, steerSession } from "./worker";
+import {
+    buildRunArgs,
+    buildSteerArgs,
+    buildTurnEnv,
+    resolveAuthMode,
+    resolveGrokBinary,
+    steerSession,
+    subscriptionAuthPath,
+} from "./worker";
 
 /**
  * Regression test: PR #330 review t2 — the worker's isolation contract was
@@ -48,6 +56,51 @@ describe("worker isolation env", () => {
         expect(built.GROK_CLAUDE_SKILLS_ENABLED).toBe("0");
         expect(built.GROK_CLAUDE_HOOKS_ENABLED).toBe("0");
         expect(built.GROK_HOME).toBe("/tmp/worker-home");
+    });
+});
+
+/**
+ * The worker's GROK_HOME never holds a `grok login`, and the binary prefers an
+ * ambient XAI_API_KEY over its OAuth file. Left alone, every worker turn bills
+ * the metered API team; five planners died on its 403 on 2026-09-04 while the
+ * user's subscription sat idle.
+ */
+describe("worker auth mode", () => {
+    test("subscription mode strips the API key and points at the real login file", () => {
+        const built = buildTurnEnv({ XAI_API_KEY: "xai-secret", PATH: "/usr/bin" }, "/tmp/worker-home", null, {
+            mode: "subscription",
+            authPath: "/home/u/.grok/auth.json",
+        });
+
+        expect(built.XAI_API_KEY).toBeUndefined();
+        expect(built.GROK_AUTH_PATH).toBe("/home/u/.grok/auth.json");
+        expect(built.GROK_HOME).toBe("/tmp/worker-home");
+    });
+
+    test("api-key mode leaves the ambient key in place (negative control)", () => {
+        const built = buildTurnEnv({ XAI_API_KEY: "xai-secret" }, "/tmp/worker-home", null, {
+            mode: "api-key",
+            authPath: "/home/u/.grok/auth.json",
+        });
+
+        expect(built.XAI_API_KEY).toBe("xai-secret");
+        expect(built.GROK_AUTH_PATH).toBeUndefined();
+    });
+
+    test("the default is subscription only when the login file exists", () => {
+        const home = mkdtempSync(join(tmpdir(), "grok-auth-"));
+        const authPath = join(home, "auth.json");
+
+        expect(resolveAuthMode(undefined, authPath)).toBe("api-key");
+        writeFileSync(authPath, "{}");
+        expect(resolveAuthMode(undefined, authPath)).toBe("subscription");
+        expect(resolveAuthMode("api-key", authPath)).toBe("api-key");
+    });
+
+    test("the login file follows the caller's GROK_AUTH_PATH, then GROK_HOME, then ~/.grok", () => {
+        expect(subscriptionAuthPath({ GROK_AUTH_PATH: "/x/auth.json", GROK_HOME: "/y" })).toBe("/x/auth.json");
+        expect(subscriptionAuthPath({ GROK_HOME: "/y" })).toBe("/y/auth.json");
+        expect(subscriptionAuthPath({}).endsWith("/.grok/auth.json")).toBe(true);
     });
 });
 

@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
@@ -26,6 +27,32 @@ const ISOLATION_ENV: Record<string, string> = {
 
 const READ_ONLY_TOOLS = "read_file,list_dir,grep";
 
+export type GrokAuthMode = "subscription" | "api-key";
+
+/**
+ * Where `grok login` keeps its OAuth credential. The interactive CLI reads it
+ * from its own GROK_HOME (~/.grok by default). The worker's GROK_HOME is a
+ * separate directory, so without this the binary falls back to XAI_API_KEY and
+ * bills the metered API team instead of the subscription (2026-09-04: five
+ * planners died on a 403 "used all available credits").
+ */
+export function subscriptionAuthPath(baseEnv: Record<string, string | undefined>): string {
+    if (baseEnv.GROK_AUTH_PATH) {
+        return baseEnv.GROK_AUTH_PATH;
+    }
+
+    return join(baseEnv.GROK_HOME ?? join(homedir(), ".grok"), "auth.json");
+}
+
+/** An explicit request wins; otherwise subscription when the login file exists, else the API key. */
+export function resolveAuthMode(requested: GrokAuthMode | undefined, authPath: string): GrokAuthMode {
+    if (requested) {
+        return requested;
+    }
+
+    return existsSync(authPath) ? "subscription" : "api-key";
+}
+
 export interface RunSessionOptions {
     name: string;
     cwd: string;
@@ -34,6 +61,7 @@ export interface RunSessionOptions {
     model?: string;
     readOnly: boolean;
     workerHome?: string;
+    auth?: GrokAuthMode;
 }
 
 export interface SteerSessionOptions {
@@ -67,9 +95,10 @@ export interface TurnResult {
 export function buildTurnEnv(
     baseEnv: Record<string, string | undefined>,
     workerHome: string,
-    rendezvousSession?: string | null
+    rendezvousSession?: string | null,
+    auth?: { mode: GrokAuthMode; authPath: string }
 ): Record<string, string | undefined> {
-    return {
+    const built: Record<string, string | undefined> = {
         ...baseEnv,
         GROK_HOME: workerHome,
         // The swarm the worker must join. Without it the worker would fall back
@@ -77,6 +106,19 @@ export function buildTurnEnv(
         ...(rendezvousSession ? { GT_RENDEZVOUS_SESSION: rendezvousSession } : {}),
         ...ISOLATION_ENV,
     };
+
+    if (auth?.mode === "subscription") {
+        // The binary prefers an API key over its OAuth login ("XAI_API_KEY is
+        // still set and will be used for authentication" in its own strings),
+        // so the key has to go. GROK_AUTH_PATH points the worker at the REAL
+        // login file, never a copy, so a token refresh cannot fork the
+        // credential between the worker and the interactive CLI.
+        delete built.XAI_API_KEY;
+        delete built.GROK_CODE_XAI_API_KEY;
+        built.GROK_AUTH_PATH = auth.authPath;
+    }
+
+    return built;
 }
 
 /** Arguments for the first turn of a session. */
@@ -196,9 +238,17 @@ async function runTurn(
     const logPath = turnLogPath(meta.name, turn);
     const errPath = turnErrPath(meta.name, turn);
     const args = [...turnArgs, "--cwd", meta.cwd, "--output-format", "streaming-json"];
+    const authPath = subscriptionAuthPath(env.getProcessEnv());
+    const authMode = resolveAuthMode(meta.auth, authPath);
+    if (authMode === "subscription" && !existsSync(authPath)) {
+        throw new Error(
+            `grok subscription login not found at ${authPath}. Run 'grok login' first, or start the session with --auth api-key.`
+        );
+    }
+
     // The prompt is user text and can carry credentials or private code, so the
     // day-stamped log gets the shape of the invocation, never its payload.
-    log.info({ name: meta.name, turn, binary, args: redactArgs(args), logPath }, "starting grok turn");
+    log.info({ name: meta.name, turn, binary, args: redactArgs(args), logPath, auth: authMode }, "starting grok turn");
 
     // O_EXCL: the turn log doubles as the turn reservation. Two concurrent
     // steers derive the same next turn from the same metadata, and "w" would
@@ -228,7 +278,10 @@ async function runTurn(
         const proc = Bun.spawn({
             cmd: [binary, ...args],
             cwd: meta.cwd,
-            env: buildTurnEnv(env.getProcessEnv(), meta.workerHome, meta.rendezvousSession),
+            env: buildTurnEnv(env.getProcessEnv(), meta.workerHome, meta.rendezvousSession, {
+                mode: authMode,
+                authPath,
+            }),
             stdin: "ignore",
             stdout: logFd,
             stderr: errFd,
@@ -278,6 +331,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         workerHome: options.workerHome ? resolve(options.workerHome) : defaultWorkerHome(),
         model: options.model,
         readOnly: options.readOnly,
+        auth: options.auth,
         turns: 0,
         createdAt: new Date().toISOString(),
         // Pinned once: every later steer must land in the same swarm, even if

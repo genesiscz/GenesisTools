@@ -44,7 +44,7 @@ tools grok sessions
   Verified: the harness then reports `exit 143`, `died mid-flight`, and exits 1, while the session survives and the next `steer` resumes it normally.
 
   🛑 Do **not** `pkill -f "grok .*--cwd <path>"`. A cwd pattern matches every session running in that project, and `grok` is a common enough word to catch your own shell and editor.
-- Auth is `XAI_API_KEY` from the environment. If a turn reports a login problem, stop and report — never run `grok login` for the user.
+- **Auth defaults to the user's subscription login** (`~/.grok/auth.json`, written by `grok login`) whenever that file exists: the harness drops `XAI_API_KEY` from the worker env and sets `GROK_AUTH_PATH` to the real login file, so refreshes never fork into a copy. Pass `--auth api-key` on `run` to bill the metered `XAI_API_KEY` team instead; the choice is stored in the session meta, so every `steer` reuses it. Why the default flipped (2026-09-04 18:20): the worker's `GROK_HOME` never holds a login, and the binary prefers an ambient `XAI_API_KEY` over its OAuth file, so five planners silently burned API credits and died on a 403 `used all available credits` while the subscription sat idle. If a turn reports a login problem, stop and report — never run `grok login` for the user.
 
 ## What the harness bakes in (do not hand-roll bare `grok`)
 
