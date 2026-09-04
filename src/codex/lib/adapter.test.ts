@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isApprovalRequest, isText, isToolCall, isToolResult } from "@genesiscz/utils/worker/events";
+import { isApprovalRequest, isText, isToolCall, isToolResult, isUsageLimits } from "@genesiscz/utils/worker/events";
 import { formatStoredEventLine, type StoredCodexEvent, toWorkerEvent } from "./adapter";
 
 // Shapes captured from real session logs under ~/.genesis-tools/codex/sessions
@@ -200,12 +200,31 @@ describe("codex toWorkerEvent", () => {
             "hook/started",
             "hook/completed",
             "thread/tokenUsage/updated",
-            "account/rateLimits/updated",
             "item/commandExecution/outputDelta",
             "daemon/started",
         ]) {
             expect(toWorkerEvent({ source: "app-server", method, params: { threadId: THREAD } })).toBeNull();
         }
+    });
+
+    // A live push the daemon used to drop. Field names captured from a real
+    // `account/rateLimits/read` on 2026-09-04: rateLimits.{primary,secondary}
+    // carry usedPercent / windowDurationMins / resetsAt (epoch SECONDS).
+    test("account/rateLimits/updated becomes a usage.limits event carrying the raw payload", () => {
+        const params = {
+            threadId: THREAD,
+            rateLimits: {
+                primary: { usedPercent: 41.5, windowDurationMins: 300, resetsAt: 1_757_000_000 },
+                secondary: { usedPercent: 12, windowDurationMins: 10_080, resetsAt: 1_757_400_000 },
+                planType: "plus",
+            },
+        };
+
+        const event = toWorkerEvent({ source: "app-server", method: "account/rateLimits/updated", params });
+
+        expect(event).toMatchObject({ kind: "usage.limits", sessionId: THREAD });
+        expect(isUsageLimits(event!)).toBe(true);
+        expect((event as { native: typeof params }).native).toBe(params);
     });
 
     test("user messages are not re-emitted", () => {

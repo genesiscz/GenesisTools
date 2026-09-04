@@ -184,6 +184,11 @@ export function toWorkerEvent(event: StoredCodexEvent): WorkerEvent | null {
             const status = params?.status as { type?: string } | undefined;
             return status?.type === "closed" ? { kind: "session.closed", sessionId, ts } : null;
         }
+        // A running `tools codex run` gets fresh rate limits pushed for free, so the
+        // openai-sub usage cache can refresh without spawning a second app-server
+        // (spec 2026-09-04 section 6.6). The payload is passed through untouched.
+        case "account/rateLimits/updated":
+            return { kind: "usage.limits", sessionId, native: params, ts };
         // Deliberately outside the shared stream.
         case "daemon/started":
         case "thread/started":
@@ -191,7 +196,6 @@ export function toWorkerEvent(event: StoredCodexEvent): WorkerEvent | null {
         case "hook/started":
         case "hook/completed":
         case "thread/tokenUsage/updated":
-        case "account/rateLimits/updated":
         case "remoteControl/status/changed":
         case "skills/changed":
         case "warning":
