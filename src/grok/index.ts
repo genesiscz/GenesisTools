@@ -10,6 +10,7 @@ import { formatWorkerEvent } from "@genesiscz/utils/worker/events";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
+import { registerGrokLoginCommand } from "./commands/login";
 import { registerGrokResumeCommand } from "./commands/resume";
 import { turnErrPath, turnLogPath } from "./lib/paths";
 import { GrokSessionStore } from "./lib/store";
@@ -283,6 +284,7 @@ for (const [verb, reason] of Object.entries(WORKER_CAPABILITIES.grok.absentVerbs
 }
 
 registerGrokHistoryCommand(program);
+registerGrokLoginCommand(program);
 registerGrokResumeCommand(program);
 
 await runTool(program, { tool: "grok" });

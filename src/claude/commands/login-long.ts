@@ -20,6 +20,7 @@ export function registerLoginLongCommand(program: Command): void {
                 name,
                 setupToken: opts.setupToken,
                 tool: "tools claude login-long",
+                subcommand: ["login-long"],
             });
         });
 }

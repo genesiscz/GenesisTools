@@ -21,6 +21,7 @@ import { withCancel } from "@genesiscz/utils/prompts/clack/helpers.ts";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerAccountsCommands } from "./commands/accounts";
 import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
@@ -570,6 +571,7 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
+registerAccountsCommands(program);
 registerConfigCommands(program);
 registerSessionsCommands(program);
 
