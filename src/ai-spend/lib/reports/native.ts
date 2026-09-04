@@ -1,12 +1,12 @@
 import { basename, dirname } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
-import { accountIdForFile, resolveDriverRoots } from "../account-roots";
+import { resolveDriverRoots, rootForFile } from "../account-roots";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import type { DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
+import type { DriverUsageEvent, MonitorDriver } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
 import type { SourceId, SpendEvent } from "./types";
@@ -255,7 +255,6 @@ function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadN
         options.minMtimeMs ?? MIN_MTIME,
         driver
     );
-    const byPath = new Map(roots.map((root) => [root.path, root]));
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -265,8 +264,11 @@ function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadN
             continue;
         }
 
-        const accountId = accountIdForFile(file, roots);
-        const home = byPath.get(rootOfFile(file, roots))?.home;
+        // One lookup for both fields: `home` must come from the same row
+        // `accountId` did, and a second selector is how the two drift apart.
+        const root = rootForFile(file, roots);
+        const accountId = root?.accountId;
+        const home = root?.home;
 
         for (const event of parseNativeChunk({ driver, source, file, chunk: content }).events) {
             if (accountId !== undefined) {
@@ -282,19 +284,6 @@ function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadN
     }
 
     return events;
-}
-
-/** The longest root the file sits under, so `home` comes from the same row `accountId` did. */
-function rootOfFile(file: string, roots: readonly DriverRoot[]): string {
-    let best = "";
-
-    for (const root of roots) {
-        if ((file.startsWith(`${root.path}/`) || file === root.path) && root.path.length > best.length) {
-            best = root.path;
-        }
-    }
-
-    return best;
 }
 
 export function loadClaudeEvents(options: LoadNativeOptions): SpendEvent[] {
