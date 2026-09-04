@@ -58,6 +58,10 @@ bun scripts/ci/harvest-placeholder-markers.ts
 
 Wired 2026-09-01 14:08. Run it BY HAND when Teams gained someone new: it reads the ms-teams cache only, so it is a seeding job, not a per-push step. The pre-push hook ran it between 2026-09-02 22:42 and 2026-09-03 21:50 and no longer does — rewriting the needle file on every push added nothing, and the harvester lives on one branch, so the `set -e` hook aborted on branches without it.
 
+### Git branch mechanics
+
+`tools git merged` decides merged-ness (by content: squash, rebase and recompose all fool git's own checks); `tools git rebase-cascade` moves a parent with its children; `tools git base` names the base branch and the rule that chose it; `tools git config` reads the per-repo `genesis-tools.config.json`. The `gt:git` plugin skill is the guided workflow on top. Typed git output for any tool: `createGit()` readers and the `porcelain` bundles in `src/utils/git/porcelain.ts`; never re-parse `status` or `for-each-ref` by hand.
+
 ### 🛑 Hard rules for agents working in an isolated worktree
 
 Every teammate/subagent given its own worktree MUST, before ANY other work:

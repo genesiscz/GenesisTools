@@ -203,7 +203,7 @@ is large, and as skills they would load into sessions that never needed them.
 | `azure-devops` | Work items, queries, sprints, dashboards. Defers time logging to `/gt:timelog`. |
 | `claude-history` | Find a past Claude Code conversation by topic, file, or date. |
 | `debugging-master` | Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation (Node/TS, PHP, browser). |
-| `git-rebaser` | Cascade rebase for a parent branch plus the children stacked on it, using `git rebase --onto`. |
+| `git` | Branch mechanics with proof: is it merged (by content), rebase one branch or a fleet, the oracle merge, cascade a parent and its children, clean up after a merge, recommit, split a branch, merge a PR. Drives `tools git merged`, `rebase-cascade`, `base`, `config`. |
 | `github` | Read or search GitHub, and analyze GitHub Actions runs, failures, and billing. |
 | `handoff-to` | Offload work to another model or agent and pick which one (Codex/GPT, grok, Claude on another account, sonnet, opus, fable); per-backend mechanics in its `references/`. |
 | `improve-agents-md` | Empirically evaluate and trim `CLAUDE.md` / `AGENTS.md` by testing which rules a clean model already follows. |
@@ -329,10 +329,9 @@ that tool's own `README.md`, which you can also print in the terminal with
 
 | Tool | What it does | Key subcommands |
 |------|--------------|-----------------|
-| [`git`](src/git/README.md) | Commit analysis: query commits by range, extract work-item IDs by regex, manage author identities, branch cleanup. | `commits` `configure-authors` `configure-workitem-patterns` `health` `branch-gc` `monster` |
+| [`git`](src/git/README.md) | Commit analysis plus branch mechanics: is a branch merged (by content, not sha), cascade-rebase a parent with its children, detect the base branch, per-repo git policy. | `commits` `merged` `rebase-cascade` `base` `config` `configure-authors` `configure-workitem-patterns` `health` `monster` |
 | [`git-commit`](src/git-commit/README.md) | Generate commit messages with AI, optionally staging first and pushing after. | flags only (`--stage`, `--detail`) |
 | [`git-last-commits-diff`](src/git-last-commits-diff/README.md) | Render diffs between recent commits, formatted for feeding to an AI. | flags only (`--commits`, `--output`, `--clipboard`) |
-| [`git-rebase-multiple`](src/git-rebase-multiple/README.md) | Safe branch-hierarchy rebasing with backup refs, fork-point tags, and full rollback. | flags only (`--status`, `--dry-run`, `--abort`, `--continue`, `--cleanup`) |
 | [`git-rebranch`](src/git-rebranch/README.md) | Split a messy branch into several clean branches by grouping commits. | flags only (`--dry-run`) |
 | [`git-rename-commits`](src/git-rename-commits/README.md) | Interactively rename the last N commit messages, with a confirmation screen before the rewrite. | flags only (`--commits`) |
 | [`last-changes`](src/last-changes/README.md) | Show uncommitted changes grouped by modification time, so you can see what you touched when. | flags only |
