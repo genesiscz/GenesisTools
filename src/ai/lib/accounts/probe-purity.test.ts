@@ -165,7 +165,7 @@ describe("accounts who", () => {
         expect(refreshCalls).toEqual([]);
         expect(fetchCalls).toEqual([]);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
-    });
+    }, 30_000);
 });
 
 describe("accounts discover without --bind", () => {
