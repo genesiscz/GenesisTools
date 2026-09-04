@@ -3,7 +3,7 @@ import { type ApplyLoginOutcomeResult, applyLoginOutcome } from "@genesiscz/util
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountIdentity, LoginOutcome } from "@genesiscz/utils/ai/providers/account-features";
 import { identityMismatch } from "@genesiscz/utils/ai/providers/identity-guard";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
 /**
@@ -101,6 +101,27 @@ export interface WriteLoginOutcomeInput {
     defaultForApps?: string[];
 }
 
+/**
+ * A rollback that fails must not turn a clean refusal into a crash: the config
+ * was NOT written either way, so the account is still consistent. Say what was
+ * left behind rather than swallowing it.
+ */
+async function rollbackOutcome(outcome: LoginOutcome): Promise<void> {
+    if (!outcome.rollback) {
+        return;
+    }
+
+    try {
+        await outcome.rollback();
+        logger.info({ provider: outcome.provider }, "identity refused: rolled back the flow's on-disk write");
+    } catch (err) {
+        logger.warn({ err, provider: outcome.provider }, "identity refused but the rollback failed");
+        out.printlnErr(
+            pc.yellow("  Could not undo the credential file this login wrote — check it before using the account.")
+        );
+    }
+}
+
 /** Returns null when the identity policy refused; the caller prints and exits 1. */
 export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<ApplyLoginOutcomeResult | null> {
     const decision = await applyIdentityPolicy({
@@ -112,6 +133,11 @@ export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<
 
     if (!decision.ok) {
         out.printlnErr(pc.red(decision.reason));
+        // The flow may already have written a vendor file (codex's `auth.json`).
+        // Refusing the CONFIG write while leaving that file replaced is the worst
+        // of both: the account still names the old identity while the resolver
+        // reads the new credential (PR #360 review t17).
+        await rollbackOutcome(input.outcome);
         return null;
     }
 

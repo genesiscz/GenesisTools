@@ -58,6 +58,17 @@ export interface LoginOutcome {
     /** Name and label suggestions when the caller gave none. */
     suggestedName?: string;
     suggestedLabel?: string;
+    /**
+     * Undo a side effect the flow already committed to disk, called ONLY when the
+     * identity policy refuses the write.
+     *
+     * Codex needs it: `codexLogin` writes the vendor's `auth.json` before anything
+     * can compare identities, so a refused re-login used to leave the config bound
+     * to the old account while the resolver read the NEW credentials out of that
+     * file (spec 2026-09-04; PR #360 review t17). A flow with no disk side effect
+     * omits it.
+     */
+    rollback?(): Promise<void>;
     /** Extra top-level fields (plan, fingerprint) the flow learned. */
     accountFields?: Partial<
         Pick<
