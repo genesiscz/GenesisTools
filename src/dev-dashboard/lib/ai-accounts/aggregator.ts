@@ -32,9 +32,9 @@ import { getLiveHub } from "@app/dev-dashboard/lib/live/singleton";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountFeatures } from "@genesiscz/utils/ai/providers/account-features";
-import { PROVIDER_ALIASES, providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
-import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
-import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
+import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
+import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
+import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
 import { CLAUDE_ALL_ACCOUNT_NAME, queryUsage } from "@genesiscz/utils/ai/usage";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
@@ -83,7 +83,6 @@ export interface AiAggregator {
 }
 
 /** Plan-AccountFeatures declares `accounts` on the plugin; read it structurally until it lands. */
-type PluginWithAccounts = ProviderPlugin & { accounts?: AccountFeatures };
 
 /**
  * Credential FIELD NAMES the dashboard may report. A value never leaves this
@@ -92,19 +91,16 @@ type PluginWithAccounts = ProviderPlugin & { accounts?: AccountFeatures };
  */
 const CREDENTIAL_FIELDS = ["apiKey", "accessToken", "refreshToken", "longLivedToken", "authFile", "secondary"] as const;
 
-/** Providers with an account concept. `pluginsWithAccounts()` replaces this when Plan-AccountFeatures lands. */
 function accountProviderIds(): Set<string> {
-    return new Set(Object.values(PROVIDER_ALIASES));
+    return new Set(pluginsWithAccounts().map((plugin) => plugin.id));
 }
 
 function featuresByPlugin(): Map<string, AccountFeatures> {
     const out = new Map<string, AccountFeatures>();
 
-    for (const plugin of allProviderPlugins()) {
-        const features = (plugin as PluginWithAccounts).accounts;
-
-        if (features) {
-            out.set(plugin.id, features);
+    for (const plugin of pluginsWithAccounts()) {
+        if (plugin.accounts) {
+            out.set(plugin.id, plugin.accounts);
         }
     }
 
@@ -204,6 +200,8 @@ function transcriptGrain(grain: SpendGrain): Exclude<SpendGrain, "minute"> {
 }
 
 export function createAiAggregator(): AiAggregator {
+    registerBuiltInPlugins();
+
     async function enabledAccounts(): Promise<AccountEntry[]> {
         const store = await AiConfigStore.load();
         const wanted = accountProviderIds();
