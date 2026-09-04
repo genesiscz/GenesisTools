@@ -1,7 +1,8 @@
 import type { LimitSeries } from "@app/dev-dashboard/contract/ai-accounts";
 import { formatClock } from "@genesiscz/utils/format";
 import { ChartBox } from "@ui/components/chart-box";
-import { CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
+import { ChartLegend, type ChartLegendItem } from "./ChartLegend";
 
 interface LimitsChartProps {
     title: string;
@@ -136,10 +137,19 @@ export function LimitsChart({
         (_, i) => domainStart + ((rangeEndMs - domainStart) * i) / (TICK_COUNT - 1)
     );
     const format = (ms: number) => formatClock(ms, rangeMinutes <= 1440 ? {} : { date: "numeric" });
+    const legend: ChartLegendItem[] = present.map((s) => ({
+        id: seriesKey(s),
+        label: `${s.accountName} ${s.label}`,
+        color: colors[s.accountId] ?? "var(--dd-accent-from)",
+        dash: dashFor(s.key),
+    }));
 
     return (
         <div className="dd-panel dd-ai-fade-up p-4">
-            <h3 className="dd-accent-text mb-3 text-sm font-semibold">{title}</h3>
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+                <h3 className="dd-accent-text text-sm font-semibold">{title}</h3>
+                <span className="dd-ai-mono text-xs text-[var(--dd-text-muted)]">{present.length} series</span>
+            </div>
             <ChartBox height={height}>
                 {(size) => (
                     <LineChart width={size.width} height={size.height} data={data}>
@@ -168,7 +178,6 @@ export function LimitsChart({
                             labelFormatter={(ms) => format(ms as number)}
                             formatter={(value, name) => [`${value}%`, String(name)]}
                         />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
                         {present.map((s) => (
                             <Line
                                 key={seriesKey(s)}
@@ -186,6 +195,7 @@ export function LimitsChart({
                     </LineChart>
                 )}
             </ChartBox>
+            <ChartLegend items={legend} />
         </div>
     );
 }
