@@ -4,6 +4,7 @@ import { Browser } from "@genesiscz/utils/browser";
 import { out } from "@genesiscz/utils/logger";
 import {
     CODEX_AUTH_PATH,
+    type CodexTokens,
     codexOAuth,
     extractAccountId,
     extractEmail,
@@ -11,6 +12,7 @@ import {
     writeCodexAuthJson,
 } from "../../../openai/codex-auth";
 import type { AccountFlowContext, LoginOutcome } from "../../account-features";
+import { accountFieldsFrom } from "../../account-fields";
 
 /**
  * Browser PKCE login for the ChatGPT/Codex subscription, moved out of
@@ -78,25 +80,39 @@ export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome>
         throw err;
     }
 
-    // The id token carries email and plan; the access token often does not.
-    const claims = tokens.idToken ?? tokens.accessToken;
-    const email = extractEmail(claims);
-    const planType = extractPlanType(claims);
     const authFile = ctx.authFile ?? join(ctx.home ?? dirname(CODEX_AUTH_PATH), "auth.json");
 
     await writeCodexAuthJson(authFile, tokens);
     out.println(`  Wrote ${authFile}`);
 
+    return codexLoginOutcome({ tokens, authFile });
+}
+
+/**
+ * The pure half of the login: what the exchanged tokens mean, with no browser,
+ * no prompt and no disk. Split out so the identity it proves is testable from
+ * invented claims instead of a real OAuth round trip.
+ */
+export function codexLoginOutcome(input: { tokens: CodexTokens; authFile: string }): LoginOutcome {
+    // The id token carries email and plan; the access token often does not.
+    const claims = input.tokens.idToken ?? input.tokens.accessToken;
+    const email = extractEmail(claims);
+    const planType = extractPlanType(claims);
+    const identity = {
+        email,
+        accountUuid: input.tokens.accountId ?? extractAccountId(claims),
+        plan: planType,
+    };
+
     return {
         provider: "openai-sub",
-        credentials: { authFile },
-        identity: {
-            email,
-            accountUuid: tokens.accountId ?? extractAccountId(claims),
-            plan: planType,
-        },
+        credentials: { authFile: input.authFile },
+        identity,
         suggestedName: email?.split("@")[0]?.toLowerCase() || "codex",
         suggestedLabel: planType ?? "codex",
-        accountFields: { label: planType ?? "codex" },
+        // The uuid is the whole point: without it a re-login of this account has
+        // no fingerprint to contradict. The label keeps its own fallback, since
+        // an account with no plan claim still displays as "codex".
+        accountFields: { ...accountFieldsFrom(identity), label: planType ?? "codex" },
     };
 }

@@ -5,10 +5,10 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type {
     AccountFeatures,
     AccountFlowContext,
-    AccountIdentity,
     ExternalLoginInstruction,
     LoginOutcome,
 } from "@genesiscz/utils/ai/providers/account-features";
+import { accountFieldsFrom } from "@genesiscz/utils/ai/providers/account-fields";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -257,19 +257,5 @@ async function bindExternalLogin(
         credentials: { authFile: instruction.authFile },
         ...(identity ? { identity, accountFields: accountFieldsFrom(identity) } : {}),
         suggestedName: identity?.email?.split("@")[0]?.toLowerCase(),
-    };
-}
-
-/**
- * `identity` names the account and is then dropped; only `accountFields` reaches
- * the stored entry. Copying the fingerprint across is what gives the identity
- * guard something to contradict when this account is logged in again, which for
- * an external flow is the only defence against binding a stranger's file over it.
- */
-function accountFieldsFrom(identity: AccountIdentity): LoginOutcome["accountFields"] {
-    return {
-        ...(identity.accountUuid ? { accountUuid: identity.accountUuid } : {}),
-        ...(identity.organizationUuid ? { organizationUuid: identity.organizationUuid } : {}),
-        ...(identity.plan ? { label: identity.plan } : {}),
     };
 }
