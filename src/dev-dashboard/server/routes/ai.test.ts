@@ -226,6 +226,31 @@ describe("aiRoutes", () => {
         expect(calls.getSpendTotals[0].source).toBe("transcripts");
     });
 
+    it("carries the provider filter into both spend queries", async () => {
+        const { agg, calls } = fakeAggregator();
+        const window = { from: "2026-09-04T11:00:00.000Z", to: "2026-09-04T12:00:00.000Z" };
+
+        await call(aiRoutes(agg), "GET", "/api/ai/spend/totals", { ...window, providers: "openai-sub" });
+        await call(aiRoutes(agg), "GET", "/api/ai/spend/series", {
+            ...window,
+            grain: "hour",
+            providers: "claude,grok-sub",
+        });
+
+        expect(calls.getSpendTotals[0].providers).toEqual(["openai-sub"]);
+        expect(calls.getSpendSeries[0].providers).toEqual(["claude", "grok-sub"]);
+    });
+
+    it("no provider parameter still means every provider", async () => {
+        const { agg, calls } = fakeAggregator();
+        await call(aiRoutes(agg), "GET", "/api/ai/spend/totals", {
+            from: "2026-09-04T11:00:00.000Z",
+            to: "2026-09-04T12:00:00.000Z",
+        });
+
+        expect(calls.getSpendTotals[0].providers).toEqual([]);
+    });
+
     it("clamps a future `to` down to now", async () => {
         const { agg, calls } = fakeAggregator();
         const future = new Date(Date.now() + 86_400_000).toISOString();

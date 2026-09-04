@@ -40,6 +40,7 @@ const spendTotalsSchema = z.object({
     from: isoInstant,
     to: isoInstant,
     accounts: commaList,
+    providers: commaList,
     source: z.enum(["calls", "transcripts", "both"]).default("transcripts"),
 });
 
@@ -189,7 +190,9 @@ export function aiRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDef[] 
             method: "GET",
             pattern: AI_ACCOUNTS_API.spendTotals,
             handler: (ctx) => {
-                const parsed = spendTotalsSchema.safeParse(pick(ctx.query, "from", "to", "accounts", "source"));
+                const parsed = spendTotalsSchema.safeParse(
+                    pick(ctx.query, "from", "to", "accounts", "providers", "source")
+                );
 
                 if (!parsed.success) {
                     return errorResult(new Error(zodMessage(parsed.error)), 400);
@@ -203,7 +206,7 @@ export function aiRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDef[] 
             pattern: AI_ACCOUNTS_API.spendSeries,
             handler: (ctx) => {
                 const parsed = spendSeriesSchema.safeParse(
-                    pick(ctx.query, "from", "to", "accounts", "source", "grain")
+                    pick(ctx.query, "from", "to", "accounts", "providers", "source", "grain")
                 );
 
                 if (!parsed.success) {

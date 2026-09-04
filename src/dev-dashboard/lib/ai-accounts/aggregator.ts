@@ -26,6 +26,7 @@ import {
     flattenSnapshotsCache,
     resolveProviderFilter,
     type SnapshotFilter,
+    spendAccountIds,
 } from "@app/dev-dashboard/lib/ai-accounts/snapshots";
 import { getRecentRuns } from "@app/dev-dashboard/lib/daemon-view/aggregator";
 import { publishAiUsage } from "@app/dev-dashboard/lib/live/ai-usage-producer";
@@ -55,6 +56,8 @@ export interface SpendTotalsQuery {
     from: string;
     to: string;
     accounts?: readonly string[];
+    /** Aliases or plugin ids. Empty or omitted means every provider. */
+    providers?: readonly string[];
     source: SpendSource;
 }
 
@@ -238,6 +241,26 @@ export function createAiAggregator(): AiAggregator {
             .map((account) => account.name);
     }
 
+    /** The spend stores filter by account id, so the provider chips become ids first. */
+    async function scopedAccountIds(query: SpendTotalsQuery): Promise<readonly string[] | undefined> {
+        if (!query.providers?.length) {
+            return query.accounts?.length ? [...query.accounts] : undefined;
+        }
+
+        return spendAccountIds(query, await enabledAccounts());
+    }
+
+    function emptyTotals(query: SpendTotalsQuery): AiSpendTotalsResult {
+        return {
+            from: query.from,
+            to: query.to,
+            source: query.source,
+            total: emptyBucket(),
+            accounts: [],
+            unpriced: 0,
+        };
+    }
+
     function spendFromCalls(query: SpendTotalsQuery, grain?: SpendGrain) {
         return queryUsage({
             from: query.from,
@@ -345,7 +368,14 @@ export function createAiAggregator(): AiAggregator {
             return { series };
         },
 
-        async getSpendTotals(query: SpendTotalsQuery): Promise<AiSpendTotalsResult> {
+        async getSpendTotals(request: SpendTotalsQuery): Promise<AiSpendTotalsResult> {
+            const accountIds = await scopedAccountIds(request);
+
+            if (accountIds && accountIds.length === 0) {
+                return emptyTotals(request);
+            }
+
+            const query: SpendTotalsQuery = { ...request, accounts: accountIds };
             const byId = await accountsById();
             const total = emptyBucket();
             const perAccount = new Map<string, SpendBucket>();
@@ -390,7 +420,22 @@ export function createAiAggregator(): AiAggregator {
             return { from: query.from, to: query.to, source: query.source, total, accounts, unpriced };
         },
 
-        async getSpendSeries(query: SpendSeriesQuery): Promise<AiSpendSeriesResult> {
+        async getSpendSeries(request: SpendSeriesQuery): Promise<AiSpendSeriesResult> {
+            const accountIds = await scopedAccountIds(request);
+
+            if (accountIds && accountIds.length === 0) {
+                return {
+                    from: request.from,
+                    to: request.to,
+                    grain: request.grain,
+                    source: request.source,
+                    points: [],
+                    accounts: [],
+                    unpriced: 0,
+                };
+            }
+
+            const query: SpendSeriesQuery = { ...request, accounts: accountIds };
             const byId = await accountsById();
             let points: SpendSeriesPoint[] = [];
             const refs: AccountRef[] = [];

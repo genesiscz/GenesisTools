@@ -97,19 +97,34 @@ export function AiAccountsRoute() {
     const fromIso = new Date(range.fromMs).toISOString();
     const toIso = new Date(range.toMs).toISOString();
 
+    // The provider chips narrow spend too: without them the widget kept reporting
+    // claude money while the grid said "no accounts match the filters".
     const totalsQuery = useQuery({
-        queryKey: ["ai", "spend", "totals", fromIso, toIso, source, accountsParam],
+        queryKey: ["ai", "spend", "totals", fromIso, toIso, source, providersParam, accountsParam],
         queryFn: () =>
             fetchJson<AiSpendTotalsResult>(
-                `${AI_ACCOUNTS_API.spendTotals}${query({ from: fromIso, to: toIso, source, accounts: accountsParam })}`
+                `${AI_ACCOUNTS_API.spendTotals}${query({
+                    from: fromIso,
+                    to: toIso,
+                    source,
+                    providers: providersParam,
+                    accounts: accountsParam,
+                })}`
             ),
         refetchInterval: 60000,
     });
     const spendSeriesQuery = useQuery({
-        queryKey: ["ai", "spend", "series", fromIso, toIso, grain, source, accountsParam],
+        queryKey: ["ai", "spend", "series", fromIso, toIso, grain, source, providersParam, accountsParam],
         queryFn: () =>
             fetchJson<AiSpendSeriesResult>(
-                `${AI_ACCOUNTS_API.spendSeries}${query({ from: fromIso, to: toIso, grain, source, accounts: accountsParam })}`
+                `${AI_ACCOUNTS_API.spendSeries}${query({
+                    from: fromIso,
+                    to: toIso,
+                    grain,
+                    source,
+                    providers: providersParam,
+                    accounts: accountsParam,
+                })}`
             ),
         refetchInterval: 60000,
     });
