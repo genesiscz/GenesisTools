@@ -6,6 +6,7 @@ import { LIMIT_ORDER, PROMINENT_LIMITS } from "./buckets";
 import { anthropicLogin } from "./login";
 import { anthropicLoginLong } from "./login-long";
 import { anthropicLoginSecondary } from "./login-secondary";
+import { anthropicSpendScope } from "./spend";
 import { anthropicUsage } from "./usage";
 
 /**
@@ -94,5 +95,7 @@ export const anthropicSubPlugin: ProviderPlugin = {
                 plan: account.label ?? account.subscriptionPlan,
             };
         },
+
+        spendScope: anthropicSpendScope,
     },
 };

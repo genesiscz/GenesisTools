@@ -44,7 +44,8 @@ function grokHomesIn(root: string): string[] {
     return homes.sort();
 }
 
-function workerHomesIn(workerRoot: string): string[] {
+/** Every `worker-home*` directory under the harness root. Also the spend scope's glob. */
+export function workerHomesIn(workerRoot: string): string[] {
     if (!existsSync(workerRoot)) {
         return [];
     }
