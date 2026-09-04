@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
-import { accountIdForFile, resolveDriverRoots } from "./account-roots";
+import { accountIdForFile, resolveDriverRoots, rootForFile } from "./account-roots";
 import type { DriverRoot, MonitorDriver } from "./drivers";
 import { isolateAgentHomeEnv } from "./drivers/test-env";
 
@@ -112,5 +112,33 @@ describe("accountIdForFile", () => {
 
     test("a sibling directory that merely shares a prefix never matches", () => {
         expect(accountIdForFile("/u/.codex/sessions-old/e.jsonl", roots)).toBeUndefined();
+    });
+});
+
+describe("rootForFile", () => {
+    const roots: DriverRoot[] = [
+        { path: "/u/.codex" },
+        { path: "/u/.codex/sessions", accountId: "acc_work", home: "/u/.codex" },
+        { path: "/u/.codex-shop/sessions", accountId: "acc_shop", home: "/u/.codex-shop" },
+    ];
+
+    test("returns the whole row, so accountId and home come from the same root", () => {
+        expect(rootForFile("/u/.codex/sessions/2026/a.jsonl", roots)).toEqual({
+            path: "/u/.codex/sessions",
+            accountId: "acc_work",
+            home: "/u/.codex",
+        });
+    });
+
+    test("accountIdForFile is that same selection, not a second one", () => {
+        for (const file of [
+            "/u/.codex/sessions/2026/a.jsonl",
+            "/u/.codex-shop/sessions/b.jsonl",
+            "/u/.codex/archived_sessions/c.jsonl",
+            "/u/.codex/sessions-old/e.jsonl",
+            "/elsewhere/d.jsonl",
+        ]) {
+            expect(accountIdForFile(file, roots)).toBe(rootForFile(file, roots)?.accountId);
+        }
     });
 });

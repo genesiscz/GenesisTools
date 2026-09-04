@@ -74,13 +74,17 @@ export function resolveDriverRoots(options: ResolveDriverRootsOptions): DriverRo
 }
 
 /**
- * The account a file belongs to, by LONGEST matching root path.
+ * The root a file sits under, by LONGEST matching path.
  *
  * Longest wins because roots nest: `~/.codex/sessions` sits under a discovered
  * `~/.codex`, and the more specific root is the one that was actually claimed.
- * A file under no bound root returns undefined, which reports as "(unbound)".
+ * The boundary check is on `${path}/` rather than the bare prefix, so
+ * `~/.codex/sessions-old` is not read as living under `~/.codex/sessions`.
+ *
+ * ONE selector, because a file's `accountId` and its `home` are two fields of
+ * the same row: picking them with two separate loops let them drift apart.
  */
-export function accountIdForFile(file: string, roots: readonly DriverRoot[]): string | undefined {
+export function rootForFile(file: string, roots: readonly DriverRoot[]): DriverRoot | undefined {
     let best: DriverRoot | undefined;
 
     for (const root of roots) {
@@ -93,5 +97,10 @@ export function accountIdForFile(file: string, roots: readonly DriverRoot[]): st
         }
     }
 
-    return best?.accountId;
+    return best;
+}
+
+/** A file under no bound root returns undefined, which reports as "(unbound)". */
+export function accountIdForFile(file: string, roots: readonly DriverRoot[]): string | undefined {
+    return rootForFile(file, roots)?.accountId;
 }
