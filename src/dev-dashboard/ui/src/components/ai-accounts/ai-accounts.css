@@ -109,6 +109,57 @@
     opacity: 1;
 }
 
+/* Reorderable block grid: one column on a phone, two from the lg breakpoint up. A
+   block keeps its own panel surface, so the grid itself draws no frame. */
+.dd-ai-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+    .dd-ai-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.dd-ai-grid-block {
+    position: relative;
+    min-width: 0;
+}
+
+/* Grip and hide sit over the block's top edge, dimmed until it is hovered or focused. */
+.dd-ai-grid-tools {
+    position: absolute;
+    top: -11px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.dd-ai-grid-block:hover .dd-ai-grid-tools,
+.dd-ai-grid-block:focus-within .dd-ai-grid-tools {
+    opacity: 1;
+}
+
+.dd-ai-grid-tools .dd-ai-tool-btn {
+    background: var(--dd-bg-panel);
+}
+
+.dd-ai-grip {
+    cursor: grab;
+    touch-action: none;
+}
+
+.dd-ai-grip:active {
+    cursor: grabbing;
+}
+
 .dd-ai-tool-btn {
     display: inline-flex;
     align-items: center;
@@ -232,7 +283,8 @@
     .dd-ai-tool-btn,
     .dd-ai-action,
     .dd-ai-action-ghost,
-    .dd-ai-block-tools {
+    .dd-ai-block-tools,
+    .dd-ai-grid-tools {
         transition: none;
     }
 
