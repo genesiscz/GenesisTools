@@ -1,4 +1,4 @@
-import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
+import { resolveListFilters } from "@app/macos/lib/mail/command-helpers";
 import { exportMessages } from "@app/macos/lib/mail/export";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import * as p from "@clack/prompts";
@@ -56,15 +56,12 @@ export function registerSearchDownloadCommand(program: Command): void {
                         process.exit(1);
                     }
 
+                    const { filters, limit } = resolveListFilters({ ...options, limit: options.limit ?? "100" });
                     const searchOpts = await db.resolveMailboxFilter({
                         query,
                         withoutBody: options.withoutBody,
-                        receiver: options.receiver,
-                        account: options.account,
-                        from: parseMailDate(options.from),
-                        to: parseMailDate(options.to, true),
-                        mailbox: options.mailbox,
-                        limit: Number.parseInt(options.limit ?? "100", 10),
+                        ...filters,
+                        limit,
                         offset: 0,
                     });
                     const spinner = p.spinner();

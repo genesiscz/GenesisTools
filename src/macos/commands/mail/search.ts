@@ -3,9 +3,9 @@ import {
     enrichWithBodies,
     needsRecipients,
     outputFormattedResults,
-    parseMailDate,
     printStructured,
     resolveColumnsFromFlag,
+    resolveListFilters,
 } from "@app/macos/lib/mail/command-helpers";
 import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import * as p from "@clack/prompts";
@@ -125,16 +125,17 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
+                // Same resolver `list` uses, so an unparseable --limit/--offset is rejected
+                // here too instead of reaching SQL as NaN. Search keeps its own default of
+                // 100, which is higher than the list default.
+                const { filters, limit, offset } = resolveListFilters({ ...options, limit: options.limit ?? "100" });
+
                 const searchOpts: SearchOptions = await db.resolveMailboxFilter({
                     query,
                     withoutBody: options.withoutBody,
-                    receiver: options.receiver,
-                    account: options.account,
-                    from: parseMailDate(options.from),
-                    to: parseMailDate(options.to, true),
-                    mailbox: options.mailbox,
-                    limit: Number.parseInt(options.limit ?? "100", 10),
-                    offset: Number.parseInt(options.offset ?? "0", 10),
+                    ...filters,
+                    limit,
+                    offset,
                 });
 
                 const outcome = await runMailSearch(query, {
