@@ -13,7 +13,7 @@
 export { dayFilePath, usageDir, utcDayOf } from "./paths";
 export { emptyAggregate, queryUsage } from "./query";
 export { recordUsage } from "./record";
-export { spendBucketKey, systemTimeZone } from "./series-keys";
+export { isValidTimeZone, spendBucketKey, systemTimeZone } from "./series-keys";
 export type {
     AccountRef,
     SpendGrain,

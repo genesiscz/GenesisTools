@@ -229,6 +229,19 @@ describe("buildSpendSeries", () => {
         );
     });
 
+    test("an unknown timeZone is named up front, not thrown by Intl inside the loop", async () => {
+        await expect(
+            buildSpendSeries({ ...window(), grain: "day" }, { ...options, timeZone: "Not/AZone" })
+        ).rejects.toThrow(/unknown timeZone "Not\/AZone"/);
+    });
+
+    test("negative control: a real IANA zone still buckets", async () => {
+        const result = await buildSpendSeries({ ...window(), grain: "day" }, { ...options, timeZone: "Europe/Prague" });
+
+        expect(result.points).toHaveLength(1);
+        expect(result.points[0].tokens).toBe(600_000);
+    });
+
     test("a file whose mtime predates the window is never opened", async () => {
         const stale = join(homes.work, "sessions", "rollout-stale.jsonl");
         writeFileSync(stale, codexRollout(new Date(Date.now() - 30 * 86_400_000).toISOString(), 500_000));

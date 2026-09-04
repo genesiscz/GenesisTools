@@ -6,6 +6,7 @@ import {
     type AccountRef,
     CLAUDE_ALL_ACCOUNT_ID,
     CLAUDE_ALL_ACCOUNT_NAME,
+    isValidTimeZone,
     type SpendGrain,
     type SpendSeriesBucket,
     type SpendSeriesPoint,
@@ -141,6 +142,12 @@ export async function buildSpendSeries(
 ): Promise<SpendSeriesResult> {
     if (query.grain === "minute") {
         throw new UnsupportedGrainError(query.grain);
+    }
+
+    if (options.timeZone !== undefined && !isValidTimeZone(options.timeZone)) {
+        throw new Error(
+            `ai-spend series: unknown timeZone "${options.timeZone}". Pass an IANA identifier such as "Europe/Prague", or omit it for the system zone.`
+        );
     }
 
     const grain: TranscriptGrain = query.grain;

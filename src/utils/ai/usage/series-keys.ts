@@ -17,6 +17,22 @@ export function systemTimeZone(): string {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
+/**
+ * `Intl.DateTimeFormat` answers an unknown zone with a `RangeError`, and inside
+ * the bucketing loop that surfaces as a whole query dying on its first event.
+ * Producers check the zone ONCE, before any bucketing, so a bad `timeZone`
+ * names itself instead of arriving as a formatter stack trace.
+ */
+export function isValidTimeZone(timeZone: string): boolean {
+    try {
+        Intl.DateTimeFormat("en-US", { timeZone });
+
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /** Monday of the civil week containing `ymd`, as `YYYY-MM-DD`. */
 function mondayOfDay(ymd: string): string {
     const [year, month, day] = ymd.split("-").map(Number);

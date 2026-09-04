@@ -438,4 +438,18 @@ describe("queryUsage grain", () => {
         expect(result.total.costUsd).toBeCloseTo(7, 6);
         expect(result.byAccount.work.costUsd).toBeCloseTo(5, 6);
     });
+
+    test("an unknown timeZone is rejected up front rather than by Intl on the first event", async () => {
+        await seedHours();
+
+        expect(() => queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: "Not/AZone" })).toThrow(
+            /unknown timeZone "Not\/AZone"/
+        );
+    });
+
+    test("an unknown timeZone is rejected even when the window holds no events", () => {
+        expect(() => queryUsage({ from: "2026-03-02", to: "2026-03-03", timeZone: "Not/AZone" })).toThrow(
+            /unknown timeZone/
+        );
+    });
 });
