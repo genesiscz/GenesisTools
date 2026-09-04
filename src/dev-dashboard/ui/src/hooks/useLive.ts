@@ -77,6 +77,13 @@ export function useLive(channels: LiveChannel[]): {
                     return;
                 }
 
+                if (frame.channel === "ai-usage" && frame.type === "snapshot") {
+                    // Every ai query shares the window and the account list, so a
+                    // fresh poll re-reads all of them rather than patching one key.
+                    void qc.invalidateQueries({ queryKey: ["ai"] });
+                    return;
+                }
+
                 if (frame.channel === "qa" && frame.type === "entry") {
                     qc.setQueryData(["qa", "live-entry"], frame.payload);
                     // Let QA page listeners also invalidate list

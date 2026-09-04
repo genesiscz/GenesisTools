@@ -6,6 +6,12 @@ describe("parseChannelsQuery", () => {
         expect(parseChannelsQuery("ports,pulse,ports,nope")).toEqual(["ports", "pulse"]);
     });
 
+    test("ai-usage is a static channel", () => {
+        expect(isLiveChannel("ai-usage")).toBe(true);
+        expect(isLiveChannel("ai-usage-nope")).toBe(false);
+        expect(parseChannelsQuery("ai-usage,pulse")).toEqual(["ai-usage", "pulse"]);
+    });
+
     test("boards and daemon", () => {
         expect(isLiveChannel("boards:foo")).toBe(true);
         expect(isLiveChannel("daemon:/tmp/x.log")).toBe(true);
