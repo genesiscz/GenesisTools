@@ -452,4 +452,21 @@ describe("queryUsage grain", () => {
             /unknown timeZone/
         );
     });
+
+    test('an account id of "__proto__" gets its own bucket rather than Object.prototype', async () => {
+        // Bound rather than written inline: a literal `["__proto__"]` accessor
+        // is a lint error, and the point is that this is DATA, not an accessor.
+        const opaque = "__proto__";
+        await recordUsage(input({ at: "2026-03-02T09:00:00.000Z", accountId: opaque, costUsd: 1 }));
+
+        const result = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: TZ });
+
+        expect(Object.keys(result.byAccount)).toEqual([opaque]);
+        expect(result.byAccount[opaque].events).toBe(1);
+        expect(Object.keys(result.points?.[0].byAccount ?? {})).toEqual([opaque]);
+        expect(result.points?.[0].byAccount[opaque].costUsd).toBeCloseTo(1, 6);
+        // The canary: on a plain object the running totals land here instead.
+        expect(Object.prototype).not.toHaveProperty("costUsd");
+        expect(Object.prototype).not.toHaveProperty("events");
+    });
 });

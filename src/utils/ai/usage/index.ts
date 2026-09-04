@@ -11,7 +11,7 @@
  * truth for subscription bucket utilization; both merely emit here as well.
  */
 export { dayFilePath, usageDir, utcDayOf } from "./paths";
-export { emptyAggregate, queryUsage } from "./query";
+export { emptyAggregate, emptyBuckets, queryUsage } from "./query";
 export { recordUsage } from "./record";
 export { isValidTimeZone, spendBucketKey, systemTimeZone } from "./series-keys";
 export type {
