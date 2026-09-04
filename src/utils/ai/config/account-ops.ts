@@ -102,6 +102,28 @@ function requireAccount(config: AiConfigData, idOrName: string): AccountEntry {
     return byName[0];
 }
 
+/**
+ * Every vault entry this account owns, deleted.
+ *
+ * Keyed by the immutable account id, so a prefix list catches fields no constant
+ * in this file names — the dotted `secondary.*` paths, and anything a future
+ * credential adds. Used both when the account goes away and when a provider
+ * switch makes its old secrets unreachable.
+ */
+async function deleteAccountSecrets(accountId: string): Promise<string[]> {
+    const vault = await secrets();
+    const owned = await vault.list(vaultPathFor(accountId, ""));
+    const deleted: string[] = [];
+
+    for (const path of owned) {
+        if (await vault.delete(path)) {
+            deleted.push(path);
+        }
+    }
+
+    return deleted;
+}
+
 /** Subscription providers bill a flat plan; everything else meters per token. */
 function defaultBilling(provider: string): AccountBilling["mode"] {
     const plugin = tryProviderPlugin(provider);
@@ -231,9 +253,18 @@ export async function applyLoginOutcome(input: ApplyLoginOutcomeInput): Promise<
         }
 
         if (providerChanged) {
+            // Drop the vault entries BEFORE the config fields that name them.
+            // Clearing `credentials` alone left the old vendor's tokens in the
+            // encrypted store with nothing left to reach them by: `clearCredentials`
+            // works off the config, so those secrets became permanent unreachable
+            // orphans in the OS keychain (PR #360 review t11).
+            const orphaned = await deleteAccountSecrets(account.id);
+
             account.provider = input.outcome.provider;
             account.billing = { mode: defaultBilling(input.outcome.provider) };
             account.credentials = {};
+
+            logger.info({ id: account.id, secretsDeleted: orphaned }, "provider switch: deleted the old vault entries");
         }
 
         if (input.apps?.length && !account.apps?.length) {
@@ -414,15 +445,7 @@ export async function removeAccount(idOrName: string, options: { force?: boolean
             throw new AccountInUseError(account, referrers);
         }
 
-        const vault = await secrets();
-        const owned = await vault.list(vaultPathFor(account.id, ""));
-        const secretsDeleted: string[] = [];
-
-        for (const path of owned) {
-            if (await vault.delete(path)) {
-                secretsDeleted.push(path);
-            }
-        }
+        const secretsDeleted = await deleteAccountSecrets(account.id);
 
         config.accounts = config.accounts.filter((entry) => entry.id !== account.id);
         logger.info({ id: account.id, referrers: referrers.length, secretsDeleted }, "removed AI account");
