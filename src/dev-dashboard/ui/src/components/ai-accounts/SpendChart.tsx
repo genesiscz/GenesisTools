@@ -1,9 +1,10 @@
 import type { AccountRef, SpendGrain, SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
 import { formatClock } from "@genesiscz/utils/format";
 import { ChartBox } from "@ui/components/chart-box";
-import { Area, AreaChart, CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { ACCOUNT_PALETTE, hashString } from "@/lib/account-color";
 import { buildSpendChartData, formatUsd, type SpendChartMode, TOTAL_KEY } from "@/lib/spend-chart-data";
+import { ChartLegend } from "./ChartLegend";
 
 interface SpendChartProps {
     points: SpendSeriesPoint[];
@@ -99,52 +100,55 @@ export function SpendChart({
                 labelFormatter={(ms) => `${format(ms as number)} (${grain})`}
                 formatter={(value, name) => [formatUsd(Number(value)), String(name)]}
             />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
         </>
     );
 
     const stacked = mode === "stacked" || mode === "byModel";
+    const legend = keys.map((key) => ({ id: key, label: nameOf(key), color: colorOf(key) }));
 
     return (
-        <ChartBox height={height}>
-            {(size) =>
-                stacked ? (
-                    <AreaChart width={size.width} height={size.height} data={rows}>
-                        {axes}
-                        {keys.map((key) => (
-                            <Area
-                                key={key}
-                                type="monotone"
-                                dataKey={key}
-                                name={nameOf(key)}
-                                stackId="cost"
-                                stroke={colorOf(key)}
-                                fill={colorOf(key)}
-                                fillOpacity={0.28}
-                                strokeWidth={1.5}
-                                isAnimationActive={false}
-                            />
-                        ))}
-                    </AreaChart>
-                ) : (
-                    <LineChart width={size.width} height={size.height} data={rows}>
-                        {axes}
-                        {keys.map((key) => (
-                            <Line
-                                key={key}
-                                type="monotone"
-                                dataKey={key}
-                                name={nameOf(key)}
-                                stroke={colorOf(key)}
-                                strokeWidth={key === TOTAL_KEY ? 2.5 : 2}
-                                dot={false}
-                                connectNulls
-                                isAnimationActive={false}
-                            />
-                        ))}
-                    </LineChart>
-                )
-            }
-        </ChartBox>
+        <>
+            <ChartBox height={height}>
+                {(size) =>
+                    stacked ? (
+                        <AreaChart width={size.width} height={size.height} data={rows}>
+                            {axes}
+                            {keys.map((key) => (
+                                <Area
+                                    key={key}
+                                    type="monotone"
+                                    dataKey={key}
+                                    name={nameOf(key)}
+                                    stackId="cost"
+                                    stroke={colorOf(key)}
+                                    fill={colorOf(key)}
+                                    fillOpacity={0.28}
+                                    strokeWidth={1.5}
+                                    isAnimationActive={false}
+                                />
+                            ))}
+                        </AreaChart>
+                    ) : (
+                        <LineChart width={size.width} height={size.height} data={rows}>
+                            {axes}
+                            {keys.map((key) => (
+                                <Line
+                                    key={key}
+                                    type="monotone"
+                                    dataKey={key}
+                                    name={nameOf(key)}
+                                    stroke={colorOf(key)}
+                                    strokeWidth={key === TOTAL_KEY ? 2.5 : 2}
+                                    dot={false}
+                                    connectNulls
+                                    isAnimationActive={false}
+                                />
+                            ))}
+                        </LineChart>
+                    )
+                }
+            </ChartBox>
+            <ChartLegend items={legend} variant={stacked ? "area" : "line"} />
+        </>
     );
 }
