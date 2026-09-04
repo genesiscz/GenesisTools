@@ -1,6 +1,6 @@
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
 
-const STATIC = new Set(["ports", "pulse", "qa"]);
+const STATIC = new Set(["ports", "pulse", "qa", "ai-usage"]);
 
 export function isLiveChannel(s: string): s is LiveChannel {
     if (STATIC.has(s)) {
