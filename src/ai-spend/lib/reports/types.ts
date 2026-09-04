@@ -56,6 +56,14 @@ export interface SpendEvent {
     reasoningOutputTokens?: number;
     recordedCostUsd?: number;
     isSidechain?: boolean;
+    /**
+     * `AccountEntry.id` of the account whose root this file sat under. Absent
+     * when no account claims that root, which reports as `UNBOUND_ACCOUNT_ID`
+     * rather than being dropped.
+     */
+    accountId?: string;
+    /** Provider home the file came from (`~/.codex-work`), when known. */
+    home?: string;
 }
 
 export interface ModelBreakdownJson {

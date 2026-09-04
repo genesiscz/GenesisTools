@@ -151,6 +151,27 @@ describe("monitor report", () => {
         expect(third.today.tokens).toBe(3_850_000);
     });
 
+    test("a version-3 cache is discarded, and the version-4 one it writes is reused", () => {
+        const storage = new Storage("ai-spend");
+        const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
+
+        // A v3 row has no accountId, so its day sums cannot be attributed. The
+        // file is dropped rather than reported under a guessed account.
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
+        expect(written.version).toBe(4);
+
+        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 3 }, { strict: true }));
+        const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(afterDowngrade.parsedFiles).toBe(3);
+        expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
+
+        // Negative control: the v4 cache it just wrote IS reused.
+        const afterV4 = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(afterV4.parsedFiles).toBe(0);
+        expect(afterV4.today.cost).toBeCloseTo(3.48, 5);
+    });
+
     test("fast path within sweep TTL catches appends, new siblings, and new project dirs", () => {
         const storage = new Storage("ai-spend");
         const iso = new Date().toISOString();
