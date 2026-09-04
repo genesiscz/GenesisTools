@@ -4,12 +4,13 @@ import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
+import { loadSpendAccountsContext } from "./accounts-context";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";
 import { AGENT_IDS, type AgentId } from "./drivers";
 import { buildMonitorReport, type MonitorReport } from "./monitor";
 import { renderSessions, renderSummary, renderToday } from "./render";
-import { registerCcusageCommands } from "./reports/commands";
+import { addAccountFlags, registerCcusageCommands } from "./reports/commands";
 import { loadEvents } from "./reports/load";
 import type { SpendEvent } from "./reports/types";
 import { buildSpendSeries, type TranscriptGrain } from "./series";
@@ -135,9 +136,16 @@ interface SeriesOpts {
     to?: string;
     grain?: string | true;
     account?: string[];
+    allHomes?: boolean;
     sources?: string;
     byModel?: boolean;
     json?: boolean;
+}
+
+interface MonitorOpts {
+    json?: boolean;
+    allHomes?: boolean;
+    account?: string[];
 }
 
 const SERIES_DEFAULT_DAYS = 7;
@@ -208,42 +216,46 @@ function renderSeries(result: Awaited<ReturnType<typeof buildSpendSeries>>): str
 }
 
 function registerSeriesCommand(program: Command): Command {
-    program
+    const series = program
         .command("series")
         .description("Transcript spend over time, bucketed and split by account")
         .option("--from <when>", `ISO instant or YYYY-MM-DD (default: ${SERIES_DEFAULT_DAYS} days ago)`)
         .option("--to <when>", "ISO instant or YYYY-MM-DD, exclusive (default: now)")
         .option("--grain [width]", `Bucket width: ${TRANSCRIPT_GRAINS.join(" | ")}`)
-        .option("--account <id...>", 'Filter to these account ids ("(unbound)" and "claude-all" allowed)')
         .option("--sources <ids>", `Comma-separated subset of ${AGENT_IDS.join(", ")}`)
-        .option("--by-model", "Also split each point by model")
-        .action(async (_opts: SeriesOpts, cmd: Command) => {
-            const opts = cmd.optsWithGlobals() as SeriesOpts;
-            const grain = await resolveGrain(opts.grain);
+        .option("--by-model", "Also split each point by model");
 
-            if (!grain) {
-                return;
-            }
+    addAccountFlags(series).action(async (_opts: SeriesOpts, cmd: Command) => {
+        const opts = cmd.optsWithGlobals() as SeriesOpts;
+        const grain = await resolveGrain(opts.grain);
 
-            const now = new Date();
-            const from = opts.from ?? new Date(now.getTime() - SERIES_DEFAULT_DAYS * 86_400_000).toISOString();
-            const result = await buildSpendSeries({
+        if (!grain) {
+            return;
+        }
+
+        const now = new Date();
+        const from = opts.from ?? new Date(now.getTime() - SERIES_DEFAULT_DAYS * 86_400_000).toISOString();
+        const context = await loadSpendAccountsContext({ allHomes: opts.allHomes });
+        const result = await buildSpendSeries(
+            {
                 from,
                 to: opts.to ?? now.toISOString(),
                 grain,
                 sources: parseSources(opts.sources),
                 accountIds: opts.account,
                 byModel: opts.byModel,
-            });
+            },
+            { accounts: context.accounts, discoveredHomes: context.discoveredHomes }
+        );
 
-            if (opts.json) {
-                out.result(result);
+        if (opts.json) {
+            out.result(result);
 
-                return;
-            }
+            return;
+        }
 
-            out.println(renderSeries(result));
-        });
+        out.println(renderSeries(result));
+    });
 
     return program;
 }
@@ -274,36 +286,49 @@ export function registerSpendCommand(program: Command): Command {
     registerCcusageCommands(program);
     registerSeriesCommand(program);
 
-    program
+    const monitor = program
         .command("monitor")
         .description(
             "Today + current week (local timezone, Monday start) across claude/codex/grok in <1s — for status bars/monitors"
         )
-        .option("--json", "Emit {today, week, todayDate, weekStart, timezone, agents} as JSON")
-        .action(async (_opts: { json?: boolean }, cmd: Command) => {
-            // Root also defines --json (addSpendOptions), so commander binds it there;
-            // optsWithGlobals() merges it back — same as runSpend above.
-            const opts = cmd.optsWithGlobals() as { json?: boolean };
-            const storage = new Storage("ai-spend");
-            const pricing = await loadPricing(storage);
-            const report = buildMonitorReport({ pricing, storage });
+        .option("--json", "Emit {today, week, todayDate, weekStart, timezone, agents, accounts} as JSON");
 
-            if (opts.json) {
-                out.result(monitorEnvelope(report));
-
-                return;
-            }
-
-            const perAgent = AGENT_IDS.filter((id) => report.agents[id].week.tokens > 0)
-                .map((id) => `${id} $${report.agents[id].today.cost.toFixed(2)}`)
-                .join(" · ");
-
-            out.println(
-                `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
-                    `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]` +
-                    (perAgent ? `\ntoday by agent: ${perAgent}` : "")
-            );
+    addAccountFlags(monitor).action(async (_opts: MonitorOpts, cmd: Command) => {
+        // Root also defines --json (addSpendOptions), so commander binds it there;
+        // optsWithGlobals() merges it back — same as runSpend above.
+        const opts = cmd.optsWithGlobals() as MonitorOpts;
+        const storage = new Storage("ai-spend");
+        const pricing = await loadPricing(storage);
+        const context = await loadSpendAccountsContext({ allHomes: opts.allHomes });
+        const report = buildMonitorReport({
+            pricing,
+            storage,
+            accounts: context.accounts,
+            discoveredHomes: context.discoveredHomes,
+            accountIds: opts.account,
         });
+
+        if (opts.json) {
+            out.result(monitorEnvelope(report));
+
+            return;
+        }
+
+        const perAgent = AGENT_IDS.filter((id) => report.agents[id].week.tokens > 0)
+            .map((id) => `${id} $${report.agents[id].today.cost.toFixed(2)}`)
+            .join(" · ");
+        const perAccount = (report.accounts ?? [])
+            .filter((account) => account.today.tokens > 0)
+            .map((account) => `${account.accountName} $${account.today.cost.toFixed(2)}`)
+            .join(" · ");
+
+        out.println(
+            `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
+                `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]` +
+                (perAgent ? `\ntoday by agent: ${perAgent}` : "") +
+                (perAccount ? `\ntoday by account: ${perAccount}` : "")
+        );
+    });
 
     return program;
 }

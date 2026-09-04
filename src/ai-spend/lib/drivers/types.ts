@@ -18,6 +18,19 @@ export type AgentId = "claude" | "codex" | "grok";
 
 export const AGENT_IDS: readonly AgentId[] = ["claude", "codex", "grok"];
 
+/**
+ * The provider plugin that owns each agent's accounts.
+ *
+ * An agent is a transcript dialect; a plugin is a login. They are one-to-one
+ * today and this map is the only place that says so, so a driver never hardcodes
+ * a plugin id and the accounts wiring never hardcodes an agent id.
+ */
+export const AGENT_PLUGIN_IDS: Record<AgentId, string> = {
+    claude: "anthropic-sub",
+    codex: "openai-sub",
+    grok: "grok-sub",
+};
+
 export interface DriverUsageEvent {
     /**
      * Dedup key, unique within one transcript. Agents that stamp a message or
@@ -94,8 +107,13 @@ export interface MonitorDriver {
      * The same trees, split per account, via `plugin.accounts.spendScope`.
      * Absent means this agent cannot attribute transcripts to an account, so
      * every root stays unbound.
+     *
+     * `userHome` is the same home `roots()` got. A provider whose accounts share
+     * ONE tree (anthropic) needs it to stay inside that home: its `spendScope`
+     * answers for the real `$HOME`, and without this argument an injected home
+     * would silently pull the real `~/.claude/projects` in beside it.
      */
-    rootsForAccounts?(accounts: AccountEntry[]): DriverRoot[];
+    rootsForAccounts?(accounts: AccountEntry[], userHome: string): DriverRoot[];
     /** File-name test, applied BEFORE stat() so non-transcripts cost nothing. */
     isTranscript(name: string): boolean;
     /** How deep below a root transcripts can sit. */

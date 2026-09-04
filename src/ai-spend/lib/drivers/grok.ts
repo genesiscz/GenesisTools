@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -8,8 +9,9 @@ import {
     nativeSessionRoots,
     nativeTranscriptMaxDepth,
 } from "@genesiscz/utils/providers/session-paths";
+import { spendScopeRoots } from "./account-scope";
 import { isRecord, num } from "./parse-helpers";
-import type { CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
+import type { CreateParserOptions, DriverLineParser, DriverRoot, DriverUsageEvent, MonitorDriver } from "./types";
 
 /**
  * Grok CLI sessions: `~/.grok/sessions/<url-encoded-cwd>/<session-id>/updates.jsonl`
@@ -149,6 +151,16 @@ export const grokDriver: MonitorDriver = {
 
     roots(home: string): string[] {
         return nativeSessionRoots("grok", home);
+    },
+
+    /**
+     * The account's own home, plus every `~/.genesis-tools/grok/worker-home*`
+     * when it owns the default login — the harness authenticates workers with
+     * that credential, so their turns are this account's spend, and they never
+     * reach the call log.
+     */
+    rootsForAccounts(accounts: AccountEntry[]): DriverRoot[] {
+        return spendScopeRoots({ agent: "grok", accounts });
     },
 
     isTranscript(name: string): boolean {

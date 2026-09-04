@@ -98,6 +98,10 @@ export interface ReportFlags {
     sessionLength?: string;
     id?: string;
     byAgent?: boolean;
+    /** Read provider homes on disk that no account claims. */
+    allHomes?: boolean;
+    /** Account ids to report; `"(unbound)"` and `"claude-all"` are valid entries. */
+    account?: string[];
 }
 
 export interface ReportContext {
