@@ -156,18 +156,32 @@ fi
 
 if [ -n "$hits" ]; then
     # Attribution runs only over the files that matched, never the whole tree.
+    # The paths come out of the hit lines (`path:line:text`) rather than from a
+    # second `git grep -l` walk, which cost as much as the scan itself. A path
+    # that holds a colon does not survive that split: its lines still print in
+    # full below, only the needle name for it is lost, and it is said so.
     HIT_FILES=()
 
-    while IFS= read -r -d '' file; do
-        HIT_FILES+=("$file")
-    done < <(git grep -lzIPi "${ARGS[@]}" -- .)
+    while IFS= read -r file; do
+        if [ -e "$file" ]; then
+            HIT_FILES+=("$file")
+        else
+            echo "  ⚠ cannot name the needle for '${file}': the path holds a ':'; its lines are still listed below"
+        fi
+    done < <(printf '%s\n' "$hits" | cut -d: -f1 | sort -u)
 
     matches_in_hits() {
         git grep -qIPi "$@" -- "${HIT_FILES[@]}"
     }
 
-    echo "✗ placeholder-check: $(printf '%s\n' "$hits" | wc -l | tr -d ' ') line(s) in ${#HIT_FILES[@]} tracked file(s) matched a local needle"
-    echo "  needle(s): $(bisect matches_in_hits 0 "$CHECKED" | paste -sd ',' - | sed 's/,/, /g')"
+    nlines=$(printf '%s\n' "$hits" | wc -l | tr -d ' ')
+    nfiles=$(printf '%s\n' "$hits" | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+    echo "✗ placeholder-check: ${nlines} line(s) in ${nfiles} tracked file(s) matched a local needle"
+
+    if [ "${#HIT_FILES[@]}" -gt 0 ]; then
+        echo "  needle(s): $(bisect matches_in_hits 0 "$CHECKED" | paste -sd ',' - | sed 's/,/, /g')"
+    fi
+
     printf '%s\n' "$hits" | sed 's/^/    /'
     echo
     echo "Replace the values above with placeholders before pushing."
