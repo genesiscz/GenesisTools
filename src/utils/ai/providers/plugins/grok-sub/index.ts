@@ -5,6 +5,7 @@ import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverGrokHomes } from "./discover";
+import { grokSpendScope } from "./spend";
 import { grokUsage } from "./usage";
 
 /**
@@ -103,5 +104,7 @@ export const grokSubPlugin: ProviderPlugin = {
                 ...(claims.tier === undefined ? {} : { plan: `tier ${claims.tier}` }),
             };
         },
+
+        spendScope: (account) => grokSpendScope(account),
     },
 };

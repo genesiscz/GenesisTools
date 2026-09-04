@@ -5,6 +5,7 @@ import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverCodexHomes } from "./discover";
 import { codexLogin } from "./login";
+import { codexSpendScope } from "./spend";
 import { codexUsage } from "./usage";
 
 /**
@@ -83,5 +84,7 @@ export const openAiSubPlugin: ProviderPlugin = {
                 plan: extractPlanType(claims) ?? account.label,
             };
         },
+
+        spendScope: codexSpendScope,
     },
 };
