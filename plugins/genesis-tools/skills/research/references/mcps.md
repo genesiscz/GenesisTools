@@ -54,7 +54,7 @@ Local stdio server. User needs a Brave Search API key from <https://brave.com/se
 Install:
 
 ```bash
-bun add --global @modelcontextprotocol/server-brave-search
+bun add --global @brave/brave-search-mcp-server
 ```
 
 Config snippet:
@@ -64,7 +64,8 @@ Config snippet:
   "mcpServers": {
     "brave-search": {
       "type": "stdio",
-      "command": "mcp-server-brave-search",
+      "command": "brave-search-mcp-server",
+      "args": ["--transport", "stdio"],
       "env": {
         "BRAVE_API_KEY": "<YOUR_BRAVE_API_KEY>"
       }

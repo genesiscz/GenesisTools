@@ -14,7 +14,33 @@ There are two ways to hand work to a Claude model, and they are not interchangea
 
 **Default to the `Agent` tool.** Reach for `tools claude exec` only when the point is the *account* or the *separate process*: spreading usage across accounts, running under a subscription this session is not on, or launching a long headless run that must not consume this session's context.
 
-## The command
+## The worker layer — use this, not a hand-rolled `claude -p`
+
+```bash
+tools claude worker spawn  --name <task> -a <account> --cwd <abs path> \
+  --prompt-file /tmp/claude-<task>-brief.md [-m sonnet] [--safe-mode]
+tools claude worker steer  --name <task> --prompt '<correction>'     # blocking, resumes the same session
+tools claude worker read   --name <task> [--turn N] [--events]
+tools claude worker status --name <task>
+tools claude worker stop   --name <task>      # kill a running turn; steer resumes the session
+tools claude worker sessions
+```
+
+The worker layer owns everything the hand-rolled form gets wrong, each one hit for real on 2026-09-01:
+
+- **The account is required and re-pinned on every turn** — no autopick, ever. Spawning without `-a` refuses with the eligible list.
+- **The session id is chosen at spawn** (`--session-id <uuid>`) and every steer resumes it, so resumption never depends on scraping an id back out. Verified: turn 2 recalled turn 1's content.
+- **It strips the parent's `CLAUDECODE`/session markers** — the claude CLI otherwise refuses to start inside a Claude Code session, which is exactly where a handoff runs from.
+- **It resolves the user's real `claude` install**, not the repo-vendored `@anthropic-ai/claude-code` CLI (2.1.45) that `node_modules/.bin` puts first on PATH under `bun run` and that rejects current flags.
+- **Turns are NDJSON** (`--output-format stream-json`) parsed into the shared worker-event stream; `read --events` renders it in the same vocabulary as `tools codex logs --events` and `tools grok read --events`.
+
+`--safe-mode` launches the child with CLAUDE.md, hooks, skills and MCP disabled. Prefer it plus a scratch `--cwd` for bounded work: a trivial haiku turn launched from a config-heavy repo cost **$0.11** in config cache-writes alone, and $0.06 with `--safe-mode` (both measured 2026-09-01).
+
+Capabilities are declared in `WORKER_CAPABILITIES.claude` (`src/utils/worker/capabilities.ts`); a verb this backend lacks (approve, deny, tail) errors naming that entry.
+
+## The primitive underneath: `tools claude exec`
+
+The worker layer builds on `exec`, which is still the right tool for pinning ANY one-shot command (a hook, CI, a `claude -p` you genuinely need bare):
 
 ```bash
 tools claude exec -a <account> -- \
@@ -56,7 +82,7 @@ Eligible means provider `anthropic-sub` **and** a stored long-lived token (`exec
 
 `tools claude run` launches an interactive Claude Code. It is the right tool when a human is driving and the wrong tool for an unattended worker, for reasons that hold independently of anything else: it expects a TTY, it returns prose rather than parseable output, and it gives you no way to steer a running turn.
 
-⚠️ There is also a dated billing observation: Claude Code **2.1.202** was seen swapping `CLAUDE_CODE_OAUTH_TOKEN` for keychain credentials *after startup*, so an interactive session began billing a different account mid-run, while headless `-p` was unaffected. That has **not** been re-tested on the current build (2.1.238 as of 2026-08-27). Treat it as a reason to prefer `-p`, not as a current fact about `run`. If you need to know, `tools claude doctor` scans running pinned sessions for exactly this silent-fallback failure.
+⚠️ There is also a dated billing observation: Claude Code **2.1.202** was seen swapping `CLAUDE_CODE_OAUTH_TOKEN` for keychain credentials *after startup*, so an interactive session began billing a different account mid-run, while headless `-p` was unaffected. That has **not** been re-tested on later builds. Treat it as a reason to prefer `-p`, not as a current fact about `run`. If you need to know, `tools claude doctor` scans running pinned sessions for exactly this silent-fallback failure.
 
 ## Model and effort
 
@@ -119,14 +145,4 @@ Never trust the self-report. Run the verification command yourself, read `git di
 
 ## Driver mode
 
-For a long multi-turn Claude handoff, spawn a `genesis-tools:agent-driver` subagent with `BACKEND: claude` so the run's output stays out of this session.
-
-Give the first turn a session id you chose, so resuming never depends on scraping one back out:
-
-```bash
-uuid=$(uuidgen)
-tools claude exec -a <account> -- claude -p "<brief>" --session-id "$uuid" --model sonnet
-tools claude exec -a <account> -- claude -p "<correction>" --resume "$uuid"      # every later turn
-```
-
-`--session-id <uuid>` and `-r, --resume [value]` are both real flags on the installed `claude` CLI (verified 2026-08-27). Keep the same `-a <account>` on every turn so the whole handoff bills one identity, and confirm it rather than assuming it stuck.
+For a long multi-turn Claude handoff, spawn a `genesis-tools:agent-driver` subagent with `BACKEND: claude` and an `ACCOUNT:` line so the run's output stays out of this session. The driver runs the `tools claude worker spawn/steer/read/status` loop — the session id and account pinning are the worker layer's job now, not a shell recipe's. Confirm the account each turn (`worker status` prints it) rather than assuming it stuck.

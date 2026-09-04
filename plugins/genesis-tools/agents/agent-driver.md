@@ -108,33 +108,37 @@ So send one in every exit path, including the ugly ones:
 
 ⚠️ **Timestamp every message you send, not just the VERDICT, and never relay state you have not just re-read.** Observed in the same run: the driver sent "Still waiting on the Codex driver for the formal verdict" after the report had already landed and the session had been stopped, and a later message carried an idle timestamp *earlier* than work already completed. Before any status relay, re-run `tools codex status --name <NAME>` and report what it says now — not what you believed one turn ago.
 
+## The other backends share the verb set
+
+What each backend can and cannot do (approvals, sandbox, readonly mode, steering, whether an account must be named, which verbs exist and which are absent by design) lives in ONE place: `WORKER_CAPABILITIES` in `src/utils/worker/capabilities.ts` in the GenesisTools repo, pinned by its test. Read it instead of trusting prose; a verb a backend lacks errors at the CLI naming its entry. Every backend's `read`/`logs` takes `--events` to print the shared normalized event stream (`src/utils/worker/events.ts`) instead of raw output.
+
 ## BACKEND: grok
 
-Grok has no daemon, no bus auto-registration, and no approval channel — the drive model is a **resume loop**: each turn is one blocking headless `grok` invocation, and steering happens between turns. Read `plugins/genesis-tools/skills/handoff-to/references/grok.md` in the GenesisTools repo for the full verified command set (isolation wrapper, safety flags, stream schema); the `genesis-tools:handoff-to` skill points at the same file. The section mapping:
+A **resume loop**: each turn is one blocking headless `grok` invocation, steering happens between turns. Read `plugins/genesis-tools/skills/handoff-to/references/grok.md` for the full verified command set (isolation wrapper, safety flags, stream schema); the `genesis-tools:handoff-to` skill points at the same file.
 
 | Codex step above | Grok equivalent |
 |---|---|
 | §3 spawn | `tools grok run --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
-| §4 watch | the `run`/`steer` output already carries the worker's report and tool calls; `tools grok read --name <NAME> [--turn N]` re-prints any turn |
-| §5 steer | `tools grok steer --name <NAME> --prompt '<correction>'`; between turns only — to abort a running turn, kill the grok process (the session survives and the next steer resumes it) |
-| §6 approvals | none exist. `WRITE_POLICY: deny` → `--readonly` (sticky across steers); `ask` → refuse the spawn and report that grok cannot do supervised writes (the orchestrator must pick `deny` or `allow`, or route to Codex); `allow` → default Auto-mode cwd jail (full trust is not exposed — ask for a disposable worktree instead) |
+| §4 watch | `tools grok status --name <NAME>` (metadata + whether a turn is running); `tools grok read --name <NAME> [--turn N] [--events]` re-prints any finished turn |
+| §5 steer | `tools grok steer --name <NAME> --prompt '<correction>'`; between turns only — `tools grok stop --name <NAME>` kills a running turn (the session survives and the next steer resumes it) |
+| §6 approvals | none (see the capability matrix). `WRITE_POLICY: deny` → `--readonly` (sticky across steers); `ask` → refuse the spawn and report that grok cannot do supervised writes (the orchestrator must pick `deny` or `allow`, or route to Codex); `allow` → default Auto-mode cwd jail (full trust is not exposed — ask for a disposable worktree instead) |
 | §7 verify | unchanged: run `VERIFY_CMD` yourself, read `git diff` |
-| §8 teardown | nothing to stop; report the same `VERDICT:` block |
+| §8 teardown | nothing daemon-shaped to stop; report the same `VERDICT:` block |
 
 ## BACKEND: claude
 
-A second Claude account driven headlessly. Like grok it is a resume loop with no daemon, no bus auto-registration, and no approvals; unlike either, there is **no sandbox flag at all**. Read `plugins/genesis-tools/skills/handoff-to/references/claude.md` for the verified detail. The section mapping:
+A second Claude account driven headlessly through the worker layer: `tools claude worker` owns the session (pinned account, chosen `--session-id`, `--resume` on every later turn, the nesting and vendored-binary traps). Like grok it is a resume loop with no approvals; unlike either, there is **no sandbox at all**. Read `plugins/genesis-tools/skills/handoff-to/references/claude.md` for the verified detail.
 
 | Codex step above | Claude equivalent |
 |---|---|
-| §3 spawn | `tools claude exec -a <ACCOUNT> -- claude -p "$(cat <BRIEF_FILE>)" --session-id <uuid> --model <model>` — background Bash, wait for completion |
-| §4 watch | nothing to tail; the turn's stdout IS the report |
-| §5 steer | `tools claude exec -a <ACCOUNT> -- claude -p '<correction>' --resume <uuid>`; between turns only |
-| §6 approvals | none exist, and there is no sandbox flag. Enforce `WRITE_POLICY` through the brief and the location you launch in, not through a flag — see below |
+| §3 spawn | `tools claude worker spawn --name <NAME> -a <ACCOUNT> --cwd <CWD> --prompt-file <BRIEF_FILE> [-m <model>] [--safe-mode]` — background Bash, wait for completion |
+| §4 watch | `tools claude worker status --name <NAME>`; `tools claude worker read --name <NAME> [--turn N] [--events]` |
+| §5 steer | `tools claude worker steer --name <NAME> --prompt '<correction>'`; between turns only — `worker stop` kills a running turn |
+| §6 approvals | none, and no sandbox (see the capability matrix). Enforce `WRITE_POLICY` through the brief and the location you launch in — see below |
 | §7 verify | unchanged: run `VERIFY_CMD` yourself, read `git diff` |
-| §8 teardown | nothing to stop; report the same `VERDICT:` block |
+| §8 teardown | nothing daemon-shaped to stop; report the same `VERDICT:` block |
 
-🛑 **`ACCOUNT` is mandatory and the orchestrator must name it.** Omitting `-a` in a non-TTY silently auto-picks by usage headroom, so the work bills an account nobody chose. If your spawn prompt has no account, ask for one before spawning; do not guess.
+🛑 **`ACCOUNT` is mandatory and the orchestrator must name it.** `worker spawn` refuses to run without `-a` — deliberately, because the underlying `tools claude exec` without `-a` silently auto-picks by usage headroom and the work bills an account nobody chose. If your spawn prompt has no account, ask for one before spawning; do not guess. Prefer `--safe-mode` plus a scratch cwd: a trivial turn launched from a config-heavy repo without it cost $0.11 in config cache-writes alone (measured 2026-09-01).
 
 **Enforcing `WRITE_POLICY` without a flag.** This backend has no sandbox, so the policy is yours to hold. It is a real policy, not a suggestion:
 
@@ -144,7 +148,7 @@ A second Claude account driven headlessly. Like grok it is a resume loop with no
 
 Workers follow negative constraints reliably when they are spelled out. Spell them out, then verify with the diff rather than trusting the report.
 
-⚠️ **Use headless `-p`, not interactive `tools claude run`.** `run` expects a TTY, returns prose rather than parseable output, and gives you no way to steer, so it is the wrong shape for a driven worker regardless of anything else. Separately, `run` was observed on Claude Code 2.1.202 swapping the pinned token for keychain credentials after startup and billing the wrong account; that has **not** been re-tested on the current build (2.1.238), so treat it as a dated observation rather than a live fact.
+⚠️ **Use the worker layer, never interactive `tools claude run`.** `run` expects a TTY, returns prose rather than parseable output, and gives you no way to steer, so it is the wrong shape for a driven worker regardless of anything else. Separately, `run` was observed on Claude Code 2.1.202 swapping the pinned token for keychain credentials after startup and billing the wrong account; that has **not** been re-tested on later builds, so treat it as a dated observation rather than a live fact.
 
 ## Backends other than Codex, Grok and Claude
 

@@ -1,0 +1,14 @@
+{
+    "$schema": "https://vitrinka.ai/static/vitrinka.config.schema.json",
+    "version": 1,
+    "index": {
+        "enabled": false,
+        "roots": [],
+        "extensionGroups": [],
+        "extensions": [],
+        "include": [],
+        "exclude": [],
+        "includeUntracked": false,
+        "useClaudeIgnore": true
+    }
+}

@@ -208,6 +208,8 @@ vercel-skills
 .playwright-mcp/
 
 .agents/skills/hf-cli/
+# and the .claude symlink that points into it, or a fresh clone gets a dangling link
+.claude/skills/hf-cli
 
 .tanstack/
 .superpowers/
@@ -225,10 +227,20 @@ vercel-skills
 # Agent working directory — plans, audits, reviews, session scratch. These are
 # internal notes, not contributor documentation, and they carry customer and
 # employer names. Contributor docs live in docs/ instead.
-.claude/
+#
+# Per-entry (`.claude/*`) rather than the whole directory (`.claude/`), because
+# git cannot re-include anything inside an excluded directory. Skills and
+# commands are real project config, not session scratch, so they stay tracked.
+.claude/*
+!.claude/skills/
+!.claude/commands/
 .handoff
 README.json-to-ts.md
 .claude/plans/
 .claude/old/
+.vitrinka/screenshots/
+.vitrinka/artifacts/
+.vitrinka/scratch/
+
 # Benchmark result rows carry real scan paths; keep them out of git
 scripts/benchmarks/**/*results*.jsonl

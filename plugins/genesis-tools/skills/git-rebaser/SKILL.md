@@ -39,6 +39,18 @@ Child branches:
 
 ### Phase 3: Rebase Parent (if not already done)
 
+**Before a plain replay, check whether the parent's work already landed on the target
+in a recomposed form.** `git cherry <target> <parent>` showing mostly `+` while the
+target visibly holds the same features (the parent's PRs were squashed or recomposed
+before merging) means a commit-by-commit rebase will conflict at intermediate commits
+and can replay an older copy over the better one already on the target. In that case
+resolve the parent with the **oracle merge** from `me:rebase-workflow`, gotcha 6:
+merge the target in once, resolve per file by which side is newer, verify green, tag
+the tree, abort, rebase with `rebase-with-oracle.ts`, gate on
+`git diff <oracle> HEAD^{tree}`. Move stale `.git/rr-cache` aside first (gotcha 7).
+Then cascade the children as below — a child cut from the OLD parent tip still needs
+`OLD_PARENT` from the reflog or backup tag, exactly as in the tiers under this phase.
+
 If the parent has NOT been rebased yet:
 
 1. **Save the pre-rebase ref**: `OLD_PARENT=$(git rev-parse <parent>)`

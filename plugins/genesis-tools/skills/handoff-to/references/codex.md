@@ -43,23 +43,38 @@ Write policy — the only real safety dial:
 
 | `--write` | sandbox | approvals | use for |
 |---|---|---|---|
-| omitted / `deny` | read-only | none possible | reviewers, investigations, second opinions |
+| omitted / `deny` | read-only | none possible | INLINE-only review. No file to write. |
 | `ask` | workspace-write | untrusted → forwarded to `lead` | **default for implementation** |
-| `allow` | workspace-write | never prompts | tightly bounded, disposable, or worktree-isolated work only |
+| `allow` | workspace-write | never prompts | tightly bounded folder: vault note, disposable worktree |
+
+### 🛑 File deliverables: never `--write deny`
+
+If the brief tells the worker to write a path (Obsidian vault, report.md, any file), **do not spawn deny.** `--writable-root` under deny does not lift that.
+
+Observed 2026-08-31 12:15: `--write deny` plus `--writable-root <path to the notes vault>` still failed `apply_patch` with *"writing is blocked by read-only sandbox; rejected by user approval settings"*. The vault note had to be written by the orchestrator.
+
+Recipe for a note under the notes vault:
+
+1. Orchestrator `mkdir -p` the note's parent first. macOS TCC on a synced folder can block the Codex child's mkdir.
+2. Spawn `--write allow` with `--cwd` set to that parent. Do not set cwd to the app repo.
+3. Brief: write only the exact path. Do not commit. Do not touch the repo.
+4. If `apply_patch` still stalls on Tresors, the worker writes `/tmp/<same-filename>` and you `cp` it into the vault.
+
+`--write ask` is fine if the driver will approve that one path. `allow` is allowed here because cwd is the note folder, not the live repo.
 
 ### 🛑 What read-only mode actually costs you
 
-`deny` is the right default for a reviewer, but it is far more restrictive than "cannot edit your code". Both of these were observed in one real review handoff on 2026-08-27:
+`deny` is the right default for an **inline** reviewer. It is far more restrictive than "cannot edit the repo". Observed on a real review handoff on 2026-08-27:
 
-- **The worker cannot write its own report file.** A brief that says "write your findings to `<path>.md`" fails. Codex correctly refused with *"Blocked from writing the requested report: the sandbox is read-only"* and dumped about 4 KB of report inline as its final answer instead, which then had to be saved by hand. So in `deny` mode, either **make inline output the deliverable** and say so in the brief, or grant exactly one writable path.
-- **The worker cannot run most test runners.** This is the damaging half: a reviewer that cannot run tests cannot verify anything it claims. Observed verbatim: the first attempt failed because *"Jest's Watchman probe failed because the read-only sandbox blocked fchmod in Watchman state"*, and the retry with Watchman disabled failed because *"Jest still attempted to persist its haste map under /private/var/…/T and was blocked by EPERM"*. Net effect: the reviewer executed **zero** test assertions and still produced a confident "Test quality" section, which was nearly relayed onward as an observation.
+- **The worker cannot write a report file.** A brief that says "write your findings to `<path>.md`" fails. Codex refused with *"Blocked from writing the requested report: the sandbox is read-only"* and dumped about 4 KB inline. In `deny` mode the deliverable is that inline answer. Do not add the report directory as `--writable-root` and keep deny. That was the 2026-08-31 miss.
+- **The worker cannot run most test runners.** Observed: Jest's Watchman probe failed (`fchmod` in a read-only temp), then haste-map persist under `/private/var/…/T` hit EPERM. Zero assertions ran, and the worker still wrote a confident "Test quality" section.
 
-Fix by granting temp and cache roots while keeping the repo read-only:
+`--writable-root /tmp` and `"$TMPDIR"` under deny exist so Jest can persist a haste map. They are not a report-file hatch:
 
 ```bash
 tools codex spawn --name <task> --cwd <abs path> \
+  --write deny \
   --writable-root /tmp --writable-root "$TMPDIR" \
-  --writable-root <dir for the report file> \
   --prompt-file /tmp/codex-<task>-brief.md
 ```
 
@@ -114,6 +129,8 @@ tools codex interrupt --name <task>             # kill the current turn
 tools codex rollback  --name <task> --turns 1   # drop turns from the end
 tools codex stop      --name <task>             # tear down
 ```
+
+`tools codex logs` and `tail` take `--events` to render the shared worker-event stream (`src/utils/worker/events.ts`) — the same vocabulary `tools grok read --events` and `tools claude worker read --events` speak — instead of raw notifications. The default raw view is unchanged and stays the authoritative one for approvals, since it carries the request ids. Codex's capabilities (the only backend with mid-turn approvals and mid-turn steering) are declared in `WORKER_CAPABILITIES.codex` (`src/utils/worker/capabilities.ts`).
 
 Repeat the negative constraints in every steering message — the correction is what the model attends to now.
 
