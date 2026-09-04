@@ -1,8 +1,8 @@
 import { apiHandler, jsonBody } from "@app/clarity/ui/src/server/api-utils";
-import { executeFill } from "@app/clarity/ui/src/server/fill";
+import { getAssignmentView } from "@app/clarity/ui/src/server/assignments";
 import { createFileRoute } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/api/fill/execute")({
+export const Route = createFileRoute("/api/assignment-view")({
     server: {
         handlers: {
             POST: apiHandler(async (request) => {
@@ -15,21 +15,21 @@ export const Route = createFileRoute("/api/fill/execute")({
                 if (
                     typeof body.month !== "number" ||
                     typeof body.year !== "number" ||
-                    !Array.isArray(body.weekIds) ||
-                    !body.weekIds.every((id: unknown) => typeof id === "number")
+                    body.month < 1 ||
+                    body.month > 12
                 ) {
                     return Response.json(
-                        { error: "Fields 'month' and 'year' must be numbers, 'weekIds' must be number[]" },
+                        { error: "Field 'month' must be 1-12 and 'year' must be a number" },
                         { status: 400 }
                     );
                 }
 
-                const result = await executeFill(
-                    body.month,
-                    body.year,
-                    body.weekIds as number[],
-                    body.allowUnmapped === true
-                );
+                const result = await getAssignmentView({
+                    month: body.month,
+                    year: body.year,
+                    refresh: body.refresh === true,
+                });
+
                 return Response.json(result);
             }),
         },

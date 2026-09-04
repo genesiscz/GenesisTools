@@ -30,6 +30,7 @@ import { Route as ApiConfigureTimelogKeyRouteImport } from './routes/api/configu
 import { Route as ApiConfigureAdoRouteImport } from './routes/api/configure-ado'
 import { Route as ApiClarityWeeksRouteImport } from './routes/api/clarity-weeks'
 import { Route as ApiClarityTasksRouteImport } from './routes/api/clarity-tasks'
+import { Route as ApiAssignmentViewRouteImport } from './routes/api/assignment-view'
 import { Route as ApiAdoWorkitemsRouteImport } from './routes/api/ado-workitems'
 import { Route as ApiAdoConfigRouteImport } from './routes/api/ado-config'
 import { Route as ApiFillPreviewRouteImport } from './routes/api/fill.preview'
@@ -140,6 +141,11 @@ const ApiClarityTasksRoute = ApiClarityTasksRouteImport.update({
   path: '/api/clarity-tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAssignmentViewRoute = ApiAssignmentViewRouteImport.update({
+  id: '/api/assignment-view',
+  path: '/api/assignment-view',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAdoWorkitemsRoute = ApiAdoWorkitemsRouteImport.update({
   id: '/api/ado-workitems',
   path: '/api/ado-workitems',
@@ -169,6 +175,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/api/ado-config': typeof ApiAdoConfigRoute
   '/api/ado-workitems': typeof ApiAdoWorkitemsRoute
+  '/api/assignment-view': typeof ApiAssignmentViewRoute
   '/api/clarity-tasks': typeof ApiClarityTasksRoute
   '/api/clarity-weeks': typeof ApiClarityWeeksRoute
   '/api/configure-ado': typeof ApiConfigureAdoRoute
@@ -196,6 +203,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/api/ado-config': typeof ApiAdoConfigRoute
   '/api/ado-workitems': typeof ApiAdoWorkitemsRoute
+  '/api/assignment-view': typeof ApiAssignmentViewRoute
   '/api/clarity-tasks': typeof ApiClarityTasksRoute
   '/api/clarity-weeks': typeof ApiClarityWeeksRoute
   '/api/configure-ado': typeof ApiConfigureAdoRoute
@@ -224,6 +232,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/api/ado-config': typeof ApiAdoConfigRoute
   '/api/ado-workitems': typeof ApiAdoWorkitemsRoute
+  '/api/assignment-view': typeof ApiAssignmentViewRoute
   '/api/clarity-tasks': typeof ApiClarityTasksRoute
   '/api/clarity-weeks': typeof ApiClarityWeeksRoute
   '/api/configure-ado': typeof ApiConfigureAdoRoute
@@ -253,6 +262,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/ado-config'
     | '/api/ado-workitems'
+    | '/api/assignment-view'
     | '/api/clarity-tasks'
     | '/api/clarity-weeks'
     | '/api/configure-ado'
@@ -280,6 +290,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/ado-config'
     | '/api/ado-workitems'
+    | '/api/assignment-view'
     | '/api/clarity-tasks'
     | '/api/clarity-weeks'
     | '/api/configure-ado'
@@ -307,6 +318,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/ado-config'
     | '/api/ado-workitems'
+    | '/api/assignment-view'
     | '/api/clarity-tasks'
     | '/api/clarity-weeks'
     | '/api/configure-ado'
@@ -335,6 +347,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   ApiAdoConfigRoute: typeof ApiAdoConfigRoute
   ApiAdoWorkitemsRoute: typeof ApiAdoWorkitemsRoute
+  ApiAssignmentViewRoute: typeof ApiAssignmentViewRoute
   ApiClarityTasksRoute: typeof ApiClarityTasksRoute
   ApiClarityWeeksRoute: typeof ApiClarityWeeksRoute
   ApiConfigureAdoRoute: typeof ApiConfigureAdoRoute
@@ -504,6 +517,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiClarityTasksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/assignment-view': {
+      id: '/api/assignment-view'
+      path: '/api/assignment-view'
+      fullPath: '/api/assignment-view'
+      preLoaderRoute: typeof ApiAssignmentViewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/ado-workitems': {
       id: '/api/ado-workitems'
       path: '/api/ado-workitems'
@@ -543,6 +563,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   ApiAdoConfigRoute: ApiAdoConfigRoute,
   ApiAdoWorkitemsRoute: ApiAdoWorkitemsRoute,
+  ApiAssignmentViewRoute: ApiAssignmentViewRoute,
   ApiClarityTasksRoute: ApiClarityTasksRoute,
   ApiClarityWeeksRoute: ApiClarityWeeksRoute,
   ApiConfigureAdoRoute: ApiConfigureAdoRoute,

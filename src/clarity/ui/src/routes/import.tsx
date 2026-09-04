@@ -40,11 +40,11 @@ interface ExecuteFillResult {
     entries: FillEntryResult[];
 }
 
-async function fetchFillPreview(month: number, year: number) {
+async function fetchFillPreview(month: number, year: number, allowUnmapped: boolean) {
     const res = await fetch("/api/fill/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: SafeJSON.stringify({ month, year }),
+        body: SafeJSON.stringify({ month, year, allowUnmapped }),
     });
 
     if (!res.ok) {
@@ -81,11 +81,16 @@ interface PreviewWeek {
     unmappedWorkItems: Array<{ workItemId: number; minutes: number }>;
 }
 
-async function executeFillApi(month: number, year: number, weekIds: number[]): Promise<ExecuteFillResult> {
+async function executeFillApi(
+    month: number,
+    year: number,
+    weekIds: number[],
+    allowUnmapped: boolean
+): Promise<ExecuteFillResult> {
     const res = await fetch("/api/fill/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: SafeJSON.stringify({ month, year, weekIds }),
+        body: SafeJSON.stringify({ month, year, weekIds, allowUnmapped }),
     });
 
     if (!res.ok) {
@@ -107,14 +112,15 @@ function ImportPage() {
     const [alsoPostComments, setAlsoPostComments] = useState(false);
     const [commentedWeekIds, setCommentedWeekIds] = useState<number[]>([]);
     const [showReviewDialog, setShowReviewDialog] = useState(false);
+    const [allowUnmapped, setAllowUnmapped] = useState(false);
 
     const {
         data: preview,
         isLoading,
         error,
     } = useQuery({
-        queryKey: ["fill-preview", month, year],
-        queryFn: () => fetchFillPreview(month, year),
+        queryKey: ["fill-preview", month, year, allowUnmapped],
+        queryFn: () => fetchFillPreview(month, year, allowUnmapped),
     });
 
     const selectedWeekNotes = useMemo(() => {
@@ -135,7 +141,7 @@ function ImportPage() {
     }, [preview, selectedWeeks]);
 
     const fillMutation = useMutation({
-        mutationFn: () => executeFillApi(month, year, [...selectedWeeks]),
+        mutationFn: () => executeFillApi(month, year, [...selectedWeeks], allowUnmapped),
         onSuccess: async () => {
             const commented: number[] = [];
 
@@ -243,6 +249,18 @@ function ImportPage() {
 
                         <div className="flex-1" />
 
+                        {(preview.diagnostics?.reason === "unmapped_work_items" || allowUnmapped) && (
+                            <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-mono text-yellow-500/80 hover:text-yellow-400 transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={allowUnmapped}
+                                    onChange={(e) => setAllowUnmapped(e.target.checked)}
+                                    className="accent-yellow-500 w-3 h-3"
+                                />
+                                Leave {(preview.totalUnmapped / 60).toFixed(1)}h of unmapped work out
+                            </label>
+                        )}
+
                         {preview.weeks.length > 0 && (
                             <Button variant="ghost" size="sm" onClick={selectAll} className="text-xs font-mono">
                                 Select All
@@ -256,7 +274,7 @@ function ImportPage() {
                             <CardContent className="p-8 text-center">
                                 <div className="text-gray-500 font-mono text-sm">
                                     {preview.diagnostics?.message ??
-                                        "No week data available. Check that mappings have cached timesheet IDs."}
+                                        "No week data available. Check the Clarity session in Settings."}
                                 </div>
                             </CardContent>
                         </Card>

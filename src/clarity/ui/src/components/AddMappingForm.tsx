@@ -291,7 +291,6 @@ export function AddMappingForm({ onMappingAdded }: AddMappingFormProps) {
                         </span>
                         <WorkItemSelector
                             clarityTask={selectedTask}
-                            timesheetId={timesheetId}
                             month={month}
                             year={year}
                             onItemsAdded={onMappingAdded}

@@ -16,7 +16,7 @@ export const Route = createFileRoute("/api/fill/preview")({
                     return Response.json({ error: "Fields 'month' and 'year' must be numbers" }, { status: 400 });
                 }
 
-                const result = await getFillPreview(body.month, body.year);
+                const result = await getFillPreview(body.month, body.year, body.allowUnmapped === true);
                 return Response.json(result);
             }),
         },

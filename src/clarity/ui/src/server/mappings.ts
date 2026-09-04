@@ -3,6 +3,7 @@ import { getConfig, saveConfig } from "@app/clarity/config";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import { getTimesheetWeeks as getTimesheetWeeksShared, type TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
+import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 
 export type { TimesheetWeek };
@@ -21,7 +22,7 @@ export async function getTimesheetWeeks(month?: number, year?: number): Promise<
         cookies: config.cookies,
     });
 
-    return getTimesheetWeeksShared(api, config.mappings, month, year);
+    return getTimesheetWeeksShared(api, month, year);
 }
 
 export async function getMappings(): Promise<{ mappings: ClarityMapping[]; configured: boolean }> {
@@ -77,6 +78,7 @@ export async function addMapping(data: Record<string, unknown>): Promise<{ succe
     }
 
     await saveConfig(config);
+    invalidateAssignmentView();
     return { success: true };
 }
 
@@ -126,6 +128,7 @@ export async function moveMapping(
     mapping.clarityInvestmentCode = target.clarityInvestmentCode;
 
     await saveConfig(config);
+    invalidateAssignmentView();
     return { success: true };
 }
 
@@ -138,5 +141,6 @@ export async function removeMapping(adoWorkItemId: number): Promise<{ success: b
 
     config.mappings = config.mappings.filter((m) => m.adoWorkItemId !== adoWorkItemId);
     await saveConfig(config);
+    invalidateAssignmentView();
     return { success: true };
 }

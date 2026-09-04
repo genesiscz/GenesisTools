@@ -84,7 +84,7 @@ export function MappingTable({
         return (
             <div className="text-center py-12 text-gray-500 font-mono text-sm">
                 No mappings configured. Use the form below or{" "}
-                <code className="text-primary">tools clarity link-workitems</code> to create mappings.
+                <code className="text-primary">tools clarity mappings</code> to create mappings.
             </div>
         );
     }

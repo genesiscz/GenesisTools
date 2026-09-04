@@ -1,0 +1,32 @@
+{
+    // The dashboard is excluded from the repo-wide pass, so it needs its own project to be
+    // typechecked at all. Wired into `bun run typecheck:all`.
+    "include": ["**/*.ts", "**/*.tsx"],
+    "exclude": ["dist"],
+    "compilerOptions": {
+        "lib": ["ESNext", "DOM", "DOM.Iterable"],
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleDetection": "force",
+        "jsx": "react-jsx",
+        "allowJs": true,
+        "types": ["vite/client", "bun"],
+
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "noEmit": true,
+
+        "strict": true,
+        "skipLibCheck": true,
+        "noFallthroughCasesInSwitch": true,
+
+        "paths": {
+            "@genesiscz/utils": ["../../utils/index.ts"],
+            "@genesiscz/utils/*": ["../../utils/*"],
+            "@app/*": ["../../*"],
+            "@ui/*": ["../../utils/ui/*"],
+            "@ui": ["../../utils/ui/index.ts"]
+        }
+    }
+}

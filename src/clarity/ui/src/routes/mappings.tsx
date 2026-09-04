@@ -1,7 +1,7 @@
 import type { TimesheetWeek } from "@app/clarity/lib/timesheet-weeks";
 import type { ClarityTask } from "@app/clarity/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
@@ -75,6 +75,15 @@ async function fetchClarityTasks(timesheetId: number): Promise<{ tasks: ClarityT
     }
 
     return res.json();
+}
+
+/**
+ * A mapping write changes what is recommended and what has drifted, so both caches have to go.
+ * Clearing only `mappings` left the badges describing the state before the write for 5 minutes.
+ */
+function invalidateMappingViews(queryClient: QueryClient): void {
+    queryClient.invalidateQueries({ queryKey: ["mappings"] });
+    queryClient.invalidateQueries({ queryKey: ["assignment-view"] });
 }
 
 async function deleteMappingApi(adoWorkItemId: number) {
@@ -161,7 +170,7 @@ function MappingsPage() {
         mutationFn: deleteMappingApi,
         onSuccess: (_data, adoWorkItemId) => {
             toast.success(`Mapping removed for #${adoWorkItemId}`);
-            queryClient.invalidateQueries({ queryKey: ["mappings"] });
+            invalidateMappingViews(queryClient);
         },
         onError: (err) => {
             toast.error(err instanceof Error ? err.message : "Failed to remove mapping");
@@ -178,7 +187,7 @@ function MappingsPage() {
         }) => moveMappingApi(adoWorkItemId, target),
         onSuccess: () => {
             toast.success("Mapping moved successfully");
-            queryClient.invalidateQueries({ queryKey: ["mappings"] });
+            invalidateMappingViews(queryClient);
         },
         onError: (err) => {
             toast.error(err instanceof Error ? err.message : "Failed to move mapping");
@@ -268,12 +277,11 @@ function MappingsPage() {
                                 investmentName: addToTask.clarityInvestmentName,
                                 investmentCode: addToTask.clarityInvestmentCode,
                             }}
-                            timesheetId={firstTimesheetId}
                             month={month}
                             year={year}
                             onItemsAdded={() => {
                                 setAddToTask(null);
-                                queryClient.invalidateQueries({ queryKey: ["mappings"] });
+                                invalidateMappingViews(queryClient);
                             }}
                         />
                     )}

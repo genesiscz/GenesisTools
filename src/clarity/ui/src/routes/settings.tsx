@@ -540,7 +540,7 @@ function SettingsPage() {
                             <span className="text-gray-500">Initial setup with base URL and auth</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-primary">tools clarity link-workitems</code>
+                            <code className="text-primary">tools clarity mappings</code>
                             <span className="text-gray-500">Create ADO-Clarity mappings</span>
                         </div>
                         <div className="flex items-center gap-2">

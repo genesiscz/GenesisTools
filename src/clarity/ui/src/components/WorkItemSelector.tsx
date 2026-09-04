@@ -1,13 +1,28 @@
 import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
+import type { SerialisedAssignmentRow } from "@app/clarity/lib/assignments";
 import type { AdoWorkItem, TimelogWorkItem } from "@app/clarity/lib/types";
+import type { AssignmentViewResult } from "@app/clarity/ui/src/server/assignments";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { Input } from "@ui/components/input";
-import { CheckCircle, Loader2, Plus, Search, XCircle } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+    CheckCircle,
+    HelpCircle,
+    Loader2,
+    Plus,
+    RefreshCw,
+    Search,
+    Sparkles,
+    TriangleAlert,
+    XCircle,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { TypeBadge, WorkItemChain } from "./WorkItemLink";
+
+/** Upper bound on client staleness; the server's own window starts at `builtAt`, not at settle. */
+const VIEW_MAX_AGE_MS = 5 * 60 * 1000;
 
 interface ClarityTaskTarget {
     taskId: number;
@@ -19,7 +34,6 @@ interface ClarityTaskTarget {
 
 interface WorkItemSelectorProps {
     clarityTask: ClarityTaskTarget;
-    timesheetId?: number;
     month: number;
     year: number;
     onItemsAdded: () => void;
@@ -61,6 +75,21 @@ async function fetchMappings(): Promise<{ mappings: Array<{ adoWorkItemId: numbe
     return res.json();
 }
 
+async function fetchAssignmentView(month: number, year: number, refresh: boolean): Promise<AssignmentViewResult> {
+    const res = await fetch("/api/assignment-view", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: SafeJSON.stringify({ month, year, refresh }),
+    });
+
+    if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Failed to load recommendations (${res.status})`);
+    }
+
+    return res.json();
+}
+
 async function searchAdoWorkItems(query: string): Promise<{ items: AdoWorkItem[] }> {
     const res = await fetch("/api/ado-workitems", {
         method: "POST",
@@ -91,7 +120,51 @@ async function addMappingApi(data: Record<string, unknown>) {
     return res.json();
 }
 
-export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItemsAdded }: WorkItemSelectorProps) {
+/** Project rules ("an Incident goes to Incidenty_Opex") are the operator's judgement, so no badge. */
+function RecommendationBadge({ row, clarityTaskName }: { row?: SerialisedAssignmentRow; clarityTaskName: string }) {
+    if (!row?.recommendation) {
+        return null;
+    }
+
+    const { matchedWorkItemId, matchedWorkItemTitle } = row.recommendation;
+
+    return (
+        <span className="flex items-center gap-1 shrink-0">
+            <Badge variant="outline" className="text-[9px] border-cyan-500/40 text-cyan-400 gap-1">
+                <Sparkles className="w-2.5 h-2.5" />
+                Recommended
+            </Badge>
+            <button
+                type="button"
+                className="cursor-help"
+                aria-label={`Matched ${clarityTaskName} with #${matchedWorkItemId} — ${matchedWorkItemTitle}`}
+                title={`Matched ${clarityTaskName} with #${matchedWorkItemId} — ${matchedWorkItemTitle}`}
+            >
+                <HelpCircle aria-hidden className="w-3 h-3 text-gray-600 hover:text-cyan-400 transition-colors" />
+            </button>
+        </span>
+    );
+}
+
+/** The stored mapping points somewhere the ancestor tree does not, which the CLI prints as ⚠. */
+function DriftBadge({ row }: { row?: SerialisedAssignmentRow }) {
+    if (!row?.drifted || !row.recommendation) {
+        return null;
+    }
+
+    return (
+        <Badge
+            variant="outline"
+            className="text-[9px] border-yellow-500/40 text-yellow-500 gap-1 shrink-0"
+            title={`Mapped to ${row.clarityTaskName ?? "?"}, but the tree points at ${row.recommendation.clarityTaskName}`}
+        >
+            <TriangleAlert className="w-2.5 h-2.5" />
+            Drifted
+        </Badge>
+    );
+}
+
+export function WorkItemSelector({ clarityTask, month, year, onItemsAdded }: WorkItemSelectorProps) {
     const [selectedWorkItems, setSelectedWorkItems] = useState<Map<number, AdoWorkItem>>(new Map());
     const [timelogFilter, setTimelogFilter] = useState("");
     const [showMapped, setShowMapped] = useState(false);
@@ -118,6 +191,35 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
         queryFn: fetchMappings,
     });
 
+    const queryClient = useQueryClient();
+    const {
+        data: assignmentView,
+        isFetching: viewFetching,
+        error: viewError,
+    } = useQuery({
+        queryKey: ["assignment-view", month, year],
+        queryFn: () => fetchAssignmentView(month, year, false),
+        // The server caches for the same window, so a stale view is never served twice.
+        staleTime: VIEW_MAX_AGE_MS,
+        refetchInterval: VIEW_MAX_AGE_MS,
+    });
+
+    // A plain refetch would re-run the queryFn above, which asks for `refresh: false` and gets the
+    // server's cached view back — the spinner would turn and the data would be identical. Only a
+    // POST carrying `refresh: true` actually rebuilds it.
+    const rebuildView = useMutation({
+        mutationFn: async () => {
+            // A periodic refetch already in flight would resolve after the rebuild and overwrite
+            // the seeded value with the pre-rebuild view.
+            await queryClient.cancelQueries({ queryKey: ["assignment-view", month, year] });
+
+            return fetchAssignmentView(month, year, true);
+        },
+        onSuccess: (fresh) => {
+            queryClient.setQueryData(["assignment-view", month, year], fresh);
+        },
+    });
+
     const { data: adoConfigData } = useQuery({
         queryKey: ["ado-config"],
         queryFn: async () => {
@@ -142,6 +244,34 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
         return ids;
     }, [mappingsData]);
 
+    const rowsByWorkItem = useMemo(() => {
+        const rows = new Map<number, SerialisedAssignmentRow>();
+
+        for (const row of [...(assignmentView?.assigned ?? []), ...(assignmentView?.unassigned ?? [])]) {
+            rows.set(row.workItemId, row);
+        }
+
+        return rows;
+    }, [assignmentView]);
+
+    const [now, setNow] = useState(Date.now());
+
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 30_000);
+
+        return () => clearInterval(timer);
+    }, []);
+
+    const recommendationAge = useMemo(() => {
+        if (!assignmentView) {
+            return "recommendations";
+        }
+
+        const minutes = Math.floor((now - assignmentView.builtAt) / 60_000);
+
+        return minutes < 1 ? "just now" : `${minutes}m ago`;
+    }, [assignmentView, now]);
+
     const typeColors = typeColorsData?.types ?? {};
     const adoConfig =
         adoConfigData?.org && adoConfigData?.project
@@ -164,8 +294,13 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
             items = items.filter((wi) => `#${wi.id}`.includes(q) || wi.title.toLowerCase().includes(q));
         }
 
-        return items;
-    }, [timelogData, timelogFilter, showMapped, mappedIds]);
+        // Items the ancestor walk says belong to THIS Clarity task come first; everything else
+        // keeps the order the server sent, so the list does not reshuffle for no reason.
+        const recommendedHere = (id: number) =>
+            rowsByWorkItem.get(id)?.recommendation?.clarityTaskId === clarityTask.taskId ? 0 : 1;
+
+        return [...items].sort((a, b) => recommendedHere(a.id) - recommendedHere(b.id));
+    }, [timelogData, timelogFilter, showMapped, mappedIds, rowsByWorkItem, clarityTask.taskId]);
 
     const addMutation = useMutation({
         mutationFn: async () => {
@@ -183,7 +318,6 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                         clarityTaskCode: clarityTask.taskCode,
                         clarityInvestmentName: clarityTask.investmentName,
                         clarityInvestmentCode: clarityTask.investmentCode,
-                        clarityTimesheetId: timesheetId,
                         adoWorkItemId: wi.id,
                         adoWorkItemTitle: wi.title,
                         adoWorkItemType: wi.type,
@@ -275,8 +409,27 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                 {filteredTimelog.length}/{timelogData.workItems.length} items
                             </span>
                         )}
+                        <button
+                            type="button"
+                            onClick={() => rebuildView.mutate()}
+                            disabled={viewFetching || rebuildView.isPending}
+                            title="Rebuild the recommendations from ADO"
+                            className="flex items-center gap-1 text-[10px] font-mono text-gray-500 hover:text-cyan-400 transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw
+                                className={`w-3 h-3 ${viewFetching || rebuildView.isPending ? "animate-spin" : ""}`}
+                            />
+                            {viewFetching || rebuildView.isPending ? "Recommendations…" : recommendationAge}
+                        </button>
                     </div>
                 </div>
+
+                {viewError && (
+                    <div className="mb-1.5 flex items-center gap-2 text-yellow-500 font-mono text-[10px]">
+                        <TriangleAlert className="w-3 h-3" />
+                        Recommendations unavailable: {viewError instanceof Error ? viewError.message : "unknown error"}
+                    </div>
+                )}
 
                 <Input
                     type="text"
@@ -303,6 +456,8 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                             const isSelected = selectedWorkItems.has(wi.id);
                             const hours = (wi.totalMinutes / 60).toFixed(1);
                             const typeColor = typeColors[wi.type];
+                            const row = rowsByWorkItem.get(wi.id);
+                            const recommendedHere = row?.recommendation?.clarityTaskId === clarityTask.taskId;
 
                             return (
                                 <label
@@ -312,7 +467,9 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                             ? "border-border/60 bg-card/60 text-gray-600 cursor-not-allowed"
                                             : isSelected
                                               ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300 cursor-pointer"
-                                              : "border-border/60 bg-card/60 text-gray-400 hover:border-cyan-500/20 hover:bg-cyan-500/5 cursor-pointer"
+                                              : recommendedHere
+                                                ? "border-cyan-500/25 bg-cyan-500/5 text-gray-400 hover:border-cyan-500/40 cursor-pointer"
+                                                : "border-border/60 bg-card/60 text-gray-400 hover:border-cyan-500/20 hover:bg-cyan-500/5 cursor-pointer"
                                     }`}
                                 >
                                     <input
@@ -333,6 +490,10 @@ export function WorkItemSelector({ clarityTask, timesheetId, month, year, onItem
                                             <span className="text-gray-600 tabular-nums whitespace-nowrap">
                                                 {wi.entryCount} {wi.entryCount === 1 ? "entry" : "entries"}
                                             </span>
+                                            {recommendedHere && (
+                                                <RecommendationBadge row={row} clarityTaskName={clarityTask.taskName} />
+                                            )}
+                                            <DriftBadge row={row} />
                                             {isMapped && (
                                                 <Badge
                                                     variant="outline"

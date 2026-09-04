@@ -1,16 +1,15 @@
-import { loadConfig as loadAdoConfig } from "@app/azure-devops/config";
 import { exportMonth } from "@app/azure-devops/lib/timelog/export";
 import { enrichWorkItems } from "@app/azure-devops/lib/work-item-enrichment";
-import { TimeLogApi } from "@app/azure-devops/timelog-api";
-import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { requireConfig } from "@app/clarity/config";
+import { checkUnmapped } from "@app/clarity/lib/fill-guard";
 import {
     buildFillMap,
     buildTimeSegments,
     type ExecuteFillResult,
     type FillEntryResult,
 } from "@app/clarity/lib/fill-utils";
-import { getTimesheetWeeks } from "@app/clarity/lib/timesheet-weeks";
+import { findWeekForDate, getTimesheetWeeks, hasTimesheetId } from "@app/clarity/lib/timesheet-weeks";
+import { requireAdoTimeLogConfig } from "@app/clarity/ui/src/server/ado-config";
 import type { ApiDebugInfo, TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { addDay, isDateInHalfOpenRange } from "@genesiscz/utils/date";
@@ -45,48 +44,21 @@ interface WeekPreview {
     numberOfNotes?: number;
 }
 
-function requireAdoTimeLogConfig(): { config: AzureConfigWithTimeLog; user: TimeLogUser; api: TimeLogApi } {
-    const config = loadAdoConfig() as AzureConfigWithTimeLog | null;
-
-    if (!config) {
-        throw new Error("Azure DevOps is not configured. Open Settings and complete the Azure DevOps section.");
-    }
-
-    if (!config.orgId) {
-        throw new Error("Organization ID missing from config. Open Settings and reconnect Azure DevOps.");
-    }
-
-    if (!config.projectId) {
-        throw new Error("Project ID missing from config. Open Settings and reconnect Azure DevOps.");
-    }
-
-    if (!config.timelog?.functionsKey) {
-        throw new Error("TimeLog API key is missing. Open Settings and complete the TimeLog section.");
-    }
-
-    const user = config.timelog.defaultUser;
-
-    if (!user) {
-        throw new Error("TimeLog user is missing. Open Settings and choose a TimeLog team member.");
-    }
-
-    const api = new TimeLogApi(config.orgId, config.projectId, config.timelog.functionsKey, user);
-    return { config, user, api };
-}
-
 export interface FillPreviewResult {
     weeks: WeekPreview[];
     totalMapped: number;
     totalUnmapped: number;
     adoConfig?: { org: string; project: string };
     userId?: number;
+    /** Days carrying mapped hours that no Clarity period covers. The write drops those hours. */
+    unresolvedDates?: string[];
     diagnostics?: {
         reason: string;
         message: string;
     };
 }
 
-export async function getFillPreview(month: number, year: number): Promise<FillPreviewResult> {
+export async function getFillPreview(month: number, year: number, allowUnmapped = false): Promise<FillPreviewResult> {
     const clarityConfig = await requireConfig();
     const { config: adoConfig, user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
     const clarityApi = new ClarityApi({
@@ -162,24 +134,66 @@ export async function getFillPreview(month: number, year: number): Promise<FillP
         };
     }
 
-    const { weeks: clarityWeeks, userId } = await getTimesheetWeeks(clarityApi, clarityConfig.mappings, month, year);
+    // Checked before week discovery, the order the CLI uses: an unmapped work item is the
+    // actionable problem and must not sit behind an unrelated one.
+    const unmapped = checkUnmapped({ unmappedByWi, allowUnmapped });
+
+    if (unmapped.blocked) {
+        return {
+            weeks: [],
+            totalMapped,
+            totalUnmapped,
+            adoConfig: adoInfo,
+            diagnostics: {
+                reason: "unmapped_work_items",
+                message: `${unmapped.items.length} work item(s) carrying ${(unmapped.totalMinutes / 60).toFixed(1)}h have no Clarity mapping. Map them first, or re-run allowing unmapped work.`,
+            },
+        };
+    }
+
+    const { weeks: clarityWeeks, userId } = await getTimesheetWeeks(clarityApi, month, year);
+    // The same check `resolveFillWeeks` runs for the CLI: a day carrying mapped hours that no
+    // opened period covers is dropped by the write.
+    const unresolvedDates = [...new Set([...fillMap.values()].flatMap((fill) => Object.keys(fill.dayMinutes)))]
+        .sort()
+        .filter((date) => !findWeekForDate(clarityWeeks, date));
 
     if (clarityWeeks.length === 0) {
         return {
             weeks: [],
             totalMapped,
             totalUnmapped,
+            unresolvedDates,
+            adoConfig: adoInfo,
+            userId,
             diagnostics: {
                 reason: "no_timesheet_weeks",
                 message:
-                    "Could not resolve Clarity timesheet weeks for this month. Check that mappings have a valid clarityTimesheetId.",
+                    "Could not resolve any Clarity timesheet week for this month. Check the Clarity session in Settings.",
+            },
+        };
+    }
+
+    if (unresolvedDates.length > 0) {
+        return {
+            weeks: [],
+            totalMapped,
+            totalUnmapped,
+            unresolvedDates,
+            adoConfig: adoInfo,
+            userId,
+            diagnostics: {
+                reason: "unresolved_dates",
+                message: `No Clarity period covers ${unresolvedDates.join(", ")}. Filling would drop those hours, so the preview refuses the month.`,
             },
         };
     }
 
     const weekPreviews: WeekPreview[] = [];
 
-    for (const cw of clarityWeeks) {
+    // A period Clarity has not opened has no id to read or write with, and WeekPreview.timesheetId
+    // is sent straight to the API. Drop them here rather than letting `undefined` through.
+    for (const cw of clarityWeeks.filter(hasTimesheetId)) {
         const weekEntries: WeekPreview["entries"] = [];
 
         for (const fill of fillMap.values()) {
@@ -330,7 +344,12 @@ export async function postTimesheetNote(timesheetId: number, noteText: string, u
     await clarityApi.createTimesheetNote(timesheetId, noteText, userId);
 }
 
-export async function executeFill(month: number, year: number, weekIds: number[]): Promise<ExecuteFillResult> {
+export async function executeFill(
+    month: number,
+    year: number,
+    weekIds: number[],
+    allowUnmapped = false
+): Promise<ExecuteFillResult> {
     const clarityConfig = await requireConfig();
     const { user: adoUser, api: adoApi } = requireAdoTimeLogConfig();
     const clarityApi = new ClarityApi({
@@ -341,7 +360,28 @@ export async function executeFill(month: number, year: number, weekIds: number[]
     });
 
     const adoExport = await exportMonth(adoApi, month, year, adoUser.userId);
-    const { fillMap } = buildFillMap(adoExport.entries, clarityConfig.mappings);
+    const { fillMap, unmappedByWi } = buildFillMap(adoExport.entries, clarityConfig.mappings);
+
+    // The preview refusing is not a guard: it only stops the client from OFFERING the write. This
+    // is the path that actually books hours, and it takes weekIds straight from the request.
+    const unmapped = checkUnmapped({ unmappedByWi, allowUnmapped });
+
+    if (unmapped.blocked) {
+        throw new Error(
+            `Refusing to fill: ${unmapped.items.length} work item(s) carrying ${(unmapped.totalMinutes / 60).toFixed(1)}h have no Clarity mapping.`
+        );
+    }
+
+    // The sibling check. Hours on a day no opened period covers are never written, and the response
+    // would still report success for the weeks that did write.
+    const { weeks: reachable } = await getTimesheetWeeks(clarityApi, month, year);
+    const unreachable = [...new Set([...fillMap.values()].flatMap((fill) => Object.keys(fill.dayMinutes)))]
+        .sort()
+        .filter((date) => !findWeekForDate(reachable, date));
+
+    if (unreachable.length > 0) {
+        throw new Error(`Refusing to fill: no Clarity period covers ${unreachable.join(", ")}.`);
+    }
 
     let success = 0;
     let failed = 0;

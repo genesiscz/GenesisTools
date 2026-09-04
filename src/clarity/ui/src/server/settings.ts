@@ -8,6 +8,7 @@ import type { AzureConfigWithTimeLog } from "@app/azure-devops/types";
 import { getConfig, saveConfig } from "@app/clarity/config";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import { type AuthStatus, pingAdo, pingClarity, pingTimelog, type ServiceAuthState } from "@app/clarity/lib/preflight";
+import { invalidateAssignmentView } from "@app/clarity/ui/src/server/assignments";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -112,6 +113,7 @@ export async function updateAuth(curl: string): Promise<{ success: boolean; mess
             }
 
             await saveConfig(existing);
+            invalidateAssignmentView();
             return { success: true, message: "Auth tokens updated" };
         }
 
@@ -129,6 +131,7 @@ export async function updateAuth(curl: string): Promise<{ success: boolean; mess
             uniqueName: resource?.email,
             mappings: [],
         });
+        invalidateAssignmentView();
 
         const name = resource ? ` as ${resource.full_name}` : "";
         return { success: true, message: `Clarity configured${name}` };
