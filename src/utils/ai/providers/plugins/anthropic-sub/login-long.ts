@@ -190,11 +190,14 @@ export async function confirmTokenIdentity(
             )
         );
 
+        // THROW, never `process.exit` here: `out.*` is fire-and-forget, so exiting
+        // in the same tick can tear the stderr pipe down with the diagnostic still
+        // queued. The entrypoint awaits `out.flush()` before it exits, and a thrown
+        // failure is also what makes this branch testable (PR #360 review t12).
         if (decision === "refuse") {
-            out.printlnErr(
+            throw new Error(
                 "Refusing to overwrite an identified account with an unverified token. Retry when the API can name the token's organization."
             );
-            process.exit(1);
         }
 
         const overwriteUnverified = await p.confirm({
@@ -215,8 +218,8 @@ export async function confirmTokenIdentity(
     }
 
     if (print.verdict === "invalid") {
-        spinner.stop(pc.red("Token rejected by the API — nothing saved."));
-        process.exit(1);
+        spinner.stop(pc.red("Token rejected by the API."));
+        throw new Error("Token rejected by the API — nothing saved.");
     }
 
     // Reached only for `ok` and `org-dead`. `ok` always carries an org now, but
@@ -346,9 +349,10 @@ export async function anthropicLoginLong(ctx: LoginLongContext): Promise<LoginOu
         const verdict = await verifyLongLivedToken(token);
 
         if (verdict === "invalid") {
-            spinner.stop(pc.red("Token rejected by the API (401/403) — nothing saved."));
-            out.println(pc.dim("Re-run `claude setup-token` and copy the whole line."));
-            process.exit(1);
+            spinner.stop(pc.red("Token rejected by the API (401/403)."));
+            throw new Error(
+                "Token rejected by the API (401/403) — nothing saved. Re-run `claude setup-token` and copy the whole line."
+            );
         }
 
         if (verdict === "unreachable") {

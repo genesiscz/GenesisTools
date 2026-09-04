@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { Browser } from "@genesiscz/utils/browser";
 import { determineAccountLabel } from "@genesiscz/utils/claude/account-label";
 import {
     claudeOAuth,
@@ -26,8 +27,19 @@ export async function generateAuthUrl(scopes?: string): Promise<string> {
     return authUrl;
 }
 
+/**
+ * `Browser.open`, not a hard-coded `open`: that binary exists on macOS only, so
+ * a Linux or Windows login aborted before the code prompt with a spawn error.
+ * The shared opener also honours the configured preferred browser and reports a
+ * failure instead of throwing, so the URL on screen stays usable (review t13).
+ */
 async function openInDefaultBrowser(url: string): Promise<void> {
-    Bun.spawn(["open", url], { stdio: ["ignore", "ignore", "ignore"] });
+    const result = await Browser.open(url);
+
+    if (!result.success) {
+        logger.warn({ url, error: result.error }, "could not open the authorization URL in a browser");
+        p.log.warn(`Could not open a browser (${result.error ?? "unknown error"}). Open the URL above by hand.`);
+    }
 }
 
 /**

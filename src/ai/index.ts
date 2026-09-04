@@ -581,6 +581,10 @@ async function main(): Promise<void> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
+        // Drain before exiting: `out.*` and clack both write fire-and-forget, so
+        // exiting in the same tick can tear the pipe down with the diagnostic
+        // still queued and leave the user an empty exit 1 (PR #360 review t12).
+        await out.flush();
         process.exit(1);
     }
 }
