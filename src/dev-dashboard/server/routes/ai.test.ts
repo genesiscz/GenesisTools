@@ -72,6 +72,7 @@ function fakeAggregator(): { agg: AiAggregator; calls: Calls } {
                         credentialKinds: ["accessToken"],
                     },
                 ],
+                providers: [{ provider: "anthropic-sub", prominentLimits: ["five_hour", "seven_day"] }],
             };
         },
 
