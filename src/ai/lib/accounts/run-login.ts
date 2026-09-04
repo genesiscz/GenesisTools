@@ -2,7 +2,12 @@ import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
 import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-import type { AccountFeatures, AccountFlowContext, LoginOutcome } from "@genesiscz/utils/ai/providers/account-features";
+import type {
+    AccountFeatures,
+    AccountFlowContext,
+    ExternalLoginInstruction,
+    LoginOutcome,
+} from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -12,6 +17,39 @@ import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { resolveAccountsProvider } from "./select-provider";
 import { writeLoginOutcome } from "./write-outcome";
+
+/**
+ * The two side effects of the external flow, behind one seam so a test can drive
+ * the error paths without spawning a vendor CLI or blocking on a TTY prompt.
+ * Absent, `defaultExternalRunner` does the real thing.
+ */
+export interface ExternalLoginRunner {
+    /** Answers "Run it now?" once the command has been printed. */
+    confirm(instruction: ExternalLoginInstruction): Promise<boolean>;
+    /** Runs the vendor command and resolves its exit code. */
+    run(instruction: ExternalLoginInstruction): Promise<number>;
+}
+
+const defaultExternalRunner: ExternalLoginRunner = {
+    async confirm() {
+        const answer = await p.confirm({ message: "Run it now?", initialValue: true });
+
+        if (p.isCancel(answer)) {
+            throw new Error("Cancelled");
+        }
+
+        return answer;
+    },
+
+    async run(instruction) {
+        const proc = Bun.spawn(instruction.command, {
+            stdio: ["inherit", "inherit", "inherit"],
+            env: { ...process.env, ...instruction.env },
+        });
+
+        return await proc.exited;
+    },
+};
 
 export interface RunLoginOptions {
     /** Pinned by `tools claude login`; resolved from `--provider` otherwise. */
@@ -23,6 +61,8 @@ export interface RunLoginOptions {
     authFile?: string;
     tool: string;
     subcommand?: string[];
+    /** Injected by tests only; production leaves it unset. */
+    externalRunner?: ExternalLoginRunner;
 }
 
 export interface RunLoginResult {
@@ -165,18 +205,10 @@ async function bindExternalLogin(
             return undefined;
         }
 
-        const run = await p.confirm({ message: "Run it now?", initialValue: true });
+        const runner = opts.externalRunner ?? defaultExternalRunner;
 
-        if (p.isCancel(run)) {
-            throw new Error("Cancelled");
-        }
-
-        if (run) {
-            const proc = Bun.spawn(instruction.command, {
-                stdio: ["inherit", "inherit", "inherit"],
-                env: { ...process.env, ...instruction.env },
-            });
-            await proc.exited;
+        if (await runner.confirm(instruction)) {
+            await runner.run(instruction);
         }
 
         if (!(await Bun.file(instruction.authFile).exists())) {
