@@ -168,15 +168,23 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Pr
 async function spawnClient(home: string): Promise<CodexUsageClient> {
     const client = new AppServerClient(spawnAppServer({ cwd: home, home }));
 
-    await withTimeout(
-        client.request("initialize", {
-            clientInfo: { name: "genesis-tools-usage", title: "GenesisTools usage", version: "0.1.0" },
-            capabilities: null,
-        }),
-        REQUEST_TIMEOUT_MS,
-        "codex app-server initialize"
-    );
-    await client.notify("initialized");
+    try {
+        await withTimeout(
+            client.request("initialize", {
+                clientInfo: { name: "genesis-tools-usage", title: "GenesisTools usage", version: "0.1.0" },
+                capabilities: null,
+            }),
+            REQUEST_TIMEOUT_MS,
+            "codex app-server initialize"
+        );
+        await client.notify("initialized");
+    } catch (err) {
+        // `pollCodexAccount`'s finally only covers a client it received. A handshake that
+        // times out throws before that, and the `codex app-server` child would survive
+        // every failed poll, one process per minute.
+        await client.close();
+        throw err;
+    }
 
     return client;
 }
