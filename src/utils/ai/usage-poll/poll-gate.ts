@@ -27,6 +27,21 @@ import { pollGateCacheKey, USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage
  */
 const GATE_TTL = USAGE_CACHE_TTL;
 
+/**
+ * A poll the gate (or a provider's own rule, such as a plan that cannot run Claude Code)
+ * refused before any request went out. NOT a failure: counting a skip as one would ratchet
+ * the backoff forever without a single request ever being sent.
+ *
+ * It lives beside the gate rather than in `poll.ts` so a provider plugin can subclass it
+ * without importing the poll core, which imports the plugin registry (that would be a cycle).
+ */
+export class PollSuppressed extends Error {
+    constructor(reason: string) {
+        super(reason);
+        this.name = "PollSuppressed";
+    }
+}
+
 export interface GateEntry {
     /** Consecutive failed polls that REACHED Anthropic. Any success resets it to 0. */
     failures: number;

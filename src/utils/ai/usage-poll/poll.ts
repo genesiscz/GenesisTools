@@ -4,24 +4,23 @@ import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
 import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
-import { allProviderPlugins } from "@genesiscz/utils/ai/providers/registry";
+import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
 import type { SnapshotsCacheProvider } from "./legacy-cache";
 import { writeSnapshotsCache } from "./legacy-cache";
-import { applyPollGateOutcomes, blockedEntry, isTransportFailure, loadPollGate, pruneGate } from "./poll-gate";
+import {
+    applyPollGateOutcomes,
+    blockedEntry,
+    isTransportFailure,
+    loadPollGate,
+    PollSuppressed,
+    pruneGate,
+} from "./poll-gate";
 import { recordSnapshots } from "./record";
 import type { Cached } from "./shared-cache";
 import { __makeSharedUsage, API_MIN_INTERVAL_MS, SNAPSHOT_OPS } from "./shared-cache";
 import { snapshotsCacheKey, USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage } from "./storage";
 import type { AccountUsageSnapshot } from "./types";
-
-/**
- * Extension point for Plan-AccountFeatures: `ProviderPlugin.accounts` is declared in
- * `account-features.ts` but the plugin objects that carry it are created by that plan.
- * Until they land this reads the member structurally, so the poll core compiles and runs
- * against the registry as it is today (it simply finds no provider with usage).
- */
-type PluginWithAccounts = ProviderPlugin & { accounts?: AccountFeatures };
 
 export interface UsagePlugin {
     plugin: ProviderPlugin;
@@ -29,12 +28,16 @@ export interface UsagePlugin {
     usage: AccountUsageFeature;
 }
 
-/** Every registered plugin whose `accounts.usage` is set, in registry order. */
-export function pluginsWithUsage(): UsagePlugin[] {
+/**
+ * The registry decides who has usage (`pluginsWithUsage`); this only narrows the optional
+ * members so the rest of the file can read `entry.usage` without a guard per line. The
+ * filter is redundant to TypeScript but not to the reader: it is the same predicate.
+ */
+function usagePlugins(): UsagePlugin[] {
     const out: UsagePlugin[] = [];
 
-    for (const plugin of allProviderPlugins()) {
-        const features = (plugin as PluginWithAccounts).accounts;
+    for (const plugin of pluginsWithUsage()) {
+        const features = plugin.accounts;
 
         if (features?.usage) {
             out.push({ plugin, features, usage: features.usage });
@@ -64,7 +67,7 @@ export interface PollAccountsOptions {
  */
 export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<AccountUsageSnapshot[]> {
     const wanted = opts.providers?.map((p) => resolveProviderAlias(p));
-    const plugins = pluginsWithUsage().filter((entry) => !wanted || wanted.includes(entry.plugin.id));
+    const plugins = usagePlugins().filter((entry) => !wanted || wanted.includes(entry.plugin.id));
 
     if (plugins.length === 0) {
         logger.debug({ providers: opts.providers }, "[usage] no provider plugin declares accounts.usage");
@@ -120,7 +123,7 @@ async function pollProvider(
     const getShared = __makeSharedUsage<AccountUsageSnapshot>({
         provider: providerId,
         ops: SNAPSHOT_OPS,
-        fetchAll: () => fetchProviderSnapshots(entry, accounts, opts),
+        fetchAll: ({ orgBlocked }) => fetchProviderSnapshots(entry, accounts, opts, orgBlocked),
         getCache: async (key) =>
             (await storage.getCacheFile<Cached<AccountUsageSnapshot>>(key, USAGE_CACHE_TTL)) ?? null,
         putCache: (key, value) => storage.putCacheFile(key, value, USAGE_CACHE_TTL),
@@ -145,7 +148,8 @@ async function pollProvider(
 async function fetchProviderSnapshots(
     entry: UsagePlugin,
     accounts: readonly AccountEntry[],
-    opts: PollAccountsOptions
+    opts: PollAccountsOptions,
+    orgBlocked: ReadonlySet<string>
 ): Promise<AccountUsageSnapshot[]> {
     const providerId = entry.plugin.id;
     const now = Date.now();
@@ -168,7 +172,7 @@ async function fetchProviderSnapshots(
                 return Promise.reject(new PollSuppressed(blocked.reason));
             }
 
-            return entry.usage.poll(account, { probe: opts.probe, force: opts.force });
+            return entry.usage.poll(account, { probe: opts.probe, force: opts.force, orgBlocked });
         })
     );
 
@@ -220,12 +224,4 @@ async function fetchProviderSnapshots(
     }
 
     return snapshots;
-}
-
-/** A poll the gate refused. Not a failure: it must not advance the backoff ladder. */
-class PollSuppressed extends Error {
-    constructor(reason: string) {
-        super(reason);
-        this.name = "PollSuppressed";
-    }
 }

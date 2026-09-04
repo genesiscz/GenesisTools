@@ -4,7 +4,8 @@ import { loadDashboardConfig } from "@app/claude/lib/usage/dashboard-config";
 import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { NotificationManager } from "@app/claude/lib/usage/notification-manager";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
-import { pluginsWithUsage, pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
+import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
+import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -20,7 +21,7 @@ const PROVIDERS_ON_THE_LEGACY_PATH = new Set(["anthropic-sub"]);
 /** Every provider whose usage the poll core owns today. Empty until phase 3 lands. */
 function coreProviders(): string[] {
     return pluginsWithUsage()
-        .map((entry) => entry.plugin.id)
+        .map((plugin) => plugin.id)
         .filter((id) => !PROVIDERS_ON_THE_LEGACY_PATH.has(id));
 }
 

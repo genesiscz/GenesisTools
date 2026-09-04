@@ -143,6 +143,13 @@ export interface UsagePollOptions {
     /** Bypass the shared cache. */
     force?: boolean;
     fetch?: typeof fetch;
+    /**
+     * Accounts the PREVIOUS round found blocked at the provider's org level, by name.
+     * A provider that answers a dead subscription with a rate-limit status uses this to
+     * skip the "rotate the token and retry" unlock, which for such an account only spends
+     * a single-use grant on a request that cannot succeed.
+     */
+    orgBlocked?: ReadonlySet<string>;
 }
 
 /** Where this account's coding-agent transcripts live, for the transcript spend. */

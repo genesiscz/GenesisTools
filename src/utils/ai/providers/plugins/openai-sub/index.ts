@@ -5,6 +5,7 @@ import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverCodexHomes } from "./discover";
 import { codexLogin } from "./login";
+import { codexUsage } from "./usage";
 
 /**
  * Codex (ChatGPT plan) subscription over the WHAM endpoint.
@@ -63,6 +64,7 @@ export const openAiSubPlugin: ProviderPlugin = {
         presentation,
         logoutTargets: ["oauth", "authFile"],
         login: codexLogin,
+        usage: codexUsage,
         discoverHomes: () => discoverCodexHomes(),
 
         /** JWT claims from the auth file or the stored token. Decode only, no network. */
