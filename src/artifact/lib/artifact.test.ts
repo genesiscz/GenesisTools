@@ -147,7 +147,12 @@ describe("running tracker", () => {
         void holdServer({ port: 3995, dir, name: "held", close: () => Promise.resolve() }).then(() => {
             settled = true;
         });
-        await Bun.sleep(50);
+        // A fixed 50 ms was not enough on a loaded CI runner; wait for the
+        // record itself, with a ceiling so a broken write still fails fast.
+        const deadline = Date.now() + 2000;
+        while (!listRunning().some((s) => s.name === "held") && Date.now() < deadline) {
+            await Bun.sleep(20);
+        }
 
         expect(listRunning().map((s) => s.name)).toContain("held");
         expect(process.listenerCount("SIGINT")).toBe(sigint + 1);

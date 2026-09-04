@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { tool } from "ai";
 import { z } from "zod";
 
@@ -44,7 +45,7 @@ export function getFileTools() {
                 "Search for a pattern in files using ripgrep. Returns matching lines with file paths and line numbers.",
             inputSchema: grepSchema,
             execute: async ({ pattern, path, glob }: z.infer<typeof grepSchema>) => {
-                const args = ["rg", "--no-heading", "-n", pattern];
+                const args = [ripgrepBinary() ?? "rg", "--no-heading", "-n", pattern];
 
                 if (glob) {
                     args.push("--glob", glob);

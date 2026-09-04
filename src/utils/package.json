@@ -30,10 +30,20 @@
             "types": "./WebView/index.ts",
             "default": "./WebView/index.ts"
         },
-        "./agent-runtime": {
-            "bun": "./agent-runtime.ts",
-            "types": "./agent-runtime.ts",
-            "default": "./agent-runtime.ts"
+        "./agent/context": {
+            "bun": "./agent/context.ts",
+            "types": "./agent/context.ts",
+            "default": "./agent/context.ts"
+        },
+        "./agent/host": {
+            "bun": "./agent/host.ts",
+            "types": "./agent/host.ts",
+            "default": "./agent/host.ts"
+        },
+        "./agent/runtime": {
+            "bun": "./agent/runtime.ts",
+            "types": "./agent/runtime.ts",
+            "default": "./agent/runtime.ts"
         },
         "./agents": {
             "bun": "./agents/index.ts",
@@ -331,6 +341,11 @@
             "types": "./references.ts",
             "default": "./references.ts"
         },
+        "./ripgrep": {
+            "bun": "./ripgrep.ts",
+            "types": "./ripgrep.ts",
+            "default": "./ripgrep.ts"
+        },
         "./search": {
             "bun": "./search/index.ts",
             "types": "./search/index.ts",
@@ -382,6 +397,11 @@
             "types": "./ui/index.ts",
             "default": "./ui/index.ts"
         },
+        "./ui/components/*": {
+            "bun": "./ui/components/*.tsx",
+            "types": "./ui/components/*.tsx",
+            "default": "./ui/components/*.tsx"
+        },
         "./ui/vite.base": {
             "bun": "./ui/vite.base.ts",
             "types": "./ui/vite.base.ts",
@@ -401,6 +421,21 @@
             "bun": "./wakeful.ts",
             "types": "./wakeful.ts",
             "default": "./wakeful.ts"
+        },
+        "./worker/capabilities": {
+            "bun": "./worker/capabilities.ts",
+            "types": "./worker/capabilities.ts",
+            "default": "./worker/capabilities.ts"
+        },
+        "./worker/events": {
+            "bun": "./worker/events.ts",
+            "types": "./worker/events.ts",
+            "default": "./worker/events.ts"
+        },
+        "./worker/ps": {
+            "bun": "./worker/ps.ts",
+            "types": "./worker/ps.ts",
+            "default": "./worker/ps.ts"
         }
     },
     "dependencies": {

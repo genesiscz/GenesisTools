@@ -66,6 +66,16 @@ jobs:
         with:
           bun-version: "1.3.13"
 
+      # The hosted images ship no ripgrep (actions/runner-images#12179, closed
+      # NOT_PLANNED) and the history search, the shell-quirks extractor and the
+      # fable enumerator shell out to it. A prebuilt release binary lands on
+      # PATH in a few seconds; no apt, no sudo. Same version the vendored
+      # fallback in src/utils/ripgrep.ts carries, so both paths behave alike.
+      - name: Install ripgrep
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        with:
+          tool: ripgrep@14.1.1
+
       - name: Cache bun install
         uses: actions/cache@v4
         with:
@@ -204,10 +214,32 @@ jobs:
         shell: bash
         run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha }}"
 
-      - name: Run Biome check (dashboard)
+      - name: Run Biome check (src/claude-history-dashboard)
         if: runner.os == 'Linux'
         timeout-minutes: 2
         run: bun run lint:dashboard
+
+      # src/dashboard is a SEPARATE bun workspace with its own lockfile and its
+      # own vitest suite, and nothing above reaches it — the step named
+      # "dashboard" right above lints src/claude-history-dashboard, a different
+      # directory. That gap let PR #340 sit green with a lockfile its manifest
+      # contradicted and a suite that failed on import. These three steps close
+      # it: the frozen install proves package.json and bun.lock agree, then the
+      # app's own check-types and vitest run.
+      - name: Install src/dashboard (frozen lockfile)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: bun run install:dashboard-web
+
+      - name: TypeScript check (src/dashboard/apps/web)
+        if: runner.os == 'Linux'
+        timeout-minutes: 3
+        run: bun run typecheck:dashboard-web
+
+      - name: Vitest (src/dashboard/apps/web)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: bun run test:dashboard-web
 
       - name: TypeScript check
         if: runner.os == 'Linux'

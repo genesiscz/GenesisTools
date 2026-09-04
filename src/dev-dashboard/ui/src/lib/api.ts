@@ -1,4 +1,5 @@
 import type { PublishedNote } from "@app/dev-dashboard/config";
+import type { TmuxHubSession } from "@app/dev-dashboard/contract/dto";
 import type {
     AttentionRes,
     CommandsRes,

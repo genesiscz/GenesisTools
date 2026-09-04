@@ -10,6 +10,7 @@ import { extractProjectName } from "@genesiscz/utils/claude";
 import { isSubagentFile, readHeadTailLines } from "@genesiscz/utils/claude/session.utils";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import { FABLE_MODEL, type FableConfig, packPaths } from "./config";
 
 export interface SessionCandidate {
@@ -48,12 +49,13 @@ async function rgFableFiles(root: string): Promise<string[]> {
 
     // Bun.spawn throws ENOENT synchronously when the binary is missing, which
     // would abort enumeration instead of degrading to the mirror scan.
-    if (!Bun.which("rg")) {
-        logger.warn({ root }, "ripgrep (rg) not on PATH — skipping fable-file enumeration for this root");
+    const rg = ripgrepBinary();
+    if (!rg) {
+        logger.warn({ root }, "no ripgrep on PATH or vendored — skipping fable-file enumeration for this root");
         return [];
     }
 
-    const proc = Bun.spawn(["rg", "-l", "--no-messages", "-F", `"model":"${FABLE_MODEL}"`, root, "--glob", "*.jsonl"], {
+    const proc = Bun.spawn([rg, "-l", "--no-messages", "-F", `"model":"${FABLE_MODEL}"`, root, "--glob", "*.jsonl"], {
         stdout: "pipe",
         stderr: "pipe",
     });

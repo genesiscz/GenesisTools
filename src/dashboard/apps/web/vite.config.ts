@@ -38,13 +38,17 @@ const config = defineConfig({
     },
     plugins: [
         ...(env.dashboard.isDevtoolsEnabled() ? [devtools()] : []),
-        nitro(nitroConfig),
+        // Nitro and TanStack Start build the app SERVER. A vitest run only needs module
+        // resolution, and loading them left a Vite server alive after the suite finished, so every
+        // run ended on "close timed out after 10000ms" and paid ~10s of dead wall time. The unit
+        // suites import libraries, never routes, so dropping the server plugins under vitest costs
+        // nothing. `bun run dev` / `build` are unaffected.
+        ...(env.node.isVitest() ? [] : [nitro(nitroConfig), tanstackStart()]),
         // this is the plugin that enables path aliases
         viteTsConfigPaths({
             projects: ["./tsconfig.json"],
         }),
         tailwindcss(),
-        tanstackStart(),
         viteReact(),
         // @vitejs/plugin-react@6 dropped the inline `babel` option; React Compiler
         // is now wired via the exported reactCompilerPreset + @rolldown/plugin-babel
@@ -153,6 +157,16 @@ const config = defineConfig({
             "@tanstack/query-core",
         ],
         exclude: ["nitro", "nitro/database"],
+    },
+    test: {
+        // Vitest and Playwright split by BOTH directory and suffix, because
+        // vitest's default include (`**/*.{test,spec}.*`) otherwise collects
+        // `tests/e2e/*.spec.ts` — Playwright's own testDir — and every run
+        // failed with "Playwright Test did not expect test.describe() to be
+        // called here". Unit tests are `src/**/*.test.ts`; Playwright owns
+        // `tests/e2e/**/*.spec.ts` (see playwright.config.ts).
+        include: ["src/**/*.test.{ts,tsx}"],
+        exclude: ["**/node_modules/**", "**/dist/**", "tests/e2e/**"],
     },
 });
 

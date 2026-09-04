@@ -72,5 +72,18 @@ export type HandoffPublicEvent = {
         repoRoot?: string | null;
         commitSha?: string | null;
     };
+    /**
+     * Present on a REFUSED action: the fold journals the attempt with `applied: false`
+     * and the reason. Declared explicitly because the index signature below types it as
+     * `unknown`, which made every `event.outcome?.applied` read a type error in the UI.
+     * Mirrors `FoldOutcome` in @app/handoff/types, which this browser-safe copy cannot import.
+     */
+    outcome?: {
+        applied: boolean;
+        error?: string;
+        info?: string[];
+        noop?: boolean;
+        assignedTaskIds?: string[];
+    };
     [key: string]: unknown;
 };

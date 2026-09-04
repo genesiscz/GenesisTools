@@ -4,6 +4,13 @@
   // a test's transitive-only import (@workos/authkit-session) does not resolve
   // under tsc in a fresh worktree (resolves fine in a full install). The build
   // gate must validate SHIPPED code; test types are the test runner's job.
+  //
+  // vite.config.ts is excluded for the same reason. It carries the vitest `test`
+  // block, which vite's own defineConfig overloads do not model, and the obvious
+  // fix (importing defineConfig from "vitest/config") is worse here: vitest@3
+  // bundles vite@7 types while this app is on vite@8, so the two Plugin types
+  // collide. The config is still typechecked by the editor tsconfig, and vite
+  // executes it on every dev/build/test run, so a real break cannot hide.
   "extends": "./tsconfig.json",
-  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"]
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "vite.config.ts"]
 }

@@ -30,6 +30,11 @@ export const env = {
         getEnv: () => getTrimmed("NODE_ENV"),
         isProduction: () => getRaw("NODE_ENV") === "production",
         getPort: (fallback?: string) => getTrimmed("PORT") ?? fallback,
+        /**
+         * True inside a vitest run. Vitest sets VITEST for the config load and every worker.
+         * Presence, not `isFlag`: the value is "true", so an exact `=== "1"` test never fires.
+         */
+        isVitest: () => isNonEmpty("VITEST"),
     },
 
     dashboard: {

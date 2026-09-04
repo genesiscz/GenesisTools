@@ -38,6 +38,26 @@ This exists because inside a **git worktree** any `bunx` call creates a partial 
 
 **Tests must not use real account names.** Fixture handles, emails, and login ids in `*.test.ts` are invented (`work`, `personal`, `shop`, `side`, `work@shop`, `alice@example.com`). Never copy a live Claude/AI account name, email, or org from this machine into a test. A test that needs several distinct accounts uses those fixtures, not the real ones.
 
+### Personal-data probe (always, before every `git push`)
+
+This is `scripts/ci/placeholder-check.sh`, not `tools ms-teams repair probe` (that one searches live Teams IndexedDB).
+
+```bash
+bash scripts/ci/placeholder-check.sh
+```
+
+The pre-push hook runs it first, before biome; a hit is a push blocker. It is sub-second on 800 needles. CI does not run it: the list would have to reach the runner as a secret, and a hit would echo the matched values into a public log.
+
+The needle list is **local only**: `~/.genesis-tools/placeholder-check/markers.txt` (override with `PLACEHOLDER_MARKERS_FILE`). It is not in git. Other clones see "not configured, nothing scanned" and exit 0. Do not copy that file into the repo, tests, commit messages, or CLAUDE.md.
+
+Refresh the Teams-derived block (counts only, no names printed):
+
+```bash
+bun scripts/ci/harvest-placeholder-markers.ts
+```
+
+Wired 2026-09-01 14:08. Run it BY HAND when Teams gained someone new: it reads the ms-teams cache only, so it is a seeding job, not a per-push step. The pre-push hook ran it between 2026-09-02 22:42 and 2026-09-03 21:50 and no longer does — rewriting the needle file on every push added nothing, and the harvester lives on one branch, so the `set -e` hook aborted on branches without it.
+
 ### 🛑 Hard rules for agents working in an isolated worktree
 
 Every teammate/subagent given its own worktree MUST, before ANY other work:
@@ -178,7 +198,7 @@ See `docs/tool-template.md` for complete templates (@inquirer + @clack/prompts),
 - **Long `if`: parenthesized multiline, one clause per line** — `if (\n  a ||\n  b\n ) {`.
 - **`// biome-ignore` must name a rule that actually fires there**, else it becomes a `suppressions/unused` warning itself.
 - **The SafeJSON rule (`noRestrictedGlobals` denying bare `JSON`) is OFF in exactly one zone** — `src/youtube/extension/**` (a biome.json override). There, use `JSON` directly with NO biome-ignore (it warns as unused). **Standalone plugin skill scripts** (`plugins/*/skills/*/scripts/**`) have no override: they cannot import `SafeJSON`, so each `JSON` call carries its own `// biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON`. Everywhere else use `SafeJSON`, never an ignore.
-- **The pre-commit hook runs `biome check --write --staged`**: it can fix the staged copy while leaving a reflow residue in the working tree of the SAME file. After committing, glance at `git status` and commit the residue as `style:` — don't leave it to pollute the next person's diff.
+- **The pre-commit hook runs `biome check --write --staged` and then formats the staged blobs themselves** (since 2026-09-03 01:05 it pipes each staged copy biome touched through `biome --stdin-file-path` and writes the result back into the index). The commit always carries the formatted copy, a file with unstaged hunks keeps them unstaged, and nothing written to the working tree during the run is swept in. The working-tree copy is formatted too, so the only thing `git status` shows afterwards is what was unstaged before.
 
 ## Code Style Rules
 
@@ -230,6 +250,7 @@ The recurring bug shape in this repo is a path that READS like an inspection but
 ## Debugging & Logging
 
 - **Triage from logs first.** When any tool misbehaves, the FIRST step is to read `~/.genesis-tools/logs/<today>.log` (and recent days) and `rg` for the tool name / error string — *before* forming hypotheses or reproducing. Logs are day-stamped pino JSON. This bug (`sqlite-vec extension failed to load`) was in the logs for weeks before it was triaged; checking them first collapses hours of guessing into one `rg`.
+- **Profiling lines live in their own file:** `~/.genesis-tools/logs/<date>-profiling.log` (e.g. `2026-09-03-profiling.log`), one `[profile:<scope>] <label> <ms>` line per measurement plus a `── <title> ──` summary table per scope. Enable per run with `PROFILE=1`, `PROFILE=*` or `PROFILE=<scope,scope>` (scope names in `src/utils/profile/scopes.ts`); an env `PROFILE` also echoes to stderr, `PROFILE_TO_STDERR=0` silences that. Persistent profiling comes from `tools config profiling`.
 - **Log enough to triage from logs alone.** Every tool must emit enough via `@genesiscz/utils/logger` that a future reader can reconstruct what happened without re-running it: log key decision branches, every external-resource access (DB opens with their paths, spawned commands, API URLs), mode/config resolution, and result counts.
 - **Never swallow errors.** A bare `catch {}` is forbidden. At minimum `logger.debug` (or `.warn`) the caught error with context. A swallowed error is a future debugging session that did not have to happen.
 
