@@ -22,16 +22,22 @@ export function formatMoney(window: LimitWindow): string | null {
 
     const { usedMinor, limitMinor, currency, exponent } = window.money;
     const divisor = 10 ** exponent;
-    const used = (usedMinor / divisor).toFixed(exponent > 0 ? 2 : 0);
+    // The currency's own exponent, not a fixed 2: a three-decimal currency (KWD, BHD)
+    // would otherwise lose its last minor-unit digit.
+    const used = (usedMinor / divisor).toFixed(exponent);
 
     if (limitMinor === undefined) {
         return `${used} ${currency}`;
     }
 
-    return `${used} / ${(limitMinor / divisor).toFixed(exponent > 0 ? 2 : 0)} ${currency}`;
+    return `${used} / ${(limitMinor / divisor).toFixed(exponent)} ${currency}`;
 }
 
-/** Windows to render, in `prominent` order first, then whatever else came back. */
+/**
+ * Windows to render. A `prominent` list both selects and orders them: the compact views
+ * show that subset only, which is what `prominentBuckets` means in the dashboard config.
+ * An empty or omitted list shows everything the provider returned.
+ */
 export function orderWindows(limits: readonly LimitWindow[], prominent?: string[]): LimitWindow[] {
     if (!prominent || prominent.length === 0) {
         return [...limits];

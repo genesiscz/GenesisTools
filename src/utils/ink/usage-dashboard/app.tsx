@@ -6,6 +6,7 @@ import { HelpOverlay } from "./components/help-overlay";
 import { StatusBar } from "./components/status-bar";
 import { TabBar } from "./components/tab-bar";
 import { cycleProvider, FilterBar, type FilterState } from "./filters";
+import { setModalOpen } from "./hooks/input-scope";
 import { useKeybindings } from "./hooks/use-keybindings";
 import { usePoller } from "./hooks/use-poller";
 import { useTabNavigation } from "./hooks/use-tab-navigation";
@@ -107,7 +108,13 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
                           provider: cycleProvider(current.provider, source.providers),
                       }))
                 : undefined,
-        onOpenAccountFilter: () => setAccountPickerOpen(true),
+        // The scope must open here, paired with the `setModalOpen(false)` the picker's own
+        // Escape/Enter handler makes. Without it `isModalOpen()` stayed false and the tab
+        // navigation still answered arrows and digits behind the open checklist.
+        onOpenAccountFilter: () => {
+            setModalOpen(true);
+            setAccountPickerOpen(true);
+        },
     });
 
     if (showHelp) {
