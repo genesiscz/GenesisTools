@@ -82,7 +82,7 @@ tools codex spawn --name <task> --cwd <abs path> \
 
 ### Keeping the worker lean
 
-`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
+`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`; `--no-skills` and `--no-rules` were added 2026-09-04 for parity with grok and claude, and they only print a warning that codex cannot honour them. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
 
 Observed cost of not isolating: a code-review worker spent its startup attaching about 20 MCP servers it had no use for (expo, higgsfield, apify, vitrinka, playwright, firecrawl, jina, brave-search and more), four of which failed noisily — three "not logged in" errors and a vitrinka HTTP connect failure.
 
@@ -102,18 +102,13 @@ The session auto-registers on the bus as `codex_<name>`. **Never `tools agents l
 
 ## 3. Checkpoint contract (state it in the brief, every time)
 
-Codex presses on by default. The brief must say where it stops. Include this block verbatim, filled in:
+Codex presses on by default. The brief must say where it stops. The generic contract (ask before new files, dependencies, interface changes or git operations; stop after two failed verifies; paths character for character; the `RESULT/AT/CHANGED/VERIFY/OPEN` report lines; the bus commands) is injected by the harness (`src/utils/worker/contract.ts`, see § The worker's own instructions below), so the brief carries only the task-specific lines, filled in:
 
 ```markdown
 ## Stop and report — do not continue past these
 - After <first milestone>: report what changed + the verify output, then WAIT for a reply.
-- Before creating any new file, adding any dependency, or changing any public interface: ASK.
-- Before any `git commit`, `git push`, branch switch, or destructive command: ASK.
-- If the verify command fails twice in a row: STOP and report both failures. Do not keep patching.
 - If the task turns out to need work outside <declared scope>: STOP and report the gap.
-- Copy every file path from this brief CHARACTER FOR CHARACTER. Do not retype or normalize them.
-Report with: tools agents message --from codex_<name> --to lead --body '<text>'
-Check for replies with: tools agents login --agent-name codex_<name> --once
+- Do NOT touch <paths>.
 ```
 
 The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-502/-Users-Martin-Tresors-Projects-Contoso-example-app/<uuid>/scratchpad/report.md` and Codex echoed it back as `…/-Users-Martin-Tresors-Projects/Contoso-example-app/<uuid>/…`, substituting a `/` for a `-` mid-path. Harmless that time because the orchestrator used its own path; a human copy-pasting it lands nowhere.
@@ -130,7 +125,7 @@ tools codex rollback  --name <task> --turns 1   # drop turns from the end
 tools codex stop      --name <task>             # tear down
 ```
 
-`tools codex logs` and `tail` take `--events` to render the shared worker-event stream (`src/utils/worker/events.ts`) — the same vocabulary `tools grok read --events` and `tools claude worker read --events` speak — instead of raw notifications. The default raw view is unchanged and stays the authoritative one for approvals, since it carries the request ids. Codex's capabilities (the only backend with mid-turn approvals and mid-turn steering) are declared in `WORKER_CAPABILITIES.codex` (`src/utils/worker/capabilities.ts`).
+`tools codex logs` and `tail` take `--events` to render the shared worker-event stream (`src/utils/worker/events.ts`) instead of raw notifications, and `--format compact|json|jsonl|events|raw` to go through the transcript door every backend shares (`tools grok read --format`, `tools claude worker read --format`, `tools ai sessions tail <name> --provider codex`). The default raw view is unchanged and stays the authoritative one for approvals, since it carries the request ids; the transcript formats do not. Codex's capabilities (the only backend with mid-turn approvals and mid-turn steering) are declared in `WORKER_CAPABILITIES.codex` (`src/utils/worker/capabilities.ts`).
 
 Repeat the negative constraints in every steering message — the correction is what the model attends to now.
 
@@ -189,9 +184,9 @@ Agent(
 
 ## The worker's own instructions are injected in code, not from this file
 
-`tools codex spawn` builds the worker's receiving-end contract programmatically and passes it as `developerInstructions` on `thread/start` (`src/codex/lib/session.ts:114-130`, built by `buildAgentInstructions()` in `src/codex/lib/seed-instructions.ts`). It covers: the worker's bus identity and how to message `lead`, checking for steering with `--once`, honoring the **Stop and report** block, asking before new files or dependencies or git operations, and pasting real verification output. A read-only sandbox gets a different variant telling it to narrate instead, because `tools agents` writes fail with EPERM there.
+`tools codex spawn` passes the worker's receiving-end contract as `developerInstructions` on `thread/start` (`src/codex/lib/session.ts`). Since 2026-09-04 that text is the ONE contract every backend injects, `buildWorkerContract()` in `src/utils/worker/contract.ts` (grok passes it as `--rules`, claude as `--append-system-prompt`); `buildAgentInstructions()` in `src/codex/lib/seed-instructions.ts` is codex's door onto it and adds the bus identity. It covers: how to message `lead` and check for steering with `--once` (only when the swarm is enabled; a `--no-agents` worker still gets the rest), honoring the **Stop and report** block, asking before new files or dependencies or git operations, pasting real verification output, and ending the final message with `RESULT: / AT: / CHANGED: / VERIFY: / OPEN:`. A read-only sandbox gets a variant telling it to narrate instead, because `tools agents` writes fail with EPERM there.
 
-So do **not** restate the receiving-end contract in your brief, and do not edit it here — edit `seed-instructions.ts`, which is covered by `seed-instructions.test.ts`.
+So do **not** restate the receiving-end contract in your brief, and do not edit it here — edit `src/utils/worker/contract.ts`, which is covered by `contract.test.ts` and `seed-instructions.test.ts`.
 
 ## Fallback: one-shot `codex exec`
 

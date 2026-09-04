@@ -67,7 +67,7 @@ Do not dispatch until all five hold. If any fails, the task is not ready to offl
 1. The prompt is **self-contained**: the worker has none of this conversation's context.
 2. There is a **verification command** the worker can run itself, with the expected observable output stated — **and the worker's sandbox can actually run it** (see § Read-only tax).
 3. **Negative constraints are explicit** — "do NOT create new files", "do NOT commit", "do NOT touch `src/x/`", size limits. Workers obey these reliably when spelled out, and not otherwise.
-4. **Checkpoints are named** — the points at which the worker must stop and report instead of pressing on.
+4. **Checkpoints are named** — the points at which the worker must stop and report instead of pressing on. The generic contract (honour Stop-and-report, real verify output only, two failed verifies means stop, paths character for character, the `RESULT/AT/CHANGED/VERIFY/OPEN` report lines) is injected by every harness from `src/utils/worker/contract.ts`; the brief supplies only the task-specific milestone and negative constraints.
 5. **The deliverable matches the sandbox.** A `--write deny` / `--readonly` worker cannot write a file. If the deliverable is a path on disk (Obsidian vault note, report.md, anything `mkdir`/`cp` would create), do **not** dispatch deny. `--writable-root` under deny does **not** make that write work (Codex, 2026-08-31 12:15: `apply_patch` still rejected with "writing is blocked by read-only sandbox"). Spawn recipe: `references/codex.md` § File deliverables. Inline chat text may use deny.
 
 ## 🛑 Read-only tax — decide this before you dispatch

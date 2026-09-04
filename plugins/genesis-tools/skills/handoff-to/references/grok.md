@@ -7,16 +7,17 @@ The harness is **`tools grok`** (`src/grok/`) — the grok counterpart of `tools
 ## Drive loop
 
 ```bash
-tools grok run    --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly]
+tools grok run    --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly] [--no-skills] [--no-rules]
 tools grok steer  --name <task> --prompt-file <correction file>   # preferred
 tools grok steer  --name <task> --prompt '<correction + the negative constraints restated>'
-tools grok read   --name <task> [--turn N] [--events]
+tools grok read   --name <task> [--turn N] [--format compact|json|jsonl|events|raw] [--thoughts none|short|full]
+tools grok tail   --name <task> [--format compact]   # follow the running turn; exits when the turn ends
 tools grok status --name <task>      # metadata + whether a turn is running right now
 tools grok stop   --name <task>      # kill the running turn; the session survives, steer resumes it
 tools grok sessions
 ```
 
-`--events` renders the turn as the shared worker-event stream (`src/utils/worker/events.ts`) instead of the report — the same vocabulary `tools codex logs --events` and `tools claude worker read --events` use. What this backend can and cannot do is declared in `WORKER_CAPABILITIES.grok` (`src/utils/worker/capabilities.ts`); a verb it lacks (approve, deny, tail) errors naming that entry.
+`--format` is the one transcript door every backend shares (`src/utils/ai/transcripts/door.ts`; `tools ai sessions tail <task> --provider grok` is the same thing without the backend prefix). `compact` is the agent-friendly view: one numbered block per model call, thoughts shortened to one line, tool results folded into the call line, a totals footer, and a `--offset` hint for the next window. `jsonl` streams one JSON turn per line, `events` is the shared worker-event vocabulary (`src/utils/worker/events.ts`, deltas already folded), `raw` is the CLI's own NDJSON. What this backend can and cannot do is declared in `WORKER_CAPABILITIES.grok` (`src/utils/worker/capabilities.ts`); a verb it lacks (approve, deny) errors naming that entry.
 
 - **`run` and `steer` block for the whole turn (minutes).** Run them with Bash `run_in_background: true` and wait for the completion notification. A foreground call is killed at the Bash timeout cap mid-turn.
 - Write the brief to a file (session scratchpad) and pass `--prompt-file`. Inside single quotes a backtick and `$(...)` stay literal, so those are safe; what breaks is an **apostrophe** in the brief, which closes the quote and leaves the shell parsing the rest as arguments. A file has no quoting rules at all.
@@ -48,7 +49,7 @@ tools grok sessions
 
 ## What the harness bakes in (do not hand-roll bare `grok`)
 
-- **Isolation.** Workers run with `GROK_HOME=~/.genesis-tools/grok/worker-home` plus the `GROK_CLAUDE_*_ENABLED=0` toggles. Without them the worker loads the user's `~/.claude/CLAUDE.md`, permission settings, and ~200 personal skills — and *acts* on them (verified: an un-isolated worker ran the user's personal `tools say` ritual mid-task). Project-local configuration in the worker's own `--cwd` still loads — `CLAUDE.md`, and any `.grok/` config the repo carries (MCP servers, hooks, permission rules). `GROK_HOME` redirects *user* state only, never the target repo's. That is usually what you want; when it is not, point `--cwd` at a scratch dir or a worktree without that config.
+- **Surfaces on, side effects off.** Workers run with `GROK_HOME=~/.genesis-tools/grok/worker-home`; hooks, MCP servers and session pickup from `~/.claude` are off unconditionally. The user's personal skills and rules are ON by default (decided 2026-09-04: a worker that knows them does better work) and `--no-skills` / `--no-rules` opt out, sticky across steers. Because the personal rules include interactive rituals, every turn carries the shared contract as `--rules` (`src/utils/worker/contract.ts`), which tells the worker those rituals (`tools say`, spoken summaries, asking the user) do not apply to it. Before 2026-09-04 the toggles were meant to block everything and did not: grok scans `~/.agents/skills` against the real `$HOME` with no toggle, so the "isolated" planner read the user's `best-skill` before its own brief; `--no-skills` now handles that tier through a `[skills] ignore` block in the worker home's `config.toml`. Project-local configuration in the worker's own `--cwd` always loads — `CLAUDE.md`, and any `.grok/` config the repo carries (MCP servers, hooks, permission rules). `GROK_HOME` redirects *user* state only, never the target repo's; point `--cwd` at a scratch dir or a worktree when that is not what you want.
 - **Session bookkeeping.** The session uuid and cwd live in `~/.genesis-tools/grok/sessions/<task>.meta.json`; grok keys sessions by cwd, and `steer` resumes with the identical cwd automatically.
 - **Sticky `--readonly`.** The raw grok CLI forgets `--tools` on every `--resume` (verified: a read-only session edited a file on its first unflagged resume). The harness re-arms the allowlist on every steer — verified: an unflagged steer of a read-only session still had only `read_file,list_dir,grep` and left the target file untouched. `--writable` on a steer deliberately switches back (verified: write tools returned, the edit landed, and `sessions` then shows the session as `jail`).
 - **A per-handoff worker home** via `--worker-home <path>` when running handoffs in parallel (verified: grok populated the override directory instead of the default one). Keep it constant for the whole handoff — grok keys sessions by cwd inside that home. ⚠️ It moves the worker's own state, **not** the session records: those stay under `~/.genesis-tools/grok/sessions/` so `tools grok sessions` lists every worker, so two runs sharing a `--name` share one record whatever their home, and `run` refuses the second.
@@ -81,21 +82,19 @@ So for a read-only grok review, plan for it up front:
 
 ## Checkpoints
 
-The readiness gate in `gt:handoff-to` applies unchanged. Because there are no approvals, slice the task so each turn ends at a checkpoint. Include in the brief, filled in:
+The readiness gate in `gt:handoff-to` applies unchanged. Because there are no approvals, slice the task so each turn ends at a checkpoint. The generic contract is injected by the harness on every turn (`src/utils/worker/contract.ts`, passed as `--rules`): honour the brief's Stop-and-report block, never report a verification you did not run, stop after two failed verifies, copy paths character for character, and end the final message with `RESULT: / AT: / CHANGED: / VERIFY: / OPEN:`. The brief supplies only what is task-specific, filled in:
 
 ```markdown
 ## Stop and report — do not continue past these
 - This turn: <single milestone> ONLY. Report what changed + the verify output, then STOP; the next instruction arrives as a new turn.
 - Do NOT create new files, do NOT commit or push, do NOT touch <paths>.
-- If the verify command fails twice in a row: STOP and report both outputs. Do not keep patching.
-- Copy every file path from this brief CHARACTER FOR CHARACTER. Do not retype or normalize them.
 ```
 
-Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message.
+Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message. The finished-turn printer puts the worker's `RESULT:` line on its status line, so `tools grok run … 2>&1 | head -1` tells you `done`, `stopped-at-checkpoint`, `blocked` or `failed` without reading the report.
 
 ## What the raw CLI still has that the harness does not
 
-The harness already consumes `--output-format streaming-json` — every turn log is flat NDJSON (`{"type":"text","data":…}`; despite the CLI help, it is NOT ACP-nested), which is what `read --events` renders from. Two raw-CLI capabilities remain unwired:
+The harness already consumes `--output-format streaming-json` — every turn log is flat NDJSON (`{"type":"text","data":…}`; despite the CLI help, it is NOT ACP-nested), which is what `read --format …` renders from: inside one model call the order is thought deltas, text deltas, one `usage` line, then that call's tool calls, and results arrive whenever the tool finishes. Two raw-CLI capabilities remain unwired:
 
 - **`--json-schema '<schema>'`** constrains the final answer to a validated shape, and `streaming-messages-json` emits the Anthropic Messages wire format instead.
 - **A leader process.** `grok leader list | info | kill` manages running leader processes over a socket at `~/.grok/leader.sock` (`--leader-socket` overrides it). This is the closest grok analog to the Codex app-server daemon.
