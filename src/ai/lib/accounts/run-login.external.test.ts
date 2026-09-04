@@ -50,8 +50,11 @@ let runCalls: string[];
 /** `{ name, probe }` per `identityOf` call, so probe purity is observable. */
 let identityCalls: Array<{ name: string; probe?: boolean }>;
 let identityResult: AccountIdentity | undefined;
+/** `out.error` lines; `errLines` is the plain `out.printlnErr` channel beside them. */
 let errorLines: string[];
+let errLines: string[];
 let realError: typeof out.error;
+let realPrintlnErr: typeof out.printlnErr;
 let realIsTty: boolean | undefined;
 
 function externalPlugin(id: string, accounts: AccountFeatures): ProviderPlugin {
@@ -172,9 +175,14 @@ beforeEach(async () => {
     );
 
     errorLines = [];
+    errLines = [];
     realError = out.error;
     out.error = (msg?: unknown, ...rest: unknown[]) => {
         errorLines.push([msg, ...rest].map(String).join(" "));
+    };
+    realPrintlnErr = out.printlnErr;
+    out.printlnErr = (raw?: unknown, ...rest: unknown[]) => {
+        errLines.push([raw, ...rest].map(String).join(" "));
     };
 
     realIsTty = process.stdin.isTTY;
@@ -186,6 +194,7 @@ beforeEach(async () => {
 
 afterEach(() => {
     out.error = realError;
+    out.printlnErr = realPrintlnErr;
     setTty(realIsTty ?? false);
     // Every refusal sets it; leaving it set would fail the whole test run.
     process.exitCode = 0;
@@ -218,6 +227,7 @@ describe("an existing credential file", () => {
         expect(runCalls).toEqual([]);
         expect(storedAccount("work")?.credentials.authFile).toBe(authFile);
         expect(storedAccount("work")?.provider).toBe("grok-sub");
+        expect(storedAccount("work")?.accountUuid).toBe("user-1");
         expect(identityCalls).toEqual([{ name: "work", probe: true }]);
     });
 });
@@ -238,7 +248,7 @@ describe("nothing to bind", () => {
         expect(storedAccount("work")).toBeUndefined();
     });
 
-    test("declining the command spawns nothing and writes nothing", async () => {
+    test("declining is its own outcome: it says so and hands back the command", async () => {
         setTty(true);
         const before = readFileSync(configPath(), "utf8");
 
@@ -248,8 +258,22 @@ describe("nothing to bind", () => {
         expect(process.exitCode).toBe(1);
         expect(confirmCalls).toEqual([authFile]);
         expect(runCalls).toEqual([]);
+
+        const message = errorLines.join("\n");
+        expect(message).toContain("Declined");
+        expect(message).toContain("Run it yourself");
+        // A decline is not a missing file, and must not be reported as one.
+        expect(message).not.toContain("Still no credential");
         expect(readFileSync(configPath(), "utf8")).toBe(before);
         expect(storedAccount("work")).toBeUndefined();
+    });
+
+    test("declining prints the vendor command so it can be run by hand", async () => {
+        setTty(true);
+
+        await login({ name: "work", externalRunner: runner({ confirm: false }) });
+
+        expect(errLines.join("\n")).toContain(VENDOR_COMMAND.join(" "));
     });
 
     test("a command that writes no file binds nothing and names the path it expected", async () => {
@@ -262,12 +286,13 @@ describe("nothing to bind", () => {
         expect(process.exitCode).toBe(1);
         expect(runCalls).toEqual([VENDOR_COMMAND.join(" ")]);
         expect(existsSync(authFile)).toBe(false);
-        expect(errorLines.join("\n")).toContain(authFile);
+        // A clean exit that produced nothing keeps the missing-credential wording.
+        expect(errorLines.join("\n")).toContain(`Still no credential at ${authFile}`);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
         expect(storedAccount("work")).toBeUndefined();
     });
 
-    test("a non-zero exit that wrote no file binds nothing, but the code is never surfaced", async () => {
+    test("a non-zero exit names the command, the code and the expected path", async () => {
         setTty(true);
         const before = readFileSync(configPath(), "utf8");
 
@@ -277,14 +302,32 @@ describe("nothing to bind", () => {
         expect(process.exitCode).toBe(1);
         expect(runCalls).toEqual([VENDOR_COMMAND.join(" ")]);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
-        // Pinning today's contract, not endorsing it: `await proc.exited` is
-        // discarded, so a vendor CLI that failed loudly is reported only as a
-        // missing file. Nothing tells the user the command exited 42. The path is
-        // masked first, because a random temp dir could carry those characters.
-        const message = errorLines.join("\n").replaceAll(authFile, "<authFile>");
-        expect(message).toContain("Still no credential at");
-        expect(message).not.toContain("42");
-        expect(message.toLowerCase()).not.toContain("exit");
+
+        const message = errorLines.join("\n");
+        expect(message).toContain(VENDOR_COMMAND.join(" "));
+        expect(message).toContain("exited 42");
+        expect(message).toContain(authFile);
+        // A command that announced its own failure is not a missing file.
+        expect(message).not.toContain("Still no credential");
+    });
+
+    test("a non-zero exit refuses even when the command DID write the file", async () => {
+        setTty(true);
+        const before = readFileSync(configPath(), "utf8");
+
+        const result = await login({
+            name: "work",
+            externalRunner: runner({ confirm: true, exitCode: 7, writesFile: true }),
+        });
+
+        // The vendor CLI said it failed, so whatever it left on the way out is
+        // not a credential to trust. Binding it would be a login built on a file
+        // the tool that wrote it disowned.
+        expect(result.ok).toBe(false);
+        expect(existsSync(authFile)).toBe(true);
+        expect(errorLines.join("\n")).toContain("exited 7");
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(storedAccount("work")).toBeUndefined();
     });
 
     test("a provider with neither an in-process nor an external flow says so and writes nothing", async () => {
@@ -315,6 +358,7 @@ describe("negative control: a command that writes the file still binds", () => {
         expect(confirmCalls).toEqual([authFile]);
         expect(runCalls).toEqual([VENDOR_COMMAND.join(" ")]);
         expect(storedAccount("work")?.credentials.authFile).toBe(authFile);
+        expect(storedAccount("work")?.accountUuid).toBe("user-1");
         expect(identityCalls).toEqual([{ name: "work", probe: true }]);
     });
 });
@@ -336,17 +380,40 @@ describe("an identity the provider cannot prove", () => {
         expect(identityCalls).toEqual([{ name: "grok", probe: true }]);
     });
 
-    test("a proven identity names the account but is still not persisted on it", async () => {
-        identityResult = { accountUuid: "user-1", email: "alice@example.com" };
+    test("a proven identity is persisted on the account, not just used to name it", async () => {
+        identityResult = {
+            accountUuid: "user-1",
+            organizationUuid: "org-1",
+            email: "alice@example.com",
+            plan: "SuperGrok Heavy",
+        };
         writeAuthFile();
 
         const result = await login();
 
         expect(result.account?.name).toBe("alice");
-        // The external flow returns `identity` but no `accountFields`, and only
-        // `accountFields` reaches the account. So a re-login of this account has
-        // no stored uuid for the identity guard to contradict.
-        expect(storedAccount("alice")?.accountUuid).toBeUndefined();
+        // Only `accountFields` reaches the stored entry, so this is what gives a
+        // later re-login something for the identity guard to contradict.
+        expect(storedAccount("alice")?.accountUuid).toBe("user-1");
+        expect(storedAccount("alice")?.organizationUuid).toBe("org-1");
+        expect(storedAccount("alice")?.label).toBe("SuperGrok Heavy");
         expect(storedAccount("alice")?.credentials.authFile).toBe(authFile);
+    });
+
+    test("the stored fingerprint makes a stranger's credential refuse in a pipe", async () => {
+        identityResult = { accountUuid: "user-1", email: "alice@example.com" };
+        writeAuthFile();
+        await login({ name: "work" });
+
+        const before = readFileSync(configPath(), "utf8");
+        identityResult = { accountUuid: "user-2", email: "shop@example.com" };
+
+        const result = await login({ name: "work" });
+
+        // Without the stored fingerprint there was nothing to contradict, so this
+        // second login used to overwrite the first account's credential in silence.
+        expect(result.ok).toBe(false);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(storedAccount("work")?.accountUuid).toBe("user-1");
     });
 });

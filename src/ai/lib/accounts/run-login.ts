@@ -5,6 +5,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type {
     AccountFeatures,
     AccountFlowContext,
+    AccountIdentity,
     ExternalLoginInstruction,
     LoginOutcome,
 } from "@genesiscz/utils/ai/providers/account-features";
@@ -207,8 +208,27 @@ async function bindExternalLogin(
 
         const runner = opts.externalRunner ?? defaultExternalRunner;
 
-        if (await runner.confirm(instruction)) {
-            await runner.run(instruction);
+        // Declining is its own outcome, not a missing file: the user chose to run
+        // the command elsewhere, so the reply is where to run it, not a complaint
+        // that it did not appear.
+        if (!(await runner.confirm(instruction))) {
+            out.error(pc.red(`Declined — nothing bound. Run it yourself, then rerun:`));
+            out.printlnErr(`  ${commandLine}`);
+            out.printlnErr(suggestCommand(opts.tool, { subcommand: opts.subcommand }));
+            return undefined;
+        }
+
+        const exitCode = await runner.run(instruction);
+
+        // A vendor CLI that failed loudly must not be reported as a missing file,
+        // and whatever it left behind on the way out is not a credential we trust.
+        if (exitCode !== 0) {
+            out.error(
+                pc.red(
+                    `\`${commandLine}\` exited ${exitCode} — nothing bound. It should have written ${instruction.authFile}.`
+                )
+            );
+            return undefined;
         }
 
         if (!(await Bun.file(instruction.authFile).exists())) {
@@ -235,7 +255,21 @@ async function bindExternalLogin(
     return {
         provider: plugin.id,
         credentials: { authFile: instruction.authFile },
-        ...(identity ? { identity } : {}),
+        ...(identity ? { identity, accountFields: accountFieldsFrom(identity) } : {}),
         suggestedName: identity?.email?.split("@")[0]?.toLowerCase(),
+    };
+}
+
+/**
+ * `identity` names the account and is then dropped; only `accountFields` reaches
+ * the stored entry. Copying the fingerprint across is what gives the identity
+ * guard something to contradict when this account is logged in again, which for
+ * an external flow is the only defence against binding a stranger's file over it.
+ */
+function accountFieldsFrom(identity: AccountIdentity): LoginOutcome["accountFields"] {
+    return {
+        ...(identity.accountUuid ? { accountUuid: identity.accountUuid } : {}),
+        ...(identity.organizationUuid ? { organizationUuid: identity.organizationUuid } : {}),
+        ...(identity.plan ? { label: identity.plan } : {}),
     };
 }
