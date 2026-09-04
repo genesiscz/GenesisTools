@@ -11,7 +11,6 @@ import { SegmentedControl } from "@ui/components/segmented-control";
 import { CircleHelp } from "lucide-react";
 import { providerMeta } from "@/lib/provider-meta";
 import { formatUsd, SPEND_CHART_MODES, type SpendChartMode, sumVisible } from "@/lib/spend-chart-data";
-import { Chip } from "./Chip";
 import { ProviderBadge } from "./ProviderBadge";
 import { SpendChart } from "./SpendChart";
 
@@ -99,11 +98,11 @@ export function RecordedSpend({
     const shownTotal = visible ?? totals?.total;
     const unpriced = totals?.unpriced ?? series?.unpriced ?? 0;
     const empty = !loading && !error && (totals?.total.costUsd ?? 0) === 0 && (series?.points.length ?? 0) === 0;
-    const sortedAccounts = [...accounts].sort((a, b) => {
-        const costA = totals?.accounts.find((x) => x.accountId === a.accountId)?.costUsd ?? 0;
-        const costB = totals?.accounts.find((x) => x.accountId === b.accountId)?.costUsd ?? 0;
-        return costB - costA;
-    });
+    const costOf = (accountId: string): number => totals?.accounts.find((x) => x.accountId === accountId)?.costUsd ?? 0;
+    const sortedAccounts = [...accounts].sort((a, b) => costOf(b.accountId) - costOf(a.accountId));
+    // Share bars read against the biggest account, not the total: with one
+    // account at 97% every other bar would be an invisible sliver.
+    const topCost = sortedAccounts.length > 0 ? costOf(sortedAccounts[0].accountId) : 0;
 
     return (
         <div className="dd-panel dd-ai-fade-up flex flex-col gap-4 p-4">
@@ -176,31 +175,50 @@ export function RecordedSpend({
                     </div>
 
                     {sortedAccounts.length > 0 ? (
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-col gap-0.5">
                             {sortedAccounts.map((account) => {
                                 const row = totals?.accounts.find((x) => x.accountId === account.accountId);
                                 const name = account.label
                                     ? `${account.accountName} (${account.label})`
                                     : account.accountName;
-                                const amount = row ? ` ${formatUsd(row.costUsd)}` : "";
+                                const color = colors[account.accountId] ?? providerMeta(account.provider).color;
+                                const share = topCost > 0 ? ((row?.costUsd ?? 0) / topCost) * 100 : 0;
 
                                 return (
-                                    <span key={account.accountId} className="inline-flex items-center gap-1">
-                                        <Chip
-                                            pressed={!hiddenAccountIds.has(account.accountId)}
-                                            color={colors[account.accountId] ?? providerMeta(account.provider).color}
-                                            label={`${name}${amount}`}
-                                            title={`${providerMeta(account.provider).displayName}: ${account.accountId}`}
-                                            onClick={() => onToggleAccount(account.accountId)}
-                                        />
+                                    <button
+                                        key={account.accountId}
+                                        type="button"
+                                        className="dd-ai-spend-row"
+                                        aria-pressed={!hiddenAccountIds.has(account.accountId)}
+                                        title={`${providerMeta(account.provider).displayName}: ${account.accountId}`}
+                                        style={{ "--chip-color": color } as React.CSSProperties}
+                                        onClick={() => onToggleAccount(account.accountId)}
+                                    >
+                                        <span className="dd-ai-dot" />
+                                        <span className="min-w-0 flex-1 truncate text-xs text-[var(--dd-text-primary)]">
+                                            {name}
+                                        </span>
                                         <ProviderBadge provider={account.provider} compact />
-                                    </span>
+                                        <span className="dd-ai-mono w-16 text-right text-xs text-[var(--dd-text-primary)]">
+                                            {formatUsd(row?.costUsd ?? 0)}
+                                        </span>
+                                        <span className="dd-ai-mono w-14 text-right text-xs text-[var(--dd-text-muted)]">
+                                            {formatTokens(row?.tokens ?? 0)}
+                                        </span>
+                                        <span
+                                            className="dd-ai-share w-14 sm:w-24"
+                                            aria-hidden="true"
+                                            title={`${share.toFixed(0)}% of the largest account`}
+                                        >
+                                            <span style={{ width: `${Math.min(100, share)}%`, background: color }} />
+                                        </span>
+                                    </button>
                                 );
                             })}
                             {hiddenAccountIds.size > 0 ? (
                                 <button
                                     type="button"
-                                    className="text-xs text-[var(--dd-text-muted)] underline-offset-2 hover:text-[var(--dd-text-primary)] hover:underline"
+                                    className="self-start text-xs text-[var(--dd-text-muted)] underline-offset-2 hover:text-[var(--dd-text-primary)] hover:underline"
                                     onClick={onShowAll}
                                 >
                                     show all
