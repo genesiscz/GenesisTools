@@ -47,6 +47,18 @@ describe("buildMailFilterPredicate", () => {
         expect(r!.params).toContain("%foo@example.com%");
     });
 
+    it("matches --sender against mailapp.addresses on the message sender", () => {
+        const r = buildMailFilterPredicate({ sender: "alice@example.com" });
+        expect(r!.sql).toContain("mailapp.addresses sa");
+        expect(r!.sql).toContain("sa.address LIKE");
+        expect(r!.params).toEqual(["%alice@example.com%", "%alice@example.com%"]);
+    });
+
+    it("emits m.read = 0 for unread", () => {
+        const r = buildMailFilterPredicate({ unread: true });
+        expect(r!.sql).toContain("m.read = 0");
+    });
+
     it("combines multiple filters with AND", () => {
         const r = buildMailFilterPredicate({
             from: new Date("2026-01-01"),

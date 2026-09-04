@@ -5,6 +5,7 @@ import {
     needsRecipients,
     outputFormattedResults,
     resolveColumnsFromFlag,
+    resolveListFilters,
 } from "@app/macos/lib/mail/command-helpers";
 import { MailStorage } from "@app/macos/lib/mail/mail-storage";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
@@ -17,16 +18,36 @@ import type { Command } from "commander";
 
 interface ListOptions {
     limit?: string;
+    offset?: string;
     columns?: string | true;
     format?: string;
     sinceLastCheck?: boolean;
+    from?: string;
+    to?: string;
+    sender?: string;
+    receiver?: string;
+    account?: string;
+    unread?: boolean;
+    read?: boolean;
+    flagged?: boolean;
+    hasAttachment?: boolean;
 }
 
 export function registerListCommand(program: Command): void {
     program
         .command("list [mailbox]")
         .description("List recent emails from a mailbox (default: INBOX)")
-        .option("--limit <n>", "Number of emails to show", "20")
+        .option("--limit <n>", "Max emails to return after filters (default 20)", "20")
+        .option("--offset <n>", "Skip the first N matching emails", "0")
+        .option("--from <date>", "Only emails sent at or after this instant (14h, 7d, YYYY-MM-DD, ISO, now)")
+        .option("--to <date>", "Only emails sent at or before this instant (date-only is end of that local day)")
+        .option("--sender <text>", "Filter by sender address or name (substring)")
+        .option("--receiver <email>", "Filter by recipient address (substring)")
+        .option("--account <id>", "Filter by account (email address or UUID prefix)")
+        .option("--unread", "Only unread emails")
+        .option("--read", "Only read emails")
+        .option("--flagged", "Only flagged emails")
+        .option("--has-attachment", "Only emails with at least one attachment")
         .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .option("--since-last-check", "Show only emails since last monitor check")
@@ -35,7 +56,14 @@ export function registerListCommand(program: Command): void {
 
             try {
                 const targetMailbox = mailbox ?? "INBOX";
-                const limit = Number.parseInt(options.limit ?? "20", 10);
+                const { filters, limit, offset } = resolveListFilters(options);
+
+                if (options.sinceLastCheck) {
+                    const mailStorage = new MailStorage();
+                    const store = mailStorage.openSeenStore();
+                    filters.minRowid = store.getMaxSeenRowid();
+                    store.close();
+                }
 
                 const columns = await resolveColumnsFromFlag(options.columns);
 
@@ -49,16 +77,7 @@ export function registerListCommand(program: Command): void {
                 const spinner = isQuietOutput(format) ? createQuietSpinner() : p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
-                let rows = await db.listMessages(targetMailbox, limit);
-
-                if (options.sinceLastCheck) {
-                    const mailStorage = new MailStorage();
-                    const store = mailStorage.openSeenStore();
-                    const maxSeen = store.getMaxSeenRowid();
-                    store.close();
-
-                    rows = rows.filter((r) => r.rowid > maxSeen);
-                }
+                const rows = await db.listMessages(targetMailbox, limit, { ...filters, offset });
 
                 if (rows.length === 0) {
                     spinner.stop(`No messages found in ${targetMailbox}.`);

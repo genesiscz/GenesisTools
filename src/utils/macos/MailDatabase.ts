@@ -132,6 +132,29 @@ function buildMailFilterExpressions(opts: MailFilterOptions): Expression<SqlBool
         )`);
     }
 
+    if (opts.sender) {
+        const pattern = `%${escapeLike(opts.sender)}%`;
+        filters.push(sql<SqlBool>`(a.address LIKE ${pattern} ESCAPE '\\' OR a.comment LIKE ${pattern} ESCAPE '\\')`);
+    }
+
+    if (opts.unread) {
+        filters.push(sql<SqlBool>`m.read = 0`);
+    } else if (opts.read) {
+        filters.push(sql<SqlBool>`m.read != 0`);
+    }
+
+    if (opts.flagged) {
+        filters.push(sql<SqlBool>`m.flagged != 0`);
+    }
+
+    if (opts.hasAttachment) {
+        filters.push(sql<SqlBool>`EXISTS (SELECT 1 FROM attachments att_f WHERE att_f.message = m.ROWID)`);
+    }
+
+    if (opts.minRowid !== undefined) {
+        filters.push(sql<SqlBool>`m.ROWID > ${opts.minRowid}`);
+    }
+
     return filters;
 }
 
@@ -286,13 +309,18 @@ export class MailDatabase extends MacDatabase {
         return results;
     }
 
-    async listMessages(mailbox: string, limit: number): Promise<MailMessageRow[]> {
-        const rowids = resolveMailboxRowids(this.getDb(), mailbox);
+    async listMessages(
+        mailbox: string,
+        limit: number,
+        opts: MailFilterOptions & { offset?: number } = {}
+    ): Promise<MailMessageRow[]> {
+        const resolved = this.resolveMailboxFilter({ ...opts, mailbox: opts.mailbox ?? mailbox });
 
-        if (rowids === undefined || rowids.length === 0) {
+        if (resolved.mailboxRowids !== undefined && resolved.mailboxRowids.length === 0) {
             return [];
         }
 
+        const filterExpressions = buildMailFilterExpressions(resolved);
         const rows = await this.k()
             .selectFrom("messages as m")
             .innerJoin("subjects as s", "s.ROWID", "m.subject")
@@ -301,8 +329,9 @@ export class MailDatabase extends MacDatabase {
             .select(MESSAGE_SELECT_COLUMNS as never)
             .distinct()
             .where("m.deleted", "=", 0)
-            .where("m.mailbox", "in", rowids)
+            .where((eb) => (filterExpressions.length > 0 ? eb.and(filterExpressions) : eb.and([sql<SqlBool>`1 = 1`])))
             .orderBy("m.date_sent", "desc")
+            .offset(opts.offset ?? 0)
             .limit(limit)
             .execute();
 

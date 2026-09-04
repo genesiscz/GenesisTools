@@ -12,8 +12,10 @@ import { formatResultsTable } from "@app/macos/lib/mail/format";
 import * as p from "@clack/prompts";
 import { isInteractive, printLn } from "@genesiscz/utils/cli";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
+import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
+import type { MailFilterOptions } from "@genesiscz/utils/macos/mail-sql";
 
 // ─── Column resolution ──────────────────────────────────────
 
@@ -85,25 +87,125 @@ export async function resolveColumnsFromFlag(rawColumns: string | true | undefin
 // ─── Date parsing ───────────────────────────────────────────
 
 /**
- * Parse a YYYY-MM-DD (or ISO) date string. For `endOfDay=true` bare dates
- * are bumped to 23:59:59.999 UTC so `--to 2026-04-09` includes the whole day.
+ * Parse a mail `--from` / `--to` value.
+ *
+ * Accepts ISO datetimes, `YYYY-MM-DD`, `now`, and relative durations (`14h`, `7d`,
+ * `30m`, `1h30m`). Bare numbers are rejected (they are not dates). Date-only values
+ * use the local timezone: `--from 2026-04-09` is local midnight, `--to 2026-04-09`
+ * with `endOfDay` is local 23:59:59.999.
  */
 export function parseMailDate(str: string | undefined, endOfDay = false): Date | undefined {
     if (!str) {
         return undefined;
     }
 
-    const d = new Date(str);
+    const trimmed = str.trim();
 
-    if (Number.isNaN(d.getTime())) {
-        throw new Error(`Invalid date: "${str}". Use YYYY-MM-DD format.`);
+    if (trimmed === "now") {
+        return new Date();
     }
 
-    if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
-        d.setUTCHours(23, 59, 59, 999);
+    if (!/^\d+$/.test(trimmed)) {
+        const durationMs = parseDuration(trimmed);
+
+        if (durationMs > 0) {
+            return new Date(Date.now() - durationMs);
+        }
+    }
+
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+
+    if (day) {
+        const year = Number(day[1]);
+        const month = Number(day[2]) - 1;
+        const date = Number(day[3]);
+
+        if (endOfDay) {
+            return new Date(year, month, date, 23, 59, 59, 999);
+        }
+
+        return new Date(year, month, date, 0, 0, 0, 0);
+    }
+
+    const d = new Date(trimmed);
+
+    if (Number.isNaN(d.getTime())) {
+        throw new Error(`Invalid date: "${str}". Use YYYY-MM-DD, ISO, now, or a duration like 14h / 7d.`);
     }
 
     return d;
+}
+
+/**
+ * A calendar day the way the user typed it: LOCAL, matching parseMailDate's
+ * local midnight.
+ *
+ * `toISOString().slice(0, 10)` shifts a local midnight back a day anywhere east
+ * of UTC, so `--from 2026-04-09` was echoed as 2026-04-08 in the destructive
+ * rebuild confirmation, against a SQL window that was in fact correct.
+ */
+export function formatLocalDay(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, "0");
+
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+export type MailListCliOptions = {
+    from?: string;
+    to?: string;
+    sender?: string;
+    receiver?: string;
+    account?: string;
+    unread?: boolean;
+    read?: boolean;
+    flagged?: boolean;
+    hasAttachment?: boolean;
+    offset?: string;
+    limit?: string;
+};
+
+/**
+ * Turn `mail list` flags into SQL filter options. Throws when `--read` and
+ * `--unread` are both set, or when `--offset` is not a non-negative integer.
+ */
+export function resolveListFilters(options: MailListCliOptions): {
+    filters: MailFilterOptions;
+    limit: number;
+    offset: number;
+} {
+    if (options.read && options.unread) {
+        throw new Error("Use either --read or --unread, not both.");
+    }
+
+    const rawOffset = options.offset ?? "0";
+    const offset = Number.parseInt(rawOffset, 10);
+
+    if (!Number.isFinite(offset) || offset < 0 || String(offset) !== rawOffset.trim()) {
+        throw new Error(`Invalid --offset "${rawOffset}". Use a non-negative integer.`);
+    }
+
+    const rawLimit = options.limit ?? "20";
+    const limit = Number.parseInt(rawLimit, 10);
+
+    if (!Number.isFinite(limit) || limit < 1 || String(limit) !== rawLimit.trim()) {
+        throw new Error(`Invalid --limit "${rawLimit}". Use a positive integer.`);
+    }
+
+    return {
+        filters: {
+            from: parseMailDate(options.from),
+            to: parseMailDate(options.to, true),
+            sender: options.sender,
+            receiver: options.receiver,
+            account: options.account,
+            unread: options.unread || undefined,
+            read: options.read || undefined,
+            flagged: options.flagged || undefined,
+            hasAttachment: options.hasAttachment || undefined,
+        },
+        limit,
+        offset,
+    };
 }
 
 // ─── Recipient check ────────────────────────────────────────

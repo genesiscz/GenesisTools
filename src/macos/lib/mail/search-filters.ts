@@ -1,18 +1,6 @@
-import { escapeLike, LIKE_ESCAPE_CLAUSE } from "@genesiscz/utils/macos/mail-sql";
+import { escapeLike, LIKE_ESCAPE_CLAUSE, type MailFilterOptions } from "@genesiscz/utils/macos/mail-sql";
 
-export interface MailFilterOpts {
-    from?: Date;
-    to?: Date;
-    mailbox?: string;
-    receiver?: string;
-    account?: string;
-    /**
-     * Pre-resolved `mailboxes.ROWID` set for `mailbox`/`account` substring
-     * filters. The FTS path consumes these instead of LIKE so non-ASCII names
-     * (e.g. Czech "Doručená pošta") match correctly.
-     */
-    mailboxRowids?: number[];
-}
+export type MailFilterOpts = MailFilterOptions;
 
 /**
  * Build a SQL predicate appended via AND to the FTS / cosine search WHERE clause.
@@ -70,6 +58,32 @@ export function buildMailFilterPredicate(opts: MailFilterOpts): { sql: string; p
         );
         conds.push(`ra.address LIKE ? ${LIKE_ESCAPE_CLAUSE}`);
         params.push(`%${escapeLike(opts.receiver)}%`);
+    }
+
+    if (opts.sender) {
+        joins.push("JOIN mailapp.addresses sa ON sa.ROWID = m.sender");
+        conds.push(`(sa.address LIKE ? ${LIKE_ESCAPE_CLAUSE} OR sa.comment LIKE ? ${LIKE_ESCAPE_CLAUSE})`);
+        const senderPattern = `%${escapeLike(opts.sender)}%`;
+        params.push(senderPattern, senderPattern);
+    }
+
+    if (opts.unread) {
+        conds.push("m.read = 0");
+    } else if (opts.read) {
+        conds.push("m.read != 0");
+    }
+
+    if (opts.flagged) {
+        conds.push("m.flagged != 0");
+    }
+
+    if (opts.hasAttachment) {
+        conds.push("EXISTS (SELECT 1 FROM mailapp.attachments att_f WHERE att_f.message = m.ROWID)");
+    }
+
+    if (opts.minRowid !== undefined) {
+        conds.push("m.ROWID > ?");
+        params.push(opts.minRowid);
     }
 
     // `conds` always carries `m.deleted = 0`; a real filter is anything beyond

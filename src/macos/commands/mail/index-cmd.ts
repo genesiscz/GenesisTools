@@ -2,7 +2,7 @@ import { IndexerManager } from "@app/indexer/lib/manager";
 import { createProgressCallbacks } from "@app/indexer/lib/progress";
 import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
-import { parseMailDate } from "@app/macos/lib/mail/command-helpers";
+import { formatLocalDay, parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import * as p from "@clack/prompts";
 import {
     getDefaultModel,
@@ -43,8 +43,8 @@ export function registerIndexCommand(program: Command): void {
         .option("--rebuild-fulltext", "Drop and re-scan all emails (full reindex)")
         .option("--rebuild-embeddings", "Re-embed all chunks (keeps FTS index)")
         .option("--force", "Skip confirmation for destructive operations")
-        .option("--from <date>", "Only index emails from this date (YYYY-MM-DD)")
-        .option("--to <date>", "Only index emails up to this date (YYYY-MM-DD)")
+        .option("--from <date>", "Only index emails from this date (14h, 7d, YYYY-MM-DD, ISO, now)")
+        .option("--to <date>", "Only index emails up to this date (date-only is end of that local day)")
         .action(
             async (opts: {
                 model?: string | true;
@@ -435,8 +435,8 @@ async function rebuildEmbeddings(
 
     if (dateRange.fromDate || dateRange.toDate) {
         const range = [
-            dateRange.fromDate ? dateRange.fromDate.toISOString().slice(0, 10) : "beginning",
-            dateRange.toDate ? dateRange.toDate.toISOString().slice(0, 10) : "now",
+            dateRange.fromDate ? formatLocalDay(dateRange.fromDate) : "beginning",
+            dateRange.toDate ? formatLocalDay(dateRange.toDate) : "now",
         ];
         p.log.info(`  ${pc.dim("Date range:")} ${range[0]} → ${range[1]}`);
     }
@@ -558,15 +558,15 @@ async function incrementalSync(manager: IndexerManager, dateRange: DateRange = {
         const { dateRangeMin, dateRangeMax } = meta.stats;
 
         if (dateRangeMin && dateRangeMax) {
-            const fromIso = new Date(dateRangeMin * 1000).toISOString().slice(0, 10);
-            const toIso = new Date(dateRangeMax * 1000).toISOString().slice(0, 10);
+            const fromIso = formatLocalDay(new Date(dateRangeMin * 1000));
+            const toIso = formatLocalDay(new Date(dateRangeMax * 1000));
             p.log.info(`  ${pc.dim("Range:")} ${fromIso} → ${toIso}`);
         }
     }
 
     if (dateRange.fromDate || dateRange.toDate) {
-        const from = dateRange.fromDate?.toISOString().slice(0, 10) ?? "beginning";
-        const to = dateRange.toDate?.toISOString().slice(0, 10) ?? "now";
+        const from = dateRange.fromDate ? formatLocalDay(dateRange.fromDate) : "beginning";
+        const to = dateRange.toDate ? formatLocalDay(dateRange.toDate) : "now";
         p.log.info(`  ${pc.dim("Filter:")} ${from} → ${to}`);
     }
 

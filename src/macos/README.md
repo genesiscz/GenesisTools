@@ -28,8 +28,9 @@
 ```bash
 # Mail
 tools macos mail search "invoice"
-tools macos mail list INBOX --limit 20
-tools macos mail download ./out --from "boss@example.com"
+tools macos mail list INBOX --limit 20 --from 14h
+tools macos mail list INBOX --unread --has-attachment --from 2026-08-01
+tools macos mail download 12345 --output-dir ./out
 
 # Calendar
 tools macos calendar list-calendars
@@ -46,6 +47,11 @@ tools macos reminders add "Buy milk" --list Home --due "tomorrow 18:00"
 tools macos messages list --limit 50
 tools macos messages search "meeting"
 tools macos messages show "+420..."
+tools macos messages show "+420..." --from 2026-01-01 --to 2026-12-31 \
+  --output-dir ./out --md-name chat-2026.md --save-attachments
+tools macos messages attachment 11122 --download ./out/attachments
+# --attachments-filter accepts "#11122,10989" or a name regex like "IMG_|\\.pdf$"
+# Opaque *.pluginPayloadAttachment stubs are renamed via magic-byte sniff (e.g. 11111-image.png).
 
 # Voice Memos (also available as `tools voice-memos`)
 tools macos voice-memos list

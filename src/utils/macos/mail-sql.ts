@@ -20,6 +20,18 @@ export interface MailFilterOptions {
     mailbox?: string;
     receiver?: string;
     account?: string;
+    /** Substring match on sender address or display name. */
+    sender?: string;
+    /** When true, only unread (`read = 0`). Mutually exclusive with `read`. */
+    unread?: boolean;
+    /** When true, only read (`read != 0`). Mutually exclusive with `unread`. */
+    read?: boolean;
+    /** When true, only flagged (`flagged != 0`). */
+    flagged?: boolean;
+    /** When true, only messages that have at least one attachment row. */
+    hasAttachment?: boolean;
+    /** Inclusive-exclusive lower bound on `messages.ROWID` (since-last-check). */
+    minRowid?: number;
     /**
      * Pre-resolved set of `mailboxes.ROWID`s satisfying the `mailbox` and/or
      * `account` substring constraints. Filter builders prefer this over the
@@ -104,49 +116,3 @@ export const MESSAGE_SELECT = `
     JOIN mailboxes mb ON m.mailbox = mb.ROWID`;
 
 export const ATTACHMENT_JOIN = "LEFT JOIN attachments att ON att.message = m.ROWID";
-
-/** Build WHERE clauses + params for date/mailbox/receiver/account filters. */
-export function buildFilters(opts: MailFilterOptions, params: Record<string, string | number>): string[] {
-    const filters: string[] = [];
-
-    if (opts.from) {
-        filters.push("m.date_sent >= $dateFrom");
-        params.$dateFrom = Math.floor(opts.from.getTime() / 1000);
-    }
-
-    if (opts.to) {
-        filters.push("m.date_sent <= $dateTo");
-        params.$dateTo = Math.floor(opts.to.getTime() / 1000);
-    }
-
-    if (opts.mailboxRowids !== undefined) {
-        // Pre-resolved rowids: Unicode-safe path. Empty array → guaranteed
-        // no-match predicate so callers don't accidentally match everything.
-        if (opts.mailboxRowids.length === 0) {
-            filters.push("1 = 0");
-        } else {
-            filters.push(`m.mailbox IN (${opts.mailboxRowids.join(",")})`);
-        }
-    } else {
-        if (opts.mailbox) {
-            filters.push(`mb.url LIKE $mailbox ${LIKE_ESCAPE_CLAUSE}`);
-            params.$mailbox = `%${escapeLike(opts.mailbox)}%`;
-        }
-
-        if (opts.account) {
-            filters.push(`mb.url LIKE $account ${LIKE_ESCAPE_CLAUSE}`);
-            params.$account = `%${escapeLike(opts.account)}%`;
-        }
-    }
-
-    if (opts.receiver) {
-        filters.push(`m.ROWID IN (
-            SELECT r.message FROM recipients r
-            JOIN addresses a ON r.address = a.ROWID
-            WHERE a.address LIKE $receiver ${LIKE_ESCAPE_CLAUSE}
-        )`);
-        params.$receiver = `%${escapeLike(opts.receiver)}%`;
-    }
-
-    return filters;
-}
