@@ -4,7 +4,7 @@ import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import { resolveAccountsProvider } from "./select-provider";
@@ -40,7 +40,21 @@ export async function collectHomes(providerId?: string): Promise<DiscoveredRow[]
             continue;
         }
 
-        for (const home of (await plugin.accounts?.discoverHomes?.()) ?? []) {
+        // One provider's unreadable home directory must not hide every other
+        // provider's homes: discovery walks the filesystem, so an EACCES or a
+        // vanished dir is an expected outcome, not a reason to abort the whole
+        // inventory (PR #360 review t4).
+        let homes: DiscoveredHome[] = [];
+
+        try {
+            homes = (await plugin.accounts?.discoverHomes?.()) ?? [];
+        } catch (err) {
+            logger.warn({ err, provider: plugin.id }, "home discovery failed for this provider — skipping it");
+            // stderr, not stdout: `--json` consumers still get a clean result.
+            out.printlnErr(pc.yellow(`  ${providerAliasOf(plugin.id)}: could not read its homes — skipped.`));
+        }
+
+        for (const home of homes) {
             rows.push({ ...home, provider: plugin.id, alias: providerAliasOf(plugin.id) });
         }
     }
@@ -71,17 +85,46 @@ export async function runDiscover(opts: RunDiscoverOptions): Promise<void> {
     }
 
     const rows = await collectHomes(providerId);
+    // `--json` owns stdout entirely, so nothing below may print there — the table
+    // and the bind log used to run anyway and produced unparseable output for a
+    // caller that passed both flags (PR #360 review t2).
+    const quiet = opts.json === true;
 
-    if (opts.json && !opts.bind) {
-        out.result({ homes: rows });
+    if (!opts.bind) {
+        if (quiet) {
+            out.result({ homes: rows });
+            return;
+        }
+
+        if (rows.length === 0) {
+            out.println(pc.dim("No vendor homes found on this machine."));
+            return;
+        }
+
+        renderHomes(rows);
+
+        const unbound = rows.filter((row) => !row.boundToAccountId && row.authFile).length;
+        out.println(
+            pc.dim(
+                `  ${rows.length} home${rows.length === 1 ? "" : "s"}, ${unbound} unbound. ` +
+                    `Create accounts for them: ${pc.cyan(suggestCommand(opts.tool, { subcommand: opts.subcommand, add: ["--bind"] }))}`
+            )
+        );
         return;
     }
 
-    if (rows.length === 0) {
-        out.println(pc.dim("No vendor homes found on this machine."));
-        return;
+    if (!quiet && rows.length > 0) {
+        renderHomes(rows);
     }
 
+    const bound = await bindHomes(rows, quiet);
+
+    if (quiet) {
+        out.result({ homes: rows, bound });
+    }
+}
+
+function renderHomes(rows: DiscoveredRow[]): void {
     renderCliHeader("Vendor homes", "profile directories the CLIs keep their logins in");
 
     const table = createBoxTable(["PROVIDER", "HOME", "IDENTITY", "BOUND"]);
@@ -96,25 +139,42 @@ export async function runDiscover(opts: RunDiscoverOptions): Promise<void> {
     }
 
     out.println(table.toString());
-
-    if (!opts.bind) {
-        const unbound = rows.filter((row) => !row.boundToAccountId && row.authFile).length;
-        out.println(
-            pc.dim(
-                `  ${rows.length} home${rows.length === 1 ? "" : "s"}, ${unbound} unbound. ` +
-                    `Create accounts for them: ${pc.cyan(suggestCommand(opts.tool, { subcommand: opts.subcommand, add: ["--bind"] }))}`
-            )
-        );
-        return;
-    }
-
-    await bindHomes(rows);
 }
 
-async function bindHomes(rows: DiscoveredRow[]): Promise<void> {
+/**
+ * A name no other home in THIS run has already claimed.
+ *
+ * `writeLoginOutcome` merges onto an account of the same name, and after the
+ * first write the store holds it — so two homes whose emails share a local part
+ * (`me@work.com` and `me@personal.com`) both merged into one account, and the
+ * second silently replaced the first one's credentials (PR #360 review t3).
+ */
+function uniqueInRun(base: string, taken: Set<string>): string {
+    if (!taken.has(base)) {
+        return base;
+    }
+
+    let suffix = 2;
+
+    while (taken.has(`${base}-${suffix}`)) {
+        suffix += 1;
+    }
+
+    return `${base}-${suffix}`;
+}
+
+export interface BoundHome {
+    home: string;
+    account: string;
+    provider: string;
+}
+
+async function bindHomes(rows: DiscoveredRow[], quiet: boolean): Promise<BoundHome[]> {
     const store = await AiConfigStore.load();
     const interactive = isInteractive();
-    let created = 0;
+    const claimed = new Set<string>();
+    const bound: BoundHome[] = [];
+    let attempted = 0;
 
     for (const row of rows) {
         // Only a home with a credential file is bindable; a worker home carries
@@ -123,7 +183,12 @@ async function bindHomes(rows: DiscoveredRow[]): Promise<void> {
             continue;
         }
 
-        const name = row.identity?.email?.split("@")[0]?.toLowerCase() ?? `${row.alias}-${created + 1}`;
+        // Numbered off ATTEMPTS, not successes: a refused write used to leave the
+        // next home reusing the name that just failed.
+        attempted += 1;
+        const base = row.identity?.email?.split("@")[0]?.toLowerCase() ?? `${row.alias}-${attempted}`;
+        const name = uniqueInRun(base, claimed);
+        claimed.add(name);
 
         const written = await writeLoginOutcome({
             name,
@@ -142,11 +207,16 @@ async function bindHomes(rows: DiscoveredRow[]): Promise<void> {
             continue;
         }
 
-        created += 1;
-        out.println(pc.green(`✓ Bound ${row.home} as "${written.account.name}".`));
+        bound.push({ home: row.home, account: written.account.name, provider: row.provider });
+
+        if (!quiet) {
+            out.println(pc.green(`✓ Bound ${row.home} as "${written.account.name}".`));
+        }
     }
 
-    if (created === 0) {
+    if (bound.length === 0 && !quiet) {
         out.println(pc.dim("  Nothing to bind: every home with a credential file already has an account."));
     }
+
+    return bound;
 }

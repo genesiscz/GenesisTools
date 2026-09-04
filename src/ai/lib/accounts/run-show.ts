@@ -1,9 +1,10 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AccountIdentity, DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { suggestCommand } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { renderCliHeader, renderCliKeyRow, renderCliSection } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import { type CredentialKind, credentialKinds } from "./credential-kinds";
@@ -46,8 +47,25 @@ export async function runShow(opts: RunShowOptions): Promise<void> {
 
     const plugin = tryProviderPlugin(account.provider);
     const features = plugin?.accounts;
-    const identity = await features?.identityOf?.(account, { probe: true });
-    const allHomes = (await features?.discoverHomes?.()) ?? [];
+
+    // Both walk the filesystem, so an unreadable directory or a corrupt auth
+    // file is an expected outcome. Neither may stop the STORED fields — the ones
+    // this command exists to show — from rendering (PR #360 review t4).
+    let identity: AccountIdentity | undefined;
+
+    try {
+        identity = await features?.identityOf?.(account, { probe: true });
+    } catch (err) {
+        logger.warn({ err, account: account.id }, "identity decode failed — showing stored fields only");
+    }
+
+    let allHomes: DiscoveredHome[] = [];
+
+    try {
+        allHomes = (await features?.discoverHomes?.()) ?? [];
+    } catch (err) {
+        logger.warn({ err, provider: account.provider }, "home discovery failed — omitting the homes section");
+    }
 
     const detail: AccountDetail = {
         id: account.id,

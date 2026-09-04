@@ -53,7 +53,11 @@ export async function applyIdentityPolicy(input: IdentityPolicyInput): Promise<I
         // external login, a codex token without claims) still writes, but the
         // user is told that nobody checked.
         if (!input.incoming?.accountUuid && !input.incoming?.organizationUuid) {
-            out.println(pc.dim(`  Identity was not verified — this provider does not say whose credential this is.`));
+            // stderr: this is a notice, not the machine result, and `--json`
+            // callers of `accounts discover --bind` parse stdout (review t2).
+            out.printlnErr(
+                pc.dim(`  Identity was not verified — this provider does not say whose credential this is.`)
+            );
         }
 
         return { ok: true };
@@ -63,7 +67,7 @@ export async function applyIdentityPolicy(input: IdentityPolicyInput): Promise<I
         `This grant belongs to ${input.incoming?.email ?? "another identity"}, ` +
         `a DIFFERENT one than "${input.accountName}".`;
 
-    out.println(pc.yellow(`⚠ ${reason}`));
+    out.printlnErr(pc.yellow(`⚠ ${reason}`));
 
     if (!input.interactive) {
         return {
