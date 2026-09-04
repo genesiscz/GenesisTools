@@ -113,6 +113,38 @@ export function resolveRange(range: TimeRange, now: number): ResolvedRange {
     };
 }
 
+/**
+ * How far a window end may move before it counts as a new window.
+ *
+ * Every query key on the page is built from the window bounds, so a `to` taken
+ * straight from `Date.now()` mints a new key on every tick and nothing is ever
+ * served from cache: an idle 7-day page issued six spend requests over four
+ * windows a minute, and an idle 30-day page paid for a fresh transcript scan
+ * each time (sweep 2026-09-04, N1). The step scales with the window because a
+ * minute matters on an hour of data and means nothing on a month of it.
+ */
+export function windowStepMs(minutes: number): number {
+    if (minutes <= 180) {
+        return 60_000;
+    }
+
+    if (minutes <= 3 * 1440) {
+        return 300_000;
+    }
+
+    return 900_000;
+}
+
+/**
+ * The window a query should ask for: the same bounds until the clock crosses the
+ * next step, so a re-render and a refetch reuse one cache entry. The end is
+ * snapped DOWN, never up, so a window never reaches into the future.
+ */
+export function resolveStableRange(range: TimeRange, nowMs: number): ResolvedRange {
+    const step = windowStepMs(resolveRange(range, nowMs).minutes);
+    return resolveRange(range, Math.floor(nowMs / step) * step);
+}
+
 /** The chart grain that keeps a window readable: about 60 to 200 points. */
 export function grainForMinutes(minutes: number): SpendGrain {
     if (minutes <= 180) {
