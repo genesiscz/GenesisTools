@@ -13,9 +13,12 @@ export { followTranscript } from "./tail";
 export type {
     SliceOptions,
     TranscriptEnvelope,
+    TranscriptEvent,
     TranscriptProvider,
     TranscriptRole,
     TranscriptTool,
+    TranscriptTotals,
     TranscriptTurn,
+    TranscriptUsage,
 } from "./types";
-export { clipResult, DEFAULT_RESULT_CHARS, DEFAULT_TURN_LIMIT, sliceTurns } from "./types";
+export { clipResult, DEFAULT_RESULT_CHARS, DEFAULT_TURN_LIMIT, sliceTurns, terminatedOf, totalsOf } from "./types";
