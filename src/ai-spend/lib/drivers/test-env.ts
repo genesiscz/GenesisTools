@@ -13,7 +13,19 @@ import type { EnvSnapshot } from "@genesiscz/utils/env/env-testing";
  * inflates the file counts. Call this at the top of any suite that pins a
  * fixture home or an exact root list.
  */
-const AGENT_HOME_KEYS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"] as const;
+export const AGENT_HOME_KEYS = ["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME"] as const;
+
+/**
+ * The same three keys as an env patch for a CHILD process.
+ *
+ * `isolateAgentHomeEnv()` only cleans this process. A test that spawns the real
+ * CLI hands the child `...process.env`, so without this the child reads the
+ * developer's own `CODEX_HOME` and walks a real transcript tree. `Bun.spawn`
+ * drops a key whose value is `undefined`, which is what removes them.
+ */
+export function agentHomeEnvPatch(): Record<string, undefined> {
+    return Object.fromEntries(AGENT_HOME_KEYS.map((key) => [key, undefined]));
+}
 
 /**
  * The grok roots also include the headless worker home, which hangs off
