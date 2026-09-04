@@ -12,10 +12,10 @@ describe("pinnedLaunchEnv", () => {
             TOOLS_CLAUDE_AUTH: "token",
             CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-token",
             CLAUDE_CODE_SUBSCRIPTION_TYPE: "max",
-            ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",
-            ANTHROPIC_CUSTOM_MODEL_OPTION: "claude-fable-5[1m]",
-            ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "Fable 5",
-            ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: "Fable 5 · Most capable for hardest and longest-running tasks",
+            ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5-1",
+            ANTHROPIC_CUSTOM_MODEL_OPTION: "claude-fable-5-1[1m]",
+            ANTHROPIC_CUSTOM_MODEL_OPTION_NAME: "Fable 5.1",
+            ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION: "Fable 5.1 · Most capable for hardest and longest-running tasks",
         });
     });
 

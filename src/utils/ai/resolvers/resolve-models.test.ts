@@ -78,5 +78,6 @@ describe("toModelInfo", () => {
         expect(ids).toContain("claude-opus-5");
         expect(ids).toContain("claude-sonnet-5");
         expect(ids).toContain("claude-fable-5");
+        expect(ids).toContain("claude-fable-5-1");
     });
 });

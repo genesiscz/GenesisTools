@@ -117,7 +117,7 @@ describe("static catalog", () => {
      * in ask was two Anthropic generations behind and still shipped to users.
      */
     test("the current Anthropic generation is present", () => {
-        for (const id of ["claude-opus-5", "claude-sonnet-5", "claude-fable-5"]) {
+        for (const id of ["claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-fable-5-1"]) {
             expect(byId(id)?.provider).toBe("anthropic");
         }
     });

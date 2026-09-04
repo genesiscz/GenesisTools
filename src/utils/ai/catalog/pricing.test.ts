@@ -76,7 +76,13 @@ describe("pricing ladder", () => {
      * asserting a surcharge there would over-bill by 2x.
      */
     test("models Anthropic serves at flat 1M pricing carry no tier", async () => {
-        for (const id of ["claude-sonnet-4-6", "claude-opus-5", "claude-sonnet-5", "claude-fable-5"]) {
+        for (const id of [
+            "claude-sonnet-4-6",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-fable-5",
+            "claude-fable-5-1",
+        ]) {
             const pricing = await pricingFor("anthropic", id);
 
             expect(pricing?.inputPer1MAbove200k).toBeUndefined();

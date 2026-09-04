@@ -7,7 +7,7 @@ import { logger } from "@genesiscz/utils/logger";
 
 export const FABLE_LOCAL_DIR = resolve(env.tools.getHome(), ".genesis-tools", "claude", "fable");
 export const FABLE_CONFIG_PATH = join(FABLE_LOCAL_DIR, "config.json");
-export const FABLE_MODEL = "claude-fable-5";
+export const FABLE_MODEL = "claude-fable-5-1";
 
 /**
  * Model calls in flight per stage. Every stage's units of work (windows,

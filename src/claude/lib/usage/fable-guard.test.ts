@@ -192,7 +192,7 @@ describe("deadBucketForAccount", () => {
 
     test("a fable launch reports the dead fable bucket", () => {
         const acc: AccountUsage = { accountName: "a", usage: usageWith(100, 10) };
-        expect(deadBucketForAccount([acc], "a", true, NOW)?.bucket).toBe("Fable 5");
+        expect(deadBucketForAccount([acc], "a", true, NOW)?.bucket).toBe("Fable");
     });
 
     test("a healthy account returns null", () => {

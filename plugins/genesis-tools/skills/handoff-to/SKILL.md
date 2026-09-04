@@ -24,10 +24,12 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 
 | model | cost | intelligence | taste |
 |---|---|---|---|
-| gpt-5.5 | 9 | 8 | 5 |
+| gpt-5.6-sol | 9 | 8 | 5 |
+| gpt-5.6-terra | 9 | 7 | 5 |
 | grok-4.6 | 7 | 6 | 4 |
 | sonnet-5 | 5 | 5 | 7 |
-| opus-4.8 | 4 | 7 | 8 |
+| opus-5 | 4 | 8 | 8 |
+| fable-5-1 | 2 | 9 | 9 |
 | fable-5 | 2 | 9 | 9 |
 
 grok-4.6 scores are provisional (added 2026-08-26, one session of evidence); re-rank after real use.
@@ -36,11 +38,11 @@ How to apply:
 
 - Defaults, not limits. Standing permission to override: if a cheaper model's output misses the bar, rerun with a smarter one without asking. **Judge the output, not the price tag. Escalating costs less than shipping mediocre work.**
 - Cost is a tie-breaker only. When axes conflict for anything that ships: intelligence > taste > cost.
-- Bulk/mechanical work (clear-spec implementation, data analysis, migrations): gpt-5.5 — effectively free.
+- Bulk/mechanical work (clear-spec implementation, data analysis, migrations): gpt-5.6-terra — effectively free, and it spares the sol quota.
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
-- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as an extra independent perspective.
+- Reviews of plans/implementations: fable-5-1 (fable-5 is the same tier) or opus-5, optionally gpt-5.6-sol as an extra independent perspective.
 - Never Haiku for work that ships (thin wrapper/relay agents are fine).
-- gpt-5.5 is only reachable through the Codex CLI; grok-4.6 only through the `grok` CLI (metered `XAI_API_KEY`). Claude models run via the `Agent`/`Workflow` `model` parameter, or on a separate account through `tools claude exec` (`references/claude.md`).
+- gpt-5.6 (sol, terra, luna) is only reachable through the Codex CLI; grok-4.6 only through the `grok` CLI (metered `XAI_API_KEY`). Claude models run via the `Agent`/`Workflow` `model` parameter, or on a separate account through `tools claude exec` (`references/claude.md`).
 - **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.
 - Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals, so route work needing supervised writes in a live checkout to Codex instead.
 
@@ -51,7 +53,7 @@ How to apply:
 | Design decisions, naming, interface shape | Stay here — decide first, then hand the decision down |
 | Spec'd mechanical implementation, boilerplate, big renames | Codex |
 | Test writing against a fixed contract | Codex |
-| Second-opinion code review | Codex, read-only — but read the § Read-only tax first |
+| Second-opinion code review | Codex, read-only only if the deliverable is inline. A vault note or report file is a writable job. See § Read-only tax |
 | Ambiguous / underspecified work | Stay here until spec'd, THEN offload |
 | Cross-file refactor requiring judgment calls | Stay here, or opus/fable subagent |
 | Long-running bounded sweep while this session reviews | Codex, parallel drivers with `isolation: "worktree"` |
@@ -66,7 +68,7 @@ Do not dispatch until all five hold. If any fails, the task is not ready to offl
 2. There is a **verification command** the worker can run itself, with the expected observable output stated — **and the worker's sandbox can actually run it** (see § Read-only tax).
 3. **Negative constraints are explicit** — "do NOT create new files", "do NOT commit", "do NOT touch `src/x/`", size limits. Workers obey these reliably when spelled out, and not otherwise.
 4. **Checkpoints are named** — the points at which the worker must stop and report instead of pressing on.
-5. **The deliverable matches the sandbox**: a read-only worker cannot write a report file, so inline output must be the deliverable, or a writable path must be granted explicitly.
+5. **The deliverable matches the sandbox.** A `--write deny` / `--readonly` worker cannot write a file. If the deliverable is a path on disk (Obsidian vault note, report.md, anything `mkdir`/`cp` would create), do **not** dispatch deny. `--writable-root` under deny does **not** make that write work (Codex, 2026-08-31 12:15: `apply_patch` still rejected with "writing is blocked by read-only sandbox"). Spawn recipe: `references/codex.md` § File deliverables. Inline chat text may use deny.
 
 ## 🛑 Read-only tax — decide this before you dispatch
 
@@ -74,11 +76,12 @@ Do not dispatch until all five hold. If any fails, the task is not ready to offl
 
 So when you route a review:
 
-- Say in the brief that **inline output is the deliverable**, or grant a writable path (Codex only: `--writable-root`).
-- Expect **no executed verification** unless you granted writable temp and cache dirs.
-- **Any claim a read-only reviewer makes about test or runtime behavior is inference, not observation.** Ask it for the command and the real output. If there is none, say so when you relay the finding.
+- **File deliverable** (vault, report.md, any path): not a deny job. Do not pass `--write deny` or grok `--readonly`. Codex recipe in `references/codex.md` § File deliverables. Grok: default jail with `--cwd` at the note folder, or write `/tmp` and copy.
+- **Inline deliverable**: say so in the brief. Do not ask the worker to write a path.
+- Expect **no executed verification** under deny unless you granted writable temp/cache dirs for the test runner. That is all `--writable-root` is for under deny. It is not a report-file hatch.
+- **Any claim a read-only reviewer makes about test or runtime behavior is inference, not observation.** Ask it for the command it ran and that command's real output. If there is none, say so when you relay the finding.
 
-The per-backend escape hatches differ, and both are in the reference files. Codex has `--writable-root`; grok has none, so the answer there is a disposable worktree.
+Per-backend spawn flags live in the reference files. Do not invent a deny+writable-root hybrid for a vault write.
 
 ## Driver-model choice (when the route is Codex or Grok)
 

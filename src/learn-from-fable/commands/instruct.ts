@@ -20,7 +20,7 @@ export function selfReviewCommand(config: FableConfig): void {
     const spec = readOr(paths.spec, "(no spec yet)");
     out.print(`# Stage: self-review (instruct)
 
-You are ${FABLE_MODEL === "claude-fable-5" ? "ideally a live Fable 5 session" : "a strong model"} auditing the Fable Pack spec WHILE Fable is still served. This signal expires when the model does.
+You are ${FABLE_MODEL.startsWith("claude-fable-") ? "ideally a live Fable session" : "a strong model"} auditing the Fable Pack spec WHILE Fable is still served. This signal expires when the model does.
 
 ## Your tasks
 1. Read the spec below as its subject: mark principles that are WRONG, overfit to one session, or missing their real why. Rewrite those in place (edit ${paths.spec}).

@@ -10,11 +10,34 @@ tools ai-proxy config init
 tools ai-proxy accounts login github-copilot
 tools ai-proxy config setup-tunnel   # cloudflared / tailscale / custom
 tools ai-proxy up              # start proxy (+ tunnel if configured)
+tools ai-proxy install         # launchd agent: starts at login, respawns on crash
 tools ai-proxy status
 tools ai-proxy introspect --clipboard
 ```
 
 Config lives at `~/.genesis-tools/ai-proxy/config.json` (via `AiProxyStorage`).
+
+## Running as a launchd agent (macOS)
+
+`tools ai-proxy up` alone gives you a detached process that dies at reboot and never comes
+back. On 2026-08-31 that cost ten silent days: the proxy had been down since 2026-08-21 and the
+only symptom was `ECONNREFUSED 127.0.0.1:8317` inside two sentry-mcp servers whose plain API
+tools kept working.
+
+```bash
+tools ai-proxy install     # write + load ~/Library/LaunchAgents/com.genesis-tools.ai-proxy.plist
+tools ai-proxy uninstall   # unload and delete it (the proxy stops)
+```
+
+- Label: `com.genesis-tools.ai-proxy`. `RunAtLoad` and `KeepAlive` are both true, so it starts
+  at login and respawns on crash. stdout and stderr go to `~/.genesis-tools/ai-proxy/proxy.log`.
+- The plist carries `HOME`, `PATH` and the `LANG` / `LC_*` locale only — **no API keys**. The
+  proxy reads Grok OAuth from `~/.grok/auth.json` (hence `HOME`) and every other credential
+  from `config.json` and the encrypted vault.
+- With the agent installed, `up` kickstarts it instead of spawning a second process, and
+  **`down` boots the agent out first** — otherwise `KeepAlive` answers the SIGTERM by restarting
+  the proxy two seconds later. `status` prints whether launchd owns the proxy.
+- `down` still never stops the shared cloudflared tunnel, on either path.
 
 ## Cursor BYOK
 
@@ -78,7 +101,7 @@ Examples:
 - `genesiscz/grok/grok-composer-2.5-fast`
 - `genesiscz/github-copilot/claude-sonnet-4`
 - `genesiscz/claude-sub/sonnet` (aliases: `sonnet`, `opus`, `haiku`, `fable` — resolve to the current dated Claude model ids)
-- `genesiscz/codex/gpt-5.5`
+- `genesiscz/codex/gpt-5.6-sol`
 - `router/openrouter/anthropic/claude-sonnet-5` (OpenRouter ids contain a slash, so the id has four segments)
 
 ### Pinning reasoning effort with a `:<effort>` suffix

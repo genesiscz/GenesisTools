@@ -16,6 +16,8 @@ export interface ClaudeModel {
     label: string;
     /** Model supports the `[1m]` 1M-context variant suffix in Claude Code. */
     supports1m?: boolean;
+    /** Catalog aliases (`fable`, `opus`, ...) that resolve straight to this model. */
+    aliases?: string[];
 }
 
 const FAMILY_ORDER: ClaudeModelFamily[] = ["fable", "opus", "sonnet", "haiku"];
@@ -28,6 +30,7 @@ export const CLAUDE_MODELS: ClaudeModel[] = FAMILY_ORDER.flatMap((family) =>
             family,
             label: model.flags?.cli?.label ?? model.displayName,
             supports1m: model.flags?.supports1m,
+            aliases: model.aliases,
         }))
 );
 
@@ -72,6 +75,12 @@ export function resolveModelSpec(spec: string): ModelResolution {
     const exact = launchable.find((m) => m.id === trimmed);
     if (exact) {
         return { kind: "exact", model: exact };
+    }
+
+    const aliased = CLAUDE_MODELS.find((m) => m.aliases?.includes(trimmed.toLowerCase()));
+    const aliasedLaunchable = aliased && launchable.find((m) => m.id === aliased.id);
+    if (aliasedLaunchable) {
+        return { kind: "exact", model: aliasedLaunchable };
     }
 
     const tokens = normalize(trimmed)

@@ -6,7 +6,7 @@ describe("resolveModelSpec", () => {
         const res = resolveModelSpec("fable");
         expect(res.kind).toBe("exact");
         if (res.kind === "exact") {
-            expect(res.model.id).toBe("claude-fable-5");
+            expect(res.model.id).toBe("claude-fable-5-1");
         }
     });
 
@@ -18,8 +18,16 @@ describe("resolveModelSpec", () => {
         }
     });
 
-    test("opus is ambiguous and lists all opus variants incl [1m]", () => {
+    test("alias opus resolves directly to the newest Opus", () => {
         const res = resolveModelSpec("opus");
+        expect(res.kind).toBe("exact");
+        if (res.kind === "exact") {
+            expect(res.model.id).toBe("claude-opus-5");
+        }
+    });
+
+    test("'opus 4' is ambiguous and lists all opus 4 variants incl [1m]", () => {
+        const res = resolveModelSpec("opus 4");
         expect(res.kind).toBe("ambiguous");
         if (res.kind === "ambiguous") {
             const ids = res.candidates.map((c) => c.id);

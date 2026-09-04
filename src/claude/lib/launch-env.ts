@@ -17,13 +17,13 @@ import { logger } from "@genesiscz/utils/logger";
  *     so `/model fable` and Fable inference are allowed. It does NOT add Fable
  *     to the picker list for first-party OAuth (Xf()/firstParty stays empty).
  *  2. ANTHROPIC_CUSTOM_MODEL_OPTION pushes an entry straight into the picker
- *     list, ungated by first-party, so "Fable 5" shows up in `/model` without
+ *     list, ungated by first-party, so "Fable 5.1" shows up in `/model` without
  *     the user typing it. `[1m]` selects the 1M-context Fable.
  */
-export const FABLE_MODEL_ID = "claude-fable-5";
-export const FABLE_MODEL_OPTION = "claude-fable-5[1m]";
-export const FABLE_MODEL_OPTION_NAME = "Fable 5";
-export const FABLE_MODEL_OPTION_DESCRIPTION = "Fable 5 · Most capable for hardest and longest-running tasks";
+export const FABLE_MODEL_ID = "claude-fable-5-1";
+export const FABLE_MODEL_OPTION = "claude-fable-5-1[1m]";
+export const FABLE_MODEL_OPTION_NAME = "Fable 5.1";
+export const FABLE_MODEL_OPTION_DESCRIPTION = "Fable 5.1 · Most capable for hardest and longest-running tasks";
 
 /**
  * Claude Code reads `.claude.json` from `$CLAUDE_CONFIG_DIR/.claude.json` when that

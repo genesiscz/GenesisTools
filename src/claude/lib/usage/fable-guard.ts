@@ -88,7 +88,7 @@ export function weeklyStatusForAccount(
 
 export interface DeadBucket {
     /** Human name of the bucket that is empty. */
-    bucket: "weekly quota" | "Fable 5";
+    bucket: "weekly quota" | "Fable";
     resetsAt: string | null;
 }
 
@@ -115,7 +115,7 @@ export function deadBucketForAccount(
 
     const fable = fableStatusForAccount(accounts, accountName, now);
 
-    return fable.available ? null : { bucket: "Fable 5", resetsAt: fable.resetsAt };
+    return fable.available ? null : { bucket: "Fable", resetsAt: fable.resetsAt };
 }
 
 /**
