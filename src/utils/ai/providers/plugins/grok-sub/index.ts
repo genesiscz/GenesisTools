@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { decodeJwtClaims, getActiveAuthEntry, readAuthFileAsync } from "../../../grok/auth";
 import { grokAuthPath, resolveGrokHome } from "../../../grok/paths";
@@ -78,7 +79,11 @@ export const grokSubPlugin: ProviderPlugin = {
          * round-trip and we bind the file it writes.
          */
         externalLogin(ctx) {
-            const home = ctx.home ?? resolveGrokHome();
+            // `grok login` writes `$GROK_HOME/auth.json`, so an explicit auth file
+            // has to DICTATE the home, not just be reported alongside it: with
+            // `--auth-file` and no `--home` the CLI wrote the default home and the
+            // binder then reported "still no credential" (PR #360 review t14).
+            const home = ctx.home ?? (ctx.authFile ? dirname(ctx.authFile) : resolveGrokHome());
 
             return {
                 command: ["grok", "login"],
