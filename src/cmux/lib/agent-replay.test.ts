@@ -17,7 +17,7 @@ function grokSession(overrides: Partial<ReplayCatalogSession> = {}): ReplayCatal
     return {
         kind: "grok",
         sessionId: GROK_ID,
-        cwd: "/Users/me/Projects/shop-fe",
+        cwd: "/Users/me/Projects/shop",
         title: "PRs merged into release/2026-09-03",
         ...overrides,
     };
@@ -42,7 +42,7 @@ function terminal(title: string, extra: Partial<TerminalSurface> = {}): Terminal
     return {
         type: "terminal",
         title,
-        cwd: extra.cwd ?? "/Users/me/Projects/shop-fe",
+        cwd: extra.cwd ?? "/Users/me/Projects/shop",
         ...extra,
     };
 }
@@ -50,14 +50,14 @@ function terminal(title: string, extra: Partial<TerminalSurface> = {}): Terminal
 describe("inferLauncherFromTitle", () => {
     test("detects a grok tab even when the live title has a spinner prefix", () => {
         expect(inferLauncherFromTitle("PRs merged into release/2026-09-03 - grok")).toBe("grok");
-        expect(inferLauncherFromTitle("lukas-messages - grok · 33a9c763")).toBe("grok");
+        expect(inferLauncherFromTitle("project-notes - grok · 33a9c763")).toBe("grok");
         expect(inferLauncherFromTitle("⠙ - Waiting for response… - Restore cmux surfaces - grok")).toBe("grok");
     });
 
     test("detects Claude Code tabs from the working/idle glyphs", () => {
         expect(inferLauncherFromTitle("✳ Continue")).toBe("claude");
         expect(inferLauncherFromTitle("⠐ Task list h_szhk85zs")).toBe("claude");
-        expect(inferLauncherFromTitle("✳ col-297040-burn-auth-callback · 46768bb6")).toBe("claude");
+        expect(inferLauncherFromTitle("✳ auth-callback · 46768bb6")).toBe("claude");
     });
 
     test("detects a codex tab from the same suffix shape as grok", () => {
@@ -66,7 +66,7 @@ describe("inferLauncherFromTitle", () => {
     });
 
     test("leaves idle shells and other tools alone", () => {
-        expect(inferLauncherFromTitle("Martin@MacBook-Pro:~/Tresors/Projects/App")).toBeUndefined();
+        expect(inferLauncherFromTitle("alice@host:~/Projects/App")).toBeUndefined();
         expect(inferLauncherFromTitle("ncdu /root/security/")).toBeUndefined();
         expect(inferLauncherFromTitle("tail -f /tmp/*.log")).toBeUndefined();
     });
@@ -83,18 +83,14 @@ describe("matchGrokSession", () => {
     ];
 
     test("matches an exact generated title in the same cwd", () => {
-        const hit = matchGrokSession(
-            "PRs merged into release/2026-09-03 - grok",
-            "/Users/me/Projects/shop-fe",
-            sessions
-        );
+        const hit = matchGrokSession("PRs merged into release/2026-09-03 - grok", "/Users/me/Projects/shop", sessions);
         expect(hit?.sessionId).toBe(GROK_ID);
     });
 
     test("matches a truncated cmux title against the longer generated title", () => {
         const hit = matchGrokSession(
             "Worktree bun installs: Skia copy costs 1… - grok",
-            "/Users/me/Projects/shop-fe",
+            "/Users/me/Projects/shop",
             sessions
         );
         expect(hit?.sessionId).toBe("01a05d17-c512-7dd2-abb6-e62d8c7d612a");
@@ -106,9 +102,7 @@ describe("matchGrokSession", () => {
     });
 
     test("returns nothing for an idle shell title", () => {
-        expect(
-            matchGrokSession("Martin@MacBook-Pro:~/Tresors/Projects/shop-fe", "/Users/me/Projects/shop-fe", sessions)
-        ).toBeUndefined();
+        expect(matchGrokSession("alice@host:~/Projects/shop", "/Users/me/Projects/shop", sessions)).toBeUndefined();
     });
 });
 
@@ -168,9 +162,7 @@ describe("replayCommandForSurface", () => {
     test("does not invent a command for ncdu, ssh, or an idle shell", () => {
         const sessions = catalog([grokSession(), claudeSession()]);
         expect(replayCommandForSurface(terminal("ncdu /root/security/"), sessions)?.command).toBeUndefined();
-        expect(
-            replayCommandForSurface(terminal("Martin@MacBook-Pro:~/Tresors/Projects/shop-fe"), sessions)?.command
-        ).toBeUndefined();
+        expect(replayCommandForSurface(terminal("alice@host:~/Projects/shop"), sessions)?.command).toBeUndefined();
         expect(
             replayCommandForSurface(terminal("-=*[ROOT]*=- | root@de:~ | 125x25 | pts/0"), sessions)?.command
         ).toBeUndefined();

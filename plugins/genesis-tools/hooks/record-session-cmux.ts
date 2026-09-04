@@ -52,6 +52,40 @@ function identifyRefs(): IdentifyCaller {
     }
 }
 
+/**
+ * True when the Claude process this hook belongs to has a controlling tty.
+ *
+ * A headless child (`claude -p` run from another session's Bash tool, a probe
+ * battery, a subagent script) inherits the parent's CMUX_SURFACE_ID, so
+ * recording it RELABELS the parent's tab with the child's session id — the
+ * newest journal line wins, and `cmux tree`/monitor presence then report the
+ * long-lived session in that pane as "not in cmux" (observed 2026-09-01:
+ * two `claude -p` children stole surface:108 from session 7af3dcba).
+ *
+ * Env comparison cannot catch this: a nested claude overwrites
+ * CLAUDE_CODE_SESSION_ID for its own children. The tty can — the interactive
+ * claude that actually OWNS the pane has one (`ttys…`), a headless run shows
+ * `??`. CLAUDE_PID names the claude process in hook env; without it, fail
+ * open and record, matching the old behavior.
+ */
+function claudeHasTty(): boolean {
+    const pid = process.env.CLAUDE_PID;
+
+    if (!pid || !/^\d+$/.test(pid)) {
+        return true;
+    }
+
+    const result = spawnSync("ps", ["-o", "tty=", "-p", pid], { encoding: "utf8", timeout: 1500 });
+
+    if (result.status !== 0 || !result.stdout) {
+        return true;
+    }
+
+    // macOS prints `??` for "no controlling tty", Linux prints `?`.
+    const tty = result.stdout.trim();
+    return tty !== "??" && tty !== "?";
+}
+
 function main(raw: string): void {
     if (!raw.trim()) {
         return;
@@ -75,6 +109,12 @@ function main(raw: string): void {
 
     // Not in cmux and not in tmux: nothing to record.
     if (!surfaceId && !tmuxPane) {
+        return;
+    }
+
+    // Headless claude (`-p` child, probe, subagent): the surface in its env is
+    // its PARENT's pane, and recording it would steal that pane's label.
+    if (!claudeHasTty()) {
         return;
     }
 

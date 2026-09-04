@@ -63,7 +63,7 @@ export async function openSessionAt(
                     cwd: candidate.cwd,
                     window: target.windowRef,
                 });
-                const anchor = await pickAnchorSurface(created.workspace_ref);
+                const anchor = await showThenPickAnchor(created.workspace_ref);
                 return { workspaceRef: created.workspace_ref, surfaceRef: anchor.surfaceRef };
             }
             case "workspace": {
@@ -111,6 +111,23 @@ export async function openSessionAt(
         surfaceRef: placed.surfaceRef,
         target: target.kind,
     };
+}
+
+/**
+ * A workspace that has never been shown does not resolve for `pane.list`: cmux
+ * answers with the ACTIVE workspace's panes rather than an error. Asking before
+ * the first select therefore returned the CALLER's own surface, and the resume
+ * command was typed into the terminal the user was sitting in — observed
+ * 2026-08-31, where a new workspace:13 sent its command to surface:179 in
+ * workspace:3. Show the workspace first, then ask it for its anchor.
+ *
+ * raiseThenSend selects the same workspace again a moment later, which is a
+ * no-op, so the extra select costs one call and no flicker.
+ */
+async function showThenPickAnchor(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
+    await runCmuxOk(["select-workspace", "--workspace", workspaceRef]);
+    await new Promise((resolve) => setTimeout(resolve, PLACEMENT_SETTLE_MS));
+    return pickAnchorSurface(workspaceRef);
 }
 
 interface IdentifyResponse {

@@ -2,6 +2,7 @@ import { findWorkspaceByName } from "@genesiscz/utils/cmux/layout";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
+    type PaneListResponse,
     paneList,
     type SurfaceSplitResult,
     type WorkspaceCreateResult,
@@ -48,8 +49,27 @@ export async function ensureWorkspaceByName(name: string, cwd?: string): Promise
     return created.workspace_ref;
 }
 
-export async function pickAnchorSurface(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
-    const layout = await paneList(workspaceRef);
+/**
+ * cmux answers `pane.list` for a workspace it cannot resolve with the ACTIVE
+ * workspace's panes instead of an error. Verified 2026-08-31:
+ * `list-panes --workspace workspace:999` returned workspace:3's layout, echoing
+ * `"workspace_ref": "workspace:3"`. A workspace that was just created and never
+ * shown takes the same path, so trusting that answer types the launch command
+ * into whichever terminal the user happens to be sitting in. Compare the echoed
+ * ref before believing the panes.
+ */
+export function anchorFromLayout(
+    workspaceRef: string,
+    layout: PaneListResponse
+): { paneRef: string; surfaceRef: string } {
+    // Only short refs are comparable; a UUID or index request echoes back as a ref.
+    if (workspaceRef.startsWith("workspace:") && layout.workspace_ref && layout.workspace_ref !== workspaceRef) {
+        throw new Error(
+            `cmux answered pane.list for ${layout.workspace_ref} when asked about ${workspaceRef} — ` +
+                `select the workspace before asking for its panes`
+        );
+    }
+
     const panes = layout.panes;
 
     if (panes.length === 0) {
@@ -64,6 +84,10 @@ export async function pickAnchorSurface(workspaceRef: string): Promise<{ paneRef
     }
 
     return { paneRef: focused.ref, surfaceRef };
+}
+
+export async function pickAnchorSurface(workspaceRef: string): Promise<{ paneRef: string; surfaceRef: string }> {
+    return anchorFromLayout(workspaceRef, await paneList(workspaceRef));
 }
 
 export async function openSplitInWorkspace(workspaceRef: string): Promise<OpenSplitResult> {
