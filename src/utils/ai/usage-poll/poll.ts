@@ -8,7 +8,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
 import type { SnapshotsCacheProvider } from "./legacy-cache";
-import { readSnapshotsCache, writeSnapshotsCache } from "./legacy-cache";
+import { projectRoundIntoLegacyCache, readSnapshotsCache, writeSnapshotsCache } from "./legacy-cache";
 import {
     applyPollGateOutcomes,
     blockedEntry,
@@ -156,6 +156,9 @@ async function pollProvider(
         putCache: (key, value) => storage.putCacheFile(key, value, USAGE_CACHE_TTL),
         withLock: (key, fn) => storage.withFileLock({ file: usageCacheFilePath(key), fn, timeout: 10_000 }),
         recordHistory: (snapshots) => recordSnapshots(snapshots),
+        // Spec 6.4: the Genesis app still reads `claude-usage/cache/usage-shared` directly,
+        // so an anthropic round keeps writing it until Genesis switches to snapshots.json.
+        onFresh: (snapshots, fetchedAt) => projectRoundIntoLegacyCache(providerId, snapshots, fetchedAt),
     });
 
     logger.debug({ provider: providerId, accounts: accounts.length, cacheKey }, "[usage] polling provider");

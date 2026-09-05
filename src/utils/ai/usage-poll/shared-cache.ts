@@ -43,7 +43,11 @@ export interface SharedUsageDeps<T> {
     withLock: <R>(key: string, fn: () => Promise<R>) => Promise<R>;
     notifyExtraUsage?: (accounts: T[]) => void | Promise<void>;
     recordHistory?: (accounts: T[]) => void | Promise<void>;
-    /** Ran after every LIVE fetch, with the whole payload. Used for the legacy projection. */
+    /**
+     * Ran after every LIVE fetch, with the whole payload that was cached — this round's rows
+     * plus the accounts a FILTERED round never asked about. Used for the legacy projection,
+     * which must not shrink the Genesis app's file to whatever one filtered poll fetched.
+     */
     onFresh?: (accounts: T[], fetchedAt: number) => void | Promise<void>;
 }
 
@@ -160,10 +164,8 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
                     previous
                 );
                 const fetchedAt = Date.now();
-                await deps.putCache(cacheKey, {
-                    fetchedAt,
-                    accounts: cacheableSet(ops, fresh, previous, opts.accountFilter),
-                });
+                const cacheable = cacheableSet(ops, fresh, previous, opts.accountFilter);
+                await deps.putCache(cacheKey, { fetchedAt, accounts: cacheable });
 
                 if (deps.recordHistory) {
                     try {
@@ -186,7 +188,7 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
 
                 if (deps.onFresh) {
                     try {
-                        await deps.onFresh(fresh, fetchedAt);
+                        await deps.onFresh(cacheable, fetchedAt);
                     } catch (err) {
                         logger.warn({ err }, "usage cache projection failed; returning fetched usage anyway");
                     }

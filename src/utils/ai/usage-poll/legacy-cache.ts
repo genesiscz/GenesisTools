@@ -133,6 +133,58 @@ export async function writeLegacyUsageShared(
     logger.debug({ accounts: payload.accounts.length }, "[usage] legacy usage-shared cache written");
 }
 
+/** The only provider whose rounds keep the claude-only legacy file current. */
+export const LEGACY_CACHE_PROVIDER = "anthropic-sub";
+
+/**
+ * One snapshot as the Swift decoder wants it. `native` is the untouched `UsageResponse`, so
+ * this re-wraps rather than re-deriving from `LimitWindow[]`, and the epoch-ms timestamps the
+ * decoder expects come back from the snapshot's ISO strings.
+ */
+function legacyRowFromSnapshot(snapshot: AccountUsageSnapshot): LegacyAccountInput {
+    const refreshExpiresAt = snapshot.auth?.refreshExpiresAt
+        ? new Date(snapshot.auth.refreshExpiresAt).getTime()
+        : undefined;
+
+    return {
+        accountName: snapshot.accountName,
+        ...(snapshot.label === undefined ? {} : { label: snapshot.label }),
+        ...(snapshot.plan?.name === undefined ? {} : { subscriptionPlan: snapshot.plan.name }),
+        ...(snapshot.plan?.status === undefined ? {} : { subscriptionStatus: snapshot.plan.status }),
+        ...(snapshot.plan?.createdAt === undefined ? {} : { subscriptionCreatedAt: snapshot.plan.createdAt }),
+        ...(snapshot.plan?.contradictedAt === undefined ? {} : { planContradictedAt: snapshot.plan.contradictedAt }),
+        ...(refreshExpiresAt === undefined || Number.isNaN(refreshExpiresAt) ? {} : { refreshExpiresAt }),
+        ...(snapshot.native === undefined ? {} : { usage: snapshot.native }),
+        ...(snapshot.error === undefined ? {} : { error: snapshot.error }),
+        ...(snapshot.stale === undefined
+            ? {}
+            : {
+                  stale: {
+                      lastSuccessAt: new Date(snapshot.stale.lastSuccessAt).getTime(),
+                      reason: snapshot.stale.reason,
+                  },
+              }),
+        ...(snapshot.auth?.orgBlocked === undefined ? {} : { orgBlocked: snapshot.auth.orgBlocked }),
+    };
+}
+
+/**
+ * Keep the Genesis app's file current after a live `anthropic-sub` round (spec 6.4). Every
+ * other provider is a no-op: the file is claude-only and one grok row in it makes the whole
+ * thing wrong rather than richer.
+ */
+export async function projectRoundIntoLegacyCache(
+    provider: string,
+    snapshots: readonly AccountUsageSnapshot[],
+    fetchedAt: number
+): Promise<void> {
+    if (provider !== LEGACY_CACHE_PROVIDER) {
+        return;
+    }
+
+    await writeLegacyUsageShared(snapshots.map(legacyRowFromSnapshot), fetchedAt);
+}
+
 /** One provider's slice of the all-provider cache file (spec 6.4, amended 18:05). */
 export interface SnapshotsCacheProvider {
     /** CLI alias: `claude`, `codex`, `grok`. */

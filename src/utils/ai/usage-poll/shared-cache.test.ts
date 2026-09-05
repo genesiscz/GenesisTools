@@ -287,6 +287,38 @@ describe("SNAPSHOT_OPS", () => {
         await expect(get({})).rejects.toThrow("Failed to acquire file lock");
     });
 
+    /**
+     * `onFresh` writes the legacy `usage-shared` file the Genesis app decodes. Handing it
+     * this round's rows only would shrink that file to whatever one filtered poll fetched,
+     * so it gets the same set the cache got.
+     */
+    test("onFresh gets the accounts a filtered round never fetched", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:openai-sub", {
+            fetchedAt: Date.now() - 300_000,
+            accounts: [snapshot("openai-sub", "work", 11), snapshot("openai-sub", "personal", 22)],
+        });
+
+        const projected: string[][] = [];
+        const recorded: string[][] = [];
+        const get = makeGet("openai-sub", {
+            ...storeDeps(store, async () => [snapshot("openai-sub", "work", 44)]),
+            recordHistory: (snapshots) => {
+                recorded.push(snapshots.map((s) => s.accountName));
+            },
+            onFresh: (snapshots) => {
+                projected.push(snapshots.map((s) => s.accountName));
+            },
+        });
+
+        await get({ force: true, accountFilter: "work" });
+
+        expect(projected).toEqual([["work", "personal"]]);
+        // The write-through still sees only what was actually fetched: recording a carried
+        // row would re-timestamp an old reading as current.
+        expect(recorded).toEqual([["work"]]);
+    });
+
     test("history write-through and onFresh fire only on a live fetch", async () => {
         const store: CacheStore = new Map();
         const recorded: number[] = [];
