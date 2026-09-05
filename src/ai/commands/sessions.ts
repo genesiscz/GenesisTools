@@ -65,7 +65,7 @@ export function registerSessionsCommands(program: Command): void {
                 }
 
                 await runTranscriptDoor({
-                    tool: "tools ai",
+                    tool: "tools ai sessions tail",
                     subcommand: ["sessions", "tail"],
                     provider,
                     query: sessionId,

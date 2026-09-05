@@ -19,7 +19,7 @@ export interface LogsOptions {
 export async function printTranscript(options: LogsOptions, follow: boolean, subcommand: string): Promise<void> {
     const store = new CodexSessionStore();
     await runTranscriptDoor({
-        tool: "tools codex",
+        tool: `tools codex ${subcommand}`,
         subcommand: [subcommand],
         provider: "codex",
         query: options.name,

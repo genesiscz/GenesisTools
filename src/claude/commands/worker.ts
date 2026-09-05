@@ -203,7 +203,7 @@ export function registerWorkerCommand(program: Command): void {
                 }
 
                 await runTranscriptDoor({
-                    tool: "tools claude",
+                    tool: "tools claude worker read",
                     subcommand: ["worker", "read"],
                     provider: "claude",
                     query: options.name,
@@ -229,7 +229,7 @@ export function registerWorkerCommand(program: Command): void {
             }
 
             await runTranscriptDoor({
-                tool: "tools claude",
+                tool: "tools claude worker tail",
                 subcommand: ["worker", "tail"],
                 provider: "claude",
                 query: options.name,
