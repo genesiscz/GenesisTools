@@ -334,6 +334,24 @@ describe("writeSnapshotsCache", () => {
         expect(cache?.providers["grok-sub"].accounts.map((entry) => entry.accountName)).toEqual(["side"]);
     });
 
+    /**
+     * The stamp is what a reader judges freshness by. An anthropic-only poll serving a
+     * 40s-old cache must not report the whole file as 40s old when another provider's
+     * slice arrived a moment ago.
+     */
+    test("a round with older rows never moves the file stamp backwards", async () => {
+        useTempHome();
+
+        await writeSnapshotsCache(slice("grok-sub", "grok", "work"), new Date("2026-09-04T18:00:30.000Z"));
+        await writeSnapshotsCache(slice("anthropic-sub", "claude", "personal"), new Date("2026-09-04T18:00:00.000Z"));
+
+        expect((await readSnapshotsCache())?.fetchedAt).toBe("2026-09-04T18:00:30.000Z");
+
+        await writeSnapshotsCache(slice("grok-sub", "grok", "side"), new Date("2026-09-04T18:01:00.000Z"));
+
+        expect((await readSnapshotsCache())?.fetchedAt).toBe("2026-09-04T18:01:00.000Z");
+    });
+
     test("strips native — a provider-private payload never crosses a file boundary", async () => {
         useTempHome();
 

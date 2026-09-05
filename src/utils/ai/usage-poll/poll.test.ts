@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
-import { mergeAccountSlice, usagePlugins } from "./poll";
+import { latestFetchedAt, mergeAccountSlice, usagePlugins } from "./poll";
 import type { AccountUsageSnapshot } from "./types";
 
 /**
@@ -90,5 +90,37 @@ describe("mergeAccountSlice", () => {
 
         expect(mergeAccountSlice(undefined, fresh)).toBe(fresh);
         expect(mergeAccountSlice([], fresh)).toBe(fresh);
+    });
+});
+
+/**
+ * `pollAccounts` runs on every read and most reads are served from the 45s cache, so the
+ * file-level stamp used to say "fetched now" about rows that were minutes old.
+ */
+describe("latestFetchedAt", () => {
+    function at(name: string, fetchedAt: string): AccountUsageSnapshot {
+        return {
+            provider: "anthropic-sub",
+            accountId: `acc_${name}`,
+            accountName: name,
+            fetchedAt,
+            limits: [],
+        };
+    }
+
+    const now = new Date("2026-09-05T18:00:00.000Z");
+
+    test("reports the newest row's own fetch time, not the wall clock", () => {
+        const stamp = latestFetchedAt(
+            [at("work", "2026-09-05T17:58:00.000Z"), at("personal", "2026-09-05T17:59:30.000Z")],
+            now
+        );
+
+        expect(stamp.toISOString()).toBe("2026-09-05T17:59:30.000Z");
+    });
+
+    test("falls back to now when a round returned nothing datable", () => {
+        expect(latestFetchedAt([], now)).toBe(now);
+        expect(latestFetchedAt([at("work", "not a date")], now)).toBe(now);
     });
 });

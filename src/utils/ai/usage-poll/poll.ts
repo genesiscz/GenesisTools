@@ -105,12 +105,34 @@ export async function pollAccounts(opts: PollAccountsOptions = {}): Promise<Acco
 
     // The all-provider file is what Plan-Dashboard and the Genesis app read. The writer
     // merges per provider, so a call that polled one provider never drops the others.
-    await writeSnapshotsCache(byProvider);
+    await writeSnapshotsCache(byProvider, latestFetchedAt(out));
 
     return out;
 }
 
 /** Fresh rows first, then the accounts the previous file held that this round skipped. */
+
+/**
+ * When the rows this round returned were actually fetched.
+ *
+ * `pollAccounts` runs on every READ, and most reads are served from the 45s cache, so
+ * stamping the file with `Date.now()` told the dashboard and the Genesis app that a
+ * minutes-old reading had just arrived. Every snapshot carries its own fetch time; the
+ * newest of them is the one fact the file-level stamp can honestly report.
+ */
+export function latestFetchedAt(snapshots: readonly AccountUsageSnapshot[], now: Date = new Date()): Date {
+    let newest = 0;
+
+    for (const snapshot of snapshots) {
+        const ms = Date.parse(snapshot.fetchedAt);
+
+        if (Number.isFinite(ms) && ms > newest) {
+            newest = ms;
+        }
+    }
+
+    return newest > 0 ? new Date(newest) : now;
+}
 export function mergeAccountSlice(
     previous: readonly AccountUsageSnapshot[] | undefined,
     fresh: AccountUsageSnapshot[]

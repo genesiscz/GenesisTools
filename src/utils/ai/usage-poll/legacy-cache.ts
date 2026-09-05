@@ -218,6 +218,17 @@ function stripNative(snapshot: AccountUsageSnapshot): AccountUsageSnapshot {
     return rest;
 }
 
+/** The later of a round's stamp and the one already in the file, as ISO-8601. */
+function newestStamp(fetchedAt: Date, current: string | undefined): string {
+    const previous = current ? Date.parse(current) : Number.NaN;
+
+    if (!Number.isFinite(previous) || previous <= fetchedAt.getTime()) {
+        return fetchedAt.toISOString();
+    }
+
+    return new Date(previous).toISOString();
+}
+
 /**
  * Merges per provider: a caller that polled one provider (`tools claude usage` polls
  * anthropic only) replaces that provider's slice and keeps every other slice the file
@@ -245,7 +256,10 @@ export async function writeSnapshotsCache(
     // Immaterial at USAGE_CACHE_TTL of 365 days, and the payload carries its own
     // `fetchedAt` for any reader that wants to judge age for itself.
     const payload = await usagePollStorage().atomicUpdate<SnapshotsCache>(SNAPSHOTS_CACHE_KEY, (current) => ({
-        fetchedAt: fetchedAt.toISOString(),
+        // One round's rows can be older than another provider's slice already in the file
+        // (an anthropic-only poll serving a 40s-old cache beside a grok slice fetched a
+        // moment ago), so the file-level stamp keeps the newest data the file holds.
+        fetchedAt: newestStamp(fetchedAt, current?.fetchedAt),
         providers: { ...current?.providers, ...fresh },
     }));
 
