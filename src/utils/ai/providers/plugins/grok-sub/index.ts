@@ -6,6 +6,7 @@ import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverGrokHomes } from "./discover";
+import { grokUsage } from "./usage";
 
 /**
  * SuperGrok subscription through the Grok CLI chat proxy.
@@ -15,12 +16,15 @@ import { discoverGrokHomes } from "./discover";
  */
 const resolver = new GrokSubResolver();
 
-/** xAI reports one window: the monthly billing credit (`used` against `monthlyLimit`). */
+/**
+ * xAI reports the subscription allowance as whole percent over a rolling week, split by
+ * product. The pay-as-you-go credit only appears when the account has on-demand spend.
+ */
 const presentation: AccountFeatures["presentation"] = {
     displayName: "Grok",
     alias: "grok",
-    limitOrder: ["monthly"],
-    prominentLimits: ["monthly"],
+    limitOrder: ["weekly", "product:grokbuild", "product:grokchat", "credit"],
+    prominentLimits: ["weekly"],
 };
 
 export const grokSubPlugin: ProviderPlugin = {
@@ -66,6 +70,7 @@ export const grokSubPlugin: ProviderPlugin = {
     accounts: {
         presentation,
         logoutTargets: ["authFile"],
+        usage: grokUsage,
         discoverHomes: () => discoverGrokHomes(),
 
         /**

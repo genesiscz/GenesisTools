@@ -1,13 +1,20 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import type { AccountIdentity, DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import type {
+    AccountIdentity,
+    AccountUsageSnapshot,
+    DiscoveredHome,
+} from "@genesiscz/utils/ai/providers/account-features";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
+import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { formatRelativeTime } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { renderCliHeader, renderCliKeyRow, renderCliSection } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import { type CredentialKind, credentialKinds } from "./credential-kinds";
+import { formatLimitLine, lastSnapshotFor } from "./last-usage";
 
 export interface RunShowOptions {
     name: string;
@@ -26,6 +33,8 @@ export interface AccountDetail {
     identity?: { email?: string; accountUuid?: string; organizationUuid?: string; plan?: string };
     homes: Array<{ home: string; authFile?: string; boundToAccountId?: string }>;
     subscription?: { plan?: string; status?: string; checkedAt?: number };
+    /** The last RECORDED snapshot, never a fresh poll. Null when nothing was ever recorded. */
+    lastUsage: AccountUsageSnapshot | null;
 }
 
 /**
@@ -67,6 +76,16 @@ export async function runShow(opts: RunShowOptions): Promise<void> {
         logger.warn({ err, provider: account.provider }, "home discovery failed — omitting the homes section");
     }
 
+    // A READ of what the daemon last recorded. `show` never polls, so this is the
+    // only usage it can report and a missing file is an ordinary outcome, not an error.
+    let lastUsage: AccountUsageSnapshot | undefined;
+
+    try {
+        lastUsage = lastSnapshotFor(await readSnapshotsCache(), account);
+    } catch (err) {
+        logger.warn({ err, account: account.id }, "usage snapshot cache unreadable — omitting the usage section");
+    }
+
     const detail: AccountDetail = {
         id: account.id,
         name: account.name,
@@ -84,6 +103,7 @@ export async function runShow(opts: RunShowOptions): Promise<void> {
             status: account.subscriptionStatus,
             checkedAt: account.subscriptionCheckedAt,
         },
+        lastUsage: lastUsage ?? null,
     };
 
     if (opts.json) {
@@ -108,6 +128,39 @@ export async function runShow(opts: RunShowOptions): Promise<void> {
         }
     }
 
+    renderUsage(detail.lastUsage);
+
     renderCliSection("Next");
     out.println(pc.dim(`  Live quota: ${pc.cyan("tools ai usage")} · this command never polls.`));
+}
+
+/** The last recorded snapshot, in the same key-row style as the rest of `show`. */
+function renderUsage(snapshot: AccountUsageSnapshot | null): void {
+    renderCliSection("Last usage");
+
+    if (!snapshot) {
+        out.println(pc.dim(`  No usage snapshot yet. Run: ${pc.cyan("tools ai usage")}`));
+        return;
+    }
+
+    const fetchedAt = new Date(snapshot.fetchedAt);
+    const age = Number.isNaN(fetchedAt.getTime()) ? snapshot.fetchedAt : formatRelativeTime(fetchedAt);
+    renderCliKeyRow("Recorded", age);
+
+    if (snapshot.error) {
+        renderCliKeyRow("Error", snapshot.error);
+    }
+
+    if (snapshot.stale) {
+        renderCliKeyRow("Stale", snapshot.stale.reason);
+    }
+
+    if (snapshot.limits.length === 0) {
+        out.println(pc.dim("  No windows recorded in that snapshot."));
+        return;
+    }
+
+    for (const window of snapshot.limits) {
+        renderCliKeyRow(window.label, formatLimitLine(window));
+    }
 }

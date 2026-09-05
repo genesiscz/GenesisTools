@@ -1,18 +1,39 @@
+import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
+import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
+
+/** `-f` is repeatable and additive; `--account` is the variadic spelling of the same list. */
+function collectFilter(value: string, previous: string[]): string[] {
+    return [...previous, value];
+}
+
+interface UsageOptions {
+    account?: string[];
+    filter?: string[];
+    range?: string | boolean;
+    token?: string;
+    tui?: boolean;
+    json?: boolean;
+    scored?: boolean;
+    watch?: boolean;
+    fresh?: boolean;
+}
 
 export function registerUsageCommand(program: Command): void {
     const usage = program
         .command("usage")
         .description("Show Claude API usage dashboard (interactive TUI)")
-        .option("-f, --filter <account>", "Filter to a specific account name")
+        .option("--account <name...>", "Limit to these account names")
+        .option("-f, --filter <account>", "Alias of --account, kept for scripts", collectFilter, [])
+        .option("--range [value]", `History range: ${RANGE_VALUES.join(" | ")}`)
         .option("--token <token>", "Use a specific OAuth access token")
         .option("--no-tui", "Use legacy plain text output")
         .option("--json", "Output as JSON")
         .option("--scored", "With --json, emit sortGrouped(scoreAccounts(...))")
         .option("--watch", "Watch mode (legacy)")
-        .option("--interval <seconds>", "Poll interval override")
         .option("--fresh", "Force a live Anthropic fetch, bypassing the shared cache");
 
     usage
@@ -50,12 +71,26 @@ export function registerUsageCommand(program: Command): void {
             await out.flush();
         });
 
-    usage.action(async (opts: Record<string, string | boolean | undefined>) => {
-        const accountFilter = typeof opts.filter === "string" ? opts.filter : undefined;
+    usage.action(async (opts: UsageOptions) => {
+        const names = [...(opts.account ?? []), ...(opts.filter ?? [])];
+        const accountFilter = names.length > 0 ? names : undefined;
 
         if (opts.scored && !opts.json) {
             logger.error("use --json --scored");
             process.exit(1);
+        }
+
+        const range = resolveRangeFlag(opts.range);
+
+        if (range.status === "invalid") {
+            out.printlnErr(
+                suggestEnumFlag("tools claude usage", "--range", RANGE_VALUES, {
+                    subcommand: ["usage"],
+                    ...(range.given === undefined ? {} : { given: range.given }),
+                })
+            );
+            process.exitCode = 1;
+            return;
         }
 
         if (opts.tui === false || opts.json || opts.token || opts.watch) {
@@ -63,7 +98,7 @@ export function registerUsageCommand(program: Command): void {
             const { getSharedAccountsUsage } = await import("@app/claude/lib/usage/shared-cache");
             const { renderAllAccounts, renderAccountUsage } = await import("@app/claude/lib/usage/display");
 
-            if (opts.token && typeof opts.token === "string") {
+            if (opts.token) {
                 const usage = await fetchUsage(opts.token);
                 const account = { accountName: "token", usage };
 
@@ -77,21 +112,22 @@ export function registerUsageCommand(program: Command): void {
                 return;
             }
 
-            // Validate account filter against AIConfig
             if (accountFilter) {
                 const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
                 const aiConfig = await AIConfig.load();
-                const exists = aiConfig.getAccountsByProvider("anthropic-sub").some((a) => a.name === accountFilter);
+                const known = new Set(aiConfig.getAccountsByProvider("anthropic-sub").map((a) => a.name));
+                const unknown = accountFilter.filter((name) => !known.has(name));
 
-                if (!exists) {
-                    logger.error({ accountFilter }, "Unknown account");
+                if (unknown.length > 0) {
+                    logger.error({ unknown }, "Unknown account");
                     process.exit(1);
                 }
             }
 
             if (opts.watch) {
+                // `watchUsage` is the legacy single-account renderer; it takes one name.
                 const { watchUsage } = await import("@app/claude/lib/usage/watch");
-                await watchUsage(accountFilter);
+                await watchUsage(accountFilter?.[0]);
                 return;
             }
 
@@ -131,6 +167,9 @@ export function registerUsageCommand(program: Command): void {
         // Deferred: ink + react + the TUI tree cost ~160ms to import and the
         // hot --json path (Genesis.app polling) never renders them.
         const { renderUsageTui } = await import("./render-tui");
-        await renderUsageTui(accountFilter);
+        await renderUsageTui({
+            ...(accountFilter === undefined ? {} : { accountFilter }),
+            ...(range.status === "ok" ? { range: range.range } : {}),
+        });
     });
 }

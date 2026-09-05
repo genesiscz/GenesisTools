@@ -1,5 +1,5 @@
 import { formatDuration as formatDurationShared } from "@genesiscz/utils/format";
-import type { UsageHistoryDb } from "./history-db";
+import { DEFAULT_LIMITS_PROVIDER, type UsageHistoryDb } from "./history-db";
 import { calculateRollingRates, projectTimeToLimit, type RollingRates, type TimestampedValue } from "./rate-math";
 
 /**
@@ -128,7 +128,7 @@ export interface PaceInput {
 
 function samplesFor(db: UsageHistoryDb, accountName: string, bucket: string): TimestampedValue[] {
     return db
-        .getSnapshots(accountName, bucket, LOOKBACK_MINUTES)
+        .getSnapshots(accountName, bucket, LOOKBACK_MINUTES, DEFAULT_LIMITS_PROVIDER)
         .map((s) => ({ timestamp: s.timestamp, value: s.utilization }));
 }
 
@@ -146,7 +146,7 @@ export function paceFor(db: UsageHistoryDb, input: PaceInput, now: Date = new Da
     if (scope === "pooled") {
         // Same bucket kind across every account we have history for — one
         // person's working rhythm, not one account's.
-        for (const entry of db.getAllAccountBuckets()) {
+        for (const entry of db.getAllAccountBuckets(DEFAULT_LIMITS_PROVIDER)) {
             if (entry.bucket !== input.bucket || entry.accountName === input.accountName) {
                 continue;
             }

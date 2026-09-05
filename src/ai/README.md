@@ -17,6 +17,7 @@ The user-facing face of the AI subsystem under `src/utils/ai/`. The verbs here a
 | `models` | Manage downloaded local models |
 | `config` | Manage AI accounts, defaults, links, secrets and diagnostics |
 | `accounts` | Browser logins, logout, and vendor-home discovery for the subscription providers |
+| `usage` | Quota and rate-limit windows for every provider that reports them, plus the polling daemon |
 
 ## Quick start
 
@@ -127,6 +128,21 @@ Where a login lands:
 - **grok**: no in-process flow. The command prints `grok login` with `GROK_HOME` set, offers to run it, then binds the `auth.json` it wrote.
 
 A re-login merges onto the account of the same name and keeps its long-lived token, secondary grant, label and apps. When the browser proves a different identity than the account already stores, the write needs a confirmation in a TTY and is refused in a pipe.
+
+## `ai usage`: quota across every provider
+
+One dashboard over every plugin that declares `accounts.usage`. The TUI is the default; `--json` and `--no-tui` never import Ink, which is what keeps a scripted read cheap.
+
+```bash
+tools ai usage [--provider claude|codex|grok] [--account <name>] [--range 60m|6h|24h|7d] [--json|--no-tui] [--fresh]
+tools ai usage daemon register|unregister|status
+```
+
+`--provider` and `--range` are enumerated: passed with no value, or with a value that is not on the list, they print the possible ones and exit 1.
+
+`tools claude usage`, `tools codex usage` and `tools grok usage` are the same dashboard pinned to one provider. `tools claude usage` additionally keeps its Sessions tab, the `--token`, `--watch` and `--scored` flags, and its `usage sessions` subcommand.
+
+`daemon register` owns the single `ai-usage-poll` task and removes the old claude-only `claude-usage-poll` on the way through. Running it once is the whole migration. `tools claude daemon` is an alias for the same three subcommands.
 
 ## 🛑 Diagnostics do not mutate
 

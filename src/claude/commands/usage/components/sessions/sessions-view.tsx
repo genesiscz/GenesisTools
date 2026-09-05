@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { setModalOpen } from "@app/claude/commands/usage/hooks/input-scope";
-import { useScroll } from "@app/claude/commands/usage/hooks/use-scroll";
 import { type SessionRow, useSessions } from "@app/claude/commands/usage/hooks/use-sessions";
-import type { NotificationManager } from "@app/claude/lib/usage/notification-manager";
+import type { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime, formatTokens } from "@genesiscz/utils/format";
+import { setModalOpen } from "@genesiscz/utils/ink/usage-dashboard/hooks/input-scope";
+import { useScroll } from "@genesiscz/utils/ink/usage-dashboard/hooks/use-scroll";
 import { logger } from "@genesiscz/utils/logger";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -66,8 +66,9 @@ type PingState = "idle" | "pinging" | "done" | "error";
 
 const PING_TIMEOUT_MS = 15_000;
 
+/** `ExtraTabProps` from the dashboard shell: the tab is handed the shell's own manager. */
 interface SessionsViewProps {
-    notifications?: NotificationManager | null;
+    notifications: NotificationManager | null;
 }
 
 export function SessionsView({ notifications }: SessionsViewProps) {
@@ -112,10 +113,12 @@ export function SessionsView({ notifications }: SessionsViewProps) {
         return () => setModalOpen(false);
     }, [actionMenu.open]);
 
-    // TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8 fixed lines
+    // FilterBar(1) + TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 9
+    // fixed lines. The filter bar is the shell's, above the tabs, and forgetting it here
+    // cost the list one row and pushed the last session under the status bar.
     // Each group header takes 1 line + marginTop(1) for non-first groups
     const separatorLines = groups.length > 0 ? groups.length + (groups.length - 1) : 0;
-    const pageSize = Math.max(3, termHeight - 8 - separatorLines);
+    const pageSize = Math.max(3, termHeight - 9 - separatorLines);
 
     const { offset, setOffset } = useScroll({
         totalItems: flatRows.length,

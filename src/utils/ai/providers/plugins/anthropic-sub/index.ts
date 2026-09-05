@@ -2,9 +2,11 @@ import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { AnthropicSubResolver } from "../../../resolvers/AnthropicSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
+import { LIMIT_ORDER, PROMINENT_LIMITS } from "./buckets";
 import { anthropicLogin } from "./login";
 import { anthropicLoginLong } from "./login-long";
 import { anthropicLoginSecondary } from "./login-secondary";
+import { anthropicUsage } from "./usage";
 
 /**
  * Claude Max/Pro subscription.
@@ -17,16 +19,15 @@ import { anthropicLoginSecondary } from "./login-secondary";
 const resolver = new AnthropicSubResolver();
 
 /**
- * `limitOrder` is `VISIBLE_BUCKETS` (`src/claude/lib/usage/constants.ts`) plus
- * `extra_usage`, copied rather than imported: `src/utils/` must not depend on a
- * tool folder. `prominentLimits` are the keys the usage mapper emits for the
- * compact views (TUI overview, menubar).
+ * One vocabulary for the whole provider: `buckets.ts` is what the usage mapper emits and
+ * what `src/claude/lib/usage/constants.ts` re-exports for the TUI, so the display order
+ * here cannot drift from the keys that actually arrive.
  */
 const presentation: AccountFeatures["presentation"] = {
     displayName: "Claude",
     alias: "claude",
-    limitOrder: ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps", "extra_usage"],
-    prominentLimits: ["five_hour", "seven_day", "seven_day_sonnet"],
+    limitOrder: LIMIT_ORDER,
+    prominentLimits: PROMINENT_LIMITS,
 };
 
 export const anthropicSubPlugin: ProviderPlugin = {
@@ -75,6 +76,7 @@ export const anthropicSubPlugin: ProviderPlugin = {
         login: anthropicLogin,
         loginLong: anthropicLoginLong,
         loginSecondary: anthropicLoginSecondary,
+        usage: anthropicUsage,
 
         /**
          * Stored fields only, never a profile fetch. Resolving an access token to
