@@ -113,10 +113,12 @@ export function SessionsView({ notifications }: SessionsViewProps) {
         return () => setModalOpen(false);
     }, [actionMenu.open]);
 
-    // TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 8 fixed lines
+    // FilterBar(1) + TabBar(1) + StatusBar(3) + paddingY(2) + hint(1) + colHeader(1) = 9
+    // fixed lines. The filter bar is the shell's, above the tabs, and forgetting it here
+    // cost the list one row and pushed the last session under the status bar.
     // Each group header takes 1 line + marginTop(1) for non-first groups
     const separatorLines = groups.length > 0 ? groups.length + (groups.length - 1) : 0;
-    const pageSize = Math.max(3, termHeight - 8 - separatorLines);
+    const pageSize = Math.max(3, termHeight - 9 - separatorLines);
 
     const { offset, setOffset } = useScroll({
         totalItems: flatRows.length,
