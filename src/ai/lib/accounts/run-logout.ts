@@ -10,6 +10,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
+import { siblingCommandOf } from "./tool-names";
 
 export interface RunLogoutOptions {
     provider?: string | true;
@@ -186,6 +187,15 @@ export async function runLogout(opts: RunLogoutOptions): Promise<void> {
     const remaining = availableTargets((await AiConfigStore.load()).account(account.id) ?? account, declared);
     p.log.info(
         pc.dim(`Remaining: ${remaining.length > 0 ? remaining.join(" + ") : "nothing"}. Account entry kept in config.`)
+    );
+    // The entry survives a logout, so both ways out of that state belong here.
+    // The old claude-only command printed them and the shared core dropped them,
+    // leaving no hint that the account was still in the config (gap/cli).
+    p.log.info(
+        pc.dim(
+            `Re-login: ${pc.cyan(`${siblingCommandOf(opts.tool, "login")} ${account.name}`)} · ` +
+                `full removal: ${pc.cyan(`tools ai config account rm ${account.name}`)}`
+        )
     );
 }
 
