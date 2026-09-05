@@ -42,10 +42,14 @@ export const anthropicPresenters: UsagePresenters = {
         return colorForPctWithReset(window.percentUsed, window.key, window.resetsAt ?? null, new Date(now));
     },
 
+    // Read off `sessions-view.tsx`, not off the old overlay: the view binds `f`, and
+    // Enter opens a menu rather than resuming straight away.
     helpLines: [
         ["", "Sessions tab:"],
-        ["t", "Cycle the time filter"],
-        ["j/k", "Scroll up/down"],
-        ["enter", "Resume the selected session"],
+        ["↑/↓", "Select session"],
+        ["Enter", "Open action menu (ping / copy resume)"],
+        ["f", "Cycle time filter (1h/6h/24h/7d/all)"],
+        ["j/k", "Scroll list"],
+        ["g/G", "Top/bottom"],
     ],
 };
