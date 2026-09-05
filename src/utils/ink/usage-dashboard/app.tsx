@@ -44,6 +44,9 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
         [source.extraTabs]
     );
     const { activeTab, activeIndex } = useTabNavigation(tabs, source.config.defaultTab);
+    // An extra tab owns its own letters: the claude Sessions tab binds `f` to its time
+    // filter, and the shell answering the same key would move the History range behind it.
+    const extraTab = source.extraTabs?.find((tab) => tab.id === activeTab);
 
     const [pollInterval, setPollInterval] = useState<number>(
         POLL_INTERVALS.includes(source.config.refreshInterval as (typeof POLL_INTERVALS)[number])
@@ -88,7 +91,7 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
                 });
             }
         },
-        { isActive: !accountPickerOpen }
+        { isActive: !accountPickerOpen && !extraTab }
     );
 
     const { showHelp, setShowHelp } = useKeybindings({
@@ -130,7 +133,6 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
               ),
           }
         : null;
-    const extraTab = source.extraTabs?.find((tab) => tab.id === activeTab);
 
     return (
         // Clamp the frame STRICTLY below the viewport height: at >= rows Ink
