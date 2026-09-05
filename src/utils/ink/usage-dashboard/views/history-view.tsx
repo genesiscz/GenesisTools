@@ -2,6 +2,7 @@ import type { SeriesEntry, UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/
 import { logger } from "@genesiscz/utils/logger";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState } from "react";
+import { isModalOpen } from "../hooks/input-scope";
 import { useScroll } from "../hooks/use-scroll";
 import { colorForPercent, colorForWindowKey } from "../lib/colors";
 import { formatTimeRange } from "../types";
@@ -268,6 +269,10 @@ export function HistoryView({ db, dbVersion, timeRange, providers, accountFilter
     }, [layout, groupedMaxOffset, rows.length, availableLines, offset, setOffset]);
 
     useInput((input) => {
+        if (isModalOpen()) {
+            return;
+        }
+
         if (input === "l") {
             setLayout((current) => (current === "grouped" ? "flat" : "grouped"));
             return;

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { cycleProvider, toggleAccount } from "./filters";
+import { isModalOpen, setModalOpen } from "./hooks/input-scope";
 import { nextPollState, notifiableWindows } from "./hooks/use-poller";
 import { colorForWindowKey } from "./lib/colors";
 import { formatTimeRange } from "./types";
@@ -258,6 +259,26 @@ describe("history rows", () => {
         expect(computeMaxOffset(rows, 5)).toBe(1);
         expect(computeMaxOffset(rows, 3)).toBe(1);
         expect(computeMaxOffset([], 10)).toBe(0);
+    });
+});
+
+describe("input scope", () => {
+    test("a modal claims the keyboard until it is closed, and never unbalances the count", () => {
+        expect(isModalOpen()).toBe(false);
+
+        setModalOpen(true);
+        expect(isModalOpen()).toBe(true);
+
+        setModalOpen(false);
+        expect(isModalOpen()).toBe(false);
+
+        // The counter floors at zero, so a stray close cannot make the NEXT modal invisible
+        // to the global key handlers.
+        setModalOpen(false);
+        setModalOpen(true);
+        expect(isModalOpen()).toBe(true);
+        setModalOpen(false);
+        expect(isModalOpen()).toBe(false);
     });
 });
 

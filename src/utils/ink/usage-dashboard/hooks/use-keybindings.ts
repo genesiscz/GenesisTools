@@ -1,5 +1,6 @@
 import { useApp, useInput } from "ink";
 import { useState } from "react";
+import { isModalOpen } from "./input-scope";
 
 interface KeybindingsOptions {
     onForceRefresh: () => void;
@@ -26,6 +27,13 @@ export function useKeybindings({
     const [showHelp, setShowHelp] = useState(false);
 
     useInput((input) => {
+        // The account checklist and the Sessions action menu own the keyboard while they
+        // are open: `q` would quit out from under the picker, and a second `a` would open
+        // a scope that is never closed, leaving tab navigation dead for the whole session.
+        if (isModalOpen()) {
+            return;
+        }
+
         if (input === "q") {
             exit();
         }
