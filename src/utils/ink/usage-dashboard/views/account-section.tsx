@@ -2,7 +2,7 @@ import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/prov
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
 import { UsageBar } from "../components/usage-bar";
-import { colorForWindow } from "../lib/colors";
+import { colorForWindow, colorForWindowKey } from "../lib/colors";
 
 export interface GenericAccountSectionProps {
     snapshot: AccountUsageSnapshot;
@@ -93,7 +93,7 @@ export function GenericAccountSection({
 
                 return (
                     <Box key={window.key}>
-                        <Text dimColor>{window.label.padEnd(LABEL_WIDTH)}</Text>
+                        <Text color={colorForWindowKey(window.key)}>{window.label.padEnd(LABEL_WIDTH)}</Text>
                         <UsageBar
                             utilization={window.percentUsed}
                             width={barWidth}

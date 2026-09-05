@@ -3,7 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Box, Text, useInput, useStdout } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { useScroll } from "../hooks/use-scroll";
-import { colorForPercent } from "../lib/colors";
+import { colorForPercent, colorForWindowKey } from "../lib/colors";
 import { formatTimeRange } from "../types";
 
 export interface HistoryViewProps {
@@ -333,7 +333,9 @@ export function HistoryView({ db, dbVersion, timeRange, providers, accountFilter
                                 )}
                                 <Box>
                                     <Text dimColor>{formatTimestamp(row.t).padEnd(10)}</Text>
-                                    <Text color="magenta">{shortWindowLabel(row.key).slice(0, 11).padEnd(12)}</Text>
+                                    <Text color={colorForWindowKey(row.key)}>
+                                        {shortWindowLabel(row.key).slice(0, 11).padEnd(12)}
+                                    </Text>
                                     <Text bold color={colorForPercent(row.percent)}>
                                         {`${row.percent.toFixed(1)}%`.padEnd(9)}
                                     </Text>
@@ -355,7 +357,7 @@ export function HistoryView({ db, dbVersion, timeRange, providers, accountFilter
                         <Box key={`${row.account}-${row.key}-${row.t}-${i}`}>
                             <Text color="cyan">{row.account.slice(0, 17).padEnd(18)}</Text>
                             <Text dimColor>{formatTimestamp(row.t).padEnd(10)}</Text>
-                            <Text color="magenta">{row.key.slice(0, 13).padEnd(14)}</Text>
+                            <Text color={colorForWindowKey(row.key)}>{row.key.slice(0, 13).padEnd(14)}</Text>
                             <Text bold color={colorForPercent(row.percent)}>
                                 {`${row.percent.toFixed(1)}%`.padEnd(9)}
                             </Text>

@@ -3,6 +3,7 @@ import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { cycleProvider, toggleAccount } from "./filters";
 import { nextPollState, notifiableWindows } from "./hooks/use-poller";
+import { colorForWindowKey } from "./lib/colors";
 import { formatTimeRange } from "./types";
 import { formatMoney, orderWindows } from "./views/account-section";
 import {
@@ -257,6 +258,37 @@ describe("history rows", () => {
         expect(computeMaxOffset(rows, 5)).toBe(1);
         expect(computeMaxOffset(rows, 3)).toBe(1);
         expect(computeMaxOffset([], 10)).toBe(0);
+    });
+});
+
+describe("window colours", () => {
+    test("the claude windows keep the colours the old History tab drew them in", () => {
+        expect(colorForWindowKey("five_hour")).toBe("cyan");
+        expect(colorForWindowKey("seven_day")).toBe("yellow");
+        expect(colorForWindowKey("seven_day_opus")).toBe("magenta");
+        expect(colorForWindowKey("seven_day_sonnet")).toBe("green");
+        expect(colorForWindowKey("seven_day_oauth_apps")).toBe("blue");
+    });
+
+    test("a scoped window the mapper does not know stays magenta, as it always did", () => {
+        expect(colorForWindowKey("seven_day_fable")).toBe("magenta");
+        expect(colorForWindowKey("extra_usage")).toBe("magenta");
+    });
+
+    test("codex and grok windows read session/weekly/monthly off the same palette", () => {
+        expect(colorForWindowKey("primary")).toBe("cyan");
+        expect(colorForWindowKey("secondary")).toBe("yellow");
+        expect(colorForWindowKey("weekly")).toBe("yellow");
+        expect(colorForWindowKey("monthly")).toBe("blue");
+        expect(colorForWindowKey("credit")).toBe("green");
+    });
+
+    test("two grok products get different colours, and the same one on every run", () => {
+        const build = colorForWindowKey("product:grokbuild");
+        const imagine = colorForWindowKey("product:grokimagine");
+
+        expect(build).not.toBe(imagine);
+        expect(colorForWindowKey("product:grokbuild")).toBe(build);
     });
 });
 
