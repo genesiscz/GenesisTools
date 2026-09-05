@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync } from "node:fs";
+import { runLogin } from "@app/ai/lib/accounts/run-login";
 import {
     detectGithubCopilotAccount,
     inferAccountNameFromLogin,
@@ -7,16 +8,12 @@ import {
 } from "@app/ai-proxy/lib/config";
 import { clearCopilotModelsCache } from "@app/ai-proxy/lib/copilot-models-cache";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
-import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import {
     clearGithubCopilotTokenResolutionCache,
     clearSessionCache,
     fetchGithubUserLogin,
 } from "@genesiscz/utils/ai/github-copilot";
 import { copilotDataDir, copilotGhoTokenAuthKey, githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
-import { codexOAuth, extractEmail, extractPlanType } from "@genesiscz/utils/ai/openai/codex-auth";
-import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { runGitHubDeviceLogin } from "@genesiscz/utils/oauth";
@@ -109,74 +106,17 @@ async function runCodexLogin(): Promise<void> {
         return;
     }
 
-    const authUrl = await codexOAuth.startLogin();
+    // The ACCOUNT write is the shared lib's, so there is one codex login path
+    // rather than two that disagree (decision D4). What stays here is the proxy's
+    // own bookkeeping below, which the shared lib knows nothing about.
+    const login = await runLogin({ provider: "openai-sub", tool: "tools ai-proxy accounts login codex" });
 
-    p.note(
-        [
-            "1. Open the URL below in your browser",
-            "2. Sign in with your ChatGPT account",
-            "3. Authorize Codex",
-            "4. Copy the code from the callback page/URL",
-        ].join("\n"),
-        "OpenAI OAuth Login"
-    );
-
-    out.println();
-    out.println(`  ${authUrl}`);
-    out.println();
-
-    const openBrowser = await p.confirm({ message: "Open URL in browser?", initialValue: true });
-
-    if (p.isCancel(openBrowser)) {
+    if (!login.ok || !login.account) {
         return;
     }
 
-    if (openBrowser) {
-        await Browser.open(authUrl);
-    }
-
-    const code = await p.text({
-        message: "Paste the authorization code:",
-        validate: (val) => {
-            if (!val?.trim()) {
-                return "Code is required";
-            }
-        },
-    });
-
-    if (p.isCancel(code)) {
-        return;
-    }
-
-    const spinner = p.spinner();
-    spinner.start("Exchanging code for tokens...");
-
-    let tokens: Awaited<ReturnType<typeof codexOAuth.exchangeCode>>;
-    try {
-        tokens = await codexOAuth.exchangeCode((code as string).trim());
-        spinner.stop("Tokens received.");
-    } catch (err) {
-        spinner.stop(`Token exchange failed: ${err instanceof Error ? err.message : String(err)}`);
-        return;
-    }
-
-    const email = extractEmail(tokens.accessToken);
-    const planType = extractPlanType(tokens.accessToken);
-    const accountName = email?.split("@")[0]?.toLowerCase() || "codex";
-
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccount({
-        name: accountName,
-        provider: "openai-sub",
-        tokens: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: tokens.expiresAt,
-        },
-        label: planType ?? "codex",
-        apps: ["ask", "ai-proxy"],
-    });
-    out.log.success(`AI-config account "${accountName}" (openai-sub${planType ? `, ${planType}` : ""}) saved.`);
+    const accountName = login.account.name;
+    const planType = login.account.label;
 
     const config = await loadConfig();
     const existing = config.accounts.find(

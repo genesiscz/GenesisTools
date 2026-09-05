@@ -1,11 +1,5 @@
-import {
-    type ClaudeConfig,
-    DEFAULT_WARMUP,
-    determineAccountLabel,
-    loadConfig,
-    updateConfig,
-} from "@app/claude/lib/config";
-import { identityMismatch } from "@app/claude/lib/identity-guard";
+import { runLogin } from "@app/ai/lib/accounts/run-login";
+import { type ClaudeConfig, DEFAULT_WARMUP, loadConfig, updateConfig } from "@app/claude/lib/config";
 import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
 import { fetchUsage } from "@app/claude/lib/usage/api";
 import { clearPollGate } from "@app/claude/lib/usage/poll-gate";
@@ -13,13 +7,11 @@ import { ensureSubscriptionAnchors, planAllowsClaudeCode } from "@app/claude/lib
 import { formatWarmupViaHint } from "@app/claude/lib/warmup/service";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
-import { claudeOAuth, fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
-import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
+import { fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
-import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatLocalDate } from "@genesiscz/utils/date";
-import { logger, out } from "@genesiscz/utils/logger";
+import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -30,259 +22,11 @@ function maskToken(token: string): string {
     return `${token.slice(0, 20)}...`;
 }
 
-export async function generateAuthUrl(scopes?: string): Promise<string> {
-    const spinner = p.spinner();
-    spinner.start("Generating authorization URL...");
-    const authUrl = await claudeOAuth.startLogin(scopes);
-    spinner.stop("Authorization URL ready.");
-    return authUrl;
-}
-
-/**
- * THROWS `Cancelled` when the user aborts the browser-choice prompt.
- *
- * It returned a boolean before, and a caller that forgot to check it fell
- * straight through to the code prompt — which happened twice while this PR was
- * in review. `claude/index.ts` already maps a `Cancelled` message to a clean
- * exit 0, so throwing makes the abort impossible to ignore instead of relying
- * on every present and future caller remembering to test a return value.
- *
- * The signature IS the regression test: with `Promise<void>` there is no value
- * left to drop. A behavioural test was written and then removed — `mock.module`
- * is process-global in Bun, so stubbing `@clack/prompts` here broke
- * `src/utils/logger/out.test.ts`, which asserts on the REAL clack sentinel.
- */
-export async function presentAuthUrl(authUrl: string): Promise<void> {
-    p.note(
-        [
-            "1. Open the URL below in your browser",
-            "2. Log in with your Claude account (if needed)",
-            "3. Click 'Authorize' to grant access",
-            "4. Copy the code shown on the callback page",
-            "   (format: code#state or just the code part)",
-        ].join("\n"),
-        "OAuth Login"
-    );
-
-    out.println();
-    out.println(`  ${pc.cyan(authUrl)}`);
-    out.println();
-
-    // Never copy the URL unasked: whoever already opened it by hand is holding the
-    // CODE in their clipboard, and clobbering that costs them the whole round-trip.
-    const action = await p.select({
-        message: "How do you want to open it?",
-        options: [
-            { value: "open", label: "Open in browser now" },
-            { value: "copy", label: "Copy the URL to my clipboard", hint: "overwrites whatever is in it" },
-            { value: "none", label: "Neither — I already have the code", hint: "clipboard untouched" },
-        ],
-    });
-
-    if (p.isCancel(action)) {
-        throw new Error("Cancelled");
-    }
-
-    if (action === "open") {
-        Bun.spawn(["open", authUrl], { stdio: ["ignore", "ignore", "ignore"] });
-    } else if (action === "copy") {
-        await copyToClipboard(authUrl, { silent: true });
-        p.log.info("URL copied. After authorizing, copy the CODE from the callback page — that is what to paste next.");
-    }
-}
-
-/**
- * Accept what the user actually has in the clipboard: the bare `code#state`, or
- * the whole callback URL (its `code`/`state` params are pulled out). Declining
- * the browser-open puts the AUTHORIZE url on the clipboard, so that exact
- * mis-paste is caught here instead of failing as "Invalid request format".
- */
-export function normalizeAuthorizationCode(input: string): { code: string } | { error: string } {
-    const trimmed = input.trim();
-
-    if (!trimmed.startsWith("http")) {
-        return { code: trimmed };
-    }
-
-    let url: URL;
-    try {
-        url = new URL(trimmed);
-    } catch (error) {
-        logger.debug({ error }, "[oauth] pasted value starts with http but is not a parseable URL");
-        return { error: "That looks like a URL but could not be parsed. Paste the code shown after authorizing." };
-    }
-
-    if (url.pathname.includes("/oauth/authorize")) {
-        return {
-            error: "That is the authorization URL (what we copied to your clipboard), not the code. Open it, click Authorize, then paste the code from the callback page.",
-        };
-    }
-
-    const code = url.searchParams.get("code");
-
-    if (!code) {
-        return { error: "No `code` parameter in that URL. Paste the code shown after authorizing." };
-    }
-
-    const state = url.searchParams.get("state");
-    return { code: state ? `${code}#${state}` : code };
-}
-
-export async function promptAndExchangeCode(
-    opts: { expiresIn?: number } = {}
-): Promise<Awaited<ReturnType<typeof claudeOAuth.exchangeCode>> | null> {
-    const code = await p.text({
-        message: "Paste the authorization code:",
-        placeholder: "code#state",
-        validate: (val) => {
-            if (!val?.trim()) {
-                return "Code is required";
-            }
-
-            const normalized = normalizeAuthorizationCode(val);
-            if ("error" in normalized) {
-                return normalized.error;
-            }
-        },
-    });
-
-    if (p.isCancel(code)) {
-        return null;
-    }
-
-    const normalized = normalizeAuthorizationCode(code as string);
-
-    if ("error" in normalized) {
-        p.log.error(normalized.error);
-        return null;
-    }
-
-    const spinner = p.spinner();
-    spinner.start("Exchanging code for tokens...");
-    try {
-        const tokens = await claudeOAuth.exchangeCode(normalized.code, opts);
-        spinner.stop("Tokens received.");
-        return tokens;
-    } catch (err) {
-        spinner.stop(`Token exchange failed: ${err}`);
-        return null;
-    }
-}
-
-export async function fetchAndDisplayProfile(
-    tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>
-): Promise<Awaited<ReturnType<typeof fetchOAuthProfile>>> {
-    const spinner = p.spinner();
-    spinner.start("Fetching account profile...");
-    const profile = await fetchOAuthProfile(tokens.accessToken);
-    spinner.stop("Profile fetched.");
-
-    const infoLines: string[] = [];
-
-    if (tokens.account) {
-        infoLines.push(`${pc.dim("Account:")} ${pc.cyan(tokens.account.email)}`);
-    }
-
-    if (tokens.organization) {
-        infoLines.push(`${pc.dim("Organization:")} ${tokens.organization.name}`);
-    }
-
-    if (profile) {
-        const sub = profile.organization.subscription_status;
-        const tier = profile.organization.rate_limit_tier;
-        infoLines.push(`${pc.dim("Subscription:")} ${sub} (${tier})`);
-    }
-
-    infoLines.push(`${pc.dim("Scopes:")} ${tokens.scopes.join(", ")}`);
-    infoLines.push(`${pc.dim("Expires:")} ${new Date(tokens.expiresAt).toLocaleString()}`);
-    infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")} — token will auto-refresh`);
-
-    p.note(infoLines.join("\n"), "Account Authorized");
-    return profile;
-}
-
-async function promptAccountName(aiConfig: AIConfig, suggestedName: string): Promise<string | null> {
-    let name = await p.text({
-        message: "Name for this account:",
-        placeholder: suggestedName,
-        validate: (val) => {
-            if (!val?.trim()) {
-                return "Name is required";
-            }
-        },
-    });
-
-    if (p.isCancel(name)) {
-        return null;
-    }
-
-    if (aiConfig.getAccount(name as string)) {
-        const overwrite = await p.confirm({
-            message: `Account "${name}" already exists. Overwrite?`,
-            initialValue: false,
-        });
-
-        if (p.isCancel(overwrite) || !overwrite) {
-            name = await p.text({
-                message: "Enter a different name:",
-                validate: (val) => {
-                    if (!val?.trim()) {
-                        return "Name is required";
-                    }
-                    if (aiConfig.getAccount(val)) {
-                        return `Account "${val}" already exists`;
-                    }
-                },
-            });
-
-            if (p.isCancel(name)) {
-                return null;
-            }
-        }
-    }
-
-    return name as string;
-}
-
-async function addAccountViaOAuth(aiConfig: AIConfig): Promise<void> {
-    const authUrl = await generateAuthUrl();
-
-    await presentAuthUrl(authUrl);
-
-    const tokens = await promptAndExchangeCode();
-    if (!tokens) {
-        return;
-    }
-
-    const profile = await fetchAndDisplayProfile(tokens);
-
-    const suggestedName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
-    const name = await promptAccountName(aiConfig, suggestedName);
-    if (!name) {
-        return;
-    }
-
-    await aiConfig.addAccountWithDefaults({
-        name,
-        provider: "anthropic-sub",
-        tokens: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: tokens.expiresAt,
-            refreshExpiresAt: tokens.refreshExpiresAt,
-        },
-        label: determineAccountLabel(profile),
-        apps: ["claude", "ask"],
-    });
-
-    p.log.success(`Account "${name}" saved with auto-refresh support.`);
-}
-
 async function interactiveConfig(): Promise<void> {
     p.intro(pc.bgCyan(pc.black(" claude config ")));
 
     const config = await loadConfig();
-    const aiConfig = await AIConfig.load();
+    let aiConfig = await AIConfig.load();
 
     while (true) {
         const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
@@ -304,6 +48,10 @@ async function interactiveConfig(): Promise<void> {
 
         if (action === "accounts") {
             await manageAccounts(aiConfig);
+            // `AIConfig.invalidate()` drops the STATIC cache; this loop still
+            // holds the instance it loaded before the login, so the next screen
+            // would render the pre-login account list (PR #360 review t8).
+            aiConfig = await AIConfig.load();
         } else if (action === "notifications") {
             await manageNotifications(config);
         } else if (action === "warmup") {
@@ -332,7 +80,13 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
     }
 
     if (action === "add-oauth") {
-        await addAccountViaOAuth(aiConfig);
+        // `promptName`: this menu asked what to call the account before the flows
+        // moved into the shared lib, and losing that left the interactive path
+        // unable to name an account at all (gap/cli).
+        await runLogin({ provider: "anthropic-sub", tool: "tools claude login", promptName: true });
+        // The shared lib writes through the v4 store, which this menu's in-memory
+        // v3 view cannot see; re-read before the next screen renders a stale list.
+        AIConfig.invalidate();
     } else if (action === "add-manual") {
         const name = await p.text({
             message: "Name for this account:",
@@ -1016,109 +770,13 @@ export function registerConfigCommand(program: Command): void {
             await showConfig(config, aiConfig);
         });
 
-    // OAuth login command (top-level, not under config)
+    // OAuth login command (top-level, not under config). A door onto the shared
+    // account lib with the provider pinned; `tools ai accounts login --provider
+    // claude` reaches the identical code.
     program
         .command("login [name]")
         .description("Login with OAuth to add an account (with auto-refresh)")
         .action(async (name?: string) => {
-            const aiConfig = await AIConfig.load();
-
-            // Same helpers the other login paths use: three-way browser choice
-            // (so declining never clobbers a clipboard that holds the code) and
-            // a paste prompt that accepts the callback URL.
-            const authUrl = await generateAuthUrl();
-
-            await presentAuthUrl(authUrl);
-
-            const tokens = await promptAndExchangeCode();
-
-            if (!tokens) {
-                out.println(pc.dim("Login cancelled."));
-                process.exit(0);
-            }
-
-            // Determine account name
-            const accountName = name ?? tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal";
-            if (aiConfig.getAccount(accountName)) {
-                out.println(pc.yellow(`Updating existing account "${accountName}"...`));
-            }
-
-            // Fetch profile for label
-            const profile = await fetchOAuthProfile(tokens.accessToken);
-            const label = determineAccountLabel(profile);
-
-            // The browser decided who authorized. If that is a different person
-            // than the entry being written, saying yes would overwrite another
-            // account's tokens with this identity's.
-            const existing = aiConfig.getAccount(accountName);
-
-            // The account's OWN uuid first. Reading only `secondary.accountUuid`
-            // made this guard dead code for every account that never did a
-            // secondary login — which was all of them, so a stale browser session
-            // could overwrite any entry with the wrong identity and nothing said so.
-            if (
-                identityMismatch({
-                    storedUuid: existing?.accountUuid ?? existing?.secondary?.accountUuid,
-                    incomingUuid: profile?.account.uuid,
-                })
-            ) {
-                out.println(
-                    pc.yellow(
-                        `⚠ This grant belongs to ${profile?.account.email ?? "another account"}, ` +
-                            `a DIFFERENT identity than "${accountName}".`
-                    )
-                );
-
-                const proceed = await p.confirm({ message: "Save anyway?", initialValue: false });
-
-                if (p.isCancel(proceed) || !proceed) {
-                    p.cancel("Cancelled — nothing written.");
-                    process.exit(0);
-                }
-            }
-
-            await aiConfig.addAccountWithDefaults({
-                name: accountName,
-                provider: "anthropic-sub",
-                tokens: {
-                    accessToken: tokens.accessToken,
-                    refreshToken: tokens.refreshToken,
-                    expiresAt: tokens.expiresAt,
-                    refreshExpiresAt: tokens.refreshExpiresAt,
-                },
-                label,
-                apps: ["claude", "ask"],
-            });
-
-            // The plan reading comes free with the profile fetched above. Storing
-            // it here is what lets a just-renewed account be polled immediately
-            // instead of waiting out the 6h recheck window with a stale
-            // "claude_free" that keeps it suppressed.
-            if (profile) {
-                await aiConfig.updateAccount(accountName, {
-                    subscriptionCreatedAt: profile.organization.subscription_created_at || undefined,
-                    subscriptionPlan: profile.organization.organization_type,
-                    subscriptionStatus: profile.organization.subscription_status,
-                    subscriptionCheckedAt: Date.now(),
-                    // The fingerprint. An OAuth login is the ONLY place the account
-                    // uuid can be read, and storing the org uuid here is what lets a
-                    // later `login-long` prove a pasted setup token is this account's.
-                    accountUuid: profile.account.uuid,
-                    organizationUuid: profile.organization.uuid,
-                });
-            }
-
-            // A fresh grant retires both cooldowns the dead one earned.
-            await clearInvalidGrant(accountName);
-            await clearPollGate(accountName);
-
-            out.println();
-            out.println(pc.green(`✓ Account "${accountName}" saved with auto-refresh.`));
-            if (tokens.account) {
-                out.println(pc.dim(`  Email: ${tokens.account.email}`));
-            }
-            if (label) {
-                out.println(pc.dim(`  Plan: ${label}`));
-            }
+            await runLogin({ provider: "anthropic-sub", name, tool: "tools claude login", subcommand: ["login"] });
         });
 }

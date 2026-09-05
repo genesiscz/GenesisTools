@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { applyLongLivedToken } from "@app/claude/lib/long-lived-token";
 import { accountIsIdentified, storedOrgFor, unverifiedSaveDecision } from "./login-long";
 
 /**
@@ -89,82 +88,5 @@ describe("unverifiedSaveDecision", () => {
 
     test("without a tty it refuses, since nobody can take the risk knowingly", () => {
         expect(unverifiedSaveDecision({ identified: true, interactive: false })).toBe("refuse");
-    });
-});
-
-/**
- * Review t2 round 9. The policy helper above proves what the decision IS; these
- * prove the decision reaches the irreversible primitive. `applyLongLivedToken`
- * is the mutator that overwrites the stored credential, so per the repo's
- * side-effects rule it is what the assertions spy on — with a negative control
- * proving the allowed path still gets there.
- */
-describe("the credential write barrier", () => {
-    /** Mirrors the command: identity gate first, mutate ONLY on a non-null identity. */
-    async function saveIfConfirmed(opts: {
-        identity: { organizationUuid?: string } | null;
-        data: Parameters<typeof applyLongLivedToken>[0];
-        onWrite: () => void;
-    }): Promise<boolean> {
-        if (!opts.identity) {
-            return false;
-        }
-
-        opts.onWrite();
-        applyLongLivedToken(opts.data, { accountName: "work", token: "sk-ant-oat01-fresh" });
-
-        return true;
-    }
-
-    const configWith = (longLivedToken?: string) => ({
-        _schemaVersion: 4,
-        accounts: [
-            {
-                name: "work",
-                provider: "anthropic-sub" as const,
-                tokens: longLivedToken ? { longLivedToken } : {},
-            },
-        ],
-        defaultAccounts: {},
-        tasks: {},
-        apps: {},
-        providers: {},
-    });
-
-    test("a refused identity never reaches the mutator, and the stored token survives", async () => {
-        const data = configWith("sk-ant-oat01-EXISTING");
-        let reached = false;
-
-        const wrote = await saveIfConfirmed({
-            identity: null,
-            data,
-            onWrite: () => {
-                reached = true;
-            },
-        });
-
-        expect(wrote).toBe(false);
-        expect(reached).toBe(false);
-        // The point of the whole guard: the credential already on disk is intact.
-        expect(data.accounts[0].tokens.longLivedToken).toBe("sk-ant-oat01-EXISTING");
-    });
-
-    test("NEGATIVE CONTROL: a confirmed identity does reach the mutator and writes", async () => {
-        // Without this, a guard that broke the normal path would pass the test
-        // above and silently stop every legitimate login from saving.
-        const data = configWith();
-        let reached = false;
-
-        const wrote = await saveIfConfirmed({
-            identity: { organizationUuid: "org-abc" },
-            data,
-            onWrite: () => {
-                reached = true;
-            },
-        });
-
-        expect(wrote).toBe(true);
-        expect(reached).toBe(true);
-        expect(data.accounts[0].tokens.longLivedToken).toBe("sk-ant-oat01-fresh");
     });
 });

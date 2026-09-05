@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeAuthorizationCode } from "./config";
+import { normalizeAuthorizationCode } from "./login";
 
 describe("normalizeAuthorizationCode", () => {
     test("a bare code passes through", () => {

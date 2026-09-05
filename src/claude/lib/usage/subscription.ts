@@ -1,5 +1,5 @@
-import { probeTokenOrg } from "@app/claude/lib/account-fingerprint";
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
 import { fetchOAuthProfile } from "@genesiscz/utils/claude/auth";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
