@@ -1,6 +1,6 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
-import type { UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
+import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
@@ -21,6 +21,23 @@ export interface BuildUsageDataSourceOptions {
      */
     presenters?: Record<string, UsagePresenters | undefined>;
     extraTabs?: UsageDataSource["extraTabs"];
+}
+
+/**
+ * Drop the accounts the dashboard preferences hide. `showsInUsageDashboard` is an account
+ * PROPERTY and `hiddenAccounts` a dashboard PREFERENCE, so the poll core knows nothing
+ * about the second one: without this the account list and the Overview disagreed, and a
+ * hidden account kept drawing its bars while being absent from the `a` checklist.
+ */
+export function withoutHiddenAccounts(
+    snapshots: readonly AccountUsageSnapshot[],
+    hidden: ReadonlySet<string>
+): AccountUsageSnapshot[] {
+    if (hidden.size === 0) {
+        return [...snapshots];
+    }
+
+    return snapshots.filter((snapshot) => !hidden.has(snapshot.accountName));
 }
 
 /**
@@ -46,12 +63,15 @@ export async function buildUsageDataSource(opts: BuildUsageDataSourceOptions = {
 
     return {
         providers,
-        poll: (pollOpts) =>
-            pollAccounts({
-                providers,
-                ...(pollOpts.force === undefined ? {} : { force: pollOpts.force }),
-                ...(pollOpts.accountFilter === undefined ? {} : { accountFilter: pollOpts.accountFilter }),
-            }),
+        poll: async (pollOpts) =>
+            withoutHiddenAccounts(
+                await pollAccounts({
+                    providers,
+                    ...(pollOpts.force === undefined ? {} : { force: pollOpts.force }),
+                    ...(pollOpts.accountFilter === undefined ? {} : { accountFilter: pollOpts.accountFilter }),
+                }),
+                hidden
+            ),
         // Re-read every round, so an account renamed or logged out in another terminal
         // shows up without restarting the TUI.
         accounts: async () => {

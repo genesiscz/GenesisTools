@@ -5,6 +5,7 @@ import { cycleProvider, toggleAccount } from "./filters";
 import { isModalOpen, setModalOpen } from "./hooks/input-scope";
 import { nextPollState, notifiableWindows } from "./hooks/use-poller";
 import { colorForPercent, colorForWindow, colorForWindowKey } from "./lib/colors";
+import { withoutHiddenAccounts } from "./source";
 import { formatTimeRange } from "./types";
 import { formatMoney, orderWindows } from "./views/account-section";
 import {
@@ -310,6 +311,20 @@ describe("window colours", () => {
 
         expect(build).not.toBe(imagine);
         expect(colorForWindowKey("product:grokbuild")).toBe(build);
+    });
+});
+
+describe("hidden accounts", () => {
+    test("a hidden account leaves the Overview, not just the account checklist", () => {
+        const snapshots = [codex("work", 10), codex("shop", 20)];
+
+        expect(withoutHiddenAccounts(snapshots, new Set(["shop"])).map((s) => s.accountName)).toEqual(["work"]);
+    });
+
+    test("no hidden accounts leaves the round untouched", () => {
+        const snapshots = [codex("work", 10), grok("personal", 30)];
+
+        expect(withoutHiddenAccounts(snapshots, new Set()).map((s) => s.accountName)).toEqual(["work", "personal"]);
     });
 });
 
