@@ -14,6 +14,7 @@ import {
     isLoopbackOnlyOrigin,
     isResponseRetryableMethod,
     proxyFailureLogLevel,
+    SCAN_UPSTREAM_TIMEOUT_MS,
     SLOW_UPSTREAM_TIMEOUT_MS,
     UPSTREAM_TIMEOUT_MS,
     UpstreamRetriesExhausted,
@@ -170,7 +171,7 @@ describe("isLongLivedProxiedStream", () => {
 
 // Every path named here timed out against the 15s deadline in
 // ~/.genesis-tools/logs/dev-dashboard.bg.log and became a public 502.
-describe("upstreamTimeoutMs — three tiers, not two", () => {
+describe("upstreamTimeoutMs — four tiers, not two", () => {
     test("a stream has no deadline at all", () => {
         expect(upstreamTimeoutMs("/api/qa/stream")).toBeUndefined();
         expect(upstreamTimeoutMs("/api/live")).toBeUndefined();
@@ -184,6 +185,19 @@ describe("upstreamTimeoutMs — three tiers, not two", () => {
         expect(upstreamTimeoutMs("/api/tmux/sessions")).toBe(SLOW_UPSTREAM_TIMEOUT_MS);
     });
 
+    test("the transcript-scan routes get the longest deadline of the bounded tiers", () => {
+        expect(upstreamTimeoutMs("/api/ai/spend/totals")).toBe(SCAN_UPSTREAM_TIMEOUT_MS);
+        expect(upstreamTimeoutMs("/api/ai/spend/series")).toBe(SCAN_UPSTREAM_TIMEOUT_MS);
+        expect(upstreamTimeoutMs("/api/claude/usage/totals")).toBe(SCAN_UPSTREAM_TIMEOUT_MS);
+    });
+
+    test("the neighbouring ai routes are fast and stay on the short default", () => {
+        expect(upstreamTimeoutMs("/api/ai/usage")).toBe(UPSTREAM_TIMEOUT_MS);
+        expect(upstreamTimeoutMs("/api/ai/usage/series")).toBe(UPSTREAM_TIMEOUT_MS);
+        expect(upstreamTimeoutMs("/api/ai/daemon")).toBe(UPSTREAM_TIMEOUT_MS);
+        expect(upstreamTimeoutMs("/api/ai/accounts")).toBe(UPSTREAM_TIMEOUT_MS);
+    });
+
     test("everything else keeps the short default", () => {
         expect(upstreamTimeoutMs("/")).toBe(UPSTREAM_TIMEOUT_MS);
         expect(upstreamTimeoutMs("/share/KSW_CSKpwggf5mLz")).toBe(UPSTREAM_TIMEOUT_MS);
@@ -193,6 +207,11 @@ describe("upstreamTimeoutMs — three tiers, not two", () => {
     test("a slow API stays bounded — it must never become an unbounded stream", () => {
         expect(SLOW_UPSTREAM_TIMEOUT_MS).toBeGreaterThan(UPSTREAM_TIMEOUT_MS);
         expect(Number.isFinite(SLOW_UPSTREAM_TIMEOUT_MS)).toBe(true);
+    });
+
+    test("a scan stays bounded too, and outlives the worker's own 60s budget", () => {
+        expect(SCAN_UPSTREAM_TIMEOUT_MS).toBeGreaterThan(SLOW_UPSTREAM_TIMEOUT_MS);
+        expect(Number.isFinite(SCAN_UPSTREAM_TIMEOUT_MS)).toBe(true);
     });
 });
 

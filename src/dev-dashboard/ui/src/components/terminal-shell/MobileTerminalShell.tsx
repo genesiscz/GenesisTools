@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { useRef, useState } from "react";
-import { NAV_ROUTES } from "@/lib/nav-routes";
+import { useNavOrder } from "@/hooks/useNavOrder";
 
 export interface ShellTab {
     id: string;
@@ -30,6 +30,9 @@ export interface MobileTerminalShellProps {
 }
 
 export function MobileTerminalShell(props: MobileTerminalShellProps) {
+    // The overlay lists the routes in the order the user gave the desktop rail. It
+    // does not offer drag: reordering happens on the rail or in NavOrderEditor.
+    const { routes } = useNavOrder();
     const [navOpen, setNavOpen] = useState(false);
     const [overviewOpen, setOverviewOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -175,7 +178,7 @@ export function MobileTerminalShell(props: MobileTerminalShellProps) {
             {navOpen ? (
                 <div className="absolute inset-0 z-40 flex bg-black/55" onClick={() => setNavOpen(false)}>
                     <nav className="dd-nav-panel" onClick={(e) => e.stopPropagation()}>
-                        {NAV_ROUTES.map(({ to, label, Icon, exact }) => (
+                        {routes.map(({ to, label, Icon, exact }) => (
                             <Link
                                 key={to}
                                 to={to}

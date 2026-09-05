@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 const FILES = [
     "dto.ts",
+    "ai-accounts.ts",
     "endpoints.ts",
     "client.ts",
     "index.ts",
