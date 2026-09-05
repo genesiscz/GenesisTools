@@ -174,6 +174,53 @@ describe("toLimitWindows", () => {
         });
     });
 
+    /**
+     * `cap.money` and `limit.exponent` are what the pre-campaign writer stored in the spend
+     * row's `cap_minor` / `cap_currency` / `limit_exponent`. The window is the only carrier
+     * left, so dropping them here loses those columns for every new row.
+     */
+    it("carries the configured spend cap and the limit's own exponent", () => {
+        const windows = toLimitWindows({
+            ...USAGE_BODY,
+            spend: {
+                used: { amount_minor: 1234, currency: "EUR", exponent: 2 },
+                limit: { amount_minor: 15000, currency: "EUR", exponent: 2 },
+                percent: 8.23,
+                severity: "normal",
+                enabled: true,
+                cap: { money: { amount_minor: 15000, currency: "EUR", exponent: 2 }, credits: null },
+            },
+        });
+
+        expect(windows.find((w) => w.key === "extra_usage")?.money).toMatchObject({
+            usedMinor: 1234,
+            limitMinor: 15000,
+            limitExponent: 2,
+            capMinor: 15000,
+            capCurrency: "EUR",
+        });
+    });
+
+    // Negative control: a payload with no cap leaves both cap fields off the window.
+    it("omits the cap fields when the account has no cap", () => {
+        const windows = toLimitWindows({
+            ...USAGE_BODY,
+            spend: {
+                used: { amount_minor: 1234, currency: "USD", exponent: 2 },
+                limit: null,
+                percent: 24.68,
+                severity: "normal",
+                enabled: true,
+                cap: null,
+            },
+        });
+        const money = windows.find((w) => w.key === "extra_usage")?.money;
+
+        expect(money?.capMinor).toBeUndefined();
+        expect(money?.capCurrency).toBeUndefined();
+        expect(money?.limitExponent).toBeUndefined();
+    });
+
     it("never writes the API's own weekly_all or session kind names", () => {
         const kinds = toLimitWindows(USAGE_BODY).map((w) => w.kind);
 

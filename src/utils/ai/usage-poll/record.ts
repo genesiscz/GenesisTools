@@ -38,12 +38,18 @@ export async function recordSnapshots(snapshots: readonly AccountUsageSnapshot[]
                         used_currency: window.money.currency,
                         used_exponent: window.money.exponent,
                         limit_minor: window.money.limitMinor ?? null,
-                        limit_exponent: window.money.limitMinor === undefined ? null : window.money.exponent,
+                        // No limit means no limit exponent, which is what the pre-campaign
+                        // writer stored. `exponent` is the fallback for a provider that
+                        // states a limit without an exponent of its own.
+                        limit_exponent:
+                            window.money.limitMinor === undefined
+                                ? null
+                                : (window.money.limitExponent ?? window.money.exponent),
                         percent: window.percentUsed,
                         severity: window.severity ?? "ok",
                         enabled: window.isActive ?? true,
-                        cap_minor: null,
-                        cap_currency: null,
+                        cap_minor: window.money.capMinor ?? null,
+                        cap_currency: window.money.capCurrency ?? null,
                     },
                     snapshot.provider
                 );

@@ -106,6 +106,12 @@ export interface LimitMoney {
     limitMinor?: number;
     currency: string;
     exponent: number;
+    /** Exponent of `limitMinor` when the provider states it separately from `exponent`. */
+    limitExponent?: number;
+    /** Hard spend ceiling the account is configured with, when the provider reports one. */
+    capMinor?: number;
+    /** Currency of `capMinor`, which need not be the currency the spend is billed in. */
+    capCurrency?: string;
 }
 
 /** One rate-limit window, provider-neutral. Claude has 5 to 6, codex 2, grok 1 (monthly). */

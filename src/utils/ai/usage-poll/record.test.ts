@@ -58,6 +58,39 @@ function grokSnapshot(name: string): AccountUsageSnapshot {
     };
 }
 
+/**
+ * The anthropic `extra_usage` window, which is the one that carries a configured spend cap.
+ * `capMinor` / `capCurrency` / `limitExponent` are what `normalizeSpend` reads out of
+ * `raw.cap.money` and `raw.limit.exponent`.
+ */
+function cappedCreditSnapshot(name: string): AccountUsageSnapshot {
+    return {
+        provider: "anthropic-sub",
+        accountId: `acc_${name}`,
+        accountName: name,
+        fetchedAt: new Date().toISOString(),
+        limits: [
+            {
+                key: "extra_usage",
+                label: "Extra usage",
+                kind: "credit",
+                percentUsed: 8,
+                severity: "ok",
+                isActive: true,
+                money: {
+                    usedMinor: 1234,
+                    limitMinor: 15000,
+                    currency: "EUR",
+                    exponent: 2,
+                    limitExponent: 2,
+                    capMinor: 15000,
+                    capCurrency: "EUR",
+                },
+            },
+        ],
+    };
+}
+
 function todayWindow(): { from: string; to: string } {
     const now = Date.now();
     return { from: new Date(now - 60_000).toISOString(), to: new Date(now + 60_000).toISOString() };
@@ -152,5 +185,40 @@ describe("recordSnapshots", () => {
         expect(db.getLatest("work", "primary", "openai-sub")).toBeNull();
         expect(db.getLatest("personal", "primary", "openai-sub")).toBeNull();
         expect(queryUsage({ ...todayWindow(), app: "ai-usage" }).total.events).toBe(0);
+    });
+
+    /**
+     * The spend row is the money series, and the pre-campaign writer filled its cap columns
+     * straight from `normalizeSpend`. The window carrier had nowhere to hold a cap, so both
+     * columns were written as null on every new row.
+     */
+    test("a capped credit window lands its cap and its limit exponent", async () => {
+        await recordSnapshots([cappedCreditSnapshot("shop")], db);
+
+        expect(db.getLatestSpend("shop", "anthropic-sub")).toMatchObject({
+            used_minor: 1234,
+            used_currency: "EUR",
+            used_exponent: 2,
+            limit_minor: 15000,
+            limit_exponent: 2,
+            cap_minor: 15000,
+            cap_currency: "EUR",
+            percent: 8,
+            enabled: true,
+        });
+    });
+
+    // Negative control: a provider that reports no cap still writes null, as before.
+    test("a credit window with no cap still writes null cap columns", async () => {
+        await recordSnapshots([grokSnapshot("side")], db);
+
+        expect(db.getLatestSpend("side", "grok-sub")).toMatchObject({
+            used_minor: 900,
+            limit_minor: 3000,
+            // No limitExponent on the window, so the used exponent stands in.
+            limit_exponent: 2,
+            cap_minor: null,
+            cap_currency: null,
+        });
     });
 });

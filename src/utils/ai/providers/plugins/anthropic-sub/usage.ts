@@ -79,6 +79,9 @@ export function toLimitWindows(usage: UsageResponse): LimitWindow[] {
                 currency: spend.used_currency,
                 exponent: spend.used_exponent,
                 ...(spend.limit_minor === null ? {} : { limitMinor: spend.limit_minor }),
+                ...(spend.limit_exponent === null ? {} : { limitExponent: spend.limit_exponent }),
+                ...(spend.cap_minor === null ? {} : { capMinor: spend.cap_minor }),
+                ...(spend.cap_currency === null ? {} : { capCurrency: spend.cap_currency }),
             },
         });
     }
