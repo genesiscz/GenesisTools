@@ -66,6 +66,12 @@ export interface RunLoginOptions {
     authFile?: string;
     tool: string;
     subcommand?: string[];
+    /**
+     * Ask what to call the account once the flow has proved an identity, the way
+     * the `tools claude config` accounts menu always did. The top-level `login`
+     * commands derive the name silently and leave this unset.
+     */
+    promptName?: boolean;
     /** Injected by tests only; production leaves it unset. */
     externalRunner?: ExternalLoginRunner;
 }
@@ -128,8 +134,21 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     const alias = providerAliasOf(plugin.id);
-    const name = opts.name ?? outcome.suggestedName ?? alias;
-    const existing = store.account(name);
+    const suggested = opts.name ?? outcome.suggestedName ?? alias;
+    // Re-read: the browser round-trip takes minutes, and another terminal may
+    // have added an account under the name this one is about to claim.
+    const fresh = await AiConfigStore.load();
+    const name =
+        opts.name === undefined && opts.promptName === true && interactive
+            ? await promptAccountName(fresh, suggested)
+            : suggested;
+
+    if (name === null) {
+        p.cancel("Cancelled — nothing written.");
+        return { ok: false };
+    }
+
+    const existing = fresh.account(name);
 
     if (existing) {
         out.println(pc.yellow(`Updating existing account "${name}"...`));
@@ -175,6 +194,69 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     return { ok: true, account: written.account };
+}
+
+/**
+ * What to call the account, when the caller wants to be asked.
+ *
+ * A straight copy of the prompt the `tools claude config` accounts menu used
+ * before the flows moved here: the suggested name is a placeholder rather than a
+ * default, and an existing name needs a confirmation before it is overwritten.
+ * Returns null when the user aborted.
+ */
+async function promptAccountName(store: AiConfigStore, suggested: string): Promise<string | null> {
+    const first = await p.text({
+        message: "Name for this account:",
+        placeholder: suggested,
+        defaultValue: suggested,
+        validate: (value) => {
+            if (!value?.trim() && !suggested) {
+                return "Name is required";
+            }
+        },
+    });
+
+    if (p.isCancel(first)) {
+        return null;
+    }
+
+    const name = (first as string).trim() || suggested;
+
+    if (!store.account(name)) {
+        return name;
+    }
+
+    const overwrite = await p.confirm({
+        message: `Account "${name}" already exists. Overwrite?`,
+        initialValue: false,
+    });
+
+    if (p.isCancel(overwrite)) {
+        return null;
+    }
+
+    if (overwrite) {
+        return name;
+    }
+
+    const other = await p.text({
+        message: "Enter a different name:",
+        validate: (value) => {
+            if (!value?.trim()) {
+                return "Name is required";
+            }
+
+            if (store.account(value.trim())) {
+                return `Account "${value.trim()}" already exists`;
+            }
+        },
+    });
+
+    if (p.isCancel(other)) {
+        return null;
+    }
+
+    return (other as string).trim();
 }
 
 /**

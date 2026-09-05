@@ -80,7 +80,10 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
     }
 
     if (action === "add-oauth") {
-        await runLogin({ provider: "anthropic-sub", tool: "tools claude login" });
+        // `promptName`: this menu asked what to call the account before the flows
+        // moved into the shared lib, and losing that left the interactive path
+        // unable to name an account at all (gap/cli).
+        await runLogin({ provider: "anthropic-sub", tool: "tools claude login", promptName: true });
         // The shared lib writes through the v4 store, which this menu's in-memory
         // v3 view cannot see; re-read before the next screen renders a stale list.
         AIConfig.invalidate();

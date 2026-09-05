@@ -206,7 +206,7 @@ afterEach(() => {
     AiConfigStore.invalidate();
 });
 
-function login(overrides: { name?: string; externalRunner?: ExternalLoginRunner } = {}) {
+function login(overrides: { name?: string; promptName?: boolean; externalRunner?: ExternalLoginRunner } = {}) {
     return runLogin({
         provider: "grok",
         tool: "tools grok login",
@@ -415,5 +415,32 @@ describe("an identity the provider cannot prove", () => {
         expect(result.ok).toBe(false);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
         expect(storedAccount("work")?.accountUuid).toBe("user-1");
+    });
+});
+
+describe("promptName", () => {
+    test("in a pipe it never prompts and the derived name still wins", async () => {
+        identityResult = { accountUuid: "user-1", email: "alice@example.com" };
+        writeAuthFile();
+        setTty(false);
+
+        // A prompt here would hang the suite rather than fail it, so reaching
+        // `p.text` at all is what this asserts against.
+        const result = await login({ promptName: true, externalRunner: forbiddenRunner });
+
+        expect(result.ok).toBe(true);
+        expect(result.account?.name).toBe("alice");
+        expect(storedAccount("alice")?.credentials.authFile).toBe(authFile);
+    });
+
+    test("an explicit name skips the prompt even on a TTY", async () => {
+        identityResult = { accountUuid: "user-1", email: "alice@example.com" };
+        writeAuthFile();
+        setTty(true);
+
+        const result = await login({ name: "work", promptName: true, externalRunner: forbiddenRunner });
+
+        expect(result.ok).toBe(true);
+        expect(result.account?.name).toBe("work");
     });
 });
