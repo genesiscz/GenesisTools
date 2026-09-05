@@ -1,6 +1,7 @@
 import type { LimitKind } from "@genesiscz/utils/ai/providers/account-features";
+import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
-import type { Storage } from "@genesiscz/utils/storage/storage";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import type { UsageDashboardConfig } from "./dashboard-config";
 
 /** Persisted by the claude extra-usage tracker in the same config blob; opaque here. */
@@ -31,6 +32,17 @@ export interface UsageWindowNotification {
 }
 
 const NOTIFICATION_POLL_TRACKER_CONFIG_KEY = "notificationPollTracker";
+
+/**
+ * Where the tracker lived before the poll core moved to `Storage("ai-usage")`
+ * (spec section 6.3). It is read once, only while the new store still has no trackers.
+ *
+ * Without it the first poll after the move finds nothing, treats itself as the first poll
+ * ever, and fires a desktop banner for every window already over a threshold — one burst
+ * per account per window, for thresholds that had all been notified days earlier. The
+ * dashboard preferences got a one-time copy for the same reason; this state did not.
+ */
+const LEGACY_TRACKER_TOOL_NAME = "claude-usage";
 
 interface TrackerState {
     lastNotifiedThreshold: number | null;
@@ -120,6 +132,12 @@ class BucketTracker {
     }
 }
 
+async function readTrackerState(storage: Storage): Promise<PersistedState | undefined> {
+    const config = await storage.getConfig<Record<string, unknown>>();
+
+    return config?.[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] as PersistedState | undefined;
+}
+
 export class NotificationManager {
     private trackers = new Map<string, BucketTracker>();
     private isFirstPoll = true;
@@ -200,14 +218,21 @@ export class NotificationManager {
     }
 
     async loadState(storage: Storage): Promise<void> {
-        const saved = (await storage.getConfig<Record<string, unknown>>())?.[NOTIFICATION_POLL_TRACKER_CONFIG_KEY] as
-            | PersistedState
-            | undefined;
-        if (!saved?.trackers) {
+        const saved = await readTrackerState(storage);
+
+        if (saved?.trackers) {
+            this.applyPersistedTrackers(saved.trackers);
             return;
         }
 
-        this.applyPersistedTrackers(saved.trackers);
+        const legacy = await readTrackerState(new Storage(LEGACY_TRACKER_TOOL_NAME));
+
+        if (!legacy?.trackers) {
+            return;
+        }
+
+        logger.debug({ from: LEGACY_TRACKER_TOOL_NAME }, "[usage] restored notification thresholds from the old store");
+        this.applyPersistedTrackers(legacy.trackers);
     }
 
     private applyPersistedTrackers(byKey: Record<string, TrackerState>): void {
