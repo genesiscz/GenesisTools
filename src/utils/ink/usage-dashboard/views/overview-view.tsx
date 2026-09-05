@@ -158,7 +158,11 @@ export function OverviewView({ results, config, presenters, sortMode = "urgency"
     }
 
     const banner = results.error ? <Text color="yellow">{`  ⚠ Last poll failed: ${results.error}`}</Text> : null;
-    const singleWidth = Math.max(40, termWidth - 2);
+    // The terminal's real width, as the old Overview passed it: a floor here would let the
+    // account block render wider than the window on a narrow terminal, and it would also
+    // disagree with the height estimate that decides one column against two. The account
+    // renderers have their own narrow layouts.
+    const singleWidth = termWidth - 2;
     const columnWidth = Math.floor((termWidth - 2 - COLUMN_GAP) / 2);
     const minColumnWidth = Math.max(
         DEFAULT_MIN_COLUMN_WIDTH,
