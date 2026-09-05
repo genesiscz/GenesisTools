@@ -1,5 +1,6 @@
+import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
-import { parseTimeRange, RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
+import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
@@ -12,7 +13,7 @@ function collectFilter(value: string, previous: string[]): string[] {
 interface UsageOptions {
     account?: string[];
     filter?: string[];
-    range?: string;
+    range?: string | boolean;
     token?: string;
     tui?: boolean;
     json?: boolean;
@@ -27,7 +28,7 @@ export function registerUsageCommand(program: Command): void {
         .description("Show Claude API usage dashboard (interactive TUI)")
         .option("--account <name...>", "Limit to these account names")
         .option("-f, --filter <account>", "Alias of --account, kept for scripts", collectFilter, [])
-        .option("--range <window>", `History range: ${RANGE_VALUES.join(" | ")}`)
+        .option("--range [value]", `History range: ${RANGE_VALUES.join(" | ")}`)
         .option("--token <token>", "Use a specific OAuth access token")
         .option("--no-tui", "Use legacy plain text output")
         .option("--json", "Output as JSON")
@@ -79,10 +80,15 @@ export function registerUsageCommand(program: Command): void {
             process.exit(1);
         }
 
-        const range = opts.range === undefined ? undefined : parseTimeRange(opts.range);
+        const range = resolveRangeFlag(opts.range);
 
-        if (opts.range !== undefined && range === null) {
-            out.print(suggestEnumFlag("tools claude usage", "--range", RANGE_VALUES));
+        if (range.status === "invalid") {
+            out.printlnErr(
+                suggestEnumFlag("tools claude usage", "--range", RANGE_VALUES, {
+                    subcommand: ["usage"],
+                    ...(range.given === undefined ? {} : { given: range.given }),
+                })
+            );
             process.exitCode = 1;
             return;
         }
@@ -163,7 +169,7 @@ export function registerUsageCommand(program: Command): void {
         const { renderUsageTui } = await import("./render-tui");
         await renderUsageTui({
             ...(accountFilter === undefined ? {} : { accountFilter }),
-            ...(range === null || range === undefined ? {} : { range }),
+            ...(range.status === "ok" ? { range: range.range } : {}),
         });
     });
 }

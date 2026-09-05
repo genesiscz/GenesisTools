@@ -1,15 +1,16 @@
+import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
 import { PROVIDER_ALIASES, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
-import { parseTimeRange, RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
+import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 export interface AiUsageOptions {
-    provider?: string[];
+    provider?: string[] | boolean;
     account?: string[];
     filter?: string[];
-    range?: string;
+    range?: string | boolean;
     json?: boolean;
     tui?: boolean;
     fresh?: boolean;
@@ -28,10 +29,10 @@ function providerValues(): string[] {
  */
 export function registerAiUsageCommand(usage: Command): void {
     usage
-        .option("--provider <name...>", `Limit to these providers: ${providerValues().join(" | ")}`)
+        .option("--provider [name...]", `Limit to these providers: ${providerValues().join(" | ")}`)
         .option("--account <name...>", "Limit to these account names")
         .option("-f, --filter <account...>", "Alias of --account, kept for scripts")
-        .option("--range <window>", `History range: ${RANGE_VALUES.join(" | ")}`)
+        .option("--range [value]", `History range: ${RANGE_VALUES.join(" | ")}`)
         .option("--json", "Output the snapshots as JSON instead of opening the TUI")
         .option("--no-tui", "Print a plain-text summary instead of opening the TUI")
         .option("--fresh", "Force a live poll, bypassing the shared per-provider cache")
@@ -43,22 +44,37 @@ export function registerAiUsageCommand(usage: Command): void {
                 return;
             }
 
+            // `--provider` with no value at all is a MISSING enumerated value, not
+            // "every provider": the flag absent means all, and the two must not
+            // print the same thing (gap/cli).
+            const named = Array.isArray(opts.provider) ? opts.provider : [];
+            const bareProvider = opts.provider !== undefined && named.length === 0;
             const known = new Set(providerValues());
-            const unknown = (opts.provider ?? []).filter((name) => !known.has(name));
+            const unknown = named.filter((name) => !known.has(name));
 
-            if (unknown.length > 0) {
-                out.print(suggestEnumFlag("tools ai usage", "--provider", providerValues()));
+            if (bareProvider || unknown.length > 0) {
+                out.printlnErr(
+                    suggestEnumFlag("tools ai usage", "--provider", providerValues(), {
+                        subcommand: ["usage"],
+                        ...(unknown[0] === undefined ? {} : { given: unknown[0] }),
+                    })
+                );
                 process.exitCode = 1;
                 return;
             }
 
-            const providers = opts.provider?.map((name) => resolveProviderAlias(name));
+            const providers = named.length > 0 ? named.map((name) => resolveProviderAlias(name)) : undefined;
             const names = [...(opts.account ?? []), ...(opts.filter ?? [])];
             const accountFilter = names.length > 0 ? names : undefined;
-            const range = opts.range === undefined ? undefined : parseTimeRange(opts.range);
+            const range = resolveRangeFlag(opts.range);
 
-            if (opts.range !== undefined && range === null) {
-                out.print(suggestEnumFlag("tools ai usage", "--range", RANGE_VALUES));
+            if (range.status === "invalid") {
+                out.printlnErr(
+                    suggestEnumFlag("tools ai usage", "--range", RANGE_VALUES, {
+                        subcommand: ["usage"],
+                        ...(range.given === undefined ? {} : { given: range.given }),
+                    })
+                );
                 process.exitCode = 1;
                 return;
             }
@@ -91,7 +107,7 @@ export function registerAiUsageCommand(usage: Command): void {
             await renderAiUsageTui({
                 ...(providers === undefined ? {} : { providers }),
                 ...(accountFilter === undefined ? {} : { accountFilter }),
-                ...(range === null || range === undefined ? {} : { range }),
+                ...(range.status === "ok" ? { range: range.range } : {}),
             });
         });
 }

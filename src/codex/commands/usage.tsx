@@ -1,12 +1,13 @@
+import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
-import { parseTimeRange, RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
+import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
 interface CodexUsageOptions {
     account?: string[];
-    range?: string;
+    range?: string | boolean;
     json?: boolean;
     fresh?: boolean;
 }
@@ -20,14 +21,19 @@ export function registerUsageCommand(program: Command): void {
         .command("usage")
         .description("Codex rate-limit windows (interactive TUI)")
         .option("--account <name...>", "Limit to these account names")
-        .option("--range <window>", `History range: ${RANGE_VALUES.join(" | ")}`)
+        .option("--range [value]", `History range: ${RANGE_VALUES.join(" | ")}`)
         .option("--json", "Output the snapshots as JSON instead of opening the TUI")
         .option("--fresh", "Force a live poll, bypassing the shared cache")
         .action(async (opts: CodexUsageOptions) => {
-            const range = opts.range === undefined ? undefined : parseTimeRange(opts.range);
+            const range = resolveRangeFlag(opts.range);
 
-            if (opts.range !== undefined && range === null) {
-                out.print(suggestEnumFlag("tools codex usage", "--range", RANGE_VALUES));
+            if (range.status === "invalid") {
+                out.printlnErr(
+                    suggestEnumFlag("tools codex usage", "--range", RANGE_VALUES, {
+                        subcommand: ["usage"],
+                        ...(range.given === undefined ? {} : { given: range.given }),
+                    })
+                );
                 process.exitCode = 1;
                 return;
             }
@@ -47,7 +53,7 @@ export function registerUsageCommand(program: Command): void {
             await renderAiUsageTui({
                 providers: ["openai-sub"],
                 ...(opts.account === undefined ? {} : { accountFilter: opts.account }),
-                ...(range === null || range === undefined ? {} : { range }),
+                ...(range.status === "ok" ? { range: range.range } : {}),
             });
         });
 }
