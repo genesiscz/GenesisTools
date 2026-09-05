@@ -1,10 +1,11 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeDatabase } from "@genesiscz/utils/claude/database";
 import { removeDbFile } from "@genesiscz/utils/fs";
 import { tmpdir } from "@genesiscz/utils/paths";
-import { UsageLimitsDb } from "./limits-db";
+import { normalizeSeverity, UsageLimitsDb } from "./limits-db";
 
 let testCounter = 0;
 
@@ -93,14 +94,14 @@ describe("UsageLimitsDb", () => {
         expect(pairs).toHaveLength(3);
     });
 
-    test("recordSnapshotV2 stores severity + scope_model", () => {
+    test("recordSnapshotV2 stores severity + scope_model, severity in one vocabulary", () => {
         db.recordSnapshotV2("work", "five_hour", 42, recentTimestamp(5), {
             resetsAt: null,
             severity: "warning",
             scopeModel: null,
         });
         const latest = db.getLatest("work", "five_hour");
-        expect(latest?.severity).toBe("warning");
+        expect(latest?.severity).toBe("warn");
         expect(latest?.scopeModel).toBeNull();
     });
 
@@ -199,11 +200,110 @@ describe("UsageLimitsDb", () => {
         expect(db.recordSpendIfChanged("acct", spend)).toBe(false);
 
         const latest = db.getLatestSpend("acct");
-        expect(latest).toMatchObject({ used_minor: 1234, percent: 8, severity: "normal", enabled: true });
+        expect(latest).toMatchObject({ used_minor: 1234, percent: 8, severity: "ok", enabled: true });
     });
 
     test("getLatestSpend returns null when no spend snapshots exist", () => {
         expect(db.getLatestSpend("nobody")).toBeNull();
+    });
+
+    /**
+     * Two processes polled the same account with the same reading in two vocabularies: a
+     * pre-campaign `tools claude usage` wrote the raw API `normal` / `warning`, the new
+     * daemon and TUI wrote `ok` / `warn`. Each read the other's spelling as a change, so
+     * `usage_snapshots` grew ~2500 rows/hour instead of ~100 and `spend_snapshots` ~840.
+     */
+    describe("alternating severity vocabularies", () => {
+        test("normalizeSeverity folds the raw API spelling onto the neutral one", () => {
+            expect(normalizeSeverity("normal")).toBe("ok");
+            expect(normalizeSeverity("warning")).toBe("warn");
+            expect(normalizeSeverity("critical")).toBe("critical");
+            expect(normalizeSeverity("something-else")).toBe("something-else");
+        });
+
+        /**
+         * The other process runs a different copy of this code, so its row reaches the table
+         * without passing through this store's write path. Recording it through the store
+         * would normalise it on the way in and prove nothing.
+         */
+        function foreignSnapshotRow(utilization: number, resetsAt: string): void {
+            const foreign = new Database(dbPath);
+
+            foreign
+                .prepare(
+                    `INSERT INTO usage_snapshots (timestamp, account_name, bucket, utilization, resets_at, severity)
+                     VALUES (?, 'work', 'five_hour', ?, ?, 'warning')`
+                )
+                .run(recentTimestamp(5), utilization, resetsAt);
+            foreign.close();
+        }
+
+        test("a foreign writer's spelling does not defeat the snapshot dedupe", () => {
+            const resetsAt = "2026-09-05T20:00:00.000Z";
+
+            foreignSnapshotRow(84, resetsAt);
+
+            for (let i = 0; i < 10; i++) {
+                expect(
+                    db.recordIfChangedV2("work", "five_hour", 84, {
+                        resetsAt,
+                        severity: "warn",
+                        scopeModel: null,
+                    })
+                ).toBe(false);
+            }
+
+            expect(db.getSnapshots("work", "five_hour", 60)).toHaveLength(1);
+        });
+
+        test("a real utilization change still lands exactly one row", () => {
+            const resetsAt = "2026-09-05T20:00:00.000Z";
+
+            db.recordSnapshotV2("work", "five_hour", 83, recentTimestamp(5), {
+                resetsAt,
+                severity: "warning",
+                scopeModel: null,
+            });
+
+            expect(
+                db.recordIfChangedV2("work", "five_hour", 84, { resetsAt, severity: "warn", scopeModel: null })
+            ).toBe(true);
+            expect(
+                db.recordIfChangedV2("work", "five_hour", 84, { resetsAt, severity: "warn", scopeModel: null })
+            ).toBe(false);
+
+            expect(db.getSnapshots("work", "five_hour", 60).map((row) => row.utilization)).toEqual([83, 84]);
+        });
+
+        test("a foreign writer's spelling does not defeat the spend dedupe", () => {
+            const spend = {
+                used_minor: 0,
+                used_currency: "USD",
+                used_exponent: 2,
+                limit_minor: null,
+                limit_exponent: null,
+                percent: 0,
+                severity: "normal",
+                enabled: true,
+                cap_minor: null,
+                cap_currency: null,
+            };
+
+            const foreign = new Database(dbPath);
+
+            foreign
+                .prepare(
+                    `INSERT INTO spend_snapshots (timestamp, account_name, used_minor, used_currency,
+                         used_exponent, percent, severity, enabled)
+                     VALUES (?, 'work', 0, 'USD', 2, 0, 'normal', 1)`
+                )
+                .run(recentTimestamp(5));
+            foreign.close();
+
+            for (let i = 0; i < 10; i++) {
+                expect(db.recordSpendIfChanged("work", { ...spend, severity: "ok" })).toBe(false);
+            }
+        });
     });
 
     test("only runs ensureSchema's CREATE/ALTER statements once per underlying connection", () => {

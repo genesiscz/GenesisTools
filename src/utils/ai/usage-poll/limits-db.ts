@@ -148,6 +148,37 @@ export function resetsAtRoughlyEqual(a: string | null, b: string | null): boolea
 }
 
 /**
+ * Two vocabularies reach this store for the same fact. The raw Anthropic usage endpoint
+ * answers `normal` / `warning` / `critical`; the provider-neutral `LimitWindow.severity` is
+ * `ok` / `warn` / `critical` (`SEVERITY_MAP` in the anthropic-sub plugin). Both are derived
+ * from the same utilization, so a row whose only difference is the spelling is not a change.
+ *
+ * Comparing the stored strings made every writer read every OTHER writer's spelling as new.
+ * With a pre-campaign `tools claude usage` writing `warning` beside a new-code daemon writing
+ * `warn`, `usage_snapshots` went from ~100 rows/hour to ~2500 on 2026-09-04 and
+ * `spend_snapshots` to ~840, every pair carrying identical utilization.
+ *
+ * Normalising here — on the write AND on the comparison — rather than at each caller is what
+ * makes the dedupe hold whichever process writes the row.
+ */
+const SEVERITY_ALIASES: Record<string, string> = {
+    normal: "ok",
+    warning: "warn",
+};
+
+export function normalizeSeverity(severity: string): string {
+    return SEVERITY_ALIASES[severity] ?? severity;
+}
+
+function normalizeNullableSeverity(severity: string | null): string | null {
+    if (severity === null) {
+        return null;
+    }
+
+    return normalizeSeverity(severity);
+}
+
+/**
  * The limits store (spec 2026-09-04 section 6.2): percent-of-window snapshots per account
  * per limit window, plus the subscription spend rows. Provider-neutral since the
  * `2026-09-usage-limits-provider` migration; rows stay keyed by account NAME so
@@ -256,7 +287,7 @@ export class UsageLimitsDb {
             bucket,
             utilization,
             extras.resetsAt,
-            extras.severity,
+            normalizeNullableSeverity(extras.severity),
             extras.scopeModel,
             extras.provider ?? DEFAULT_LIMITS_PROVIDER,
             extras.accountId ?? null,
@@ -286,7 +317,7 @@ export class UsageLimitsDb {
         if (
             latest &&
             latest.utilization === utilization &&
-            latest.severity === extras.severity &&
+            normalizeNullableSeverity(latest.severity) === normalizeNullableSeverity(extras.severity) &&
             resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)
         ) {
             return false;
@@ -460,7 +491,7 @@ export class UsageLimitsDb {
             latest.used_currency === spend.used_currency &&
             latest.used_exponent === spend.used_exponent &&
             latest.percent === spend.percent &&
-            latest.severity === spend.severity &&
+            normalizeSeverity(latest.severity) === normalizeSeverity(spend.severity) &&
             latest.enabled === spend.enabled &&
             latest.limit_minor === spend.limit_minor &&
             latest.limit_exponent === spend.limit_exponent &&
@@ -485,7 +516,7 @@ export class UsageLimitsDb {
             spend.limit_minor,
             spend.limit_exponent,
             spend.percent,
-            spend.severity,
+            normalizeSeverity(spend.severity),
             spend.enabled ? 1 : 0,
             spend.cap_minor,
             spend.cap_currency,
