@@ -7,10 +7,11 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { aggregate } from "./lib/aggregate";
 import { loadPricing } from "./lib/config";
-import { findTranscriptFiles, readEvents } from "./lib/discover";
+import { isolateAgentHomeEnv } from "./lib/drivers/test-env";
 import { parseTranscriptLine } from "./lib/parse";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "./lib/pricing";
 import { renderSummary } from "./lib/render";
+import { loadEvents } from "./lib/reports/load";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
 
@@ -254,7 +255,12 @@ describe("aggregate", () => {
     });
 });
 
-describe("discover + readEvents", () => {
+describe("claude transcript discovery", () => {
+    // The summary views read through `loadEvents`, the same stack the ccusage
+    // reports use. `discover.ts` was a second one that saw only
+    // `~/.claude/projects` and missed `~/.config/claude/projects`.
+    isolateAgentHomeEnv();
+
     it("finds *.jsonl under <home>/.claude/projects and parses events", () => {
         const home = mkdtempSync(join(tmpdir(), "ai-spend-home-"));
         const projDir = join(home, ".claude", "projects", "-Users-x-Foo");
@@ -268,17 +274,33 @@ describe("discover + readEvents", () => {
         });
         writeFileSync(join(projDir, "sess.jsonl"), `${line}\n{garbage}\n\n`);
 
-        const files = findTranscriptFiles(home);
-        expect(files.length).toBe(1);
-
-        const events = readEvents(files);
+        const events = loadEvents({ home, sources: ["claude"] });
         expect(events.length).toBe(1);
-        expect(events[0].messageId).toBe("m1");
+        expect(events[0].id).toBe("m1");
+        expect(events[0].project).toBe("/Users/x/Foo");
+    });
+
+    it("also reads the second root, which the old discover walk never saw", () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-spend-second-root-"));
+        const cfgDir = join(home, ".config", "claude", "projects", "-Users-x-Bar");
+        mkdirSync(cfgDir, { recursive: true });
+        writeFileSync(
+            join(cfgDir, "sess.jsonl"),
+            `${SafeJSON.stringify({
+                type: "assistant",
+                timestamp: "2026-06-01T10:00:00.000Z",
+                cwd: "/Users/x/Bar",
+                sessionId: "s2",
+                message: { id: "m2", model: "claude-opus-4-8", usage: { input_tokens: 5 } },
+            })}\n`
+        );
+
+        expect(loadEvents({ home, sources: ["claude"] }).map((event) => event.id)).toEqual(["m2"]);
     });
 
     it("returns [] when the projects dir is absent", () => {
         const home = mkdtempSync(join(tmpdir(), "ai-spend-empty-"));
-        expect(findTranscriptFiles(home)).toEqual([]);
+        expect(loadEvents({ home, sources: ["claude"] })).toEqual([]);
     });
 });
 

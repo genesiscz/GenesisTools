@@ -11,6 +11,18 @@
  * truth for subscription bucket utilization; both merely emit here as well.
  */
 export { dayFilePath, usageDir, utcDayOf } from "./paths";
-export { emptyAggregate, queryUsage } from "./query";
+export { emptyAggregate, emptyBuckets, queryUsage } from "./query";
 export { recordUsage } from "./record";
-export type { UsageAggregate, UsageEvent, UsageEventInput, UsageQuery, UsageQueryResult } from "./types";
+export { isValidTimeZone, spendBucketKey, systemTimeZone } from "./series-keys";
+export type {
+    AccountRef,
+    SpendGrain,
+    SpendSeriesBucket,
+    SpendSeriesPoint,
+    UsageAggregate,
+    UsageEvent,
+    UsageEventInput,
+    UsageQuery,
+    UsageQueryResult,
+} from "./types";
+export { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME, UNBOUND_ACCOUNT_ID } from "./types";
