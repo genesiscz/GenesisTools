@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
@@ -7,9 +7,11 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
+import { __resetUsagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import { claudeOAuth } from "@genesiscz/utils/claude/auth";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import {
     _resetMasterKeyProviders,
     _resetSecretsForTest,
@@ -74,6 +76,39 @@ function configPath(): string {
     return join(home, ".genesis-tools", "ai", "config.json");
 }
 
+/**
+ * One recorded snapshot for `expired-sub`, in the all-provider cache `show` reads
+ * (spec 6.4). The storage singleton memoises its directory, so it is reset here to
+ * pick up this test's `GENESIS_TOOLS_HOME`.
+ */
+function writeSnapshotsFixture(): void {
+    __resetUsagePollStorage();
+    const dir = join(home, ".genesis-tools", "ai-usage", "cache");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+        join(dir, "snapshots.json"),
+        SafeJSON.stringify({
+            fetchedAt: new Date().toISOString(),
+            providers: {
+                "anthropic-sub": {
+                    alias: "claude",
+                    displayName: "Claude",
+                    prominent: ["five_hour"],
+                    accounts: [
+                        {
+                            provider: "anthropic-sub",
+                            accountId: "acc_expired",
+                            accountName: "expired-sub",
+                            fetchedAt: new Date().toISOString(),
+                            limits: [{ key: "five_hour", label: "5h", kind: "session", percentUsed: 42 }],
+                        },
+                    ],
+                },
+            },
+        })
+    );
+}
+
 /** Seed and let the vault migration settle, so a later byte check measures only the probe. */
 async function seed(accounts: AccountEntry[]): Promise<void> {
     const data: AiConfigData = { version: CONFIG_VERSION, accounts, defaults: {} };
@@ -114,6 +149,9 @@ beforeEach(async () => {
 afterEach(() => {
     claudeOAuth.refresh = realRefresh;
     globalThis.fetch = realFetch;
+    // The storage memoises its cache directory. Left set, the next test would read
+    // THIS test's snapshots file out of a home that no longer belongs to it.
+    __resetUsagePollStorage();
     env.testing.unset("GENESIS_TOOLS_HOME");
     env.testing.unset("GROK_HOME");
     _resetMasterKeyProviders();
@@ -153,6 +191,50 @@ describe("accounts show", () => {
 
         expect(refreshCalls).toEqual([]);
         expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    // NEGATIVE CONTROL for the usage section: the snapshot really is reported, and
+    // reporting it still costs no grant. `show` reads the recorded cache rather than
+    // `UsageLimitsDb`, whose constructor would CREATE and migrate tables — a write.
+    test("reports the recorded snapshot without polling, refreshing or opening a database", async () => {
+        writeSnapshotsFixture();
+        const before = readFileSync(configPath(), "utf8");
+        const printed: unknown[] = [];
+        const realResult = out.result;
+        out.result = ((value: unknown) => {
+            printed.push(value);
+        }) as typeof out.result;
+
+        try {
+            await runShow({ name: "expired-sub", json: true, tool: "tools ai accounts show" });
+        } finally {
+            out.result = realResult;
+        }
+
+        const detail = printed[0] as { lastUsage: { accountName: string; limits: Array<{ key: string }> } | null };
+        expect(detail.lastUsage?.accountName).toBe("expired-sub");
+        expect(detail.lastUsage?.limits.map((window) => window.key)).toEqual(["five_hour"]);
+        expect(refreshCalls).toEqual([]);
+        expect(fetchCalls).toEqual([]);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(existsSync(join(home, ".genesis-tools", "claude", "usage.db"))).toBe(false);
+    });
+
+    test("an account with nothing recorded reports null rather than failing", async () => {
+        const printed: unknown[] = [];
+        const realResult = out.result;
+        out.result = ((value: unknown) => {
+            printed.push(value);
+        }) as typeof out.result;
+
+        try {
+            await runShow({ name: "expired-sub", json: true, tool: "tools ai accounts show" });
+        } finally {
+            out.result = realResult;
+        }
+
+        expect((printed[0] as { lastUsage: unknown }).lastUsage).toBeNull();
+        expect(fetchCalls).toEqual([]);
     });
 });
 
