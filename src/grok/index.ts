@@ -158,7 +158,7 @@ program
 
         if (options.format !== undefined || options.events) {
             await runTranscriptDoor({
-                tool: "tools grok",
+                tool: "tools grok read",
                 subcommand: ["read"],
                 provider: "grok",
                 query: meta.name,
@@ -200,7 +200,7 @@ program
         }
 
         await runTranscriptDoor({
-            tool: "tools grok",
+            tool: "tools grok tail",
             subcommand: ["tail"],
             provider: "grok",
             query: meta.name,
