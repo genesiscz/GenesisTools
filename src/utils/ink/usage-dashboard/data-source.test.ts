@@ -5,7 +5,14 @@ import { cycleProvider, toggleAccount } from "./filters";
 import { nextPollState, notifiableWindows } from "./hooks/use-poller";
 import { formatTimeRange } from "./types";
 import { formatMoney, orderWindows } from "./views/account-section";
-import { seriesToRows } from "./views/history-view";
+import {
+    computeMaxOffset,
+    formatTimePerPercent,
+    groupStarts,
+    seriesToRows,
+    shortWindowLabel,
+    visibleGroupedRows,
+} from "./views/history-view";
 import { sortSnapshots, urgencyOf } from "./views/overview-view";
 
 /**
@@ -208,6 +215,48 @@ describe("history rows", () => {
         expect(work[0].percent).toBe(25);
         expect(work[0].delta).toBe(15);
         expect(work[1].delta).toBeNull();
+    });
+
+    test("burn speed is wall time per percent since the previous point, only when usage rose", () => {
+        const rows = seriesToRows(series);
+        const work = rows.filter((r) => r.account === "work");
+
+        // 30 minutes for 15 points.
+        expect(work[0].timePerPercent).toBe("2m");
+        expect(work[1].timePerPercent).toBeNull();
+        expect(formatTimePerPercent(45_000, 1)).toBe("45s");
+        expect(formatTimePerPercent(90 * 60_000, 1)).toBe("1h30m");
+        expect(formatTimePerPercent(60_000, -2)).toBeNull();
+        expect(formatTimePerPercent(0, 3)).toBeNull();
+    });
+
+    test("short window labels read like the old claude History tab", () => {
+        expect(shortWindowLabel("five_hour")).toBe("session");
+        expect(shortWindowLabel("seven_day")).toBe("weekly");
+        expect(shortWindowLabel("seven_day_fable")).toBe("fable");
+        expect(shortWindowLabel("product:grokbuild")).toBe("grokbuild");
+        expect(shortWindowLabel("primary")).toBe("primary");
+    });
+
+    test("grouped layout starts a block per account and j/k target those starts", () => {
+        const rows = seriesToRows(series);
+
+        expect(groupStarts(rows)).toEqual([0, 1]);
+    });
+
+    test("grouped fill charges the account header and the max offset still reaches the last row", () => {
+        const rows = seriesToRows(series);
+
+        // Page top: header(1) + row(1) for personal, header+margin(2) + row(1) + row(1) for work = 6 lines.
+        expect(visibleGroupedRows(rows, 0, 6).map((r) => r.account)).toEqual(["personal", "work", "work"]);
+        expect(visibleGroupedRows(rows, 0, 5).map((r) => r.account)).toEqual(["personal", "work"]);
+        expect(visibleGroupedRows(rows, 0, 4).map((r) => r.account)).toEqual(["personal"]);
+        expect(visibleGroupedRows(rows, 1, 3).map((r) => r.percent)).toEqual([25, 10]);
+
+        expect(computeMaxOffset(rows, 6)).toBe(0);
+        expect(computeMaxOffset(rows, 5)).toBe(1);
+        expect(computeMaxOffset(rows, 3)).toBe(1);
+        expect(computeMaxOffset([], 10)).toBe(0);
     });
 });
 
