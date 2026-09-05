@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/limits-db";
+import { shellHelpLines } from "./components/help-overlay";
 import { cycleProvider, toggleAccount } from "./filters";
 import { isModalOpen, setModalOpen } from "./hooks/input-scope";
 import { nextPollState, notifiableWindows } from "./hooks/use-poller";
@@ -260,6 +261,26 @@ describe("history rows", () => {
         expect(computeMaxOffset(rows, 5)).toBe(1);
         expect(computeMaxOffset(rows, 3)).toBe(1);
         expect(computeMaxOffset([], 10)).toBe(0);
+    });
+});
+
+describe("help overlay", () => {
+    test("the digit range names the tabs this dashboard has", () => {
+        const two = shellHelpLines({ tabCount: 2, canCycleProvider: false });
+        const three = shellHelpLines({ tabCount: 3, canCycleProvider: false });
+
+        expect(two.find(([, desc]) => desc === "Jump to tab")?.[0]).toBe("1-2");
+        expect(three.find(([, desc]) => desc === "Jump to tab")?.[0]).toBe("1-3");
+    });
+
+    test("P is listed only on a dashboard that has providers to cycle", () => {
+        const pinned = shellHelpLines({ tabCount: 3, canCycleProvider: false });
+        const all = shellHelpLines({ tabCount: 2, canCycleProvider: true });
+
+        expect(pinned.some(([key]) => key === "P")).toBe(false);
+        expect(all.some(([key]) => key === "P")).toBe(true);
+        // `a` is bound either way, so it stays listed on both.
+        expect(pinned.some(([key]) => key === "a")).toBe(true);
     });
 });
 

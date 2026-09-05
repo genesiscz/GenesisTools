@@ -121,7 +121,14 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
     });
 
     if (showHelp) {
-        return <HelpOverlay onClose={() => setShowHelp(false)} extraLines={helpLines} />;
+        return (
+            <HelpOverlay
+                onClose={() => setShowHelp(false)}
+                tabCount={tabs.length}
+                canCycleProvider={source.providers.length > 1}
+                {...(helpLines === undefined ? {} : { extraLines: helpLines })}
+            />
+        );
     }
 
     const visibleProviders = filters.provider ? [filters.provider] : source.providers;
