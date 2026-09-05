@@ -6,6 +6,12 @@ import { useScroll } from "../hooks/use-scroll";
 import { colorForPercent, colorForWindowKey } from "../lib/colors";
 import { formatTimeRange } from "../types";
 
+/**
+ * Module level, so it survives the unmount a tab switch causes: leaving History for the
+ * Overview and coming back used to drop the reader at the top of the list again.
+ */
+let savedOffset = 0;
+
 export interface HistoryViewProps {
     db: UsageLimitsDb | null;
     dbVersion: number;
@@ -243,9 +249,14 @@ export function HistoryView({ db, dbVersion, timeRange, providers, accountFilter
         totalItems: rows.length,
         pageSize: availableLines,
         enabled: true,
+        initialOffset: savedOffset,
         vimKeys: layout === "flat",
         maxOffsetOverride: layout === "grouped" ? groupedMaxOffset : undefined,
     });
+
+    useEffect(() => {
+        savedOffset = offset;
+    }, [offset]);
 
     // A poll can shrink the list under the cursor; clamp instead of pinning the view blank.
     useEffect(() => {
