@@ -225,6 +225,10 @@ export async function anthropicLogin(ctx: AccountFlowContext): Promise<LoginOutc
     const tokens = await promptAndExchangeCode();
 
     if (!tokens) {
+        // `Cancelled` exits 0 silently at both entrypoints, so the abort needs a
+        // line of its own — `tools claude login` printed one before the flow
+        // moved here, and `loginSecondary` still does (gap/cli).
+        out.println(pc.dim("Login cancelled."));
         throw new Error("Cancelled");
     }
 

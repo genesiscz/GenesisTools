@@ -94,8 +94,11 @@ export function registerAiUsageCommand(usage: Command): void {
 
                 for (const snapshot of snapshots) {
                     const windows = snapshot.limits.map((w) => `${w.label} ${w.percentUsed.toFixed(1)}%`).join("  ");
-                    const status = snapshot.error ?? snapshot.stale?.reason ?? windows ?? "";
-                    out.println(`${snapshot.provider}/${snapshot.accountName}: ${status}`);
+                    // `join` on an empty list is "", not undefined, so `??` never fell
+                    // through and an account with no windows printed a bare colon —
+                    // indistinguishable from a healthy account at 0% (gap/cli).
+                    const status = snapshot.error ?? snapshot.stale?.reason ?? windows;
+                    out.println(`${snapshot.provider}/${snapshot.accountName}: ${status || "no windows reported"}`);
                 }
 
                 return;
