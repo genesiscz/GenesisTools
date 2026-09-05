@@ -77,10 +77,13 @@ export async function collectAccountRows(providerId?: string): Promise<AccountLi
 export async function runList(opts: RunListOptions): Promise<void> {
     let providerId: string | undefined;
 
-    if (opts.provider !== undefined && opts.provider !== true && opts.provider !== "") {
+    // The flag ABSENT means every provider; the flag passed with no value means a
+    // value is missing, and answering that with the full list hid the typo
+    // instead of naming the possible values (gap/cli).
+    if (opts.provider !== undefined) {
         const resolved = await resolveAccountsProvider({
             raw: opts.provider,
-            // Never prompt: a list is a diagnostic, and a value was supplied.
+            // Never prompt: a list is a diagnostic, and the flag was typed.
             interactive: false,
             tool: opts.tool,
             subcommand: opts.subcommand,

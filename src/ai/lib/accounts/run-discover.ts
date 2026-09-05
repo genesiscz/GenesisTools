@@ -67,7 +67,9 @@ export async function runDiscover(opts: RunDiscoverOptions): Promise<void> {
 
     let providerId: string | undefined;
 
-    if (opts.provider !== undefined && opts.provider !== true && opts.provider !== "") {
+    // As in `run-list`: absent means every provider, present-but-empty is a
+    // missing enumerated value and must name the possible ones (gap/cli).
+    if (opts.provider !== undefined) {
         const resolved = await resolveAccountsProvider({
             raw: opts.provider,
             interactive: false,
