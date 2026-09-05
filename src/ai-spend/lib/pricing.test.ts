@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { byId } from "@genesiscz/utils/ai/catalog";
 import { DEFAULT_PRICING, priceFor } from "./pricing";
 
 describe("pricing table", () => {
@@ -16,6 +17,16 @@ describe("pricing table", () => {
             cacheWrite: 1.0,
             cacheRead: 0.08,
         });
+    });
+
+    test("claude-3-5-haiku is a hidden CATALOG entry now, not a literal table in pricing.ts", () => {
+        // It used to be `LEGACY_PRICING`, four numbers written out here. Hidden
+        // keeps it out of the pickers while `byProvider("anthropic")` still
+        // feeds it to the spend table, which is the only consumer left.
+        const entry = byId("claude-3-5-haiku", "anthropic");
+
+        expect(entry?.flags?.hidden).toBe(true);
+        expect(entry?.pricing).toMatchObject({ inputPer1M: 0.8, outputPer1M: 4 });
     });
 
     test("an unpriced catalog entry never shadows a priced id of the same name", () => {

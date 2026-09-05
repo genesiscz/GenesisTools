@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ApiLimit } from "@app/claude/lib/usage/api";
+import type { AccountUsage, ApiLimit } from "@app/claude/lib/usage/api";
 import type { Cached } from "@app/claude/lib/usage/shared-cache";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import {
@@ -35,7 +35,9 @@ function group(overrides: Partial<SessionGroup> = {}): SessionGroup {
     };
 }
 
-function cache(opts: { weeklyUsed?: number; sessionUsed?: number; fableUsed?: number; ageMs?: number } = {}): Cached {
+function cache(
+    opts: { weeklyUsed?: number; sessionUsed?: number; fableUsed?: number; ageMs?: number } = {}
+): Cached<AccountUsage> {
     const limits: ApiLimit[] = [
         {
             kind: "weekly_all",

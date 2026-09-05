@@ -349,3 +349,124 @@ describe("queryUsage", () => {
         expect(queryUsage({ from: "2026-03-04", to: "2026-03-01" }).total.events).toBe(0);
     });
 });
+
+describe("queryUsage grain", () => {
+    /** Fixed zone so bucket boundaries do not depend on the machine's clock. */
+    const TZ = "UTC";
+
+    async function seedHours(): Promise<void> {
+        await recordUsage(input({ at: "2026-03-02T09:15:00.000Z", accountId: "work", costUsd: 1 }));
+        await recordUsage(input({ at: "2026-03-02T09:45:00.000Z", accountId: "shop", costUsd: 2 }));
+        await recordUsage(input({ at: "2026-03-02T11:05:00.000Z", accountId: "work", costUsd: 4 }));
+    }
+
+    test("day grain returns one point with a byAccount split", async () => {
+        await seedHours();
+
+        const result = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: TZ });
+
+        expect(result.points).toHaveLength(1);
+        expect(result.points?.[0].t).toBe("2026-03-02");
+        expect(result.points?.[0].costUsd).toBeCloseTo(7, 6);
+        expect(result.points?.[0].tokens).toBe(4_500);
+        expect(result.points?.[0].byAccount.work).toEqual({ costUsd: 5, tokens: 3_000 });
+        expect(result.points?.[0].byAccount.shop).toEqual({ costUsd: 2, tokens: 1_500 });
+    });
+
+    test("hour and minute grains cut the same rows finer", async () => {
+        await seedHours();
+
+        const hourly = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "hour", timeZone: TZ });
+        expect(hourly.points?.map((point) => point.t)).toEqual(["2026-03-02T09", "2026-03-02T11"]);
+        expect(hourly.points?.map((point) => point.costUsd)).toEqual([3, 4]);
+
+        const perMinute = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "minute", timeZone: TZ });
+        expect(perMinute.points?.map((point) => point.t)).toEqual([
+            "2026-03-02T09:15",
+            "2026-03-02T09:45",
+            "2026-03-02T11:05",
+        ]);
+    });
+
+    test("week grain folds the days into their Monday", async () => {
+        // 2026-03-02 is a Monday; 2026-03-04 a Wednesday of the same week.
+        await recordUsage(input({ at: "2026-03-02T09:00:00.000Z", costUsd: 1 }));
+        await recordUsage(input({ at: "2026-03-04T09:00:00.000Z", costUsd: 1 }));
+
+        const result = queryUsage({ from: "2026-03-01", to: "2026-03-08", grain: "week", timeZone: TZ });
+
+        expect(result.points).toHaveLength(1);
+        expect(result.points?.[0].t).toBe("2026-03-02");
+        expect(result.points?.[0].costUsd).toBeCloseTo(2, 6);
+    });
+
+    test("byModel splits a point only when asked", async () => {
+        await seedHours();
+
+        const withModel = queryUsage({
+            from: "2026-03-02",
+            to: "2026-03-03",
+            grain: "day",
+            byModel: true,
+            timeZone: TZ,
+        });
+        expect(withModel.points?.[0].byModel?.["anthropic/claude-opus-4-1-20250805"].tokens).toBe(4_500);
+
+        const without = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: TZ });
+        expect(without.points?.[0].byModel).toBeUndefined();
+    });
+
+    test("an unpriced row is bucketed and still counted in total.unpricedEvents", async () => {
+        await recordUsage(input({ at: "2026-03-02T09:00:00.000Z", costUsd: 1 }));
+        // An id no catalog carries: recordUsage cannot derive a cost, so the row
+        // has none. Its tokens still belong in the point; its cost is missing.
+        await recordUsage(input({ at: "2026-03-02T09:30:00.000Z", provider: "invented", modelId: "not-a-real-model" }));
+
+        const result = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: TZ });
+
+        expect(result.total.unpricedEvents).toBe(1);
+        expect(result.points?.[0].costUsd).toBeCloseTo(1, 6);
+        expect(result.points?.[0].tokens).toBe(3_000);
+    });
+
+    test("negative control: without a grain there is no points key and the totals are unchanged", async () => {
+        await seedHours();
+
+        const result = queryUsage({ from: "2026-03-02", to: "2026-03-03" });
+
+        expect("points" in result).toBe(false);
+        expect(result.total.costUsd).toBeCloseTo(7, 6);
+        expect(result.byAccount.work.costUsd).toBeCloseTo(5, 6);
+    });
+
+    test("an unknown timeZone is rejected up front rather than by Intl on the first event", async () => {
+        await seedHours();
+
+        expect(() => queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: "Not/AZone" })).toThrow(
+            /unknown timeZone "Not\/AZone"/
+        );
+    });
+
+    test("an unknown timeZone is rejected even when the window holds no events", () => {
+        expect(() => queryUsage({ from: "2026-03-02", to: "2026-03-03", timeZone: "Not/AZone" })).toThrow(
+            /unknown timeZone/
+        );
+    });
+
+    test('an account id of "__proto__" gets its own bucket rather than Object.prototype', async () => {
+        // Bound rather than written inline: a literal `["__proto__"]` accessor
+        // is a lint error, and the point is that this is DATA, not an accessor.
+        const opaque = "__proto__";
+        await recordUsage(input({ at: "2026-03-02T09:00:00.000Z", accountId: opaque, costUsd: 1 }));
+
+        const result = queryUsage({ from: "2026-03-02", to: "2026-03-03", grain: "day", timeZone: TZ });
+
+        expect(Object.keys(result.byAccount)).toEqual([opaque]);
+        expect(result.byAccount[opaque].events).toBe(1);
+        expect(Object.keys(result.points?.[0].byAccount ?? {})).toEqual([opaque]);
+        expect(result.points?.[0].byAccount[opaque].costUsd).toBeCloseTo(1, 6);
+        // The canary: on a plain object the running totals land here instead.
+        expect(Object.prototype).not.toHaveProperty("costUsd");
+        expect(Object.prototype).not.toHaveProperty("events");
+    });
+});

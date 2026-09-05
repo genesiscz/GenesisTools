@@ -21,10 +21,13 @@ import { withCancel } from "@genesiscz/utils/prompts/clack/helpers.ts";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerAccountsCommands } from "./commands/accounts";
 import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
 import { registerSessionsCommands } from "./commands/sessions";
+import { registerUsageDaemonCommands } from "./commands/usage/daemon";
+import { registerAiUsageCommand } from "./commands/usage/index";
 
 // Without this, `referrersOf` in this process cannot see the accounts the
 // ai-proxy config bills, so `account rm` would delete an account (and its vault
@@ -570,8 +573,15 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
+registerAccountsCommands(program);
 registerConfigCommands(program);
 registerSessionsCommands(program);
+
+// `tools ai usage` opens the dashboard across every provider that reports quota; its
+// `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).
+const usageCmd = program.command("usage").description("Usage limits for every AI provider");
+registerAiUsageCommand(usageCmd);
+registerUsageDaemonCommands(usageCmd);
 
 async function main(): Promise<void> {
     try {
@@ -579,6 +589,10 @@ async function main(): Promise<void> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         p.log.error(message);
+        // Drain before exiting: `out.*` and clack both write fire-and-forget, so
+        // exiting in the same tick can tear the pipe down with the diagnostic
+        // still queued and leave the user an empty exit 1 (PR #360 review t12).
+        await out.flush();
         process.exit(1);
     }
 }

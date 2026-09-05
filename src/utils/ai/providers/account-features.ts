@@ -58,6 +58,17 @@ export interface LoginOutcome {
     /** Name and label suggestions when the caller gave none. */
     suggestedName?: string;
     suggestedLabel?: string;
+    /**
+     * Undo a side effect the flow already committed to disk, called ONLY when the
+     * identity policy refuses the write.
+     *
+     * Codex needs it: `codexLogin` writes the vendor's `auth.json` before anything
+     * can compare identities, so a refused re-login used to leave the config bound
+     * to the old account while the resolver read the NEW credentials out of that
+     * file (spec 2026-09-04; PR #360 review t17). A flow with no disk side effect
+     * omits it.
+     */
+    rollback?(): Promise<void>;
     /** Extra top-level fields (plan, fingerprint) the flow learned. */
     accountFields?: Partial<
         Pick<
@@ -143,6 +154,13 @@ export interface UsagePollOptions {
     /** Bypass the shared cache. */
     force?: boolean;
     fetch?: typeof fetch;
+    /**
+     * Accounts the PREVIOUS round found blocked at the provider's org level, by name.
+     * A provider that answers a dead subscription with a rate-limit status uses this to
+     * skip the "rotate the token and retry" unlock, which for such an account only spends
+     * a single-use grant on a request that cannot succeed.
+     */
+    orgBlocked?: ReadonlySet<string>;
 }
 
 /** Where this account's coding-agent transcripts live, for the transcript spend. */
@@ -160,11 +178,27 @@ export interface SpendScope {
  */
 export interface UsagePresenters {
     /** Replace the generic per-account block in the Overview tab. */
-    AccountSection?: ComponentType<{ snapshot: AccountUsageSnapshot; width: number; paceScope?: string }>;
+    AccountSection?: ComponentType<{
+        snapshot: AccountUsageSnapshot;
+        width: number;
+        prominent: string[];
+        paceScope?: string;
+    }>;
     /** Urgency sort. Absent means config order only. */
     score?(snapshots: AccountUsageSnapshot[]): AccountUsageSnapshot[];
-    /** Extra help lines for the `?` overlay. */
-    helpLines?: string[];
+    /**
+     * Rendered line count of one `AccountSection` at that width. The Overview tab uses it
+     * to decide between one and two columns, so a presenter whose block is taller than the
+     * generic bars must supply it or the layout under-counts and overflows.
+     */
+    estimateHeight?(snapshot: AccountUsageSnapshot, opts: { width: number; prominent: string[] }): number;
+    /** Narrowest column this presenter still renders cleanly in. */
+    minColumnWidth?: number;
+    /**
+     * Extra rows for the `?` overlay, as the overlay renders them: `[key, description]`.
+     * An empty key makes the row a heading, an empty pair a blank line.
+     */
+    helpLines?: Array<[key: string, description: string]>;
     /** Colour for a window; default is the percent thresholds. */
     colorFor?(window: LimitWindow, now: number): "red" | "yellow" | "green";
 }

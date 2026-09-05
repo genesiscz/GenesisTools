@@ -36,6 +36,12 @@ export type WorkerEvent =
     | { kind: "approval_request"; sessionId: string; requestId: string; method: string; detail?: string; ts?: string }
     | { kind: "turn.completed"; sessionId: string; turn?: number; usage?: WorkerUsage; ts?: string }
     | { kind: "turn.failed"; sessionId: string; reason?: string; ts?: string }
+    /**
+     * A live rate-limit push from the backend (codex `account/rateLimits/updated`). The
+     * payload stays provider-native: `src/utils/ai/usage-poll` owns the mapping into
+     * `LimitWindow[]`, and a worker must not depend on that vocabulary.
+     */
+    | { kind: "usage.limits"; sessionId: string; native: unknown; ts?: string }
     | { kind: "error"; sessionId: string; message: string; ts?: string }
     | { kind: "session.closed"; sessionId: string; ts?: string };
 
@@ -53,6 +59,7 @@ export const isToolResult = is("tool_result");
 export const isApprovalRequest = is("approval_request");
 export const isTurnCompleted = is("turn.completed");
 export const isTurnFailed = is("turn.failed");
+export const isUsageLimits = is("usage.limits");
 export const isWorkerError = is("error");
 export const isSessionClosed = is("session.closed");
 
@@ -77,6 +84,8 @@ export function formatWorkerEvent(event: WorkerEvent): string {
             }`;
         case "turn.failed":
             return `✖ turn failed${event.reason ? `: ${event.reason}` : ""}`;
+        case "usage.limits":
+            return "📊 rate limits updated";
         case "error":
             return `✖ error: ${event.message}`;
         case "session.closed":

@@ -1,4 +1,5 @@
 import { stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -6,8 +7,9 @@ import {
     nativeSessionRoots,
     nativeTranscriptMaxDepth,
 } from "@genesiscz/utils/providers/session-paths";
+import { spendScopeRoots } from "./account-scope";
 import { isRecord, num } from "./parse-helpers";
-import type { CreateParserOptions, DriverLineParser, DriverUsageEvent, MonitorDriver } from "./types";
+import type { CreateParserOptions, DriverLineParser, DriverRoot, DriverUsageEvent, MonitorDriver } from "./types";
 
 /**
  * Codex CLI rollouts: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, plus
@@ -159,6 +161,11 @@ export const codexDriver: MonitorDriver = {
 
     roots(home: string): string[] {
         return nativeSessionRoots("codex", home);
+    },
+
+    /** One home per account (`~/.codex`, `~/.codex-work`), so each root is tagged. */
+    rootsForAccounts(accounts: AccountEntry[]): DriverRoot[] {
+        return spendScopeRoots({ agent: "codex", accounts });
     },
 
     isTranscript(name: string): boolean {

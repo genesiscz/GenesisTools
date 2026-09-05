@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { generatePkcePair } from "@genesiscz/utils/ai/oauth/pkce";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -278,25 +279,8 @@ export class ClaudeOAuthClient {
         return Date.now() + bufferMs >= expiresAt;
     }
 
-    private async generatePKCE(): Promise<PKCEChallenge> {
-        const verifierBytes = new Uint8Array(32);
-        crypto.getRandomValues(verifierBytes);
-        const verifier = this.base64UrlEncode(verifierBytes);
-
-        const encoder = new TextEncoder();
-        const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
-        const challenge = this.base64UrlEncode(new Uint8Array(hashBuffer));
-
-        const stateBytes = new Uint8Array(32);
-        crypto.getRandomValues(stateBytes);
-        const state = this.base64UrlEncode(stateBytes);
-
-        return { verifier, challenge, state };
-    }
-
-    private base64UrlEncode(bytes: Uint8Array): string {
-        const base64 = btoa(String.fromCharCode(...bytes));
-        return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    private generatePKCE(): Promise<PKCEChallenge> {
+        return generatePkcePair();
     }
 }
 

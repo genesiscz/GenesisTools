@@ -2,13 +2,24 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
+import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { claudeDriver, codexDriver, grokDriver } from "./drivers";
 import { isolateAgentHomeEnv, toolsHomeFixture } from "./drivers/test-env";
-import { buildMonitorReport, findRecentTranscripts, localDayString, type MonitorReport, mondayOfWeek } from "./monitor";
+import {
+    type BuildMonitorOptions,
+    buildMonitorReport,
+    findRecentTranscripts,
+    localDayString,
+    type MonitorReport,
+    mondayOfWeek,
+} from "./monitor";
 import { DEFAULT_PRICING } from "./pricing";
+import { monitorEnvelope } from "./register";
 import type { PricingTable } from "./types";
 
 setupStorageSandbox();
@@ -151,6 +162,27 @@ describe("monitor report", () => {
         expect(third.today.tokens).toBe(3_850_000);
     });
 
+    test("a version-3 cache is discarded, and the version-4 one it writes is reused", () => {
+        const storage = new Storage("ai-spend");
+        const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
+
+        // A v3 row has no accountId, so its day sums cannot be attributed. The
+        // file is dropped rather than reported under a guessed account.
+        buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
+        expect(written.version).toBe(4);
+
+        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 3 }, { strict: true }));
+        const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(afterDowngrade.parsedFiles).toBe(3);
+        expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
+
+        // Negative control: the v4 cache it just wrote IS reused.
+        const afterV4 = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
+        expect(afterV4.parsedFiles).toBe(0);
+        expect(afterV4.today.cost).toBeCloseTo(3.48, 5);
+    });
+
     test("fast path within sweep TTL catches appends, new siblings, and new project dirs", () => {
         const storage = new Storage("ai-spend");
         const iso = new Date().toISOString();
@@ -180,6 +212,17 @@ describe("monitor report", () => {
         const files = findRecentTranscripts(roots, Date.now() - 60_000, claudeDriver);
         expect(files.every((f) => f.startsWith(roots[0]) || f.startsWith(roots[1]))).toBe(true);
         expect(files.some((f) => f.endsWith("old.jsonl"))).toBe(false);
+    });
+
+    test("nested roots yield each transcript once, so its events are never counted twice", () => {
+        const outer = join(home, ".claude", "projects");
+        const inner = join(outer, "p1");
+        const files = findRecentTranscripts([outer, inner], Date.now() - 60_000, claudeDriver);
+
+        expect(files.length).toBe(new Set(files).size);
+        expect(files.filter((f) => f.startsWith(inner)).length).toBe(
+            findRecentTranscripts([inner], Date.now() - 60_000, claudeDriver).length
+        );
     });
 
     test("a timestamp-less record does not burn its id for the real record that follows", () => {
@@ -503,5 +546,167 @@ describe("monitor honours dated and context-banded pricing", () => {
 
         // $2 in the matching band; $50 in the wrong one, $100 with no band at all.
         expect(report.today.cost).toBeCloseTo(2, 5);
+    });
+});
+
+/**
+ * The account dimension, end to end: the real drivers ask the real plugins for
+ * each account's `spendScope`, so a fixture home bound to an account has to come
+ * back tagged with that account's id. A fake driver would prove only that the
+ * merge works, not that the three plugins agree with it.
+ */
+describe("monitor account rows", () => {
+    /** Fixture handles only — never a live account name. */
+    const WORK = "acc_work";
+    const SHOP = "acc_shop";
+
+    let home: string;
+    let homes: { work: string; shop: string; loose: string };
+    let accounts: AccountEntry[];
+
+    function codexAccount(id: string, name: string, codexHome: string): AccountEntry {
+        return {
+            id,
+            name,
+            provider: "openai-sub",
+            credentials: { authFile: join(codexHome, "auth.json") },
+        } as AccountEntry;
+    }
+
+    /** gpt-5: $10/M output. One turn_context to pin the model, one token_count. */
+    function codexRollout(iso: string, outputTokens: number): string {
+        const usage = {
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: outputTokens,
+            total_tokens: outputTokens,
+        };
+
+        return `${SafeJSON.stringify({
+            timestamp: iso,
+            type: "turn_context",
+            payload: { turn_id: "t1", cwd: "/tmp/proj", model: "gpt-5" },
+        })}\n${SafeJSON.stringify({
+            timestamp: iso,
+            type: "event_msg",
+            payload: { type: "token_count", info: { total_token_usage: usage, last_token_usage: usage } },
+        })}\n`;
+    }
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+        // ai-spend runs in its own process, so the drivers only see spendScope
+        // once the plugins are registered — same call register.ts makes.
+        registerBuiltInPlugins();
+
+        home = mkdtempSync(join(tmpdir(), "ai-spend-accounts-"));
+        homes = {
+            work: join(home, ".codex-work"),
+            shop: join(home, ".codex-shop"),
+            loose: join(home, ".codex-loose"),
+        };
+
+        const iso = new Date().toISOString();
+        const claudeDir = join(home, ".claude", "projects", "p1");
+        mkdirSync(claudeDir, { recursive: true });
+        // 1M input on claude-3-5-haiku = $0.80.
+        writeFileSync(join(claudeDir, "s1.jsonl"), line("msg-a", iso, { input_tokens: 1_000_000 }));
+
+        // 0.1M / 0.2M / 0.4M gpt-5 output = $1.00 / $2.00 / $4.00.
+        for (const [dir, outputTokens] of [
+            [homes.work, 100_000],
+            [homes.shop, 200_000],
+            [homes.loose, 400_000],
+        ] as const) {
+            const sessions = join(dir, "sessions", "2026", "09", "04");
+            mkdirSync(sessions, { recursive: true });
+            writeFileSync(
+                join(sessions, "rollout-2026-09-04T09-00-00-synthetic.jsonl"),
+                codexRollout(iso, outputTokens)
+            );
+        }
+
+        accounts = [codexAccount(WORK, "work", homes.work), codexAccount(SHOP, "shop", homes.shop)];
+    });
+
+    function run(extra: Partial<BuildMonitorOptions> = {}): MonitorReport {
+        return buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            drivers: [claudeDriver, codexDriver],
+            ...extra,
+        });
+    }
+
+    test("two bound codex homes report as their own accounts and still sum to the top level", () => {
+        const report = run({ accounts });
+        const byId = new Map((report.accounts ?? []).map((row) => [row.accountId, row]));
+
+        expect(byId.get(WORK)?.accountName).toBe("work");
+        expect(byId.get(WORK)?.today.cost).toBeCloseTo(1, 6);
+        expect(byId.get(WORK)?.today.tokens).toBe(100_000);
+        expect(byId.get(SHOP)?.accountName).toBe("shop");
+        expect(byId.get(SHOP)?.today.cost).toBeCloseTo(2, 6);
+        expect(byId.get(SHOP)?.provider).toBe("openai-sub");
+        // The loose home is not in the config and was not discovered, so it is
+        // not walked at all — no row, and no money.
+        expect(byId.has(UNBOUND_ACCOUNT_ID)).toBe(false);
+        expect(report.agents.codex.today.cost).toBeCloseTo(3, 6);
+        expect(report.today.cost).toBeCloseTo(0.8 + 3, 6);
+    });
+
+    test("claude stays ONE row however many anthropic accounts exist", () => {
+        const anthropic = (id: string, name: string): AccountEntry =>
+            ({ id, name, provider: "anthropic-sub", credentials: {} }) as AccountEntry;
+        const report = run({ accounts: [...accounts, anthropic("acc_a", "work"), anthropic("acc_b", "personal")] });
+        const claudeRows = (report.accounts ?? []).filter((row) => row.source === "claude");
+
+        expect(claudeRows).toHaveLength(1);
+        expect(claudeRows[0].accountId).toBe(CLAUDE_ALL_ACCOUNT_ID);
+        expect(claudeRows[0].accountName).toBe("claude (all accounts)");
+        expect(claudeRows[0].today).toEqual(report.agents.claude.today);
+        // Emitting the shared tree once per account would have tripled it.
+        expect(report.agents.claude.today.tokens).toBe(1_000_000);
+    });
+
+    test("--all-homes counts a home no account claims, under the unbound row", () => {
+        const report = run({ accounts, discoveredHomes: { codex: [{ home: homes.loose }] } });
+        const byId = new Map((report.accounts ?? []).map((row) => [row.accountId, row]));
+
+        expect(byId.get(UNBOUND_ACCOUNT_ID)?.today.cost).toBeCloseTo(4, 6);
+        expect(byId.get(UNBOUND_ACCOUNT_ID)?.source).toBe("codex");
+        expect(report.agents.codex.today.cost).toBeCloseTo(7, 6);
+
+        // 🛑 The four leaves the Genesis app decodes strictly must stay numbers
+        // at their own keys, and must still be the sum across every home.
+        const envelope = SafeJSON.parse(SafeJSON.stringify(monitorEnvelope(report), { strict: true }), {
+            strict: true,
+        }) as { today: { cost: unknown; tokens: unknown }; week: { cost: unknown; tokens: unknown } };
+
+        expect(typeof envelope.today.cost).toBe("number");
+        expect(typeof envelope.today.tokens).toBe("number");
+        expect(typeof envelope.week.cost).toBe("number");
+        expect(typeof envelope.week.tokens).toBe("number");
+        expect(envelope.today.cost).toBeCloseTo(0.8 + 7, 6);
+    });
+
+    test("--account restricts the totals as well as the breakdown", () => {
+        const report = run({ accounts, accountIds: [WORK] });
+
+        expect((report.accounts ?? []).map((row) => row.accountId)).toEqual([WORK]);
+        expect(report.today.cost).toBeCloseTo(1, 6);
+        expect(report.agents.claude.today.tokens).toBe(0);
+    });
+
+    test("a caller that never mentions accounts gets no accounts key at all", () => {
+        const report = run();
+
+        expect(report.accounts).toBeUndefined();
+        expect(report.today.cost).toBeCloseTo(0.8, 6);
     });
 });

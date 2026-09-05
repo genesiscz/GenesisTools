@@ -1,10 +1,21 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
-import { AGENT_IDS, type AgentId, type DriverUsageEvent, MONITOR_DRIVERS, type MonitorDriver } from "./drivers";
+import { accountIdForFile, resolveDriverRoots } from "./account-roots";
+import {
+    AGENT_IDS,
+    AGENT_PLUGIN_IDS,
+    type AgentId,
+    type DriverUsageEvent,
+    MONITOR_DRIVERS,
+    type MonitorDriver,
+} from "./drivers";
 import { costOf, resolvePrice } from "./pricing";
 import type { ModelPriceEntry, PricingTable } from "./types";
 
@@ -36,6 +47,23 @@ export interface AgentTotals {
     week: MonitorTotals;
 }
 
+/**
+ * One account's slice of the same today/week windows.
+ *
+ * Claude contributes exactly ONE row, `CLAUDE_ALL_ACCOUNT_ID`, because
+ * `~/.claude/projects` carries no account marker (campaign decision D6).
+ * Transcripts under a home no account claims report as `UNBOUND_ACCOUNT_ID`.
+ */
+export interface MonitorAccountSpend {
+    accountId: string;
+    accountName: string;
+    /** Plugin id: `anthropic-sub`, `openai-sub`, `grok-sub`. */
+    provider: string;
+    source: AgentId;
+    today: MonitorTotals;
+    week: MonitorTotals;
+}
+
 export interface MonitorReport {
     today: MonitorTotals;
     week: MonitorTotals;
@@ -44,6 +72,12 @@ export interface MonitorReport {
     timezone: string;
     /** Per-agent split of the same today/week windows. Sums to the top level. */
     agents: Record<AgentId, AgentTotals>;
+    /**
+     * Per-account split, when the caller passed accounts. Sums to the top level
+     * as well, so `today.cost` never moves because this key appeared — the
+     * Genesis app decodes those four leaves strictly and ignores the rest.
+     */
+    accounts?: MonitorAccountSpend[];
     /** Files parsed (fully or incrementally) on this run — cache misses. */
     parsedFiles: number;
     /** Recent files considered (mtime within the week). */
@@ -69,9 +103,16 @@ export function mondayOfWeek(date: Date): Date {
     return midnight;
 }
 
-/** All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test. */
+/**
+ * All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test.
+ *
+ * A Set, because roots NEST: `resolveDriverRoots` dedupes by exact path, so a
+ * discovered home and an account's `spendScope` can contribute one tree and a
+ * subtree of it. Returning the same transcript twice makes every caller add its
+ * events twice, which doubles the reported cost and tokens instead of failing.
+ */
 export function findRecentTranscripts(roots: string[], minMtimeMs: number, driver: MonitorDriver): string[] {
-    const out: string[] = [];
+    const found = new Set<string>();
 
     const walk = (dir: string, depth: number): void => {
         let entries: import("node:fs").Dirent[];
@@ -100,7 +141,7 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number, drive
 
             try {
                 if (statSync(full).mtimeMs >= minMtimeMs) {
-                    out.push(full);
+                    found.add(full);
                 }
             } catch (err) {
                 logger.debug({ err, file: full }, "ai-spend monitor: stat failed");
@@ -114,7 +155,7 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number, drive
         }
     }
 
-    return out;
+    return [...found];
 }
 
 interface DaySums {
@@ -125,6 +166,12 @@ interface DaySums {
 interface FileCacheEntry {
     size: number;
     mtimeMs: number;
+    /**
+     * Account the file's root belonged to on the LAST run, re-stamped every run
+     * from the current root map. Never trusted across runs: binding a home to
+     * an account later must not leave the cached rows tagged unbound.
+     */
+    accountId?: string;
     /** Byte offset already parsed (== size unless the file shrank). */
     offset: number;
     days: Record<string, DaySums>;
@@ -145,8 +192,13 @@ interface AgentCache {
     files: Record<string, FileCacheEntry>;
 }
 
+/**
+ * Bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
+ * and reporting it under "(unbound)" would be a guess. Discarding the file
+ * costs one full re-parse and gets every row tagged from the live root map.
+ */
 interface MonitorCache {
-    version: 3;
+    version: 4;
     agents: Record<AgentId, AgentCache>;
 }
 
@@ -172,7 +224,7 @@ function freshAgentCache(): AgentCache {
 
 function freshCache(): MonitorCache {
     return {
-        version: 3,
+        version: 4,
         agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
     };
 }
@@ -187,7 +239,7 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 3 && raw.agents) {
+        if (raw?.version === 4 && raw.agents) {
             const cache = freshCache();
 
             for (const id of AGENT_IDS) {
@@ -290,8 +342,14 @@ function fastCandidates(driver: MonitorDriver, roots: string[], cache: AgentCach
     return [...out];
 }
 
-/** Read the file from `offset` to EOF (append-only tail). */
-function readTail(path: string, offset: number, size: number): string {
+/**
+ * Read the file from `offset` to EOF (append-only tail).
+ *
+ * Exported because the series event cache (`events-cache.ts`) needs the exact
+ * same incremental read: two implementations of "parse only what was appended"
+ * would drift, and the one that drifted would silently lose events.
+ */
+export function readTail(path: string, offset: number, size: number): string {
     const length = size - offset;
     const fd = openSync(path, "r");
 
@@ -417,6 +475,20 @@ export interface BuildMonitorOptions {
     now?: Date;
     storage?: Storage;
     pricing: PricingTable;
+    /** Enabled accounts, so transcripts under their homes carry an account id. */
+    accounts?: readonly AccountEntry[];
+    /**
+     * Extra homes on disk, per agent, from `--all-homes`. The caller awaits
+     * `plugin.accounts.discoverHomes()` — this function stays synchronous, and
+     * every reader of the monitor with it.
+     */
+    discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
+    /**
+     * Report only these account rows, and only their spend. `"(unbound)"` and
+     * `"claude-all"` are valid entries. Absent means every account, which is
+     * what the Genesis app asks for.
+     */
+    accountIds?: readonly string[];
     /** Injectable readers (tests spy on which files get opened). */
     readTailFn?: typeof readTail;
     /** Full-sweep interval override (tests; 0 = sweep every run). */
@@ -439,11 +511,19 @@ interface ScanOptions {
     sweepTtlMs: number;
     pricing: PricingTable;
     tailReader: typeof readTail;
+    accounts?: readonly AccountEntry[];
+    discoveredHomes?: readonly DiscoveredHome[];
 }
 
 function scanAgent(options: ScanOptions): ScanResult {
     const { driver, cache, now, minMtimeMs, pricing, tailReader } = options;
-    const roots = driver.roots(options.home);
+    const driverRoots = resolveDriverRoots({
+        driver,
+        userHome: options.home,
+        accounts: options.accounts,
+        discoveredHomes: options.discoveredHomes,
+    });
+    const roots = driverRoots.map((root) => root.path);
     const sweepDue = now.getTime() - cache.sweepAt >= options.sweepTtlMs;
     let files: string[];
 
@@ -498,6 +578,17 @@ function scanAgent(options: ScanOptions): ScanResult {
         parsedFiles++;
     }
 
+    // Re-stamped for every candidate, not just the parsed ones: binding a home
+    // to an account does not touch the transcripts, so a cache-hit file would
+    // otherwise keep yesterday's unbound tag forever.
+    for (const file of files) {
+        const entry = cache.files[file];
+
+        if (entry) {
+            entry.accountId = accountIdForFile(file, driverRoots);
+        }
+    }
+
     if (sweepDue) {
         // Drop cache rows for files that fell out of the window (or were deleted).
         const live = new Set(files);
@@ -519,6 +610,43 @@ function scanAgent(options: ScanOptions): ScanResult {
 
 function emptyAgentTotals(): AgentTotals {
     return { today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } };
+}
+
+/**
+ * Which account row a file's spend lands in.
+ *
+ * Claude collapses to one synthetic row: its transcripts record no login
+ * (decision D6). Every other agent reports its own account, or the unbound row
+ * when nothing claims that home — spend on an unbound home is still spend, so
+ * it is never silently dropped.
+ */
+function accountRowId(agent: AgentId, fileAccountId: string | undefined): string {
+    if (agent === "claude") {
+        return CLAUDE_ALL_ACCOUNT_ID;
+    }
+
+    return fileAccountId ?? UNBOUND_ACCOUNT_ID;
+}
+
+function newAccountRow(agent: AgentId, rowId: string, accounts: readonly AccountEntry[]): MonitorAccountSpend {
+    const provider = AGENT_PLUGIN_IDS[agent];
+    const empty = { today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } };
+
+    if (rowId === CLAUDE_ALL_ACCOUNT_ID) {
+        return { accountId: rowId, accountName: CLAUDE_ALL_ACCOUNT_NAME, provider, source: agent, ...empty };
+    }
+
+    const account = accounts.find((candidate) => candidate.id === rowId);
+
+    return {
+        accountId: rowId,
+        // The unbound row prints its own marker; a bound row whose account has
+        // since been deleted falls back to the id rather than inventing a name.
+        accountName: account?.name ?? rowId,
+        provider: account?.provider ?? provider,
+        source: agent,
+        ...empty,
+    };
 }
 
 export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport {
@@ -551,6 +679,8 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
             sweepTtlMs,
             pricing: options.pricing,
             tailReader,
+            accounts: options.accounts,
+            discoveredHomes: options.discoveredHomes?.[driver.id],
         });
         parsedFiles += result.parsedFiles;
         recentFiles += result.recentFiles;
@@ -565,6 +695,10 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
     // has cached day sums on disk, and reporting those next to freshly refreshed
     // ones would silently mix stale and current figures.
     const scanned = new Set(drivers.map((driver) => driver.id));
+    const wantedAccounts = options.accountIds ? new Set(options.accountIds) : undefined;
+    // Keyed by agent AND account: the unbound codex row and the unbound grok row
+    // are two different piles of money.
+    const rows = new Map<string, MonitorAccountSpend>();
 
     for (const id of AGENT_IDS) {
         if (!scanned.has(id)) {
@@ -574,12 +708,32 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         const totals = agents[id];
 
         for (const entry of Object.values(cache.agents[id].files)) {
+            const rowId = accountRowId(id, entry.accountId);
+
+            // `--account` restricts the totals too, not just the breakdown: a
+            // number labelled "one account" that summed every account would be
+            // worse than no number at all. Genesis passes no filter, so its four
+            // leaves stay the full sum.
+            if (wantedAccounts && !wantedAccounts.has(rowId)) {
+                continue;
+            }
+
+            const key = `${id}:${rowId}`;
+            let row = rows.get(key);
+
+            if (!row) {
+                row = newAccountRow(id, rowId, options.accounts ?? []);
+                rows.set(key, row);
+            }
+
             for (const [day, sums] of Object.entries(entry.days)) {
                 if (day >= weekStart && day <= todayDate) {
                     totals.week.cost += sums.cost;
                     totals.week.tokens += sums.tokens;
                     week.cost += sums.cost;
                     week.tokens += sums.tokens;
+                    row.week.cost += sums.cost;
+                    row.week.tokens += sums.tokens;
                 }
 
                 if (day === todayDate) {
@@ -587,6 +741,8 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
                     totals.today.tokens += sums.tokens;
                     today.cost += sums.cost;
                     today.tokens += sums.tokens;
+                    row.today.cost += sums.cost;
+                    row.today.tokens += sums.tokens;
                 }
             }
         }
@@ -599,7 +755,34 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
         weekStart,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         agents,
+        accounts: accountBreakdown(rows, options),
         parsedFiles,
         recentFiles,
     };
+}
+
+/**
+ * The `accounts` array, or nothing at all.
+ *
+ * Nothing when the caller never asked about accounts: a bare `monitor` would
+ * otherwise grow an "(unbound)" row that is a verbatim copy of `agents.codex`,
+ * which reads like a finding and is only an artefact. Rows that earned nothing
+ * this week are dropped for the same reason.
+ */
+function accountBreakdown(
+    rows: Map<string, MonitorAccountSpend>,
+    options: BuildMonitorOptions
+): MonitorAccountSpend[] | undefined {
+    const asked =
+        (options.accounts?.length ?? 0) > 0 ||
+        options.discoveredHomes !== undefined ||
+        options.accountIds !== undefined;
+
+    if (!asked) {
+        return undefined;
+    }
+
+    return [...rows.values()]
+        .filter((row) => row.week.tokens > 0 || row.week.cost > 0)
+        .sort((a, b) => a.accountName.localeCompare(b.accountName) || a.source.localeCompare(b.source));
 }

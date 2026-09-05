@@ -9,6 +9,7 @@ import {
     testAccount,
 } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry, UseEnvApiKey } from "@genesiscz/utils/ai/config/schema";
+import { isAccountProviderAlias, providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { allProviderPlugins, providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -231,6 +232,15 @@ async function reportAdded(input: AddAccountInput, json: boolean | undefined): P
 
     out.log.success(`Added ${pc.bold(account.name)} (${account.id}) for ${account.provider}.`);
     out.log.info(`Verify it with: tools ai config account test ${account.name}`);
+
+    // This command enters a credential the user already holds. A subscription
+    // provider can OBTAIN one instead, and typing the raw fields for it is work
+    // nobody has to do (spec 5.6).
+    const alias = providerAliasOf(account.provider);
+
+    if (isAccountProviderAlias(alias)) {
+        out.log.info(`To log in through the browser use: tools ai accounts login --provider ${alias}`);
+    }
 }
 
 /**

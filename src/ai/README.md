@@ -16,6 +16,7 @@ The user-facing face of the AI subsystem under `src/utils/ai/`. The verbs here a
 | `classify [text]` | Classify text into categories using semantic similarity |
 | `models` | Manage downloaded local models |
 | `config` | Manage AI accounts, defaults, links, secrets and diagnostics |
+| `accounts` | Browser logins, logout, and vendor-home discovery for the subscription providers |
 
 ## Quick start
 
@@ -100,9 +101,36 @@ When nothing is specified, the ladder falls back to the app default, then the ta
 
 ---
 
+## `ai accounts`: browser logins, logout, home discovery
+
+`ai config account` enters a credential you already hold. `ai accounts` OBTAINS one: the browser OAuth flows, the long-lived token mint, the external `grok login`, and the discovery of vendor home directories. It covers only the subscription plugins that declare account features (`anthropic-sub`, `openai-sub`, `grok-sub`), addressed by alias or plugin id.
+
+```bash
+tools ai accounts list [--provider claude|codex|grok] [--json]   # which credentials each account holds, never their values
+tools ai accounts show <account> [--json]                        # identity, credential kinds, bound homes; never polls
+tools ai accounts login [name] --provider <p> [--home <dir>] [--auth-file <f>]
+tools ai accounts login-long [name] --provider claude [--setup-token]
+tools ai accounts login-secondary [name] --provider claude
+tools ai accounts logout [name] [--provider <p>] [--oauth|--long-lived|--secondary|--auth-file|--all] [-y]
+tools ai accounts discover [--provider <p>] [--bind] [--json]    # vendor homes on disk; --bind is the only writing path
+tools ai accounts who [--json] [--all]                            # live Claude Code processes and the account each one bills
+```
+
+`--provider` is an enumerated flag: in a TTY it prompts, in a pipe (or with an unknown value) it prints the possible values and exits 1.
+
+One core, several doors. `tools claude login|login-long|login-secondary|logout|who`, `tools codex login`, `tools grok login` and `tools ai-proxy accounts login codex` call the same functions in `src/ai/lib/accounts/` with the provider pinned, so a behaviour cannot exist behind one door and not the others.
+
+Where a login lands:
+
+- **claude**: access and refresh token in the vault; the first login also becomes the default account for the `claude` and `ask` apps when they have none.
+- **codex**: the codex home's `auth.json` (`~/.codex` or `--home`), in the shape the official CLI reads, and the account stores that path. An account may instead hold a vault-stored token pair, the way `tools ai-proxy accounts login codex` used to write it; both keep working.
+- **grok**: no in-process flow. The command prints `grok login` with `GROK_HOME` set, offers to run it, then binds the `auth.json` it wrote.
+
+A re-login merges onto the account of the same name and keeps its long-lived token, secondary grant, label and apps. When the browser proves a different identity than the account already stores, the write needs a confirmation in a TTY and is refused in a pipe.
+
 ## 🛑 Diagnostics do not mutate
 
-`doctor` and `account test` are read-only by contract. They resolve and report, and they refuse to spend a single-use credential.
+`doctor`, `account test`, `accounts list`, `accounts show`, `accounts discover` (without `--bind`) and `accounts who` are read-only by contract. They resolve and report, and they refuse to spend a single-use credential.
 
 This is not a stylistic preference. Both commands once rotated Anthropic OAuth refresh tokens simply by reaching a shared auth path that refreshed on expiry, which meant **diagnosing an account could break it**. The guard now lives in the shared function, immediately before the call that spends the token, rather than at each call site.
 
