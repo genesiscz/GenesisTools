@@ -1,4 +1,5 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
 import { UsageBar } from "../components/usage-bar";
@@ -16,24 +17,6 @@ export interface GenericAccountSectionProps {
 
 /** Cells reserved for the label column, so the bars line up across accounts. */
 const LABEL_WIDTH = 16;
-
-export function formatMoney(window: LimitWindow): string | null {
-    if (!window.money) {
-        return null;
-    }
-
-    const { usedMinor, limitMinor, currency, exponent } = window.money;
-    const divisor = 10 ** exponent;
-    // The currency's own exponent, not a fixed 2: a three-decimal currency (KWD, BHD)
-    // would otherwise lose its last minor-unit digit.
-    const used = (usedMinor / divisor).toFixed(exponent);
-
-    if (limitMinor === undefined) {
-        return `${used} ${currency}`;
-    }
-
-    return `${used} / ${(limitMinor / divisor).toFixed(exponent)} ${currency}`;
-}
 
 /**
  * Windows to render. A `prominent` list both selects and orders them: the compact views
@@ -83,12 +66,12 @@ export function GenericAccountSection({
                 <Text dimColor>{`  ${snapshot.provider}`}</Text>
                 {snapshot.plan?.name ? <Text dimColor>{`  ${snapshot.plan.name}`}</Text> : null}
                 {snapshot.stale ? (
-                    <Text color="yellow">{`  ⚠ stale ${formatRelativeTime(new Date(snapshot.stale.lastSuccessAt))}`}</Text>
+                    <Text color="yellow">{`  ! stale ${formatRelativeTime(new Date(snapshot.stale.lastSuccessAt))}`}</Text>
                 ) : null}
             </Box>
             {snapshot.error ? (
                 <Box>
-                    <Text color="red">{`  ✖ ${snapshot.error}`}</Text>
+                    <Text color="red">{`  × ${snapshot.error}`}</Text>
                 </Box>
             ) : null}
             {windows.map((window) => {

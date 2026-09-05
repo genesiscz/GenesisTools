@@ -1,5 +1,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 
 /**
@@ -32,25 +33,14 @@ export function lastSnapshotFor(cache: SnapshotsCache | null, account: AccountEn
 /**
  * A window as one line: `5h   42.0%`, with the money pair appended for a credit
  * window and the reset time when the provider gave one.
- *
- * The money rule (divide by the currency's OWN exponent, never a fixed 2, so KWD
- * and BHD keep their third digit) is the same one `formatMoney` applies in
- * `src/utils/ink/usage-dashboard/views/account-section.tsx:18`. It is repeated here
- * rather than imported because that module pulls in Ink and React, and this file is
- * loaded on every `tools ai` invocation.
  */
 export function formatLimitLine(window: LimitWindow, now: number = Date.now()): string {
     const parts = [`${window.percentUsed.toFixed(1)}%`];
 
-    if (window.money) {
-        const { usedMinor, limitMinor, currency, exponent } = window.money;
-        const divisor = 10 ** exponent;
-        const used = (usedMinor / divisor).toFixed(exponent);
-        parts.push(
-            limitMinor === undefined
-                ? `${used} ${currency}`
-                : `${used} / ${(limitMinor / divisor).toFixed(exponent)} ${currency}`
-        );
+    const money = formatMoney(window);
+
+    if (money) {
+        parts.push(money);
     }
 
     if (window.resetsAt) {

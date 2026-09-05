@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
+import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
 import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { shellHelpLines } from "./components/help-overlay";
 import { cycleProvider, toggleAccount } from "./filters";
@@ -8,7 +9,7 @@ import { nextPollState, notifiableWindows } from "./hooks/use-poller";
 import { colorForPercent, colorForWindow, colorForWindowKey } from "./lib/colors";
 import { withoutHiddenAccounts } from "./source";
 import { formatTimeRange } from "./types";
-import { formatMoney, orderWindows } from "./views/account-section";
+import { orderWindows } from "./views/account-section";
 import {
     computeMaxOffset,
     formatTimePerPercent,
