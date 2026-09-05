@@ -12,7 +12,12 @@ tools grok history [query] [--all] [--format json] [-i]
 tools grok steer --name fix-auth --prompt "Now fix the second bug; still do not touch tests"
 tools grok read --name fix-auth [--turn 2]
 tools grok sessions
+
+tools grok login [name] [--home ~/.grok]     # runs `grok login` when the file is missing, then binds its auth.json
+tools grok usage [--json] [--range 24h]      # the shared usage dashboard pinned to this provider
 ```
+
+`login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider grok` and `tools ai usage --provider grok`. xAI has no in-process OAuth flow, so `login` prints the vendor command with `GROK_HOME` set, offers to run it, and binds the `auth.json` it wrote. `usage` reports the monthly billing credit rather than percentage windows.
 
 `run` and `steer` block until the turn ends (minutes). From an agent, run them in background Bash and wait for the completion notification.
 
