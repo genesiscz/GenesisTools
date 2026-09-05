@@ -2,13 +2,15 @@ import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/prov
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
 import { UsageBar } from "../components/usage-bar";
-import { colorForWindow, colorForWindowKey } from "../lib/colors";
+import { colorForWindow, colorForWindowKey, type UsageColor } from "../lib/colors";
 
 export interface GenericAccountSectionProps {
     snapshot: AccountUsageSnapshot;
     width?: number;
     /** Window keys to show. Empty or omitted means every window the provider returned. */
     prominent?: string[];
+    /** The provider presenter's own bar colour (spec 7.3). Defaults to the shared rule. */
+    colorFor?: (window: LimitWindow, now: number) => UsageColor;
     now?: number;
 }
 
@@ -66,6 +68,7 @@ export function GenericAccountSection({
     snapshot,
     width = 60,
     prominent,
+    colorFor = colorForWindow,
     now = Date.now(),
 }: GenericAccountSectionProps) {
     const windows = orderWindows(snapshot.limits, prominent);
@@ -90,16 +93,13 @@ export function GenericAccountSection({
             ) : null}
             {windows.map((window) => {
                 const money = formatMoney(window);
+                const color = colorFor(window, now);
 
                 return (
                     <Box key={window.key}>
                         <Text color={colorForWindowKey(window.key)}>{window.label.padEnd(LABEL_WIDTH)}</Text>
-                        <UsageBar
-                            utilization={window.percentUsed}
-                            width={barWidth}
-                            color={colorForWindow(window, now)}
-                        />
-                        <Text bold color={colorForWindow(window, now)}>
+                        <UsageBar utilization={window.percentUsed} width={barWidth} color={color} />
+                        <Text bold color={color}>
                             {` ${window.percentUsed.toFixed(1)}%`}
                         </Text>
                         {money ? <Text dimColor>{`  ${money}`}</Text> : null}

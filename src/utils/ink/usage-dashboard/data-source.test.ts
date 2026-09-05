@@ -4,7 +4,7 @@ import type { SeriesEntry } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { cycleProvider, toggleAccount } from "./filters";
 import { isModalOpen, setModalOpen } from "./hooks/input-scope";
 import { nextPollState, notifiableWindows } from "./hooks/use-poller";
-import { colorForWindowKey } from "./lib/colors";
+import { colorForPercent, colorForWindow, colorForWindowKey } from "./lib/colors";
 import { formatTimeRange } from "./types";
 import { formatMoney, orderWindows } from "./views/account-section";
 import {
@@ -310,6 +310,31 @@ describe("window colours", () => {
 
         expect(build).not.toBe(imagine);
         expect(colorForWindowKey("product:grokbuild")).toBe(build);
+    });
+});
+
+describe("bar colour", () => {
+    const now = Date.parse("2026-09-04T18:00:00.000Z");
+
+    test("percent alone decides the colour when the reset is far away", () => {
+        expect(colorForPercent(10)).toBe("green");
+        expect(colorForPercent(50)).toBe("yellow");
+        expect(colorForPercent(80)).toBe("red");
+        expect(
+            colorForWindow(
+                { key: "primary", label: "5h", kind: "session", percentUsed: 92, resetsAt: "2026-09-04T22:00:00.000Z" },
+                now
+            )
+        ).toBe("red");
+    });
+
+    test("a window about to refill reads green even when it is spent", () => {
+        expect(
+            colorForWindow(
+                { key: "primary", label: "5h", kind: "session", percentUsed: 92, resetsAt: "2026-09-04T18:10:00.000Z" },
+                now
+            )
+        ).toBe("green");
     });
 });
 

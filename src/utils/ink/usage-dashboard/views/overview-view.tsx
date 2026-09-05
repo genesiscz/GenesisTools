@@ -167,14 +167,25 @@ export function OverviewView({ results, config, presenters, sortMode = "urgency"
 
     const render = (snapshot: AccountUsageSnapshot, width: number) => {
         const prominent = prominentFor(config, snapshot.provider);
-        const Presenter = presenters[snapshot.provider]?.AccountSection;
+        const presenter = presenters[snapshot.provider];
+        const Presenter = presenter?.AccountSection;
         const key = `${snapshot.provider}:${snapshot.accountName}`;
 
         if (Presenter) {
             return <Presenter key={key} snapshot={snapshot} width={width} prominent={prominent} />;
         }
 
-        return <GenericAccountSection key={key} snapshot={snapshot} width={width} prominent={prominent} />;
+        // A provider that ships only `colorFor` still gets its own bar colours out of the
+        // generic block, which is the whole point of the field in `UsagePresenters`.
+        return (
+            <GenericAccountSection
+                key={key}
+                snapshot={snapshot}
+                width={width}
+                prominent={prominent}
+                {...(presenter?.colorFor === undefined ? {} : { colorFor: presenter.colorFor })}
+            />
+        );
     };
 
     const totalHeight = accounts.reduce(
