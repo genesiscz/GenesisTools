@@ -4,6 +4,14 @@ import { join, resolve } from "node:path";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
+import {
+    DEFAULT_SURFACES,
+    ensureGrokWorkerConfig,
+    grokSurfaceEnv,
+    surfacesFromFlags,
+    type WorkerSurfaces,
+} from "@genesiscz/utils/worker/isolation";
 import { defaultWorkerHome, turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
@@ -12,14 +20,12 @@ import { type WorktreeDelta, worktreeDelta, worktreeState } from "./worktree";
 const log = logger.child({ component: "grok:worker" });
 
 /**
- * Without these toggles the worker loads the user's ~/.claude compat config
- * (CLAUDE.md rules, settings.local.json permissions, ~200 personal skills)
- * and acts on it. A fresh GROK_HOME alone does NOT stop that pickup.
+ * The ~/.claude compat pickups that are side effects or credentials, never
+ * user-facing surfaces: hooks run commands, MCP servers carry secrets, session
+ * pickup leaks the user's own conversations. Off unconditionally. Skills and
+ * rules are surfaces and follow `WorkerSurfaces` (on by default).
  */
-const ISOLATION_ENV: Record<string, string> = {
-    GROK_CLAUDE_SKILLS_ENABLED: "0",
-    GROK_CLAUDE_RULES_ENABLED: "0",
-    GROK_CLAUDE_AGENTS_ENABLED: "0",
+const SIDE_EFFECT_ENV: Record<string, string> = {
     GROK_CLAUDE_MCPS_ENABLED: "0",
     GROK_CLAUDE_HOOKS_ENABLED: "0",
     GROK_CLAUDE_SESSIONS_ENABLED: "0",
@@ -62,6 +68,7 @@ export interface RunSessionOptions {
     readOnly: boolean;
     workerHome?: string;
     auth?: GrokAuthMode;
+    surfaces?: WorkerSurfaces;
 }
 
 export interface SteerSessionOptions {
@@ -69,6 +76,8 @@ export interface SteerSessionOptions {
     prompt?: string;
     promptFile?: string;
     readOnly?: boolean;
+    /** Only the flags given on this steer; absent ones keep the session's choice. */
+    surfaces?: Partial<WorkerSurfaces>;
 }
 
 export interface TurnResult {
@@ -86,17 +95,19 @@ export interface TurnResult {
 /**
  * The environment a worker turn runs under.
  *
- * ISOLATION_ENV is applied AFTER the caller's environment on purpose: whoever
- * launches `tools grok` may already export GROK_CLAUDE_SKILLS_ENABLED=1, and
- * letting that through would hand the worker the user's personal rules, skills
- * and hooks. Extracted so the isolation contract is asserted rather than
- * described (PR #330 review t2).
+ * The toggles are applied AFTER the caller's environment on purpose: whoever
+ * launches `tools grok` may already export GROK_CLAUDE_HOOKS_ENABLED=1, and
+ * letting that through would run the user's hooks inside the worker. The
+ * surfaces (skills, rules) come from the session's choice, never from the
+ * ambient environment either. Extracted so the contract is asserted rather
+ * than described (PR #330 review t2).
  */
 export function buildTurnEnv(
     baseEnv: Record<string, string | undefined>,
     workerHome: string,
     rendezvousSession?: string | null,
-    auth?: { mode: GrokAuthMode; authPath: string }
+    auth?: { mode: GrokAuthMode; authPath: string },
+    surfaces: WorkerSurfaces = DEFAULT_SURFACES
 ): Record<string, string | undefined> {
     const built: Record<string, string | undefined> = {
         ...baseEnv,
@@ -104,7 +115,8 @@ export function buildTurnEnv(
         // The swarm the worker must join. Without it the worker would fall back
         // to a host session id and could start a swarm its parent is not in.
         ...(rendezvousSession ? { GT_RENDEZVOUS_SESSION: rendezvousSession } : {}),
-        ...ISOLATION_ENV,
+        ...grokSurfaceEnv(surfaces),
+        ...SIDE_EFFECT_ENV,
     };
 
     if (auth?.mode === "subscription") {
@@ -121,9 +133,21 @@ export function buildTurnEnv(
     return built;
 }
 
+/**
+ * The shared worker contract as grok's `--rules <TEXT>` ("custom rules for the
+ * system prompt"). Passed on EVERY turn like `--tools`, because the CLI keeps no
+ * flag across `--resume`.
+ */
+export function contractArgs(readOnly: boolean, surfaces: WorkerSurfaces = DEFAULT_SURFACES): string[] {
+    return [
+        "--rules",
+        buildWorkerContract({ backend: "grok", sandbox: readOnly ? "read-only" : "cwd-jail", surfaces }),
+    ];
+}
+
 /** Arguments for the first turn of a session. */
 export function buildRunArgs(
-    session: { sessionId: string; model?: string; readOnly: boolean },
+    session: { sessionId: string; model?: string; readOnly: boolean; surfaces?: WorkerSurfaces },
     promptArguments: string[]
 ): string[] {
     const args = [...promptArguments, "--session-id", session.sessionId];
@@ -135,6 +159,7 @@ export function buildRunArgs(
         args.push("--tools", READ_ONLY_TOOLS);
     }
 
+    args.push(...contractArgs(session.readOnly, session.surfaces));
     return args;
 }
 
@@ -143,12 +168,17 @@ export function buildRunArgs(
  * grok CLI drops safety flags on `--resume`; without this a session started
  * read-only silently gains write tools from turn 2 onward.
  */
-export function buildSteerArgs(session: { sessionId: string }, readOnly: boolean, promptArguments: string[]): string[] {
+export function buildSteerArgs(
+    session: { sessionId: string; surfaces?: WorkerSurfaces },
+    readOnly: boolean,
+    promptArguments: string[]
+): string[] {
     const args = [...promptArguments, "--resume", session.sessionId];
     if (readOnly) {
         args.push("--tools", READ_ONLY_TOOLS);
     }
 
+    args.push(...contractArgs(readOnly, session.surfaces));
     return args;
 }
 
@@ -275,13 +305,19 @@ async function runTurn(
 
     let exitCode: number | null = null;
     try {
+        const surfaces = meta.surfaces ?? DEFAULT_SURFACES;
+        // `~/.agents/skills` has no env toggle; `--no-skills` lives in the worker home's config.toml.
+        ensureGrokWorkerConfig(meta.workerHome, surfaces);
         const proc = Bun.spawn({
             cmd: [binary, ...args],
             cwd: meta.cwd,
-            env: buildTurnEnv(env.getProcessEnv(), meta.workerHome, meta.rendezvousSession, {
-                mode: authMode,
-                authPath,
-            }),
+            env: buildTurnEnv(
+                env.getProcessEnv(),
+                meta.workerHome,
+                meta.rendezvousSession,
+                { mode: authMode, authPath },
+                surfaces
+            ),
             stdin: "ignore",
             stdout: logFd,
             stderr: errFd,
@@ -332,6 +368,7 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         model: options.model,
         readOnly: options.readOnly,
         auth: options.auth,
+        surfaces: options.surfaces ?? DEFAULT_SURFACES,
         turns: 0,
         createdAt: new Date().toISOString(),
         // Pinned once: every later steer must land in the same swarm, even if
@@ -352,8 +389,14 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
     }
 
     const readOnly = options.readOnly ?? meta.readOnly;
-    const args = buildSteerArgs(meta, readOnly, promptArgs(options));
-    const modeChange = readOnly === meta.readOnly ? undefined : { readOnly };
+    const previous = meta.surfaces ?? DEFAULT_SURFACES;
+    const surfaces = surfacesFromFlags(options.surfaces ?? {}, previous);
+    const args = buildSteerArgs({ ...meta, surfaces }, readOnly, promptArgs(options));
+    const surfacesChanged = surfaces.skills !== previous.skills || surfaces.rules !== previous.rules;
+    const modeChange =
+        readOnly === meta.readOnly && !surfacesChanged
+            ? undefined
+            : { ...(readOnly === meta.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
 
-    return runTurn(store, { ...meta, readOnly }, meta.turns + 1, args, modeChange);
+    return runTurn(store, { ...meta, readOnly, surfaces }, meta.turns + 1, args, modeChange);
 }

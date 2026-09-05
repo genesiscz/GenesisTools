@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
+import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
+import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { runTool } from "@genesiscz/utils/cli";
-import { parseTurnEvents } from "@genesiscz/utils/grok/stream";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
-import { formatWorkerEvent } from "@genesiscz/utils/worker/events";
+import { surfacesFromFlags } from "@genesiscz/utils/worker/isolation";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
+import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
 import { registerGrokLoginCommand } from "./commands/login";
@@ -30,50 +32,22 @@ const program = new Command();
 program.name("grok").description("Drive an isolated headless grok worker: run, steer between turns, read transcripts");
 
 function printTurn(result: TurnResult): void {
-    if (result.summary.toolCalls.length > 0) {
-        out.log.info(`tool calls (turn ${result.turn}):`);
-        for (const call of result.summary.toolCalls) {
-            out.log.message(`  ${call.tool}${call.target ? ` :: ${call.target}` : ""}`);
-        }
-    }
-
-    out.print(result.summary.report.trim());
-
-    if (!result.summary.ended) {
-        out.log.error(`turn ${result.turn} died mid-flight (no end event, exit ${result.exitCode})`);
-        if (result.stderr.trim()) {
-            out.log.error(result.stderr.trim());
-        }
-
-        process.exitCode = 1;
-        return;
-    }
-
-    // A turn can end cleanly and still have written warnings to stderr (a
-    // deprecated flag, a failed tool). Dropping those on success meant the only
-    // way to see them was to know the .err file existed (PR #330 review t7).
-    if (result.stderr.trim()) {
-        out.log.warn(`turn ${result.turn} wrote to stderr:`);
-        out.log.message(result.stderr.trim());
-    }
-
-    // "The turn ended" is not "the task got done": a worker that stops cleanly having
-    // written nothing prints the same success line as one that finished the job.
-    if (result.worktree !== null && !result.meta.readOnly) {
-        if (result.worktree.changedThisTurn === 0) {
-            out.log.warn(
-                `turn ${result.turn} changed NOTHING in ${result.meta.cwd} — the turn ended, but the task may be unfinished. Check, then steer to continue.`
-            );
-        } else {
-            out.log.info(
-                `turn ${result.turn} changed ${result.worktree.changedThisTurn} path(s); ${result.worktree.dirtyTotal} dirty in total`
-            );
-        }
-    }
-
-    out.log.success(
-        `turn ${result.turn} completed — verify yourself before trusting this report (log: ${result.logPath})`
-    );
+    printWorkerTurn({
+        backend: "grok",
+        name: result.meta.name,
+        turn: result.turn,
+        ended: result.summary.ended,
+        exitCode: result.exitCode,
+        report: result.summary.report,
+        stderr: result.stderr,
+        errPath: result.errPath,
+        toolCalls: result.summary.toolCalls,
+        // A read-only turn changes nothing by design; a replay has no snapshot to compare.
+        worktree:
+            result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
+        logPath: result.logPath,
+        transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+    });
 }
 
 program
@@ -90,6 +64,10 @@ program
         "--auth <mode>",
         "subscription (your `grok login` in ~/.grok, the default when it exists) or api-key (XAI_API_KEY, metered)"
     )
+    .option("--skills", "load your personal skills (~/.agents, ~/.claude); the default")
+    .option("--no-skills", "hide your personal skills from the worker (sticky across steers)")
+    .option("--rules", "load your personal rules (~/.claude rules and CLAUDE.md); the default")
+    .option("--no-rules", "hide your personal rules from the worker (sticky across steers)")
     .option("-r, --resume [query]", "Resume a grok TUI session by id, title, or transcript (not the headless worker)")
     .option("-l, --list", "With --resume, list matching TUI sessions")
     .option("-a, --all", "With --resume, search every project")
@@ -122,6 +100,7 @@ program
             readOnly: options.readonly,
             workerHome: options.workerHome,
             auth: options.auth,
+            surfaces: surfacesFromFlags({ skills: options.skills, rules: options.rules }),
         });
         printTurn(result);
     });
@@ -134,6 +113,10 @@ program
     .option("--prompt <text>", "inline instruction")
     .option("--readonly", "switch the session to read-only from this turn on")
     .option("--writable", "switch the session back to the default project-jail mode")
+    .option("--skills", "load your personal skills from this turn on")
+    .option("--no-skills", "hide your personal skills from this turn on")
+    .option("--rules", "load your personal rules from this turn on")
+    .option("--no-rules", "hide your personal rules from this turn on")
     .action(async (options) => {
         let readOnly: boolean | undefined;
         if (options.readonly) {
@@ -147,17 +130,20 @@ program
             prompt: options.prompt,
             promptFile: options.promptFile,
             readOnly,
+            surfaces: { skills: options.skills, rules: options.rules },
         });
         printTurn(result);
     });
 
 program
     .command("read")
-    .description("Re-print a finished turn's report and tool calls from its log")
+    .description("Re-print a finished turn: its report (default), or the transcript in a chosen --format")
     .requiredOption("--name <name>", "session name")
     .option("--turn <n>", "turn number (default: latest)")
-    .option("--events", "print normalized worker events instead of the report")
-    .action((options) => {
+    .option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")}`)
+    .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+    .option("--events", "alias of --format events")
+    .action(async (options) => {
         const store = new GrokSessionStore();
         const meta = store.readMeta(options.name);
         if (!meta) {
@@ -170,14 +156,17 @@ program
             throw new Error(`No log for turn ${turn} of '${meta.name}' (${logPath})`);
         }
 
-        if (options.events) {
-            for (const event of parseTurnEvents(readFileSync(logPath, "utf8"), meta.sessionId)) {
-                const line = formatWorkerEvent(event);
-                if (line) {
-                    out.println(line);
-                }
-            }
-
+        if (options.format !== undefined || options.events) {
+            await runTranscriptDoor({
+                tool: "tools grok read",
+                subcommand: ["read"],
+                provider: "grok",
+                query: meta.name,
+                format: options.format,
+                thoughts: options.thoughts,
+                events: options.events,
+                turnFile: logPath,
+            });
             return;
         }
 
@@ -194,6 +183,31 @@ program
             errPath,
             // A replay has no before/after snapshot, so it cannot honestly claim one.
             worktree: null,
+        });
+    });
+
+program
+    .command("tail")
+    .description("Follow the running turn's transcript as it is written; stops when the turn ends")
+    .requiredOption("--name <name>", "session name")
+    .option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")} (default compact)`)
+    .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+    .action(async (options) => {
+        const store = new GrokSessionStore();
+        const meta = store.readMeta(options.name);
+        if (!meta) {
+            throw new Error(`Grok session not found: ${options.name}`);
+        }
+
+        await runTranscriptDoor({
+            tool: "tools grok tail",
+            subcommand: ["tail"],
+            provider: "grok",
+            query: meta.name,
+            format: options.format,
+            thoughts: options.thoughts,
+            follow: true,
+            stillRunning: async () => (await runningTurnPids(meta.sessionId)).length > 0,
         });
     });
 

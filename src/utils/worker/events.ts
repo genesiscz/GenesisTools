@@ -63,6 +63,65 @@ export const isUsageLimits = is("usage.limits");
 export const isWorkerError = is("error");
 export const isSessionClosed = is("session.closed");
 
+/**
+ * Fold streamed deltas into whole messages before a line-per-event printer sees
+ * them. A run of `text` or `reasoning` deltas becomes ONE non-delta event with
+ * the joined text. When the run is immediately followed by a non-delta event of
+ * the same kind (codex emits the per-token deltas AND the completed message),
+ * the run is dropped and the completed message stands alone, so nothing prints
+ * twice. Grok emits deltas only, and its `read --events` used to print one line
+ * per token (233 lines for a 65-call turn, 2026-09-04).
+ */
+export function coalesceWorkerEvents(events: readonly WorkerEvent[]): WorkerEvent[] {
+    interface Run {
+        kind: "text" | "reasoning";
+        sessionId: string;
+        text: string;
+        ts?: string;
+    }
+
+    const whole = (run: Run): WorkerEvent => ({
+        kind: run.kind,
+        sessionId: run.sessionId,
+        text: run.text,
+        delta: false,
+        ...(run.ts ? { ts: run.ts } : {}),
+    });
+
+    const out: WorkerEvent[] = [];
+    let run: Run | null = null;
+
+    for (const event of events) {
+        if ((event.kind === "text" || event.kind === "reasoning") && event.delta) {
+            if (run !== null && run.kind === event.kind) {
+                run.text += event.text;
+            } else {
+                if (run !== null) {
+                    out.push(whole(run));
+                }
+
+                run = { kind: event.kind, sessionId: event.sessionId, text: event.text, ts: event.ts };
+            }
+
+            continue;
+        }
+
+        if (run !== null && event.kind !== run.kind) {
+            out.push(whole(run));
+        }
+
+        // A completed message of the same kind supersedes the deltas that streamed it.
+        run = null;
+        out.push(event);
+    }
+
+    if (run !== null) {
+        out.push(whole(run));
+    }
+
+    return out;
+}
+
 /** One-line human rendering, shared so every backend's `--events` view reads the same. */
 export function formatWorkerEvent(event: WorkerEvent): string {
     switch (event.kind) {

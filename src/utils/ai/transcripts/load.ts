@@ -1,11 +1,20 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
+import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
 import { claudeMessagesToTurns } from "./claude";
 import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
-import { type SliceOptions, sliceTurns, type TranscriptEnvelope, type TranscriptTurn } from "./types";
+import {
+    type SliceOptions,
+    sliceTurns,
+    type TranscriptEnvelope,
+    type TranscriptTurn,
+    terminatedOf,
+    totalsOf,
+} from "./types";
+import { workerEventsToTurns } from "./worker-events";
 
 function readRecords(path: string): unknown[] {
     if (!existsSync(path)) {
@@ -32,6 +41,15 @@ function looksLikeCodexGt(records: unknown[]): boolean {
 
 async function turnsFromFile(resolved: ResolvedTranscript, path: string, index = 1): Promise<TranscriptTurn[]> {
     if (resolved.provider === "claude") {
+        if (resolved.source === "worker") {
+            // A `claude -p --output-format stream-json` turn file, not a session file.
+            return workerEventsToTurns(
+                parseClaudeTurnEvents(readFileSync(path, "utf8"), resolved.sessionId),
+                resolved.sessionId,
+                index
+            );
+        }
+
         const session = await ClaudeSession.fromFile(path);
         return claudeMessagesToTurns(session.messages);
     }
@@ -75,5 +93,7 @@ export async function transcriptEnvelope(
         truncated: sliced.truncated,
         nextOffset: sliced.nextOffset,
         turns: sliced.turns,
+        totals: totalsOf(turns),
+        terminated: terminatedOf(turns),
     };
 }

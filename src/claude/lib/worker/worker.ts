@@ -4,6 +4,7 @@ import { pinnedLaunchEnv } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import { isText, isTurnCompleted, isTurnFailed, type WorkerEvent } from "@genesiscz/utils/worker/events";
 import { workerTurnErrPath, workerTurnLogPath } from "./paths";
 import { type ClaudeWorkerMeta, ClaudeWorkerStore } from "./store";
@@ -69,6 +70,16 @@ export function turnArgs(options: { meta: { sessionId: string; model?: string };
         args.push("--safe-mode");
     }
 
+    // The shared worker contract, on every turn: --append-system-prompt is per
+    // invocation, and --safe-mode is the one switch that drops the user's surfaces.
+    args.push(
+        "--append-system-prompt",
+        buildWorkerContract({
+            backend: "claude",
+            sandbox: "none",
+            surfaces: safeMode ? { skills: false, rules: false } : { skills: true, rules: true },
+        })
+    );
     return args;
 }
 

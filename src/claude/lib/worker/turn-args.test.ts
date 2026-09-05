@@ -39,8 +39,18 @@ describe("turnArgs", () => {
             "--model",
             "sonnet",
             "--safe-mode",
+            "--append-system-prompt",
+            expect.stringContaining("RESULT: "),
         ]);
         expect(turnArgs({ meta: { sessionId: meta.sessionId }, first: true })).not.toContain("--safe-mode");
+    });
+
+    test("the shared worker contract rides on every turn, and names the loaded surfaces unless safe mode", () => {
+        const meta = { sessionId: "11111111-aaaa-bbbb-cccc-000000000004" };
+        const contractOf = (args: string[]) => args[args.indexOf("--append-system-prompt") + 1] ?? "";
+
+        expect(contractOf(turnArgs({ meta, first: false }))).toContain("personal rules and skills are loaded");
+        expect(contractOf(turnArgs({ meta, first: false, safeMode: true }))).not.toContain("loaded for reference");
     });
 });
 
@@ -80,14 +90,18 @@ describe.skipIf(process.platform === "win32")("spawnWorker delivers the prompt o
         const argv = readFileSync(argvPath, "utf8");
         expect(argv).not.toContain(prompt);
         expect(argv).not.toContain("sk-fixture-not-a-real-secret");
-        expect(argv.split("\n").filter(Boolean)).toEqual([
+        // The contract is multi-line, so it spans several argv lines in the capture.
+        const lines = argv.split("\n").filter(Boolean);
+        expect(lines.slice(0, 7)).toEqual([
             "-p",
             "--output-format",
             "stream-json",
             "--verbose",
             "--session-id",
             expect.stringMatching(/^[0-9a-f-]{36}$/),
+            "--append-system-prompt",
         ]);
+        expect(lines.slice(7).join("\n")).toContain("RESULT: ");
         expect(readFileSync(stdinPath, "utf8")).toBe(prompt);
     });
 });

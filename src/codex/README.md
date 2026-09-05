@@ -10,6 +10,7 @@ tools codex spawn \
 
 tools codex status --name reviewer
 tools codex tail --name reviewer --follow
+tools codex logs --name reviewer --format compact   # the transcript door every backend shares (json|jsonl|events|raw)
 tools codex steer --name reviewer --body "Focus on the auth path"
 tools codex interrupt --name reviewer
 tools codex read --name reviewer

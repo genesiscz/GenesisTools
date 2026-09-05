@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
+import { workersDir as claudeWorkerDir } from "@genesiscz/utils/claude/worker-paths";
 import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-paths";
 import { env } from "@genesiscz/utils/env";
 import { sessionsDir as grokWorkerDir } from "@genesiscz/utils/grok/worker-paths";
@@ -15,6 +16,8 @@ export interface TranscriptRoots {
     claudeProjects?: string;
     /** Every Claude root, so auto-resolution is not limited to the first. */
     claudeProjectsAll?: string[];
+    /** `tools claude worker` sessions: `<name>.meta.json` + `<name>.turn<N>.jsonl`. */
+    claudeWorker?: string;
     grokHome?: string;
     grokWorker?: string;
     codexHome?: string;
@@ -101,6 +104,7 @@ export function defaultTranscriptRoots(): Required<TranscriptRoots> {
         // (PR #341 review round 4, t3).
         claudeProjects: nativeSessionRoots("claude")[0] ?? PROJECTS_DIR,
         claudeProjectsAll: nativeSessionRoots("claude"),
+        claudeWorker: claudeWorkerDir(),
         grokHome: env.grok.getHome(),
         grokWorker: grokWorkerDir(),
         codexHome: env.codex.getHomeOverride() ?? join(homedir(), ".codex"),
@@ -167,7 +171,12 @@ function findGrokNative(query: string, grokHome: string): RankedHit[] {
     return hits;
 }
 
-function findGrokWorker(query: string, workerDir: string): RankedHit[] {
+/**
+ * A `<name>.meta.json` + `<name>.turn<N>.jsonl` worker directory, the layout
+ * `tools grok` and `tools claude worker` share. Matches the worker name or the
+ * session uuid in its meta; the latest turn file is the head, earlier ones the chain.
+ */
+function findTurnFileWorker(query: string, workerDir: string, provider: TranscriptProvider): RankedHit[] {
     const hits: RankedHit[] = [];
     const entries = listDir(workerDir);
     for (const entry of entries) {
@@ -197,7 +206,7 @@ function findGrokWorker(query: string, workerDir: string): RankedHit[] {
         const filePath = turns[turns.length - 1];
         const extraFiles = turns.slice(0, -1);
         hits.push({
-            provider: "grok",
+            provider,
             source: "worker",
             sessionId,
             filePath,
@@ -206,6 +215,14 @@ function findGrokWorker(query: string, workerDir: string): RankedHit[] {
         });
     }
     return hits;
+}
+
+function findGrokWorker(query: string, workerDir: string): RankedHit[] {
+    return findTurnFileWorker(query, workerDir, "grok");
+}
+
+function findClaudeWorker(query: string, workerDir: string): RankedHit[] {
+    return findTurnFileWorker(query, workerDir, "claude");
 }
 
 /**
@@ -356,6 +373,7 @@ export async function resolveTranscript(
         for (const root of claudeRoots) {
             hits.push(...findClaude(query, root));
         }
+        hits.push(...findClaudeWorker(query, resolved.claudeWorker));
     }
     if (!provider || provider === "grok") {
         hits.push(...findGrokNative(query, resolved.grokHome));

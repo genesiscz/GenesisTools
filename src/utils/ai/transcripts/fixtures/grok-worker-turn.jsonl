@@ -1,0 +1,25 @@
+{"type":"available_commands","tools":["run_terminal_command","read_file","list_dir","grep"],"commands":["compact","context"]}
+{"type":"thought","data":"The user"}
+{"type":"thought","data":" wants a plan."}
+{"type":"thought","data":" Read the brief first."}
+{"type":"text","data":"I'll"}
+{"type":"text","data":" read the"}
+{"type":"text","data":" spec first."}
+{"type":"available_commands","tools":["run_terminal_command","read_file","list_dir","grep"],"commands":["compact","context"]}
+{"type":"usage","usage":{"input_tokens":41511,"output_tokens":501,"cache_read_input_tokens":512,"cache_creation_input_tokens":0,"reasoning_tokens":331},"signature":"sig-1"}
+{"type":"tool_call","toolCallId":"call-a-0","title":"read_file","kind":"read","status":"pending","toolName":"read_file","rawInput":{"target_file":"/tmp/project/docs/Spec.md","limit":100},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-a-0","status":null,"content":[],"rawOutput":null,"locations":[{"path":"/tmp/project/docs/Spec.md"}]}
+{"type":"tool_call","toolCallId":"call-a-1","title":"run_terminal_command","kind":"execute","status":"pending","toolName":"run_terminal_command","rawInput":{"command":"date '+%Y-%m-%d %H:%M' && ls docs","description":"Get date, list docs"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-a-1","status":null,"content":[{"type":"content","content":{"type":"text","text":"Get date, list docs"}}],"rawOutput":null,"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-a-1","status":"in_progress","content":[{"type":"content","content":{"type":"text","text":""}}],"rawOutput":{"type":"Bash","output":[],"output_for_prompt":"","exit_code":0,"command":"date '+%Y-%m-%d %H:%M' && ls docs","truncated":false,"signal":null,"timed_out":false,"description":null,"current_dir":"/tmp/project","output_file":"","total_bytes":0},"locations":[]}
+{"type":"thought","data":"Spec is long;"}
+{"type":"thought","data":" grep the headings."}
+{"type":"text","data":"Pulling the headings next."}
+{"type":"usage","usage":{"input_tokens":3593,"output_tokens":256,"cache_read_input_tokens":41984,"cache_creation_input_tokens":0,"reasoning_tokens":69},"signature":"sig-2"}
+{"type":"tool_call","toolCallId":"call-b-0","title":"grep","kind":"search","status":"pending","toolName":"grep","rawInput":{"pattern":"^## ","path":"/tmp/project/docs/Spec.md"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-a-0","status":"completed","content":[{"type":"content","content":{"type":"text","text":"1→---\n2→created: 2026-09-04 17:40\n3→---\n4→# Spec\n"}}],"rawOutput":null,"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-a-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"2026-09-04 17:50\n\u001b[1m\u001b[36mSpec.md\u001b[39;49m\u001b[0m\n"}}],"rawOutput":{"type":"Bash","output":[],"output_for_prompt":"2026-09-04 17:50\nSpec.md\n","exit_code":0,"command":"date '+%Y-%m-%d %H:%M' && ls docs","truncated":false,"signal":null,"timed_out":false,"description":null,"current_dir":"/tmp/project","output_file":"","total_bytes":27},"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-b-0","status":"failed","content":[{"type":"content","content":{"type":"text","text":"User cancelled the execution for tool `grep`"}}],"rawOutput":null,"locations":[]}
+not json at all
+{"type":"thought","data":"Third call, never finished."}
+{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 403 Forbidden): permission-denied: Your team 00000000-0000-4000-8000-000000000000 has either used all available credits or reached its monthly spending limit.\",\n  \"http_status\": 403\n}"}
