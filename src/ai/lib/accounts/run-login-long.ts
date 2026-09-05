@@ -9,6 +9,7 @@ import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
+import { siblingCommandOf } from "./tool-names";
 
 /**
  * Spec 4.1 widens `loginLong`'s context with `pastedToken` only, and
@@ -78,7 +79,7 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
 
     if (accounts.length === 0) {
         out.error(pc.red(`No ${alias} accounts configured yet.`));
-        out.println(pc.dim(`Run ${pc.cyan(`${opts.tool} login`)} first, then rerun this command.`));
+        out.println(pc.dim(`Run ${pc.cyan(siblingCommandOf(opts.tool, "login"))} first, then rerun this command.`));
         process.exitCode = 1;
         return;
     }

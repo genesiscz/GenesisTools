@@ -7,6 +7,7 @@ import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { resolveAccountName } from "./select-account";
 import { resolveAccountsProvider } from "./select-provider";
+import { siblingCommandOf } from "./tool-names";
 import { writeLoginOutcome } from "./write-outcome";
 
 export interface RunLoginSecondaryOptions {
@@ -65,7 +66,7 @@ export async function runLoginSecondary(opts: RunLoginSecondaryOptions): Promise
     const accounts = store.accounts({ provider: plugin.id });
 
     if (accounts.length === 0) {
-        out.error(pc.red(`No ${alias} accounts configured. Run \`${opts.tool.replace(/ [^ ]+$/, "")} login\` first.`));
+        out.error(pc.red(`No ${alias} accounts configured. Run \`${siblingCommandOf(opts.tool, "login")}\` first.`));
         process.exitCode = 1;
         return;
     }
