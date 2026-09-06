@@ -5,7 +5,7 @@ import type { DarwinKit, ReminderInfo, ReminderListInfo } from "@genesiscz/darwi
 import { DarwinKitError, ReminderPriority } from "@genesiscz/darwinkit";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
-import { closeDarwinKit, getDarwinKit } from "./darwinkit";
+import { closeDarwinKit, closeDarwinKitWhenIdle, getDarwinKit, leaseDarwinKit } from "./darwinkit";
 
 export type { ReminderInfo, ReminderListInfo };
 export { ReminderPriority };
@@ -236,6 +236,10 @@ export async function runDarwinkitGuarded<T>(
     options?: GuardOptions
 ): Promise<T> {
     const timeoutMs = options?.timeoutMs ?? resolveDefaultTimeoutMs();
+    // Every reminders call goes through here, so this is where the shared client is
+    // held. `requestAccess` retires the client it spawned, and without a lease that
+    // close rejected a list or a write another caller still had in flight.
+    const releaseLease = leaseDarwinKit();
 
     await dk.connect().catch(() => {
         // connection errors will surface via fn() below
@@ -362,6 +366,8 @@ export async function runDarwinkitGuarded<T>(
         for (const unsub of unsubscribers) {
             unsub();
         }
+
+        releaseLease();
     }
 }
 
@@ -421,7 +427,10 @@ export class MacReminders {
                 { ...options, timeoutMs }
             );
         } finally {
-            closeDarwinKit();
+            // The client is process-wide and closing it rejects every pending
+            // request, so a list or a write running beside this one would fail with
+            // `Client closed`. The helper is still retired, just once it is idle.
+            closeDarwinKitWhenIdle();
         }
     }
 
