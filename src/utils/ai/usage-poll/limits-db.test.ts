@@ -588,8 +588,11 @@ describe("UsageLimitsDb", () => {
             const to = Date.now();
             const from = to - 7 * 24 * 3600_000;
 
-            // 2,000 samples 5 minutes apart, which an undownsampled read returns whole.
-            for (let i = 0; i < 2000; i++) {
+            // Comfortably more samples than the 720-point default keeps, and few enough
+            // that the insert loop cannot time out when the suite runs 16 files in parallel.
+            const samples = 900;
+
+            for (let i = 0; i < samples; i++) {
                 db.recordSnapshot("work", "five_hour", i % 100, new Date(from + i * 300_000).toISOString());
             }
 
@@ -600,7 +603,7 @@ describe("UsageLimitsDb", () => {
                 step: 0,
             });
 
-            expect(every[0].points).toHaveLength(2000);
+            expect(every[0].points).toHaveLength(samples);
             expect(bounded[0].points.length).toBeLessThanOrEqual(720);
             // The newest sample is what the pace and the top row read, so it must survive.
             expect(bounded[0].points.at(-1)).toEqual(every[0].points.at(-1));
