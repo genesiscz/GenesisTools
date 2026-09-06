@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { AccountFeatures, AccountIdentity } from "@genesiscz/utils/ai/providers/account-features";
@@ -40,6 +40,8 @@ let authFile: string;
 let loginCalls: string[];
 /** Cleared by the controls, which need the flow's RESULT rather than its refusal. */
 let throwOnLogin = true;
+/** What the flow was handed, so the path normalization is observable. */
+let loginCtx: { home?: string; authFile?: string } | undefined;
 let identityCalls: Array<{ name: string; probe?: boolean }>;
 let identityResult: AccountIdentity | undefined;
 let realIsTty: boolean | undefined;
@@ -88,7 +90,10 @@ function setTty(value: boolean): void {
 }
 
 beforeEach(async () => {
-    home = mkdtempSync(join(tmpdir(), "gt-runlogin-authfile-"));
+    // Realpath: on macOS `/var` is a symlink to `/private/var`, and `process.cwd()`
+    // reports the physical path, so an un-resolved temp dir makes every
+    // absolute-path expectation below differ from the value the code produces.
+    home = realpathSync(mkdtempSync(join(tmpdir(), "gt-runlogin-authfile-")));
     authFile = join(home, "imported", "auth.json");
     env.testing.set("GENESIS_TOOLS_HOME", home);
     _setMasterKeyProvidersForTest([
@@ -99,6 +104,7 @@ beforeEach(async () => {
     _resetBuiltInPluginsForTest(true);
 
     loginCalls = [];
+    loginCtx = undefined;
     identityCalls = [];
     identityResult = { accountUuid: "chatgpt-acct-1", email: "alice@example.com", plan: "plus" };
 
@@ -108,6 +114,7 @@ beforeEach(async () => {
             logoutTargets: ["oauth", "authFile"],
             async login(ctx) {
                 loginCalls.push(ctx.authFile ?? "no-auth-file");
+                loginCtx = { home: ctx.home, authFile: ctx.authFile };
 
                 // Where the flag is honoured, reaching this is the bug under test;
                 // the control below passes `throwOnLogin: false` to use the result.
@@ -147,7 +154,7 @@ afterEach(() => {
     AiConfigStore.invalidate();
 });
 
-function login(overrides: { name?: string; authFile?: string } = {}) {
+function login(overrides: { name?: string; authFile?: string; home?: string } = {}) {
     return runLogin({
         provider: "codex",
         tool: "tools codex login",
@@ -217,5 +224,57 @@ describe("NEGATIVE CONTROL: the in-process flow still runs", () => {
         // refusing here would break `tools grok login --auth-file <new path>`.
         expect(result.ok).toBe(true);
         expect(loginCalls).toEqual([missing]);
+    });
+});
+
+describe("paths are absolute before anything stores or reads them", () => {
+    /** `process.chdir` is process-wide, so every case restores it. */
+    async function fromDirectory<T>(dir: string, body: () => Promise<T>): Promise<T> {
+        const before = process.cwd();
+        process.chdir(dir);
+
+        try {
+            return await body();
+        } finally {
+            process.chdir(before);
+        }
+    }
+
+    test("a relative --auth-file is persisted absolute, not relative to the shell that typed it", async () => {
+        writeImportedFile();
+
+        await fromDirectory(join(home, "imported"), () => login({ name: "work", authFile: "./auth.json" }));
+
+        expect(storedAccount("work")?.credentials.authFile).toBe(authFile);
+        expect(isAbsolute(storedAccount("work")?.credentials.authFile ?? "")).toBe(true);
+    });
+
+    test("the identity probe reads the resolved path too, so binding works from any directory", async () => {
+        writeImportedFile();
+
+        await fromDirectory(home, () => login({ name: "work", authFile: join("imported", "auth.json") }));
+
+        // A relative reference would have made the probe miss the file entirely,
+        // so the fingerprint landing is what proves the path was resolved first.
+        expect(storedAccount("work")?.accountUuid).toBe("chatgpt-acct-1");
+        expect(storedAccount("work")?.credentials.authFile).toBe(authFile);
+    });
+
+    test("a relative --home reaches the provider flow already resolved", async () => {
+        throwOnLogin = false;
+
+        await fromDirectory(home, () => login({ name: "work", home: "./profile" }));
+
+        expect(loginCtx?.home).toBe(join(home, "profile"));
+        expect(isAbsolute(loginCtx?.home ?? "")).toBe(true);
+    });
+
+    test("NEGATIVE CONTROL: an absolute path is handed through unchanged", async () => {
+        throwOnLogin = false;
+        const explicit = join(home, "already-absolute");
+
+        await login({ name: "work", home: explicit });
+
+        expect(loginCtx?.home).toBe(explicit);
     });
 });

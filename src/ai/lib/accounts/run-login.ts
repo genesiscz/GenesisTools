@@ -15,6 +15,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { clearInvalidGrant } from "@genesiscz/utils/claude/subscription-auth";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import { expandPath } from "@genesiscz/utils/paths";
 import pc from "picocolors";
 import { resolveAccountsProvider } from "./select-provider";
 import { writeLoginOutcome } from "./write-outcome";
@@ -118,10 +119,16 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     const store = await AiConfigStore.load();
+    // Absolute BEFORE anything reads them. The path a flow settles on is written
+    // to the account and resolved again later from whatever directory the tool
+    // happens to run in, so `--auth-file ./profile/auth.json` used to persist a
+    // reference that only worked from the directory it was typed in, and
+    // `--home ./profile` derived one the same way (PR #360 review r2 t1). Every
+    // consumer below reads `ctx`, so this is the one place that has to normalize.
     const ctx: AccountFlowContext = {
         requestedName: opts.name,
-        home: opts.home,
-        authFile: opts.authFile,
+        home: opts.home === undefined ? undefined : expandPath(opts.home),
+        authFile: opts.authFile === undefined ? undefined : expandPath(opts.authFile),
         interactive,
         ...(opts.name ? { account: store.account(opts.name) } : {}),
     };
@@ -278,8 +285,8 @@ async function resolveLoginOutcome(
     ctx: AccountFlowContext,
     opts: RunLoginOptions
 ): Promise<LoginOutcome | undefined> {
-    if (opts.authFile !== undefined && (await Bun.file(opts.authFile).exists())) {
-        return bindAuthFile(plugin, features, ctx, opts.authFile);
+    if (ctx.authFile !== undefined && (await Bun.file(ctx.authFile).exists())) {
+        return bindAuthFile(plugin, features, ctx, ctx.authFile);
     }
 
     return features.login ? await features.login(ctx) : await bindExternalLogin(plugin, features, ctx, opts);
