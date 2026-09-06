@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
+import type { CodexUsageClient } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
+import { codexUsage, pollCodexAccount } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
 import type { Cached, SharedUsageDeps } from "./shared-cache";
 import { __makeSharedUsage, SNAPSHOT_OPS } from "./shared-cache";
 import type { AccountUsageSnapshot } from "./types";
@@ -528,5 +531,96 @@ describe("SNAPSHOT_OPS", () => {
         const result = await get({});
 
         expect(result[0].limits[0].percentUsed).toBe(42);
+    });
+});
+/**
+ * The daemon's own cadence, driven the way launchd drives it: one FORCED round every 30s,
+ * forever. `force` means "do not serve me the shared 45s window", never "ignore the
+ * provider's own floor" — a codex round spawns a `codex app-server` per account, so a floor
+ * that force could bypass meant one process per account per tick (PR #359 review t1, the
+ * same subject as PR #361 t3).
+ *
+ * The spy is the thing that actually spawns: `openClient`, injected into the real
+ * `codexUsage.poll`, not a stand-in fetcher.
+ */
+describe("forced daemon rounds against the codex poll", () => {
+    const realNow = Date.now;
+
+    afterEach(() => {
+        Date.now = realNow;
+    });
+
+    // The plugin's OWN floor and the daemon's own period, not invented numbers.
+    const CODEX_FLOOR_MS = codexUsage.minIntervalMs ?? 0;
+    const TICK_MS = 30_000;
+
+    function codexAccount(name: string): AccountEntry {
+        return {
+            id: `acc_${name}`,
+            name,
+            provider: "openai-sub",
+            credentials: { dataDir: `/tmp/.codex-${name}` },
+        } as AccountEntry;
+    }
+
+    /** An app-server that answers one rate-limit read and closes. */
+    function fakeAppServer(): CodexUsageClient {
+        return {
+            async request<T>(): Promise<T> {
+                return { rateLimits: { primary: { usedPercent: 12, windowDurationMins: 300 } } } as T;
+            },
+            async notify() {},
+            async close() {},
+        };
+    }
+
+    /** `ticks` forced rounds `TICK_MS` apart, returning how often an app-server was opened. */
+    async function runTicks(ticks: number, floorMs: number): Promise<number> {
+        const store: CacheStore = new Map();
+        const account = codexAccount("work");
+        let spawned = 0;
+        let clock = 1_800_000_000_000;
+        Date.now = () => clock;
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => [
+                await pollCodexAccount(
+                    account,
+                    {},
+                    {
+                        openClient: async () => {
+                            spawned += 1;
+                            return fakeAppServer();
+                        },
+                    }
+                ),
+            ])
+        );
+
+        for (let tick = 0; tick < ticks; tick++) {
+            await get({ force: true, floorMs });
+            clock += TICK_MS;
+        }
+
+        return spawned;
+    }
+
+    // The spy sits on the function the plugin actually registers, so this drives the
+    // production path rather than a stand-in.
+    test("the plugin's registered poll is the one under test", () => {
+        expect(codexUsage.poll).toBe(pollCodexAccount);
+        expect(CODEX_FLOOR_MS).toBe(120_000);
+    });
+
+    // Ten ticks span 270s. At the 120s floor that is one round at 0s, 120s and 240s.
+    test("ten forced rounds spawn three app-servers, not ten", async () => {
+        expect(await runTicks(10, CODEX_FLOOR_MS)).toBe(3);
+    });
+
+    // Negative control: with the floor at one tick, every forced round still polls. A floor
+    // that leaked into the normal path would freeze the daemon instead of pacing it.
+    test("a floor of one tick still polls on every forced round", async () => {
+        expect(await runTicks(10, TICK_MS)).toBe(10);
     });
 });
