@@ -209,6 +209,19 @@ function transcriptGrain(grain: SpendGrain): Exclude<SpendGrain, "minute"> {
 }
 
 /**
+ * The ONE axis a spend series is drawn on.
+ *
+ * `mergePoints` folds the call half into the transcript half by the bucket
+ * STRING, so two halves bucketed at different widths never merge: a `both`
+ * request at `minute` grain drew hourly transcript spikes beside minute buckets
+ * and still labelled the result `minute`. Transcripts cannot resolve below an
+ * hour, so a mixed request puts BOTH halves on the coarser axis.
+ */
+export function effectiveSpendGrain(source: SpendSource, grain: SpendGrain): SpendGrain {
+    return source === "both" ? transcriptGrain(grain) : grain;
+}
+
+/**
  * Two spend requests describing the same scan. The totals and the series
  * endpoints fire together on every page load with the same window, and each one
  * used to walk every transcript on disk: 21.8 s and 11.8 s respectively over 30
@@ -506,13 +519,14 @@ export function createAiAggregator(): AiAggregator {
         },
 
         async getSpendSeries(request: SpendSeriesQuery): Promise<AiSpendSeriesResult> {
+            const grain = effectiveSpendGrain(request.source, request.grain);
             const accountIds = await scopedAccountIds(request);
 
             if (accountIds && accountIds.length === 0) {
                 return {
                     from: request.from,
                     to: request.to,
-                    grain: request.grain,
+                    grain,
                     source: request.source,
                     points: [],
                     accounts: [],
@@ -520,21 +534,21 @@ export function createAiAggregator(): AiAggregator {
                 };
             }
 
-            const query: SpendSeriesQuery = { ...request, accounts: accountIds };
+            const query: SpendSeriesQuery = { ...request, accounts: accountIds, grain };
             const byId = await accountsById();
             let points: SpendSeriesPoint[] = [];
             const refs: AccountRef[] = [];
             let unpriced = 0;
 
             if (query.source !== "transcripts") {
-                const calls = spendFromCalls(query, query.grain);
+                const calls = spendFromCalls(query, grain);
                 points = calls.points ?? [];
                 unpriced += calls.total.unpricedEvents;
                 refs.push(...Object.keys(calls.byAccount).map((accountId) => refFor(accountId, byId)));
             }
 
             if (query.source !== "calls") {
-                const transcripts = await spendFromTranscripts(query, query.grain);
+                const transcripts = await spendFromTranscripts(query, grain);
                 points = mergePoints(points, transcripts.points);
                 unpriced += transcripts.unpriced;
                 refs.push(...transcripts.accounts);
@@ -543,7 +557,7 @@ export function createAiAggregator(): AiAggregator {
             return {
                 from: query.from,
                 to: query.to,
-                grain: query.grain,
+                grain,
                 source: query.source,
                 points,
                 accounts: dedupeRefs(refs),

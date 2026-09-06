@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { defaultSeriesStep, transcriptScanKey } from "@app/dev-dashboard/lib/ai-accounts/aggregator";
+import {
+    defaultSeriesStep,
+    effectiveSpendGrain,
+    transcriptScanKey,
+} from "@app/dev-dashboard/lib/ai-accounts/aggregator";
 
 const WINDOW = { from: "2026-08-05T19:00:00.000Z", to: "2026-09-04T19:00:00.000Z", source: "transcripts" } as const;
 
@@ -50,5 +54,28 @@ describe("defaultSeriesStep", () => {
     test("an unusable window asks for no downsampling rather than a bad step", () => {
         expect(defaultSeriesStep("nope", WINDOW.to)).toBeUndefined();
         expect(defaultSeriesStep(WINDOW.to, WINDOW.from)).toBeUndefined();
+    });
+});
+describe("effectiveSpendGrain", () => {
+    test("a single-source series keeps the grain it asked for", () => {
+        expect(effectiveSpendGrain("calls", "minute")).toBe("minute");
+        expect(effectiveSpendGrain("transcripts", "minute")).toBe("minute");
+        expect(effectiveSpendGrain("calls", "day")).toBe("day");
+    });
+
+    test("both sources at minute grain draw on the hour, because the two halves must merge", () => {
+        expect(effectiveSpendGrain("both", "minute")).toBe("hour");
+    });
+
+    test("both sources agree with the transcript half at every coarser grain", () => {
+        expect(effectiveSpendGrain("both", "hour")).toBe("hour");
+        expect(effectiveSpendGrain("both", "day")).toBe("day");
+        expect(effectiveSpendGrain("both", "week")).toBe("week");
+    });
+
+    test("the merged grain is the one the transcript scan is keyed by, so the halves share buckets", () => {
+        expect(transcriptScanKey({ ...WINDOW, source: "both" }, effectiveSpendGrain("both", "minute"))).toBe(
+            transcriptScanKey({ ...WINDOW, source: "both" }, "minute")
+        );
     });
 });
