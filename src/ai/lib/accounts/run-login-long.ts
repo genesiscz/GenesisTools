@@ -144,7 +144,7 @@ export async function runLoginLong(opts: RunLoginLongOptions): Promise<void> {
 
     await store.mutate((data) =>
         applyLongLivedToken(data, {
-            accountName: account.name,
+            accountId: account.id,
             token,
             expiresAt,
             organizationUuid: outcome.accountFields?.organizationUuid,

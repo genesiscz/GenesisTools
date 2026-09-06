@@ -68,7 +68,7 @@ afterEach(() => {
 describe("applyLongLivedToken", () => {
     test("sets the token on the named account only", async () => {
         const data = configWith({});
-        await applyLongLivedToken(data, { accountName: "personal", token: "sk-ant-oat01-new" });
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "sk-ant-oat01-new" });
 
         expect(await resolveSecret(data.accounts[0].credentials.longLivedToken)).toBe("sk-ant-oat01-new");
         expect(data.accounts[1].credentials.longLivedToken).toBeUndefined();
@@ -83,7 +83,7 @@ describe("applyLongLivedToken", () => {
             expiresAt: 1234,
         });
 
-        await applyLongLivedToken(data, { accountName: "personal", token: "sk-ant-oat01-new" });
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "sk-ant-oat01-new" });
 
         expect(data.accounts[0].credentials.accessToken).toBe("fresh-access");
         expect(data.accounts[0].credentials.refreshToken).toBe("fresh-refresh");
@@ -92,14 +92,14 @@ describe("applyLongLivedToken", () => {
 
     test("a minted token records its expiry", async () => {
         const data = configWith({});
-        await applyLongLivedToken(data, { accountName: "personal", token: "tok", expiresAt: 999 });
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "tok", expiresAt: 999 });
 
         expect(data.accounts[0].credentials.longLivedTokenExpiresAt).toBe(999);
     });
 
     test("replacing a minted token with a PASTED one clears the stale expiry", async () => {
         const data = configWith({ longLivedToken: "minted", longLivedTokenExpiresAt: 999 });
-        await applyLongLivedToken(data, { accountName: "personal", token: "pasted" });
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "pasted" });
 
         expect(await resolveSecret(data.accounts[0].credentials.longLivedToken)).toBe("pasted");
         expect(data.accounts[0].credentials.longLivedTokenExpiresAt).toBeUndefined();
@@ -107,7 +107,7 @@ describe("applyLongLivedToken", () => {
 
     test("the token never lands in the config as plaintext", async () => {
         const data = configWith({});
-        await applyLongLivedToken(data, { accountName: "personal", token: "sk-ant-oat01-secret" });
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "sk-ant-oat01-secret" });
 
         expect(data.accounts[0].credentials.longLivedToken).not.toBe("sk-ant-oat01-secret");
         expect(SafeJSON.stringify(data)).not.toContain("sk-ant-oat01-secret");
@@ -120,7 +120,7 @@ describe("applyLongLivedToken", () => {
         // prevents, and it would then look verified.
         const data = configWith({});
         await applyLongLivedToken(data, {
-            accountName: "personal",
+            accountId: "acc_personal",
             token: "sk-ant-oat01-new",
             organizationUuid: "org-proven",
         });
@@ -135,14 +135,83 @@ describe("applyLongLivedToken", () => {
         // API is unreachable). That must not ERASE a fingerprint already stored.
         const data = configWith({});
         data.accounts[0].organizationUuid = "org-existing";
-        await applyLongLivedToken(data, { accountName: "personal", token: "sk-ant-oat01-new" });
+        await applyLongLivedToken(data, { accountId: "acc_personal", token: "sk-ant-oat01-new" });
 
         expect(data.accounts[0].organizationUuid).toBe("org-existing");
     });
 
     test("an unknown account throws rather than silently writing nothing", async () => {
         const data = configWith({});
-        await expect(applyLongLivedToken(data, { accountName: "ghost", token: "tok" })).rejects.toThrow(/not found/);
+        await expect(applyLongLivedToken(data, { accountId: "acc_ghost", token: "tok" })).rejects.toThrow(/not found/);
+    });
+});
+
+/**
+ * PR #359 review t7. The selector filters candidates by provider and accepts an
+ * explicit account id, but the write used to pass only the NAME, and this lookup
+ * scans every account in the v4 config. Two accounts named `work` on different
+ * providers therefore made the Anthropic token land wherever the name matched
+ * first — including its organization uuid, which is the fingerprint a later
+ * login-long compares against.
+ */
+describe("the write targets the selected account, not the first one sharing its name", () => {
+    /** Same name, different providers, the metered one first in the array. */
+    function twoWorkAccounts(): AiConfigData {
+        return {
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    id: "acc_work_openai",
+                    name: "work",
+                    provider: "openai",
+                    enabled: true,
+                    billing: { mode: "metered" },
+                    credentials: { apiKey: "sk-invented-metered" },
+                    useEnvApiKey: false,
+                },
+                {
+                    id: "acc_work_anthropic",
+                    name: "work",
+                    provider: "anthropic-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: {},
+                    useEnvApiKey: false,
+                },
+            ],
+            defaults: {},
+        };
+    }
+
+    test("the token and the org uuid land on the selected id, not on the namesake", async () => {
+        const data = twoWorkAccounts();
+
+        await applyLongLivedToken(data, {
+            accountId: "acc_work_anthropic",
+            token: "sk-ant-oat01-selected",
+            organizationUuid: "org-proven",
+        });
+
+        expect(await resolveSecret(data.accounts[1].credentials.longLivedToken)).toBe("sk-ant-oat01-selected");
+        expect(data.accounts[1].organizationUuid).toBe("org-proven");
+        // The namesake is what the name lookup would have hit first.
+        expect(data.accounts[0].credentials.longLivedToken).toBeUndefined();
+        expect(data.accounts[0].organizationUuid).toBeUndefined();
+    });
+
+    test("NEGATIVE CONTROL: selecting the other namesake writes to that one instead", async () => {
+        const data = twoWorkAccounts();
+
+        await applyLongLivedToken(data, { accountId: "acc_work_openai", token: "sk-ant-oat01-other" });
+
+        expect(await resolveSecret(data.accounts[0].credentials.longLivedToken)).toBe("sk-ant-oat01-other");
+        expect(data.accounts[1].credentials.longLivedToken).toBeUndefined();
+    });
+
+    test("a name where an id is expected is rejected rather than guessed at", async () => {
+        const data = twoWorkAccounts();
+
+        await expect(applyLongLivedToken(data, { accountId: "work", token: "tok" })).rejects.toThrow(/not found/);
     });
 });
 
@@ -165,7 +234,7 @@ describe("the credential write barrier", () => {
         }
 
         opts.onWrite();
-        await applyLongLivedToken(opts.data, { accountName: "personal", token: "sk-ant-oat01-fresh" });
+        await applyLongLivedToken(opts.data, { accountId: "acc_personal", token: "sk-ant-oat01-fresh" });
 
         return true;
     }
@@ -286,7 +355,7 @@ describe("the production identity-to-write boundary", () => {
 
             reachedMutator = true;
             await applyLongLivedToken(data, {
-                accountName: "personal",
+                accountId: "acc_personal",
                 token: outcome.credentials.longLivedToken as string,
                 organizationUuid: outcome.accountFields?.organizationUuid,
             });
@@ -314,7 +383,7 @@ describe("the production identity-to-write boundary", () => {
         expect(outcome.accountFields?.organizationUuid).toBe("org-invented-stored");
 
         await applyLongLivedToken(data, {
-            accountName: "personal",
+            accountId: "acc_personal",
             token: outcome.credentials.longLivedToken as string,
             organizationUuid: outcome.accountFields?.organizationUuid,
         });
