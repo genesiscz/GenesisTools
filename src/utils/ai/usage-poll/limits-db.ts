@@ -63,8 +63,9 @@ export interface SpendSnapshot extends SpendInput {
 
 export interface SeriesQuery {
     provider?: string;
+    /** Omitted means every account; an EMPTY list means none of them. */
     accounts?: string[];
-    /** `LimitWindow.key` values, stored in the `bucket` column. */
+    /** `LimitWindow.key` values, stored in the `bucket` column. Empty means none, not all. */
     keys?: string[];
     /** ISO timestamps. */
     from: string;
@@ -393,6 +394,14 @@ export class UsageLimitsDb {
      * one, so a 7-day range at the 30s poll period returned up to 20,160 points per series.
      */
     getSeries(query: SeriesQuery): SeriesEntry[] {
+        // An omitted list means "every one"; an EMPTY list means "none of them". The
+        // dashboard's account checklist can deselect the last account, and `toggleAccount`
+        // hands that on as `[]`. Read as "no filter", History then drew every account while
+        // the filter bar said 0 selected and the Overview correctly showed none.
+        if (query.accounts?.length === 0 || query.keys?.length === 0) {
+            return [];
+        }
+
         const where: string[] = ["timestamp >= ?", "timestamp <= ?"];
         const params: Array<string | null> = [query.from, query.to];
 
@@ -401,12 +410,12 @@ export class UsageLimitsDb {
             params.push(query.provider);
         }
 
-        if (query.accounts && query.accounts.length > 0) {
+        if (query.accounts) {
             where.push(`account_name IN (${query.accounts.map(() => "?").join(", ")})`);
             params.push(...query.accounts);
         }
 
-        if (query.keys && query.keys.length > 0) {
+        if (query.keys) {
             where.push(`bucket IN (${query.keys.map(() => "?").join(", ")})`);
             params.push(...query.keys);
         }

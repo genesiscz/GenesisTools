@@ -609,6 +609,33 @@ describe("UsageLimitsDb", () => {
             expect(bounded[0].points.at(-1)).toEqual(every[0].points.at(-1));
         });
 
+        /**
+         * The account checklist can deselect every account, and `toggleAccount` hands that
+         * on as `[]`. Treated as "no filter", History drew every account while the filter
+         * bar read 0 selected and the Overview showed none (review t13).
+         */
+        test("an empty account selection is no history, not all history", () => {
+            db.recordSnapshot("work", "five_hour", 10, recentTimestamp(30));
+            db.recordSnapshot("personal", "five_hour", 20, recentTimestamp(30));
+
+            const from = recentTimestamp(60);
+            const to = recentTimestamp(0);
+
+            expect(db.getSeries({ from, to, accounts: [] })).toEqual([]);
+            expect(db.getSeries({ from, to, keys: [] })).toEqual([]);
+        });
+
+        // Negative control: an OMITTED list still means every account, which is what the
+        // unfiltered dashboard and every existing caller rely on.
+        test("an omitted account list still returns every account", () => {
+            db.recordSnapshot("work", "five_hour", 10, recentTimestamp(30));
+            db.recordSnapshot("personal", "five_hour", 20, recentTimestamp(30));
+
+            const series = db.getSeries({ from: recentTimestamp(60), to: recentTimestamp(0) });
+
+            expect(series.map((s) => s.account).sort()).toEqual(["personal", "work"]);
+        });
+
         test("step keeps the last sample of each bucket", () => {
             // Aligned to the step so the two early samples always share one bucket:
             // an unaligned base splits them whenever the wall clock lands near a
