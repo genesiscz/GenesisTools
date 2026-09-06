@@ -1,6 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { AccountEntry } from "../../../config/schema";
 import type { CodexUsageClient } from "./usage";
 import { codexHomeFor, mapRateLimits, pollCodexAccount } from "./usage";
@@ -13,6 +11,11 @@ import { codexHomeFor, mapRateLimits, pollCodexAccount } from "./usage";
 
 function entry(name: string, credentials: AccountEntry["credentials"] = {}): AccountEntry {
     return { id: `acc_${name}`, name, provider: "openai-sub", credentials } as AccountEntry;
+}
+
+/** An account bound to a home, which is what every poll below needs to reach a client. */
+function bound(name: string): AccountEntry {
+    return entry(name, { dataDir: `/tmp/.codex-${name}` });
 }
 
 interface FakeClient extends CodexUsageClient {
@@ -99,17 +102,47 @@ describe("codexHomeFor", () => {
         expect(codexHomeFor(entry("work", { authFile: "/tmp/.codex-work/auth.json" }))).toBe("/tmp/.codex-work");
     });
 
-    it("falls back to dataDir, then to the CLI default", () => {
+    it("falls back to dataDir", () => {
         expect(codexHomeFor(entry("work", { dataDir: "/tmp/.codex-alt" }))).toBe("/tmp/.codex-alt");
-        expect(codexHomeFor(entry("work"))).toBe(join(homedir(), ".codex"));
+    });
+
+    /**
+     * An account may hold its own tokens with no home. Answering `~/.codex` filed a
+     * different login's rate limits under this account's id and name, and gave every such
+     * account the same numbers (review t9).
+     */
+    it("never falls back to the CLI default home", () => {
+        expect(codexHomeFor(entry("work"))).toBeNull();
+        expect(codexHomeFor(entry("personal", { accessToken: "at", refreshToken: "rt" }))).toBeNull();
     });
 });
 
 describe("openai-sub usage.poll", () => {
+    // The whole point of t9: an unbound account must not read someone else's home, and it
+    // must not spawn an app-server to find that out either.
+    it("reports an unbound account instead of polling the CLI default home", async () => {
+        let opened = 0;
+        const snapshot = await pollCodexAccount(
+            entry("personal", { accessToken: "at", refreshToken: "rt" }),
+            {},
+            {
+                openClient: async () => {
+                    opened += 1;
+                    return fakeClient(CAMEL);
+                },
+            }
+        );
+
+        expect(opened).toBe(0);
+        expect(snapshot.limits).toEqual([]);
+        expect(snapshot.error).toContain("no Codex home bound");
+        expect(snapshot.accountName).toBe("personal");
+    });
+
     it("maps a live read into a snapshot and closes the app-server", async () => {
         const client = fakeClient(CAMEL);
 
-        const snapshot = await pollCodexAccount(entry("work"), {}, { openClient: async () => client });
+        const snapshot = await pollCodexAccount(bound("work"), {}, { openClient: async () => client });
 
         expect(snapshot).toMatchObject({ provider: "openai-sub", accountId: "acc_work", plan: { name: "plus" } });
         expect(snapshot.limits.map((w) => w.key)).toEqual(["primary", "secondary"]);
@@ -120,7 +153,7 @@ describe("openai-sub usage.poll", () => {
     it("closes the app-server when the request throws", async () => {
         const client = fakeClient(CAMEL, { throwOn: "account/rateLimits/read" });
 
-        await expect(pollCodexAccount(entry("work"), {}, { openClient: async () => client })).rejects.toThrow("boom");
+        await expect(pollCodexAccount(bound("work"), {}, { openClient: async () => client })).rejects.toThrow("boom");
 
         expect(client.closed).toBe(1);
     });
@@ -128,7 +161,7 @@ describe("openai-sub usage.poll", () => {
     it("reports a home with no login instead of throwing", async () => {
         const client = fakeClient({});
 
-        const snapshot = await pollCodexAccount(entry("side"), {}, { openClient: async () => client });
+        const snapshot = await pollCodexAccount(bound("side"), {}, { openClient: async () => client });
 
         expect(snapshot.limits).toEqual([]);
         expect(snapshot.error).toContain("no rate limits");

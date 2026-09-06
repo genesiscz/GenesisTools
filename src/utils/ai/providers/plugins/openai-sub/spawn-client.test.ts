@@ -38,7 +38,13 @@ mock.module("../../../openai/app-server-client", () => ({
 
 const { pollCodexAccount } = await import("./usage");
 
-const ACCOUNT = { id: "acc_work", name: "work", provider: "openai-sub", credentials: {} } as AccountEntry;
+// A bound home: an account that names none is reported without ever opening a client.
+const ACCOUNT = {
+    id: "acc_work",
+    name: "work",
+    provider: "openai-sub",
+    credentials: { dataDir: "/tmp/.codex-spawn-test" },
+} as AccountEntry;
 
 describe("spawnClient handshake", () => {
     test("closes the client when the handshake fails", async () => {

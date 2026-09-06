@@ -1,5 +1,4 @@
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
 import { AppServerClient, spawnAppServer } from "../../../openai/app-server-client";
@@ -137,15 +136,23 @@ export function mapRateLimits(result: CodexRateLimitsResult | null | undefined):
     return { limits, ...(planName === undefined ? {} : { planName }) };
 }
 
-/** The `CODEX_HOME` an account's credentials point at, or the CLI default. */
-export function codexHomeFor(account: AccountEntry): string {
+/**
+ * The `CODEX_HOME` this account is BOUND to, or null when it names none.
+ *
+ * There is no default. An account may hold its own `accessToken`/`refreshToken` with no
+ * `authFile` and no `dataDir` (`codex-auth.ts` supports that credential mode), and falling
+ * back to `~/.codex` then read a DIFFERENT login's rate limits and filed them under this
+ * account's id and name — every such account showing the same numbers (review t9). It is
+ * also the ambient credential pickup the house rules forbid.
+ */
+export function codexHomeFor(account: AccountEntry): string | null {
     const authFile = account.credentials.authFile;
 
     if (authFile) {
         return dirname(authFile);
     }
 
-    return account.credentials.dataDir ?? join(homedir(), ".codex");
+    return account.credentials.dataDir ?? null;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
@@ -204,6 +211,18 @@ export async function pollCodexAccount(
         limits: [],
         ...(account.label === undefined ? {} : { label: account.label }),
     };
+
+    if (home === null) {
+        // Reported, not thrown: an unbound account is a configuration state, not a failure
+        // that should climb the poll gate's backoff ladder.
+        logger.debug({ account: account.name }, "[usage] codex account names no home; not polling the CLI default");
+
+        return {
+            ...base,
+            error: "no Codex home bound to this account — run: tools codex login --home <dir>",
+            auth: { reason: "no codex home bound" },
+        };
+    }
 
     const open = deps.openClient ?? spawnClient;
     const client = await open(home);
