@@ -92,6 +92,34 @@ describe("resolveDriverRoots", () => {
             "/u/.codex-work/sessions",
         ]);
     });
+
+    test("a home bound to an account the caller did not supply is walked as unbound", () => {
+        // `loadSpendAccountsContext` supplies ENABLED accounts only, while
+        // `discoverHomes` matches every account of the provider. A disabled
+        // account's home therefore arrives carrying `boundToAccountId` and is
+        // contributed by nobody, so trusting that flag dropped its spend.
+        const roots = resolveDriverRoots({
+            driver: fakeDriver({
+                id: "codex",
+                roots: ["/u/.codex/sessions"],
+                rootsForAccounts: () => [{ path: "/u/.codex-work/sessions", accountId: "acc_work" }],
+            }),
+            userHome: "/u",
+            accounts: [account("acc_work")],
+            discoveredHomes: [
+                { home: "/u/.codex-work", boundToAccountId: "acc_work" },
+                { home: "/u/.codex-off", boundToAccountId: "acc_disabled" },
+            ],
+        });
+
+        // The disabled account's home is counted, unbound rather than dropped.
+        expect(roots.map((root) => root.path)).toContain("/u/.codex-off/sessions");
+        expect(roots.find((root) => root.path === "/u/.codex-off/sessions")?.accountId).toBeUndefined();
+        // Negative control: the enabled account's home keeps its tag and does
+        // not gain a second, unbound archived root.
+        expect(roots.find((root) => root.path === "/u/.codex-work/sessions")?.accountId).toBe("acc_work");
+        expect(roots.map((root) => root.path)).not.toContain("/u/.codex-work/archived_sessions");
+    });
 });
 
 describe("accountIdForFile", () => {

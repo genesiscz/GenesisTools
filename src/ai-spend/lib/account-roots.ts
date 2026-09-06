@@ -21,8 +21,8 @@ export interface ResolveDriverRootsOptions {
     accounts?: readonly AccountEntry[];
     /**
      * Homes found on disk by `plugin.accounts.discoverHomes()`, from
-     * `--all-homes`. Ones already bound to an account are skipped here: the
-     * account's own `spendScope` already contributed them, with its id.
+     * `--all-homes`. Ones whose roots this merge already bound are skipped: the
+     * account's own `spendScope` contributed them, with its id.
      */
     discoveredHomes?: readonly DiscoveredHome[];
 }
@@ -32,7 +32,7 @@ export interface ResolveDriverRootsOptions {
  *
  * 1. `driver.roots(userHome)` — the unbound defaults.
  * 2. `driver.rootsForAccounts(accounts)` — the same trees, tagged.
- * 3. discovered homes no account claims — unbound.
+ * 3. discovered homes step 2 did not already bind — unbound.
  *
  * Deduped by path, last tagged writer wins over an untagged one.
  */
@@ -62,11 +62,21 @@ export function resolveDriverRoots(options: ResolveDriverRootsOptions): DriverRo
     }
 
     for (const discovered of options.discoveredHomes ?? []) {
-        if (discovered.boundToAccountId) {
+        const homeRoots = nativeSessionRootsForHome(options.driver.id, discovered.home);
+
+        // The question is whether step 2 ALREADY bound this home, not what
+        // `discovered.boundToAccountId` claims. Discovery matches homes against
+        // every account of the provider, while the caller supplies only the
+        // ENABLED ones, so a disabled account's home arrives flagged as bound
+        // and is contributed by nobody. Trusting the flag dropped that home's
+        // spend entirely, even under `--all-homes`; asking the map instead
+        // still skips a genuinely bound home, so its archived roots do not
+        // reappear as a second, unbound row.
+        if (homeRoots.some((path) => byPath.get(path)?.accountId !== undefined)) {
             continue;
         }
 
-        for (const path of nativeSessionRootsForHome(options.driver.id, discovered.home)) {
+        for (const path of homeRoots) {
             add({ path, home: discovered.home });
         }
     }
