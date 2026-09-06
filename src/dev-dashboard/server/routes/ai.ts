@@ -21,9 +21,10 @@ const commaList = z
             .filter(Boolean)
     );
 
-const isoInstant = z.string().refine((raw) => !Number.isNaN(Date.parse(raw)), {
-    message: "expected an ISO-8601 instant",
-});
+// `Date.parse` also accepts `Sep 4 2026` and `2026/09/04`, which these schemas
+// promise not to. `offset: true` keeps a `+02:00` client working; every in-tree
+// caller sends `toISOString()`, which is the `Z` form.
+const isoInstant = z.iso.datetime({ offset: true, error: "expected an ISO-8601 instant" });
 
 const filterSchema = z.object({ providers: commaList, accounts: commaList });
 
@@ -57,14 +58,29 @@ function zodMessage(error: z.ZodError): string {
     return error.issues.map((issue) => `${issue.path.join(".") || "query"}: ${issue.message}`).join("; ");
 }
 
+export type ResolvedWindow = { ok: true; from: string; to: string } | { ok: false; message: string };
+
 /**
+ * The `[from, to)` window a handler may pass on.
+ *
  * A window that ends in the future would ask the transcript scan and the call log
  * for buckets that cannot exist yet, and the chart would draw an empty tail as if
  * it were zero spend. Clamp rather than reject: a client clock runs a little fast.
+ *
+ * Clamping only lowers `to`, so a `from` that is itself in the future survives it
+ * and the window comes out backwards. Both stores answer an inverted range with
+ * nothing, which reads as "no spend" rather than "you asked for the impossible",
+ * so that case is a 400 instead.
  */
-function clampTo(to: string, now = Date.now()): string {
+export function resolveWindow(from: string, to: string, now = Date.now()): ResolvedWindow {
     const parsed = Date.parse(to);
-    return parsed > now ? new Date(now).toISOString() : to;
+    const clamped = parsed > now ? new Date(now).toISOString() : to;
+
+    if (Date.parse(from) > Date.parse(clamped)) {
+        return { ok: false, message: "from: must not be after to" };
+    }
+
+    return { ok: true, from, to: clamped };
 }
 
 /**
@@ -183,7 +199,13 @@ export function aiRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDef[] 
                     return errorResult(new Error(zodMessage(parsed.error)), 400);
                 }
 
-                return h.usageSeries({ ...parsed.data, to: clampTo(parsed.data.to) });
+                const window = resolveWindow(parsed.data.from, parsed.data.to);
+
+                if (!window.ok) {
+                    return errorResult(new Error(window.message), 400);
+                }
+
+                return h.usageSeries({ ...parsed.data, from: window.from, to: window.to });
             },
         },
         {
@@ -198,7 +220,13 @@ export function aiRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDef[] 
                     return errorResult(new Error(zodMessage(parsed.error)), 400);
                 }
 
-                return h.spendTotals({ ...parsed.data, to: clampTo(parsed.data.to) });
+                const window = resolveWindow(parsed.data.from, parsed.data.to);
+
+                if (!window.ok) {
+                    return errorResult(new Error(window.message), 400);
+                }
+
+                return h.spendTotals({ ...parsed.data, from: window.from, to: window.to });
             },
         },
         {
@@ -213,7 +241,13 @@ export function aiRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDef[] 
                     return errorResult(new Error(zodMessage(parsed.error)), 400);
                 }
 
-                return h.spendSeries({ ...parsed.data, to: clampTo(parsed.data.to) });
+                const window = resolveWindow(parsed.data.from, parsed.data.to);
+
+                if (!window.ok) {
+                    return errorResult(new Error(window.message), 400);
+                }
+
+                return h.spendSeries({ ...parsed.data, from: window.from, to: window.to });
             },
         },
         { method: "GET", pattern: AI_ACCOUNTS_API.daemon, handler: () => h.daemon() },

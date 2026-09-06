@@ -265,6 +265,65 @@ describe("aiRoutes", () => {
         expect(Date.parse(calls.getSpendSeries[0].to)).toBeLessThanOrEqual(Date.now());
     });
 
+    it("rejects the loose date shapes Date.parse used to wave through", async () => {
+        const { agg, calls } = fakeAggregator();
+        const routes = aiRoutes(agg);
+
+        for (const from of ["Sep 4 2026", "2026/09/04", "2026-09-04T12:00:00+0200"]) {
+            const { status, body } = await call(routes, "GET", "/api/ai/spend/totals", {
+                from,
+                to: "2026-09-04T13:00:00.000Z",
+            });
+
+            expect(status).toBe(400);
+            expect(String(body.error)).toContain("ISO-8601");
+        }
+
+        expect(calls.getSpendTotals).toHaveLength(0);
+    });
+
+    it("negative control: an offset instant is still an instant", async () => {
+        const { agg, calls } = fakeAggregator();
+        const { status } = await call(aiRoutes(agg), "GET", "/api/ai/spend/totals", {
+            from: "2026-09-04T11:00:00+02:00",
+            to: "2026-09-04T12:00:00+02:00",
+        });
+
+        expect(status).toBe(200);
+        expect(calls.getSpendTotals).toHaveLength(1);
+    });
+
+    it("400s on a window that runs backwards rather than answering it empty", async () => {
+        const { agg, calls } = fakeAggregator();
+        const routes = aiRoutes(agg);
+        const inverted = { from: "2026-09-04T12:00:00.000Z", to: "2026-09-04T11:00:00.000Z" };
+
+        for (const [pattern, extra] of [
+            ["/api/ai/spend/totals", {}],
+            ["/api/ai/spend/series", { grain: "hour" }],
+            ["/api/ai/usage/series", {}],
+        ] as const) {
+            const { status, body } = await call(routes, "GET", pattern, { ...inverted, ...extra });
+
+            expect(status).toBe(400);
+            expect(String(body.error)).toContain("from");
+        }
+
+        expect(calls.getSpendTotals).toHaveLength(0);
+        expect(calls.getSpendSeries).toHaveLength(0);
+        expect(calls.getUsageSeries).toHaveLength(0);
+    });
+
+    it("a `from` in the future inverts the window once `to` is clamped, so it 400s", async () => {
+        const { agg, calls } = fakeAggregator();
+        const soon = new Date(Date.now() + 3_600_000).toISOString();
+        const later = new Date(Date.now() + 7_200_000).toISOString();
+        const { status } = await call(aiRoutes(agg), "GET", "/api/ai/spend/totals", { from: soon, to: later });
+
+        expect(status).toBe(400);
+        expect(calls.getSpendTotals).toHaveLength(0);
+    });
+
     it("splits comma lists and rejects an unknown source", async () => {
         const { agg, calls } = fakeAggregator();
         const routes = aiRoutes(agg);
