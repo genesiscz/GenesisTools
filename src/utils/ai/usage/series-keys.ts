@@ -33,6 +33,47 @@ export function isValidTimeZone(timeZone: string): boolean {
     }
 }
 
+/**
+ * One formatter per zone, reused across every event of every query.
+ *
+ * Constructing an `Intl.DateTimeFormat` loads locale and time-zone data, and
+ * `spendBucketKey` runs once per event in both producers. On the dashboard
+ * polling path that setup dominated even when every transcript was a cache hit.
+ * The objects are stateless for `formatToParts`, so sharing them is safe.
+ *
+ * Bounded because the key is a caller-supplied zone string: the working set is
+ * one or two zones, and a full reset costs one rebuild rather than unbounded
+ * growth.
+ */
+const FORMATTER_CACHE_LIMIT = 32;
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+    const cached = formatters.get(timeZone);
+
+    if (cached) {
+        return cached;
+    }
+
+    const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+    });
+
+    if (formatters.size >= FORMATTER_CACHE_LIMIT) {
+        formatters.clear();
+    }
+
+    formatters.set(timeZone, formatter);
+
+    return formatter;
+}
+
 /** Monday of the civil week containing `ymd`, as `YYYY-MM-DD`. */
 function mondayOfDay(ymd: string): string {
     const [year, month, day] = ymd.split("-").map(Number);
@@ -55,15 +96,7 @@ export function spendBucketKey(timestamp: string, grain: SpendGrain, timeZone = 
         return "";
     }
 
-    const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-    }).formatToParts(date);
+    const parts = formatterFor(timeZone).formatToParts(date);
     const get = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
     const day = `${get("year")}-${get("month")}-${get("day")}`;
 

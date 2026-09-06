@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { dayFilePath, daysInRange, parseBound } from "./paths";
-import { isValidTimeZone, spendBucketKey } from "./series-keys";
+import { isValidTimeZone, spendBucketKey, systemTimeZone } from "./series-keys";
 import type {
     SpendSeriesBucket,
     SpendSeriesPoint,
@@ -96,9 +96,13 @@ function bucketPoints(events: UsageEvent[], query: UsageQuery): SpendSeriesPoint
     }
 
     const buckets = new Map<string, SpendSeriesPoint>();
+    // Resolved once, not per event: the default parameter of `spendBucketKey`
+    // would call `systemTimeZone()` for every row, and that reads the resolved
+    // Intl options each time.
+    const timeZone = query.timeZone ?? systemTimeZone();
 
     for (const event of events) {
-        const key = spendBucketKey(event.at, grain, query.timeZone);
+        const key = spendBucketKey(event.at, grain, timeZone);
 
         if (key === "") {
             logger.debug({ at: event.at }, "usage: row has an unusable timestamp; not bucketed");
