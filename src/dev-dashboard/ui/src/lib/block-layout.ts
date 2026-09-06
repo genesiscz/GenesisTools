@@ -39,14 +39,27 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
     return next;
 }
 
-export function moveById<T extends { id: string }>(list: readonly T[], id: string, direction: -1 | 1): T[] {
-    const from = list.findIndex((item) => item.id === id);
+/**
+ * Move one block a single step among the VISIBLE blocks.
+ *
+ * The arrow buttons are indexed against the visible list, so a step of one index
+ * in the FULL list let a hidden block in between absorb the click: the rendered
+ * order did not change and the enabled button read as dead. Both ends are
+ * addressed in the full list, so hidden blocks keep their stored positions.
+ */
+export function moveVisible(list: readonly BlockEntry[], id: string, direction: -1 | 1): BlockEntry[] {
+    const visible = list.filter((entry) => entry.visible);
+    const at = visible.findIndex((entry) => entry.id === id);
+    const target = visible[at + direction];
 
-    if (from === -1) {
+    if (at === -1 || target === undefined) {
         return [...list];
     }
 
-    return moveItem(list, from, from + direction);
+    const from = list.findIndex((entry) => entry.id === id);
+    const to = list.findIndex((entry) => entry.id === target.id);
+
+    return moveItem(list, from, to);
 }
 
 export function setVisible(list: readonly BlockEntry[], id: string, visible: boolean): BlockEntry[] {

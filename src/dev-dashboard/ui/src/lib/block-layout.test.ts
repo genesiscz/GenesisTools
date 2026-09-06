@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
     assignBlockSpans,
-    moveById,
     moveItem,
+    moveVisible,
     parseBlockEntries,
     reconcileLayout,
     reconcileOrder,
@@ -38,18 +38,64 @@ describe("reconcileLayout", () => {
     });
 });
 
-describe("moveItem and moveById", () => {
+describe("moveItem", () => {
     test("moves within bounds and returns a copy out of bounds", () => {
         expect(moveItem(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);
         expect(moveItem(["a", "b", "c"], 0, 5)).toEqual(["a", "b", "c"]);
     });
+});
 
-    test("moveById shifts one step and ignores unknown ids", () => {
-        const list = [{ id: "a" }, { id: "b" }, { id: "c" }];
+/**
+ * The arrow buttons are indexed against the VISIBLE blocks. Stepping one index in
+ * the stored list let a hidden block between two visible ones absorb the click,
+ * so the rendered order did not change and the button read as dead (CodeRabbit
+ * review, PR #363).
+ */
+describe("moveVisible", () => {
+    const ids = (list: readonly { id: string }[]) => list.map((entry) => entry.id);
 
-        expect(moveById(list, "c", -1).map((x) => x.id)).toEqual(["a", "c", "b"]);
-        expect(moveById(list, "a", -1).map((x) => x.id)).toEqual(["a", "b", "c"]);
-        expect(moveById(list, "zz", 1).map((x) => x.id)).toEqual(["a", "b", "c"]);
+    test("with nothing hidden it is a single step", () => {
+        const list = [
+            { id: "a", visible: true },
+            { id: "b", visible: true },
+            { id: "c", visible: true },
+        ];
+
+        expect(ids(moveVisible(list, "c", -1))).toEqual(["a", "c", "b"]);
+        expect(ids(moveVisible(list, "a", 1))).toEqual(["b", "a", "c"]);
+    });
+
+    test("a hidden block between two visible ones does not absorb the click", () => {
+        const list = [
+            { id: "a", visible: true },
+            { id: "hidden", visible: false },
+            { id: "c", visible: true },
+        ];
+
+        // One click swaps the two VISIBLE blocks; the hidden one keeps its place.
+        expect(ids(moveVisible(list, "c", -1))).toEqual(["c", "a", "hidden"]);
+        expect(moveVisible(list, "c", -1).find((entry) => entry.id === "hidden")?.visible).toBe(false);
+    });
+
+    test("the first and last visible blocks cannot step past the ends", () => {
+        const list = [
+            { id: "hidden", visible: false },
+            { id: "a", visible: true },
+            { id: "b", visible: true },
+        ];
+
+        expect(ids(moveVisible(list, "a", -1))).toEqual(["hidden", "a", "b"]);
+        expect(ids(moveVisible(list, "b", 1))).toEqual(["hidden", "a", "b"]);
+    });
+
+    test("a hidden block and an unknown id are both no-ops", () => {
+        const list = [
+            { id: "a", visible: true },
+            { id: "hidden", visible: false },
+        ];
+
+        expect(ids(moveVisible(list, "hidden", -1))).toEqual(["a", "hidden"]);
+        expect(ids(moveVisible(list, "zz", 1))).toEqual(["a", "hidden"]);
     });
 });
 

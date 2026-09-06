@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from "react";
 import {
     type BlockEntry,
-    moveById,
     moveItem,
+    moveVisible,
     parseBlockEntries,
     reconcileLayout,
     setVisible,
@@ -18,8 +18,10 @@ export function useSectionLayout(storageKey: string, defaults: readonly string[]
     const [stored, setStored, reset] = usePersistedState<BlockEntry[]>(storageKey, parseBlockEntries, fallback);
     const layout = useMemo(() => reconcileLayout(stored, defaults), [stored, defaults]);
 
+    // The arrow buttons index the VISIBLE blocks, so one click must land on the
+    // next visible neighbour rather than on whatever sits next in storage.
     const move = useCallback(
-        (id: string, direction: -1 | 1) => setStored(moveById(layout, id, direction)),
+        (id: string, direction: -1 | 1) => setStored(moveVisible(layout, id, direction)),
         [layout, setStored]
     );
     // A drag lands one block on another, which is a move to an arbitrary index rather
@@ -40,18 +42,6 @@ export function useSectionLayout(storageKey: string, defaults: readonly string[]
     );
     const hide = useCallback((id: string) => setStored(setVisible(layout, id, false)), [layout, setStored]);
     const show = useCallback((id: string) => setStored(setVisible(layout, id, true)), [layout, setStored]);
-    const setOrder = useCallback(
-        (ids: readonly string[]) => {
-            const visibility = new Map(layout.map((b) => [b.id, b.visible] as const));
-            setStored(
-                reconcileLayout(
-                    ids.map((id) => ({ id, visible: visibility.get(id) ?? true })),
-                    defaults
-                )
-            );
-        },
-        [layout, setStored, defaults]
-    );
 
-    return { layout, move, reorder, hide, show, setOrder, reset };
+    return { layout, move, reorder, hide, show, reset };
 }
