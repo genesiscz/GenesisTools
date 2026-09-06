@@ -72,6 +72,23 @@ function visibleBuckets(point: SpendSeriesPoint, hidden: ReadonlySet<string>): A
     return Object.entries(point.byAccount).filter(([accountId]) => !hidden.has(accountId));
 }
 
+const NOTHING_HIDDEN: ReadonlySet<string> = new Set();
+
+/**
+ * The accounts a chart mode can actually hide.
+ *
+ * `byModel` reads `point.byModel`, which is a model marginal with no account
+ * dimension: one account's share of a model is not in the payload, so the chart
+ * cannot subtract it. Hiding an account therefore lowered the headline Cost while
+ * the by-model chart kept drawing that money, and the widget reported two
+ * different numbers for one window. Until the wire format carries an
+ * account-by-model breakdown, the toggles simply do not apply in this mode, and
+ * the headline must agree with the chart rather than with the other modes.
+ */
+export function hiddenForMode(mode: SpendChartMode, hidden: ReadonlySet<string>): ReadonlySet<string> {
+    return mode === "byModel" ? NOTHING_HIDDEN : hidden;
+}
+
 /**
  * Shape the series for recharts. Hidden accounts are removed before summing,
  * so `total` mode reflects the toggles, not the server total. Keys are the
@@ -82,7 +99,8 @@ export function buildSpendChartData(
     points: readonly SpendSeriesPoint[],
     options: { mode: SpendChartMode; hiddenAccountIds: ReadonlySet<string> }
 ): SpendChartData {
-    const { mode, hiddenAccountIds } = options;
+    const { mode } = options;
+    const hiddenAccountIds = hiddenForMode(mode, options.hiddenAccountIds);
     const keySet = new Set<string>();
     const partial: Array<{ t: number; values: Record<string, number> }> = [];
 

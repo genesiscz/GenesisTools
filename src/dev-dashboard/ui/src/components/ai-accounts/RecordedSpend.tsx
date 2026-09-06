@@ -10,7 +10,7 @@ import { IconTooltip } from "@ui/components/icon-button";
 import { SegmentedControl } from "@ui/components/segmented-control";
 import { CircleHelp } from "lucide-react";
 import { providerMeta } from "@/lib/provider-meta";
-import { formatUsd, SPEND_CHART_MODES, type SpendChartMode, sumVisible } from "@/lib/spend-chart-data";
+import { formatUsd, hiddenForMode, SPEND_CHART_MODES, type SpendChartMode, sumVisible } from "@/lib/spend-chart-data";
 import { ProviderBadge } from "./ProviderBadge";
 import { SpendChart } from "./SpendChart";
 
@@ -94,7 +94,11 @@ export function RecordedSpend({
     colors,
 }: RecordedSpendProps) {
     const accounts: AccountRef[] = totals?.accounts ?? series?.accounts ?? [];
-    const visible = series ? sumVisible(series.points, hiddenAccountIds) : undefined;
+    // By-model cannot drop one account's spend, so the headline must not either:
+    // one window may not report two different totals in one widget.
+    const chartHidden = hiddenForMode(mode, hiddenAccountIds);
+    const hidingIsIgnored = mode === "byModel" && hiddenAccountIds.size > 0;
+    const visible = series ? sumVisible(series.points, chartHidden) : undefined;
     const shownTotal = visible ?? totals?.total;
     const unpriced = totals?.unpriced ?? series?.unpriced ?? 0;
     const empty = !loading && !error && (totals?.total.costUsd ?? 0) === 0 && (series?.points.length ?? 0) === 0;
@@ -170,9 +174,15 @@ export function RecordedSpend({
                             hint={unpriced > 0 ? `${formatNumber(unpriced)} unpriced` : undefined}
                         />
                         <Stat label="Tokens" value={formatTokens(shownTotal.tokens)} />
-                        <Stat label="Accounts" value={String(accounts.length - hiddenAccountIds.size)} />
+                        <Stat label="Accounts" value={String(accounts.length - chartHidden.size)} />
                         <Stat label="Source" value={SOURCE_OPTIONS.find((o) => o.value === source)?.label ?? source} />
                     </div>
+
+                    {hidingIsIgnored ? (
+                        <p className="text-xs text-[var(--dd-text-muted)]">
+                            By model counts every account: the series carries no per-account split of a model.
+                        </p>
+                    ) : null}
 
                     {sortedAccounts.length > 0 ? (
                         <div className="flex flex-col gap-0.5">
@@ -233,7 +243,7 @@ export function RecordedSpend({
                             accounts={accounts}
                             colors={colors}
                             mode={mode}
-                            hiddenAccountIds={hiddenAccountIds}
+                            hiddenAccountIds={chartHidden}
                             rangeStartMs={rangeStartMs}
                             rangeEndMs={rangeEndMs}
                             grain={grain}

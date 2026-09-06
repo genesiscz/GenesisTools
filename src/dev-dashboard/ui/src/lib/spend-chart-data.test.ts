@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
-import { bucketLabel, buildSpendChartData, formatUsd, parseBucketTime, sumVisible } from "./spend-chart-data";
+import {
+    bucketLabel,
+    buildSpendChartData,
+    formatUsd,
+    hiddenForMode,
+    parseBucketTime,
+    sumVisible,
+} from "./spend-chart-data";
 
 const POINTS: SpendSeriesPoint[] = [
     {
@@ -177,5 +184,51 @@ describe("formatUsd", () => {
         expect(formatUsd(0.0042)).toBe("$0.0042");
         expect(formatUsd(4.5678)).toBe("$4.57");
         expect(formatUsd(1234.5)).toBe("$1,235");
+    });
+});
+
+/**
+ * `point.byModel` is a model marginal with no account dimension, so one account's
+ * share of a model is not in the payload and the chart cannot subtract it. Hiding
+ * an account used to lower the headline Cost while the by-model chart kept drawing
+ * that money (CodeRabbit and eve reviews, PR #363).
+ */
+describe("hiddenForMode", () => {
+    const hidden = new Set(["acc_shop"]);
+
+    test("every account-keyed mode honours the toggles", () => {
+        expect(hiddenForMode("stacked", hidden)).toBe(hidden);
+        expect(hiddenForMode("lines", hidden)).toBe(hidden);
+        expect(hiddenForMode("total", hidden)).toBe(hidden);
+    });
+
+    test("by model hides nothing, because it cannot attribute a model to an account", () => {
+        expect(hiddenForMode("byModel", hidden).size).toBe(0);
+    });
+});
+
+describe("buildSpendChartData in byModel mode", () => {
+    const hidden = new Set(["acc_shop"]);
+
+    test("a hidden account does not remove that model's cost from the chart", () => {
+        const withHidden = buildSpendChartData(POINTS, { mode: "byModel", hiddenAccountIds: hidden });
+        const withNone = buildSpendChartData(POINTS, { mode: "byModel", hiddenAccountIds: new Set() });
+
+        expect(withHidden).toEqual(withNone);
+        // acc_shop is the only source of this bucket's $2, and it is still drawn.
+        expect(withHidden.rows[0]["gpt-5.6"]).toBe(3);
+    });
+
+    test("the same hidden set still removes the account from every other mode", () => {
+        const stacked = buildSpendChartData(POINTS, { mode: "stacked", hiddenAccountIds: hidden });
+
+        expect(stacked.keys).toEqual(["acc_work"]);
+    });
+
+    test("hiding every account leaves the by-model chart intact rather than empty", () => {
+        const all = new Set(["acc_work", "acc_shop"]);
+        const { keys } = buildSpendChartData(POINTS, { mode: "byModel", hiddenAccountIds: all });
+
+        expect(keys.sort()).toEqual(["claude-opus-5", "gpt-5.6"]);
     });
 });
