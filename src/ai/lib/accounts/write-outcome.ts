@@ -5,6 +5,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountIdentity, LoginOutcome } from "@genesiscz/utils/ai/providers/account-features";
 import { identityMismatch } from "@genesiscz/utils/ai/providers/identity-guard";
 import { logger, out } from "@genesiscz/utils/logger";
+import { expandPath } from "@genesiscz/utils/paths";
 import pc from "picocolors";
 
 /**
@@ -107,9 +108,19 @@ export async function applyAuthFileOwnershipPolicy(input: {
     }
 
     const store = await AiConfigStore.load();
+    // Compared RESOLVED, not raw: the login boundary normalizes what it is given,
+    // but an account stored before that (or edited by hand with a `~/` or a
+    // relative spelling) names the same file in a different string, and a raw
+    // comparison let that spelling walk past the check (PR #359 review t9).
+    const incoming = expandPath(input.authFile);
     const owner = store
         .accounts()
-        .find((entry) => entry.name !== input.accountName && entry.credentials.authFile === input.authFile);
+        .find(
+            (entry) =>
+                entry.name !== input.accountName &&
+                entry.credentials.authFile !== undefined &&
+                expandPath(entry.credentials.authFile) === incoming
+        );
 
     if (!owner) {
         return { ok: true };

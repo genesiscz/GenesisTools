@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
@@ -83,7 +83,10 @@ function outcome(overrides: Partial<LoginOutcome> = {}): LoginOutcome {
 }
 
 beforeEach(async () => {
-    home = mkdtempSync(join(tmpdir(), "gt-runlogin-"));
+    // Realpath: `process.cwd()` reports `/private/var` on macOS while `mkdtempSync`
+    // returns `/var`, and the ownership check below resolves a relative stored
+    // path against the cwd.
+    home = realpathSync(mkdtempSync(join(tmpdir(), "gt-runlogin-")));
     env.testing.set("GENESIS_TOOLS_HOME", home);
     _setMasterKeyProvidersForTest([
         { id: "env", available: async () => true, get: async () => KEY, getSync: () => KEY, set: async () => {} },
@@ -439,6 +442,30 @@ describe("writeLoginOutcome refuses a credential file another account owns", () 
         expect(written).not.toBeNull();
         expect(rolledBack).toBe(0);
         expect(storedAccount("work")?.credentials.authFile).toBe(authFile);
+    });
+
+    test("a RELATIVE stored path names the same file and is still the same owner", async () => {
+        // `tools ai config account edit --auth-file shared/auth.json` stores the
+        // string as typed, so an account predating the login boundary's
+        // normalization can name the file relatively. A raw string comparison
+        // walked straight past it (PR #359 review t9).
+        await seedFileOwner(join("shared", "auth.json"));
+        const before = readFileSync(configPath(), "utf8");
+        const cwd = process.cwd();
+        process.chdir(home);
+
+        try {
+            const written = await writeLoginOutcome({
+                name: "personal",
+                outcome: { provider: "fake-sub", credentials: { authFile: join(home, "shared", "auth.json") } },
+                interactive: false,
+            });
+
+            expect(written).toBeNull();
+            expect(readFileSync(configPath(), "utf8")).toBe(before);
+        } finally {
+            process.chdir(cwd);
+        }
     });
 
     test("NEGATIVE CONTROL: a different file is bound without a word", async () => {
