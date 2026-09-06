@@ -235,6 +235,11 @@ export const SNAPSHOT_OPS: UsageEntryOps<AccountUsageSnapshot> = {
         ...entry,
         limits: previous.limits,
         plan: entry.plan ?? previous.plan,
+        // The provider-native payload rides along with the limits it was derived from.
+        // `snapshotToAccountUsage` reads `native` and nothing else, so a backfilled row
+        // without it left the claude presenter, `tools claude start` and the Genesis
+        // projection with no usage bars at all after one transient failure.
+        ...(entry.native === undefined && previous.native !== undefined ? { native: previous.native } : {}),
         stale: {
             lastSuccessAt: previous.stale?.lastSuccessAt ?? new Date(previousFetchedAt).toISOString(),
             reason: entry.error ?? "fetch failed",

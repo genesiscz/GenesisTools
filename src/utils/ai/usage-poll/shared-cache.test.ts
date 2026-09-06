@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import type { Cached, SharedUsageDeps } from "./shared-cache";
 import { __makeSharedUsage, SNAPSHOT_OPS } from "./shared-cache";
 import type { AccountUsageSnapshot } from "./types";
@@ -247,6 +248,60 @@ describe("SNAPSHOT_OPS", () => {
         expect(work?.stale?.lastSuccessAt).toBe(new Date(lastGoodAt).toISOString());
         expect(work?.stale?.reason).toContain("timed out");
         expect(personal?.stale).toBeUndefined();
+    });
+
+    // `snapshotToAccountUsage` derives the whole `AccountUsage` row from `native` alone, so
+    // a backfill that copied only `limits` left the claude presenter, `tools claude start`
+    // and the Genesis projection with no usage bars after one transient failure
+    // (PR #361 review t4). Asserted through that conversion, not on `limits`.
+    test("a backfill carries the native payload the claude readers project from", async () => {
+        const native = {
+            five_hour: { utilization: 33, resets_at: null },
+            seven_day: { utilization: 12, resets_at: null },
+        };
+        const store: CacheStore = new Map();
+        store.set("snapshots:anthropic-sub", {
+            fetchedAt: Date.now() - 120_000,
+            accounts: [{ ...snapshot("anthropic-sub", "work", 33), native }],
+        });
+
+        const get = makeGet(
+            "anthropic-sub",
+            storeDeps(store, async () => [errored("anthropic-sub", "work", "usage read timed out")])
+        );
+
+        const [backfilled] = await get({ force: true });
+
+        expect(backfilled.native).toEqual(native);
+        expect(snapshotToAccountUsage(backfilled).usage).toEqual(native);
+    });
+
+    // Negative control: a live row keeps its OWN native payload, so the copy above can
+    // never overwrite fresh data with the previous round's.
+    test("a fetched row keeps its own native payload", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:anthropic-sub", {
+            fetchedAt: Date.now() - 120_000,
+            accounts: [
+                {
+                    ...snapshot("anthropic-sub", "work", 33),
+                    native: {
+                        five_hour: { utilization: 33, resets_at: null },
+                        seven_day: { utilization: 12, resets_at: null },
+                    },
+                },
+            ],
+        });
+
+        const fresh = { five_hour: { utilization: 71, resets_at: null } };
+        const get = makeGet(
+            "anthropic-sub",
+            storeDeps(store, async () => [{ ...snapshot("anthropic-sub", "work", 71), native: fresh }])
+        );
+
+        const [row] = await get({ force: true });
+
+        expect(row.native).toEqual(fresh);
     });
 
     test("chained failures keep the ORIGINAL lastSuccessAt", async () => {
