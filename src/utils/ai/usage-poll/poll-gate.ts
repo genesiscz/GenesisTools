@@ -119,22 +119,34 @@ const TRANSPORT_ERROR_CODES = new Set([
     "EPIPE",
 ]);
 
-/** Fallback for an error that was stringified before it reached the gate. */
+/**
+ * Fallback for an error that was stringified before it reached the gate. "Was there a
+ * typo in the url or port?" is Bun's wording for an unresolvable host, and it is what the
+ * token-refresh wrapper forwards; "Failed to acquire file lock" is our own
+ * `LockTimeoutError`. Neither sends a request, and both hit every account in the same
+ * round (2026-09-06: a DNS outage plus nine parallel refreshes ratcheted six accounts to
+ * the 6h ceiling through exactly these two messages).
+ */
 const TRANSPORT_MESSAGE_RE =
-    /unable to connect|failed to fetch|network (?:is )?(?:down|unreachable)|socket connection was closed|getaddrinfo|dns lookup failed/i;
+    /unable to connect|failed to fetch|network (?:is )?(?:down|unreachable)|socket connection was closed|getaddrinfo|dns lookup failed|typo in the url or port|failed to acquire file lock/i;
 
-/** True when the poll failed below HTTP, so no request reached Anthropic. */
+/** True when the poll failed below HTTP, so no request reached the provider. */
 export function isTransportFailure(err: unknown): boolean {
     if (typeof err === "object" && err !== null) {
-        const code = (err as { code?: unknown }).code;
+        const { code, name, cause } = err as { code?: unknown; name?: unknown; cause?: unknown };
 
         if (typeof code === "string" && TRANSPORT_ERROR_CODES.has(code)) {
             return true;
         }
 
-        const causeCode = (err as { cause?: { code?: unknown } }).cause?.code;
+        // Local lock contention: the request was never sent, and the lock is shared
+        // by every account, so it is no more this account's fault than a dead network.
+        if (name === "LockTimeoutError") {
+            return true;
+        }
 
-        if (typeof causeCode === "string" && TRANSPORT_ERROR_CODES.has(causeCode)) {
+        // A wrapper that kept `cause` (the refresh path does) still carries the code.
+        if (typeof cause === "object" && cause !== null && isTransportFailure(cause)) {
             return true;
         }
     }

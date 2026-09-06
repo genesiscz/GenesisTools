@@ -112,6 +112,28 @@ describe("isTransportFailure", () => {
         expect(isTransportFailure("Error: Unable to connect. Is the computer able to access the url?")).toBe(true);
     });
 
+    test("a lock timeout is transport: no request was sent and the lock is shared by every account", () => {
+        const err = Object.assign(new Error("Failed to acquire file lock at /x/config.json.lock within 5000ms"), {
+            name: "LockTimeoutError",
+        });
+
+        expect(isTransportFailure(err)).toBe(true);
+        expect(isTransportFailure(String(err))).toBe(true);
+    });
+
+    test("the refresh wrapper's DNS wording and its kept cause are both transport", () => {
+        const dns = Object.assign(new Error("Was there a typo in the url or port?"), { code: "ConnectionRefused" });
+        const wrapped = new Error('Failed to refresh token for "work": Was there a typo in the url or port?.', {
+            cause: dns,
+        });
+
+        expect(isTransportFailure(wrapped)).toBe(true);
+        expect(
+            isTransportFailure(new Error('Failed to refresh token for "work": Was there a typo in the url or port?.'))
+        ).toBe(true);
+        expect(isTransportFailure(new Error("plain failure", { cause: dns }))).toBe(true);
+    });
+
     test("an expired token is NOT transport — it must keep the long ladder", () => {
         // The whole point of the split: a dead account still earns a 6h block.
         expect(isTransportFailure(new Error("Token expired (invalid_grant). Run: tools claude login foo"))).toBe(false);

@@ -483,9 +483,12 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                     throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
                 }
             } else {
+                // `cause` keeps the transport code (ENOTFOUND, ConnectionRefused) so the
+                // poll gate can tell a dead network from a dead account.
                 throw new Error(
                     `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
-                        `Run \`tools claude login ${name}\` if this persists.`
+                        `Run \`tools claude login ${name}\` if this persists.`,
+                    { cause: err }
                 );
             }
         }
