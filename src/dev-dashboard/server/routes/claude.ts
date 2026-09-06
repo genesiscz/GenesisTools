@@ -38,7 +38,10 @@ export function claudeRoutes(agg: AiAggregator = defaultAiAggregator()): RouteDe
             pattern: "/api/claude/usage/totals",
             handler: (ctx) => {
                 const window = windowFromMinutes(parseMinutes(ctx.query.get("minutes")));
-                return h.spendTotals({ ...window, source: "calls" });
+                // Without this the alias summed every provider's recorded calls and
+                // reported codex and grok money as Claude spend. `SpendTotalsQuery`
+                // narrows by provider the same way the other two aliases do.
+                return h.spendTotals({ ...window, source: "calls", providers: [ANTHROPIC_SUB] });
             },
         },
         {

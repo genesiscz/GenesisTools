@@ -390,7 +390,7 @@ describe("claudeRoutes aliases", () => {
         expect(byAlias.body).toEqual(alias.body);
     });
 
-    it("totals pins source=calls and a minutes window", async () => {
+    it("totals pins source=calls, the provider and a minutes window", async () => {
         const { agg, calls } = fakeAggregator();
         const { status, body } = await call(claudeRoutes(agg), "GET", "/api/claude/usage/totals", { minutes: "60" });
 
@@ -398,9 +398,25 @@ describe("claudeRoutes aliases", () => {
         expect(body.source).toBe("calls");
 
         const query = calls.getSpendTotals[0];
+        // Without the provider the alias reported codex and grok spend as Claude money.
+        expect(query.providers).toEqual(["anthropic-sub"]);
+
         const spanMs = Date.parse(query.to) - Date.parse(query.from);
         expect(spanMs).toBeGreaterThanOrEqual(3_600_000);
         expect(spanMs).toBeLessThan(3_610_000);
+    });
+
+    it("every alias narrows to anthropic, so no door answers with another provider", async () => {
+        const { agg, calls } = fakeAggregator();
+        const routes = claudeRoutes(agg);
+
+        await call(routes, "GET", "/api/claude/usage");
+        await call(routes, "GET", "/api/claude/usage/totals");
+        await call(routes, "GET", "/api/claude/usage/history");
+
+        expect(calls.getCurrentSnapshots[0].providers).toEqual(["anthropic-sub"]);
+        expect(calls.getSpendTotals[0].providers).toEqual(["anthropic-sub"]);
+        expect(calls.getUsageSeries[0].providers).toEqual(["anthropic-sub"]);
     });
 
     it("history maps buckets to keys and pins the provider", async () => {
