@@ -53,6 +53,38 @@ describe("SecretStore", () => {
         expect(await resolveSecret(ref)).toBe("xai-secret-value");
     });
 
+    test("set() with the value already stored does not rewrite the vault", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "xai-secret-value");
+        const before = readFileSync(vaultPath(), "utf8");
+
+        const ref = await store.set("ai/acc_x/apiKey", "xai-secret-value");
+
+        // A rewrite mints a fresh IV and updatedAt, so identical bytes prove no write happened.
+        expect(readFileSync(vaultPath(), "utf8")).toBe(before);
+        expect(ref).toEqual({ type: "secure", path: "ai/acc_x/apiKey" });
+        expect(await store.get("ai/acc_x/apiKey")).toBe("xai-secret-value");
+    });
+
+    test("set() with a different value still rewrites, and a value that will not decrypt is replaced", async () => {
+        const store = await secrets();
+        await store.set("ai/acc_x/apiKey", "xai-secret-value");
+        const before = readFileSync(vaultPath(), "utf8");
+
+        await store.set("ai/acc_x/apiKey", "xai-rotated-value");
+
+        expect(readFileSync(vaultPath(), "utf8")).not.toBe(before);
+        expect(await store.get("ai/acc_x/apiKey")).toBe("xai-rotated-value");
+
+        // Corrupt the stored ciphertext: the unchanged-check must fall through to a write, not throw.
+        const vault: VaultFile = SafeJSON.parse(readFileSync(vaultPath(), "utf8"), { strict: true });
+        vault.entries["ai/acc_x/apiKey"].ct = Buffer.from("garbage").toString("base64");
+        writeFileSync(vaultPath(), SafeJSON.stringify(vault));
+
+        await store.set("ai/acc_x/apiKey", "xai-rotated-value");
+        expect(await store.get("ai/acc_x/apiKey")).toBe("xai-rotated-value");
+    });
+
     test("never writes the plaintext to disk", async () => {
         const store = await secrets();
         await store.set("ai/acc_x/apiKey", "xai-secret-value");
