@@ -2,7 +2,7 @@ import { formatTokens } from "@genesiscz/utils/format";
 import type { TranscriptEnvelope, TranscriptTool, TranscriptTurn } from "../types";
 import { type RenderContext, settledTurns, TranscriptRenderer, windowStart } from "./renderer";
 
-const SHORT_THOUGHT_CHARS = 200;
+export const SHORT_THOUGHT_CHARS = 200;
 const TARGET_CHARS = 160;
 const ERROR_CHARS = 400;
 

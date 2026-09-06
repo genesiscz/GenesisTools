@@ -30,6 +30,23 @@ describe("totalsOf", () => {
 });
 
 describe("terminatedOf", () => {
+    test("an earlier turn file's end does not terminate a live later turn (PR #364 review)", () => {
+        // A worker session is a chain of turn files: turn 1 ended, turn 2 is
+        // still being written. Only the LAST turn decides.
+        const turns = [
+            turn({ text: "turn 1 work" }),
+            turn({ role: "system", event: { kind: "end", stopReason: "end_turn" } }),
+            turn({ text: "turn 2, still growing" }),
+        ];
+        expect(terminatedOf(turns)).toBeNull();
+
+        const started = [
+            turn({ role: "system", event: { kind: "error", message: "403" } }),
+            turn({ role: "system", event: { kind: "turn.started", turn: 2 } }),
+        ];
+        expect(terminatedOf(started)).toBeNull();
+    });
+
     test("reports the last terminal event, and null while the transcript is still running", () => {
         expect(terminatedOf([turn({})])).toBeNull();
         expect(terminatedOf([turn({}), turn({ role: "system", event: { kind: "error", message: "403" } })])).toBe(

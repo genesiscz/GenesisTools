@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
+import { defaultWorkerHomeFor, managedHomeSkillsPolicy } from "@genesiscz/utils/grok/worker-paths";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import {
@@ -12,7 +13,7 @@ import {
     surfacesFromFlags,
     type WorkerSurfaces,
 } from "@genesiscz/utils/worker/isolation";
-import { defaultWorkerHome, turnErrPath, turnLogPath } from "./paths";
+import { turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
 import { type WorktreeDelta, worktreeDelta, worktreeState } from "./worktree";
@@ -306,8 +307,20 @@ async function runTurn(
     let exitCode: number | null = null;
     try {
         const surfaces = meta.surfaces ?? DEFAULT_SURFACES;
-        // `~/.agents/skills` has no env toggle; `--no-skills` lives in the worker home's config.toml.
-        ensureGrokWorkerConfig(meta.workerHome, surfaces);
+        // `~/.agents/skills` has no env toggle; `--no-skills` lives in the worker
+        // home's config.toml. A managed (shared) home has ONE fixed policy, so
+        // parallel sessions never rewrite it under each other; only a
+        // caller-chosen --worker-home follows the session's own choice.
+        const homePolicy = managedHomeSkillsPolicy(meta.workerHome);
+        const configSurfaces = homePolicy === null ? surfaces : { ...surfaces, skills: homePolicy };
+        if (homePolicy !== null && homePolicy !== surfaces.skills) {
+            log.warn(
+                { name: meta.name, workerHome: meta.workerHome, skills: surfaces.skills },
+                "the ~/.agents skills tier follows the shared home's fixed policy; only ~/.claude skills flip mid-session"
+            );
+        }
+
+        ensureGrokWorkerConfig(meta.workerHome, configSurfaces);
         const proc = Bun.spawn({
             cmd: [binary, ...args],
             cwd: meta.cwd,
@@ -364,7 +377,9 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
         name: options.name,
         sessionId: crypto.randomUUID(),
         cwd: resolve(options.cwd),
-        workerHome: options.workerHome ? resolve(options.workerHome) : defaultWorkerHome(),
+        workerHome: options.workerHome
+            ? resolve(options.workerHome)
+            : defaultWorkerHomeFor((options.surfaces ?? DEFAULT_SURFACES).skills),
         model: options.model,
         readOnly: options.readOnly,
         auth: options.auth,

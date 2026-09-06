@@ -242,7 +242,10 @@ export function grokWorkerTextToTurns(text: string, sessionId: string, turnIndex
                 }
 
                 const output = stripAnsi(workerToolOutput(line));
-                tool.result = output ? clipResult(output) : null;
+                // An empty string, never null: `result !== null` is what every
+                // renderer uses to mean "this tool finished", so a silent
+                // command used to render as still pending (PR #364 review).
+                tool.result = clipResult(output);
                 tool.resultChars = output.length;
                 tool.isError = line.status === "failed";
                 const exitCode = num(line.rawOutput?.exit_code);
@@ -261,7 +264,7 @@ export function grokWorkerTextToTurns(text: string, sessionId: string, turnIndex
                     at: null,
                     text: `end (${stopReason})`,
                     tools: [],
-                    event: { kind: "end", stopReason, costUsd: line.total_cost_usd },
+                    event: { kind: "end", stopReason, costUsd: num(line.total_cost_usd) },
                 });
                 break;
             }

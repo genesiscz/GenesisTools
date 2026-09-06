@@ -88,12 +88,19 @@ export function totalsOf(turns: readonly TranscriptTurn[]): TranscriptTotals {
     return totals;
 }
 
+/**
+ * How the transcript ended, or null while it is still running.
+ *
+ * ONLY the last turn decides. A worker session is a CHAIN of turn files, so
+ * turn 1's `end` sits in the middle of the array while turn 2 is still being
+ * written. Scanning the whole history backward found that older terminal event
+ * and reported a live turn as finished, which made follow mode abort at once
+ * and made line renderers emit a growing turn as settled (PR #364 review).
+ */
 export function terminatedOf(turns: readonly TranscriptTurn[]): "end" | "error" | null {
-    for (let i = turns.length - 1; i >= 0; i -= 1) {
-        const event = turns[i]?.event;
-        if (event?.kind === "end" || event?.kind === "error") {
-            return event.kind;
-        }
+    const event = turns.at(-1)?.event;
+    if (event?.kind === "end" || event?.kind === "error") {
+        return event.kind;
     }
 
     return null;

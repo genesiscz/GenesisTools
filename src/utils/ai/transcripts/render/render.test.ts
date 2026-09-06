@@ -111,6 +111,69 @@ describe("CompactRenderer", () => {
     });
 });
 
+describe("late tool results in follow mode (PR #364 review)", () => {
+    const pending: TranscriptTurn = {
+        id: "a",
+        role: "assistant",
+        at: null,
+        text: "Reading.",
+        tools: [{ id: "t1", name: "read_file", inputPreview: "x.md", result: null, isError: false }],
+    };
+    const growing: TranscriptTurn = { id: "b", role: "assistant", at: null, text: "Partial", tools: [] };
+    const done = { ...pending, tools: [{ ...pending.tools[0], result: "hello", resultChars: 5 }] };
+
+    test("jsonl holds a settled turn with a pending tool, writes it once with the result, and flushes on close", () => {
+        const { ctx, lines } = capture({ follow: true });
+        const renderer = rendererFor("jsonl");
+
+        renderer.envelope(envelopeOf([pending, growing], { terminated: null }), ctx);
+        expect(lines).toEqual([]);
+
+        renderer.envelope(envelopeOf([done, growing], { terminated: null }), ctx);
+        expect(lines).toHaveLength(1);
+        expect(SafeJSON.parse(lines[0] ?? "", { strict: true })).toMatchObject({
+            id: "a",
+            tools: [{ result: "hello" }],
+        });
+
+        renderer.close(ctx);
+        const ids = lines.map(
+            (line) => (SafeJSON.parse(line, { strict: true }) as Record<string, unknown>).id ?? "totals"
+        );
+        expect(ids).toEqual(["a", "b", "totals"]);
+    });
+
+    test("events prints a late tool result once, after the turn it belongs to", () => {
+        const { ctx, lines } = capture({ follow: true });
+        const renderer = rendererFor("events");
+
+        renderer.envelope(envelopeOf([pending, growing], { terminated: null }), ctx);
+        expect(lines).toEqual(["💬 Reading.", "🔧 read_file x.md"]);
+
+        renderer.envelope(envelopeOf([done, growing], { terminated: null }), ctx);
+        renderer.envelope(envelopeOf([done, growing], { terminated: null }), ctx);
+        expect(lines).toEqual(["💬 Reading.", "🔧 read_file x.md", "↩ read_file"]);
+    });
+
+    test("events shortens thoughts by default and keeps them whole on full", () => {
+        const long: TranscriptTurn = {
+            id: "r",
+            role: "assistant",
+            at: null,
+            text: "",
+            tools: [],
+            reasoning: "x".repeat(300),
+        };
+        const short = capture();
+        rendererFor("events").envelope(envelopeOf([long]), short.ctx);
+        expect(short.lines[0]?.length).toBe("🧠 ".length + 200 + 1);
+
+        const full = capture({ thoughts: "full" });
+        rendererFor("events").envelope(envelopeOf([long]), full.ctx);
+        expect(full.lines[0]).toBe(`🧠 ${"x".repeat(300)}`);
+    });
+});
+
 describe("JsonRenderer and JsonlRenderer", () => {
     test("json hands the envelope to result once", () => {
         const { ctx, results, lines } = capture();
@@ -167,5 +230,32 @@ describe("RawRenderer", () => {
         writeFileSync(path, '{"type":"text","data":"a"}\n{"type":"end"}\n');
         renderer.envelope(envelopeOf([], { filePath: path }), ctx);
         expect(lines).toEqual(['{"type":"text","data":"a"}', '{"type":"end"}']);
+    });
+
+    test("a record split across two reads, even inside a multi-byte character, comes out as one line", () => {
+        const dir = mkdtempSync(join(tmpdir(), "raw-render-"));
+        const path = join(dir, "t.turn1.jsonl");
+        const record = '{"type":"text","data":"héllo → wörld"}\n';
+        const bytes = Buffer.from(record, "utf8");
+        // Cut inside the two-byte "é".
+        const cut = bytes.indexOf(Buffer.from("é", "utf8")) + 1;
+
+        const { ctx, lines } = capture({ follow: true });
+        const renderer = rendererFor("raw");
+
+        writeFileSync(path, bytes.subarray(0, cut));
+        renderer.envelope(envelopeOf([], { filePath: path }), ctx);
+        expect(lines).toEqual([]);
+
+        writeFileSync(path, bytes);
+        renderer.envelope(envelopeOf([], { filePath: path }), ctx);
+        expect(lines).toEqual(['{"type":"text","data":"héllo → wörld"}']);
+
+        // An unterminated final record is flushed when the follow ends.
+        writeFileSync(path, Buffer.concat([bytes, Buffer.from('{"type":"end"}', "utf8")]));
+        renderer.envelope(envelopeOf([], { filePath: path }), ctx);
+        expect(lines).toHaveLength(1);
+        renderer.close(ctx);
+        expect(lines).toEqual(['{"type":"text","data":"héllo → wörld"}', '{"type":"end"}']);
     });
 });

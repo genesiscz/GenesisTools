@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { ClaudeSession } from "@genesiscz/utils/claude/session";
 import { parseTurnEvents as parseClaudeTurnEvents } from "@genesiscz/utils/claude/worker-stream";
+import { toWorkerEvent as codexToWorkerEvent, type StoredCodexEvent } from "@genesiscz/utils/codex/worker-stream";
+import type { WorkerEvent } from "@genesiscz/utils/worker/events";
 import { claudeMessagesToTurns } from "./claude";
-import { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
+import { codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
@@ -61,7 +63,14 @@ async function turnsFromFile(resolved: ResolvedTranscript, path: string, index =
     }
     const records = readRecords(path);
     if (resolved.source === "worker" || looksLikeCodexGt(records)) {
-        return codexGtEventsToTurns(records);
+        // The codex CLI's own event mapping, not a second guess at it: the
+        // stored notifications are `item/started`, `item/completed`,
+        // `turn/completed`, and a private matcher on method substrings dropped
+        // every one of them (PR #364 review).
+        const events = records
+            .map((record) => codexToWorkerEvent(record as StoredCodexEvent))
+            .filter((event): event is WorkerEvent => event !== null);
+        return workerEventsToTurns(events, resolved.sessionId, index);
     }
     return codexNativeLinesToTurns(records);
 }

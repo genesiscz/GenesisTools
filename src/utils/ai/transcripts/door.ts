@@ -172,6 +172,12 @@ export async function runTranscriptDoor(options: TranscriptDoorOptions): Promise
             }
         }
 
+        // The follow is over, by a terminal event, by the worker process going
+        // away, or by Ctrl-C. Line renderers hold the last turn back while a
+        // transcript is running; drain it now with one final, non-follow pass,
+        // so a worker that died mid-sentence still shows what it was doing.
+        ctx.follow = false;
+        renderer.envelope(await transcriptEnvelope(resolved, options.slice), ctx);
         renderer.close(ctx);
     } catch (error) {
         process.exitCode = 1;

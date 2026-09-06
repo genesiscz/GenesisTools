@@ -143,6 +143,38 @@ describe("grokWorkerTextToTurns", () => {
         expect(last?.text).toContain("403 Forbidden");
     });
 
+    test("a completed or failed tool with empty output is finished, not pending (PR #364 review)", () => {
+        const text = [
+            SafeJSON.stringify({
+                type: "tool_call",
+                toolCallId: "c1",
+                toolName: "run_terminal_command",
+                rawInput: { command: "true" },
+            }),
+            SafeJSON.stringify({ type: "tool_call", toolCallId: "c2", toolName: "grep", rawInput: { pattern: "x" } }),
+            SafeJSON.stringify({
+                type: "tool_call_update",
+                toolCallId: "c1",
+                status: "completed",
+                content: [],
+                rawOutput: { exit_code: 0 },
+            }),
+            SafeJSON.stringify({
+                type: "tool_call_update",
+                toolCallId: "c2",
+                status: "failed",
+                content: [],
+                rawOutput: null,
+            }),
+            SafeJSON.stringify({ type: "end", stopReason: "end_turn", total_cost_usd: "not a number" }),
+        ].join("\n");
+
+        const [first, last] = grokWorkerTextToTurns(text, "sess");
+        expect(first?.tools[0]).toMatchObject({ result: "", resultChars: 0, isError: false, exitCode: 0 });
+        expect(first?.tools[1]).toMatchObject({ result: "", isError: true });
+        expect(last?.event).toEqual({ kind: "end", stopReason: "end_turn", costUsd: undefined });
+    });
+
     test("an empty or comment-only file yields no turns", () => {
         expect(grokWorkerTextToTurns("", "sess")).toEqual([]);
         expect(grokWorkerTextToTurns('{"type":"available_commands","tools":[]}\n', "sess")).toEqual([]);

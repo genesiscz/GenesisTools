@@ -64,6 +64,29 @@ describe("coalesceWorkerEvents", () => {
         expect(coalesceWorkerEvents([])).toEqual([]);
     });
 
+    test("runs are scoped by session: deltas from two sessions never merge, and a completed message from another session does not swallow a run", () => {
+        const other = "00000000-0000-4000-8000-000000000002";
+        const events: WorkerEvent[] = [
+            text("one", true),
+            { kind: "text", sessionId: other, text: "two", delta: true },
+            { kind: "text", sessionId: other, text: "two whole", delta: false },
+        ];
+
+        expect(coalesceWorkerEvents(events)).toEqual([
+            text("one", false),
+            { kind: "text", sessionId: other, text: "two whole", delta: false },
+        ]);
+
+        const swallow: WorkerEvent[] = [
+            text("mine", true),
+            { kind: "text", sessionId: other, text: "theirs", delta: false },
+        ];
+        expect(coalesceWorkerEvents(swallow)).toEqual([
+            text("mine", false),
+            { kind: "text", sessionId: other, text: "theirs", delta: false },
+        ]);
+    });
+
     test("a trailing run with no terminator is still flushed (a turn that died mid-sentence)", () => {
         expect(coalesceWorkerEvents([text("partial", true), text(" answer", true)])).toEqual([
             text("partial answer", false),

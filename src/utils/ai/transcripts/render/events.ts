@@ -1,6 +1,16 @@
 import { formatWorkerEvent, type WorkerEvent } from "@genesiscz/utils/worker/events";
 import type { TranscriptEnvelope, TranscriptTurn } from "../types";
+import { oneLine, SHORT_THOUGHT_CHARS } from "./compact";
 import { type RenderContext, settledTurns, TranscriptRenderer } from "./renderer";
+
+/** Reasoning text under the context's thoughts mode, or null when it is hidden. */
+function reasoningText(turn: TranscriptTurn, ctx: RenderContext): string | null {
+    if (!turn.reasoning || ctx.thoughts === "none") {
+        return null;
+    }
+
+    return ctx.thoughts === "full" ? turn.reasoning.trim() : oneLine(turn.reasoning, SHORT_THOUGHT_CHARS);
+}
 
 /** A settled turn as the shared worker-event vocabulary, deltas already folded. */
 export function turnToWorkerEvents(turn: TranscriptTurn, sessionId: string, ctx: RenderContext): WorkerEvent[] {
@@ -25,8 +35,9 @@ export function turnToWorkerEvents(turn: TranscriptTurn, sessionId: string, ctx:
         return events;
     }
 
-    if (turn.reasoning && ctx.thoughts !== "none") {
-        events.push({ kind: "reasoning", sessionId, text: turn.reasoning.trim(), delta: false });
+    const reasoning = reasoningText(turn, ctx);
+    if (reasoning) {
+        events.push({ kind: "reasoning", sessionId, text: reasoning, delta: false });
     }
 
     if (turn.text.trim()) {
@@ -46,20 +57,49 @@ export function turnToWorkerEvents(turn: TranscriptTurn, sessionId: string, ctx:
 /** The `--events` view every backend shares (`formatWorkerEvent`), fed from turns so no delta ever prints. */
 export class EventsRenderer extends TranscriptRenderer {
     readonly format = "events";
-    private readonly printed = new Set<string>();
+    private readonly printedTurns = new Set<string>();
+    private readonly printedResults = new Set<string>();
 
     envelope(envelope: TranscriptEnvelope, ctx: RenderContext): void {
         for (const turn of settledTurns(envelope, ctx)) {
-            if (this.printed.has(turn.id)) {
+            if (this.printedTurns.has(turn.id)) {
+                // A turn is re-emitted on every reparse. Its tool results can
+                // arrive after it settled, so the turn being printed already is
+                // NOT a reason to drop them (PR #364 review).
+                this.emitLateResults(turn, envelope.sessionId, ctx);
                 continue;
             }
 
-            this.printed.add(turn.id);
+            this.printedTurns.add(turn.id);
             for (const event of turnToWorkerEvents(turn, envelope.sessionId, ctx)) {
+                if (event.kind === "tool_result" && event.callId) {
+                    this.printedResults.add(event.callId);
+                }
+
                 const line = formatWorkerEvent(event);
                 if (line) {
                     ctx.write(line);
                 }
+            }
+        }
+    }
+
+    private emitLateResults(turn: TranscriptTurn, sessionId: string, ctx: RenderContext): void {
+        for (const tool of turn.tools) {
+            if (tool.result === null || this.printedResults.has(tool.id)) {
+                continue;
+            }
+
+            this.printedResults.add(tool.id);
+            const line = formatWorkerEvent({
+                kind: "tool_result",
+                sessionId,
+                tool: tool.name,
+                callId: tool.id,
+                ok: !tool.isError,
+            });
+            if (line) {
+                ctx.write(line);
             }
         }
     }

@@ -91,9 +91,15 @@ export function coalesceWorkerEvents(events: readonly WorkerEvent[]): WorkerEven
     const out: WorkerEvent[] = [];
     let run: Run | null = null;
 
+    // A run belongs to one session: the claude stream carries the session id
+    // per line, so adjacent deltas from two sessions must not merge, and a
+    // completed message from another session must not swallow a pending run.
+    const sameRun = (event: WorkerEvent): boolean =>
+        run !== null && run.kind === event.kind && run.sessionId === event.sessionId;
+
     for (const event of events) {
         if ((event.kind === "text" || event.kind === "reasoning") && event.delta) {
-            if (run !== null && run.kind === event.kind) {
+            if (run !== null && sameRun(event)) {
                 run.text += event.text;
             } else {
                 if (run !== null) {
@@ -106,7 +112,7 @@ export function coalesceWorkerEvents(events: readonly WorkerEvent[]): WorkerEven
             continue;
         }
 
-        if (run !== null && event.kind !== run.kind) {
+        if (run !== null && !sameRun(event)) {
             out.push(whole(run));
         }
 
