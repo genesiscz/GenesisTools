@@ -1,5 +1,6 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { accountFieldsFrom } from "@genesiscz/utils/ai/providers/account-fields";
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
@@ -144,12 +145,16 @@ function renderHomes(rows: DiscoveredRow[]): void {
 }
 
 /**
- * A name no other home in THIS run has already claimed.
+ * A name nothing has claimed yet, neither an earlier home in THIS run nor an
+ * account already in the config.
  *
- * `writeLoginOutcome` merges onto an account of the same name, and after the
- * first write the store holds it — so two homes whose emails share a local part
- * (`me@work.com` and `me@personal.com`) both merged into one account, and the
- * second silently replaced the first one's credentials (PR #360 review t3).
+ * `writeLoginOutcome` MERGES onto an account of the same name. Two homes whose
+ * emails share a local part (`me@work.com` and `me@personal.com`) therefore both
+ * merged into one account, and the second silently replaced the first one's
+ * credentials (PR #360 review t3). An account that was already there is the same
+ * collision one step earlier: an unbound codex home decoding to `alice` converted
+ * an unrelated `alice` API-key account to openai-sub and deleted its vault
+ * secrets. This command CREATES accounts for unbound homes; it never replaces one.
  */
 function uniqueInRun(base: string, taken: Set<string>): string {
     if (!taken.has(base)) {
@@ -174,7 +179,7 @@ export interface BoundHome {
 async function bindHomes(rows: DiscoveredRow[], quiet: boolean): Promise<BoundHome[]> {
     const store = await AiConfigStore.load();
     const interactive = isInteractive();
-    const claimed = new Set<string>();
+    const claimed = new Set(store.accounts().map((account) => account.name));
     const bound: BoundHome[] = [];
     let attempted = 0;
 
@@ -199,8 +204,12 @@ async function bindHomes(rows: DiscoveredRow[], quiet: boolean): Promise<BoundHo
             outcome: {
                 provider: row.provider,
                 credentials: { authFile: row.authFile },
-                ...(row.identity ? { identity: row.identity } : {}),
-                ...(row.identity?.plan ? { accountFields: { label: row.identity.plan } } : {}),
+                // `accountFieldsFrom`, not just the plan label: `applyAccountFields`
+                // stores `accountFields` and drops `identity`, so binding a home
+                // through the label alone left the account with NO fingerprint and
+                // a later login by a stranger had nothing to contradict
+                // (PR #360 review t4).
+                ...(row.identity ? { identity: row.identity, accountFields: accountFieldsFrom(row.identity) } : {}),
             },
         });
 
