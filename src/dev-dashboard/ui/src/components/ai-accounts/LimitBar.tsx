@@ -41,16 +41,23 @@ export function formatResetsIn(resetsAt: string | undefined, nowMs: number): str
     return `resets in ${hours}h ${minutes}m`;
 }
 
+/**
+ * Minor units to a printed amount. The provider states the exponent and
+ * `anthropic-sub` forwards it verbatim, so it is not always 2: a three-decimal
+ * currency (KWD, BHD) lost its last digit to `toFixed(2)` and a zero-decimal one
+ * (JPY) gained two it does not have. Same rule as `formatMoney` in
+ * `src/utils/ai/usage-poll/format-money.ts`, which the CLI door prints.
+ */
 export function formatMoney(money: NonNullable<LimitWindow["money"]>): string {
     const scale = 10 ** money.exponent;
-    const used = (money.usedMinor / scale).toFixed(2);
+    const used = (money.usedMinor / scale).toFixed(money.exponent);
     const symbol = money.currency === "USD" ? "$" : `${money.currency} `;
 
     if (money.limitMinor === undefined) {
         return `${symbol}${used}`;
     }
 
-    return `${symbol}${used} / ${symbol}${(money.limitMinor / scale).toFixed(2)}`;
+    return `${symbol}${used} / ${symbol}${(money.limitMinor / scale).toFixed(money.exponent)}`;
 }
 
 /** One provider-neutral limit row: label, value, bar, reset hint. */
