@@ -15,7 +15,7 @@ import {
     _resetSecretsForTest,
     _setMasterKeyProvidersForTest,
 } from "@genesiscz/utils/security";
-import { CODEX_AUTH_PATH, type CodexTokens } from "../../../openai/codex-auth";
+import { CODEX_AUTH_PATH, type CodexTokens, extractAccountId, writeCodexAuthJson } from "../../../openai/codex-auth";
 import { codexLoginOutcome, resolveCodexAuthDestination } from "./login";
 
 /**
@@ -240,5 +240,68 @@ describe("resolveCodexAuthDestination", () => {
         delete account.credentials.authFile;
 
         expect(resolveCodexAuthDestination({ interactive: true, account })).toBe(CODEX_AUTH_PATH);
+    });
+});
+
+/**
+ * PR #359 review t4 asked for the end-to-end proof, not just the precedence:
+ * two accounts with separate codex homes, a named re-login of one, and the OTHER
+ * account's `auth.json` byte-identical afterwards.
+ *
+ * The browser half cannot run here, so the test composes the two REAL pieces the
+ * login uses — `resolveCodexAuthDestination` picks the path and
+ * `writeCodexAuthJson` writes it — rather than a paraphrase of either.
+ */
+describe("a named re-login leaves the other account's home alone", () => {
+    function boundTo(id: string, name: string, authFile: string): AccountEntry {
+        return {
+            id,
+            name,
+            provider: "openai-sub",
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: { authFile },
+            useEnvApiKey: false,
+        };
+    }
+
+    test("re-logging `work` writes work's file and never touches personal's", async () => {
+        const workFile = join(home, ".codex-work", "auth.json");
+        const personalFile = join(home, ".codex", "auth.json");
+
+        await writeCodexAuthJson(workFile, fakeTokens({ email: "alice@example.com", accountUuid: "acct-work" }));
+        await writeCodexAuthJson(personalFile, fakeTokens({ email: "shop@example.com", accountUuid: "acct-personal" }));
+        const personalBefore = readFileSync(personalFile, "utf8");
+        const workBefore = readFileSync(workFile, "utf8");
+
+        // No `--home`, no `--auth-file`: exactly the invocation that used to fall
+        // through to the default home and rebind `work` onto personal's file.
+        const destination = resolveCodexAuthDestination({
+            interactive: true,
+            account: boundTo("acc_work", "work", workFile),
+        });
+
+        expect(destination).toBe(workFile);
+
+        await writeCodexAuthJson(destination, fakeTokens({ email: "alice@example.com", accountUuid: "acct-work-new" }));
+
+        // The claims live inside a base64url id_token, so the proof is that
+        // personal's bytes did NOT move while work's did.
+        expect(readFileSync(personalFile, "utf8")).toBe(personalBefore);
+        expect(readFileSync(workFile, "utf8")).not.toBe(workBefore);
+        expect(extractAccountId(SafeJSON.parse(readFileSync(workFile, "utf8")).tokens.id_token)).toBe("acct-work-new");
+    });
+
+    test("NEGATIVE CONTROL: an explicit --home still moves the write to that home", async () => {
+        const workFile = join(home, ".codex-work", "auth.json");
+        const moved = join(home, ".codex-moved");
+
+        const destination = resolveCodexAuthDestination({
+            interactive: true,
+            home: moved,
+            account: boundTo("acc_work", "work", workFile),
+        });
+
+        expect(destination).toBe(join(moved, "auth.json"));
     });
 });

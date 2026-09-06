@@ -6,7 +6,7 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import type { AccountFeatures, AccountIdentity } from "@genesiscz/utils/ai/providers/account-features";
 import type { BindContext, ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
-import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
+import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest, registerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -276,5 +276,66 @@ describe("paths are absolute before anything stores or reads them", () => {
         await login({ name: "work", home: explicit });
 
         expect(loginCtx?.home).toBe(explicit);
+    });
+});
+
+/**
+ * PR #359 review t6 asked for the bind to be proven against the BUILT-IN Codex
+ * provider, not a stand-in. The real `openai-sub` plugin points `login` at
+ * `codexLogin`, whose first statement throws "Codex login needs a TTY", so a
+ * dispatch that reached the flow fails loudly here — the built-in is its own
+ * tripwire, and no browser or token exchange can occur.
+ */
+describe("the built-in Codex provider", () => {
+    /** An `auth.json` in the shape the official CLI writes, with invented claims. */
+    function writeCodexAuthFile(path: string, email: string, accountUuid: string): string {
+        const claims = Buffer.from(
+            SafeJSON.stringify({ email, chatgpt_account_id: accountUuid, "https://api.openai.com/auth": {} })
+        ).toString("base64url");
+        const contents = SafeJSON.stringify(
+            {
+                auth_mode: "chatgpt",
+                tokens: {
+                    id_token: `eyJhbGciOiJIUzI1NiJ9.${claims}.not-a-signature`,
+                    access_token: "codex-access-invented",
+                    refresh_token: "codex-refresh-invented",
+                },
+                last_refresh: new Date(0).toISOString(),
+            },
+            null,
+            2
+        );
+
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, contents);
+        return contents;
+    }
+
+    beforeEach(() => {
+        // Replace the fake registered above with the genuine plugin table.
+        _resetPluginsForTest();
+        _resetBuiltInPluginsForTest();
+        registerBuiltInPlugins();
+    });
+
+    test("--auth-file binds in a pipe, where the real flow would have demanded a TTY", async () => {
+        const codexFile = join(home, ".codex-imported", "auth.json");
+        const contents = writeCodexAuthFile(codexFile, "alice@example.com", "chatgpt-acct-real");
+
+        const result = await login({ name: "work", authFile: codexFile });
+
+        expect(result.ok).toBe(true);
+        expect(storedAccount("work")?.provider).toBe("openai-sub");
+        expect(storedAccount("work")?.credentials.authFile).toBe(codexFile);
+        // Decoded by the real `identityOf`, from the file and nothing else.
+        expect(storedAccount("work")?.accountUuid).toBe("chatgpt-acct-real");
+        // No OAuth: the vendor file is exactly as it was found.
+        expect(readFileSync(codexFile, "utf8")).toBe(contents);
+    });
+
+    test("NEGATIVE CONTROL: without --auth-file the real flow does refuse a pipe", async () => {
+        // Proves the tripwire above is armed — the built-in flow is reachable and
+        // rejects non-TTY, so the passing test above cannot be a false green.
+        await expect(login({ name: "work" })).rejects.toThrow(/needs a TTY/);
     });
 });
