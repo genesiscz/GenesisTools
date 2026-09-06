@@ -134,6 +134,21 @@ describe("isTransportFailure", () => {
         expect(isTransportFailure(new Error("plain failure", { cause: dns }))).toBe(true);
     });
 
+    /**
+     * The three request deadlines this campaign added. `AbortSignal.timeout` rejects with a
+     * DOMException named `TimeoutError` whose `code` is the NUMBER 23 (observed on Bun
+     * 1.3.13), so the string-code set never matched it and a stalled network climbed the 6h
+     * ladder rather than the 5-minute transport one (review t8).
+     */
+    test("a request deadline is transport, whichever of the three fired", () => {
+        const abort = Object.assign(new Error("The operation timed out."), { name: "TimeoutError", code: 23 });
+
+        expect(isTransportFailure(abort)).toBe(true);
+        expect(isTransportFailure("The operation timed out.")).toBe(true);
+        expect(isTransportFailure(new Error("grok usage read timed out after 8000ms"))).toBe(true);
+        expect(isTransportFailure(new Error("codex account/rateLimits/read timed out after 10000ms"))).toBe(true);
+    });
+
     test("an expired token is NOT transport — it must keep the long ladder", () => {
         // The whole point of the split: a dead account still earns a 6h block.
         expect(isTransportFailure(new Error("Token expired (invalid_grant). Run: tools claude login foo"))).toBe(false);
@@ -142,6 +157,8 @@ describe("isTransportFailure", () => {
     test("an HTTP-level error is NOT transport — the server answered", () => {
         expect(isTransportFailure(new Error("Usage API 401: unauthorized"))).toBe(false);
         expect(isTransportFailure(new Error("Usage API 429: rate limited"))).toBe(false);
+        // A body that merely mentions a timeout still answered, so it keeps the long ladder.
+        expect(isTransportFailure(new Error("Usage API 504: upstream request timeout"))).toBe(false);
     });
 });
 

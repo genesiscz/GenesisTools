@@ -128,7 +128,16 @@ const TRANSPORT_ERROR_CODES = new Set([
  * the 6h ceiling through exactly these two messages).
  */
 const TRANSPORT_MESSAGE_RE =
-    /unable to connect|failed to fetch|network (?:is )?(?:down|unreachable)|socket connection was closed|getaddrinfo|dns lookup failed|typo in the url or port|failed to acquire file lock/i;
+    /unable to connect|failed to fetch|network (?:is )?(?:down|unreachable)|socket connection was closed|getaddrinfo|dns lookup failed|typo in the url or port|failed to acquire file lock|operation timed out|timed out after/i;
+
+/**
+ * Names carried by an aborted request. `AbortSignal.timeout` rejects with a DOMException
+ * named `TimeoutError` whose `code` is the NUMBER 23, so the string-code set above never
+ * saw it: the anthropic 20s request deadline, the codex app-server deadline and the grok
+ * read deadline all reached the gate as ordinary account failures and climbed the 6h
+ * ladder instead of the transport ladder's 5-minute ceiling (review t8).
+ */
+const TRANSPORT_ERROR_NAMES = new Set(["LockTimeoutError", "TimeoutError", "AbortError"]);
 
 /** True when the poll failed below HTTP, so no request reached the provider. */
 export function isTransportFailure(err: unknown): boolean {
@@ -139,9 +148,9 @@ export function isTransportFailure(err: unknown): boolean {
             return true;
         }
 
-        // Local lock contention: the request was never sent, and the lock is shared
-        // by every account, so it is no more this account's fault than a dead network.
-        if (name === "LockTimeoutError") {
+        // Lock contention and request deadlines: nothing was sent, or the send never
+        // finished, and both hit every account of the round rather than one login.
+        if (typeof name === "string" && TRANSPORT_ERROR_NAMES.has(name)) {
             return true;
         }
 
