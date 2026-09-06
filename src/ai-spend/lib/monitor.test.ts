@@ -695,6 +695,26 @@ describe("monitor account rows", () => {
         expect(envelope.today.cost).toBeCloseTo(0.8 + 7, 6);
     });
 
+    test("a home that leaves the root set is dropped on the next run, warm cache and all", () => {
+        const storage = new Storage("ai-spend");
+        const withLoose = run({ accounts, discoveredHomes: { codex: [{ home: homes.loose }] }, storage });
+
+        expect(withLoose.agents.codex.today.cost).toBeCloseTo(7, 6);
+
+        // Warm cache and an hour of TTL left, so only the changed root set can
+        // force the re-sweep that drops the loose home's cached rows. Without
+        // it the fast path reseeds from every cached file and its $4 survives,
+        // relabelled unbound.
+        const withoutLoose = run({ accounts, storage, sweepTtlMs: 60 * 60 * 1000 });
+        const byId = new Map((withoutLoose.accounts ?? []).map((row) => [row.accountId, row]));
+
+        expect(withoutLoose.agents.codex.today.cost).toBeCloseTo(3, 6);
+        expect(byId.has(UNBOUND_ACCOUNT_ID)).toBe(false);
+        // Negative control: the two bound homes still report from the cache.
+        expect(byId.get(WORK)?.today.cost).toBeCloseTo(1, 6);
+        expect(byId.get(SHOP)?.today.cost).toBeCloseTo(2, 6);
+    });
+
     test("--account restricts the totals as well as the breakdown", () => {
         const report = run({ accounts, accountIds: [WORK] });
 

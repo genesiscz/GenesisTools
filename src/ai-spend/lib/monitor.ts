@@ -187,6 +187,20 @@ interface FileCacheEntry {
 interface AgentCache {
     /** Epoch ms of the last FULL tree sweep. */
     sweepAt: number;
+    /**
+     * The roots the last sweep walked, sorted and joined.
+     *
+     * Between sweeps the fast path seeds its candidates from every cached file
+     * and the report sums every cached row, neither of which consults the
+     * roots. So `--all-homes` once, then without it inside the TTL, kept the
+     * extra home's money in the second answer (relabelled unbound), and the
+     * same held for disabling or removing an account. A changed root set forces
+     * the sweep, whose live-set prune then drops the rows that left scope.
+     *
+     * Absent on a cache written before this field existed, which reads as
+     * "changed" and costs exactly one extra sweep.
+     */
+    rootsKey?: string;
     /** First-level children (project dirs) of the roots at the last sweep. */
     rootChildren: string[];
     files: Record<string, FileCacheEntry>;
@@ -524,12 +538,16 @@ function scanAgent(options: ScanOptions): ScanResult {
         discoveredHomes: options.discoveredHomes,
     });
     const roots = driverRoots.map((root) => root.path);
-    const sweepDue = now.getTime() - cache.sweepAt >= options.sweepTtlMs;
+    // Sorted, so a reordered account list is not mistaken for a scope change.
+    const rootsKey = [...roots].sort().join("\n");
+    const rootsChanged = cache.rootsKey !== rootsKey;
+    const sweepDue = rootsChanged || now.getTime() - cache.sweepAt >= options.sweepTtlMs;
     let files: string[];
 
     if (sweepDue) {
         files = findRecentTranscripts(roots, minMtimeMs, driver);
         cache.sweepAt = now.getTime();
+        cache.rootsKey = rootsKey;
         cache.rootChildren = listRootChildren(roots);
     } else {
         files = fastCandidates(driver, roots, cache, minMtimeMs);
@@ -601,7 +619,7 @@ function scanAgent(options: ScanOptions): ScanResult {
     }
 
     logger.debug(
-        { agent: driver.id, roots, sweepDue, files: files.length, parsedFiles },
+        { agent: driver.id, roots, sweepDue, rootsChanged, files: files.length, parsedFiles },
         "ai-spend monitor: agent scanned"
     );
 
