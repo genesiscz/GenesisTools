@@ -56,6 +56,15 @@ export interface SharedUsageOpts {
     force?: boolean;
     /** Serve cache if a successful fetch happened within this many ms. Default API_MIN_INTERVAL_MS. */
     maxStaleMs?: number;
+    /**
+     * Hard floor between two LIVE fetches of this provider, which `force` does not bypass.
+     *
+     * `force` means "do not serve me the shared 45s cache", which is what the every-30s
+     * daemon needs from anthropic. It used to mean "fetch unconditionally", so the daemon
+     * spawned a `codex app-server` and hit grok on every tick despite their 120s/300s
+     * floors. The floor protects the provider, so only it is exempt from `force`.
+     */
+    floorMs?: number;
 }
 
 function filterAccounts<T>(ops: UsageEntryOps<T>, accounts: T[], filter?: string | string[]): T[] {
@@ -142,10 +151,12 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
     const cacheKey = `snapshots:${deps.provider}`;
 
     return async function getShared(opts: SharedUsageOpts): Promise<T[]> {
-        const staleMs = opts.maxStaleMs ?? API_MIN_INTERVAL_MS;
+        // Under `force` the shared window collapses to the provider's own floor, which is
+        // 0 for a provider that declares none — the old unconditional-fetch behaviour.
+        const staleMs = opts.force ? (opts.floorMs ?? 0) : (opts.maxStaleMs ?? API_MIN_INTERVAL_MS);
         const cached = await deps.getCache(cacheKey);
 
-        if (!opts.force && cached && Date.now() - cached.fetchedAt < staleMs) {
+        if (staleMs > 0 && cached && Date.now() - cached.fetchedAt < staleMs) {
             return filterAccounts(ops, cached.accounts, opts.accountFilter);
         }
 
@@ -153,7 +164,7 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
             return await deps.withLock(cacheKey, async () => {
                 const c2 = await deps.getCache(cacheKey);
 
-                if (!opts.force && c2 && Date.now() - c2.fetchedAt < staleMs) {
+                if (staleMs > 0 && c2 && Date.now() - c2.fetchedAt < staleMs) {
                     return filterAccounts(ops, c2.accounts, opts.accountFilter);
                 }
 

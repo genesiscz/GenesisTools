@@ -35,7 +35,7 @@ function errored(provider: string, name: string, error: string): AccountUsageSna
 function makeGet(
     provider: string,
     deps: Omit<SharedUsageDeps<AccountUsageSnapshot>, "provider" | "ops">
-): (opts: { force?: boolean; accountFilter?: string | string[] }) => Promise<AccountUsageSnapshot[]> {
+): (opts: { force?: boolean; accountFilter?: string | string[]; floorMs?: number }) => Promise<AccountUsageSnapshot[]> {
     return __makeSharedUsage<AccountUsageSnapshot>({ provider, ops: SNAPSHOT_OPS, ...deps });
 }
 
@@ -152,6 +152,55 @@ describe("pollAccounts cache, per provider", () => {
         await get({ force: true });
 
         expect(polls).toBe(1);
+    });
+
+    // `force` means "do not serve me the shared 45s window", not "fetch unconditionally".
+    // The every-30s daemon polls with force, and used to spawn a `codex app-server` and hit
+    // grok on every tick despite their 120s and 300s floors (PR #361 review t3).
+    test("a provider floor survives force", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:openai-sub", {
+            fetchedAt: Date.now() - 30_000,
+            accounts: [snapshot("openai-sub", "work", 11)],
+        });
+        let polls = 0;
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => {
+                polls++;
+                return [snapshot("openai-sub", "work", 3)];
+            })
+        );
+
+        const served = await get({ force: true, floorMs: 120_000 });
+
+        expect(polls).toBe(0);
+        expect(served[0].limits[0].percentUsed).toBe(11);
+    });
+
+    // Negative control: past the floor, force still fetches. Without this a floor that
+    // leaked into the normal path would freeze every provider silently.
+    test("force fetches once the floor has elapsed", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:openai-sub", {
+            fetchedAt: Date.now() - 130_000,
+            accounts: [snapshot("openai-sub", "work", 11)],
+        });
+        let polls = 0;
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => {
+                polls++;
+                return [snapshot("openai-sub", "work", 3)];
+            })
+        );
+
+        const fetched = await get({ force: true, floorMs: 120_000 });
+
+        expect(polls).toBe(1);
+        expect(fetched[0].limits[0].percentUsed).toBe(3);
     });
 
     test("accountFilter narrows the returned set", async () => {

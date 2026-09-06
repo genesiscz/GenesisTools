@@ -189,6 +189,9 @@ async function pollProvider(
         force: opts.force,
         accountFilter: opts.accountFilter,
         maxStaleMs: opts.maxStaleMs ?? Math.max(API_MIN_INTERVAL_MS, entry.usage.minIntervalMs ?? 0),
+        // Survives `force`: a codex poll spawns an app-server and a grok poll costs a
+        // vendor request, so the every-30s daemon must not drive either on every tick.
+        floorMs: entry.usage.minIntervalMs ?? 0,
     });
 }
 
