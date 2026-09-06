@@ -242,11 +242,18 @@ function newestStamp(fetchedAt: Date, current: string | undefined): string {
  * writes through a temp file and a rename, which `putCacheFile` does not, so a reader can
  * no longer catch a half-written file.
  *
+ * `mergeAccounts` extends that to WITHIN a slice: a filtered round only polled the accounts
+ * it was asked about, so its slice is merged onto the file's current one instead of
+ * replacing it. That merge used to run in `pollAccounts` against a copy read BEFORE the
+ * lock, so two filtered rounds for the same provider both merged onto the same old slice
+ * and the second write restored the first round's previous reading (review t11).
+ *
  * The lock is NOT reentrant. Never call this from inside a lock on the same file.
  */
 export async function writeSnapshotsCache(
     providers: Record<string, SnapshotsCacheProvider>,
-    fetchedAt: Date = new Date()
+    fetchedAt: Date = new Date(),
+    opts: { mergeAccounts?: boolean } = {}
 ): Promise<SnapshotsCache> {
     const fresh = Object.fromEntries(
         Object.entries(providers).map(([id, slice]) => [id, { ...slice, accounts: slice.accounts.map(stripNative) }])
@@ -260,12 +267,42 @@ export async function writeSnapshotsCache(
         // (an anthropic-only poll serving a 40s-old cache beside a grok slice fetched a
         // moment ago), so the file-level stamp keeps the newest data the file holds.
         fetchedAt: newestStamp(fetchedAt, current?.fetchedAt),
-        providers: { ...current?.providers, ...fresh },
+        providers: opts.mergeAccounts
+            ? mergeProviderAccounts(current?.providers, fresh)
+            : { ...current?.providers, ...fresh },
     }));
 
     logger.debug({ providers: Object.keys(payload.providers) }, "[usage] all-provider snapshots cache written");
 
     return payload;
+}
+
+/** Fresh rows first, then the accounts the file already held that this round skipped. */
+export function mergeAccountSlice(
+    previous: readonly AccountUsageSnapshot[] | undefined,
+    fresh: AccountUsageSnapshot[]
+): AccountUsageSnapshot[] {
+    if (!previous || previous.length === 0) {
+        return fresh;
+    }
+
+    const fetched = new Set(fresh.map((snapshot) => snapshot.accountName));
+
+    return [...fresh, ...previous.filter((snapshot) => !fetched.has(snapshot.accountName))];
+}
+
+/** Each fresh slice merged onto the CURRENT one for the same provider, inside the lock. */
+function mergeProviderAccounts(
+    current: Record<string, SnapshotsCacheProvider> | undefined,
+    fresh: Record<string, SnapshotsCacheProvider>
+): Record<string, SnapshotsCacheProvider> {
+    const merged: Record<string, SnapshotsCacheProvider> = { ...current };
+
+    for (const [id, slice] of Object.entries(fresh)) {
+        merged[id] = { ...slice, accounts: mergeAccountSlice(current?.[id]?.accounts, slice.accounts) };
+    }
+
+    return merged;
 }
 
 export async function readSnapshotsCache(): Promise<SnapshotsCache | null> {

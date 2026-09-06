@@ -318,6 +318,56 @@ describe("writeSnapshotsCache", () => {
         expect(cache?.providers["anthropic-sub"].accounts[0].accountName).toBe("personal");
     });
 
+    function pctSlice(provider: string, name: string, percent: number) {
+        return {
+            [provider]: {
+                alias: "claude",
+                displayName: "Claude",
+                prominent: ["monthly"],
+                accounts: [
+                    {
+                        ...snapshot(provider, name),
+                        limits: [{ ...snapshot(provider, name).limits[0], percentUsed: percent }],
+                    },
+                ],
+            },
+        };
+    }
+
+    /**
+     * Two FILTERED rounds for the SAME provider, each holding a different account. The
+     * merge used to run in `pollAccounts` against a copy read before the lock, so both
+     * merged onto the same old slice and the second write restored the first account's
+     * previous reading (review t11).
+     */
+    test("two concurrent filtered writes for one provider both survive", async () => {
+        useTempHome();
+
+        await Promise.all([
+            writeSnapshotsCache(pctSlice("anthropic-sub", "work", 11), new Date(), { mergeAccounts: true }),
+            writeSnapshotsCache(pctSlice("anthropic-sub", "personal", 22), new Date(), { mergeAccounts: true }),
+        ]);
+
+        const accounts = (await readSnapshotsCache())?.providers["anthropic-sub"].accounts ?? [];
+
+        expect(accounts.map((a) => a.accountName).sort()).toEqual(["personal", "work"]);
+        expect(accounts.find((a) => a.accountName === "work")?.limits[0].percentUsed).toBe(11);
+        expect(accounts.find((a) => a.accountName === "personal")?.limits[0].percentUsed).toBe(22);
+    });
+
+    // Negative control: without mergeAccounts an UNFILTERED round still replaces the whole
+    // slice, so an account removed from the config does not linger in the file forever.
+    test("an unfiltered write still replaces the provider's whole account list", async () => {
+        useTempHome();
+
+        await writeSnapshotsCache(pctSlice("anthropic-sub", "work", 11), new Date(), { mergeAccounts: true });
+        await writeSnapshotsCache(pctSlice("anthropic-sub", "personal", 22));
+
+        const accounts = (await readSnapshotsCache())?.providers["anthropic-sub"].accounts ?? [];
+
+        expect(accounts.map((a) => a.accountName)).toEqual(["personal"]);
+    });
+
     test("three concurrent writers all survive, and a later one still replaces its own slice", async () => {
         useTempHome();
 

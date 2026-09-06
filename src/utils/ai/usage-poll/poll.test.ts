@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
-import { latestFetchedAt, mergeAccountSlice, usagePlugins } from "./poll";
+import { mergeAccountSlice } from "./legacy-cache";
+import { latestFetchedAt, usagePlugins } from "./poll";
 import type { AccountUsageSnapshot } from "./types";
 
 /**
