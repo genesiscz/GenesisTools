@@ -46,16 +46,24 @@ export function seriesRetentionCutoffMs(now: Date): number {
     return now.getTime() - AI_SPEND_SERIES_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 }
 
-const CACHE_VERSION = 1;
+/** 2: entries gained `id`, without which cross-file dedup cannot work. */
+const CACHE_VERSION = 2;
 
 /** Same bound as the monitor: duplicates of one event sit adjacent in a transcript. */
 const RECENT_ID_WINDOW = 50;
 
 export interface CompactEvent {
+    /**
+     * The event's own id, as `reports/load.ts` knows it. Kept in the cache
+     * because dedup happens across FILES, so it has to survive a cache hit.
+     */
+    id: string;
     /** ISO-8601 instant of the event. */
     t: string;
     costUsd: number;
     tokens: number;
+    /** Claude sidechain copy; a non-sidechain copy of the same id wins. */
+    sidechain?: boolean;
     /** Stamped fresh on every read from the current root map, never from disk. */
     accountId?: string;
     model?: string;
@@ -134,16 +142,21 @@ function freshEntry(): FileEntry {
 }
 
 function compact(
-    event: { model: string; timestamp: string; recordedCostUsd?: number },
+    event: { id: string; model: string; timestamp: string; recordedCostUsd?: number; isSidechain?: boolean },
     options: { costUsd: number; tokens: number; source: AgentId; priced: boolean }
 ): CompactEvent {
     const compacted: CompactEvent = {
+        id: event.id,
         t: event.timestamp,
         costUsd: options.costUsd,
         tokens: options.tokens,
         model: event.model,
         source: options.source,
     };
+
+    if (event.isSidechain) {
+        compacted.sidechain = true;
+    }
 
     if (!options.priced && event.recordedCostUsd === undefined) {
         compacted.unpriced = true;
@@ -191,8 +204,13 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
     const wanted = new Set(options.sources);
     const cache = loadCache(options.storage);
     const cutoff = seriesRetentionCutoffMs(now);
-    const collected: CompactEvent[] = [];
+    // Keyed by `source:id`, the identity `reports/load.ts:dedupEvents` uses.
+    // The per-file `recentIds` window catches only adjacent repeats inside one
+    // transcript; resuming or forking a session copies earlier turns into a
+    // SECOND file, and nothing below the file loop could see that.
+    const byId = new Map<string, CompactEvent>();
     let outsideRetention = 0;
+    let duplicates = 0;
 
     for (const driver of drivers) {
         if (!wanted.has(driver.id)) {
@@ -248,10 +266,27 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
                 }
 
                 event.accountId = accountId;
-                collected.push(event);
+
+                const key = `${event.source}:${event.id}`;
+                const existing = byId.get(key);
+
+                if (!existing) {
+                    byId.set(key, event);
+                    continue;
+                }
+
+                duplicates += 1;
+
+                // Same preference as the report loader: a real turn beats the
+                // sidechain copy of itself.
+                if (existing.sidechain && !event.sidechain) {
+                    byId.set(key, event);
+                }
             }
         }
     }
+
+    const collected = [...byId.values()];
 
     pruneAndSave(cache, options.storage, now);
 
@@ -259,6 +294,7 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
         {
             events: collected.length,
             outsideRetention,
+            duplicates,
             files: Object.keys(cache.files).length,
             sources: [...wanted],
         },

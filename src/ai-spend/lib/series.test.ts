@@ -11,6 +11,7 @@ import { claudeDriver } from "./drivers/claude";
 import { codexDriver } from "./drivers/codex";
 import { isolateAgentHomeEnv } from "./drivers/test-env";
 import type { DriverRoot, MonitorDriver } from "./drivers/types";
+import { loadEvents } from "./reports/load";
 import { buildSpendSeries, type SpendSeriesOptions, UnsupportedGrainError } from "./series";
 
 setupStorageSandbox();
@@ -225,6 +226,48 @@ describe("buildSpendSeries", () => {
         expect(cache.files[oldFile].events).toEqual([]);
         // Negative control: the in-window file kept its event.
         expect(cache.files[join(homes.work, "sessions", "rollout-work.jsonl")].events).toHaveLength(1);
+    });
+
+    test("one claude message in two transcripts is counted once, like the reports loader", async () => {
+        // Resuming or forking a session copies earlier turns into a new file, so
+        // the same `message.id` really does live in two transcripts: 1,362 of
+        // 101,399 ids in a 1,500-file sample of this machine's tree. reports/
+        // dedups globally on `source:id`; the series must agree.
+        const projects = join(home, ".claude", "projects", "p1");
+        mkdirSync(projects, { recursive: true });
+        const line = claudeLine("msg-shared", yesterdayAt(12), { input_tokens: 1_000_000 });
+        writeFileSync(join(projects, "parent.jsonl"), line);
+        writeFileSync(join(projects, "resumed.jsonl"), line);
+
+        const result = await buildSpendSeries(
+            { ...window(), grain: "day", home, sources: ["claude"] },
+            { storage, drivers: [claudeDriver] }
+        );
+
+        // 1M input on claude-3-5-haiku is $0.80. Counting the copy would be $1.60.
+        expect(result.points[0].tokens).toBe(1_000_000);
+        expect(result.points[0].costUsd).toBeCloseTo(0.8, 6);
+    });
+
+    test("series and the reports loader agree on a duplicated message, cold and warm", async () => {
+        const projects = join(home, ".claude", "projects", "p1");
+        mkdirSync(projects, { recursive: true });
+        const line = claudeLine("msg-shared", yesterdayAt(12), { input_tokens: 1_000_000 });
+        writeFileSync(join(projects, "parent.jsonl"), line);
+        writeFileSync(join(projects, "resumed.jsonl"), line);
+
+        const reportTokens = loadEvents({ home, sources: ["claude"] }).reduce(
+            (sum, event) => sum + event.inputTokens + event.outputTokens,
+            0
+        );
+        const query = { ...window(), grain: "day" as const, home, sources: ["claude" as const] };
+        const cold = await buildSpendSeries(query, { storage, drivers: [claudeDriver] });
+        const warm = await buildSpendSeries(query, { storage, drivers: [claudeDriver] });
+
+        // The report loader is the reference: `dedupEvents` keys on source:id.
+        expect(reportTokens).toBe(1_000_000);
+        expect(cold.points[0].tokens).toBe(reportTokens);
+        expect(warm.points[0].tokens).toBe(reportTokens);
     });
 
     test("claude transcripts report as one row, never split per anthropic account", async () => {
