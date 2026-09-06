@@ -24,6 +24,8 @@ import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@app/dev-dashboard/co
 import {
     filterSnapshots,
     flattenSnapshotsCache,
+    limitSeriesFrom,
+    providerAccountKey,
     resolveProviderFilter,
     type SnapshotFilter,
     spendAccountIds,
@@ -432,11 +434,16 @@ export function createAiAggregator(): AiAggregator {
                 return { series: [] };
             }
 
-            const byName = new Map(accounts.map((account) => [account.name, account]));
             const current = await readCurrent();
             const labels = new Map(
                 current.snapshots.flatMap((snapshot) =>
-                    snapshot.limits.map((limit) => [`${snapshot.accountName}|${limit.key}`, limit.label] as const)
+                    snapshot.limits.map(
+                        (limit) =>
+                            [
+                                `${providerAccountKey(snapshot.provider, snapshot.accountName)}|${limit.key}`,
+                                limit.label,
+                            ] as const
+                    )
                 )
             );
             const db = new UsageLimitsDb();
@@ -449,18 +456,10 @@ export function createAiAggregator(): AiAggregator {
                 ...(step !== undefined ? { step } : {}),
             });
 
-            const series: LimitSeries[] = entries.map((entry) => {
-                const account = byName.get(entry.account);
-
-                return {
-                    accountId: account?.id ?? entry.account,
-                    accountName: entry.account,
-                    provider: account?.provider ?? "",
-                    key: entry.key,
-                    label: labels.get(`${entry.account}|${entry.key}`) ?? entry.key,
-                    points: entry.points,
-                };
-            });
+            // The DB narrows by account NAME only, so the provider filter is applied
+            // again over the rows it returned; each row keeps the provider it was
+            // written under rather than borrowing one from a same-named account.
+            const series: LimitSeries[] = limitSeriesFrom(entries, accounts, labels, query);
 
             logger.debug({ series: series.length, from: query.from, to: query.to }, "[ai-dashboard] limit series");
             return { series };

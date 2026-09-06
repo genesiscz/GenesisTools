@@ -1,4 +1,9 @@
-import type { AccountUsageSnapshot, AiUsageResult } from "@app/dev-dashboard/contract/ai-accounts";
+import type {
+    AccountUsageSnapshot,
+    AiUsageResult,
+    LimitSeries,
+    LimitSeriesPoint,
+} from "@app/dev-dashboard/contract/ai-accounts";
 import { CLAUDE_ALL_ACCOUNT_ID } from "@app/dev-dashboard/contract/ai-accounts";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
@@ -90,4 +95,65 @@ export function spendAccountIds(
 
     const allowed = new Set(explicit);
     return ids.filter((id) => allowed.has(id));
+}
+/**
+ * Identity of a limits-DB row. `AiConfigStore` lets two providers hold an account
+ * of the same NAME (its own `account()` tells callers to address ids instead), and
+ * the DB is keyed by provider AND name, so a name-only lookup hands one provider's
+ * history the other provider's account id.
+ */
+export function providerAccountKey(provider: string, accountName: string): string {
+    return `${provider}::${accountName}`;
+}
+
+/** One provider's limit history for one window, as the limits DB returns it. */
+export interface LimitHistoryEntry {
+    provider: string;
+    account: string;
+    key: string;
+    points: LimitSeriesPoint[];
+}
+
+/** The account fields the series adapter reads. */
+export interface LimitHistoryAccount {
+    id: string;
+    name: string;
+    provider: string;
+}
+
+/**
+ * Limits-DB entries to wire series.
+ *
+ * The DB query can only narrow by account NAME, so a provider filter has to be
+ * applied again here: asking for `claude` while codex holds an account of the same
+ * name used to return the codex rows too, under the claude account's id.
+ */
+export function limitSeriesFrom(
+    entries: readonly LimitHistoryEntry[],
+    accounts: readonly LimitHistoryAccount[],
+    labels: ReadonlyMap<string, string>,
+    filter: SnapshotFilter
+): LimitSeries[] {
+    const byProviderName = new Map(
+        accounts.map((account) => [providerAccountKey(account.provider, account.name), account] as const)
+    );
+    const providers = filter.providers?.length ? new Set(filter.providers.map(resolveProviderFilter)) : undefined;
+    const wanted = filter.accounts?.length ? new Set(filter.accounts) : undefined;
+
+    return entries
+        .filter((entry) => !providers || providers.has(entry.provider))
+        .map((entry) => {
+            const key = providerAccountKey(entry.provider, entry.account);
+            const account = byProviderName.get(key);
+
+            return {
+                accountId: account?.id ?? entry.account,
+                accountName: entry.account,
+                provider: entry.provider,
+                key: entry.key,
+                label: labels.get(`${key}|${entry.key}`) ?? entry.key,
+                points: entry.points,
+            };
+        })
+        .filter((series) => !wanted || wanted.has(series.accountId) || wanted.has(series.accountName));
 }
