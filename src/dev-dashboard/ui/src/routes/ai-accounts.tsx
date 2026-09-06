@@ -95,13 +95,17 @@ export function AiAccountsRoute() {
         queryFn: () => fetchJson<AiAccountsResult>(AI_ACCOUNTS_API.accounts),
         refetchInterval: 60000,
     });
+    // No interval: the `ai-usage` frame invalidates `["ai", "usage", …]` within 5s
+    // of the cache file changing, whoever wrote it, so a timer on top of it only
+    // re-read a file that cannot have changed. `accountsQuery`, the spend queries
+    // and `daemonQuery` keep theirs: they read config, transcript and task state
+    // that no poll of the usage cache reports.
     const usageQuery = useQuery({
         queryKey: ["ai", "usage", providersParam, accountsParam],
         queryFn: () =>
             fetchJson<AiUsageResult>(
                 `${AI_ACCOUNTS_API.usage}${query({ providers: providersParam, accounts: accountsParam })}`
             ),
-        refetchInterval: 60000,
     });
 
     // One window end shared by every query and chart so their axes align. It is
@@ -157,6 +161,8 @@ export function AiAccountsRoute() {
         refetchInterval: spendRefetchMs,
         retry: spendRetry,
     });
+    // Same key prefix, and the limits DB is written by the poll that writes the
+    // cache file, so this rides the same invalidation.
     const limitsSeriesQuery = useQuery({
         queryKey: ["ai", "usage", "series", fromIso, toIso, providersParam, accountsParam],
         queryFn: () =>
@@ -168,7 +174,6 @@ export function AiAccountsRoute() {
                     accounts: accountsParam,
                 })}`
             ),
-        refetchInterval: 60000,
     });
     const daemonQuery = useQuery({
         queryKey: ["ai", "daemon"],
@@ -223,6 +228,22 @@ export function AiAccountsRoute() {
         [usageQuery.data]
     );
 
+    /**
+     * A failed request leaves `isLoading` false and the data empty, which the
+     * empty states read as "nothing matches your filters". Every block that has an
+     * empty state has to answer the error FIRST, or a dead endpoint looks like a
+     * correct answer about the user's own data.
+     */
+    // Either request failing leaves the account grid with nothing to draw.
+    const accountsError = usageQuery.error ?? accountsQuery.error;
+
+    const blockError = (message: string, detail: string) => (
+        <div className="dd-panel flex flex-col items-center gap-2 p-8 text-center">
+            <p className="text-sm text-[var(--dd-danger)]">{message}</p>
+            <p className="break-words font-mono text-xs text-[var(--dd-text-muted)]">{detail}</p>
+        </div>
+    );
+
     const renderBlock = (id: string) => {
         switch (id) {
             case "filters":
@@ -251,6 +272,10 @@ export function AiAccountsRoute() {
                             ))}
                         </div>
                     );
+                }
+
+                if (accountsError) {
+                    return blockError("Could not load accounts.", accountsError.message);
                 }
 
                 if (snapshots.length === 0) {
@@ -302,6 +327,10 @@ export function AiAccountsRoute() {
                     />
                 );
             case "limits":
+                if (limitsSeriesQuery.error) {
+                    return blockError("Could not load limit history.", limitsSeriesQuery.error.message);
+                }
+
                 return (
                     <LimitsChart
                         title="Limits over time"
