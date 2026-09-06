@@ -21,6 +21,7 @@ export function registerLogoutCommand(program: Command): void {
                 provider: "anthropic-sub",
                 name,
                 targets: logoutTargetsFromFlags(opts),
+                all: opts.all,
                 yes: opts.yes,
                 tool: "tools claude logout",
                 subcommand: ["logout"],

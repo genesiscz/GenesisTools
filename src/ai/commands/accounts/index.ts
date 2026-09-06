@@ -95,6 +95,7 @@ export function registerAccountsCommands(program: Command): void {
                 provider: opts.provider,
                 name,
                 targets: logoutTargetsFromFlags(opts),
+                all: opts.all,
                 yes: opts.yes,
                 tool: `${TOOL} logout`,
                 subcommand: ["accounts", "logout"],

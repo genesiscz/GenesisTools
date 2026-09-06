@@ -14,12 +14,17 @@ export interface LogoutFlags {
     all?: boolean;
 }
 
-/** Empty means "ask" (TTY) or "name a scope" (non-TTY); it never means "everything". */
+/**
+ * The scopes the flags NAMED. Empty means "ask" (TTY) or "name a scope"
+ * (non-TTY); it never means "everything".
+ *
+ * `--all` is deliberately not expanded here. It means "every credential this
+ * account holds", which only `runLogout` can know: expanding it to the four
+ * declared kinds made `logout work --provider codex --all --yes` fail with "no
+ * oauth credential" on an account that had never had one, and remove nothing
+ * (PR #360 review t5).
+ */
 export function logoutTargetsFromFlags(flags: LogoutFlags): LogoutTarget[] {
-    if (flags.all) {
-        return ["oauth", "longLived", "secondary", "authFile"];
-    }
-
     const targets: LogoutTarget[] = [];
 
     if (flags.oauth || flags.both) {

@@ -17,6 +17,8 @@ export interface RunLogoutOptions {
     name?: string;
     /** Which credentials to remove. Prompted for when empty on a TTY. */
     targets?: LogoutTarget[];
+    /** `--all`: everything this account HOLDS, resolved against the account, not the provider. */
+    all?: boolean;
     yes?: boolean;
     tool: string;
     subcommand?: string[];
@@ -111,9 +113,11 @@ export async function runLogout(opts: RunLogoutOptions): Promise<void> {
         return;
     }
 
-    let targets = (opts.targets ?? []).filter((target) => declared.includes(target));
+    // `--all` intersects with what is there; a named flag still has to name
+    // something the account holds, so a typo is still an error (review t5).
+    let targets = opts.all ? [...available] : (opts.targets ?? []).filter((target) => declared.includes(target));
 
-    if ((opts.targets ?? []).length > 0 && targets.length === 0) {
+    if (!opts.all && (opts.targets ?? []).length > 0 && targets.length === 0) {
         out.error(pc.red(`${providerAliasOf(plugin.id)} has none of the credentials you asked to remove.`));
         process.exitCode = 1;
         return;
