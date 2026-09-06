@@ -15,6 +15,17 @@ export const API_MIN_INTERVAL_MS = 45_000;
 export interface Cached<T> {
     fetchedAt: number;
     accounts: T[];
+    /**
+     * Epoch ms of the fetch each account's row came from, by account name.
+     *
+     * The file-level `fetchedAt` belongs to the round that WROTE it, and a filtered round
+     * only fetched the accounts it was asked about while carrying the rest over unchanged.
+     * Trusting one stamp for the whole provider made a filtered poll declare every other
+     * account fresh: on a cold cache, polling `work` and then `personal` inside the window
+     * returned nothing at all for `personal` (PR #361 review t6). Absent for an entry
+     * written before this field existed, which falls back to `fetchedAt`.
+     */
+    accountFetchedAt?: Record<string, number>;
 }
 
 /** How the generic accessor reads and rewrites one provider's account entries. */
@@ -131,6 +142,70 @@ function cacheableSet<T>(
     return [...fresh, ...carried];
 }
 
+/** When each row in `cacheable` was actually fetched: now for this round's, else its old stamp. */
+function stampAccounts<T>(
+    ops: UsageEntryOps<T>,
+    fresh: T[],
+    cacheable: T[],
+    prev: Cached<T> | null,
+    fetchedAt: number
+): Record<string, number> {
+    const fetchedNames = new Set(fresh.map((account) => ops.nameOf(account)));
+    const stamps: Record<string, number> = {};
+
+    for (const account of cacheable) {
+        const name = ops.nameOf(account);
+        stamps[name] = fetchedNames.has(name) ? fetchedAt : (prev?.accountFetchedAt?.[name] ?? prev?.fetchedAt ?? 0);
+    }
+
+    return stamps;
+}
+
+/**
+ * The rows a cached entry may answer this request with, or null when it must fetch.
+ *
+ * A hit needs BOTH coverage and freshness: every account the caller named has to be in the
+ * entry, and no row it will return may be older than `staleMs`. The old check compared one
+ * provider-wide stamp, so a filtered round that touched one account marked the whole
+ * provider fresh (PR #361 review t6).
+ */
+function servableFrom<T>(
+    ops: UsageEntryOps<T>,
+    cached: Cached<T> | null,
+    filter: string | string[] | undefined,
+    staleMs: number,
+    now: number
+): T[] | null {
+    if (!cached) {
+        return null;
+    }
+
+    const rows = filterAccounts(ops, cached.accounts, filter);
+
+    if (filter !== undefined) {
+        const wanted = new Set(Array.isArray(filter) ? filter : [filter]);
+
+        if (rows.length < wanted.size) {
+            return null;
+        }
+    }
+
+    for (const row of rows) {
+        const stamp = cached.accountFetchedAt?.[ops.nameOf(row)] ?? cached.fetchedAt;
+
+        if (now - stamp >= staleMs) {
+            return null;
+        }
+    }
+
+    // An empty entry has nothing to go stale, so the file stamp is all there is to judge.
+    if (rows.length === 0 && now - cached.fetchedAt >= staleMs) {
+        return null;
+    }
+
+    return rows;
+}
+
 /** Mark every data-bearing account in a cache entry stale with the given reason. */
 function markAllStale<T>(ops: UsageEntryOps<T>, entry: Cached<T>, reason: string): T[] {
     return entry.accounts.map((account) => {
@@ -155,17 +230,19 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
         // 0 for a provider that declares none — the old unconditional-fetch behaviour.
         const staleMs = opts.force ? (opts.floorMs ?? 0) : (opts.maxStaleMs ?? API_MIN_INTERVAL_MS);
         const cached = await deps.getCache(cacheKey);
+        const servable = staleMs > 0 ? servableFrom(ops, cached, opts.accountFilter, staleMs, Date.now()) : null;
 
-        if (staleMs > 0 && cached && Date.now() - cached.fetchedAt < staleMs) {
-            return filterAccounts(ops, cached.accounts, opts.accountFilter);
+        if (servable) {
+            return servable;
         }
 
         try {
             return await deps.withLock(cacheKey, async () => {
                 const c2 = await deps.getCache(cacheKey);
+                const servable2 = staleMs > 0 ? servableFrom(ops, c2, opts.accountFilter, staleMs, Date.now()) : null;
 
-                if (staleMs > 0 && c2 && Date.now() - c2.fetchedAt < staleMs) {
-                    return filterAccounts(ops, c2.accounts, opts.accountFilter);
+                if (servable2) {
+                    return servable2;
                 }
 
                 const previous = c2 ?? cached;
@@ -176,7 +253,11 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
                 );
                 const fetchedAt = Date.now();
                 const cacheable = cacheableSet(ops, fresh, previous, opts.accountFilter);
-                await deps.putCache(cacheKey, { fetchedAt, accounts: cacheable });
+                await deps.putCache(cacheKey, {
+                    fetchedAt,
+                    accounts: cacheable,
+                    accountFetchedAt: stampAccounts(ops, fresh, cacheable, previous, fetchedAt),
+                });
 
                 if (deps.recordHistory) {
                     try {

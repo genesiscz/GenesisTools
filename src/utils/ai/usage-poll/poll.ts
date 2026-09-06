@@ -187,7 +187,9 @@ async function pollProvider(
 
     return getShared({
         force: opts.force,
-        accountFilter: opts.accountFilter,
+        // The RESOLVED names, not the caller's raw list: a filter may name accounts of
+        // another provider, and the cache's coverage check counts what it was asked for.
+        ...(opts.accountFilter === undefined ? {} : { accountFilter: accounts.map((a) => a.name) }),
         maxStaleMs: opts.maxStaleMs ?? Math.max(API_MIN_INTERVAL_MS, entry.usage.minIntervalMs ?? 0),
         // Survives `force`: a codex poll spawns an app-server and a grok poll costs a
         // vendor request, so the every-30s daemon must not drive either on every tick.

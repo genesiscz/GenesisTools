@@ -204,6 +204,76 @@ describe("pollAccounts cache, per provider", () => {
         expect(fetched[0].limits[0].percentUsed).toBe(3);
     });
 
+    // A filtered round used to stamp the WHOLE provider fresh. On a cold cache, polling
+    // `work` and then `personal` inside the window answered `personal` with nothing at all
+    // (PR #361 review t6).
+    test("a filtered poll does not mark the accounts it skipped fresh", async () => {
+        const store: CacheStore = new Map();
+        const fetched: string[][] = [];
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => {
+                const round = fetched.length;
+                fetched.push(round === 0 ? ["work"] : ["personal"]);
+                return round === 0 ? [snapshot("openai-sub", "work", 11)] : [snapshot("openai-sub", "personal", 22)];
+            })
+        );
+
+        await get({ accountFilter: "work" });
+        const second = await get({ accountFilter: "personal" });
+
+        expect(fetched).toEqual([["work"], ["personal"]]);
+        expect(second.map((a) => a.accountName)).toEqual(["personal"]);
+    });
+
+    // The same trap with a warm cache: repeated `work`-only polls must not keep an old
+    // `personal` reading alive forever behind one provider-wide stamp.
+    test("a carried-over account keeps its own age", async () => {
+        const store: CacheStore = new Map();
+        store.set("snapshots:openai-sub", {
+            fetchedAt: Date.now() - 300_000,
+            accounts: [snapshot("openai-sub", "work", 11), snapshot("openai-sub", "personal", 22)],
+        });
+        const rounds: Array<string | string[] | undefined> = [];
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => {
+                rounds.push("work");
+                return [snapshot("openai-sub", "work", 44)];
+            })
+        );
+
+        await get({ accountFilter: "work" });
+        const personal = await get({ accountFilter: "personal" });
+
+        // The `work` round refreshed only `work`, so reading `personal` fetches again.
+        expect(rounds).toHaveLength(2);
+        expect(personal.map((a) => a.accountName)).toEqual([]);
+    });
+
+    // Negative control: the account a filtered round DID fetch is served from cache, so
+    // the coverage check cannot have turned every read into a fetch.
+    test("re-reading the account a filtered round fetched is served from cache", async () => {
+        const store: CacheStore = new Map();
+        let polls = 0;
+
+        const get = makeGet(
+            "openai-sub",
+            storeDeps(store, async () => {
+                polls++;
+                return [snapshot("openai-sub", "work", 11)];
+            })
+        );
+
+        await get({ accountFilter: "work" });
+        const again = await get({ accountFilter: "work" });
+
+        expect(polls).toBe(1);
+        expect(again[0].limits[0].percentUsed).toBe(11);
+    });
+
     test("accountFilter narrows the returned set", async () => {
         const store: CacheStore = new Map();
         store.set("snapshots:openai-sub", {
