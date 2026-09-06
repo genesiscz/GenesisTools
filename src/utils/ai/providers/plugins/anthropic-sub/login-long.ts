@@ -64,17 +64,22 @@ export async function mintLongLivedToken(
 
     // The PKCE session survives a failed exchange, so a fumbled paste costs one
     // retry rather than the whole browser round-trip.
-    let tokens = await promptAndExchangeCode({ expiresIn: ONE_YEAR_SECONDS });
+    let exchange = await promptAndExchangeCode({ expiresIn: ONE_YEAR_SECONDS });
 
-    while (!tokens) {
+    // Both a fumbled paste and a rejected code are worth one more try, so the
+    // retry deliberately does not discriminate; only the caller-facing outcome
+    // does (PR #360 review r2 t3).
+    while (exchange.status !== "ok") {
         const again = await p.confirm({ message: "Try pasting the code again?", initialValue: true });
 
         if (p.isCancel(again) || !again) {
             return null;
         }
 
-        tokens = await promptAndExchangeCode({ expiresIn: ONE_YEAR_SECONDS });
+        exchange = await promptAndExchangeCode({ expiresIn: ONE_YEAR_SECONDS });
     }
+
+    const tokens = exchange.tokens;
 
     if (!tokens.accessToken.startsWith(TOKEN_PREFIX)) {
         p.log.warn(`Token does not start with "${TOKEN_PREFIX}" — saving anyway, but check it works.`);

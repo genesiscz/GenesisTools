@@ -133,7 +133,36 @@ export function normalizeAuthorizationCode(input: string): { code: string } | { 
     return { code: state ? `${code}#${state}` : code };
 }
 
-export async function promptAndExchangeCode(opts: { expiresIn?: number } = {}): Promise<OAuthTokens | null> {
+/**
+ * Why the code prompt produced no tokens.
+ *
+ * It used to answer `null` for all three outcomes, and every caller turned that
+ * into `Error("Cancelled")` — the one message both entrypoints map to a clean
+ * exit 0. An expired code or a network failure therefore reported the login as
+ * cancelled AND exited 0 (PR #360 review r2 t3). `login-long` retries on either,
+ * so the distinction is carried in the result rather than thrown from here.
+ */
+export type CodeExchange =
+    | { status: "ok"; tokens: OAuthTokens }
+    | { status: "cancelled" }
+    | { status: "failed"; reason: string };
+
+/**
+ * The error a non-ok exchange deserves.
+ *
+ * `Cancelled` is load-bearing: both `tools claude` and `tools ai` map exactly
+ * that message to exit 0, so it may only be used when the user actually aborted.
+ * A failure gets its own message, and therefore exit 1.
+ */
+export function errorForExchange(exchange: Exclude<CodeExchange, { status: "ok" }>): Error {
+    if (exchange.status === "cancelled") {
+        return new Error("Cancelled");
+    }
+
+    return new Error(`Token exchange failed: ${exchange.reason}`);
+}
+
+export async function promptAndExchangeCode(opts: { expiresIn?: number } = {}): Promise<CodeExchange> {
     const code = await p.text({
         message: "Paste the authorization code:",
         placeholder: "code#state",
@@ -150,14 +179,16 @@ export async function promptAndExchangeCode(opts: { expiresIn?: number } = {}): 
     });
 
     if (p.isCancel(code)) {
-        return null;
+        return { status: "cancelled" };
     }
 
     const normalized = normalizeAuthorizationCode(code as string);
 
+    // A value the prompt's own validator already rejects cannot reach here, so
+    // this is a bad paste rather than an abort either way.
     if ("error" in normalized) {
         p.log.error(normalized.error);
-        return null;
+        return { status: "failed", reason: normalized.error };
     }
 
     const spinner = p.spinner();
@@ -165,10 +196,12 @@ export async function promptAndExchangeCode(opts: { expiresIn?: number } = {}): 
     try {
         const tokens = await claudeOAuth.exchangeCode(normalized.code, opts);
         spinner.stop("Tokens received.");
-        return tokens;
+        return { status: "ok", tokens };
     } catch (err) {
-        spinner.stop(`Token exchange failed: ${err}`);
-        return null;
+        const reason = err instanceof Error ? err.message : String(err);
+        spinner.stop(`Token exchange failed: ${reason}`);
+        logger.warn({ err }, "[oauth] authorization code exchange failed");
+        return { status: "failed", reason };
     }
 }
 
@@ -223,15 +256,15 @@ export async function anthropicLogin(ctx: AccountFlowContext): Promise<LoginOutc
 
     await presentAuthUrl(authUrl, ctx.openUrl);
 
-    const tokens = await promptAndExchangeCode();
+    const exchange = await promptAndExchangeCode();
 
-    if (!tokens) {
-        throw new Error("Cancelled");
+    if (exchange.status !== "ok") {
+        throw errorForExchange(exchange);
     }
 
-    const profile = await fetchOAuthProfile(tokens.accessToken);
+    const profile = await fetchOAuthProfile(exchange.tokens.accessToken);
 
-    return anthropicLoginOutcome({ tokens, profile });
+    return anthropicLoginOutcome({ tokens: exchange.tokens, profile });
 }
 
 /**

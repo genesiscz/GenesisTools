@@ -3,6 +3,7 @@ import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import type { AccountFlowContext, LoginOutcome } from "../../account-features";
 import {
+    errorForExchange,
     fetchAndDisplayProfile,
     generateAuthUrl,
     identityFromLogin,
@@ -33,13 +34,16 @@ export async function anthropicLoginSecondary(ctx: AccountFlowContext): Promise<
 
     await presentAuthUrl(authUrl, ctx.openUrl);
 
-    const tokens = await promptAndExchangeCode();
+    const exchange = await promptAndExchangeCode();
 
-    if (!tokens) {
-        out.println(pc.dim("Cancelled — no tokens retrieved."));
-        throw new Error("Cancelled");
+    if (exchange.status !== "ok") {
+        // A failed exchange must not borrow the `Cancelled` message: the
+        // entrypoints map exactly that to exit 0 (PR #360 review r2 t3).
+        out.println(pc.dim(exchange.status === "cancelled" ? "Cancelled — no tokens retrieved." : "No tokens saved."));
+        throw errorForExchange(exchange);
     }
 
+    const tokens = exchange.tokens;
     const profile = await fetchAndDisplayProfile(tokens);
 
     const subscriptionType = profile?.account.has_claude_max ? "max" : profile?.account.has_claude_pro ? "pro" : null;

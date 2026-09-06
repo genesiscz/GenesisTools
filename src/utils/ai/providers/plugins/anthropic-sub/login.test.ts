@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { OAuthProfileResponse, OAuthTokens } from "@genesiscz/utils/claude/auth";
-import { anthropicLoginOutcome, normalizeAuthorizationCode } from "./login";
+import { anthropicLoginOutcome, errorForExchange, normalizeAuthorizationCode } from "./login";
 
 describe("normalizeAuthorizationCode", () => {
     test("a bare code passes through", () => {
@@ -138,5 +138,46 @@ describe("anthropicLoginOutcome", () => {
         expect(outcome.accountFields).not.toHaveProperty("accountUuid");
         expect(outcome.accountFields).not.toHaveProperty("organizationUuid");
         expect(outcome.suggestedName).toBe("personal");
+    });
+});
+
+/**
+ * A failed token exchange is not a cancellation.
+ *
+ * `src/claude/index.ts` and `src/ai/index.ts` both branch on
+ * `message === "Cancelled"` and exit 0. `promptAndExchangeCode` answered `null`
+ * for an abort, a bad paste AND an exchange that threw, and every caller mapped
+ * that to `Error("Cancelled")` — so an expired code reported the login as
+ * cancelled and exited 0 (PR #360 review r2 t3).
+ *
+ * The assertions are written against the entrypoints' own comparison rather than
+ * a paraphrase of it, so a future reword of either side fails here.
+ */
+
+/** The exact condition both entrypoints use to turn an error into exit 0. */
+function exitsZero(error: Error): boolean {
+    return error.message.includes("ExitPromptError") || error.message === "Cancelled";
+}
+
+describe("errorForExchange", () => {
+    test("a real abort keeps the message the entrypoints exit 0 on", () => {
+        const error = errorForExchange({ status: "cancelled" });
+
+        expect(error.message).toBe("Cancelled");
+        expect(exitsZero(error)).toBe(true);
+    });
+
+    test("a failed exchange does NOT exit 0 and names the reason", () => {
+        const error = errorForExchange({ status: "failed", reason: "authorization code expired" });
+
+        expect(exitsZero(error)).toBe(false);
+        expect(error.message).toContain("authorization code expired");
+    });
+
+    test("a bad paste is a failure too, not an abort", () => {
+        const error = errorForExchange({ status: "failed", reason: "No `code` parameter in that URL." });
+
+        expect(error.message).not.toBe("Cancelled");
+        expect(exitsZero(error)).toBe(false);
     });
 });
