@@ -50,7 +50,9 @@ mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     },
 }));
 
-const { pollAnthropicAccount, toLimitWindows } = await import("./usage");
+const { classifyAnthropicFailure, pollAnthropicAccount, toLimitWindows } = await import("./usage");
+const { failureSnapshot } = await import("@genesiscz/utils/ai/usage-poll/poll");
+const { SNAPSHOT_OPS } = await import("@genesiscz/utils/ai/usage-poll/shared-cache");
 
 const originalFetch = globalThis.fetch;
 
@@ -68,6 +70,21 @@ function useAccount(name: string, tokens: Record<string, unknown> = {}): void {
     legacyAccounts = [
         { name, provider: "anthropic-sub", tokens: { accessToken: "at", refreshToken: "rt", ...tokens } },
     ];
+}
+
+/** One canned status for every call, with the body the caller wants. */
+function stubStatus(status: number, body: string): { calls: () => number } {
+    let calls = 0;
+
+    globalThis.fetch = Object.assign(
+        async () => {
+            calls += 1;
+            return new Response(body, { status });
+        },
+        { preconnect: originalFetch.preconnect }
+    );
+
+    return { calls: () => calls };
 }
 
 /** Answers 429 for the first `failures` calls, then the usage payload. */
@@ -138,6 +155,57 @@ describe("anthropic-sub usage.poll", () => {
         expect(fetches.calls()).toBe(1);
         expect(resolveCalls).toEqual([{ name: "shop", noRefresh: true }]);
         expect(resolveCalls.some((call) => call.forceRefresh)).toBe(false);
+    });
+
+    /**
+     * The whole chain the plugin/core boundary used to break (review t7): round one draws
+     * the org-level 403, the core's error row has to carry it, and round two's routine 429
+     * must then NOT reach the force-refresh that spends the single-use grant.
+     */
+    it("a 403 org block survives into the next round and stops the refresh", async () => {
+        useAccount("side");
+        stubStatus(403, "Usage is not allowed for this org");
+
+        const err = await pollAnthropicAccount(entry("side")).then(
+            () => undefined,
+            (e: unknown) => e
+        );
+
+        // The plugin reads its own error, and the core folds that onto the cached row.
+        expect(classifyAnthropicFailure(err)).toEqual({ orgBlocked: true });
+        const row = failureSnapshot({
+            provider: "anthropic-sub",
+            account: entry("side"),
+            reason: String(err),
+            now: Date.now(),
+            failure: classifyAnthropicFailure(err),
+        });
+        expect(row.auth?.orgBlocked).toBe(true);
+
+        const blocked = SNAPSHOT_OPS.orgBlocked([row]);
+        expect([...blocked]).toEqual(["side"]);
+
+        resolveCalls.length = 0;
+        const round2 = stubFetch(1);
+
+        await expect(pollAnthropicAccount(entry("side"), { orgBlocked: blocked })).rejects.toThrow("429");
+
+        expect(round2.calls()).toBe(1);
+        expect(resolveCalls.some((call) => call.forceRefresh)).toBe(false);
+    });
+
+    // Negative control: an error that is NOT the org 403 leaves the flag off, so the row
+    // cannot block an account whose token merely expired.
+    it("an ordinary failure is not classified as an org block", () => {
+        expect(classifyAnthropicFailure(new Error("Usage API 429: rate limited"))).toBeUndefined();
+        expect(
+            failureSnapshot({
+                provider: "anthropic-sub",
+                account: entry("work"),
+                reason: "Usage API 429: rate limited",
+                now: Date.now(),
+            }).auth
+        ).toBeUndefined();
     });
 
     it("an org-blocked account is not unlocked either", async () => {

@@ -232,11 +232,28 @@ export interface ExternalLoginInstruction {
     authFile: string;
 }
 
+/** Provider-specific facts the poll core folds into the error snapshot it builds. */
+export interface UsageFailureClass {
+    /**
+     * The provider refused this account at the ORG level (a dead subscription), not at the
+     * token level. Sticky until a successful fetch, and the reason `orgBlocked` above is
+     * ever populated: without it a 403 reaches the core as a bare error string, the next
+     * round's `orgBlocked` set is empty, and a routine 429 spends a single-use refresh
+     * grant on a request that cannot succeed.
+     */
+    orgBlocked?: boolean;
+}
+
 export interface AccountUsageFeature {
     poll(account: AccountEntry, opts: UsagePollOptions): Promise<AccountUsageSnapshot>;
     presenters?: UsagePresenters;
     /** Floor between two live polls of one account; the daemon and the shared cache enforce it. Default 30s. */
     minIntervalMs?: number;
+    /**
+     * Read a thrown poll error the way only this provider can. Absent means the error is
+     * carried as text alone, which is all a provider without an org-level refusal needs.
+     */
+    classifyFailure?(err: unknown): UsageFailureClass | undefined;
 }
 
 export interface AccountFeatures {

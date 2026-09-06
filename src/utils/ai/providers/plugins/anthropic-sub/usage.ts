@@ -7,10 +7,11 @@ import type {
     AccountUsageSnapshot,
     LimitSeverity,
     LimitWindow,
+    UsageFailureClass,
     UsagePollOptions,
 } from "../../account-features";
 import type { AccountUsage, UsageResponse } from "./api";
-import { ANTHROPIC_SUB, pollAccount } from "./api";
+import { ANTHROPIC_SUB, isSubscriptionExpiredError, pollAccount } from "./api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, bucketKind } from "./buckets";
 import type { Severity } from "./limits";
 import { normalizeLimits, normalizeSpend } from "./limits";
@@ -206,7 +207,25 @@ export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountU
     };
 }
 
+/**
+ * The usage API's org-level 403 ("not allowed for this org") read off a thrown error.
+ *
+ * `pollAnthropicAccount` calls `pollAccount` directly, so it never passes through
+ * `fetchAllAccountsUsage`'s rejection mapping, which is where `orgBlocked` used to be set.
+ * The poll core's generic error row therefore carried the 403 as text only, the next
+ * round's `orgBlocked` set came back empty, and a following 401 or 429 for the same dead
+ * organization reached the force-refresh that spends the single-use grant (review t7).
+ */
+export function classifyAnthropicFailure(err: unknown): UsageFailureClass | undefined {
+    if (!isSubscriptionExpiredError(err instanceof Error ? err.message : String(err))) {
+        return undefined;
+    }
+
+    return { orgBlocked: true };
+}
+
 export const anthropicUsage: AccountUsageFeature = {
     poll: pollAnthropicAccount,
     minIntervalMs: MIN_INTERVAL_MS,
+    classifyFailure: classifyAnthropicFailure,
 };

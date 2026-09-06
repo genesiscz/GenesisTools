@@ -1,7 +1,11 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
-import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/providers/account-features";
+import type {
+    AccountFeatures,
+    AccountUsageFeature,
+    UsageFailureClass,
+} from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -202,6 +206,33 @@ async function pollProvider(
  * plugin does the fetching, and the gate is updated from the outcomes. Modelled on
  * `fetchAllAccountsUsage` (`src/claude/lib/usage/api.ts`), which stays the anthropic path.
  */
+/**
+ * The row the core writes for an account whose poll threw.
+ *
+ * `failure` is the plugin's own reading of the error, and `auth.orgBlocked` is the only
+ * place `SNAPSHOT_OPS.orgBlocked` looks. An org-level 403 that stayed a bare error string
+ * left the next round's `orgBlocked` set empty, so a following 401 or 429 for the same
+ * dead organization reached the force-refresh that spends a single-use grant (review t7).
+ */
+export function failureSnapshot(args: {
+    provider: string;
+    account: Pick<AccountEntry, "id" | "name" | "label">;
+    reason: string;
+    now: number;
+    failure?: UsageFailureClass | undefined;
+}): AccountUsageSnapshot {
+    return {
+        provider: args.provider,
+        accountId: args.account.id,
+        accountName: args.account.name,
+        label: args.account.label,
+        fetchedAt: new Date(args.now).toISOString(),
+        limits: [],
+        error: args.reason,
+        ...(args.failure?.orgBlocked ? { auth: { orgBlocked: true } } : {}),
+    };
+}
+
 async function fetchProviderSnapshots(
     entry: UsagePlugin,
     accounts: readonly AccountEntry[],
@@ -259,15 +290,13 @@ async function fetchProviderSnapshots(
             logger.warn({ provider: providerId, account: account.name, reason }, "[usage] poll failed");
         }
 
-        return {
+        return failureSnapshot({
             provider: providerId,
-            accountId: account.id,
-            accountName: account.name,
-            label: account.label,
-            fetchedAt: new Date(now).toISOString(),
-            limits: [],
-            error: reason,
-        } satisfies AccountUsageSnapshot;
+            account,
+            reason,
+            now,
+            ...(suppressed ? {} : { failure: entry.usage.classifyFailure?.(result.reason) }),
+        });
     });
 
     if (gateDirty) {
