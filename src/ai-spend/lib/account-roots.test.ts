@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join, sep } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
 import { accountIdForFile, resolveDriverRoots, rootForFile } from "./account-roots";
@@ -128,6 +129,18 @@ describe("rootForFile", () => {
             accountId: "acc_work",
             home: "/u/.codex",
         });
+    });
+
+    test("the boundary is the platform separator, so a bound home is not unbound on Windows", () => {
+        // Built with `join`, exactly like the real roots and transcript paths:
+        // on Windows these carry backslashes, and a literal `/` matched none of
+        // them. Sibling-prefix exclusion has to survive the same treatment.
+        const home = join(sep, "u", ".codex-work");
+        const bound: DriverRoot[] = [{ path: join(home, "sessions"), accountId: "acc_work", home }];
+
+        expect(accountIdForFile(join(home, "sessions", "2026", "a.jsonl"), bound)).toBe("acc_work");
+        expect(rootForFile(join(home, "sessions"), bound)?.accountId).toBe("acc_work");
+        expect(accountIdForFile(join(home, "sessions-old", "e.jsonl"), bound)).toBeUndefined();
     });
 
     test("accountIdForFile is that same selection, not a second one", () => {

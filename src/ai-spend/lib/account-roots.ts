@@ -1,3 +1,4 @@
+import { sep } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
 import { nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
@@ -78,8 +79,13 @@ export function resolveDriverRoots(options: ResolveDriverRootsOptions): DriverRo
  *
  * Longest wins because roots nest: `~/.codex/sessions` sits under a discovered
  * `~/.codex`, and the more specific root is the one that was actually claimed.
- * The boundary check is on `${path}/` rather than the bare prefix, so
+ * The boundary check is on `${path}${sep}` rather than the bare prefix, so
  * `~/.codex/sessions-old` is not read as living under `~/.codex/sessions`.
+ *
+ * `sep`, never a literal `/`: both the roots and the transcript paths are built
+ * with `node:path`, so on Windows they carry backslashes and a hard-coded slash
+ * matched nothing — every bound home reported as unbound and `--account` then
+ * dropped all of its spend. Same fix as `openai-sub/discover.ts:boundAccountId`.
  *
  * ONE selector, because a file's `accountId` and its `home` are two fields of
  * the same row: picking them with two separate loops let them drift apart.
@@ -88,7 +94,7 @@ export function rootForFile(file: string, roots: readonly DriverRoot[]): DriverR
     let best: DriverRoot | undefined;
 
     for (const root of roots) {
-        if (!file.startsWith(`${root.path}/`) && file !== root.path) {
+        if (!file.startsWith(`${root.path}${sep}`) && file !== root.path) {
             continue;
         }
 
