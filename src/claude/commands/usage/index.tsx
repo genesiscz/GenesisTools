@@ -1,5 +1,5 @@
 import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
-import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -125,7 +125,20 @@ export function registerUsageCommand(program: Command): void {
             }
 
             if (opts.watch) {
-                // `watchUsage` is the legacy single-account renderer; it takes one name.
+                // `watchUsage` is the legacy single-account renderer and takes one name.
+                // Forwarding `accountFilter[0]` and dropping the rest was silent: `--watch
+                // --account work personal` watched `work` and never said so (review t12).
+                if (accountFilter && accountFilter.length > 1) {
+                    logger.error({ accounts: accountFilter }, "--watch takes a single --account");
+                    out.printlnErr(
+                        suggestCommand("tools claude", {
+                            replaceCommand: ["usage", "--watch", "--account", accountFilter[0]],
+                        })
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
                 const { watchUsage } = await import("@app/claude/lib/usage/watch");
                 await watchUsage(accountFilter?.[0]);
                 return;
