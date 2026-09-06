@@ -237,6 +237,75 @@ export function transcriptScanKey(query: SpendTotalsQuery, grain: SpendGrain): s
 /** Long enough to cover the two requests of one page load, short enough that a poll still shows up. */
 const TRANSCRIPT_SCAN_TTL_MS = 15_000;
 
+interface ScanEntry<T> {
+    promise: Promise<T>;
+    /** `null` while the work is still running. The TTL is measured from here. */
+    settledAt: number | null;
+}
+
+export interface ScanCache<T> {
+    /** The in-flight or fresh result for `key`, starting `run` only when there is neither. */
+    share(key: string, run: () => Promise<T>): Promise<T>;
+    /** Entry count, for tests and logging. */
+    size(): number;
+}
+
+/**
+ * Share one expensive result between the callers that arrive while it is useful.
+ *
+ * The TTL is measured from COMPLETION, not from the launch. A scan of a month of
+ * transcripts takes about 20s against a 15s TTL, so a launch-stamped entry
+ * expired while its own worker was still running: a second request evicted the
+ * promise it should have awaited and started a duplicate worker, and a request
+ * arriving just after the scan finished found the fresh result already stale.
+ * In-flight work is therefore never evicted, and a failure only drops the entry
+ * it belongs to, so a slow failing scan cannot delete the replacement that took
+ * its key in the meantime.
+ */
+export function createScanCache<T>(ttlMs: number, now: () => number = Date.now): ScanCache<T> {
+    const entries = new Map<string, ScanEntry<T>>();
+
+    return {
+        share(key, run) {
+            const at = now();
+
+            for (const [old, entry] of entries) {
+                if (entry.settledAt !== null && at - entry.settledAt > ttlMs) {
+                    entries.delete(old);
+                }
+            }
+
+            const hit = entries.get(key);
+
+            if (hit) {
+                return hit.promise;
+            }
+
+            const entry: ScanEntry<T> = { promise: run(), settledAt: null };
+            entries.set(key, entry);
+
+            void entry.promise.then(
+                () => {
+                    entry.settledAt = now();
+                },
+                () => {
+                    // Only ever remove OUR entry: a scan that fails after its key was
+                    // reused would otherwise delete a healthy replacement.
+                    if (entries.get(key) === entry) {
+                        entries.delete(key);
+                    }
+                }
+            );
+
+            return entry.promise;
+        },
+
+        size() {
+            return entries.size;
+        },
+    };
+}
+
 /** A month of transcripts takes about 20s. Past a minute, something is wrong rather than slow. */
 const TRANSCRIPT_SCAN_TIMEOUT_MS = 60_000;
 
@@ -328,7 +397,7 @@ export function createAiAggregator(): AiAggregator {
         });
     }
 
-    const transcriptScans = new Map<string, { at: number; scan: ReturnType<typeof runTranscriptScan> }>();
+    const transcriptScans = createScanCache<SpendSeriesResult>(TRANSCRIPT_SCAN_TTL_MS);
 
     async function runTranscriptScan(query: SpendTotalsQuery, grain: SpendGrain): Promise<SpendSeriesResult> {
         const output = await callWorker<TranscriptScanInput, TranscriptScanOutput>(
@@ -357,29 +426,17 @@ export function createAiAggregator(): AiAggregator {
      */
     function spendFromTranscripts(query: SpendTotalsQuery, grain: SpendGrain) {
         const key = transcriptScanKey(query, grain);
-        const now = Date.now();
 
-        for (const [old, entry] of transcriptScans) {
-            if (now - entry.at > TRANSCRIPT_SCAN_TTL_MS) {
-                transcriptScans.delete(old);
-            }
-        }
+        return transcriptScans.share(key, () => {
+            logger.debug({ key }, "[ai-dashboard] transcript scan started");
+            const scan = runTranscriptScan(query, grain);
 
-        const hit = transcriptScans.get(key);
+            void scan.catch((err: unknown) => {
+                logger.debug({ err, key }, "[ai-dashboard] transcript scan failed, not cached");
+            });
 
-        if (hit) {
-            logger.debug({ key }, "[ai-dashboard] transcript scan reused");
-            return hit.scan;
-        }
-
-        const scan = runTranscriptScan(query, grain);
-        transcriptScans.set(key, { at: now, scan });
-        void scan.catch((err: unknown) => {
-            logger.debug({ err, key }, "[ai-dashboard] transcript scan failed, not cached");
-            transcriptScans.delete(key);
+            return scan;
         });
-
-        return scan;
     }
 
     return {
