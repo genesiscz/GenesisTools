@@ -44,7 +44,7 @@ import type { AccountFeatures } from "@genesiscz/utils/ai/providers/account-feat
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
-import { CLAUDE_ALL_ACCOUNT_NAME, queryUsage } from "@genesiscz/utils/ai/usage";
+import { CLAUDE_ALL_ACCOUNT_NAME, queryUsage, spendBucketKey } from "@genesiscz/utils/ai/usage";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
@@ -224,14 +224,99 @@ export function effectiveSpendGrain(source: SpendSource, grain: SpendGrain): Spe
 }
 
 /**
+ * The grain every transcript scan runs at.
+ *
+ * `buildSpendSeries` rejects `minute` (transcripts are hour-resolution at best),
+ * so `hour` is the finest anything can ask for and every coarser axis folds from
+ * it exactly. Fixing it here is what lets ONE scan answer both endpoints: the
+ * bucketing is a single pass over events already in memory, so a finer grain
+ * costs bucket entries, never another walk of the transcripts.
+ */
+const TRANSCRIPT_SCAN_GRAIN = "hour" as const;
+
+/**
  * Two spend requests describing the same scan. The totals and the series
  * endpoints fire together on every page load with the same window, and each one
  * used to walk every transcript on disk: 21.8 s and 11.8 s respectively over 30
  * days, measured 2026-09-04, both synchronous and both on the request thread.
  * Sharing one scan halves that.
+ *
+ * The GRAIN is deliberately absent. It used to be part of the key while totals
+ * asked for `day` and the series asked for whatever the window wanted, so the
+ * two only shared a scan when the series also wanted `day`: the 1h, 6h and 24h
+ * presets and any window long enough to want `week` ran two workers over the
+ * same transcripts. Every caller now shares one hour-grain scan and folds it.
  */
-export function transcriptScanKey(query: SpendTotalsQuery, grain: SpendGrain): string {
-    return [query.from, query.to, transcriptGrain(grain), [...(query.accounts ?? [])].sort().join(",")].join("|");
+export function transcriptScanKey(query: SpendTotalsQuery): string {
+    return [query.from, query.to, [...(query.accounts ?? [])].sort().join(",")].join("|");
+}
+
+/** `YYYY-MM-DDTHH`, the shape `spendBucketKey` emits at hour grain. */
+const HOUR_BUCKET_KEY = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/;
+
+/**
+ * An hour bucket key re-read on a coarser axis.
+ *
+ * The keys are LOCAL wall clock by design (`src/utils/ai/usage/series-keys.ts`),
+ * so the day is already spelled out in the key and the week is `spendBucketKey`'s
+ * own Monday rule applied to that day. A `minute` request is answered with hour
+ * buckets, exactly as before: transcripts cannot resolve finer.
+ */
+export function foldBucketKey(hourKey: string, grain: SpendGrain): string {
+    if (grain === "hour" || grain === "minute") {
+        return hourKey;
+    }
+
+    const parts = HOUR_BUCKET_KEY.exec(hourKey);
+
+    if (!parts) {
+        return hourKey;
+    }
+
+    const [, year, month, day, hour] = parts;
+
+    if (grain === "day") {
+        return `${year}-${month}-${day}`;
+    }
+
+    const at = new Date(Number(year), Number(month) - 1, Number(day), Number(hour));
+    return spendBucketKey(at.toISOString(), grain);
+}
+
+/** Re-bucket an hour-grain series onto a coarser axis, summing what lands together. */
+export function foldSpendPoints(points: readonly SpendSeriesPoint[], grain: SpendGrain): SpendSeriesPoint[] {
+    if (grain === "hour" || grain === "minute") {
+        return [...points];
+    }
+
+    const byKey = new Map<string, SpendSeriesPoint>();
+
+    for (const point of points) {
+        const t = foldBucketKey(point.t, grain);
+        const existing = byKey.get(t);
+
+        if (!existing) {
+            byKey.set(t, {
+                t,
+                costUsd: point.costUsd,
+                tokens: point.tokens,
+                byAccount: { ...point.byAccount },
+                ...(point.byModel ? { byModel: { ...point.byModel } } : {}),
+            });
+            continue;
+        }
+
+        existing.costUsd += point.costUsd;
+        existing.tokens += point.tokens;
+        mergeBucketMaps(existing.byAccount, point.byAccount);
+
+        if (point.byModel) {
+            existing.byModel = existing.byModel ?? {};
+            mergeBucketMaps(existing.byModel, point.byModel);
+        }
+    }
+
+    return [...byKey.values()].sort((a, b) => a.t.localeCompare(b.t));
 }
 
 /** Long enough to cover the two requests of one page load, short enough that a poll still shows up. */
@@ -399,13 +484,13 @@ export function createAiAggregator(): AiAggregator {
 
     const transcriptScans = createScanCache<SpendSeriesResult>(TRANSCRIPT_SCAN_TTL_MS);
 
-    async function runTranscriptScan(query: SpendTotalsQuery, grain: SpendGrain): Promise<SpendSeriesResult> {
+    async function runTranscriptScan(query: SpendTotalsQuery): Promise<SpendSeriesResult> {
         const output = await callWorker<TranscriptScanInput, TranscriptScanOutput>(
             TRANSCRIPT_SCAN_WORKER,
             {
                 from: query.from,
                 to: query.to,
-                grain: transcriptGrain(grain),
+                grain: TRANSCRIPT_SCAN_GRAIN,
                 ...(query.accounts?.length ? { accountIds: [...query.accounts] } : {}),
                 accounts: await enabledAccounts(),
             },
@@ -424,12 +509,12 @@ export function createAiAggregator(): AiAggregator {
      * identical one blocks the whole server for as long again. Callers share the
      * in-flight promise; the result is read-only to both.
      */
-    function spendFromTranscripts(query: SpendTotalsQuery, grain: SpendGrain) {
-        const key = transcriptScanKey(query, grain);
+    function spendFromTranscripts(query: SpendTotalsQuery) {
+        const key = transcriptScanKey(query);
 
         return transcriptScans.share(key, () => {
             logger.debug({ key }, "[ai-dashboard] transcript scan started");
-            const scan = runTranscriptScan(query, grain);
+            const scan = runTranscriptScan(query);
 
             void scan.catch((err: unknown) => {
                 logger.debug({ err, key }, "[ai-dashboard] transcript scan failed, not cached");
@@ -552,7 +637,10 @@ export function createAiAggregator(): AiAggregator {
             }
 
             if (query.source !== "calls") {
-                const transcripts = await spendFromTranscripts(query, "day");
+                // Totals sums every bucket, so the axis the scan used cannot change
+                // this answer. It asks for no grain at all, which is what lets it
+                // share the series' scan whatever the series asked for.
+                const transcripts = await spendFromTranscripts(query);
                 unpriced += transcripts.unpriced;
 
                 for (const point of transcripts.points) {
@@ -604,8 +692,8 @@ export function createAiAggregator(): AiAggregator {
             }
 
             if (query.source !== "calls") {
-                const transcripts = await spendFromTranscripts(query, grain);
-                points = mergePoints(points, transcripts.points);
+                const transcripts = await spendFromTranscripts(query);
+                points = mergePoints(points, foldSpendPoints(transcripts.points, grain));
                 unpriced += transcripts.unpriced;
                 refs.push(...transcripts.accounts);
             }

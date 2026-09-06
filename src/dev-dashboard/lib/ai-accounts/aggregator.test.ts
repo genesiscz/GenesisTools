@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { SpendSeriesPoint } from "@app/dev-dashboard/contract/ai-accounts";
 import {
     createScanCache,
     defaultSeriesStep,
     effectiveSpendGrain,
+    foldSpendPoints,
     transcriptScanKey,
 } from "@app/dev-dashboard/lib/ai-accounts/aggregator";
 
@@ -16,25 +18,38 @@ const WINDOW = { from: "2026-08-05T19:00:00.000Z", to: "2026-09-04T19:00:00.000Z
  */
 describe("transcriptScanKey", () => {
     test("the totals request and the series request over one window share a key", () => {
-        expect(transcriptScanKey(WINDOW, "day")).toBe(transcriptScanKey({ ...WINDOW }, "day"));
+        expect(transcriptScanKey(WINDOW)).toBe(transcriptScanKey({ ...WINDOW }));
     });
 
-    test("a minute request keys as hour, because transcripts cannot answer finer", () => {
-        expect(transcriptScanKey(WINDOW, "minute")).toBe(transcriptScanKey(WINDOW, "hour"));
+    /**
+     * The grain used to be in the key while totals asked for `day` and the series
+     * asked for whatever the window wanted, so the 1h, 6h and 24h presets ran two
+     * workers over the same transcripts and only the 7d and 30d presets shared one
+     * (eve review, PR #363).
+     */
+    test("the key names no grain, so every caller over one window lands on one scan", () => {
+        const key = transcriptScanKey(WINDOW);
+
+        for (const grain of ["minute", "hour", "day", "week"]) {
+            expect(key).not.toContain(grain);
+        }
+
+        // The two doors build their query objects separately; only the window and
+        // the account filter may reach the key.
+        expect(transcriptScanKey({ from: WINDOW.from, to: WINDOW.to, source: "both" })).toBe(key);
+        expect(transcriptScanKey({ from: WINDOW.from, to: WINDOW.to, source: "calls" })).toBe(key);
     });
 
     test("a different window is a different scan", () => {
-        expect(transcriptScanKey(WINDOW, "day")).not.toBe(
-            transcriptScanKey({ ...WINDOW, to: "2026-09-04T20:00:00.000Z" }, "day")
-        );
+        expect(transcriptScanKey(WINDOW)).not.toBe(transcriptScanKey({ ...WINDOW, to: "2026-09-04T20:00:00.000Z" }));
     });
 
     test("the account filter is part of the key, and its order is not", () => {
-        const a = transcriptScanKey({ ...WINDOW, accounts: ["acc_work", "acc_shop"] }, "day");
-        const b = transcriptScanKey({ ...WINDOW, accounts: ["acc_shop", "acc_work"] }, "day");
+        const a = transcriptScanKey({ ...WINDOW, accounts: ["acc_work", "acc_shop"] });
+        const b = transcriptScanKey({ ...WINDOW, accounts: ["acc_shop", "acc_work"] });
 
         expect(a).toBe(b);
-        expect(a).not.toBe(transcriptScanKey(WINDOW, "day"));
+        expect(a).not.toBe(transcriptScanKey(WINDOW));
     });
 });
 
@@ -74,10 +89,103 @@ describe("effectiveSpendGrain", () => {
         expect(effectiveSpendGrain("both", "week")).toBe("week");
     });
 
-    test("the merged grain is the one the transcript scan is keyed by, so the halves share buckets", () => {
-        expect(transcriptScanKey({ ...WINDOW, source: "both" }, effectiveSpendGrain("both", "minute"))).toBe(
-            transcriptScanKey({ ...WINDOW, source: "both" }, "minute")
-        );
+    test("the merged grain is what the transcript half is folded onto, so the halves share buckets", () => {
+        const hourly = [
+            { t: "2026-09-04T09", costUsd: 1, tokens: 10, byAccount: { acc_work: { costUsd: 1, tokens: 10 } } },
+            { t: "2026-09-04T10", costUsd: 2, tokens: 20, byAccount: { acc_work: { costUsd: 2, tokens: 20 } } },
+        ];
+        const merged = effectiveSpendGrain("both", "minute");
+
+        expect(foldSpendPoints(hourly, merged).map((p) => p.t)).toEqual(["2026-09-04T09", "2026-09-04T10"]);
+    });
+});
+
+/**
+ * Every scan now runs at hour grain and each caller folds it onto its own axis,
+ * so one worker answers totals and the series whatever the series asked for
+ * (eve review, PR #363).
+ */
+describe("foldSpendPoints", () => {
+    const HOURS: SpendSeriesPoint[] = [
+        {
+            t: "2026-09-03T23",
+            costUsd: 1,
+            tokens: 10,
+            byAccount: { acc_work: { costUsd: 1, tokens: 10 } },
+            byModel: { "gpt-5.6": { costUsd: 1, tokens: 10 } },
+        },
+        {
+            t: "2026-09-04T09",
+            costUsd: 2,
+            tokens: 20,
+            byAccount: { acc_work: { costUsd: 2, tokens: 20 } },
+            byModel: { "gpt-5.6": { costUsd: 2, tokens: 20 } },
+        },
+        {
+            t: "2026-09-04T10",
+            costUsd: 4,
+            tokens: 40,
+            byAccount: { acc_shop: { costUsd: 4, tokens: 40 } },
+            byModel: { "claude-opus-5": { costUsd: 4, tokens: 40 } },
+        },
+    ];
+
+    test("hour is already the scan's own axis, so nothing moves", () => {
+        expect(foldSpendPoints(HOURS, "hour").map((p) => p.t)).toEqual([
+            "2026-09-03T23",
+            "2026-09-04T09",
+            "2026-09-04T10",
+        ]);
+    });
+
+    test("a minute request still gets hour buckets, because transcripts cannot answer finer", () => {
+        expect(foldSpendPoints(HOURS, "minute")).toEqual(foldSpendPoints(HOURS, "hour"));
+    });
+
+    test("day folds the hours of one local day together", () => {
+        const days = foldSpendPoints(HOURS, "day");
+
+        expect(days.map((p) => p.t)).toEqual(["2026-09-03", "2026-09-04"]);
+        expect(days[1].costUsd).toBe(6);
+        expect(days[1].tokens).toBe(60);
+        expect(days[1].byAccount).toEqual({
+            acc_work: { costUsd: 2, tokens: 20 },
+            acc_shop: { costUsd: 4, tokens: 40 },
+        });
+        expect(days[1].byModel).toEqual({
+            "gpt-5.6": { costUsd: 2, tokens: 20 },
+            "claude-opus-5": { costUsd: 4, tokens: 40 },
+        });
+    });
+
+    test("week folds every day onto its Monday, so all three land in one bucket", () => {
+        const weeks = foldSpendPoints(HOURS, "week");
+
+        // 2026-09-03 and 2026-09-04 share a week, whichever Monday the rule names.
+        expect(weeks).toHaveLength(1);
+        expect(weeks[0].costUsd).toBe(7);
+        expect(weeks[0].tokens).toBe(70);
+    });
+
+    test("folding conserves the total at every grain", () => {
+        const total = HOURS.reduce((sum, p) => sum + p.costUsd, 0);
+
+        for (const grain of ["minute", "hour", "day", "week"] as const) {
+            expect(foldSpendPoints(HOURS, grain).reduce((sum, p) => sum + p.costUsd, 0)).toBe(total);
+        }
+    });
+
+    test("the caller's points are not mutated", () => {
+        foldSpendPoints(HOURS, "day");
+
+        expect(HOURS[1].byAccount).toEqual({ acc_work: { costUsd: 2, tokens: 20 } });
+        expect(HOURS[1].costUsd).toBe(2);
+    });
+
+    test("a key the scan could not have produced is passed through rather than dropped", () => {
+        const odd: SpendSeriesPoint[] = [{ t: "nope", costUsd: 3, tokens: 1, byAccount: {} }];
+
+        expect(foldSpendPoints(odd, "day")).toEqual(odd);
     });
 });
 
