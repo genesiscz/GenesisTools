@@ -10,6 +10,8 @@ export interface PollerOptions {
     accountFilter?: string[];
     paused: boolean;
     pollIntervalSeconds: number;
+    /** `--fresh`: the FIRST round bypasses the shared cache. Later rounds do not. */
+    freshOnMount?: boolean;
 }
 
 /**
@@ -73,7 +75,7 @@ export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]): A
     return out;
 }
 
-export function usePoller({ source, accountFilter, paused, pollIntervalSeconds }: PollerOptions) {
+export function usePoller({ source, accountFilter, paused, pollIntervalSeconds, freshOnMount }: PollerOptions) {
     const [results, setResults] = useState<PollState | null>(null);
     const [accountRefs, setAccountRefs] = useState<UsageAccountRef[]>([]);
     const [pollingLabel, setPollingLabel] = useState<string | null>(null);
@@ -87,6 +89,9 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds }
     const pruneIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pollingRef = useRef(false);
     const pendingForceRef = useRef(false);
+    // `--fresh` is about the reading the dashboard OPENS with. Leaving it on would force
+    // every timer round too, which is what the 45s shared cache exists to prevent.
+    const freshPendingRef = useRef(freshOnMount === true);
 
     const { config, limitsDb } = source;
 
@@ -184,7 +189,9 @@ export function usePoller({ source, accountFilter, paused, pollIntervalSeconds }
     const forceRefresh = useCallback(() => poll(true), [poll]);
 
     useEffect(() => {
-        void poll();
+        const fresh = freshPendingRef.current;
+        freshPendingRef.current = false;
+        void poll(fresh);
     }, [poll]);
 
     useEffect(() => {

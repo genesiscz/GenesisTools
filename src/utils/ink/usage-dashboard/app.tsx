@@ -29,6 +29,8 @@ export interface UsageDashboardProps {
     range?: number;
     /** Extra `?` overlay lines from the pinned provider's presenter. */
     helpLines?: Array<[string, string]>;
+    /** `--fresh`: the first round bypasses the shared per-provider cache. */
+    fresh?: boolean;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface UsageDashboardProps {
  * filters and the poll loop; everything provider-specific arrives through
  * `source.presenters`.
  */
-export function UsageDashboard({ source, accountFilter, range, helpLines }: UsageDashboardProps) {
+export function UsageDashboard({ source, accountFilter, range, helpLines, fresh }: UsageDashboardProps) {
     const { rows } = useTerminalSize({ clearOnResize: true });
 
     const tabs = useMemo(
@@ -76,6 +78,7 @@ export function UsageDashboard({ source, accountFilter, range, helpLines }: Usag
             accountFilter: filters.accounts ?? undefined,
             paused,
             pollIntervalSeconds: pollInterval,
+            ...(fresh === undefined ? {} : { freshOnMount: fresh }),
         });
 
     const forceRefreshRef = useRef(forceRefresh);

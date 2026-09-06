@@ -111,6 +111,7 @@ export function registerAiUsageCommand(usage: Command): void {
                 ...(providers === undefined ? {} : { providers }),
                 ...(accountFilter === undefined ? {} : { accountFilter }),
                 ...(range.status === "ok" ? { range: range.range } : {}),
+                ...(opts.fresh === undefined ? {} : { fresh: opts.fresh }),
             });
         });
 }

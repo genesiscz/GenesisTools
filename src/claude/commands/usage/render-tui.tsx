@@ -10,6 +10,8 @@ export interface RenderUsageTuiOptions {
     accountFilter?: string[];
     /** Initial History range in minutes. */
     range?: number;
+    /** `--fresh`: the round the dashboard opens with bypasses the shared per-provider cache. */
+    fresh?: boolean;
 }
 
 /**
@@ -34,6 +36,7 @@ export async function renderUsageTui(opts: RenderUsageTuiOptions = {}): Promise<
             source={source}
             {...(opts.accountFilter === undefined ? {} : { accountFilter: opts.accountFilter })}
             {...(opts.range === undefined ? {} : { range: opts.range })}
+            {...(opts.fresh === undefined ? {} : { fresh: opts.fresh })}
             helpLines={anthropicPresenters.helpLines}
         />
     );

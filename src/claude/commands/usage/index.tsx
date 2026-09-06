@@ -170,6 +170,7 @@ export function registerUsageCommand(program: Command): void {
         await renderUsageTui({
             ...(accountFilter === undefined ? {} : { accountFilter }),
             ...(range.status === "ok" ? { range: range.range } : {}),
+            ...(opts.fresh === undefined ? {} : { fresh: opts.fresh }),
         });
     });
 }
