@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type ApplyLoginOutcomeResult, applyLoginOutcome } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountIdentity, LoginOutcome } from "@genesiscz/utils/ai/providers/account-features";
@@ -85,6 +86,54 @@ export async function applyIdentityPolicy(input: IdentityPolicyInput): Promise<I
     return { ok: true };
 }
 
+/**
+ * Refuse to point a second account at a credential file another account already
+ * owns.
+ *
+ * `applyIdentityPolicy` above compares only the account being written, so it has
+ * nothing to say about the OTHER account whose file this login just replaced:
+ * logging `personal` into the home `work` reads left both entries serving one
+ * grant, and neither of them said so (PR #360 review t1). On a TTY this is a
+ * confirmation, because two entries on one file is a legitimate (if unusual)
+ * setup; in a pipe it is a refusal.
+ */
+export async function applyAuthFileOwnershipPolicy(input: {
+    accountName: string;
+    authFile?: string;
+    interactive: boolean;
+}): Promise<IdentityDecision> {
+    if (!input.authFile) {
+        return { ok: true };
+    }
+
+    const store = await AiConfigStore.load();
+    const owner = store
+        .accounts()
+        .find((entry) => entry.name !== input.accountName && entry.credentials.authFile === input.authFile);
+
+    if (!owner) {
+        return { ok: true };
+    }
+
+    const reason = `${input.authFile} is already the credential file of account "${owner.name}".`;
+    out.printlnErr(pc.yellow(`⚠ ${reason}`));
+
+    if (!input.interactive) {
+        return {
+            ok: false,
+            reason: `${reason} Refusing to bind it to "${input.accountName}" as well without a terminal to confirm on.`,
+        };
+    }
+
+    const proceed = await p.confirm({ message: `Point "${input.accountName}" at it too?`, initialValue: false });
+
+    if (p.isCancel(proceed) || !proceed) {
+        return { ok: false, reason: "Cancelled — nothing written." };
+    }
+
+    return { ok: true };
+}
+
 export interface WriteLoginOutcomeInput {
     name: string;
     outcome: LoginOutcome;
@@ -137,6 +186,18 @@ export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<
         // Refusing the CONFIG write while leaving that file replaced is the worst
         // of both: the account still names the old identity while the resolver
         // reads the new credential (PR #360 review t17).
+        await rollbackOutcome(input.outcome);
+        return null;
+    }
+
+    const ownership = await applyAuthFileOwnershipPolicy({
+        accountName: input.name,
+        authFile: input.outcome.credentials.authFile,
+        interactive: input.interactive,
+    });
+
+    if (!ownership.ok) {
+        out.printlnErr(pc.red(ownership.reason));
         await rollbackOutcome(input.outcome);
         return null;
     }

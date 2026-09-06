@@ -373,6 +373,88 @@ describe("writeLoginOutcome undoes the flow's on-disk write when the identity is
     });
 });
 
+describe("writeLoginOutcome refuses a credential file another account owns", () => {
+    /** `work` already reads this file; every case below logs a DIFFERENT name in. */
+    async function seedFileOwner(authFile: string): Promise<void> {
+        await seed({
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    id: "acc_work",
+                    name: "work",
+                    provider: "fake-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: { authFile },
+                    useEnvApiKey: false,
+                },
+            ],
+            defaults: {},
+        });
+    }
+
+    test("in a pipe it writes NOTHING, says whose file it is and rolls the flow back", async () => {
+        const authFile = join(home, "shared", "auth.json");
+        await seedFileOwner(authFile);
+        const before = readFileSync(configPath(), "utf8");
+        let rolledBack = 0;
+
+        const written = await writeLoginOutcome({
+            name: "personal",
+            outcome: {
+                provider: "fake-sub",
+                credentials: { authFile },
+                rollback: async () => {
+                    rolledBack += 1;
+                },
+            },
+            interactive: false,
+        });
+
+        expect(written).toBeNull();
+        // Byte equality, not a spy: it proves no route wrote the second account.
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(storedAccount("personal")).toBeUndefined();
+        expect(rolledBack).toBe(1);
+    });
+
+    test("NEGATIVE CONTROL: the owner logging in again is not a second owner", async () => {
+        const authFile = join(home, "shared", "auth.json");
+        await seedFileOwner(authFile);
+        let rolledBack = 0;
+
+        const written = await writeLoginOutcome({
+            name: "work",
+            outcome: {
+                provider: "fake-sub",
+                credentials: { authFile },
+                rollback: async () => {
+                    rolledBack += 1;
+                },
+            },
+            interactive: false,
+            account: (await AiConfigStore.load()).account("work"),
+        });
+
+        expect(written).not.toBeNull();
+        expect(rolledBack).toBe(0);
+        expect(storedAccount("work")?.credentials.authFile).toBe(authFile);
+    });
+
+    test("NEGATIVE CONTROL: a different file is bound without a word", async () => {
+        await seedFileOwner(join(home, "shared", "auth.json"));
+
+        const written = await writeLoginOutcome({
+            name: "personal",
+            outcome: { provider: "fake-sub", credentials: { authFile: join(home, "own", "auth.json") } },
+            interactive: false,
+        });
+
+        expect(written).not.toBeNull();
+        expect(storedAccount("personal")?.credentials.authFile).toBe(join(home, "own", "auth.json"));
+    });
+});
+
 describe("restoreCodexAuthFile", () => {
     test("puts the previous auth file back byte for byte", async () => {
         const authFile = join(home, "auth.json");

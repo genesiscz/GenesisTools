@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { applyLoginOutcome } from "@genesiscz/utils/ai/config/account-ops";
-import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
+import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { identityMismatch } from "@genesiscz/utils/ai/providers/identity-guard";
 import { _resetBuiltInPluginsForTest, registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
@@ -15,8 +15,8 @@ import {
     _resetSecretsForTest,
     _setMasterKeyProvidersForTest,
 } from "@genesiscz/utils/security";
-import type { CodexTokens } from "../../../openai/codex-auth";
-import { codexLoginOutcome } from "./login";
+import { CODEX_AUTH_PATH, type CodexTokens } from "../../../openai/codex-auth";
+import { codexLoginOutcome, resolveCodexAuthDestination } from "./login";
 
 /**
  * The codex login must persist the fingerprint it proved.
@@ -187,5 +187,58 @@ describe("the stored codex fingerprint", () => {
                 incomingUuid: again.identity?.accountUuid,
             })
         ).toBe(false);
+    });
+});
+describe("resolveCodexAuthDestination", () => {
+    function boundAccount(authFile: string): AccountEntry {
+        return {
+            id: "acc_work",
+            name: "work",
+            provider: "openai-sub",
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: { authFile },
+            useEnvApiKey: false,
+        };
+    }
+
+    test("a re-login of a named account lands on the file that account already reads", () => {
+        const bound = join(home, ".codex-work", "auth.json");
+
+        expect(resolveCodexAuthDestination({ interactive: true, account: boundAccount(bound) })).toBe(bound);
+    });
+
+    test("--home still wins, so a profile can be moved on purpose", () => {
+        const bound = join(home, ".codex-work", "auth.json");
+        const moved = join(home, ".codex-elsewhere");
+
+        expect(resolveCodexAuthDestination({ interactive: true, home: moved, account: boundAccount(bound) })).toBe(
+            join(moved, "auth.json")
+        );
+    });
+
+    test("--auth-file wins over the home and over the account's stored file", () => {
+        const bound = join(home, ".codex-work", "auth.json");
+        const explicit = join(home, "elsewhere", "auth.json");
+
+        expect(
+            resolveCodexAuthDestination({
+                interactive: true,
+                authFile: explicit,
+                home: join(home, ".codex-other"),
+                account: boundAccount(bound),
+            })
+        ).toBe(explicit);
+    });
+
+    test("NEGATIVE CONTROL: a first login with no account and no flags keeps the default home", () => {
+        expect(resolveCodexAuthDestination({ interactive: true })).toBe(CODEX_AUTH_PATH);
+    });
+
+    test("an account that stores no auth file also keeps the default home", () => {
+        const account = boundAccount(join(home, "unused", "auth.json"));
+        delete account.credentials.authFile;
+
+        expect(resolveCodexAuthDestination({ interactive: true, account })).toBe(CODEX_AUTH_PATH);
     });
 });

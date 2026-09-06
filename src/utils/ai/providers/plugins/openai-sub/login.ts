@@ -1,5 +1,5 @@
 import { unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -25,6 +25,28 @@ import { accountFieldsFrom } from "../../account-fields";
  * profile, shared with the CLI and the ChatGPT app, instead of a second copy in
  * the vault that rotates independently.
  */
+/**
+ * Where this login's `auth.json` goes.
+ *
+ * An explicit `--auth-file` or `--home` wins, but a re-login of a NAMED account
+ * has to land on the file that account already reads. Falling through to the
+ * default home retargeted the account at `~/.codex/auth.json`, and when another
+ * account owned that home both accounts then served one grant: the identity
+ * guard only compares the account being written, so it accepted the swap
+ * (PR #360 review t1).
+ */
+export function resolveCodexAuthDestination(ctx: AccountFlowContext): string {
+    if (ctx.authFile) {
+        return ctx.authFile;
+    }
+
+    if (ctx.home) {
+        return join(ctx.home, "auth.json");
+    }
+
+    return ctx.account?.credentials.authFile ?? CODEX_AUTH_PATH;
+}
+
 export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome> {
     if (!ctx.interactive) {
         throw new Error("Codex login needs a TTY (browser OAuth + code paste).");
@@ -81,7 +103,7 @@ export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome>
         throw err;
     }
 
-    const authFile = ctx.authFile ?? join(ctx.home ?? dirname(CODEX_AUTH_PATH), "auth.json");
+    const authFile = resolveCodexAuthDestination(ctx);
 
     // Read the file BEFORE replacing it. The identity guard runs in the CLI layer,
     // after this function has returned, so a refused re-login has to be able to put
