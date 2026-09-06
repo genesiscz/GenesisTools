@@ -5,6 +5,7 @@ import {
     parseFilters,
     resolveRange,
     resolveStableRange,
+    toggleFilterId,
     windowStepMs,
 } from "./ai-accounts-filters";
 
@@ -122,5 +123,42 @@ describe("grainForMinutes", () => {
         expect(grainForMinutes(1440)).toBe("hour");
         expect(grainForMinutes(10080)).toBe("day");
         expect(grainForMinutes(365 * 1440)).toBe("week");
+    });
+});
+
+/**
+ * The chips render pressed while the filter list is empty, because empty means
+ * "everything". A plain toggle turned the first click into `[id]`, so the chip
+ * the user clicked to REMOVE stayed pressed and every other one disappeared
+ * (CodeRabbit review, PR #363).
+ */
+describe("toggleFilterId", () => {
+    const ALL = ["claude", "codex", "grok"];
+
+    test("the first click on an all-selected row removes only the clicked chip", () => {
+        expect(toggleFilterId([], "codex", ALL)).toEqual(["claude", "grok"]);
+    });
+
+    test("a second click removes another one, leaving the rest", () => {
+        expect(toggleFilterId(toggleFilterId([], "codex", ALL), "grok", ALL)).toEqual(["claude"]);
+    });
+
+    test("clicking an unpressed chip adds it back", () => {
+        expect(toggleFilterId(["claude"], "grok", ALL)).toEqual(["claude", "grok"]);
+    });
+
+    test("removing the last selected chip returns to `everything`", () => {
+        expect(toggleFilterId(["claude"], "claude", ALL)).toEqual([]);
+    });
+
+    test("the seed only names ids the row actually rendered", () => {
+        expect(toggleFilterId([], "claude", ["claude", "codex"])).toEqual(["codex"]);
+    });
+
+    test("the input list is never mutated", () => {
+        const list = ["claude"];
+
+        toggleFilterId(list, "grok", ALL);
+        expect(list).toEqual(["claude"]);
     });
 });

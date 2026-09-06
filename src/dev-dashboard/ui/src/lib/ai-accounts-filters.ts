@@ -161,3 +161,20 @@ export function grainForMinutes(minutes: number): SpendGrain {
 
     return "week";
 }
+
+/**
+ * Toggle one id in a filter list where EMPTY means "everything".
+ *
+ * The chips render pressed while the list is empty, so the first click has to
+ * DESELECT the chip it landed on. A plain toggle turned that click into `[id]`,
+ * which kept the clicked chip pressed and hid every other one: the opposite of
+ * what the pressed state promised. `all` is the set of ids currently rendered,
+ * so the seeded list can only name chips the user can see.
+ */
+export function toggleFilterId(list: readonly string[], id: string, all: readonly string[]): string[] {
+    if (list.length === 0) {
+        return all.filter((candidate) => candidate !== id);
+    }
+
+    return list.includes(id) ? list.filter((candidate) => candidate !== id) : [...list, id];
+}

@@ -1,5 +1,11 @@
 import { useCallback, useMemo } from "react";
-import { type AiAccountsFilters, DEFAULT_FILTERS, parseFilters, type TimeRange } from "@/lib/ai-accounts-filters";
+import {
+    type AiAccountsFilters,
+    DEFAULT_FILTERS,
+    parseFilters,
+    type TimeRange,
+    toggleFilterId,
+} from "@/lib/ai-accounts-filters";
 import { parseStringArray, usePersistedState } from "@/lib/persisted-state";
 
 export const FILTERS_KEY = "dd:ai-accounts:filters";
@@ -17,12 +23,17 @@ export function useAiAccountsFilters() {
         DEFAULT_FILTERS
     );
 
+    // `allIds` is what the chip row rendered. An empty filter means "everything",
+    // so the first click has to seed the list from those ids and remove the one
+    // that was clicked, rather than select it alone.
     const toggleProvider = useCallback(
-        (providerId: string) => setFilters((prev) => ({ ...prev, providers: toggle(prev.providers, providerId) })),
+        (providerId: string, allIds: readonly string[]) =>
+            setFilters((prev) => ({ ...prev, providers: toggleFilterId(prev.providers, providerId, allIds) })),
         [setFilters]
     );
     const toggleAccount = useCallback(
-        (accountId: string) => setFilters((prev) => ({ ...prev, accountIds: toggle(prev.accountIds, accountId) })),
+        (accountId: string, allIds: readonly string[]) =>
+            setFilters((prev) => ({ ...prev, accountIds: toggleFilterId(prev.accountIds, accountId, allIds) })),
         [setFilters]
     );
     const setAccounts = useCallback(

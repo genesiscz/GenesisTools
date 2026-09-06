@@ -8,8 +8,9 @@ interface FilterBarProps {
     filters: AiAccountsFilters;
     accounts: AccountRef[];
     colors: Record<string, string>;
-    onToggleProvider: (providerId: string) => void;
-    onToggleAccount: (accountId: string) => void;
+    /** `allIds` is every chip the row renders, so an empty (= all) filter can seed from it. */
+    onToggleProvider: (providerId: string, allIds: readonly string[]) => void;
+    onToggleAccount: (accountId: string, allIds: readonly string[]) => void;
     onSetAccounts: (accountIds: string[]) => void;
     onSetRange: (range: AiAccountsFilters["range"]) => void;
     onReset: () => void;
@@ -36,6 +37,9 @@ const INPUT_CLASS =
 const LINK_CLASS =
     "text-xs text-[var(--dd-text-muted)] underline-offset-2 hover:text-[var(--dd-text-primary)] hover:underline";
 
+/** Every provider chip the row renders, in render order. */
+const PROVIDER_IDS = PROVIDER_META.map((meta) => meta.id);
+
 /**
  * Provider chips, account chips and the time range. Empty selections mean
  * "everything", so a fresh page shows all providers and all accounts.
@@ -53,6 +57,7 @@ export function FilterBar({
     const providerActive = (id: string) => filters.providers.length === 0 || filters.providers.includes(id);
     const accountActive = (id: string) => filters.accountIds.length === 0 || filters.accountIds.includes(id);
     const visibleAccounts = accounts.filter((a) => providerActive(a.provider));
+    const visibleAccountIds = visibleAccounts.map((a) => a.accountId);
     const anyFilter = filters.providers.length > 0 || filters.accountIds.length > 0 || filters.range.preset !== "7d";
 
     return (
@@ -66,7 +71,7 @@ export function FilterBar({
                         color={meta.color}
                         label={meta.displayName}
                         title={meta.id}
-                        onClick={() => onToggleProvider(meta.id)}
+                        onClick={() => onToggleProvider(meta.id, PROVIDER_IDS)}
                     />
                 ))}
             </div>
@@ -83,7 +88,7 @@ export function FilterBar({
                         color={colors[account.accountId] ?? providerMeta(account.provider).color}
                         label={account.label ? `${account.accountName} (${account.label})` : account.accountName}
                         title={`${providerMeta(account.provider).displayName}: ${account.accountId}`}
-                        onClick={() => onToggleAccount(account.accountId)}
+                        onClick={() => onToggleAccount(account.accountId, visibleAccountIds)}
                     />
                 ))}
                 {filters.accountIds.length > 0 ? (
