@@ -194,6 +194,17 @@
     background: var(--dd-bg-panel);
 }
 
+/* A touch device reports no hover, and a tap has to land on the control before
+   :focus-within can apply, so a hover-only toolbar is unreachable there. The
+   focused mode is the default layout on a phone, which is where move and hide
+   matter most, so both toolbars stay on instead. */
+@media (hover: none) {
+    .dd-ai-block-tools,
+    .dd-ai-grid-tools {
+        opacity: 1;
+    }
+}
+
 .dd-ai-grip {
     cursor: grab;
     touch-action: none;
