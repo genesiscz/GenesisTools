@@ -11,6 +11,7 @@ import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import type { AccountFlowContext, AccountIdentity, LoginOutcome } from "../../account-features";
+import { accountFieldsFrom } from "../../account-fields";
 
 /**
  * The Anthropic browser OAuth flow, moved out of `src/claude/commands/config.ts`
@@ -229,6 +230,21 @@ export async function anthropicLogin(ctx: AccountFlowContext): Promise<LoginOutc
     }
 
     const profile = await fetchOAuthProfile(tokens.accessToken);
+
+    return anthropicLoginOutcome({ tokens, profile });
+}
+
+/**
+ * The pure half of the login: what the exchanged tokens and the profile mean,
+ * with no browser, no prompt and no network. Split out the way `codexLoginOutcome`
+ * is, so the fingerprint it stores is testable from invented claims.
+ */
+export function anthropicLoginOutcome(input: {
+    tokens: OAuthTokens;
+    profile: OAuthProfileResponse | undefined;
+}): LoginOutcome {
+    const { tokens, profile } = input;
+    const identity = identityFromLogin(tokens, profile);
     const label = determineAccountLabel(profile);
 
     return {
@@ -239,22 +255,23 @@ export async function anthropicLogin(ctx: AccountFlowContext): Promise<LoginOutc
             expiresAt: tokens.expiresAt,
             refreshExpiresAt: tokens.refreshExpiresAt,
         },
-        identity: identityFromLogin(tokens, profile),
+        identity,
         suggestedName: tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "personal",
         suggestedLabel: label,
         accountFields: {
             label,
-            // The plan reading comes free with the profile fetched above. Storing
-            // it here is what lets a just-renewed account be polled immediately
-            // instead of waiting out the 6h recheck window with a stale
-            // "claude_free" that keeps it suppressed. The uuids are the
-            // fingerprint: an OAuth login is the ONLY place the account uuid can
-            // be read, and the org uuid is what lets a later `login-long` prove a
-            // pasted setup token belongs to this account.
+            // The uuids come off the RESOLVED identity, which falls back to the
+            // OAuth token claims. Only `accountFields` reaches the stored account,
+            // so gating them on the profile meant a login during a profile outage
+            // saved working credentials with no fingerprint at all, and the next
+            // login by a stranger had nothing to contradict (review r2 t2).
+            ...accountFieldsFrom(identity),
+            // The plan reading, in contrast, genuinely only exists in the profile.
+            // Storing it here is what lets a just-renewed account be polled
+            // immediately instead of waiting out the 6h recheck window with a
+            // stale "claude_free" that keeps it suppressed.
             ...(profile
                 ? {
-                      accountUuid: profile.account.uuid,
-                      organizationUuid: profile.organization.uuid,
                       subscriptionCreatedAt: profile.organization.subscription_created_at || undefined,
                       subscriptionPlan: profile.organization.organization_type,
                       subscriptionStatus: profile.organization.subscription_status,
