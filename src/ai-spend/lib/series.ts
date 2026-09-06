@@ -19,7 +19,12 @@ import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadPricing } from "./config";
 import { AGENT_IDS, type AgentId, type MonitorDriver } from "./drivers";
-import { type CompactEvent, collectSeriesEvents } from "./events-cache";
+import {
+    AI_SPEND_SERIES_RETENTION_DAYS,
+    type CompactEvent,
+    collectSeriesEvents,
+    seriesRetentionCutoffMs,
+} from "./events-cache";
 import type { readTail } from "./monitor";
 
 /**
@@ -159,6 +164,18 @@ export async function buildSpendSeries(
         throw new Error(`ai-spend series: unparseable window ${query.from} .. ${query.to}`);
     }
 
+    const now = options.now ?? new Date();
+    const retentionCutoff = seriesRetentionCutoffMs(now);
+
+    // The cache is the only source here, and it keeps 90 days. Saying so beats
+    // drawing an empty stretch of chart that looks like "you spent nothing".
+    if (from < retentionCutoff) {
+        logger.warn(
+            { from: query.from, cutoff: new Date(retentionCutoff).toISOString() },
+            `ai-spend series: the transcript cache keeps ${AI_SPEND_SERIES_RETENTION_DAYS} days, so nothing before ${new Date(retentionCutoff).toISOString()} appears in this series. Use "tools ai-spend daily", which re-reads the transcripts, for older windows.`
+        );
+    }
+
     const storage = options.storage ?? new Storage("ai-spend");
     const pricing = await loadPricing(storage);
     const timeZone = options.timeZone ?? systemTimeZone();
@@ -174,7 +191,7 @@ export async function buildSpendSeries(
         discoveredHomes: options.discoveredHomes,
         drivers: options.drivers,
         readTailFn: options.readTailFn,
-        now: options.now,
+        now,
     });
 
     const buckets = new Map<string, SpendSeriesPoint>();

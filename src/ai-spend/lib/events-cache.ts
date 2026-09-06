@@ -31,6 +31,21 @@ import type { PricingTable } from "./types";
 /** Rolling window the cache keeps. Older events are dropped on every write. */
 export const AI_SPEND_SERIES_RETENTION_DAYS = 90;
 
+/**
+ * Epoch ms before which an event does not exist, for the READER as much as for
+ * the writer.
+ *
+ * Both sides use this one function on purpose. A cold cache parses a transcript
+ * whole, so `entry.events` briefly holds events far older than the window; the
+ * write then prunes them but keeps the file's offset, so the next identical
+ * query takes the unchanged-file branch and cannot return them again. Filtering
+ * the reader by the same cutoff makes the answer depend on the window asked
+ * for, never on how warm the cache happened to be.
+ */
+export function seriesRetentionCutoffMs(now: Date): number {
+    return now.getTime() - AI_SPEND_SERIES_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+}
+
 const CACHE_VERSION = 1;
 
 /** Same bound as the monitor: duplicates of one event sit adjacent in a transcript. */
@@ -144,7 +159,7 @@ function compact(
  * resume state are what stop the next run from re-reading it from byte zero.
  */
 function pruneAndSave(cache: EventsCache, storage: Storage, now: Date): void {
-    const cutoff = now.getTime() - AI_SPEND_SERIES_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const cutoff = seriesRetentionCutoffMs(now);
 
     for (const [file, entry] of Object.entries(cache.files)) {
         if (!existsSync(file)) {
@@ -175,7 +190,9 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
     const drivers = options.drivers ?? MONITOR_DRIVERS;
     const wanted = new Set(options.sources);
     const cache = loadCache(options.storage);
+    const cutoff = seriesRetentionCutoffMs(now);
     const collected: CompactEvent[] = [];
+    let outsideRetention = 0;
 
     for (const driver of drivers) {
         if (!wanted.has(driver.id)) {
@@ -221,6 +238,15 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
             const accountId = accountIdForFile(file, roots);
 
             for (const event of entry.events) {
+                const at = Date.parse(event.t);
+
+                // The same cutoff `pruneAndSave` applies below, so a cold run
+                // and a warm run answer the identical query identically.
+                if (Number.isNaN(at) || at < cutoff) {
+                    outsideRetention += 1;
+                    continue;
+                }
+
                 event.accountId = accountId;
                 collected.push(event);
             }
@@ -230,7 +256,12 @@ export function collectSeriesEvents(options: CollectSeriesEventsOptions): Compac
     pruneAndSave(cache, options.storage, now);
 
     logger.debug(
-        { events: collected.length, files: Object.keys(cache.files).length, sources: [...wanted] },
+        {
+            events: collected.length,
+            outsideRetention,
+            files: Object.keys(cache.files).length,
+            sources: [...wanted],
+        },
         "ai-spend series: events collected"
     );
 

@@ -188,6 +188,27 @@ describe("buildSpendSeries", () => {
         expect(second.points[0].tokens).toBe(600_000);
     });
 
+    test("two identical historical queries return the same points, cold cache or warm", async () => {
+        const old = new Date(Date.now() - 200 * 86_400_000);
+        writeFileSync(join(homes.work, "sessions", "rollout-old.jsonl"), codexRollout(old.toISOString(), 900_000));
+
+        const query = {
+            from: old.toISOString(),
+            to: new Date(Date.now() + 3_600_000).toISOString(),
+            grain: "day" as const,
+        };
+        // The first call parses the transcript whole, so the 200-day-old event
+        // is in memory before the write prunes it. Reporting it once and never
+        // again would make the answer depend on cache warmth.
+        const cold = await buildSpendSeries(query, options);
+        const warm = await buildSpendSeries(query, options);
+
+        expect(warm.points).toEqual(cold.points);
+        expect(cold.points.map((point) => point.tokens)).toEqual([600_000]);
+        // Negative control: in-window events still arrive on both runs.
+        expect(warm.points[0].byAccount[WORK].tokens).toBe(100_000);
+    });
+
     test("events older than the retention window are dropped from the cache", async () => {
         const old = new Date(Date.now() - 200 * 86_400_000);
         const oldFile = join(homes.work, "sessions", "rollout-old.jsonl");
