@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { AiConfigStore, adaptOlderConfig } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
@@ -288,6 +289,22 @@ describe("AiConfigStore mutation", () => {
 
         const count = await store.withLock(async (data) => data.accounts.length);
         expect(count).toBe(3);
+    });
+
+    test("withLock passes the caller's wait budget to the config lock", async () => {
+        const store = await AiConfigStore.load();
+        const lock = spyOn(Storage.prototype, "withConfigLock");
+
+        try {
+            await store.withLock(async () => undefined, 60_000);
+            expect(lock).toHaveBeenCalledTimes(1);
+            expect(lock.mock.calls[0][1]).toBe(60_000);
+
+            await store.withLock(async () => undefined);
+            expect(lock.mock.calls[1][1]).toBeUndefined();
+        } finally {
+            lock.mockRestore();
+        }
     });
 });
 
