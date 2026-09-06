@@ -15,14 +15,29 @@ const SidebarSortable = lazy(() =>
 
 const LONG_PRESS_MS = 450;
 
+/**
+ * How long the click produced by a long press may still arrive.
+ *
+ * The flag used to be a boolean cleared only by the next `pointerdown` or the
+ * next captured click. A gesture that entered reorder mode and then ended
+ * without a click (the pointer left the rail, or the browser fired
+ * `pointercancel`) left it armed forever, and a later activation that skips
+ * `pointerdown` on this container, such as Enter on a focused rail link, was
+ * swallowed and did not navigate. An expiry cannot outlive its own gesture, and
+ * unlike clearing on pointerup it does not race the click that follows a tap.
+ */
+const SWALLOW_WINDOW_MS = 1000;
+
 export function Sidebar() {
     const { pathname } = useLocation();
     const { routes, move } = useNavOrder();
     const [reordering, setReordering] = useState(false);
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     // A long press that turned into reorder mode must not also follow the link the
-    // finger was resting on, so the click it produces is swallowed once.
-    const swallowNextClick = useRef(false);
+    // finger was resting on, so the click it produces is swallowed once. The value
+    // is WHEN it was armed, so a gesture that never produced a click cannot leave
+    // an unrelated click suppressed later.
+    const swallowArmedAt = useRef(0);
 
     const cancelLongPress = useCallback(() => {
         if (longPressTimer.current !== null) {
@@ -33,9 +48,7 @@ export function Sidebar() {
 
     const startLongPress = useCallback(() => {
         cancelLongPress();
-        // A stale flag from a gesture that never produced a click would eat an
-        // unrelated click later, so every new press starts from a clean slate.
-        swallowNextClick.current = false;
+        swallowArmedAt.current = 0;
 
         if (reordering) {
             return;
@@ -43,7 +56,7 @@ export function Sidebar() {
 
         longPressTimer.current = setTimeout(() => {
             longPressTimer.current = null;
-            swallowNextClick.current = true;
+            swallowArmedAt.current = Date.now();
             setReordering(true);
         }, LONG_PRESS_MS);
     }, [cancelLongPress, reordering]);
@@ -84,8 +97,10 @@ export function Sidebar() {
                 onPointerLeave={cancelLongPress}
                 onPointerCancel={cancelLongPress}
                 onClickCapture={(event) => {
-                    if (swallowNextClick.current) {
-                        swallowNextClick.current = false;
+                    const armed = swallowArmedAt.current;
+                    swallowArmedAt.current = 0;
+
+                    if (armed !== 0 && Date.now() - armed < SWALLOW_WINDOW_MS) {
                         event.preventDefault();
                         event.stopPropagation();
                     }
