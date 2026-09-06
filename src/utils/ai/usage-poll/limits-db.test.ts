@@ -134,6 +134,74 @@ describe("UsageLimitsDb", () => {
         expect(inserted).toBe(false);
     });
 
+    /**
+     * A credit window with no cap reports `percentUsed` 0 forever (grok's
+     * `toCreditWindow`), so dedup on utilization alone froze `getLatest`'s money at the
+     * first reading while the spend kept climbing (review t15).
+     */
+    test("recordIfChangedV2 inserts when only the money moved", () => {
+        const extras = (usedMinor: number) => ({
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: "grok-sub",
+            kind: "credit",
+            money: { usedMinor, limitMinor: null, currency: "USD" },
+        });
+
+        db.recordSnapshotV2("work", "credit", 0, recentTimestamp(5), extras(100));
+
+        expect(db.recordIfChangedV2("work", "credit", 0, extras(500))).toBe(true);
+        expect(db.getLatest("work", "credit", "grok-sub")?.moneyUsedMinor).toBe(500);
+    });
+
+    // The same trap with the percentage held steady by a proportional cap rise.
+    test("recordIfChangedV2 inserts when spend and cap rise together", () => {
+        const extras = (usedMinor: number, limitMinor: number) => ({
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: "grok-sub",
+            kind: "credit",
+            money: { usedMinor, limitMinor, currency: "USD" },
+        });
+
+        db.recordSnapshotV2("work", "credit", 50, recentTimestamp(5), extras(100, 200));
+
+        expect(db.recordIfChangedV2("work", "credit", 50, extras(400, 800))).toBe(true);
+        expect(db.getLatest("work", "credit", "grok-sub")?.moneyLimitMinor).toBe(800);
+    });
+
+    // Negative control: unchanged money still dedupes, so the 30s poll loop does not
+    // append an identical row every tick.
+    test("recordIfChangedV2 still skips when the money is unchanged", () => {
+        const extras = {
+            resetsAt: null,
+            severity: null,
+            scopeModel: null,
+            provider: "grok-sub",
+            kind: "credit",
+            money: { usedMinor: 100, limitMinor: 200, currency: "USD" },
+        };
+
+        db.recordSnapshotV2("work", "credit", 50, recentTimestamp(5), extras);
+
+        expect(db.recordIfChangedV2("work", "credit", 50, extras)).toBe(false);
+    });
+
+    // A window that carries no money at all must keep deduping as it always did.
+    test("recordIfChangedV2 still skips a moneyless window with no change", () => {
+        db.recordSnapshotV2("work", "five_hour", 12, recentTimestamp(5), {
+            resetsAt: null,
+            severity: "normal",
+            scopeModel: null,
+        });
+
+        expect(
+            db.recordIfChangedV2("work", "five_hour", 12, { resetsAt: null, severity: "normal", scopeModel: null })
+        ).toBe(false);
+    });
+
     test("recordIfChangedV2 skips when resets_at differs only by sub-second precision", () => {
         db.recordSnapshotV2("work", "seven_day", 100, recentTimestamp(5), {
             resetsAt: "2026-07-02T19:00:00.245191+00:00",

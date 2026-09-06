@@ -312,6 +312,20 @@ export class UsageLimitsDb {
         });
     }
 
+    /**
+     * The money columns as `recordSnapshotV2` writes them, compared against a stored row.
+     * A credit window without a cap reports `percentUsed` 0 forever (grok's
+     * `toCreditWindow`), and a proportional rise in spend and cap holds the percentage
+     * steady, so dedup on utilization alone froze `getLatest`'s money at the first reading.
+     */
+    private moneyUnchanged(latest: UsageSnapshot, money: SnapshotV2Extras["money"]): boolean {
+        return (
+            latest.moneyUsedMinor === (money?.usedMinor ?? null) &&
+            latest.moneyLimitMinor === (money?.limitMinor ?? null) &&
+            latest.moneyCurrency === (money?.currency ?? null)
+        );
+    }
+
     recordIfChangedV2(accountName: string, bucket: string, utilization: number, extras: SnapshotV2Extras): boolean {
         // The provider the INSERT will write, not the caller's optional one: an omitted
         // provider means "any provider" to the readers, so a matching row belonging to
@@ -322,7 +336,8 @@ export class UsageLimitsDb {
             latest &&
             latest.utilization === utilization &&
             normalizeNullableSeverity(latest.severity) === normalizeNullableSeverity(extras.severity) &&
-            resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)
+            resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt) &&
+            this.moneyUnchanged(latest, extras.money)
         ) {
             return false;
         }
