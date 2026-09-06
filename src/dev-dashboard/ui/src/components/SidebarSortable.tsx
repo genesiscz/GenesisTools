@@ -29,6 +29,11 @@ interface SidebarSortableProps {
  * out of the first chunk for every session that never reorders. The pointer sensor
  * only takes over after 4px of travel, so a plain click still navigates; Space or
  * Enter picks an icon up for the keyboard, and NavOrderEditor is the button path.
+ *
+ * The drag activator IS the wrapper, so it owns the single Tab stop per icon and the
+ * link inside it is taken out of the tab order: a focusable link inside a
+ * `role="button"` activator gave every icon two stops and two roles. Keyboard
+ * navigation is the plain rail's job, one Escape away.
  */
 export function SidebarSortable({ routes, pathname, onMove }: SidebarSortableProps) {
     const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -93,8 +98,11 @@ function SortableNavIcon({ route, active, reducedMotion }: SortableNavIconProps)
             }}
             {...attributes}
             {...listeners}
+            // dnd-kit's attributes already say `role="button"`; the label says WHICH
+            // icon, which the wrapper would otherwise take from the link it hides.
+            aria-label={route.label}
         >
-            <NavRailLink route={route} active={active} />
+            <NavRailLink route={route} active={active} tabIndex={-1} />
         </div>
     );
 }
