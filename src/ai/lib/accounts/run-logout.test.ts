@@ -197,3 +197,73 @@ describe("--all on an account holding only some of the declared kinds", () => {
         expect(storedCredentials().refreshToken).toBeUndefined();
     });
 });
+
+/**
+ * PR #359 review t10. `runLogout` hands the resolved account's id straight to
+ * `clearCredentials`, which is irreversible, so resolving an ambiguous name to
+ * the first match wiped whichever account happened to come first in the config.
+ * The assertion is byte equality of the config file, not a spy: it proves no
+ * route wrote anything.
+ */
+describe("an ambiguous account name never reaches clearCredentials", () => {
+    async function seedTwoNamesakes(): Promise<void> {
+        const data: AiConfigData = {
+            version: CONFIG_VERSION,
+            accounts: [
+                {
+                    id: "acc_work_first",
+                    name: "work",
+                    provider: "openai-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: { authFile: join(home, ".codex-first", "auth.json") },
+                    useEnvApiKey: false,
+                },
+                {
+                    id: "acc_work_second",
+                    name: "work",
+                    provider: "openai-sub",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: { authFile: join(home, ".codex-second", "auth.json") },
+                    useEnvApiKey: false,
+                },
+            ],
+            defaults: {},
+        };
+
+        mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(configPath(), SafeJSON.stringify(data, null, 2));
+        AiConfigStore.invalidate();
+        await AiConfigStore.load();
+    }
+
+    test("--all --yes on a shared name refuses and clears nothing", async () => {
+        await seedTwoNamesakes();
+        const before = readFileSync(configPath(), "utf8");
+
+        await logout({ all: true });
+
+        expect(errorLines.join("\n")).toContain("ambiguous");
+        expect(process.exitCode).toBe(1);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    test("NEGATIVE CONTROL: naming one by its id does clear that one, and only that one", async () => {
+        await seedTwoNamesakes();
+
+        await runLogout({
+            provider: "codex",
+            name: "acc_work_second",
+            targets: [],
+            all: true,
+            yes: true,
+            tool: "tools ai accounts logout",
+            subcommand: ["accounts", "logout"],
+        });
+
+        const after: AiConfigData = SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true });
+        expect(after.accounts.find((entry) => entry.id === "acc_work_second")?.credentials.authFile).toBeUndefined();
+        expect(after.accounts.find((entry) => entry.id === "acc_work_first")?.credentials.authFile).toBeDefined();
+    });
+});
