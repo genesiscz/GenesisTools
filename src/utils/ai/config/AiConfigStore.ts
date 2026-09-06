@@ -246,7 +246,14 @@ export class AiConfigStore {
         });
     }
 
-    async withLock<T>(fn: (data: AiConfigData) => Promise<T>): Promise<T> {
+    /**
+     * `timeout` is how long to WAIT for the lock, not how long to hold it. A token
+     * refresh runs its network call inside `fn`, so when several accounts refresh at
+     * once each later one waits for every earlier one; the 5 s default was sized for a
+     * plain config edit and timed them out (observed 2026-09-06: nine accounts, one DNS
+     * outage, `LockTimeoutError` on every account but the first).
+     */
+    async withLock<T>(fn: (data: AiConfigData) => Promise<T>, timeout?: number): Promise<T> {
         return this.storage.withConfigLock(async () => {
             // BEFORE the callback, not only before the write: callers nest vault
             // writes inside `fn` (the lock-order contract says config lock first,
@@ -268,6 +275,6 @@ export class AiConfigStore {
             this.config = validated;
             this.stamp = AiConfigStore.stampOf(this.storage);
             return result;
-        });
+        }, timeout);
     }
 }
