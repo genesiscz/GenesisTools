@@ -69,7 +69,10 @@ export interface SeriesQuery {
     /** ISO timestamps. */
     from: string;
     to: string;
-    /** Downsample width in ms. Omitted means every row. */
+    /**
+     * Downsample width in ms. Omitted derives one from `from`..`to` so a wide range stays
+     * bounded (see `defaultStep`); a value of 0 or less asks for every row.
+     */
     step?: number;
 }
 
@@ -384,6 +387,10 @@ export class UsageLimitsDb {
      * Percent-over-time per (account, window key), for the dashboard charts (spec 9.4).
      * `step` downsamples by keeping the last sample of each fixed-width bucket, so a 7-day
      * range does not return 20k points.
+     *
+     * A caller that names no `step` gets `defaultStep(from, to)` rather than every row. The
+     * History tab asks for one series per provider per account per window key and never set
+     * one, so a 7-day range at the 30s poll period returned up to 20,160 points per series.
      */
     getSeries(query: SeriesQuery): SeriesEntry[] {
         const where: string[] = ["timestamp >= ?", "timestamp <= ?"];
@@ -437,13 +444,14 @@ export class UsageLimitsDb {
         }
 
         const entries = [...byKey.values()];
+        const step = query.step ?? defaultStep(query.from, query.to);
 
-        if (!query.step || query.step <= 0) {
+        if (step <= 0) {
             return entries;
         }
 
         for (const entry of entries) {
-            entry.points = downsample(entry.points, query.step);
+            entry.points = downsample(entry.points, step);
         }
 
         return entries;
@@ -581,6 +589,23 @@ export class UsageLimitsDb {
             moneyCurrency: row.money_currency,
         };
     }
+}
+
+/**
+ * Points per series a caller that named no `step` is willing to hold. Well above what any
+ * terminal can draw, and 28 times smaller than an undownsampled 7-day range at 30s polling.
+ */
+const DEFAULT_SERIES_POINTS = 720;
+
+/** Bucket width that keeps a range under `DEFAULT_SERIES_POINTS`, or 0 when the range is unusable. */
+export function defaultStep(from: string, to: string): number {
+    const span = Date.parse(to) - Date.parse(from);
+
+    if (!Number.isFinite(span) || span <= 0) {
+        return 0;
+    }
+
+    return Math.ceil(span / DEFAULT_SERIES_POINTS);
 }
 
 function downsample(points: SeriesPoint[], step: number): SeriesPoint[] {

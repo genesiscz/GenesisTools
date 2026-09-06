@@ -581,6 +581,31 @@ describe("UsageLimitsDb", () => {
             expect(series[0]).toMatchObject({ provider: "anthropic-sub", account: "work", key: "five_hour" });
         });
 
+        // A caller that names no step used to get every row back: the History tab asks for
+        // one series per provider per account per window key, and a 7-day range at the 30s
+        // poll period is 20,160 rows each (PR #361 review t1).
+        test("no step still bounds a wide range", () => {
+            const to = Date.now();
+            const from = to - 7 * 24 * 3600_000;
+
+            // 2,000 samples 5 minutes apart, which an undownsampled read returns whole.
+            for (let i = 0; i < 2000; i++) {
+                db.recordSnapshot("work", "five_hour", i % 100, new Date(from + i * 300_000).toISOString());
+            }
+
+            const bounded = db.getSeries({ from: new Date(from).toISOString(), to: new Date(to).toISOString() });
+            const every = db.getSeries({
+                from: new Date(from).toISOString(),
+                to: new Date(to).toISOString(),
+                step: 0,
+            });
+
+            expect(every[0].points).toHaveLength(2000);
+            expect(bounded[0].points.length).toBeLessThanOrEqual(720);
+            // The newest sample is what the pace and the top row read, so it must survive.
+            expect(bounded[0].points.at(-1)).toEqual(every[0].points.at(-1));
+        });
+
         test("step keeps the last sample of each bucket", () => {
             // Aligned to the step so the two early samples always share one bucket:
             // an unaligned base splits them whenever the wall clock lands near a
