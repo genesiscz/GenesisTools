@@ -126,7 +126,7 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
         ...(opts.name ? { account: store.account(opts.name) } : {}),
     };
 
-    const outcome = features.login ? await features.login(ctx) : await bindExternalLogin(plugin, features, ctx, opts);
+    const outcome = await resolveLoginOutcome(plugin, features, ctx, opts);
 
     if (!outcome) {
         process.exitCode = 1;
@@ -260,6 +260,66 @@ async function promptAccountName(store: AiConfigStore, suggested: string): Promi
 }
 
 /**
+ * Which flow this login runs.
+ *
+ * `--auth-file` is documented on every door as "bind an existing credential file
+ * INSTEAD of running a flow", but a provider that HAS an in-process flow ran it
+ * anyway: `tools codex login --auth-file x` demanded a TTY, performed OAuth and
+ * then overwrote the very file it had been asked to import, so the scripted form
+ * failed and the interactive form destroyed its own input (PR #360 review t2).
+ *
+ * A file already on disk is bound as it is, for every provider. A missing one
+ * still falls through to the provider's flow, which is how `tools grok login
+ * --auth-file <new path>` creates one.
+ */
+async function resolveLoginOutcome(
+    plugin: ProviderPlugin,
+    features: AccountFeatures,
+    ctx: AccountFlowContext,
+    opts: RunLoginOptions
+): Promise<LoginOutcome | undefined> {
+    if (opts.authFile !== undefined && (await Bun.file(opts.authFile).exists())) {
+        return bindAuthFile(plugin, features, ctx, opts.authFile);
+    }
+
+    return features.login ? await features.login(ctx) : await bindExternalLogin(plugin, features, ctx, opts);
+}
+
+/**
+ * Turn a credential file that is already on disk into a login outcome: read whose
+ * it is, and write nothing.
+ *
+ * The account entry here is synthetic, only so `identityOf` has something to read
+ * the path out of. There is no account yet, and inventing one before the identity
+ * is known is exactly the write this flow defers to the CLI layer.
+ */
+async function bindAuthFile(
+    plugin: ProviderPlugin,
+    features: AccountFeatures,
+    ctx: AccountFlowContext,
+    authFile: string
+): Promise<LoginOutcome> {
+    const probe: AccountEntry = {
+        id: "acc_probe",
+        name: ctx.requestedName ?? providerAliasOf(plugin.id),
+        provider: plugin.id,
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: { authFile },
+        useEnvApiKey: false,
+    };
+
+    const identity = await features.identityOf?.(probe, { probe: true });
+
+    return {
+        provider: plugin.id,
+        credentials: { authFile },
+        ...(identity ? { identity, accountFields: accountFieldsFrom(identity) } : {}),
+        suggestedName: identity?.email?.split("@")[0]?.toLowerCase(),
+    };
+}
+
+/**
  * Providers with no in-process flow (grok): print the vendor command, offer to
  * run it on a TTY, then bind the file it wrote. A file that is already there is
  * bound without running anything, which is what makes the non-TTY path usable.
@@ -323,25 +383,5 @@ async function bindExternalLogin(
         }
     }
 
-    // A synthetic entry, only so `identityOf` can read the file it was pointed
-    // at: there is no account yet, and inventing one before the identity is known
-    // is exactly the write this flow defers to the CLI layer.
-    const probe: AccountEntry = {
-        id: "acc_probe",
-        name: ctx.requestedName ?? providerAliasOf(plugin.id),
-        provider: plugin.id,
-        enabled: true,
-        billing: { mode: "subscription" },
-        credentials: { authFile: instruction.authFile },
-        useEnvApiKey: false,
-    };
-
-    const identity = await features.identityOf?.(probe, { probe: true });
-
-    return {
-        provider: plugin.id,
-        credentials: { authFile: instruction.authFile },
-        ...(identity ? { identity, accountFields: accountFieldsFrom(identity) } : {}),
-        suggestedName: identity?.email?.split("@")[0]?.toLowerCase(),
-    };
+    return bindAuthFile(plugin, features, ctx, instruction.authFile);
 }
