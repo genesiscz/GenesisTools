@@ -23,10 +23,13 @@ export function lastSnapshotFor(cache: SnapshotsCache | null, account: AccountEn
 
     // By id first: a rename keeps the id, so a snapshot recorded under the old name
     // still belongs to this account. The name is the fallback for a row written
-    // before the writers carried an id.
+    // before the writers carried an id, so the fallback REQUIRES an absent id: a row
+    // whose id is set and different belongs to another account, and matching it by name
+    // let a deleted account's usage and plan show up under a replacement that reused the
+    // name, until the next poll overwrote it.
     return (
         rows.find((row) => row.accountId !== "" && row.accountId === account.id) ??
-        rows.find((row) => row.accountName === account.name)
+        rows.find((row) => !row.accountId && row.accountName === account.name)
     );
 }
 

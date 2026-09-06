@@ -79,6 +79,17 @@ describe("lastSnapshotFor", () => {
 
         expect(lastSnapshotFor(cache([other]), account())).toBeUndefined();
     });
+
+    /**
+     * Delete an account and give its name to a new one on the same provider: the old row
+     * still carries the OLD id. The name fallback claimed it, so `accounts show` printed
+     * the previous account's usage and plan under the replacement (review t16).
+     */
+    test("a row with a different non-empty id is not claimed by a matching name", () => {
+        const previous = snapshot({ accountId: "acc_old", accountName: "work" });
+
+        expect(lastSnapshotFor(cache([previous]), account({ id: "acc_new", name: "work" }))).toBeUndefined();
+    });
 });
 
 describe("formatLimitLine", () => {
