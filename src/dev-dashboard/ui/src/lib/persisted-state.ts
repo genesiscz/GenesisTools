@@ -1,5 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // Same-tab localStorage writes do not emit a `storage` event (that is cross-tab
 // only), so a second mounted consumer of the same key would only catch up on
@@ -59,20 +59,28 @@ export function usePersistedState<T>(
     fallback: T
 ): [T, (next: T | ((prev: T) => T)) => void, () => void] {
     const [value, setValue] = useState<T>(() => readPersisted(key, parse) ?? fallback);
+    // The current value, so `set` can resolve a functional update without running a
+    // side effect inside React's state updater. The updater must stay PURE: React 19
+    // StrictMode calls it twice, which wrote localStorage twice and dispatched the
+    // synchronous CHANGE_EVENT twice, re-entering every other consumer's `setValue`
+    // from inside a state update. Every site that sets state updates this first, so
+    // two `set` calls in one handler still chain off the newest value.
+    const valueRef = useRef(value);
 
     const set = useCallback(
         (next: T | ((prev: T) => T)) => {
-            setValue((prev) => {
-                const resolved = typeof next === "function" ? (next as (prev: T) => T)(prev) : next;
-                writePersisted(key, resolved);
-                return resolved;
-            });
+            const resolved = typeof next === "function" ? (next as (prev: T) => T)(valueRef.current) : next;
+
+            valueRef.current = resolved;
+            setValue(resolved);
+            writePersisted(key, resolved);
         },
         [key]
     );
 
     const reset = useCallback(() => {
         clearPersisted(key);
+        valueRef.current = fallback;
         setValue(fallback);
     }, [key, fallback]);
 
@@ -84,7 +92,9 @@ export function usePersistedState<T>(
                 return;
             }
 
-            setValue(readPersisted(key, parse) ?? fallback);
+            const next = readPersisted(key, parse) ?? fallback;
+            valueRef.current = next;
+            setValue(next);
         };
 
         window.addEventListener(CHANGE_EVENT, sync);
