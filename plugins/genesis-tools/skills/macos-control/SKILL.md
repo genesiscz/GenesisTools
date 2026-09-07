@@ -1,385 +1,180 @@
 ---
 name: macos-control
-description: Control macOS UI via the Accessibility API and record short screen captures reviewed frame-by-frame. Use when automating native apps — clicking buttons, filling forms, reading element state, finding elements, getting window bounds — or when the user wants a short screen recording of an animation/transition/flicker reviewed via a contact sheet, optionally pushed to a vitrinka board. Triggers on "click button in app", "fill form in native app", "automate macOS app", "list UI elements", "find button", "read text field value", "get window position", "interact with native app", "record the screen", "capture this transition", "Xs recording", "Nfps", "watch this animation", "why does it jump/flicker", "record this app for a few seconds", "push the recording to a board".
+description: Inspect and operate macOS app UI with verified window targeting, current element references, and refreshed visual evidence. Covers native Computer Use when available, the independent tools control CLI, and optional Peekaboo recording. Use for native-app clicks, forms, UI inspection, screenshots and short transition recordings.
 ---
 
-# `tools control` — macOS UI automation + screen recording
+# macOS control
 
-Fast native CLI for reading and controlling macOS app UI via the Accessibility API (10-30x faster than osascript: ~66ms get, ~130ms list, ~170ms press vs 2-5s), plus a recording runner (`tools control capture`) for multi-frame captures with timed actions. `tools macos control` is an alias.
+Honor the user's chosen tool. Native Computer Use, Peekaboo and `tools control` are different implementations with different reference formats. A working CLI or browser tool does not prove native Computer Use works.
 
-Resources in this skill: `references/capture.md` (recording discipline — read before writing capture plans), `references/peekaboo.md` (peekaboo flag tables), `references/vitrinka.md` (optional board publishing).
+## Choose the available provider
 
-## Commands
+| Provider | Entry point | References | Requirements |
+|---|---|---|---|
+| Native Computer Use | `node_repl` JavaScript with `@oai/sky`, when exposed by the host | `element_index` from the latest `get_app_state` | Host-provided native runtime; not universally available |
+| GenesisTools | `tools control see` then `tools control act` | Snapshot token plus an integer element index | macOS, Bun, Swift toolchain, Accessibility and Screen Recording |
+| Peekaboo | Its own CLI or MCP tools | Opaque IDs and snapshot returned by its inspection | Installed Peekaboo and its permissions; check the actual tool schema/help |
 
-### Discovery (find elements you want to interact with)
+`tools control` uses the repo's native `ax-tool`. It works in an ordinary terminal, Claude Code, Codex, and other agents that can run commands. It does not import Sky, require an OpenAI account, or require an agent session. Recording has a separate optional Peekaboo dependency.
 
-```bash
-tools control preflight --app <name>                 # RUN THIS FIRST — screens, frontmost, windows,
-                                                     #   elements by role, browser tab, suggested plan
-                                                     #   --wanted screens,windows,elements[,elements:<Role>],browser,frontmost,plan
-tools control apps                                   # Running apps — valid --app values
-tools control list --app <name> [--depth N]          # Flat list of all elements (max 2000)
-tools control tree --app <name> [--depth N]          # Hierarchical nested tree (shows parent-child)
-tools control find --app <name> --role button        # Fuzzy: "button" matches AXButton
-tools control find --app <name> --title "Save"       # Find by title (substring, case-insensitive)
-tools control find --app <name> --text "YouTube"     # Search title+desc+value at once (OR)
-tools control find --app <name> --desc "Chat"        # Find by description (many SwiftUI elements use this)
-tools control find --app <name> --subrole close      # Fuzzy: "close" matches AXCloseButton
-tools control find --app <name> --role button --title "Email" --exact  # --exact forces strict role match
+If the user explicitly requests native Computer Use, first check for `node_repl`, not just a tool named `computer`. Importing Sky and listing apps proves connectivity only. Prove inspection, an authorized harmless action, and refreshed state before claiming it works. If unavailable, report the exact error and stop when the user has prohibited alternatives.
+
+## Inspect, act, refresh
+
+1. Inspect the intended app and exact window. Read the tree and view its screenshot when layout or visibility matters. Treat a permission error or an empty tree as unresolved, not evidence of empty data.
+2. Select an element from that observation. Anonymous duplicate controls need an index, not a guessed label. Never translate indexes between providers.
+3. Perform one logical action. Coordinate desktop input with other sessions. Do not run concurrent focus, typing, scrolling or recording work.
+4. Refresh before choosing the next action. Verify the expected result in the new tree and, where AX is incomplete, the screenshot. A dispatch acknowledgment or exit code alone does not prove the UI changed.
+
+If a focus attempt fails, inspect the intended app again. Do not capture whatever app became frontmost. Dynamic window titles, reordered windows, stale indexes and offscreen controls all require fresh observation. Do not blindly repeat an action after a timeout; it may already have happened.
+
+## Native Computer Use when provided by the host
+
+Read the host's Computer Use instructions before using its API. The following workflow was verified with native Sky; API availability still depends on the host.
+
+In the `node_repl` JavaScript tool:
+
+```js
+var sky = (await import("@oai/sky")).sky;
+var state = await sky.get_app_state({ app: "com.apple.calculator" });
+nodeRepl.write(state.text);
 ```
 
-Role/subrole matching is fuzzy by default: `button` finds `AXButton`, `radio` finds `AXRadioButton`, `close` finds `AXCloseButton`. Add `--exact` when you need strict matching.
+Copy the observed index of the intended control into the next call. `observedIndex` below means that inspected index, never a fixed example number:
 
-### Inspection (read element details)
-
-```bash
-tools control get --app <name> --id <axId>           # Read role/title/value/description
-tools control attrs --app <name> --id <axId>         # ALL attributes with decoded values
-tools control actions --app <name> --id <axId>       # Available AX actions (AXPress, AXShowMenu, etc.)
-tools control window --app <name>                    # Window bounds: x,y,width,height + minimized/fullscreen
+```js
+await sky.click({ app: "com.apple.calculator", element_index: observedIndex });
+var state = await sky.get_app_state({ app: "com.apple.calculator" });
+nodeRepl.write(state.text);
 ```
 
-### Interaction (modify elements)
+To view the screenshot returned for that same window:
 
-```bash
-tools control set --app <name> <target> --value "text"                  # Set text field + HARD VERIFY (reads back, 1 retry)
-tools control press --app <name> <target>                               # Press (AXPress — AX action path)
-tools control click --app <name> <target>                               # CGEvent click at element center
-tools control perform --app <name> <target> --action AXShowMenu         # Any AX action
-tools control focus --app <name> [<target>]                             # Activate app + focus element
-tools control type --app <name> --text "hello" [<target>]               # Type + HARD VERIFY ([--clear] [--return])
-tools control scroll --app <name> --direction down [--amount N]         # Wheel scroll (at <target> center or --coords x,y)
-tools control scroll --app <name> <target>                              # No --direction: AXScrollToVisible (bring into view)
-tools control hotkey --keys cmd,shift,a [--app <name>]                  # Key combo (--app activates target first)
-```
-
-### Verification (wait / assert — replaces sleep-guessing)
-
-```bash
-tools control wait --app <name> <target> [--timeout 5000] [--interval 200]   # Poll until element exists
-tools control wait --app <name> <target> --gone                              # ...until it disappears
-tools control wait --app <name> <target> --for enabled|focused               # ...until enabled/focused
-tools control wait --app <name> <target> --contains "Saved"                  # ...until AXValue contains text
-tools control assert --app <name> <target> [--expect V|--contains T|--gone]  # Single-shot check, exit 1 on fail
-```
-
-Both work as plan steps too: `{ "do": "wait", "q": "Save", "timeout": 3000 }`, `{ "do": "assert", "id": "status", "contains": "Done" }` — plans become UI tests.
-
-### Vision (screenshot / annotate / OCR)
-
-```bash
-tools control screenshot --app <name> --path /tmp/s.png [--window T] [--crop x,y,w,h]
-tools control screenshot --app <name> --path /tmp/s.png --annotate [--all]   # numbered boxes on interactable
-                                                                             #   elements + legend in --json
-tools control ocr --app <name> [--window T] [--crop x,y,w,h]                 # Vision OCR: read text + pixel boxes
-tools control ocr --image /tmp/s.png                                         # OCR an existing file
-```
-
-`--annotate` is the "what can I click?" picture: every interactable element gets a numbered box, the JSON legend maps numbers to id/role/desc. `ocr` reads rendered text pixels — the check that survives apps lying in their AX tree. Both default to the app's LARGEST window; `--window <title>` scopes either. (`screenshot --annotate` = AX element legend; drawing SHAPES on an image is the separate `draw` command below.)
-
-### Draw annotations on ANY image (`draw`) — capture-agnostic post-processing
-
-```bash
-tools control draw shot.png --annotate '[{"kind":"highlight","rect":{"x":748,"y":812,"w":1246,"h":430},"label":{"text":"Build pipeline"}}]'
-tools control draw shot.png --annotate plan.json --out annotated.png [--preset review-red|callout-amber|redact]
-```
-
-Draws a JSON annotation plan onto an existing image: `highlight` (rounded-rect outline + translucent wash — the review register), `box`, `ellipse`, `arrow {from,to}`, `label {at,text}` (chip), `blur {rect,strength}` (redact secrets), `crop {rect}` (applied LAST), `grid {step,originOffset,labels}` (coordinate finder — what clickmap uses). Coordinates are NATURAL IMAGE PIXELS; annotations draw in array order; the input is never mutated without `--in-place`. `--annotate` sniffs inline JSON (`{`/`[`) vs a plan.json path. MCP twin: `annotate_image { input, annotations, output?, preset? }` on the genesis-tools server.
-
-**Which capture tool feeds it — pick deliberately:**
-- **Web app** → `playwright-mcp browser_take_screenshot`: exact CSS-pixel viewport or full-page DOM capture, no window chrome or personal UI leaking in, `fullPage` for scrollable pages, works headless.
-- **Native app / OS surface (menu bar, dialogs, Dock) / cross-app flow** → this skill's `screenshot`/capture: physical-screen capture is the only option there, but it needs the window frontmost/unoccluded and can't capture a full scrollable page.
-- Neither can produce an ANNOTATED artifact by itself — that's `draw`'s job, deliberately designed as annotate-an-existing-image so it works on ANY capture source.
-
-### Compare two screenshots (`compare-screenshot`)
-
-```bash
-tools control compare-screenshot a.png b.png [--threshold 0.1] [--max-mismatch 0.5] [--diff-out diff.png] [--resize-to-match] [--json]
-```
-
-Pixelmatch diff: mismatch count/% + similarity score; `--max-mismatch <pct>` gates the exit code (0 pass / 1 fail / 2 unusable inputs). Visual-regression checks, migration verification, "did anything change?".
-
-### Snapshot / restore (leave the machine how you found it)
-
-```bash
-tools control snapshot                          # prints JSON: mouse position + frontmost app/window
-tools control restore --snapshot '<that json>'  # restores mouse + focus (takes the literal JSON, not a file path)
-```
-
-Wrap disruptive work: `SNAP=$(tools control snapshot)` → do focus-stealing things → `tools control restore --snapshot "$SNAP"`. Plans do this declaratively with `"restore": true`.
-
-### Record a plan instead of writing one
-
-```bash
-tools control record-plan start --record all       # commands | activity | all
-# ...run tools control commands and/or drive the UI by hand...
-tools control record-plan stop --out plan.json     # synthesized, runnable plan
-tools control record-plan --record activity --duration 20 --out plan.json   # one-shot
-```
-
-`commands` logs subsequent `tools control` action commands (any terminal). `activity` records real user clicks/keys/scrolls via a CGEvent tap, clicks resolved to AX elements (id > desc > title > coords). `all` merges both, deduping our own synthetic events. Keystrokes coalesce into `type` steps, combos into `hotkey`, wheel bursts into `scroll`. Review before running.
-
-**Multi-session warning:** the commands recorder is machine-global. Commands from a different terminal/Claude session get marked `"_foreign"` in the plan and warned about in `status`/`stop`; `stop --exclude-foreign` drops them. Concurrent subagents of the SAME session are indistinguishable (same env identity) — don't run parallel agents through `tools control` while recording.
-
-### Targeting (`<target>`)
-
-All interaction/inspection commands accept:
-- `--q <query>` — **universal search** (checks id + title + desc + value + role + subrole at once). The escape hatch when you don't know WHICH attribute holds the visible text — reach for it first when unsure.
-- `--id <axId>` — exact AXIdentifier.
-- Any combination of `--role`/`--title`/`--desc`/`--subrole` (first match), `--window <title>` to scope, `--exact` for strict role matching.
-- `--depth <n>` — search depth (default 15; browser page content may need 40 — a 0-match result at default depth hints this).
-
-Elements without AXIdentifier (browser tabs, toolbar buttons, window close buttons) are fully interactable:
-
-```bash
-# By AXIdentifier (native apps with .accessibilityIdentifier)
-tools control press --app Genesis --id nav-chat
-
-# By role + description (browser elements — no id needed)
-tools control click --app "Brave Browser" --desc "Reload" --role AXButton
-tools control click --app "Brave Browser" --desc "YouTube" --role AXRadioButton
-
-# By description alone (Genesis settings tabs sharing the same id)
-tools control press --app Genesis --desc "Account" --role AXButton
-
-# By subrole (window close/minimize/fullscreen buttons have no id or desc)
-tools control click --app Genesis --subrole AXCloseButton --window Settings
-
-# --window scopes search to a specific window (by title substring)
-tools control click --app Genesis --subrole AXMinimizeButton --window Genesis
-```
-
-## `click` vs `press` vs `set`
-
-| Command | Mechanism | When to use |
-|---------|-----------|-------------|
-| `press` | AX action (AXPress) | Buttons/toggles in native apps — position-independent, works on obscured or scrolled-away elements |
-| `click` | CGEvent at element center | Real mouse click — exercises hit testing, works on web content, triggers hover/focus |
-| `set` | Text fields: CGEvent clear+type, then reads the field back (retry once, fail loud). Other elements: AXValue write | Text fields — verified content |
-| `type` | CGEvent keystrokes | When you need real typing (autocomplete, validation, non-AX inputs) |
-| `focus` | NSRunningApplication.activate + AXFocused | Bring app/element to front before typing |
-| `focus --no-activate` | AXFocused only | Focus an element WITHOUT raising the app — use whenever the user is working |
-| `dump` | whole surface, flat + geometry | Assertions about layout: overlap, clipping, off-window controls, scroll visibility |
-| `typography` | AXAttributedStringForRange | Rendered font/size/colour — legibility and contrast checks with no screenshots |
-| `hittest --at x,y` | AXUIElementCopyElementAtPosition | Is a control actually reachable, or is something drawn on top of it |
-
-Every row above is reachable as `tools control <command>`. `hittest` takes screen
-coordinates and no `--app`. `type` and `hotkey` accept `--to-pid <pid>`, which confines the
-synthetic events to that one process instead of the global HID tap; an invalid pid is
-rejected rather than downgraded to the global tap. `window` accepts `--no-raise`.
-
-### `click` scroll-safety
-
-`click` checks if the element center is within any visible window bounds. If the element is scrolled out of view (e.g. below the fold in a scroll area), it falls back automatically:
-- **Buttons**: falls back to `AXPress` (position-independent)
-- **Text fields**: falls back to `AXFocus` (focusing a text field == clicking it)
-- Output includes `"fallback": "AXPress"|"AXFocus"` and `"warning"` when this happens
-
-For elements below the fold, prefer `press` (buttons) or `focus` + `type` (text fields) over `click`.
-
-## Gotchas
-
-- **One keyboard, one frontmost app — keyboard commands are machine-exclusive.** `set`/`type`/`hotkey` activate the target app and stream real CGEvents; a CONCURRENT session doing the same steals frontmost mid-type and keystrokes land in the wrong app (hard-verify catches it as "landed NOWHERE/different element", but the work still fails). Never run two agents that both do keyboard/focus work at the same time — parallelize read-only commands (find/get/ocr/screenshot) freely, serialize interaction.
-
-- **App-level screenshots capture the wrong window** when an app has multiple windows (e.g. Genesis main + Settings) — apps mark popups/strips as "main". Always pass a window title: `tools control screenshot --app X --window "..."` (peekaboo equivalent: `--window-title`).
-- **Browser elements use AXDescription, not AXTitle** — tab text is in `desc`, not `title`. Use `find --text "YouTube"` (searches all attributes) or `find --desc "YouTube"` specifically.
-- **Browser tabs are `AXRadioButton`**, not `AXButton` — `find --role AXButton` finds bookmark bar items, `find --role AXRadioButton` finds actual tabs.
-- **Two instances of the same app** (e.g. two Brave profiles): name/bundleId resolution fails loud with a candidates list — target one with `--app <pid>` (pids from `tools control apps`). Preflight's `browserTab` carries `pidMatch`/`warning` because AppleScript resolves by name and may answer for the other instance.
-
-## Output
-
-Default output is a human-readable summary line (`pressed nav-chat`, `assert ok board-poll-hint`). Add `--json` for the raw machine JSON — `{"ok": true, ...}` on success, `{"ok": false, "error": "..."}` on failure (compact; `--pretty` to indent). In `list`/`find` tables, the label column shows title, else desc, else value — static text usually surfaces in value, buttons in desc. Safety semantics: `set`/`type` refuse when the target app is not frontmost and hard-verify the field content after typing; `screenshot --window` and `--window` scoping fail loud with a `candidates` list on 0 or 2+ matches; `window` output flags transient popups (`"transient": true`).
-
-## Plan runner (`tools control run`)
-
-ONE plan schema covers sequential automation, timed timelines, and recordings:
-- no `atMs` anywhere → sequential (delayMs between steps)
-- any step has `atMs` → timeline (steps fire at their offset from start)
-- `capture{}` present → whole plan handed to the capture runner (records video; `steps` accepted as alias for its `actions`)
-
-Top-level result: `ok` is true only when EVERY step passed; `failedSteps` carries the count — never trust `ok` alone without it. Run a JSON plan file:
-
-```json
-{
-  "app": "Genesis",
-  "restore": true,
-  "delayMs": 300,
-  "steps": [
-    { "do": "focus" },
-    { "do": "press", "id": "settings-open" },
-    { "do": "click", "desc": "Account", "role": "button" },
-    { "do": "get", "desc": "Account", "role": "button" },
-    { "do": "click", "subrole": "close", "window": "Settings" },
-    { "do": "window" }
-  ]
+```js
+if (state.screenshot) {
+  await nodeRepl.emitImage({
+    bytes: await (await import("node:fs/promises")).readFile(
+      (await import("node:url")).fileURLToPath(state.screenshot.url)
+    ),
+    mimeType: "image/png",
+  });
 }
 ```
 
-```bash
-tools control run plan.json          # human output: ok/FAIL per step + total
-tools control run plan.json --json   # machine output: full results array
-```
+If `sky is not defined`, re-import and inspect again. If you lost the prior AX text or cannot interpret a diff, request `get_app_state({ app, disableDiff: true })`. Retry a failed display-name lookup using the app's bundle ID from `list_apps()`. Do not reset a functioning REPL, enable a guessed `cua_repl` server, or ask for a session restart just because another tool name is absent. A restart is warranted only when a concrete host configuration change requires it or the available runtime cannot recover.
 
-Plan fields:
-- `app` — default app for all steps (overridable per step with `"app": "..."`)
-- `restore` — snapshot mouse + focus before, restore after
-- `delayMs` — pause between steps (default 200ms, overridable per step with `"delay": N`)
-- `exact` — force strict role/subrole matching for all steps
-- `steps[].do` — any command name (focus/click/press/set/type/get/find/attrs/actions/perform/window/scroll/hotkey/screenshot/wait/assert)
-- Steps take the same fields as CLI flags: `id`, `role`, `title`, `desc`, `subrole`, `window`, `value`, `text`, `action`, `keys`, `direction`, `amount`, `path`
-- `wait`/`assert` steps additionally take `timeout`, `interval`, `gone`, `for`, `expect`, `contains`
+## Independent CLI workflow
 
-The runner is the declarative equivalent of the shell snapshot/restore pattern but in one call, with timing and error tracking per step.
-
-## Workflow: automate a native app form
+Check the installed command contract first:
 
 ```bash
-# 1. Discover what's in the app
-tools control list --app Genesis --depth 5
-
-# 2. Find the text field (by role if no AXIdentifier)
-tools control find --app Genesis --role AXTextField
-
-# 3. Check what you can do with it
-tools control actions --app Genesis --id auth-email
-
-# 4. Fill the field
-tools control set --app Genesis --id auth-email --value "user@example.com"
-
-# 5. Press the submit button
-tools control press --app Genesis --id auth-continue
+tools control see --help
+tools control act --help
 ```
 
-## Workflow: find elements without AXIdentifier
-
-Many apps don't set AXIdentifier on all elements. Use `find` to locate by role/title/value:
+Capture state into a file so the token does not need manual transcription:
 
 ```bash
-# Find all buttons
-tools control find --app Safari --role AXButton
-
-# Find element with specific text
-tools control find --app TextEdit --role AXStaticText --value "Untitled"
-
-# Find by title substring
-tools control find --app "System Settings" --title "Wi-Fi"
+tools control see \
+  --app com.apple.calculator \
+  --path /tmp/calculator.png > /tmp/calculator-state.json
+tools json /tmp/calculator-state.json
 ```
 
-## Workflow: get window geometry (for screenshots/crops)
+Inspect the returned `elements` and view `screenshot.path`. If there are multiple windows, the command exits 1 with `windows` candidates and their current zero-based indexes. Re-run with `--window-index N`, choosing from those candidates. It never selects the largest window. The returned `window.id` is a CG window identity; it is not an element index or a window-list index. Refresh that same window with `see --app APP --window-id ID`, because focusing or closing windows can reorder their indexes. `--window-id` and `--window-index` are alternatives, not combined selectors.
+
+After selecting the intended element, substitute its observed index for `N`:
 
 ```bash
-# Get exact window bounds for screenshot cropping
-tools control window --app Genesis
-# Returns: x, y, width, height, minimized, fullscreen per window
+tools control act \
+  --app com.apple.calculator \
+  --snapshot "$(jq -r .snapshot /tmp/calculator-state.json)" \
+  --element N \
+  --action press
+tools control see \
+  --app com.apple.calculator \
+  --path /tmp/calculator-after.png > /tmp/calculator-after.json
+tools json /tmp/calculator-after.json
 ```
 
-## Recording: `tools control capture` (video + timed actions)
+This shell example needs `jq` only to read the token. Other clients can parse the JSON and pass it as a subprocess argument. Quote the token. Check each command's exit code before proceeding; do not use a pipeline that hides a failing action's exit status.
 
-Everything above is single-shot element control. For **multi-frame recording** — capture a transition/animation while firing timed actions, diff-sampled frames, contact sheets, declarative crops, vitrinka publish — use the capture runner:
+### Actions and boundaries
+
+| `act --action` | Additional fields | Behavior |
+|---|---|---|
+| `get` | none | Read the exact indexed element after validation |
+| `press` | none | Invoke the element's exposed AXPress; does not raise another window |
+| `click` | optional `--double` | Physical click at the element center or an observed global point; --background avoids activation and pointer movement, but the receiving app must accept background events |
+| `set` | `--value TEXT` | Set AXValue and read it back; fails if not settable; no typing fallback |
+| `perform` | `--ax-action NAME` | Invoke an exact action present in the observed actions list |
+| `focus` | none | Explicitly activate and raise the selected window, then focus the selected element |
+| `scroll` | `--direction up` or `down` | Synthetic wheel scrolling derives distance from the observed target viewport for --pages 1–20, or uses exact --pixels 1–10000. The modes are mutually exclusive, either may use --coords/--background, and the result must be verified |
+| `type` | `--text TEXT` | Single-line Unicode typing into the already focused element, confined to its process |
+| `key` | `--keys cmd,a`, for example | One supported key plus modifiers, confined to the selected process and focused window |
+
+Refresh after `focus`, too. `type` and `key` do not silently focus an input. Use an explicit key action to submit; embedded newlines in `type` are refused. Keyboard layouts and app event handling can vary, so verify the actual resulting text. `refreshRequired: true` means the action was dispatched, not that a business operation succeeded.
+
+Snapshots expire after 120 seconds. Validation covers process start time, window identity, indexed tree contents, geometry, state and index bounds. The tree and screenshot come from the same window, and capture refuses changes observed during inspection. Truncated trees fail rather than issuing partial references; increase `--depth` up to 50 when needed. Offscreen, minimized or ambiguous window mappings fail explicitly.
+
+This validates observable state, not permanent AX object identity or a lock on the desktop. Replacing or reordering fully identical anonymous controls with different hidden behavior cannot be detected. Client-local AX object hashes are excluded; standard window buttons are leaves so their decorative glyph animations do not invalidate references. Unsupported AX values are marked unreadable rather than fingerprinted from object addresses. Another process can still change the UI immediately after validation. Tokens are observation data, not credentials. Do not edit them, cache them for later plans, or treat them as an authorization mechanism.
+
+### Click a point without moving the real mouse
+
+Use `act --action click --background --coords X,Y` with a current snapshot. Coordinates are global screen points inside that snapshot's window; omit `--element` when using `--coords`. The target app's hit test must agree that the point belongs to the selected window. An overlapping window of the same app can therefore cause a refusal.
 
 ```bash
-tools control capture preflight [--app "<Name>"]   # ALWAYS FIRST when writing a capture plan
-tools control capture --help                       # full plan/actions contract
-tools control capture plan.json 1>result.json 2>err.log
-tools control capture plan.json --annotate draw-plan.json   # one-shot capture+draw: renders the
-                                                            #   annotation plan onto every kept frame
-                                                            #   -> <sessionDir>/annotated/ (result.annotated)
+tools control act \
+  --app Calculator \
+  --snapshot "$(jq -r .snapshot /tmp/calculator-state.json)" \
+  --action click \
+  --background \
+  --coords X,Y
 ```
 
-**Read `references/capture.md` before writing any recording plan** — it holds the full recording discipline (duration/fps parsing, capture-target resolution, timing model, crop markers, focus re-assertion, troubleshooting, anti-patterns). `references/peekaboo.md` has the underlying peekaboo flag tables. Recording requires the external `peekaboo` binary (homebrew); element control does not.
+Replace `X,Y` with the observed point. Element `x`/`y`/`width`/`height` are already global screen points. When using a screenshot pixel instead, convert its natural-size coordinates:
 
-Capture-plan notes:
-- In a `capture{}` plan run via `tools control run`, plain verbs are auto-mapped (`press`→`ax-press`, `set`→`ax-set`, `perform`→`ax-perform`) and `id`→`axId`; the capture runner also has EXTRA action types (click/hotkey/type/scroll/crop/screenshot markers — see `capture --help`) that plain plans don't.
-- If the result carries `capture.failed: true` with "peekaboo produced NO output", the peekaboo BINARY is crashing (verify standalone: `peekaboo capture live --mode screen --duration 2 --json`; 3.0.0-beta3 did this — upgrading to 3.9.4 fixed it). Element control, screenshots, annotate, and OCR don't use that path and keep working.
-- Plan `focus{}` uses ax-tool natively (peekaboo `window focus` hangs on some versions; the wrapper only falls back to it, then osascript, when ax-tool is unavailable).
-- Capture preflight cross-checks its CGWindowList view against the AX API — windows only CGWindowList sees (other Spaces, stale entries) are marked `axVisible: false` and never picked as the crop basis.
+```text
+screenX = window.x + imageX * window.width / screenshot.width
+screenY = window.y + imageY * window.height / screenshot.height
+```
 
-Capture plans support three AX action types (same targeting as the CLI):
+This sends window-addressed mouse events to the target process without warping the pointer or explicitly activating the app. The receiving app may still respond by changing its own UI or focus; verify the result. Do not emulate pointer preservation by moving the real cursor away and restoring it afterward.
 
-| Action type | What it does | Needs ax-tool binary? |
-|-------------|-------------|----------------|
-| `ax-set` | Write a text field value | No (osascript fallback) |
-| `ax-press` | Press a button/toggle | No (osascript fallback) |
-| `ax-perform` | Any AX action (AXShowMenu, AXRaise, etc.) | Yes (no fallback) |
+Current macOS requires a private CoreGraphics window-location setter for correct event routing. The tool checks that it exists before posting events and refuses the click if unavailable. This is a macOS compatibility constraint, not a Codex dependency. `press` remains the separate AX-action mechanism.
 
-The binary auto-builds on first `tools control` run. With it, all three use the fast path (~50-200ms); without it, `ax-set`/`ax-press` fall back to osascript (~2-5s) and `ax-perform` errors.
+### Existing commands
 
-### Plan authoring workflow (element discovery, then recording)
+Existing selector commands and `tools control run` remain available. They do not acquire the `see`/`act` snapshot guarantees. In particular, `tools control snapshot` saves mouse/focus state for `restore`; it is unrelated to a `see` token. Do not pass new tokens or indexes to legacy commands. Inspect their own help before using them.
+
+With the normal `tools` launcher, macOS grants generally belong to GenesisTools.app. Directly running `ax-tool` or Bun may use a different responsible process. Use the permission error to identify the missing grant; do not assume a terminal grant applies to every provider.
+
+## Recording and publishing
+
+For motion, read [references/capture.md](references/capture.md). Recording plans use the existing capture API, not `see` tokens. For explicit Peekaboo use, read [references/peekaboo.md](references/peekaboo.md) and check the installed help. For optional sharing, read [references/vitrinka.md](references/vitrinka.md). View local evidence before publishing it.
+
+## Maintenance checks
+
+From the GenesisTools repo, run the help-contract script after editing examples:
 
 ```bash
-# 1. Discover elements with ax-tool
-tools control list --app Genesis --depth 5           # see all elements
-tools control find --app Genesis --role AXButton     # find buttons
-tools control find --app Genesis --desc "Settings"   # find by description
-tools control actions --app Genesis --id nav-chat    # what actions are available?
-
-# 2. Get window bounds (same CG point system as click coords / relativeTo)
-tools control window --app Genesis
-# Returns: x, y, width, height — use for crop regions or relativeTo offsets
-
-# 3. Write the plan using discovered identifiers
-cat > /tmp/plan.json << 'EOF'
-{
-  "capture": { "mode": "screen", "screenIndex": 0, "duration": 5,
-               "activeFps": 8, "noRemote": true, "captureEngine": "cg" },
-  "focus": { "app": "Genesis" },
-  "actions": [
-    { "atMs": 500,  "do": "ax-set", "axId": "auth-email", "value": "user@test.com", "app": "Genesis" },
-    { "atMs": 1500, "do": "ax-press", "axId": "auth-continue", "app": "Genesis" },
-    { "atMs": 3000, "do": "ax-perform", "axId": "theme-picker", "action": "AXShowMenu", "app": "Genesis" }
-  ]
-}
-EOF
-
-# 4. Run the capture
-tools control capture /tmp/plan.json 1>/tmp/result.json 2>/tmp/capture.err
+bun plugins/genesis-tools/skills/macos-control/scripts/check-help.ts
 ```
 
-### When to use element commands directly vs the capture runner
-
-| Scenario | Use |
-|----------|-----|
-| Fill a form, click a button (no recording needed) | `tools control set` / `tools control press` directly |
-| Inspect element attributes, discover identifiers | `tools control list` / `find` / `attrs` / `actions` directly |
-| Get window bounds for screenshot/crop planning | `tools control window` directly |
-| Static click-through sequence with screenshots at each step | `tools control run plan.json` (~100ms/step, native screenshots) |
-| Record UI transitions while interacting with native controls | `tools control capture` plan with `ax-set`/`ax-press`/`ax-perform` actions |
-| Timed sequence (fill form, wait, press, record the result) | `tools control capture` — timing precision matters |
-| Open a dropdown and record the menu appearing | `tools control capture` with `ax-perform` + AXShowMenu |
-
-### `tools control window` as `relativeTo` source
-
-`tools control window` returns window bounds in CG points — the exact coordinate system that `relativeTo` and click coords use. Use it to compute window-relative offsets for capture plans:
+The native regression flow opens only a dedicated test app and requires desktop access:
 
 ```bash
-# Get Genesis window position
-tools control window --app Genesis --json
-# {"windows": [{"x": 49, "y": 810, "width": 900, "height": 452, ...}]}
-
-# Use in a plan with relativeTo (offsets from window top-left):
-{ "atMs": 500, "do": "click", "coords": {"x": 100, "y": 200},
-  "relativeTo": {"app": "Genesis"} }
+bun src/control/scripts/live-smoke.ts
 ```
 
-## App name resolution
+Run ordinary tests with `bun run test src/control` and native unit tests with `swift test --package-path native/ax-tool`. Never turn a failed live flow into a success claim by switching to an unrelated provider or discarding the refusal case.
 
-`--app` matches in order: exact `localizedName`, case-insensitive name, bundleIdentifier substring. Examples:
-- `--app Finder`, `--app Safari`, `--app Genesis`
-- `--app "System Settings"` (quote names with spaces)
-- `--app com.apple.finder` (bundle ID substring)
+### Additional native actions
 
-## Permissions
+The independent control CLI also supports drag, select and paste. Drag accepts --to X,Y, optional --button left/right/middle, --duration 0.1–5, --coords and --background. Background drag and right-click have passed the dedicated AppKit fixture twice; they still depend on the receiving app accepting background events. A successful dispatch is not proof of acceptance.
 
-Requires Accessibility access for the calling terminal process. Grant in System Settings > Privacy & Security > Accessibility.
+Scroll accepts --direction up, down, left or right. --pages 1–20 derives synthetic wheel distance from the observed target viewport; --pixels 1–10000 requests an exact distance. The modes are mutually exclusive, either may use --coords and --background, and background behavior depends on the receiving app; refresh and verify the result.
 
-## Common AX actions
+Select accepts --range START,LENGTH as a UTF-16 range or a uniquely resolved --text target, with optional --prefix and --suffix. Paste requires --text and a focused target; --format accepts text, md or html, and --selection accepts text, cursor_before or cursor_after. Clipboard restoration is best-effort: the original is restored only when the observed clipboard change-count is still the one produced by the action; a concurrent copy creates a residual race and restoration is skipped. Public paste can carry text and HTML data, but raw markup is not guaranteed to render as rich text.
 
-| Action | Description |
-|--------|-------------|
-| `AXPress` | Click/activate (use `press` shortcut) |
-| `AXRaise` | Bring window to front |
-| `AXShowMenu` | Open context/dropdown menu |
-| `AXConfirm` | Confirm dialog |
-| `AXCancel` | Cancel dialog |
-| `AXIncrement` / `AXDecrement` | Stepper/slider |
-| `AXPick` | Select menu item |
+The background event path uses the localized Apple private SPI CGEventSetWindowLocation and WebKit's private window field 51. It refuses when the setter is unavailable. This documents the independent CLI's compatibility boundary and does not claim full Sky internals or parity across all applications.
