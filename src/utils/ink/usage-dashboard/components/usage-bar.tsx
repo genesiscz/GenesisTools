@@ -1,5 +1,5 @@
-import { colorForPct } from "@app/claude/lib/usage/constants";
 import { Text } from "ink";
+import { colorForPercent } from "../lib/colors";
 
 interface UsageBarProps {
     utilization: number;
@@ -30,7 +30,7 @@ export function UsageBar({ utilization, width = 30, color: colorOverride }: Usag
         filled = width - 1;
     }
 
-    const color = colorOverride ?? colorForPct(pct);
+    const color = colorOverride ?? colorForPercent(pct);
 
     return (
         <Text>

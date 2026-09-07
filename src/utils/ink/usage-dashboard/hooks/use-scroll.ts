@@ -1,5 +1,6 @@
 import { useInput } from "ink";
 import { useState } from "react";
+import { isModalOpen } from "./input-scope";
 
 interface ScrollOptions {
     totalItems: number;
@@ -31,7 +32,9 @@ export function useScroll({
 
     useInput(
         (input, key) => {
-            if (!enabled) {
+            // An open modal owns the arrow keys: without this the account checklist moved
+            // its own cursor AND scrolled the list behind it with one keystroke.
+            if (!enabled || isModalOpen()) {
                 return;
             }
 
