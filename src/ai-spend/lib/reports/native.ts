@@ -1,4 +1,7 @@
 import { basename, dirname } from "node:path";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { resolveDriverRoots, rootForFile } from "../account-roots";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
@@ -163,8 +166,95 @@ function projectFromFile(file: string, source: SourceId): string {
     return "";
 }
 
-function loadDriverFiles(driver: MonitorDriver, home: string, source: SourceId, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    const files = findRecentTranscripts(driver.roots(home), minMtimeMs, driver);
+export interface NativeChunkOptions {
+    driver: MonitorDriver;
+    source: SourceId;
+    /** Absolute path, for the session id and the project name. */
+    file: string;
+    /** Complete lines only — a chunk cut mid-line loses that line in both halves. */
+    chunk: string;
+    /** Codex's sticky model and cumulative totals, from the previous chunk. */
+    state?: unknown;
+}
+
+export interface NativeChunkResult {
+    events: SpendEvent[];
+    /** Feed back as `state` for the next chunk of the same file. */
+    state: unknown;
+}
+
+/**
+ * Turn one chunk of ONE native transcript into events.
+ *
+ * Split out of the whole-file loader so the incremental series cache
+ * (`events-cache.ts`) parses appended bytes with exactly this code. Two
+ * parsers for the same dialect would drift, and the drift would show up as a
+ * series and a report disagreeing about the same file.
+ */
+export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult {
+    const { driver, source, file, chunk } = options;
+    const events: SpendEvent[] = [];
+
+    if (source === "claude") {
+        for (const line of chunk.split("\n")) {
+            events.push(...parseClaudeLine(line, file));
+        }
+
+        return { events, state: undefined };
+    }
+
+    const parser = driver.createParser({ file, state: options.state });
+    const sessionId = sessionFromFile(file, source);
+    const project = projectFromFile(file, source);
+
+    for (const line of chunk.split("\n")) {
+        parser.parseLine(line, (event: DriverUsageEvent) => {
+            events.push({
+                source,
+                id: event.id,
+                model: event.model,
+                timestamp: event.timestamp,
+                sessionId,
+                project,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                cacheCreationTokens: event.cacheCreationTokens,
+                cacheReadTokens: event.cacheReadTokens,
+                recordedCostUsd: event.recordedCostUsd,
+                reasoningOutputTokens: event.reasoningOutputTokens,
+            });
+        });
+    }
+
+    return { events, state: parser.snapshot() };
+}
+
+/**
+ * Which trees to read, and who owns each one.
+ *
+ * The reports resolve roots through the SAME `resolveDriverRoots` the monitor
+ * and the series cache use, so `daily`, `monitor` and `series` cannot disagree
+ * about which account a transcript belongs to.
+ */
+export interface LoadNativeOptions {
+    home: string;
+    minMtimeMs?: number;
+    accounts?: readonly AccountEntry[];
+    discoveredHomes?: readonly DiscoveredHome[];
+}
+
+function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadNativeOptions): SpendEvent[] {
+    const roots = resolveDriverRoots({
+        driver,
+        userHome: options.home,
+        accounts: options.accounts,
+        discoveredHomes: options.discoveredHomes,
+    });
+    const files = findRecentTranscripts(
+        roots.map((root) => root.path),
+        options.minMtimeMs ?? MIN_MTIME,
+        driver
+    );
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -174,51 +264,38 @@ function loadDriverFiles(driver: MonitorDriver, home: string, source: SourceId, 
             continue;
         }
 
-        if (source === "claude") {
-            for (const line of content.split("\n")) {
-                events.push(...parseClaudeLine(line, file));
+        // One lookup for both fields: `home` must come from the same row
+        // `accountId` did, and a second selector is how the two drift apart.
+        const root = rootForFile(file, roots);
+        const accountId = root?.accountId;
+        const home = root?.home;
+
+        for (const event of parseNativeChunk({ driver, source, file, chunk: content }).events) {
+            if (accountId !== undefined) {
+                event.accountId = accountId;
             }
 
-            continue;
-        }
+            if (home !== undefined) {
+                event.home = home;
+            }
 
-        const parser = driver.createParser({ file, state: undefined });
-        const sessionId = sessionFromFile(file, source);
-        const project = projectFromFile(file, source);
-
-        for (const line of content.split("\n")) {
-            parser.parseLine(line, (event: DriverUsageEvent) => {
-                events.push({
-                    source,
-                    id: event.id,
-                    model: event.model,
-                    timestamp: event.timestamp,
-                    sessionId,
-                    project,
-                    inputTokens: event.inputTokens,
-                    outputTokens: event.outputTokens,
-                    cacheCreationTokens: event.cacheCreationTokens,
-                    cacheReadTokens: event.cacheReadTokens,
-                    recordedCostUsd: event.recordedCostUsd,
-                    reasoningOutputTokens: event.reasoningOutputTokens,
-                });
-            });
+            events.push(event);
         }
     }
 
     return events;
 }
 
-export function loadClaudeEvents(home: string, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    return loadDriverFiles(claudeDriver, home, "claude", minMtimeMs);
+export function loadClaudeEvents(options: LoadNativeOptions): SpendEvent[] {
+    return loadDriverFiles(claudeDriver, "claude", options);
 }
 
-export function loadCodexEvents(home: string, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    return loadDriverFiles(codexDriver, home, "codex", minMtimeMs);
+export function loadCodexEvents(options: LoadNativeOptions): SpendEvent[] {
+    return loadDriverFiles(codexDriver, "codex", options);
 }
 
-export function loadGrokEvents(home: string, minMtimeMs = MIN_MTIME): SpendEvent[] {
-    return loadDriverFiles(grokDriver, home, "grok", minMtimeMs);
+export function loadGrokEvents(options: LoadNativeOptions): SpendEvent[] {
+    return loadDriverFiles(grokDriver, "grok", options);
 }
 
 export function nativePriceCandidates(source: SourceId, model: string): string[] {

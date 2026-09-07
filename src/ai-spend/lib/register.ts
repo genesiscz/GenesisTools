@@ -1,16 +1,24 @@
 import { homedir } from "node:os";
+import * as p from "@clack/prompts";
+import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
+import { loadSpendAccountsContext } from "./accounts-context";
 import { aggregate } from "./aggregate";
 import { loadPricing } from "./config";
-import { findTranscriptFiles, readEvents } from "./discover";
-import { AGENT_IDS } from "./drivers";
-import { buildMonitorReport } from "./monitor";
+import { AGENT_IDS, type AgentId } from "./drivers";
+import { buildMonitorReport, type MonitorReport } from "./monitor";
 import { renderSessions, renderSummary, renderToday } from "./render";
-import { registerCcusageCommands } from "./reports/commands";
+import { addAccountFlags, registerCcusageCommands } from "./reports/commands";
+import { loadEvents } from "./reports/load";
+import type { SpendEvent } from "./reports/types";
+import { buildSpendSeries, type TranscriptGrain } from "./series";
 import { resolveSince } from "./since";
-import type { Report } from "./types";
+import type { Report, UsageEvent } from "./types";
+
+/** Grains `buildSpendSeries` accepts. `minute` is call-log only. */
+const TRANSCRIPT_GRAINS: readonly TranscriptGrain[] = ["hour", "day", "week"];
 
 export interface SpendOpts {
     since?: string;
@@ -24,11 +32,31 @@ export type SpendView = "summary" | "sessions" | "today";
 
 const DEFAULT_SINCE = "30d";
 
+/**
+ * `aggregate` predates the ccusage reports and speaks its own event shape. The
+ * two differ only in the name of the id field, so bridging beats forking the
+ * aggregator — which is what kept `discover.ts` alive as a second discovery
+ * stack that missed `~/.config/claude/projects` and `CLAUDE_CONFIG_DIR`.
+ */
+function toUsageEvent(event: SpendEvent): UsageEvent {
+    return {
+        messageId: event.id,
+        model: event.model,
+        timestamp: event.timestamp,
+        project: event.project,
+        sessionId: event.sessionId,
+        inputTokens: event.inputTokens,
+        outputTokens: event.outputTokens,
+        cacheCreationTokens: event.cacheCreationTokens,
+        cacheReadTokens: event.cacheReadTokens,
+    };
+}
+
 async function buildReport(opts: SpendOpts, view: SpendView): Promise<Report> {
     const now = new Date();
     const storage = new Storage("ai-spend");
     const pricing = await loadPricing(storage);
-    const events = readEvents(findTranscriptFiles(homedir()));
+    const events = loadEvents({ home: homedir(), sources: ["claude"] }).map(toUsageEvent);
 
     let sinceDay: string | undefined;
     if (view === "today") {
@@ -78,6 +106,194 @@ export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
     emit(await buildReport(opts, view), opts, view);
 }
 
+/**
+ * The `monitor --json` envelope.
+ *
+ * 🛑 `today.cost`, `today.tokens`, `week.cost`, `week.tokens` are decoded
+ * STRICTLY by the Genesis app's `SpendClient`. They must stay numbers at these
+ * exact paths; extra keys are ignored by its `JSONDecoder`, so `accounts` may
+ * ride alongside, but nothing may move cost into a new top-level key.
+ */
+export function monitorEnvelope(report: MonitorReport): Record<string, unknown> {
+    const envelope: Record<string, unknown> = {
+        today: report.today,
+        week: report.week,
+        todayDate: report.todayDate,
+        weekStart: report.weekStart,
+        timezone: report.timezone,
+        agents: report.agents,
+    };
+
+    if (report.accounts) {
+        envelope.accounts = report.accounts;
+    }
+
+    return envelope;
+}
+
+interface SeriesOpts {
+    from?: string;
+    to?: string;
+    grain?: string | true;
+    account?: string[];
+    allHomes?: boolean;
+    sources?: string;
+    byModel?: boolean;
+    json?: boolean;
+}
+
+interface MonitorOpts {
+    json?: boolean;
+    allHomes?: boolean;
+    account?: string[];
+}
+
+const SERIES_DEFAULT_DAYS = 7;
+
+/**
+ * `null` means "rejected, diagnostic already printed" and the action returns.
+ *
+ * Throwing instead would reach `runTool`'s uncaught `program.parseAsync()`, so a
+ * mistyped `--sources` printed a Bun stack trace with a source excerpt where a
+ * one-line flag diagnostic belongs.
+ */
+function parseSources(raw: string | undefined): AgentId[] | undefined | null {
+    if (!raw) {
+        return undefined;
+    }
+
+    const wanted = raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+    const unknown = wanted.filter((value) => !AGENT_IDS.includes(value as AgentId));
+
+    if (unknown.length > 0) {
+        out.error(
+            suggestEnumFlag("tools ai-spend series", "--sources", AGENT_IDS, {
+                subcommand: ["series"],
+                given: unknown.join(", "),
+            })
+        );
+        process.exitCode = 1;
+
+        return null;
+    }
+
+    return wanted as AgentId[];
+}
+
+async function resolveGrain(raw: string | true | undefined): Promise<TranscriptGrain | null> {
+    if (typeof raw === "string" && (TRANSCRIPT_GRAINS as readonly string[]).includes(raw)) {
+        return raw as TranscriptGrain;
+    }
+
+    // Enumerated flag: commander's own "argument missing" never lists the values,
+    // so the flag is declared optional and the empty case is handled here.
+    //
+    // A value that is PRESENT but wrong is not a missing value. Prompting for it
+    // would swallow the typo and then exit 0 as though `--grain bad` had been
+    // honoured, so only an omitted or bare `--grain` reaches the prompt.
+    const given = typeof raw === "string" && raw.length > 0 ? raw : undefined;
+
+    if (given !== undefined || !isInteractive()) {
+        out.error(
+            suggestEnumFlag("tools ai-spend series", "--grain", TRANSCRIPT_GRAINS, {
+                subcommand: ["series"],
+                given,
+            })
+        );
+        process.exitCode = 1;
+
+        return null;
+    }
+
+    const picked = await p.select({
+        message: "Bucket width",
+        options: TRANSCRIPT_GRAINS.map((value) => ({ value, label: value })),
+    });
+
+    if (p.isCancel(picked)) {
+        return null;
+    }
+
+    return picked;
+}
+
+function renderSeries(result: Awaited<ReturnType<typeof buildSpendSeries>>): string {
+    if (result.points.length === 0) {
+        return "no transcript spend in that window";
+    }
+
+    const names = new Map(result.accounts.map((account) => [account.accountId, account.accountName]));
+    const lines = result.points.map((point) => {
+        const split = Object.entries(point.byAccount)
+            .map(([id, bucket]) => `${names.get(id) ?? id} $${bucket.costUsd.toFixed(2)}`)
+            .join(" · ");
+
+        return `${point.t}  $${point.costUsd.toFixed(2)}  ${point.tokens.toLocaleString()} tok  ${split}`;
+    });
+
+    if (result.unpriced > 0) {
+        lines.push(`${result.unpriced} event(s) had no known rate — their cost is missing, not zero`);
+    }
+
+    return lines.join("\n");
+}
+
+function registerSeriesCommand(program: Command): Command {
+    const series = program
+        .command("series")
+        .description("Transcript spend over time, bucketed and split by account")
+        .option("--from <when>", `ISO instant or YYYY-MM-DD (default: ${SERIES_DEFAULT_DAYS} days ago)`)
+        .option("--to <when>", "ISO instant or YYYY-MM-DD, exclusive (default: now)")
+        .option("--grain [width]", `Bucket width: ${TRANSCRIPT_GRAINS.join(" | ")}`)
+        .option("--sources <ids>", `Comma-separated subset of ${AGENT_IDS.join(", ")}`)
+        .option("--by-model", "Also split each point by model");
+
+    addAccountFlags(series).action(async (_opts: SeriesOpts, cmd: Command) => {
+        const opts = cmd.optsWithGlobals() as SeriesOpts;
+        // Ahead of the grain prompt: a mistyped --sources must not sit behind an
+        // interactive question the user then answers for nothing.
+        const sources = parseSources(opts.sources);
+
+        if (sources === null) {
+            return;
+        }
+
+        const grain = await resolveGrain(opts.grain);
+
+        if (!grain) {
+            return;
+        }
+
+        const now = new Date();
+        const from = opts.from ?? new Date(now.getTime() - SERIES_DEFAULT_DAYS * 86_400_000).toISOString();
+        const context = await loadSpendAccountsContext({ allHomes: opts.allHomes });
+        const result = await buildSpendSeries(
+            {
+                from,
+                to: opts.to ?? now.toISOString(),
+                grain,
+                sources,
+                accountIds: opts.account,
+                byModel: opts.byModel,
+            },
+            { accounts: context.accounts, discoveredHomes: context.discoveredHomes }
+        );
+
+        if (opts.json) {
+            out.result(result);
+
+            return;
+        }
+
+        out.println(renderSeries(result));
+    });
+
+    return program;
+}
+
 export function registerSpendCommand(program: Command): Command {
     addSpendOptions(program).action(async (_opts: SpendOpts, cmd: Command) => {
         await runSpend(cmd, "summary");
@@ -102,44 +318,51 @@ export function registerSpendCommand(program: Command): Command {
     );
 
     registerCcusageCommands(program);
+    registerSeriesCommand(program);
 
-    program
+    const monitor = program
         .command("monitor")
         .description(
             "Today + current week (local timezone, Monday start) across claude/codex/grok in <1s — for status bars/monitors"
         )
-        .option("--json", "Emit {today, week, todayDate, weekStart, timezone, agents} as JSON")
-        .action(async (_opts: { json?: boolean }, cmd: Command) => {
-            // Root also defines --json (addSpendOptions), so commander binds it there;
-            // optsWithGlobals() merges it back — same as runSpend above.
-            const opts = cmd.optsWithGlobals() as { json?: boolean };
-            const storage = new Storage("ai-spend");
-            const pricing = await loadPricing(storage);
-            const report = buildMonitorReport({ pricing, storage });
+        .option("--json", "Emit {today, week, todayDate, weekStart, timezone, agents, accounts} as JSON");
 
-            if (opts.json) {
-                out.result({
-                    today: report.today,
-                    week: report.week,
-                    todayDate: report.todayDate,
-                    weekStart: report.weekStart,
-                    timezone: report.timezone,
-                    agents: report.agents,
-                });
-
-                return;
-            }
-
-            const perAgent = AGENT_IDS.filter((id) => report.agents[id].week.tokens > 0)
-                .map((id) => `${id} $${report.agents[id].today.cost.toFixed(2)}`)
-                .join(" · ");
-
-            out.println(
-                `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
-                    `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]` +
-                    (perAgent ? `\ntoday by agent: ${perAgent}` : "")
-            );
+    addAccountFlags(monitor).action(async (_opts: MonitorOpts, cmd: Command) => {
+        // Root also defines --json (addSpendOptions), so commander binds it there;
+        // optsWithGlobals() merges it back — same as runSpend above.
+        const opts = cmd.optsWithGlobals() as MonitorOpts;
+        const storage = new Storage("ai-spend");
+        const pricing = await loadPricing(storage);
+        const context = await loadSpendAccountsContext({ allHomes: opts.allHomes });
+        const report = buildMonitorReport({
+            pricing,
+            storage,
+            accounts: context.accounts,
+            discoveredHomes: context.discoveredHomes,
+            accountIds: opts.account,
         });
+
+        if (opts.json) {
+            out.result(monitorEnvelope(report));
+
+            return;
+        }
+
+        const perAgent = AGENT_IDS.filter((id) => report.agents[id].week.tokens > 0)
+            .map((id) => `${id} $${report.agents[id].today.cost.toFixed(2)}`)
+            .join(" · ");
+        const perAccount = (report.accounts ?? [])
+            .filter((account) => account.today.tokens > 0)
+            .map((account) => `${account.accountName} $${account.today.cost.toFixed(2)}`)
+            .join(" · ");
+
+        out.println(
+            `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
+                `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]` +
+                (perAgent ? `\ntoday by agent: ${perAgent}` : "") +
+                (perAccount ? `\ntoday by account: ${perAccount}` : "")
+        );
+    });
 
     return program;
 }

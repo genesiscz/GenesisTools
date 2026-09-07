@@ -20,6 +20,7 @@ Also reachable as `tools claude spending`, which is an alias for this tool.
 | `sessions` | Most expensive sessions leaderboard |
 | `today` | Today's spend, by UTC day |
 | `monitor` | Today + current week (LOCAL timezone, Monday week start) across Claude Code, Codex and Grok in well under 1s — for status bars. `--json` emits `{today, week, todayDate, weekStart, timezone, agents}` |
+| `series` | Transcript spend over time, bucketed and split by account. `--grain hour\|day\|week`, `--from`, `--to`, `--account`, `--sources`, `--by-model`, `--json` |
 | `daily` / `weekly` / `monthly` | All detected sources grouped by period (ccusage-compatible JSON) |
 | `session` | All detected sources grouped by session |
 | `blocks` | Claude Code 5-hour billing windows (`--active`, `--recent`) |
@@ -106,6 +107,7 @@ Measured on this machine (11.5k Claude transcripts, 207 Codex rollouts, 2.9k Gro
 
 ## Notes
 
+- `series` answers "how did spend move over time" for the dashboard. Buckets are LOCAL, and its per-file event cache (`~/.genesis-tools/ai-spend/cache/events-cache.json`, rolling 90 days) means an unchanged transcript is never re-parsed. Claude transcripts carry no account marker, so they report as one `claude (all accounts)` row; transcripts under a home no account claims report as `(unbound)`. Per-account Claude numbers come from the call log instead (`queryUsage({ grain })`).
 - `summary`, `sessions` and `today` report on Claude Code sessions specifically; only `monitor` reads Codex and Grok as well. For token and cost analytics of the `ask` tool, use [`tools usage`](../usage/README.md).
 - Costs are derived from recorded token counts and model rates. A number here is an estimate of what was consumed, not an invoice fetched from a billing API.
 - `tools claude usage` is a different thing: an interactive TUI showing API usage and account limits. This tool is the historical spend view.

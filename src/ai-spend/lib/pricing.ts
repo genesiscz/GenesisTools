@@ -59,12 +59,7 @@ function fromRegistry(): PricingTable {
     return table;
 }
 
-/** Claude 3.5 Haiku predates the curated registry — kept literal here (exact ids). */
-const LEGACY_PRICING: PricingTable = {
-    "claude-3-5-haiku": { input: 0.8, output: 4, cacheWrite: 1.0, cacheRead: 0.08 },
-};
-
-export const DEFAULT_PRICING: PricingTable = { ...fromRegistry(), ...LEGACY_PRICING };
+export const DEFAULT_PRICING: PricingTable = fromRegistry();
 
 export function priceFor(model: string, pricing: PricingTable): ModelPriceEntry | null {
     const exact = pricing[model];

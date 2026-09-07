@@ -1,20 +1,16 @@
+import { spendBucketKey } from "@genesiscz/utils/ai/usage";
 import type { PeriodGrain } from "./types";
+
+/**
+ * Re-exported rather than redefined: `isValidTimeZone` guards exactly the
+ * `Intl.DateTimeFormat` construction `spendBucketKey` performs, so the ccusage
+ * reports and the series producers cannot disagree about which zone strings are
+ * usable.
+ */
+export { isValidTimeZone, systemTimeZone } from "@genesiscz/utils/ai/usage";
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const COMPACT_DAY = /^\d{8}$/;
-
-export function systemTimeZone(): string {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-}
-
-export function isValidTimeZone(timeZone: string): boolean {
-    try {
-        Intl.DateTimeFormat("en-US", { timeZone });
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 /** Accept ccusage `YYYY-MM-DD` or `YYYYMMDD`. */
 export function parseDayArg(raw: string | undefined): string | undefined {
@@ -56,6 +52,15 @@ export function zonedDay(timestamp: string, timeZone: string): string {
     }).formatToParts(date);
     const get = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
     return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/**
+ * Local hour bucket, `YYYY-MM-DDTHH`. The finest grain the transcript series
+ * offers: agents stamp events to the second, but a per-minute line drawn from
+ * turn-level records is noise, not signal.
+ */
+export function hourKey(timestamp: string, timeZone: string): string {
+    return spendBucketKey(timestamp, "hour", timeZone);
 }
 
 export function addDays(ymd: string, days: number): string {
