@@ -33,6 +33,10 @@ function periodCell(row: Record<string, unknown>): string {
 }
 
 function costCell(row: Record<string, unknown>): string {
+    if (row.costUSD === null || row.totalCost === null) {
+        return "unknown";
+    }
+
     if (typeof row.totalCost === "number") {
         return formatCost(row.totalCost);
     }
@@ -85,7 +89,7 @@ export function renderPeriodTable(report: Record<string, unknown>, grain: Period
                             num(model.cacheCreationTokens) +
                             num(model.cacheReadTokens)
                     ),
-                    formatCost(num(model.cost)),
+                    costCell({ costUSD: model.cost }),
                 ]);
             }
         }
@@ -100,7 +104,7 @@ export function renderPeriodTable(report: Record<string, unknown>, grain: Period
         formatTokens(num(totals.cacheCreationTokens)),
         formatTokens(num(totals.cacheReadTokens)),
         formatTokens(num(totals.totalTokens)),
-        typeof totals.totalCost === "number" ? formatCost(totals.totalCost) : formatCost(num(totals.costUSD)),
+        costCell(totals),
     ]);
 
     return table.toString();
@@ -146,7 +150,7 @@ export function renderSessionTable(report: Record<string, unknown>, breakdown: b
                             num(model.cacheCreationTokens) +
                             num(model.cacheReadTokens)
                     ),
-                    formatCost(num(model.cost)),
+                    costCell({ costUSD: model.cost }),
                 ]);
             }
         }

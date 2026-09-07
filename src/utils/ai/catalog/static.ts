@@ -378,6 +378,78 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
     "openai",
     [
         {
+            id: "gpt-6-astra",
+            displayName: "GPT-6 Astra",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-09-07: https://developers.openai.com/api/docs/models/gpt-6-astra
+            // The full request is re-rated above 272K INPUT tokens, including cache.
+            pricing: {
+                inputPer1M: 10,
+                outputPer1M: 50,
+                cachedReadPer1M: 1,
+                cachedCreatePer1M: 12.5,
+                rules: [
+                    {
+                        ctxFrom: 272_001,
+                        inputPer1M: 20,
+                        outputPer1M: 75,
+                        cachedReadPer1M: 2,
+                        cachedCreatePer1M: 25,
+                    },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 20,
+                        outputPer1M: 100,
+                        cachedReadPer1M: 2,
+                        cachedCreatePer1M: 25,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 40,
+                        outputPer1M: 150,
+                        cachedReadPer1M: 4,
+                        cachedCreatePer1M: 50,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
+            id: "gpt-5.6-sol",
+            displayName: "GPT-5.6 Sol",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Published Sol promotion, verified 2026-09-07; available at least through 2026-11-21.
+            // https://developers.openai.com/api/docs/pricing
+            pricing: {
+                inputPer1M: 4,
+                outputPer1M: 20,
+                cachedReadPer1M: 0.4,
+                cachedCreatePer1M: 5,
+                rules: [
+                    { ctxFrom: 272_001, inputPer1M: 8, outputPer1M: 30, cachedReadPer1M: 0.8, cachedCreatePer1M: 10 },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 8,
+                        outputPer1M: 40,
+                        cachedReadPer1M: 0.8,
+                        cachedCreatePer1M: 10,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 16,
+                        outputPer1M: 60,
+                        cachedReadPer1M: 1.6,
+                        cachedCreatePer1M: 20,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
             id: "gpt-5.6",
             displayName: "GPT-5.6",
             contextWindow: 1_050_000,

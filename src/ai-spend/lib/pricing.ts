@@ -1,4 +1,6 @@
 import { byProvider, effectivePricing, stripModelVariantSuffix } from "@genesiscz/utils/ai/catalog";
+import { calculateCallCostUsd } from "@genesiscz/utils/ai/llm-cost";
+import { toLanguageModelUsage } from "@genesiscz/utils/ask/usage-tokens";
 import type { ModelPrice, ModelPriceEntry, PricingTable, TokenTotals } from "./types";
 
 /**
@@ -77,7 +79,10 @@ export function priceFor(model: string, pricing: PricingTable): ModelPriceEntry 
  * size. `effectivePricing` is the single resolver for that (see the AI-subsystem
  * rules); this only translates its per-1M fields into the flat shape costOf wants.
  */
-export function resolvePrice(entry: ModelPriceEntry, context: { at?: Date; contextTokens?: number } = {}): ModelPrice {
+export function resolvePrice(
+    entry: ModelPriceEntry,
+    context: { at?: Date; contextTokens?: number; serviceTier?: string } = {}
+): ModelPrice {
     if (!entry.rules?.length) {
         return entry;
     }
@@ -103,10 +108,19 @@ export function resolvePrice(entry: ModelPriceEntry, context: { at?: Date; conte
 
 export function costOf(tokens: TokenTotals, price: ModelPrice): number {
     return (
-        (tokens.input * price.input +
-            tokens.output * price.output +
-            tokens.cacheWrite * price.cacheWrite +
-            tokens.cacheRead * price.cacheRead) /
-        1_000_000
+        calculateCallCostUsd(
+            {
+                inputPer1M: price.input,
+                outputPer1M: price.output,
+                cachedCreatePer1M: price.cacheWrite,
+                cachedReadPer1M: price.cacheRead,
+            },
+            toLanguageModelUsage({
+                inputTokens: tokens.input,
+                outputTokens: tokens.output,
+                cacheWriteTokens: tokens.cacheWrite,
+                cachedInputTokens: tokens.cacheRead,
+            })
+        ) ?? 0
     );
 }

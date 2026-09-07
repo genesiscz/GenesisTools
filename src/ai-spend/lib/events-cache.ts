@@ -47,7 +47,7 @@ export function seriesRetentionCutoffMs(now: Date): number {
 }
 
 /** 2: entries gained `id`, without which cross-file dedup cannot work. */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 /** Same bound as the monitor: duplicates of one event sit adjacent in a transcript. */
 const RECENT_ID_WINDOW = 50;

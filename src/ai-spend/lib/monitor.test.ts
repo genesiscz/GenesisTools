@@ -162,7 +162,7 @@ describe("monitor report", () => {
         expect(third.today.tokens).toBe(3_850_000);
     });
 
-    test("a version-3 cache is discarded, and the version-4 one it writes is reused", () => {
+    test("an old cache is discarded, and the current one it writes is reused", () => {
         const storage = new Storage("ai-spend");
         const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
 
@@ -170,9 +170,9 @@ describe("monitor report", () => {
         // file is dropped rather than reported under a guessed account.
         buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
-        expect(written.version).toBe(4);
+        expect(written.version).toBe(5);
 
-        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 3 }, { strict: true }));
+        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 4 }, { strict: true }));
         const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         expect(afterDowngrade.parsedFiles).toBe(3);
         expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);

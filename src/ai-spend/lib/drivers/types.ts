@@ -12,6 +12,7 @@
  */
 
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import type { CodexContext } from "./codex-context";
 
 /** The agents `monitor` knows how to read. */
 export type AgentId = "claude" | "codex" | "grok";
@@ -55,6 +56,8 @@ export interface DriverUsageEvent {
      * the same figure. Absent means "derive it from the catalog rates".
      */
     recordedCostUsd?: number;
+    serviceTier?: string;
+    codex?: CodexContext;
 }
 
 /**

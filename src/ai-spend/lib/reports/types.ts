@@ -1,3 +1,5 @@
+import type { CodexContext } from "../drivers/codex-context";
+
 export const SOURCE_IDS = [
     "claude",
     "codex",
@@ -20,12 +22,12 @@ export const SOURCE_IDS = [
 export type SourceId = (typeof SOURCE_IDS)[number];
 
 export type PeriodGrain = "daily" | "weekly" | "monthly";
-export type ReportKind = PeriodGrain | "session" | "blocks" | "statusline";
+export type ReportKind = PeriodGrain | "session" | "blocks" | "statusline" | "reviews";
 export type CostMode = "auto" | "calculate" | "display";
 
 export const SOURCE_REPORTS: Record<SourceId, readonly ReportKind[]> = {
     claude: ["daily", "weekly", "monthly", "session", "blocks", "statusline"],
-    codex: ["daily", "monthly", "session"],
+    codex: ["daily", "monthly", "session", "reviews"],
     opencode: ["daily", "weekly", "monthly", "session"],
     amp: ["daily", "monthly", "session"],
     droid: ["daily", "monthly", "session"],
@@ -55,6 +57,8 @@ export interface SpendEvent {
     cacheReadTokens: number;
     reasoningOutputTokens?: number;
     recordedCostUsd?: number;
+    serviceTier?: string;
+    codex?: CodexContext;
     isSidechain?: boolean;
     /**
      * `AccountEntry.id` of the account whose root this file sat under. Absent

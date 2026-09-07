@@ -1,5 +1,76 @@
 # tools ai-spend
 
+Also available as `tools ai-usage`.
+
+## Codex pricing and review passes
+
+```bash
+tools ai-usage codex daily --since 2026-09-07 --breakdown
+tools ai-usage codex reviews --since 2026-09-07 --timezone Europe/Prague
+tools ai-usage codex reviews --since 2026-09-07 --json
+tools ai-usage codex session --id rollout-example --json
+```
+
+The existing `--account <id...>`, `--all-homes`, date and timezone filters apply.
+`CODEX_HOME` can select a specific home when no configured account claims the roots.
+The alias uses the same `ai-spend` configuration and storage.
+
+Codex daily/monthly/session reports now include an `analysis` object with model costs,
+activity totals, review passes, long-context counts and pricing coverage.
+`codex reviews` returns that analysis directly. Costs are API-equivalent estimates,
+not booked subscription charges.
+
+Astra pricing comes from the shared catalog, verified against
+[OpenAI's pricing page](https://developers.openai.com/api/docs/pricing) and
+[Astra's model page](https://developers.openai.com/api/docs/models/gpt-6-astra) on 2026-09-07:
+
+| USD per million tokens | Input | Cache read | Cache write | Output |
+| --- | ---: | ---: | ---: | ---: |
+| Standard, input at most 272,000 | 10 | 1 | 12.50 | 50 |
+| Standard, input above 272,000 | 20 | 2 | 25 | 75 |
+| Fast, input at most 272,000 | 20 | 2 | 25 | 100 |
+| Fast, input above 272,000 | 40 | 4 | 50 | 150 |
+
+Each request is priced **before** grouping. Input length includes cached input and
+cache writes; output does not determine the band. Above the boundary, the higher
+rates apply to the entire request, not just excess tokens. Cached tokens are
+subtracted from ordinary input, and reasoning tokens are already part of output.
+For example, 2,001 ordinary input + 270,000 cache-read + 1,000 output costs
+$0.65502 at standard speed. Exactly 272,000 input stays in the short band.
+
+The exact `gpt-5.6-sol` model also has its published rates: $4/$0.40/$5/$20
+for ordinary input/cache-read/cache-write/output, doubled input/cache and 1.5x
+output above 272K, with Fast doubling both bands. This is the promotion OpenAI
+says is available at least through 2026-11-21; no unannounced post-promotion price
+is invented.
+
+Tier changes are read from `thread_settings_applied.thread_settings` and explicit
+`turn_context` fields, and survive incremental parser resumes.
+Recorded `service_tier: priority` and `fast` select Fast rates. Missing tiers use
+standard rates and appear in `unspecifiedTierRequests`; today's configuration is
+never used to guess yesterday's tier. Region-specific billing is not inferred.
+Custom pricing overrides retain catalog context rules unless `rules: []` explicitly
+clears them. Monitor and series caches are invalidated for the new parser/pricing.
+
+Review attribution has explicit evidence:
+- `metadata`: Codex's native review-mode events, or a permission-review model/guardian.
+- `completion-text`: a dedicated review subagent's completed report has code-review findings.
+- `none`: insufficient evidence, including encrypted or missing completion text.
+
+A reviewer name alone is not enough. Diagnostics in a reviewer session appear as
+`other`; mixed implementation turns are not charged wholesale as code review.
+The heuristic can miss reviews and is not a complete accounting of inline review work.
+Pass totals include only usage within the selected window, even when the pass spans
+midnight; `completed` describes the recorded task, not whether every request is in-window.
+Request counts are distinct token-usage updates; cumulative-only logs cannot recover
+individual calls that were never recorded.
+
+Unknown models such as `codex-auto-review` retain their real names. Their cost is
+`null`, never a guessed GPT-5.5 price. Codex row/model/total costs are also `null`
+when incomplete; `knownCostUSD` is the priced subtotal. Terminal output says
+`unknown`. This deliberately extends ccusage's JSON shape and differs from its
+fallback-price behavior. Older non-Codex reports retain their existing shapes.
+
 > **Coding-agent token and cost analytics across all local sessions.**
 
 Reads the session records your coding agents leave on disk and turns them into a spend report: what the window cost, which sessions were expensive, and what today looks like so far.

@@ -22,6 +22,7 @@ export async function loadPricing(storage: Storage): Promise<PricingTable> {
             output: override.output ?? base?.output ?? 0,
             cacheWrite: override.cacheWrite ?? base?.cacheWrite ?? 0,
             cacheRead: override.cacheRead ?? base?.cacheRead ?? 0,
+            rules: override.rules ?? base?.rules,
         };
     }
 

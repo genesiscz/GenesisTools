@@ -6,10 +6,22 @@ import type { Command } from "commander";
 import { loadSpendAccountsContext } from "../accounts-context";
 import { loadPricing } from "../config";
 import { buildBlocksReport } from "./blocks";
-import { isValidTimeZone, parseCostMode, parseDayArg, parseLast, resolveRelativeSince, systemTimeZone } from "./dates";
+import {
+    isValidTimeZone,
+    lastSinceDay,
+    parseCostMode,
+    parseDayArg,
+    parseLast,
+    resolveRelativeSince,
+    systemTimeZone,
+    zonedDay,
+} from "./dates";
 import { filterEvents, loadEvents } from "./load";
 import { buildPeriodReport } from "./period";
+import { addCodexPricingCoverage } from "./pricing-coverage";
 import { renderBlocksTable, renderPeriodTable, renderSessionTable } from "./render";
+import { buildCodexAnalysis } from "./reviews";
+import { renderCodexAnalysis } from "./reviews-render";
 import { buildSessionReport } from "./session";
 import { parseStatuslineHook, renderStatusline } from "./statusline";
 import type { PeriodGrain, ReportFlags, ReportKind, SourceId } from "./types";
@@ -253,8 +265,35 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
         byAgent: Boolean(flags.byAgent),
     };
 
+    const analysisSince = last
+        ? lastSinceDay(
+              kind === "monthly" || kind === "weekly" ? kind : "daily",
+              last,
+              zonedDay(now.toISOString(), timezone)
+          )
+        : undefined;
+    const analysisEvents = filterEvents(events, {
+        timezone,
+        sinceDay: analysisSince ? [sinceDay ?? "", analysisSince].sort().at(-1) : sinceDay,
+        untilDay,
+        sessionId: flags.id,
+    });
+    const analysis = source === "codex" ? buildCodexAnalysis(analysisEvents, pricing, mode) : undefined;
+
+    if (kind === "reviews" && analysis) {
+        if (flags.json) {
+            out.result(analysis);
+        } else {
+            out.println(renderCodexAnalysis(analysis, timezone));
+        }
+        return;
+    }
+
     if (kind === "session") {
         const report = buildSessionReport(events, { ...common, sessionId: flags.id });
+        if (analysis) {
+            addCodexPricingCoverage(report, analysisEvents, pricing, mode, "session", timezone);
+        }
 
         if (flags.json) {
             out.result(report);
@@ -262,11 +301,17 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
         }
 
         out.println(renderSessionTable(report, Boolean(flags.breakdown)));
+        if (analysis) {
+            out.println(renderCodexAnalysis(analysis, timezone, false));
+        }
         return;
     }
 
     const grain = kind as PeriodGrain;
     const report = buildPeriodReport(events, { ...common, grain });
+    if (analysis) {
+        addCodexPricingCoverage(report, analysisEvents, pricing, mode, grain, timezone);
+    }
 
     if (flags.json) {
         out.result(report);
@@ -274,6 +319,9 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
     }
 
     out.println(renderPeriodTable(report, grain, Boolean(flags.breakdown)));
+    if (analysis) {
+        out.println(renderCodexAnalysis(analysis, timezone, false));
+    }
 }
 
 export function registerCcusageCommands(program: Command): void {
@@ -329,7 +377,7 @@ export function registerCcusageCommands(program: Command): void {
                 breakdown: true,
                 mode: source === "claude",
                 blocks: kind === "blocks",
-                sessionId: kind === "session",
+                sessionId: kind === "session" || kind === "reviews",
             };
             addReportFlags(parent.command(kind).description(`${source} ${kind} report`), extra).action(
                 async (_opts: ReportFlags, cmd: Command) => {

@@ -59,9 +59,9 @@ describe("codex driver", () => {
             cacheCreationTokens: 0,
             cacheReadTokens: 26_368,
         });
-        // gpt-5.6: $5 in · $30 out · $0.5 cacheRead per Mtok. Reasoning is inside output.
-        // 635×5e-6 + 139×30e-6 + 26368×0.5e-6 = 0.003175 + 0.00417 + 0.013184
-        expect(billedCost(codexDriver, events[0])).toBeCloseTo(0.020529, 10);
+        // Sol: $4 in · $20 out · $0.4 cacheRead per Mtok. Reasoning is inside output.
+        // 0.00254 ordinary input + 0.00278 output + 0.0105472 cache read.
+        expect(billedCost(codexDriver, events[0])).toBeCloseTo(0.0158672, 10);
     });
 
     test("a repeated cumulative total is not billed twice", () => {

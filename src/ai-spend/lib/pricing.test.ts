@@ -34,10 +34,10 @@ describe("pricing table", () => {
         expect(DEFAULT_PRICING["gpt-5.4"]?.input).toBe(2.5);
     });
 
-    test("subscription and CLI-plan ids stay unpriced, so they cost $0", () => {
+    test("models without published API rates stay unpriced", () => {
         expect(DEFAULT_PRICING["grok-4.6"]).toBeUndefined();
         expect(DEFAULT_PRICING["grok-4.6-build"]).toBeUndefined();
-        expect(DEFAULT_PRICING["gpt-5.6-sol"]).toBeUndefined();
+        expect(priceFor("gpt-5.6-sol", DEFAULT_PRICING)).not.toBeNull();
         expect(DEFAULT_PRICING["codex-auto-review"]).toBeUndefined();
         expect(priceFor("grok-4.6", DEFAULT_PRICING)).toBeNull();
     });

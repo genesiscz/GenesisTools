@@ -207,12 +207,13 @@ interface AgentCache {
 }
 
 /**
- * Bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
+ * Bumped to 5 for Astra context/fast pricing and Codex cache-write tokens.
+ * Previously bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
  * and reporting it under "(unbound)" would be a guess. Discarding the file
  * costs one full re-parse and gets every row tagged from the live root map.
  */
 interface MonitorCache {
-    version: 4;
+    version: 5;
     agents: Record<AgentId, AgentCache>;
 }
 
@@ -238,7 +239,7 @@ function freshAgentCache(): AgentCache {
 
 function freshCache(): MonitorCache {
     return {
-        version: 4,
+        version: 5,
         agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
     };
 }
@@ -253,7 +254,7 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 4 && raw.agents) {
+        if (raw?.version === 5 && raw.agents) {
             const cache = freshCache();
 
             for (const id of AGENT_IDS) {
@@ -457,6 +458,7 @@ function parseChunk(options: ParseChunkOptions): void {
                       resolvePrice(entry, {
                           at: Number.isNaN(when.getTime()) ? undefined : when,
                           contextTokens: event.inputTokens + event.cacheReadTokens + event.cacheCreationTokens,
+                          serviceTier: event.serviceTier,
                       })
                   )
                 : 0;

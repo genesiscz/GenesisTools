@@ -8,6 +8,7 @@ import {
     nativeTranscriptMaxDepth,
 } from "@genesiscz/utils/providers/session-paths";
 import { spendScopeRoots } from "./account-scope";
+import { type CodexContext, updateCodexContext } from "./codex-context";
 import { isRecord, num } from "./parse-helpers";
 import type { CreateParserOptions, DriverLineParser, DriverRoot, DriverUsageEvent, MonitorDriver } from "./types";
 
@@ -40,6 +41,7 @@ import type { CreateParserOptions, DriverLineParser, DriverRoot, DriverUsageEven
 interface CodexRawUsage {
     input_tokens?: number;
     cached_input_tokens?: number;
+    cache_write_input_tokens?: number;
     output_tokens?: number;
     reasoning_output_tokens?: number;
     total_tokens?: number;
@@ -68,6 +70,8 @@ interface CodexState {
     model?: string;
     /** Last cumulative `total_token_usage`, for the diff fallback. */
     totals?: CodexRawUsage;
+    serviceTier?: string;
+    context?: CodexContext;
 }
 
 /** First candidate that is genuinely a non-empty string. */
@@ -89,7 +93,12 @@ function readState(state: unknown): CodexState {
     const model = typeof state.model === "string" ? state.model : undefined;
     const totals = isRecord(state.totals) ? (state.totals as CodexRawUsage) : undefined;
 
-    return { model, totals };
+    return {
+        model,
+        totals,
+        serviceTier: typeof state.serviceTier === "string" ? state.serviceTier : undefined,
+        context: isRecord(state.context) ? (state.context as CodexContext) : {},
+    };
 }
 
 function sameTotals(a: CodexRawUsage | undefined, b: CodexRawUsage | undefined): boolean {
@@ -100,6 +109,7 @@ function sameTotals(a: CodexRawUsage | undefined, b: CodexRawUsage | undefined):
     return (
         num(a.input_tokens) === num(b.input_tokens) &&
         num(a.cached_input_tokens) === num(b.cached_input_tokens) &&
+        num(a.cache_write_input_tokens) === num(b.cache_write_input_tokens) &&
         num(a.output_tokens) === num(b.output_tokens) &&
         num(a.reasoning_output_tokens) === num(b.reasoning_output_tokens) &&
         num(a.total_tokens) === num(b.total_tokens)
@@ -107,11 +117,20 @@ function sameTotals(a: CodexRawUsage | undefined, b: CodexRawUsage | undefined):
 }
 
 function subtractTotals(current: CodexRawUsage, previous: CodexRawUsage | undefined): CodexRawUsage {
+    if (
+        previous &&
+        (num(current.input_tokens) < num(previous.input_tokens) ||
+            num(current.output_tokens) < num(previous.output_tokens))
+    ) {
+        return current;
+    }
+
     const sub = (a: number | undefined, b: number | undefined): number => Math.max(0, num(a) - num(b));
 
     return {
         input_tokens: sub(current.input_tokens, previous?.input_tokens),
         cached_input_tokens: sub(current.cached_input_tokens, previous?.cached_input_tokens),
+        cache_write_input_tokens: sub(current.cache_write_input_tokens, previous?.cache_write_input_tokens),
         output_tokens: sub(current.output_tokens, previous?.output_tokens),
         reasoning_output_tokens: sub(current.reasoning_output_tokens, previous?.reasoning_output_tokens),
         total_tokens: sub(current.total_tokens, previous?.total_tokens),
@@ -177,6 +196,8 @@ export const codexDriver: MonitorDriver = {
 
     createParser(options: CreateParserOptions): DriverLineParser {
         const state = readState(options.state);
+        const context = state.context ?? {};
+        state.context = context;
 
         return {
             parseLine(line: string, emit: (event: DriverUsageEvent) => void): void {
@@ -200,8 +221,29 @@ export const codexDriver: MonitorDriver = {
                 }
 
                 const raw = parsed as CodexLine;
+                const payload = isRecord(parsed.payload) ? parsed.payload : {};
+                updateCodexContext(context, raw.type, payload, typeof raw.timestamp === "string" ? raw.timestamp : "");
+
+                if (
+                    raw.type === "event_msg" &&
+                    payload.type === "thread_settings_applied" &&
+                    isRecord(payload.thread_settings)
+                ) {
+                    const settings = payload.thread_settings;
+                    if (Object.hasOwn(settings, "service_tier")) {
+                        state.serviceTier =
+                            typeof settings.service_tier === "string" ? settings.service_tier : undefined;
+                    }
+                    if (typeof settings.model === "string" && settings.model.length > 0) {
+                        state.model = settings.model;
+                    }
+                    return;
+                }
 
                 if (raw.type === "turn_context") {
+                    if (Object.hasOwn(payload, "service_tier")) {
+                        state.serviceTier = typeof payload.service_tier === "string" ? payload.service_tier : undefined;
+                    }
                     const model = raw.payload?.model;
 
                     if (typeof model === "string" && model.length > 0) {
@@ -246,7 +288,8 @@ export const codexDriver: MonitorDriver = {
                 // are a system boundary. A non-string `model` would reach
                 // `priceCandidates()` and throw on `.endsWith`, aborting the chunk.
                 const model = firstString(raw.payload.model, info?.model, state.model) ?? "unknown";
-                const inputTokens = inputTotal - cached;
+                const cacheWrite = Math.min(num(usage.cache_write_input_tokens), inputTotal - cached);
+                const inputTokens = inputTotal - cached - cacheWrite;
 
                 emit({
                     id: `${timestamp}|${model}|${inputTokens}|${cached}|${output}|${reasoning}`,
@@ -254,7 +297,9 @@ export const codexDriver: MonitorDriver = {
                     timestamp,
                     inputTokens,
                     outputTokens: output,
-                    cacheCreationTokens: 0,
+                    cacheCreationTokens: cacheWrite,
+                    serviceTier: state.serviceTier,
+                    codex: { ...state.context },
                     cacheReadTokens: cached,
                     reasoningOutputTokens: reasoning,
                 });

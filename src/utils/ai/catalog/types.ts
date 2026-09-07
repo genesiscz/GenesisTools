@@ -56,6 +56,8 @@ export interface PricingRule {
     from?: string;
     /** Inclusive UTC date the rule stops applying. Open-ended when absent. */
     to?: string;
+    /** Service tier required by this rule. "fast" and "priority" are equivalent. */
+    serviceTier?: string;
     /** Inclusive lower bound on the request's token count. */
     ctxFrom?: number;
     /** Inclusive upper bound on the request's token count. */

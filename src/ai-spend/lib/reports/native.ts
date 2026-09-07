@@ -222,6 +222,8 @@ export function parseNativeChunk(options: NativeChunkOptions): NativeChunkResult
                 cacheReadTokens: event.cacheReadTokens,
                 recordedCostUsd: event.recordedCostUsd,
                 reasoningOutputTokens: event.reasoningOutputTokens,
+                serviceTier: event.serviceTier,
+                codex: event.codex,
             });
         });
     }

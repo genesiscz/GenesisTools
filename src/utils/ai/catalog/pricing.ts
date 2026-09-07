@@ -246,6 +246,8 @@ export async function costForCall(provider: string, modelId: string, usage: Lang
 export interface PricingContext {
     /** When the call happens. Omit and dated rules simply do not apply. */
     at?: Date;
+    /** Recorded service tier; absence does not imply Fast mode. */
+    serviceTier?: string;
     /** The request's token count. Omit and context-banded rules do not apply. */
     contextTokens?: number;
 }
@@ -266,6 +268,11 @@ function utcDay(at: Date): string {
  * makes this function untestable.
  */
 function ruleApplies(rule: PricingRule, context: PricingContext): boolean {
+    const tier = (value: string | undefined) => (value === "fast" ? "priority" : value);
+    if (rule.serviceTier !== undefined && tier(rule.serviceTier) !== tier(context.serviceTier)) {
+        return false;
+    }
+
     const dated = rule.from !== undefined || rule.to !== undefined;
 
     if (dated) {
