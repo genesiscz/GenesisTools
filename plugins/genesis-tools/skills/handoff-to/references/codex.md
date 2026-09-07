@@ -1,6 +1,18 @@
-# Codex mechanics (gpt-5.x via `tools codex`)
+# Codex mechanics (GPT-6 Astra and GPT-5.6 via `tools codex`)
 
 Read this after `gt:handoff-to` has picked Codex and the readiness gate has passed. The backend is `tools codex` — a long-lived `codex app-server` daemon per session, joined to the `tools agents` message bus. Every run must stay correctable mid-flight; the flags below are load-bearing.
+
+## Explicit model selection
+
+Use the task routing in the parent skill. Pass `--model gpt-6-astra --effort high`
+for an Astra escalation, `--model gpt-5.6-sol --effort medium` for normal implementation,
+`--model gpt-5.6-terra --effort medium` for bounded exploration, or
+`--model gpt-5.6-luna --effort low` for mechanical work.
+
+The `tools codex spawn` command accepts an explicit model string. Availability still
+depends on the selected account and backend. Verify the recorded model after dispatch;
+do not treat a requested model or the parent's config as proof of what ran.
+Code-review workers should explicitly select Sol; `review_model` does not route arbitrary workers.
 
 ## Modes
 
@@ -34,6 +46,8 @@ pgrep -fl 'tools agents login --agent-main'
 ```bash
 tools codex spawn \
   --name <task> \
+  --model gpt-5.6-sol \
+  --effort medium \
   --write ask \
   --cwd <abs path> \
   --prompt-file /tmp/codex-<task>-brief.md
