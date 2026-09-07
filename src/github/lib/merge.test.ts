@@ -205,6 +205,8 @@ function makeRestackMock(opts?: {
     return { restack, calls };
 }
 
+const HEAD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 function basePr(over: Partial<PullRef> = {}): PullRef {
     return {
         number: 1,
@@ -215,7 +217,7 @@ function basePr(over: Partial<PullRef> = {}): PullRef {
         mergeable: true,
         headRef: "branch-a",
         baseRef: "main",
-        headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        headSha: HEAD_SHA,
         baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         commitCount: 1,
         htmlUrl: "https://github.com/o/r/pull/1",
@@ -543,6 +545,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             method: "squash",
             commitTitle: "PR A (#1)",
             commitMessage: "* hand-written",
+            expectedHeadSha: HEAD_SHA,
         });
         expect(result.squashMessage?.titleGenerated).toBe(true);
         expect(result.squashMessage?.bodyGenerated).toBe(false);
@@ -569,6 +572,7 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             method: "squash",
             commitTitle: "feat: ship it (#1)",
             commitMessage: "commit one\ncommit two",
+            expectedHeadSha: HEAD_SHA,
         });
         expect(result.squashMessage?.titleGenerated).toBe(false);
         expect(result.squashMessage?.bodyGenerated).toBe(false);
@@ -602,6 +606,8 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
                 "* feat(widgets): add the frame\n" +
                 '* fix(widgets): "quoted" subject with $HOME and `ticks`\n' +
                 "* chore: trailing whitespace",
+            // Bound to the head the commits were read from: a push in between fails the merge.
+            expectedHeadSha: HEAD_SHA,
         });
         expect(result.squashMessage).toEqual({
             title: "feat: widgets — bigger and `better` (#42)",
@@ -636,9 +642,44 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         });
 
         const mergeCall = calls.find((c) => c.op === "mergePull");
-        expect(mergeCall?.args[1]).toEqual({ method: "squash", commitTitle: "fix: thing (#7)", commitMessage: "" });
+        expect(mergeCall?.args[1]).toEqual({
+            method: "squash",
+            commitTitle: "fix: thing (#7)",
+            commitMessage: "",
+            expectedHeadSha: HEAD_SHA,
+        });
         expect(result.squashMessage?.titleGenerated).toBe(true);
         expect(result.squashMessage?.bodyGenerated).toBe(false);
+    });
+
+    test("a head pushed after the commit list was read fails the squash instead of inheriting the body", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr({ number: 9, title: "feat: nine" }),
+            commits: [{ sha: "1111111", subject: "one" }],
+            dependents: [dep({ number: 10 })],
+        });
+        const originalMerge = client.mergePull;
+        client.mergePull = async (owner, repo, number, options) => {
+            // GitHub answers 409 when `sha` no longer matches the head.
+            if (
+                options.expectedHeadSha !== undefined &&
+                options.expectedHeadSha !== "ffffffffffffffffffffffffffffffffffffffff"
+            ) {
+                calls.push({ op: "mergePull", args: [number, options] });
+                throw new Error("Head branch was modified. Review and try the merge again.");
+            }
+
+            return originalMerge(owner, repo, number, options);
+        };
+
+        await expect(safeMergePull({ owner: "o", repo: "r", number: 9, method: "squash", client })).rejects.toThrow(
+            /Head branch was modified/
+        );
+
+        const ops = calls.map((c) => c.op);
+        expect(ops).toContain("mergePull");
+        expect(ops).not.toContain("updatePullBase");
+        expect(ops).not.toContain("deleteBranch");
     });
 
     test("--merge does not list commits and sends no generated message", async () => {

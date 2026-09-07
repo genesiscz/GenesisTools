@@ -82,6 +82,12 @@ export interface MergePullOptions {
     method: GithubApiMergeMethod;
     commitTitle?: string;
     commitMessage?: string;
+    /**
+     * Head SHA the PR must still be at for the merge to go through. A squash
+     * body lists the commits read BEFORE the merge, so a push in between must
+     * fail the merge instead of landing under a message that omits it.
+     */
+    expectedHeadSha?: string;
 }
 
 export interface MergePullResult {
@@ -363,6 +369,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                         merge_method: options.method,
                         commit_title: options.commitTitle,
                         commit_message: options.commitMessage,
+                        sha: options.expectedHeadSha,
                     }),
                 { label: `PUT /repos/${owner}/${repo}/pulls/${number}/merge (${options.method})` }
             );
@@ -656,6 +663,8 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
             method: method as GithubApiMergeMethod,
             commitTitle: squashMessage?.title ?? commitTitle,
             commitMessage: squashMessage?.body ?? commitMessage,
+            // The generated body describes pr.headSha; a newer head must fail the merge, not inherit the message.
+            ...(squashMessage ? { expectedHeadSha: pr.headSha } : {}),
         });
     }
 
