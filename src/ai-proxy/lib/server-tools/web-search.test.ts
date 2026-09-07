@@ -259,9 +259,9 @@ describe("emulateWebSearch", () => {
                 }
 
                 const messages = body.messages as Record<string, unknown>[];
-                const lastResult = (messages.at(-1)?.content as Record<string, unknown>[])[0];
+                const lastResult = (messages.at(-1)?.content as Record<string, unknown>[] | undefined)?.[0];
                 return jsonResponse({
-                    content: [{ type: "text", text: `done: ${lastResult.content}` }],
+                    content: [{ type: "text", text: `done: ${lastResult?.content}` }],
                     stop_reason: "end_turn",
                     usage: { output_tokens: 1 },
                 });

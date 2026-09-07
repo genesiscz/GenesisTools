@@ -140,7 +140,7 @@ describe("anthropicSseToOpenAiChatStream", () => {
         expect(out).toContain('"object":"chat.completion.chunk"');
 
         // first chunk announces the assistant role
-        const firstDelta = (chunks[0]?.choices as Array<{ delta: Record<string, unknown> }>)[0]?.delta;
+        const firstDelta = (chunks[0]?.choices as Array<{ delta: Record<string, unknown> }> | undefined)?.[0]?.delta;
         expect(firstDelta).toEqual({ role: "assistant" });
 
         // reassembled content

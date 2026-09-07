@@ -70,7 +70,7 @@ describe("inquirerBackend", () => {
             });
 
             const call = calls.find((c) => c.fn === "input");
-            const validate = (call?.args[0] as { validate?: (v: string) => string | boolean }).validate;
+            const validate = (call?.args[0] as { validate?: (v: string) => string | boolean } | undefined)?.validate;
             expect(validate).toBeDefined();
             expect(validate!("ab")).toBe("too short");
             expect(validate!("abc")).toBe(true);
@@ -196,7 +196,7 @@ describe("inquirerBackend", () => {
             });
 
             const call = calls.find((c) => c.fn === "password");
-            const validate = (call?.args[0] as { validate?: (v: string) => string | boolean }).validate;
+            const validate = (call?.args[0] as { validate?: (v: string) => string | boolean } | undefined)?.validate;
             expect(validate).toBeDefined();
             expect(validate!("short")).toBe("too short");
             expect(validate!("longenough")).toBe(true);

@@ -66,6 +66,6 @@ describe("POST /api/v1/users/topup", () => {
         });
 
         expect(res?.status).toBe(200);
-        expect((res?.json.user as { credits: number }).credits).toBe(user.credits + 50);
+        expect((res?.json.user as { credits: number } | undefined)?.credits).toBe(user.credits + 50);
     });
 });

@@ -123,7 +123,9 @@ describe("claude provider TRUE global disable", () => {
             expect(claude.projects?.["/proj/b"].disabledMcpServers).toContain("serena");
             // Unrelated state preserved (read-modify-write)
             expect(claude.numStartups).toBe(5);
-            expect((claude.projects?.["/proj/a"] as Record<string, unknown>).history).toEqual(["precious"]);
+            expect((claude.projects?.["/proj/a"] as Record<string, unknown> | undefined)?.history).toEqual([
+                "precious",
+            ]);
 
             // Full config preserved in unified config with claude disabled
             const unified = await readUnified();
@@ -203,7 +205,7 @@ describe("claude provider TRUE global disable", () => {
             const result = readClaudeJson();
             expect(result.mcpServers?.serena).toBeDefined(); // restored
             expect(result.mcpServers?.serena.command).toBe("uvx");
-            expect((result.mcpServers?.serena as Record<string, unknown>)._meta).toBeUndefined(); // no _meta leak
+            expect((result.mcpServers?.serena as Record<string, unknown> | undefined)?._meta).toBeUndefined(); // no _meta leak
             expect(result.disabledMcpServers).not.toContain("serena");
             expect(result.projects?.["/proj/a"].disabledMcpServers).not.toContain("serena");
         });

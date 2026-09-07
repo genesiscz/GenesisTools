@@ -260,7 +260,7 @@ describe("anthropic stream state machine", () => {
         sse += anthropicStreamEnd(state);
 
         const frames = parseFrames(sse);
-        expect((frames[0]?.message as Record<string, unknown>).usage).toEqual({
+        expect((frames[0]?.message as Record<string, unknown> | undefined)?.usage).toEqual({
             input_tokens: 120,
             output_tokens: 0,
         });

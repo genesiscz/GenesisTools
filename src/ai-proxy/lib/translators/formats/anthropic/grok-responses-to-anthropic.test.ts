@@ -167,11 +167,11 @@ describe("grokResponsesSseToAnthropic", () => {
                 frame.event === "content_block_delta" &&
                 (frame.data.delta as Record<string, unknown>).type === "signature_delta"
         );
-        const signature = (signatureDelta?.data.delta as Record<string, unknown>).signature;
+        const signature = (signatureDelta?.data.delta as Record<string, unknown> | undefined)?.signature;
         expect(unpackReasoningSignature(signature)).toEqual({ id: "rs_1", encryptedContent: "ENC==" });
 
         const messageDelta = frames.find((frame) => frame.event === "message_delta");
-        expect((messageDelta?.data.delta as Record<string, unknown>).stop_reason).toBe("tool_use");
+        expect((messageDelta?.data.delta as Record<string, unknown> | undefined)?.stop_reason).toBe("tool_use");
         expect(messageDelta?.data.usage).toEqual({
             input_tokens: 616,
             output_tokens: 50,
@@ -211,7 +211,7 @@ describe("grokResponsesSseToAnthropic", () => {
                 frame.data.index === 2 &&
                 (frame.data.delta as Record<string, unknown>).type === "input_json_delta"
         );
-        expect((salvaged?.data.delta as Record<string, unknown>).partial_json).toBe('{"command":"date"}');
+        expect((salvaged?.data.delta as Record<string, unknown> | undefined)?.partial_json).toBe('{"command":"date"}');
     });
 
     it("closes the message when the stream ends without a terminal frame", async () => {
@@ -241,7 +241,7 @@ describe("grokResponsesSseToAnthropic", () => {
         ]);
 
         const messageDelta = frames.find((frame) => frame.event === "message_delta");
-        expect((messageDelta?.data.delta as Record<string, unknown>).stop_reason).toBe("tool_use");
+        expect((messageDelta?.data.delta as Record<string, unknown> | undefined)?.stop_reason).toBe("tool_use");
     });
 
     it("forwards keepalive comments and turns response.failed into an Anthropic error frame", async () => {
@@ -265,7 +265,7 @@ describe("grokResponsesSseToAnthropic", () => {
 
         expect(raw).toContain(": keepalive");
         const error = frames.find((frame) => frame.event === "error");
-        expect((error?.data.error as Record<string, unknown>).message).toBe("upstream exploded");
+        expect((error?.data.error as Record<string, unknown> | undefined)?.message).toBe("upstream exploded");
         // A failed response never fabricates a message_stop.
         expect(frames.some((frame) => frame.event === "message_stop")).toBe(false);
     });
@@ -312,7 +312,7 @@ describe("grokResponsesSseToAnthropic", () => {
         ]);
 
         const messageDelta = frames.find((frame) => frame.event === "message_delta");
-        expect((messageDelta?.data.delta as Record<string, unknown>).stop_reason).toBe("end_turn");
+        expect((messageDelta?.data.delta as Record<string, unknown> | undefined)?.stop_reason).toBe("end_turn");
     });
 });
 

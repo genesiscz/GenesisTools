@@ -2125,18 +2125,18 @@ console.log("round 3: error payload and recon guards");
     check(
         "a quoted label keeps a modifier word as text",
         (
-            parseSpec({ text: '@@ a.md\n<<< label="cleanup, regex noise"\nx\n===\ny\n>>>\n' })[0].ops?.[0] as {
-                label?: string;
-            }
-        ).label === "cleanup, regex noise"
+            parseSpec({ text: '@@ a.md\n<<< label="cleanup, regex noise"\nx\n===\ny\n>>>\n' })[0].ops?.[0] as
+                | { label?: string }
+                | undefined
+        )?.label === "cleanup, regex noise"
     );
     check(
         "label= last still works with a real modifier",
         (
-            parseSpec({ text: "@@ a.md\n<<< regex flags=g label=free text\nx\n===\ny\n>>>\n" })[0].ops?.[0] as {
-                kind?: string;
-            }
-        ).kind === "regex"
+            parseSpec({ text: "@@ a.md\n<<< regex flags=g label=free text\nx\n===\ny\n>>>\n" })[0].ops?.[0] as
+                | { kind?: string }
+                | undefined
+        )?.kind === "regex"
     );
 
     // A spec pasted from two sources carries CRLF on some lines only; splitting on "\n"

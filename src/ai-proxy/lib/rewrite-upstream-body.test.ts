@@ -118,7 +118,7 @@ describe("rewrite-upstream-body", () => {
         });
 
         expect(normalized?.type).toBe("function");
-        expect((normalized?.function as { name: string }).name).toBe("Read");
+        expect((normalized?.function as { name: string } | undefined)?.name).toBe("Read");
     });
 
     it("converts custom Cursor tools to function tools", () => {

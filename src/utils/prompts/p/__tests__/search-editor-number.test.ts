@@ -70,7 +70,7 @@ describe("search/editor/number backend routing", () => {
 
         expect(calls).toHaveLength(1);
         expect(calls[0]?.method).toBe("search");
-        expect((calls[0]?.opts as SearchOpts<string>).message).toBe("Find something");
+        expect((calls[0]?.opts as SearchOpts<string> | undefined)?.message).toBe("Find something");
     });
 
     it("p.editor() routes to backend.editor() with opts", async () => {
@@ -87,7 +87,7 @@ describe("search/editor/number backend routing", () => {
 
         expect(calls).toHaveLength(1);
         expect(calls[0]?.method).toBe("editor");
-        expect((calls[0]?.opts as EditorOpts).message).toBe("Edit your notes");
+        expect((calls[0]?.opts as EditorOpts | undefined)?.message).toBe("Edit your notes");
         expect(result).toBe("edited content");
     });
 
@@ -106,7 +106,7 @@ describe("search/editor/number backend routing", () => {
 
         expect(calls).toHaveLength(1);
         expect(calls[0]?.method).toBe("number");
-        expect((calls[0]?.opts as NumberOpts).message).toBe("Enter a number");
+        expect((calls[0]?.opts as NumberOpts | undefined)?.message).toBe("Enter a number");
         expect(result).toBe(7);
     });
 
