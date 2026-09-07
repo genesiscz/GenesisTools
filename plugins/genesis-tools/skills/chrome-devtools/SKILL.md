@@ -30,8 +30,10 @@ Ask which before quitting anything. Losing their tab set without warning is the 
 they will be annoyed about. Do not `osascript quit` + `open -a`: `open -a` reuses the live
 process and ignores the flag. ⚠️ Chrome ≥136 refuses the flag on the DEFAULT profile dir;
 `restart` detects that and suggests two fallbacks: `open --fresh` (throwaway, log in every
-time) and `open --user-data-dir ~/.genesis-tools/chrome-devtools/profile` (a persistent
-separate profile, logins survive between runs; the only way to keep sessions on Chrome ≥136).
+time) and `open --user-data-dir ~/.genesis-tools/chrome-devtools/<browser>/profile` (a persistent
+separate profile, one directory per browser, logins survive between runs; the only way to keep
+sessions on Chrome ≥136). The persistent profile keeps Chrome's local-network checks; only
+`--fresh` and `--extension` run with them disabled.
 
 ## Start here, every time
 

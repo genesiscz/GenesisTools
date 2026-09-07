@@ -40,6 +40,12 @@ describe("launchArgs — an explicit profile dir", () => {
         expect(args).toContain("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
         expect(args.some((a) => a === "--user-data-dir=/tmp/cdp-profile-9333")).toBe(false);
     });
+
+    test("a persistent --user-data-dir alone keeps the network protections: it holds logins like the real profile", () => {
+        const args = launchArgs(9444, { userDataDir: "/Users/x/.genesis-tools/chrome-devtools/chrome/profile" });
+        expect(args).toContain("--user-data-dir=/Users/x/.genesis-tools/chrome-devtools/chrome/profile");
+        expect(args.some((a) => a.startsWith("--disable-features"))).toBe(false);
+    });
 });
 
 const okLaunch = () => ({ ok: true, message: "launched" });

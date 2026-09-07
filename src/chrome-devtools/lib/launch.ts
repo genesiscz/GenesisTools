@@ -36,10 +36,15 @@ export function launchArgs(
 
     if (opts.fresh || opts.extension || opts.userDataDir) {
         args.push(`--user-data-dir=${opts.userDataDir ?? freshProfileDir(port)}`);
+    }
+
+    if (opts.fresh || opts.extension) {
         // Local/private-network access checks block CDP-driven fetches to dev
-        // servers, so throwaway profiles disable them. The user's REAL profile
-        // (plain open / restart) keeps every protection — a normal browsing
-        // session must never run security-downgraded.
+        // servers, so THROWAWAY profiles disable them. A persistent
+        // --user-data-dir profile keeps logins between runs, so it keeps every
+        // protection too, exactly like the user's real profile (plain open /
+        // restart): a session that holds credentials must never run
+        // security-downgraded.
         args.push("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
     }
 

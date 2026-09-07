@@ -22,7 +22,10 @@ listens. **Ask before quitting anyone's browser** — their open tabs are at sta
 directory (anti-automation). Chromium builds are unaffected; Brave's stance can differ per
 version. `restart` detects the failure and suggests two fallbacks: `open --fresh` (throwaway
 profile) and `open --user-data-dir <dir>` (a persistent separate profile whose logins survive
-between runs, e.g. `~/.genesis-tools/chrome-devtools/profile`).
+between runs, one directory per browser, e.g. `~/.genesis-tools/chrome-devtools/chrome/profile`).
+Only the throwaway `--fresh` and `--extension` profiles get
+`--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks`; a persistent profile
+holds credentials, so it keeps Chrome's network protections like the real profile does.
 
 ## Quick start
 

@@ -38,7 +38,13 @@ interface OpenOpts {
 }
 
 /** A persistent separate profile: logins survive between runs, unlike --fresh, and Chrome ≥136 accepts the flag there. */
-const PERSISTENT_PROFILE_HINT = "~/.genesis-tools/chrome-devtools/profile";
+/**
+ * One persistent profile PER BROWSER: Chrome, Brave and Chromium cannot share a user-data-dir (profile lock,
+ * mixed session state), so the suggested path carries the browser id.
+ */
+export function persistentProfileHint(browser: string): string {
+    return `~/.genesis-tools/chrome-devtools/${browser}/profile`;
+}
 
 export function registerBrowse(program: Command): void {
     withPort(program.command("open"))
@@ -50,7 +56,7 @@ export function registerBrowse(program: Command): void {
         .option("--fresh", "throwaway profile — your own profile stays untouched (but you must log in again)")
         .option(
             "--user-data-dir <dir>",
-            `persistent separate profile (logins survive between runs; Chrome ≥136 refuses the debug flag on its default profile, so this is the way to keep sessions), e.g. ${PERSISTENT_PROFILE_HINT}`
+            `persistent separate profile (logins survive between runs; Chrome ≥136 refuses the debug flag on its default profile, so this is the way to keep sessions). Use one directory per browser, e.g. ${persistentProfileHint("chrome")}. Keeps Chrome's local/private-network checks, unlike --fresh`
         )
         .option("--extension <dist-dir>", "load an unpacked extension (implies its own profile)")
         .action(async (url: string, opts: OpenOpts) => {
@@ -142,7 +148,7 @@ export function registerBrowse(program: Command): void {
                     `  fallback, throwaway profile (log in again each time): ${suggest(["open", "--browser", id, "--port", String(port), "--fresh", url])}`
                 );
                 out.log.info(
-                    `  fallback, persistent profile (logins kept between runs): ${suggest(["open", "--browser", id, "--port", String(port), "--user-data-dir", PERSISTENT_PROFILE_HINT, url])}`
+                    `  fallback, persistent profile (logins kept between runs): ${suggest(["open", "--browser", id, "--port", String(port), "--user-data-dir", persistentProfileHint(id), url])}`
                 );
                 process.exit(1);
             }
