@@ -409,7 +409,7 @@ async function captureSurface(
         return {
             type: "browser",
             title,
-            url: url ?? (entry.id ? capture?.panelBrowserUrls?.get(entry.id.toLowerCase()) : undefined),
+            url: url || (entry.id ? capture?.panelBrowserUrls?.get(entry.id.toLowerCase()) : undefined),
         };
     }
 

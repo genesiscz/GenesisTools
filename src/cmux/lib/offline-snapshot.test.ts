@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AutosaveWorkspace } from "@app/cmux/lib/autosave";
 import { flattenLayout } from "@app/cmux/lib/autosave";
-import { buildOfflinePanes } from "@app/cmux/lib/offline-snapshot";
+import { buildOfflinePanes, buildOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 
 const FRAME = { x: 0, y: 0, width: 1000, height: 800 };
 
@@ -262,4 +262,29 @@ test("offline recovery finds cached viewport by persisted identity after a panel
         }
     );
     expect(panes[0].surfaces[0]).toMatchObject({ screen: { text: "CPU 2%\nMemory 40 MiB", rows: 2 } });
+});
+
+test("offline screen opt-out omits both cached and native terminal output", () => {
+    const workspace = workspaceFixture();
+    workspace.panels[0].terminal = { scrollback: "native fixture text" };
+    const session = { path: "/fixture", savedAtMs: 1, windows: [{ tabManager: { workspaces: [workspace] } }] };
+    const deps = {
+        ttyCommands: new Map<string, string>(),
+        surfaceSessions: new Map(),
+        surfaceScreens: new Map([
+            ["b", { surfaceId: "11111111-1111-4111-8111-111111111111", text: "cached fixture text", atMs: 1 }],
+        ]),
+    };
+    const enabled = buildOfflineProfile(session, deps, { name: "fixture", captureScreen: true });
+    expect(enabled.windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
+        screen: { text: "native fixture text" },
+    });
+    const disabled = buildOfflineProfile(session, deps, { name: "fixture", captureScreen: false });
+    for (const pane of disabled.windows[0].workspaces[0].panes) {
+        for (const surface of pane.surfaces) {
+            if (surface.type === "terminal") {
+                expect(surface.screen).toBeUndefined();
+            }
+        }
+    }
 });

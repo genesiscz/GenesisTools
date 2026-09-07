@@ -20,6 +20,8 @@ import {
     uninstallCapture,
 } from "@app/cmux/lib/capture-installer";
 import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
+import { buildOfflinePanes } from "@app/cmux/lib/offline-snapshot";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 test("installation is idempotent and uninstall preserves unrelated rc bytes and journal data", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-install-home-"));
@@ -61,8 +63,40 @@ test("installed recorder survives removal of its source checkout entrypoint and 
     const result = await installCapture({ home, recorderEntrypoint: entrypoint, screens: false });
     renameSync(source, `${source}-removed`);
     expect(existsSync(entrypoint)).toBe(false);
+    const direct = Bun.spawn(
+        [
+            resolveCaptureBun(),
+            result.runtimePath!,
+            "completed",
+            "44444444-4444-4444-8444-444444444444",
+            home,
+            "",
+            "0",
+            join(home, ".genesis-tools/cmux/command-journal"),
+        ],
+        {
+            cwd: tmpdir(),
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+            env: { HOME: home, GENESIS_TOOLS_HOME: home, PATH: "/usr/bin:/bin" },
+        }
+    );
+    direct.stdin.write("printf direct-runtime");
+    direct.stdin.end();
+    const [directCode, directError] = await Promise.all([
+        direct.exited,
+        new Response(direct.stderr).text(),
+        new Response(direct.stdout).text(),
+    ]);
+    expect({ directCode, directError }).toEqual({ directCode: 0, directError: "" });
+    expect(
+        loadCapturedCommands({ directory: join(home, ".genesis-tools/cmux/command-journal") }).get(
+            "44444444-4444-4444-8444-444444444444"
+        )?.command
+    ).toBe("printf direct-runtime");
     const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
-        cwd: "/private/tmp",
+        cwd: tmpdir(),
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -144,7 +178,7 @@ test("reinstall updates a stable runtime entrypoint without rewriting shell conf
     expect(second.runtimePath).not.toBe(first.runtimePath);
     expect(readFileSync(second.rcPath, "utf8")).toBe(rc);
     expect(readFileSync(second.hookPath, "utf8")).toBe(hook);
-    const proc = Bun.spawn([process.execPath, entry], { cwd: "/private/tmp", stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([process.execPath, entry], { cwd: tmpdir(), stdout: "pipe", stderr: "pipe" });
     expect(await new Response(proc.stdout).text()).toBe("version-two");
     expect(await proc.exited).toBe(0);
 });
@@ -211,4 +245,69 @@ test("an rc edit during bundling cannot publish a new runtime link", async () =>
     } finally {
         spy.mockRestore();
     }
+});
+
+test("commands-only shell startup associates identity for recovery after runtime IDs change", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cmux-no-screens-identity-"));
+    const runtimeId = "11111111-1111-4111-8111-111111111111";
+    const stableId = "22222222-2222-4222-8222-222222222222";
+    const installed = await installCapture({ home, screens: false });
+    const native = join(home, "Library/Application Support/cmux");
+    mkdirSync(native, { recursive: true });
+    writeFileSync(
+        join(native, "session-fixture.json"),
+        SafeJSON.stringify({
+            windows: [
+                {
+                    tabManager: {
+                        workspaces: [
+                            {
+                                layout: { type: "pane", pane: { panelIds: [runtimeId] } },
+                                panels: [{ id: runtimeId, stableSurfaceId: stableId, type: "terminal" }],
+                            },
+                        ],
+                    },
+                },
+            ],
+        })
+    );
+    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { PATH: "/bin:/usr/bin", HOME: home, GENESIS_TOOLS_HOME: home, CMUX_SURFACE_ID: runtimeId },
+    });
+    proc.stdin.write(`source '${installed.hookPath}'\nprintf '%s' saved-command\n`);
+    proc.stdin.end();
+    const [code] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect(code).toBe(0);
+    const directory = join(home, ".genesis-tools/cmux/command-journal");
+    for (let attempt = 0; attempt < 100 && !existsSync(join(directory, `${runtimeId}.identity`)); attempt++) {
+        await Bun.sleep(20);
+    }
+    const commands = loadCapturedCommands({ directory });
+    expect(commands.get(stableId)?.stableSurfaceId).toBe(stableId);
+    const nextId = "33333333-3333-4333-8333-333333333333";
+    const panes = buildOfflinePanes(
+        {
+            layout: { type: "pane", pane: { panelIds: [nextId] } },
+            panels: [{ id: nextId, stableSurfaceId: stableId, type: "terminal" }],
+        },
+        { x: 0, y: 0, width: 800, height: 600 },
+        { ttyCommands: new Map(), surfaceSessions: new Map(), surfaceCommands: commands }
+    );
+    expect(panes[0].surfaces[0]).toMatchObject({
+        command: "printf '%s' saved-command",
+        command_source: "shell-journal",
+    });
+    expect(captureInstallationStatus({ home }).screens.enabled).toBe(false);
+});
+
+test("status detects and reinstall repairs a missing managed recorder symlink", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cmux-link-repair-"));
+    await installCapture({ home, screens: false });
+    const entry = join(home, ".genesis-tools/cmux/runtime/capture-record.js");
+    renameSync(entry, `${entry}.old`);
+    expect(captureInstallationStatus({ home }).runtimeValid).toBe(false);
+    expect((await installCapture({ home, screens: false })).runtimeValid).toBe(true);
 });

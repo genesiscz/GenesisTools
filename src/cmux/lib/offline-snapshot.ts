@@ -40,11 +40,13 @@ export interface OfflineCaptureDeps {
     grokSessions?: ReplayCatalogSession[];
     surfaceCommands?: Map<string, CapturedCommand>;
     surfaceScreens?: Map<string, SavedSurfaceScreen>;
+    captureScreen?: boolean;
 }
 
 export interface OfflineCaptureOptions {
     name: string;
     note?: string;
+    captureScreen?: boolean;
 }
 
 export async function captureOfflineProfile(options: OfflineCaptureOptions): Promise<Profile> {
@@ -67,7 +69,7 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
             surfaceSessions,
             grokSessions,
             surfaceCommands: loadCapturedCommands(),
-            surfaceScreens: loadSavedScreens(),
+            surfaceScreens: options.captureScreen === false ? undefined : loadSavedScreens(),
         },
         options
     );
@@ -87,7 +89,11 @@ export function buildOfflineProfile(
             title: ws.customTitle || ws.processTitle || `workspace ${wsIndex + 1}`,
             selected: wsIndex === selectedIndex,
             current_directory: ws.currentDirectory,
-            panes: buildOfflinePanes(ws, { x: 0, y: 0, width: frame.width, height: frame.height }, deps),
+            panes: buildOfflinePanes(
+                ws,
+                { x: 0, y: 0, width: frame.width, height: frame.height },
+                { ...deps, captureScreen: options.captureScreen ?? deps.captureScreen }
+            ),
         }));
 
         return {
@@ -144,7 +150,7 @@ export function buildOfflinePanes(
                 (panel.stableSurfaceId ? deps.surfaceScreens?.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
                 deps.surfaceScreens?.get(panel.id.toLowerCase());
             const text = preferredScreenText(panel.terminal?.scrollback, cachedScreen?.text);
-            const screen = text ? { text, rows: text.split("\n").length } : undefined;
+            const screen = deps.captureScreen !== false && text ? { text, rows: text.split("\n").length } : undefined;
             const original =
                 captured?.command ??
                 (panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined) ??

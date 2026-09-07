@@ -42,7 +42,7 @@ export function registerSaveCommand(parent: Command): void {
         .option("-f, --force", "Overwrite an existing profile of the same name")
         .option(
             "--offline",
-            "Capture WITHOUT the cmux socket: layout from the app's autosave file, commands from the process table. The automatic fallback when cmux's UI thread is starved. No screen contents; scope is always everything in the autosave."
+            "Capture WITHOUT the cmux socket: autosave layout, recovered commands and available native/cached screens. Use --no-screen to omit output; scope is always everything in the autosave."
         )
         .action(async (name: string | undefined, flags: SaveFlags) => {
             await runSave(name, flags);
@@ -63,7 +63,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
     const scope = offline ? "all" : await resolveScope(flags, interactive);
     rejectIncompatibleScopeFlags(scope, flags);
     const { captureCwd, captureScreen, captureHistory } = offline
-        ? { captureCwd: true, captureScreen: false, captureHistory: true }
+        ? { captureCwd: true, captureScreen: flags.screen !== false, captureHistory: true }
         : await resolveCaptureFlags(flags, interactive);
     const name = await resolveName(rawName, scope, interactive);
 
@@ -84,7 +84,10 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
             offline = true;
             out.log.warn(
                 `cmux is ${health.state} — falling back to OFFLINE capture (autosave + process table). ` +
-                    "Screen contents are not captured this way. Run `tools cmux doctor` for triage."
+                    (captureScreen
+                        ? "Available cached/native screen contents are included. "
+                        : "Screen contents are excluded. ") +
+                    "Run `tools cmux doctor` for triage."
             );
         }
     }
@@ -129,7 +132,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
 
     try {
         const profile = offline
-            ? await captureOfflineProfile({ name, note: flags.note })
+            ? await captureOfflineProfile({ name, note: flags.note, captureScreen })
             : await captureProfile(options, {
                   onWorkspaceStart: ({ title, index, total }) => {
                       spinner.message(`Capturing workspace ${index}/${total}: ${title}`);

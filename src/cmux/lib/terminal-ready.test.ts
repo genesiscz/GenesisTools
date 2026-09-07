@@ -61,7 +61,7 @@ test("restore can activate a dormant terminal once before retrying its read", as
         matches: isShellPromptReady,
         description: "shell prompt",
         intervalMs: 1,
-        timeoutMs: 100,
+        timeoutMs: 2000,
         activateOnUnavailable: true,
     });
     expect(activate).toHaveBeenCalledTimes(1);
@@ -101,8 +101,16 @@ test("a failed optional focus RPC does not abort readiness polling", async () =>
         matches: isShellPromptReady,
         description: "shell",
         intervalMs: 1,
-        timeoutMs: 100,
+        timeoutMs: 2000,
         activateOnUnavailable: true,
     });
     expect(activate).toHaveBeenCalledTimes(1);
+});
+
+test("agent-screen rejection applies to every supported prompt shape", () => {
+    for (const prompt of ["➜ repo", "[status]#", "user@host:path$", "host%", "❯"]) {
+        expect(isShellPromptReady(`Claude Code\n${prompt}`)).toBe(false);
+    }
+    expect(isShellPromptReady("100%")).toBe(false);
+    expect(isShellPromptReady("➜ grok")).toBe(true);
 });

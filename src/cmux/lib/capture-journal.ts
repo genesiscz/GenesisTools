@@ -75,37 +75,81 @@ export function recordCapturedCommand(
     }
 }
 
+function journalLines(name: string, text: string): string[] {
+    if (!name.includes(".shell")) {
+        return text.split("\n");
+    }
+    const fields = text.split("\0");
+    const lines: string[] = [];
+    for (let index = 0; index + 9 < fields.length; index++) {
+        if (
+            fields[index] !== "1" ||
+            !z
+                .string()
+                .uuid()
+                .safeParse(fields[index + 1]).success ||
+            !["running", "completed"].includes(fields[index + 2])
+        ) {
+            continue;
+        }
+        const parsed = recordSchema.safeParse({
+            version: 1,
+            surfaceId: fields[index + 1],
+            phase: fields[index + 2],
+            cwd: fields[index + 3],
+            workspaceId: fields[index + 4] || undefined,
+            exitStatus: fields[index + 5] ? Number(fields[index + 5]) : undefined,
+            atMs: Number(fields[index + 6]) * 1000,
+            command: fields[index + 8],
+        });
+        if (parsed.success && Buffer.byteLength(parsed.data.command) === Number(fields[index + 7])) {
+            lines.push(SafeJSON.stringify(parsed.data));
+            index += 8;
+        }
+    }
+    return lines;
+}
+
 /** Cutoff prevents a reused surface from leaking a post-restart command into an old autosave. */
 export function loadCapturedCommands(
     options: { directory?: string; beforeMs?: number } = {}
 ): Map<string, CapturedCommand> {
     const directory = options.directory ?? captureJournalDirectory();
     const records = new Map<string, CapturedCommand>();
+    const aliases = new Map<string, string | undefined>();
 
     if (!existsSync(directory)) {
         return records;
     }
 
     for (const name of readdirSync(directory)
-        .filter((name) => /^[a-f\d-]+\.jsonl(?:\.previous)?$/.test(name))
+        .filter((name) => /^[a-f\d-]+\.(?:jsonl|shell)(?:\.previous)?$/.test(name))
         .sort()
         .reverse()) {
         const path = join(directory, name);
         try {
-            for (const line of readFileSync(path, "utf8").split("\n")) {
+            for (const line of journalLines(name, readFileSync(path, "utf8"))) {
                 if (!line) {
                     continue;
                 }
 
                 try {
                     const record = recordSchema.parse(SafeJSON.parse(line, { strict: true }));
-                    const alias = join(directory, `${record.surfaceId.toLowerCase()}.identity`);
-                    const storedIdentity =
-                        !record.stableSurfaceId && existsSync(alias)
-                            ? z.string().uuid().safeParse(readFileSync(alias, "utf8").trim())
-                            : undefined;
-                    const stableId =
-                        record.stableSurfaceId ?? (storedIdentity?.success ? storedIdentity.data : undefined);
+                    const runtimeId = record.surfaceId.toLowerCase();
+                    if (!record.stableSurfaceId && !aliases.has(runtimeId)) {
+                        aliases.set(runtimeId, undefined);
+                        const alias = join(directory, `${runtimeId}.identity`);
+                        try {
+                            const parsed = existsSync(alias)
+                                ? z.string().uuid().safeParse(readFileSync(alias, "utf8").trim())
+                                : undefined;
+                            aliases.set(runtimeId, parsed?.success ? parsed.data.toLowerCase() : undefined);
+                        } catch (error) {
+                            logger.debug({ error, alias }, "[cmux-capture] identity alias unavailable");
+                        }
+                    }
+                    const stableId = record.stableSurfaceId ?? aliases.get(runtimeId);
+                    record.stableSurfaceId = stableId;
                     for (const id of [stableId, record.surfaceId]) {
                         if (!id) {
                             continue;

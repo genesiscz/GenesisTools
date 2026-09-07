@@ -65,6 +65,7 @@ test.each([
     const result = await rawInvoke({ tool, action: "install", home });
     expect(result.exitCode).not.toBe(0);
     expect(result.error).toContain("--yes");
+    expect(SafeJSON.parse(result.output, { strict: true })).toMatchObject({ confirmationRequired: true });
     expect(readFileSync(rc, "utf8")).toBe(before);
     expect(existsSync(join(home, ".genesis-tools/cmux/runtime"))).toBe(false);
     const preview = await rawInvoke({ tool, action: "install", home, flags: ["--dry-run"] });
@@ -92,5 +93,6 @@ test.each(["cmux", "zsh"] as const)("%s requires confirmation before uninstall e
     const result = await rawInvoke({ tool, action: "uninstall", home });
     expect(result.exitCode).not.toBe(0);
     expect(result.error).toContain("--yes");
+    expect(SafeJSON.parse(result.output, { strict: true })).toMatchObject({ confirmationRequired: true });
     expect(readFileSync(rc, "utf8")).toBe(before);
 });

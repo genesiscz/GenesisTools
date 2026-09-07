@@ -46,7 +46,14 @@ export interface RestoreOutcome {
         converged: boolean;
         /** Null when the source autosave had estimated rather than measured cell sizes. */
         maxCellDelta: number | null;
+        failures: Array<{ paneRef: string; message: string }>;
     }>;
+}
+
+export function restoreFailureMessages(outcome: RestoreOutcome): string[] {
+    return outcome.workspaces.flatMap((workspace) =>
+        workspace.failures.map((failure) => `${workspace.title} / ${failure.paneRef}: ${failure.message}`)
+    );
 }
 
 export interface RestoreEvents {
@@ -139,6 +146,7 @@ export async function restoreProfile(
                 title: targetTitle,
                 converged: !playable.cmux_version.startsWith("offline ") && result.converged,
                 maxCellDelta: playable.cmux_version.startsWith("offline ") ? null : result.maxCellDelta,
+                failures: result.failures,
             });
             events.onWorkspaceDone?.({ ref: created.workspace_ref, title: targetTitle });
         }
@@ -148,17 +156,18 @@ export async function restoreProfile(
 
 interface MaterializeResult {
     converged: boolean;
+    failures: Array<{ paneRef: string; message: string }>;
     /** Largest |saved - actual| over all panes / dimensions, in terminal cells. */
     maxCellDelta: number;
 }
 
-async function materializeWorkspace(
+export async function materializeWorkspace(
     ws: Workspace,
     workspaceRef: string,
     opts: RestoreOptions
 ): Promise<MaterializeResult> {
     if (ws.panes.length === 0) {
-        return { converged: true, maxCellDelta: 0 };
+        return { converged: true, maxCellDelta: 0, failures: [] };
     }
 
     const paneRefByIndex = await applySplitTree(buildSplitTree(ws.panes), workspaceRef);
@@ -173,15 +182,25 @@ async function materializeWorkspace(
         paneRefByIndex
     );
 
+    const failures: MaterializeResult["failures"] = [];
     for (const savedPane of ws.panes) {
         const paneRef = paneRefByIndex.get(savedPane.index);
         if (!paneRef) {
+            failures.push({ paneRef: `saved pane ${savedPane.index}`, message: "No restored pane mapping" });
             continue;
         }
-        await populatePane(savedPane, paneRef, workspaceRef, opts);
+        try {
+            await populatePane(savedPane, paneRef, workspaceRef, opts);
+        } catch (error) {
+            failures.push({ paneRef, message: error instanceof Error ? error.message : String(error) });
+            logger.warn(
+                { error, paneRef, workspaceRef },
+                "[restore] pane population failed; continuing with remaining panes"
+            );
+        }
     }
 
-    return { converged: maxDelta <= 1, maxCellDelta: maxDelta };
+    return { converged: failures.length === 0 && maxDelta <= 1, maxCellDelta: maxDelta, failures };
 }
 
 export interface RectPane {

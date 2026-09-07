@@ -178,11 +178,15 @@ tools zsh cmux install
 
 Installation previews its managed rc block and asks before editing your zsh rc file. In non-interactive use, pass `--yes` to approve that edit; `--dry-run` previews without writing files or starting a collector. Uninstall follows the same confirmation rule. Repeating installation reports that it is already installed and does not duplicate or rewrite an unchanged rc block.
 
-The installer generates the hook and standalone runtimes under `~/.genesis-tools/cmux/`; their source lives in this repository. The installed runtime does not depend on the checkout or worktree remaining at its original path. Bun must remain installed; the hook uses PATH and then a global Bun fallback. Existing rc content is backed up before an approved change, and concurrent edits after preview are refused.
+The installer generates the hook and standalone runtimes under `~/.genesis-tools/cmux/`; their source lives in this repository. Installation and the viewport collector require Bun. The lightweight zsh command hook uses built-in append/stat operations and does not launch Bun per command. Installed files do not depend on the checkout or worktree remaining at its original path. Existing rc content is backed up before an approved change, and concurrent edits after preview are refused.
 
-Rerun `install` after updating GenesisTools to rebuild the installed artifacts. The generated hook invokes a stable managed symlink, `runtime/capture-record.js`, which points to the current versioned bundle. Switching that symlink updates the recorder for already-loaded modern hooks without pointing them into a removable worktree. Source-code changes are not silently hot-loaded. Changes to the shell functions themselves require re-sourcing the hook or a new shell, just as they would with a direct symlink to a source script.
+Rerun `install` after updating GenesisTools to rebuild the installed artifacts. The stable managed symlink `runtime/capture-record.js` remains available for older loaded recorder-based hooks; updating it refreshes their recorder without depending on a removable worktree. Current hooks append lightweight NUL-delimited spool records directly, which the capture reader validates alongside legacy JSONL journals. Source-code changes are not silently hot-loaded. Changes to shell functions require re-sourcing the hook or a new shell, just as with a direct symlink to a source script.
 
 New interactive cmux zsh terminals capture automatically. Existing idle shells can reload `~/.genesis-tools/cmux/capture.zsh`; running agents are not interrupted. Reinstalling the same version is idempotent. A changed collector version takes over through a new ownership token; the old process exits without PID signals.
+
+The viewport collector currently runs for the current login only; it is not a launchd login service and is not automatically restarted after a reboot or process crash. Command capture resumes in new zsh shells, but to resume viewport sampling rerun `tools cmux capture install` (or `tools zsh cmux install`, with the same custom home/rc options if used). Status distinguishes `enabled, not running` from `running` and prints this recovery guidance. Existing cached viewports remain available while the collector is stopped.
+
+Stable-ID association is independent of viewport sampling: a missing association starts one background resolver, which retries native autosave discovery for up to 30 seconds. Shell events can retry later at most once per 30 seconds until an association exists. It does not block command execution, and it also runs with `--no-screens`. The association task requires the installed Bun recorder; the lightweight command write itself does not.
 
 ```bash
 tools cmux capture status
@@ -202,7 +206,7 @@ All three lifecycle commands support `--home <directory>`, `--rc <path>`, and `-
 
 ## What is recorded
 
-- Exact local zsh command text and launch directory, synchronously before execution. Completion retains the command and its exit status. Pipelines and quotes are preserved; tab titles are never executed as commands.
+- Exact local zsh command text and launch directory, written before execution. Completion retains the command and its exit status. The write finishes before the command starts, but the lightweight spool does not force a disk fsync per event; abrupt power loss can lose recently buffered writes. Pipelines and quotes are preserved; tab titles are never executed as commands.
 - Runtime surface UUID plus cmux's persisted `stableSurfaceId` when available. `surface:N` is an in-memory routing reference, not a durable identifier. Workspace IDs are informational: moving a panel does not redirect its history to another panel. A saved association bridges stale shell environment IDs; the collector fills associations after native autosave supplies a new panel's stable identity.
 - Current visible terminal text, sampled roughly every 15 seconds plus collection time, with a maximum of 200 lines / 200,000 characters per surface. This is a viewport snapshot, not a full scrollback recorder. Unchanged viewports are not rewritten.
 - Native autosave layout, pane proportions, tab order/selection, titles and directories. Native saved text and browser URLs are retained when provided. The current viewport cache also feeds offline/previous-autosave recovery.
@@ -213,7 +217,7 @@ The collector reads local socket data only. It never focuses or initializes dorm
 
 Viewport cache has a 64 MiB total budget, including previous versions and the pre-restart archive. Oldest snapshots are removed when the budget is exceeded. The collector preserves the last cached screens when the native previous-autosave generation changes, and historical restore never substitutes a newer screen for an older cutoff.
 
-Command journals retain two generations of up to 1 MiB per surface. Old surface journals remain until explicitly removed; commands over 65,536 characters are rejected visibly. Runtime diagnostics retain two 1 MiB generations. Files are private local data: directories mode 0700, new data files mode 0600. Commands and visible output can contain sensitive text, so do not publish the data directory or copy its contents into test fixtures.
+Command spools retain two bounded generations of approximately 1 MiB per surface; existing JSONL journals remain readable and retain their separate two-generation limit. Old surface records remain until explicitly removed; the lightweight hook visibly rejects commands over 65,536 bytes. Runtime diagnostics retain two 1 MiB generations. Files are private local data: directories mode 0700, new data files mode 0600. Commands and visible output can contain sensitive text, so do not publish the data directory or copy its contents into test fixtures.
 
 Capture can miss output between samples, terminals that never initialized, and data older than the retention budget. Recording must be installed before a command runs; it cannot recover missing earlier commands retrospectively.
 

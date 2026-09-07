@@ -1,10 +1,25 @@
-import { expect, test } from "bun:test";
-import { copyFileSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { enableScreenCollector, screenCollectorStatus } from "@app/cmux/lib/capture-collector-lifecycle";
 import { installCapture, uninstallCapture } from "@app/cmux/lib/capture-installer";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+const originalEnvironment = env.testing.snapshot();
+const fixtureHome = mkdtempSync(join(tmpdir(), "cmux-collector-os-home-"));
+const fixtureBin = join(fixtureHome, "bin");
+const fixtureAutosave = join(fixtureHome, "Library/Application Support/cmux");
+mkdirSync(fixtureBin, { recursive: true });
+mkdirSync(fixtureAutosave, { recursive: true });
+writeFileSync(join(fixtureBin, "cmux"), "#!/bin/sh\nexit 99\n", { mode: 0o700 });
+writeFileSync(join(fixtureAutosave, "session-fixture.json"), SafeJSON.stringify({ windows: [] }));
+beforeEach(() => {
+    env.testing.set("HOME", fixtureHome);
+    env.testing.set("PATH", `${fixtureBin}:${originalEnvironment.PATH ?? ""}`);
+});
+afterEach(() => env.testing.restore(originalEnvironment));
 
 test("default install owns one detached collector and uninstall stops it without deleting cache", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-collector-home-"));

@@ -64,11 +64,20 @@ export function registerCaptureLifecycleCommands(parent: Command): void {
                     }
 
                     if (plan.changesRc && !flags.yes) {
-                        p.note(
-                            plan.block || "Remove only the managed cmux capture block.",
-                            `Proposed change to ${plan.rcPath}`
-                        );
-                        if (!isInteractive()) {
+                        if (flags.json) {
+                            out.result({
+                                action,
+                                rcPath: plan.rcPath,
+                                willChangeRc: true,
+                                proposedBlock: plan.block,
+                                confirmationRequired: true,
+                            });
+                        } else {
+                            out.log.info(
+                                `Proposed change to ${plan.rcPath}:\n${plan.block || "Remove only the managed cmux capture block."}`
+                            );
+                        }
+                        if (!isInteractive() || flags.json) {
                             out.log.error(
                                 "Changing the shell rc file requires confirmation. Re-run with --yes, or use --dry-run to preview. No installation changes were made."
                             );
@@ -95,6 +104,11 @@ export function registerCaptureLifecycleCommands(parent: Command): void {
                         "changed" in result && result.changed
                             ? "cmux capture is already installed; updated its generated runtime or configuration."
                             : "cmux capture is already installed and current; no changes were needed."
+                    );
+                }
+                if (result.screens.enabled && !result.screens.running) {
+                    out.log.warn(
+                        "Viewport collector is enabled but stopped. It is not a login service; rerun capture install with the same home/rc options after reboot or process exit to restart sampling."
                     );
                 }
                 if (flags.json) {

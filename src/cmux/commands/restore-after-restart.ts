@@ -4,7 +4,13 @@ import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
 import { loadSurfaceSessions } from "@app/cmux/lib/command-capture";
 import { renderProfileCommandDetail, renderProfileTree } from "@app/cmux/lib/format";
 import { buildOfflineProfile } from "@app/cmux/lib/offline-snapshot";
-import { buildPlan, type RestoreOptions, reportWaitingPrompts, restoreProfile } from "@app/cmux/lib/restore";
+import {
+    buildPlan,
+    type RestoreOptions,
+    reportWaitingPrompts,
+    restoreFailureMessages,
+    restoreProfile,
+} from "@app/cmux/lib/restore";
 import {
     ALL_RESTORE_AGENTS,
     filterReplayByAgents,
@@ -303,14 +309,23 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
                 spinner.message(`Restoring ${index}/${total}: ${title}`);
             },
         });
-        spinner.stop(`Restored ${outcome.workspaces.length} workspace(s) in ${Date.now() - startedAt} ms`);
+        const failures = restoreFailureMessages(outcome);
+        spinner.stop(`Processed ${outcome.workspaces.length} workspace(s) in ${Date.now() - startedAt} ms`);
+        if (failures.length > 0) {
+            process.exitCode = 1;
+            p.note(failures.join("\n"), "Pane restore failures");
+        }
         if (opts.enter) {
             await reportWaitingPrompts(
                 outcome.workspaces.map((w) => w.ref),
                 "Restore"
             );
         }
-        p.outro(pc.green("Done."));
+        p.outro(
+            failures.length > 0
+                ? pc.yellow("Partial restore — some panes or commands were not restored.")
+                : pc.green("Done.")
+        );
     } catch (error) {
         spinner.stop("Restore failed.");
         logger.error({ error }, "[restore-after-restart] failed");

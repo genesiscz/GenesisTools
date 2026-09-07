@@ -176,3 +176,55 @@ test("short appends are retried until a complete UTF-8 record is persisted", () 
         spy.mockRestore();
     }
 });
+
+test("shell spool cutoff, aliasing and recovery after a truncated record", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cmux-spool-history-"));
+    const stableId = "22222222-2222-4222-8222-222222222222";
+    associateCapturedSurface({ directory, surfaceId, stableSurfaceId: stableId });
+    const encode = (command: string, seconds: number) =>
+        [
+            "",
+            "1",
+            surfaceId,
+            "completed",
+            "/tmp",
+            "",
+            "0",
+            String(seconds),
+            String(Buffer.byteLength(command)),
+            command,
+            "",
+        ].join("\0");
+    fs.writeFileSync(join(directory, `${surfaceId}.shell.previous`), encode("echo earlier", 1));
+    fs.writeFileSync(
+        join(directory, `${surfaceId}.shell`),
+        encode("echo incomplete", 2).slice(0, -5) + encode("echo café\nprintf later", 3)
+    );
+    expect(loadCapturedCommands({ directory, beforeMs: 1500 }).get(stableId)?.command).toBe("echo earlier");
+    expect(loadCapturedCommands({ directory }).get(stableId)?.command).toBe("echo café\nprintf later");
+});
+
+test("each alias is loaded once and normalized into returned command records", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cmux-alias-cache-"));
+    const stableId = "22222222-2222-4222-8222-222222222222";
+    associateCapturedSurface({ directory, surfaceId, stableSurfaceId: stableId });
+    for (let index = 0; index < 10; index++) {
+        recordCapturedCommand({
+            directory,
+            surfaceId,
+            command: `echo ${index}`,
+            cwd: "/tmp",
+            phase: "completed",
+            atMs: index,
+        });
+    }
+    const original = fs.readFileSync;
+    const spy = spyOn(fs, "readFileSync").mockImplementation(original);
+    try {
+        const result = loadCapturedCommands({ directory });
+        expect(result.get(stableId)?.stableSurfaceId).toBe(stableId);
+        expect(spy.mock.calls.filter(([path]) => String(path).endsWith(".identity"))).toHaveLength(1);
+    } finally {
+        spy.mockRestore();
+    }
+});

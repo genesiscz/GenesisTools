@@ -1,6 +1,12 @@
 import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
 import { renderProfileCommandDetail } from "@app/cmux/lib/format";
-import { buildPlan, type RestoreOptions, reportWaitingPrompts, restoreProfile } from "@app/cmux/lib/restore";
+import {
+    buildPlan,
+    type RestoreOptions,
+    reportWaitingPrompts,
+    restoreFailureMessages,
+    restoreProfile,
+} from "@app/cmux/lib/restore";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
@@ -107,17 +113,24 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
                 spinner.message(`Restoring ${index}/${total}: ${title}`);
             },
         });
-        spinner.stop(`Restored ${outcome.workspaces.length} workspace(s) in ${Date.now() - startedAt} ms`);
+        const failures = restoreFailureMessages(outcome);
+        spinner.stop(`Processed ${outcome.workspaces.length} workspace(s) in ${Date.now() - startedAt} ms`);
+        if (failures.length > 0) {
+            process.exitCode = 1;
+            p.note(failures.join("\n"), "Pane restore failures");
+        }
 
         const summary = outcome.workspaces
             .map((w) => {
                 const status = w.converged ? pc.green("✓") : pc.yellow("≈");
                 const dimensionNote =
-                    w.maxCellDelta === null
-                        ? "cell sizes unverified: autosave dimensions were estimated"
-                        : w.converged
-                          ? "exact size match"
-                          : `off by ${w.maxCellDelta} cell${w.maxCellDelta === 1 ? "" : "s"}`;
+                    w.failures.length > 0
+                        ? `partial restoration: ${w.failures.length} pane(s) failed`
+                        : w.maxCellDelta === null
+                          ? "cell sizes unverified: autosave dimensions were estimated"
+                          : w.converged
+                            ? "exact size match"
+                            : `off by ${w.maxCellDelta} cell${w.maxCellDelta === 1 ? "" : "s"}`;
                 return `  ${status} ${pc.cyan(w.title)} ${pc.dim(`(${dimensionNote})`)}`;
             })
             .join("\n");
@@ -130,7 +143,11 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
             );
         }
 
-        p.outro(pc.green("Done."));
+        p.outro(
+            failures.length > 0
+                ? pc.yellow("Partial restore — some panes or commands were not restored.")
+                : pc.green("Done.")
+        );
     } catch (error) {
         spinner.stop("Restore failed.");
         logger.error({ error }, "[cmux restore] failed");

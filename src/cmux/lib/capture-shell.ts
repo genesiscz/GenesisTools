@@ -4,31 +4,49 @@ export function renderCaptureShell(
     options: { bunPath?: string; recorderPath?: string; directory?: string; preferPathBun?: boolean } = {}
 ): string {
     const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
-    const bunPath = options.bunPath ?? process.execPath;
-    const recorderPath = options.recorderPath ?? resolve(import.meta.dir, "../capture-record.ts");
-    const recorder = options.preferPathBun
-        ? `"$_GENESIS_CMUX_CAPTURE_BUN" ${quote(recorderPath)}`
-        : `${quote(bunPath)} ${quote(recorderPath)}`;
-    const selectBun = options.preferPathBun
-        ? `typeset -g _GENESIS_CMUX_CAPTURE_BUN="\${commands[bun]:-}"
-if [[ -z "$_GENESIS_CMUX_CAPTURE_BUN" ]]; then
-    _GENESIS_CMUX_CAPTURE_BUN=${quote(bunPath)}
-fi
-if [[ ! -x "$_GENESIS_CMUX_CAPTURE_BUN" ]]; then
-    print -u2 -- 'cmux capture requires Bun on PATH; reinstall capture after installing Bun'
-    return 0
-fi
-`
-        : "";
-    const directory = quote(options.directory ?? "");
-
-    return `# Synchronous cmux command capture. Source this from ~/.zshrc.
+    const bunPath = quote(options.bunPath ?? process.execPath);
+    const selectedBun = options.preferPathBun ? `\${commands[bun]:-${bunPath}}` : bunPath;
+    const recorderPath = quote(options.recorderPath ?? resolve(import.meta.dir, "../capture-record.ts"));
+    const directory = options.directory
+        ? quote(options.directory)
+        : '"${GENESIS_TOOLS_HOME:-$HOME}/.genesis-tools/cmux/command-journal"';
+    return `# Lightweight cmux command capture. Source this from ~/.zshrc.
 [[ -o interactive && -n "$CMUX_SURFACE_ID" ]] || return 0
 [[ -z "$CMUX_CAPTURE_OWNER" || "$CMUX_CAPTURE_OWNER" = "$$" ]] || return 0
-${selectBun}export CMUX_CAPTURE_OWNER=$$
+[[ "$CMUX_SURFACE_ID" =~ '^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$' ]] || return 0
+export CMUX_CAPTURE_OWNER=$$
+zmodload zsh/datetime || return 0
+zmodload zsh/stat || return 0
+typeset -g _GENESIS_CMUX_CAPTURE_DIRECTORY=${directory}
+typeset -g _GENESIS_CMUX_CAPTURE_BUN=${selectedBun}
+typeset -g _GENESIS_CMUX_CAPTURE_ASSOCIATE_AT=\${_GENESIS_CMUX_CAPTURE_ASSOCIATE_AT:-0}
+(umask 077; command mkdir -p -- "$_GENESIS_CMUX_CAPTURE_DIRECTORY") || return 0
 autoload -Uz add-zsh-hook
+_genesis_cmux_capture_associate() {
+    local alias="$_GENESIS_CMUX_CAPTURE_DIRECTORY/\${CMUX_SURFACE_ID:l}.identity"
+    local identity=""
+    [[ -r "$alias" ]] && identity=$(<"$alias")
+    if [[ ! "$identity" =~ '^[a-fA-F0-9]{8}(-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$' && -x "$_GENESIS_CMUX_CAPTURE_BUN" && -r ${recorderPath} ]] && (( EPOCHSECONDS - _GENESIS_CMUX_CAPTURE_ASSOCIATE_AT > 30 )); then
+        typeset -g _GENESIS_CMUX_CAPTURE_ASSOCIATE_AT=$EPOCHSECONDS
+        command "$_GENESIS_CMUX_CAPTURE_BUN" ${recorderPath} --associate "$CMUX_SURFACE_ID" "$_GENESIS_CMUX_CAPTURE_DIRECTORY" </dev/null >/dev/null 2>/dev/null &!
+    fi
+}
+_genesis_cmux_capture_associate
 _genesis_cmux_capture_write() {
-    print -rn -- "$_GENESIS_CMUX_CAPTURE_COMMAND" | command ${recorder} "$1" "$CMUX_SURFACE_ID" "$_GENESIS_CMUX_CAPTURE_CWD" "$CMUX_WORKSPACE_ID" "$2" ${directory}
+    setopt localoptions
+    unsetopt multibyte
+    local spool="$_GENESIS_CMUX_CAPTURE_DIRECTORY/\${CMUX_SURFACE_ID:l}.shell"
+    local -a spool_size
+    if [[ -f "$spool" ]]; then
+        zstat -A spool_size +size "$spool" || return 1
+        if (( spool_size[1] > 900000 )); then
+            command mv -f -- "$spool" "$spool.previous" || return 1
+        fi
+    fi
+    if (( \${#_GENESIS_CMUX_CAPTURE_COMMAND} > 65536 )); then
+        return 1
+    fi
+    (umask 077; print -rn -- $'\\0'"1"$'\\0'"$CMUX_SURFACE_ID"$'\\0'"$1"$'\\0'"$_GENESIS_CMUX_CAPTURE_CWD"$'\\0'"$CMUX_WORKSPACE_ID"$'\\0'"$2"$'\\0'"$EPOCHREALTIME"$'\\0'"\${#_GENESIS_CMUX_CAPTURE_COMMAND}"$'\\0'"$_GENESIS_CMUX_CAPTURE_COMMAND"$'\\0' >> "$spool")
 }
 _genesis_cmux_capture_preexec() {
     if [[ "$1" == 'function _genesis_cmux_restore_internal '* ]]; then
@@ -37,6 +55,7 @@ _genesis_cmux_capture_preexec() {
     fi
     typeset -g _GENESIS_CMUX_CAPTURE_COMMAND="$1"
     typeset -g _GENESIS_CMUX_CAPTURE_CWD="$PWD"
+    _genesis_cmux_capture_associate
     _genesis_cmux_capture_write running '' || print -u2 -- 'cmux command capture failed; this command may not be recoverable'
     return 0
 }

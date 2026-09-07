@@ -4,6 +4,9 @@ import { logger } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
 
 export function isShellPromptReady(text: string): boolean {
+    if (/Claude Code|OpenAI Codex|(?:^|\n)\s*Grok(?:\s+CLI|\s+v?\d|\s*$)/i.test(stripAnsi(text))) {
+        return false;
+    }
     const last =
         stripAnsi(text)
             .split("\n")
@@ -14,8 +17,8 @@ export function isShellPromptReady(text: string): boolean {
         /^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?\s*$/u.test(last) ||
         /^\[[^\]]+\]\s*[$#%]\s*$/u.test(last) ||
         /^[\w.-]+@[\w.-]+:\S*[$#%]\s*$/u.test(last) ||
-        /^[\w.-]+[%#$]\s*$/u.test(last) ||
-        (/^\s*[$#%❯]\s*$/u.test(last) && !/Claude Code|OpenAI Codex|Grok/i.test(stripAnsi(text)))
+        /^[a-zA-Z_][\w.-]*[%#$]\s*$/u.test(last) ||
+        /^\s*[$#%❯]\s*$/u.test(last)
     );
 }
 
