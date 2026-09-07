@@ -4,6 +4,7 @@
  * extension browser all come through here, so a launch gotcha is paid for once.
  */
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { type CdpProbe, probe } from "./cdp.ts";
 import {
     type BrowserId,
@@ -108,6 +109,7 @@ export interface LaunchedCdpBrowser {
 }
 
 const LOG_TAIL_LINES = 40;
+const prof = profiler.scope("chrome-devtools");
 
 async function readLogTail(path: string, readLog: (path: string) => Promise<string>): Promise<string> {
     try {
@@ -173,8 +175,10 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
 
     const probeFn = opts.probe ?? probe;
     const timeoutMs = opts.timeoutMs ?? (isolated ? COLD_PROFILE_TIMEOUT_MS : DEFAULT_LAUNCH_TIMEOUT_MS);
-    const up = await (opts.waitFor ?? waitForCdp)({ port: opts.port, probe: probeFn, timeoutMs });
-    const result = up ? await probeFn(opts.port) : null;
+    const up = await prof.measureAsync(`launch.wait-cdp.${isolated ? "isolated" : "profile"}`, () =>
+        (opts.waitFor ?? waitForCdp)({ port: opts.port, probe: probeFn, timeoutMs })
+    );
+    const result = up ? await prof.measureAsync("launch.probe", () => probeFn(opts.port)) : null;
 
     if (!result) {
         const logTail = opts.logPath

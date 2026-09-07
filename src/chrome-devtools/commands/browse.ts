@@ -34,7 +34,11 @@ interface OpenOpts {
     browser?: string;
     fresh?: boolean;
     extension?: string;
+    userDataDir?: string;
 }
+
+/** A persistent separate profile: logins survive between runs, unlike --fresh, and Chrome ≥136 accepts the flag there. */
+const PERSISTENT_PROFILE_HINT = "~/.genesis-tools/chrome-devtools/profile";
 
 export function registerBrowse(program: Command): void {
     withPort(program.command("open"))
@@ -44,6 +48,10 @@ export function registerBrowse(program: Command): void {
         .argument("[url]", "url to open", "about:blank")
         .option("--browser <name>", BROWSER_IDS, "chrome")
         .option("--fresh", "throwaway profile — your own profile stays untouched (but you must log in again)")
+        .option(
+            "--user-data-dir <dir>",
+            `persistent separate profile (logins survive between runs; Chrome ≥136 refuses the debug flag on its default profile, so this is the way to keep sessions), e.g. ${PERSISTENT_PROFILE_HINT}`
+        )
         .option("--extension <dist-dir>", "load an unpacked extension (implies its own profile)")
         .action(async (url: string, opts: OpenOpts) => {
             const { id, name } = browserDefOf(opts.browser);
@@ -55,7 +63,7 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
-            if (!opts.fresh && !opts.extension && listRunningBrowsers().includes(id)) {
+            if (!opts.fresh && !opts.extension && !opts.userDataDir && listRunningBrowsers().includes(id)) {
                 out.log.error(`${name} is already running. The debug flag cannot be added to a live process.`);
                 out.log.info(`  ${suggest(["restart", "--browser", id, "--port", String(port)])}`);
                 process.exit(1);
@@ -69,6 +77,7 @@ export function registerBrowse(program: Command): void {
                     url,
                     fresh: opts.fresh === true,
                     extension: opts.extension,
+                    userDataDir: opts.userDataDir,
                 });
                 up = true;
                 out.log.info(`up: ${result.browser} on ${port} (${result.pages} pages)`);
@@ -130,7 +139,10 @@ export function registerBrowse(program: Command): void {
                         : `relaunched but no CDP on ${port}. Chrome ≥136 refuses the flag on the DEFAULT profile dir (anti-automation).`
                 );
                 out.log.info(
-                    `  fallback with a separate profile: ${suggest(["open", "--browser", id, "--port", String(port), "--fresh", url])}`
+                    `  fallback, throwaway profile (log in again each time): ${suggest(["open", "--browser", id, "--port", String(port), "--fresh", url])}`
+                );
+                out.log.info(
+                    `  fallback, persistent profile (logins kept between runs): ${suggest(["open", "--browser", id, "--port", String(port), "--user-data-dir", PERSISTENT_PROFILE_HINT, url])}`
                 );
                 process.exit(1);
             }

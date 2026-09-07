@@ -20,7 +20,9 @@ listens. **Ask before quitting anyone's browser** — their open tabs are at sta
 
 ⚠️ Chrome ≥ 136 refuses to open the CDP port when launched with the DEFAULT profile
 directory (anti-automation). Chromium builds are unaffected; Brave's stance can differ per
-version. `restart` detects the failure and suggests the `open --fresh` fallback.
+version. `restart` detects the failure and suggests two fallbacks: `open --fresh` (throwaway
+profile) and `open --user-data-dir <dir>` (a persistent separate profile whose logins survive
+between runs, e.g. `~/.genesis-tools/chrome-devtools/profile`).
 
 ## Quick start
 

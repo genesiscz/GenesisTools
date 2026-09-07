@@ -29,7 +29,9 @@ tools chrome-devtools open --browser chrome --port 9223 --fresh <url>
 Ask which before quitting anything. Losing their tab set without warning is the one thing
 they will be annoyed about. Do not `osascript quit` + `open -a`: `open -a` reuses the live
 process and ignores the flag. ⚠️ Chrome ≥136 refuses the flag on the DEFAULT profile dir;
-`restart` detects that and suggests the `--fresh` fallback.
+`restart` detects that and suggests two fallbacks: `open --fresh` (throwaway, log in every
+time) and `open --user-data-dir ~/.genesis-tools/chrome-devtools/profile` (a persistent
+separate profile, logins survive between runs; the only way to keep sessions on Chrome ≥136).
 
 ## Start here, every time
 
