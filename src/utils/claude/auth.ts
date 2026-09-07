@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { generatePkcePair } from "@genesiscz/utils/ai/oauth/pkce";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -74,6 +75,15 @@ export const INFERENCE_SCOPE = "user:inference";
 
 /** What Claude Code asks for on a setup-token exchange. */
 export const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+
+/**
+ * Deadline for one token-endpoint round trip.
+ *
+ * Sized to fit inside `NETWORKED_LOCK_WAIT_MS`: `resolveAccountToken` retries the
+ * refresh up to three times with a 1 s delay, so the worst case a waiting caller
+ * can see is 3 × 15 s + 2 s = 47 s, still under the 60 s it is willing to wait.
+ */
+export const TOKEN_REQUEST_TIMEOUT_MS = 15_000;
 
 // We do NOT send a custom `expires_in` on the normal login exchange. Claude Code's setup-token
 // flow does, but the server refuses it for the scopes a normal login requests —
@@ -250,6 +260,11 @@ export class ClaudeOAuthClient {
                 refresh_token: refreshToken,
                 client_id: CLAUDE_CODE_CLIENT_ID,
             }),
+            // This call runs INSIDE the AI config lock, so an unbounded request
+            // holds that lock for as long as the socket stays open and every
+            // other account's refresh waits behind it. The lock's stale-breaker
+            // cannot help: the holder is alive, just wedged.
+            signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
         });
 
         if (!res.ok) {
@@ -278,25 +293,8 @@ export class ClaudeOAuthClient {
         return Date.now() + bufferMs >= expiresAt;
     }
 
-    private async generatePKCE(): Promise<PKCEChallenge> {
-        const verifierBytes = new Uint8Array(32);
-        crypto.getRandomValues(verifierBytes);
-        const verifier = this.base64UrlEncode(verifierBytes);
-
-        const encoder = new TextEncoder();
-        const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
-        const challenge = this.base64UrlEncode(new Uint8Array(hashBuffer));
-
-        const stateBytes = new Uint8Array(32);
-        crypto.getRandomValues(stateBytes);
-        const state = this.base64UrlEncode(stateBytes);
-
-        return { verifier, challenge, state };
-    }
-
-    private base64UrlEncode(bytes: Uint8Array): string {
-        const base64 = btoa(String.fromCharCode(...bytes));
-        return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    private generatePKCE(): Promise<PKCEChallenge> {
+        return generatePkcePair();
     }
 }
 

@@ -1,5 +1,6 @@
 import type { EmbeddingModel, ImageModel, LanguageModel, SpeechModel, TranscriptionModel } from "ai";
 import type { AccountEntry } from "../config/schema";
+import type { AccountFeatures } from "./account-features";
 
 /**
  * A provider plugin is the extension point of the AI layer: adding a provider is
@@ -85,4 +86,14 @@ export interface ProviderPlugin {
     readonly credential: CredentialSpec;
     bind(ctx: BindContext): Promise<ProviderBinding>;
     health?(ctx: BindContext): Promise<HealthReport>;
+    /**
+     * Account lifecycle and quota features: login, logout, home discovery, usage
+     * polling, transcript scope. Absent on api-key, local and gateway plugins.
+     *
+     * Deliberately a member rather than a new `Capability`: `Capability` is what
+     * `TASK_CAPABILITY` switches on to pick a plugin for a call, so an
+     * `"accounts"` member there would force every `pluginsByCapability` caller to
+     * exclude it. A nested member has no blast radius.
+     */
+    readonly accounts?: AccountFeatures;
 }
