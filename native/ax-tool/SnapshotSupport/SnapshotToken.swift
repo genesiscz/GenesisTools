@@ -2,15 +2,11 @@ import Foundation
 
 /// A token that ties an element index to one snapshot of one window of one process instance.
 ///
-/// `validate` refuses the index when the process was replaced (pid or launch time differ), the
-/// tree changed (digest differs), the snapshot expired, or the index is outside the snapshot's
-/// element count. Each refusal has a test in `Tests/SnapshotSupportTests.swift`.
-///
-/// GROUNDWORK, not yet on the shipped path: as of this target's introduction no command in
-/// `Sources/main.swift` constructs or validates a token. The executable's `snapshot` command
-/// captures mouse position and focus, not a UI tree, so nothing yet produces the `digest`,
-/// `depth` and element `count` a token needs. The producer is the planned tree-snapshot command;
-/// until it exists, declaring the dependency in `Package.swift` adds no protection to any action.
+/// `validate` refuses the index, in this order, when the token's own metadata is invalid, the
+/// process was replaced (pid or launch time differ), the window differs, the snapshot expired, the
+/// index is outside the snapshot's element count, or the tree changed (digest differs). Each
+/// refusal has a test in `Tests/SnapshotSupportTests.swift`. `Sources/SnapshotWorkflow.swift`
+/// issues a token with every `see` and validates it before every `act`.
 public struct SnapshotToken: Codable {
     public let version: Int
     public let pid: Int32
@@ -30,9 +26,15 @@ public struct SnapshotToken: Codable {
         self.created = created
     }
 
-    public func validate(pid: Int32, launch: Double, digest: String, element: Int, count: Int, now: Double) throws -> Int {
+    public func validate(pid: Int32, launch: Double, window: Int, digest: String, element: Int, count: Int, now: Double) throws -> Int {
+        guard self.window > 0, depth > 0, depth <= 50, !self.digest.isEmpty else {
+            throw SnapshotError.invalid("invalid snapshot metadata; run see again")
+        }
         guard version == 1, self.pid == pid, self.launch == launch else {
             throw SnapshotError.invalid("snapshot belongs to a different app instance; run see again")
+        }
+        guard self.window == window else {
+            throw SnapshotError.invalid("snapshot belongs to a different window; run see again")
         }
         guard now >= created, now - created <= 120 else {
             throw SnapshotError.invalid("snapshot expired; run see again")

@@ -2,7 +2,21 @@
 
 Compiled Swift CLI for macOS UI automation via the Accessibility (AX) API. Element-targeted, cursor-free where possible, ~10-30x faster than osascript/System Events (~66ms get, ~130ms list, ~151ms press vs 2-5s).
 
-Consumed by the `tools ax` TypeScript wrapper (`src/ax/`) — prefer that interface; it auto-builds this binary on first run. Direct binary use is identical minus the human-friendly output formatting.
+Consumed by the `tools control` TypeScript wrapper (`src/control/`). It builds a missing or stale binary. Direct binary use returns JSON and works without Codex, Sky, Peekaboo or an agent session.
+
+## Observe and act
+
+`ax-tool see --app APP [--window-index N | --window-id ID] [--path PNG]` returns an indexed AX tree and screenshot for one explicit window, plus a 120-second observation token. Multiple windows require an index from the current candidates. `ax-tool act --app APP --snapshot TOKEN --element N --action press` resolves only that observation after validating process start time, CG window ID, tree digest, age and bounds. Run `see` again before the next action.
+
+Actions: get, press, click, drag, set, perform, focus, scroll, type, key, select and paste. Read `ax-tool --help` for their arguments. `click` checks focus, geometry, scroll clipping and hit ownership. `type`/`key` are process-targeted and require the intended input/window already focused. `set` writes AXValue and verifies it without a typing fallback. AX failures/timeouts fail explicitly; an acknowledgment still needs UI verification.
+
+This detects changes in observable state, not replacement of otherwise indistinguishable anonymous controls. It cannot lock the desktop against concurrent changes. The full workflow and examples are in `src/control/README.md` and the macos-control skill. Legacy commands retain their existing targeting; mouse/focus `snapshot`/`restore` is a separate API.
+
+## Background coordinate clicks
+
+`act --action click --background --coords X,Y` takes global screen points within a current snapshot's window, as an alternative to `--element N`. It performs app-scoped hit testing and sends events to the target PID and window without warping the hardware cursor or explicitly activating the app. Drag uses --to X,Y; right-click uses --button right; background delivery depends on the receiving app accepting the event. The tool does not explicitly activate or raise the app, but a foreground target may still change its own key window. Refresh and verify both the effect and any focus changes the receiving app chooses to make.
+
+Correct window-addressed events on current macOS need the private `CGEventSetWindowLocation` symbol after assigning the global location. This ordering is also used by [WebKit's event serializer](https://github.com/WebKit/WebKit/commit/7596ac02075f631c107be8d4e0b056d236288433). The symbol is resolved dynamically, and a missing symbol causes a refusal before posting any event. The separate window-local Quartz point uses a top-left origin; the native live test checks the delivered button effect and pointer preservation. No OpenAI library is involved.
 
 ## Build
 
@@ -18,10 +32,11 @@ Binary lands at `.build/release/ax-tool`. Requires Swift 5.9+, macOS 13+.
 
 Needs **Accessibility** access for the calling process (System Settings > Privacy & Security > Accessibility). `screenshot` additionally needs **Screen Recording**.
 
-## Commands (24)
+## Commands
 
 | Group | Commands |
 |-------|----------|
+| Snapshot workflow | `see`, `act` |
 | Discovery | `apps`, `list`, `tree`, `dump`, `find`, `window`, `attrs`, `actions`, `preflight` |
 | Measurement | `typography`, `hittest` |
 | Inspection | `get` |
@@ -114,17 +129,16 @@ Defaults are unchanged, but every disruptive behaviour can now be opted out of:
 Use all three when the tool runs unattended while someone is working. Leave
 them off for interactive use, where raising the app is what you asked for.
 
+## Extended snapshot actions
+
+The independent workflow supports drag, select and paste. Drag accepts --to X,Y, optional --button left|right|middle, --duration 0.1..5, --coords and --background. Scroll accepts --direction up|down|left|right. --pages 1..20 derives synthetic wheel distance from the observed target viewport; --pixels 1..10000 requests an exact distance. The two modes are mutually exclusive, and either may use --coords and --background.
+
+Select accepts a UTF-16 --range START,LENGTH or a uniquely resolved --text target, with optional --prefix and --suffix. Paste requires --text, supports --format text|md|html and --selection text|cursor_before|cursor_after; the target must already be focused. Clipboard restoration is best-effort: the original is restored only when the observed clipboard change-count is still the one produced by the action; a concurrent copy creates a residual race and restoration is skipped. Public paste carries text and HTML data, but raw markup is not guaranteed to render as rich text.
+
+The background event path uses localized Apple private SPI CGEventSetWindowLocation plus WebKit's private window field 51, and refuses when the setter is unavailable. --verify-pointer is a live-smoke opt-in and requires an idle pointer; --background-only avoids focus. These are compatibility boundaries for the independent tool and do not claim Sky internals or parity across all applications.
+
 ## Tests
 
 `bun run test:native` runs the SwiftPM test targets (`swift test` in `native/ax-tool`). CI runs
 on ubuntu, which has no Swift toolchain, so these tests are a local gate: run them before pushing
 a change under `native/ax-tool`.
-
-## SnapshotSupport (groundwork)
-
-`SnapshotSupport/SnapshotToken.swift` is a separate SwiftPM target whose `validate` refuses an
-element index for a replaced window, another process instance, an expired snapshot or an index
-outside the snapshot. No `ax-tool` command issues or checks a token yet: the existing `snapshot`
-command captures mouse and focus, not a tree, so there is no digest for a token to guard. The
-target ships with its tests as groundwork for a tree-snapshot command; until that command exists
-the executable's dependency on it changes no behaviour.

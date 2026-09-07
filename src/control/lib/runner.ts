@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { nativeNeedsBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
@@ -56,8 +58,8 @@ function maybeRecord(args: string[], ok: boolean): void {
             join(RECORD_DIR, "commands.jsonl"),
             `${SafeJSON.stringify({ ts: Date.now(), ok, src: recordSource(), args })}\n`
         );
-    } catch {
-        // recording must never break the command itself
+    } catch (error) {
+        logger.debug({ error }, "could not record control command");
     }
 }
 
@@ -68,12 +70,12 @@ export interface AxResult {
 }
 
 export function ensureBinary(): string {
-    if (existsSync(BINARY_PATH)) {
+    if (!nativeNeedsBuild({ binary: BINARY_PATH, sourceDir: SWIFT_SOURCE })) {
         return BINARY_PATH;
     }
 
     if (existsSync(join(SWIFT_SOURCE, "Package.swift"))) {
-        console.error("ax-tool: native binary not found — compiling Swift CLI (first run only, ~3s)...");
+        logger.info({ source: SWIFT_SOURCE }, "ax-tool binary missing or stale; compiling native CLI");
         const r = spawnSync("swift", ["build", "-c", "release"], {
             cwd: SWIFT_SOURCE,
             timeout: 120_000,
@@ -81,10 +83,11 @@ export function ensureBinary(): string {
             stdio: ["pipe", "pipe", "pipe"],
         });
         if (r.status === 0 && existsSync(BINARY_PATH)) {
-            console.error("ax-tool: built successfully");
+            logger.info("ax-tool built successfully");
             return BINARY_PATH;
         }
-        throw new Error(`ax-tool build failed (requires Swift toolchain on macOS):\n${r.stderr?.slice(0, 500)}`);
+        const details = [r.error?.message, r.stderr?.trim(), r.stdout?.trim()].filter(Boolean).join("\n");
+        throw new Error(`ax-tool build failed (${r.status ?? r.signal ?? "spawn error"}):\n${details.slice(-4000)}`);
     }
 
     throw new Error(
@@ -95,6 +98,7 @@ export function ensureBinary(): string {
 }
 
 export function runAx(args: string[], timeoutMs = 10_000): AxResult {
+    logger.debug({ command: args[0], timeoutMs }, "running native control command");
     const binary = ensureBinary();
 
     const r = spawnSync(binary, args, {
@@ -115,9 +119,17 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
 
     try {
         const parsed = SafeJSON.parse(stdout) as AxResult;
+
+        if (r.status !== 0 || r.signal) {
+            parsed.ok = false;
+            parsed.error ??= `native command exited ${r.status ?? r.signal}`;
+        }
+
+        logger.debug({ command: args[0], ok: parsed.ok, error: parsed.error }, "native control completed");
         maybeRecord(args, parsed.ok);
         return parsed;
-    } catch {
+    } catch (error) {
+        logger.debug({ error, command: args[0] }, "native control returned invalid JSON");
         maybeRecord(args, false);
         return { ok: false, error: `invalid JSON: ${stdout.slice(0, 200)}` };
     }

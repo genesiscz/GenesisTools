@@ -6,7 +6,48 @@ Drives native macOS apps by addressing real accessibility elements instead of gu
 
 ---
 
-## 🛑 Run `preflight` first
+## Snapshot-scoped inspection and actions
+
+Start adaptive UI work with `tools control see --app APP`. It returns JSON with the selected window's stable CG ID, a PNG path, indexed AX elements and a short-lived snapshot token. Multiple windows require an explicit `--window-index` from the returned candidates; no largest-window fallback is used. Refresh the selected window with `--window-id` using its returned CG ID, since indexes reorder when focus changes. Do not combine both selectors.
+
+```bash
+tools control see \
+  --app Calculator \
+  --path /tmp/calculator.png > /tmp/calculator-state.json
+tools json /tmp/calculator-state.json
+```
+
+View the PNG, choose an element from `elements`, and pass that index and token to `act`:
+
+```bash
+tools control act \
+  --app Calculator \
+  --snapshot "$(jq -r .snapshot /tmp/calculator-state.json)" \
+  --element N \
+  --action press
+```
+
+Replace `N` with the observed index. Refresh with `see` after every action, including focus. `act --help` lists get, press, click, drag, set, perform, focus, scroll, type, key, select and paste. Physical input requires the exact window already focused; AX actions remain explicitly separate. Stale app instances, closed/wrong windows, changed observable trees, expired tokens and invalid indexes fail before dispatch. `ok: true` acknowledges dispatch, not the outcome of the user's task.
+
+The screenshot and tree belong to the same window. Indexes are specific to that observation, not persistent AX object identities. Replacement or reordering of completely indistinguishable anonymous controls cannot be detected. Standard window buttons exclude decorative glyph descendants. Unsupported AX values are marked unreadable. The tool cannot lock out concurrent desktop changes; inspect errors and refresh rather than replaying automatically.
+
+This workflow uses native `ax-tool` with macOS APIs, not Codex, Sky or Peekaboo. A shell, Bun, Swift, and the relevant macOS grants are sufficient. The normal launcher attributes permissions to GenesisTools.app; directly invoking the binary can have a different responsible process. The CLI rebuilds when its native sources change. Direct native callers should run `swift build --package-path native/ax-tool -c release` after source changes.
+
+`see` tokens are unrelated to the legacy mouse/focus `snapshot` and `restore`. Existing selector commands, sequential plans and recording plans retain their existing semantics and do not accept the new snapshot contract.
+
+Validation:
+
+```bash
+bun run test src/control
+swift test --package-path native/ax-tool
+bun src/control/scripts/live-smoke.ts
+bun plugins/genesis-tools/skills/macos-control/scripts/check-help.ts --repo .
+```
+
+The live smoke opens a dedicated two-window test app and terminates only that app. It requires desktop access; ordinary tests do not operate personal apps. Add `--peekaboo` to the help check when validating the optional recording provider.
+
+## Legacy discovery and recording preflight
+
 
 ```bash
 tools control apps                          # valid --app values
@@ -45,12 +86,12 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 |---------|-------------|
 | `focus` | Activate an app, and optionally focus a specific element |
 | `press` | Press an element via AXPress |
-| `click` | CGEvent click at the element centre, no coordinates needed |
+| `click` | CGEvent click at the element centre, or an observed global point with background delivery |
 | `perform` | Perform any AX action on an element, the generic form of `press` |
 | `set` | Set the value of a text field |
 | `type` | Type keystrokes and hard-verify the result |
 | `hotkey` | Send a key combo via CGEvent |
-| `scroll` | Send wheel events with `--direction`, or scroll an element into view without it |
+| `scroll` | Synthetic wheel scrolling with --direction and either viewport-distance --pages 1..20 or exact --pixels 1..10000; the two modes are mutually exclusive and both may use --coords/--background. Send wheel events with `--direction`, or scroll an element into view without it |
 | `window` | Get window bounds and state, or mutate with `--action move\|resize\|minimize\|maximize\|close\|focus` |
 
 ⚠️ **`type` inserts at the current cursor.** Use `--end` to jump to the end of the field first, or `--clear` to replace the whole field. Without either, you get text spliced into the middle of whatever was there.
@@ -156,3 +197,11 @@ This tool needs macOS Accessibility permission for the process that runs it, and
 - `tools macos control` reaches the same functionality through the macOS umbrella tool.
 - The `macos-control` skill wraps this tool with the discovery-first workflow and the frame-by-frame review loop for recordings.
 - `hittest` is the tie-breaker when a click "works" but the wrong thing responds. It reports which element the system would actually deliver the event to, which is not always the element you targeted.
+
+### Snapshot drag, selection and paste
+
+The workflow adapter also exposes drag, select and paste. Drag accepts --to X,Y, --button left|right|middle, --duration 0.1..5, --coords and --background. Background drag and right-click have passed the dedicated AppKit fixture twice; an app must accept background events, so dispatch success still requires refreshed verification. The tool does not explicitly activate or raise the app, but a foreground target may still change its own key window in response.
+
+Scroll accepts --direction up|down|left|right. --pages 1..20 derives synthetic wheel distance from the observed target viewport; --pixels 1..10000 requests an exact distance. They are mutually exclusive, and either mode may use --coords and --background. Select accepts a UTF-16 --range START,LENGTH or a uniquely resolved --text target, with optional --prefix and --suffix. Paste requires --text and a focused target; --format supports text, md and html, and --selection supports text, cursor_before and cursor_after. Clipboard restoration is best-effort: the original is restored only when the observed clipboard change-count is still the one produced by the action; a concurrent copy creates a residual race and restoration is skipped. Public paste carries text and HTML data, but raw markup is not guaranteed to render as rich text.
+
+The background event path depends on localized Apple private SPI CGEventSetWindowLocation and WebKit's private window field 51; it refuses when the setter is unavailable. --verify-pointer is a live-smoke opt-in requiring an idle pointer, and --background-only avoids focus. This documents the independent CLI boundary and does not claim full Sky internals or parity across all applications.
