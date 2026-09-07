@@ -58,8 +58,10 @@ describe("tools macos mail search --mode auto (e2e)", () => {
             const stderr = await new Response(proc.stderr).text();
             const exitCode = await proc.exited;
 
+            // The regression is the sqlite-vec refusal on a big page. Whether the cap WARNING appears depends
+            // on the real index (auto may resolve to fulltext, or the query may match nothing), so it is not
+            // asserted here; vectorCapWarning has its own unit tests.
             expect(stderr).not.toContain("k value in knn query too large");
-            expect(stderr).toContain("vector candidates capped at 4096");
             expect(exitCode).toBe(0);
             expect(() => SafeJSON.parse(stdout.trim() || "[]", { strict: true })).not.toThrow();
         },

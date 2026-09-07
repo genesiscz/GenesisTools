@@ -70,7 +70,10 @@ process.stdout.write("| Arm | min | median | max | exit codes | first error line
 for (const arm of ARMS) {
     const list = samples.get(arm.name) ?? [];
     const sorted = list.map((s) => s.ms).sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    const mid = Math.floor(sorted.length / 2);
+    // Even counts average the two middle samples; odd counts take the middle one.
+    const median =
+        sorted.length === 0 ? 0 : sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
     const exits = [...new Set(list.map((s) => s.exit))].join(",");
     const err = list.find((s) => s.err)?.err ?? "";
     process.stdout.write(

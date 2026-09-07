@@ -56,11 +56,23 @@ export interface RunMailSearchOptions {
 
 export const DEFAULT_SEARCH_TIMEOUT_MS = 60_000;
 
+function stageTimeoutError(label: string, timeoutMs: number, elapsedMs: number): Error {
+    return new Error(
+        `mail search timed out after ${Math.round(elapsedMs / 1000)}s in stage "${label}" ` +
+            `(deadline ${Math.round(timeoutMs / 1000)}s). Narrow --from/--to or --limit, or raise --timeout <seconds>.`
+    );
+}
+
 /**
- * Wraps every stage of a search in a hard deadline. A stage that never settles rejects with an error that
- * names the stage, so a stuck SQLite lock or Spotlight call ends as "timed out in stage X" instead of a
- * silent process that lives for an hour (hunter A, 2026-09-07). The stuck promise is left behind; the
- * command exits right after, which is the only way to abort a synchronous SQLite call.
+ * Wraps every stage of a search in a deadline. A stage that never settles rejects with an error that names
+ * the stage, so a stuck Spotlight call or a lost promise ends as "timed out in stage X" instead of a silent
+ * process that lives for an hour (hunter A, 2026-09-07).
+ *
+ * What the deadline can and cannot do: the timer runs on the event loop, so it fires only when the stage
+ * yields. The index and row stages call SQLite synchronously (`db.query(...).all()`), and nothing here can
+ * interrupt such a call while it runs. What the guard does guarantee is that a stage which comes back AFTER
+ * its deadline is still reported as a timeout, never as a success, so an over-time query cannot slip
+ * through as a result. Bounding a blocked SQLite call itself would need a worker or subprocess.
  */
 export function stageGuard(timeoutMs: number): <T>(label: string, fn: () => Promise<T>) => Promise<T> {
     return async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
@@ -69,18 +81,20 @@ export function stageGuard(timeoutMs: number): <T>(label: string, fn: () => Prom
         let timer: ReturnType<typeof setTimeout> | undefined;
         const deadline = new Promise<never>((_, reject) => {
             timer = setTimeout(() => {
-                reject(
-                    new Error(
-                        `mail search timed out after ${Math.round(timeoutMs / 1000)}s in stage "${label}". ` +
-                            "Narrow --from/--to or --limit, or raise --timeout <seconds>."
-                    )
-                );
+                reject(stageTimeoutError(label, timeoutMs, performance.now() - t0));
             }, timeoutMs);
         });
 
         try {
             const result = await Promise.race([fn(), deadline]);
-            logger.debug(`[mail/search] stage ${label} done in ${Math.round(performance.now() - t0)}ms`);
+            const elapsed = performance.now() - t0;
+
+            if (elapsed > timeoutMs) {
+                // The stage blocked the event loop past its deadline, so the timer never got to fire.
+                throw stageTimeoutError(label, timeoutMs, elapsed);
+            }
+
+            logger.debug(`[mail/search] stage ${label} done in ${Math.round(elapsed)}ms`);
             return result;
         } finally {
             clearTimeout(timer);
@@ -99,25 +113,41 @@ export interface MailSearchOutcome {
 
 const MAIL_INDEX_NAME = "macos-mail";
 const STABLE_INDEX_FETCH_LIMIT = 250;
-/** Hybrid over-fetch: 3x for the RRF pool, then 5x for a filtered cosine query (sqlite-fts5 driver). */
-const HYBRID_VECTOR_OVERFETCH = 15;
 const prof = profiler.scope("macos-mail");
 
+/** Filtered cosine queries over-fetch 5x so the filter has candidates to drop. */
+const FILTERED_VECTOR_OVERFETCH = 5;
+/** Hybrid (RRF) builds a 3x pool for each side before merging. */
+const HYBRID_POOL_FACTOR = 3;
+
 /**
- * The vector side of a hybrid search asks sqlite-vec for `fetchLimit * 15` neighbours and sqlite-vec caps
- * `k` at 4096, so past `4096 / 15` results the ranking is fulltext-only. Says so once per run.
+ * The vector side asks sqlite-vec for more neighbours than the page (3x for the RRF pool, 5x more when a
+ * filter is attached) and sqlite-vec caps `k` at 4096. Past that the vector candidate pool is smaller than
+ * the query wanted, so some documents that should have had a vector score get none. The cap is not a rank
+ * boundary: in a hybrid search every returned result may still carry both scores, and with a selective
+ * filter even the first one may lack the vector score. Says so once per run, without claiming a boundary.
  */
-export function vectorCapWarning(fetchLimit: number, hasFilters: boolean): string | undefined {
-    const asked = fetchLimit * (hasFilters ? HYBRID_VECTOR_OVERFETCH : 3);
+export function vectorCapWarning(
+    fetchLimit: number,
+    hasFilters: boolean,
+    method: Exclude<ResolvedMethod, "bm25">
+): string | undefined {
+    const factor = (method === "rrf" ? HYBRID_POOL_FACTOR : 1) * (hasFilters ? FILTERED_VECTOR_OVERFETCH : 1);
+    const asked = fetchLimit * factor;
 
     if (asked <= SQLITE_VEC_MAX_K) {
         return undefined;
     }
 
-    const covered = Math.floor(SQLITE_VEC_MAX_K / (hasFilters ? HYBRID_VECTOR_OVERFETCH : 3));
+    const kind = method === "rrf" ? "hybrid" : "vector";
+    const effect =
+        method === "rrf"
+            ? "vector recall is reduced; results are still ranked by fulltext and vector scores together, but some may carry a fulltext score only"
+            : `only the ${SQLITE_VEC_MAX_K} nearest neighbours are considered before the filter and the page are applied`;
+
     return (
-        `vector candidates capped at ${SQLITE_VEC_MAX_K} by sqlite-vec (the hybrid search asked for ${asked} for ` +
-        `--limit ${fetchLimit}); results past about ${covered} are ranked by fulltext matches only`
+        `vector candidates capped at ${SQLITE_VEC_MAX_K} by sqlite-vec (the ${kind} search asked for ${asked} for ` +
+        `--limit ${fetchLimit}); ${effect}`
     );
 }
 
@@ -202,7 +232,9 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
 
         resolvedMethod = ftsResults[0]?.method;
         const capWarning =
-            resolvedMethod && resolvedMethod !== "bm25" ? vectorCapWarning(fetchLimit, !!filterPredicate) : undefined;
+            resolvedMethod && resolvedMethod !== "bm25"
+                ? vectorCapWarning(fetchLimit, !!filterPredicate, resolvedMethod)
+                : undefined;
 
         if (capWarning) {
             logger.debug(`[mail/search] ${capWarning}`);
