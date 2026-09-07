@@ -137,11 +137,19 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
     const { log } = logger.scoped("github:merge");
 
     const dryRun = Boolean(options.dryRun);
+    const jsonMode = options.format === "json";
     log.info(
         { owner, repo, number, method, deleteBranch, dryRun, noRestack: Boolean(options.noRestack) },
         "safe merge start"
     );
-    out.println(
+    // In JSON mode stdout carries only the result object; progress goes to the logger (stderr + file).
+    const progress = jsonMode
+        ? (message: string) => log.info(message)
+        : (message: string) => {
+              out.println(message);
+              log.debug(message);
+          };
+    progress(
         chalk.bold(
             `Safe merge ${owner}/${repo}#${number} (${method}${deleteBranch ? ", delete-branch after retarget" : ""}${
                 dryRun ? ", dry run" : ""
@@ -159,10 +167,7 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         commitTitle: options.subject,
         commitMessage: options.body,
         dryRun,
-        log: (message) => {
-            out.println(message);
-            log.debug(message);
-        },
+        log: progress,
     });
 
     log.info(

@@ -544,8 +544,14 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
     let squashMessage: SquashMessage | undefined;
 
     if (method === "squash") {
-        logLine(log, `Listing commits of #${number} for the squash message...`);
-        const commits = await client.listPullCommits(owner, repo, pr, log);
+        // An explicit --body needs no commit list, so a failing collector can never block it.
+        let commits: PullCommitSubject[] = [];
+
+        if (commitMessage === undefined) {
+            logLine(log, `Listing commits of #${number} for the squash message...`);
+            commits = await client.listPullCommits(owner, repo, pr, log);
+        }
+
         squashMessage = buildSquashMessage({
             number: pr.number,
             title: pr.title,

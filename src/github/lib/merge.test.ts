@@ -523,6 +523,31 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(retargetCalls[0].args).toEqual([2, "main"]);
     });
 
+    test("an explicit --body skips the commit fetch, so a failing collector can never block it", async () => {
+        const { client, calls } = makeMock({ pr: basePr(), commits: [] });
+        client.listPullCommits = async () => {
+            throw new Error("Could not collect every PR commit");
+        };
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "squash",
+            commitMessage: "* hand-written",
+            client,
+        });
+
+        expect(calls.map((c) => c.op)).not.toContain("listPullCommits");
+        expect(calls.find((c) => c.op === "mergePull")?.args[1]).toEqual({
+            method: "squash",
+            commitTitle: "PR A (#1)",
+            commitMessage: "* hand-written",
+        });
+        expect(result.squashMessage?.titleGenerated).toBe(true);
+        expect(result.squashMessage?.bodyGenerated).toBe(false);
+    });
+
     test("passes explicit squash subject/body through to merge API unchanged", async () => {
         const { client, calls } = makeMock({
             pr: basePr(),
