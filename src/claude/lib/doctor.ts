@@ -1,3 +1,4 @@
+import type { AccountUsage } from "@app/claude/lib/usage/api";
 import { effectiveLeftPct, extractCompactLimits } from "@app/claude/lib/usage/compact-limits";
 import { fableStatusForAccount, weeklyStatusForAccount } from "@app/claude/lib/usage/fable-guard";
 import type { Cached } from "@app/claude/lib/usage/shared-cache";
@@ -143,7 +144,7 @@ export function groupSessions(processes: PinnedProcess[]): SessionGroup[] {
 export function diagnoseGroup(
     group: SessionGroup,
     accounts: AIAccountEntry[],
-    cached: Cached | null,
+    cached: Cached<AccountUsage> | null,
     tokenVerdict: TokenVerdict,
     now: Date = new Date()
 ): Diagnosis {

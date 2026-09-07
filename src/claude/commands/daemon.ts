@@ -1,128 +1,19 @@
-import { resolve } from "node:path";
-import { getDaemonStatus } from "@app/daemon/lib/launchd";
-import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
-import * as p from "@clack/prompts";
+import { registerUsageDaemonCommands } from "@app/ai/commands/usage/daemon";
 import type { Command } from "commander";
-import pc from "picocolors";
 
-const TASK_NAME = "claude-usage-poll";
-const POLL_SCRIPT = resolve(import.meta.dir, "../lib/usage/poll-daemon.ts");
-
-function bunPath(): string {
-    return Bun.which("bun") ?? "bun";
-}
-
-export function validateRetentionMin(raw: string): number | null {
-    const minRuns = Number(raw);
-
-    if (!Number.isInteger(minRuns) || minRuns < 1) {
-        return null;
-    }
-
-    return minRuns;
-}
-
-export function validateRetentionDays(raw: string): number | null {
-    const maxAgeDays = Number(raw);
-
-    if (!Number.isFinite(maxAgeDays) || maxAgeDays < 0) {
-        return null;
-    }
-
-    return maxAgeDays;
-}
-
+/**
+ * `tools claude daemon` is now an alias for `tools ai usage daemon`: one task
+ * (`ai-usage-poll`) polls every provider, and `register` removes the old
+ * `claude-usage-poll` task on the way through. That single command is the whole user
+ * migration (decision D11, spec 2026-09-04 sections 6.5 and 13.7).
+ */
 export function registerDaemonCommand(program: Command): void {
-    const daemon = program.command("daemon").description("Manage background usage polling via the daemon scheduler");
-
-    daemon
-        .command("register")
-        .description("Register usage polling as a daemon task")
-        // 30s, not 60s: the usage buckets are what every picker and dashboard
-        // ranks accounts by, and a minute-old reading is already wrong after a
-        // busy turn. Only HEALTHY accounts pay for it — lapsed and failing ones
-        // are held back by the poll gate (src/claude/lib/usage/poll-gate.ts).
-        .option("-i, --interval <interval>", "Polling interval", "every 30 seconds")
-        .option("--retention-days <days>", "Delete run logs older than N days (with --retention-min)", "3")
-        .option("--retention-min <count>", "Always keep at least N newest run logs", "100")
-        .action(async (opts: { interval: string; retentionDays: string; retentionMin: string }) => {
-            const maxAgeDays = validateRetentionDays(opts.retentionDays);
-            const minRuns = validateRetentionMin(opts.retentionMin);
-
-            if (maxAgeDays === null) {
-                p.log.error(`Invalid --retention-days: "${opts.retentionDays}" (expected a non-negative number)`);
-                process.exit(1);
-            }
-
-            if (minRuns === null) {
-                p.log.error(`Invalid --retention-min: "${opts.retentionMin}" (expected an integer of at least 1)`);
-                process.exit(1);
-            }
-
-            const created = await registerTask({
-                name: TASK_NAME,
-                command: `${bunPath()} run ${POLL_SCRIPT}`,
-                every: opts.interval,
-                retries: 1,
-                timeoutMs: 60_000,
-                description: "Poll Claude usage API and record to history DB",
-                overwrite: true,
-                notify: false,
-                retention: {
-                    maxAgeDays,
-                    minRuns,
-                },
-            });
-
-            if (created) {
-                p.log.success(`Registered task ${pc.cyan(TASK_NAME)} (${opts.interval})`);
-            } else {
-                p.log.info(`Updated task ${pc.cyan(TASK_NAME)} (${opts.interval})`);
-            }
-
-            const status = await getDaemonStatus();
-
-            if (!status.running) {
-                p.log.warn(
-                    `Daemon is not running. Start it with: ${pc.cyan("tools daemon start")} or ${pc.cyan("tools daemon install")}`
-                );
-            }
-        });
-
-    daemon
-        .command("unregister")
-        .description("Remove usage polling from daemon")
-        .action(async () => {
-            const removed = await unregisterTask(TASK_NAME);
-
-            if (removed) {
-                p.log.success(`Removed task ${pc.cyan(TASK_NAME)}`);
-            } else {
-                p.log.warn(`Task ${pc.cyan(TASK_NAME)} was not registered`);
-            }
-        });
-
-    daemon
-        .command("status")
-        .description("Check if usage polling is registered and daemon status")
-        .action(async () => {
-            const registered = await isTaskRegistered(TASK_NAME);
-            const daemonStatus = await getDaemonStatus();
-
-            if (registered) {
-                p.log.success(`Task ${pc.cyan(TASK_NAME)} is registered`);
-            } else {
-                p.log.warn(
-                    `Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan("tools claude daemon register")}`
-                );
-            }
-
-            if (daemonStatus.running) {
-                p.log.success(`Daemon running (PID ${daemonStatus.pid})`);
-            } else if (daemonStatus.installed) {
-                p.log.warn("Daemon installed but not running");
-            } else {
-                p.log.info(`Daemon not installed. Run: ${pc.cyan("tools daemon install")}`);
-            }
-        });
+    registerUsageDaemonCommands(program);
 }
+
+export {
+    LEGACY_USAGE_TASK_NAME,
+    USAGE_TASK_NAME,
+    validateRetentionDays,
+    validateRetentionMin,
+} from "@app/ai/commands/usage/daemon";
