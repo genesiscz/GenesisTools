@@ -5,6 +5,8 @@ let package = Package(
     name: "ax-tool",
     platforms: [.macOS(.v13)],
     targets: [
-        .executableTarget(name: "ax-tool", path: "Sources"),
+        .executableTarget(name: "ax-tool", dependencies: ["SnapshotSupport"], path: "Sources"),
+        .target(name: "SnapshotSupport", path: "SnapshotSupport"),
+        .testTarget(name: "SnapshotSupportTests", dependencies: ["SnapshotSupport"], path: "Tests"),
     ]
 )
