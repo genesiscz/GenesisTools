@@ -207,6 +207,7 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
                     rebaseMode: result.rebaseMode ?? null,
                     squashMessage: result.squashMessage ?? null,
                     headRestack: result.headRestack ?? null,
+                    dependentsFound: result.dependentsFound,
                     dependents: result.retargeted,
                     dependentsRestacked: result.dependentsRestacked,
                     branchDeleted: result.branchDeleted,
