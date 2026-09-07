@@ -239,7 +239,7 @@ describe("clearStalePidfile (ownership-safe clear)", () => {
 
         // A pid that is REALLY dead: a just-exited child's. process.execPath
         // (bun itself) exists on every platform; `true` does not on Windows.
-        const dead = Bun.spawnSync([process.execPath, "-e", ""]).pid;
+        const dead = Bun.spawnSync([process.execPath, "-e", ""], { env: process.env }).pid;
 
         return { path, dead };
     };

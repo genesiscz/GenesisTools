@@ -307,7 +307,7 @@ describe("runAiProxyDown — launchd path", () => {
 describe.skipIf(process.platform !== "darwin")("runAiProxyInstallLaunchd — port owner gate", () => {
     it("refuses to install over a listener that is not ai-proxy, and signals nothing", async () => {
         useTempHome();
-        const holder = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const holder = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
         portOwner = { pid: holder.pid, command: "node something-else serve" };
         ownerIsProxy = false;
         const spy = spyOnKill();
@@ -326,11 +326,29 @@ describe.skipIf(process.platform !== "darwin")("runAiProxyInstallLaunchd — por
         useTempHome();
         // The pid record is gone, so `down` has nothing to signal; the owner
         // itself ignores SIGTERM the way a wedged proxy would.
-        const holder = Bun.spawn(["bun", "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], {
-            stdout: "ignore",
-            stderr: "ignore",
-        });
-        await Bun.sleep(400);
+        // The child says "ready" once its SIGTERM handler is installed. A fixed sleep was
+        // not enough: with the test temp root as TMPDIR the child starts on a cold bun
+        // cache, and under a parallel suite run that took longer than 400 ms, so the
+        // SIGTERM below landed before the handler existed and the child simply died.
+        const holder = Bun.spawn(
+            ["bun", "-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);"],
+            { env: process.env, stdout: "pipe", stderr: "ignore" }
+        );
+        const reader = holder.stdout.getReader();
+        const deadline = Date.now() + 5000;
+        let seen = "";
+
+        while (!seen.includes("ready") && Date.now() < deadline) {
+            const { value, done } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            seen += new TextDecoder().decode(value);
+        }
+
+        expect(seen).toContain("ready");
         portOwner = { pid: holder.pid, command: "bun src/ai-proxy/index.ts serve" };
         pidState = { status: "none" };
 

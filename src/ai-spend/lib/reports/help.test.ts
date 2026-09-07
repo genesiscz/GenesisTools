@@ -5,7 +5,7 @@ import { SOURCE_IDS, SOURCE_REPORTS } from "./types";
 const AI_SPEND = join(import.meta.dir, "../../index.ts");
 
 async function help(args: string[]): Promise<string> {
-    const proc = Bun.spawn(["bun", AI_SPEND, ...args, "--help"], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["bun", AI_SPEND, ...args, "--help"], { env: process.env, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     await proc.exited;
     return `${stdout}\n${stderr}`;

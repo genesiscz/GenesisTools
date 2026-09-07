@@ -200,7 +200,7 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
     test("rejects a claim while a LIVE foreign process owns the pidfile", async () => {
         const dir = tmp();
         const path = join(dir, "recorder.pid");
-        const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(30000)"]);
+        const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(30000)"], { env: process.env });
         try {
             writePidFile(path, { pid: child.pid });
             await expect(claimRecorderPidfile(path, 9999)).rejects.toThrow(/already up on 9999 \(pid \d+\)/);
@@ -215,9 +215,9 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
     test("sweeps takeover temps of DEAD creators and spares a live creator's", async () => {
         const dir = tmp();
         const path = join(dir, "recorder.pid");
-        const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(30000)"]);
+        const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(30000)"], { env: process.env });
         try {
-            const dead = Bun.spawnSync([process.execPath, "-e", ""]).pid;
+            const dead = Bun.spawnSync([process.execPath, "-e", ""], { env: process.env }).pid;
             const deadTemp = join(dir, `recorder.pid.stale-${dead}-deadbeef`);
             const liveTemp = join(dir, `recorder.pid.stale-${child.pid}-cafebabe`);
             await Bun.write(deadTemp, "residue");
@@ -243,7 +243,7 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
             expect(readFileSync(path, "utf8")).toContain(String(process.pid));
 
             // A genuinely dead pid is also reclaimable.
-            const dead = Bun.spawnSync([process.execPath, "-e", ""]).pid;
+            const dead = Bun.spawnSync([process.execPath, "-e", ""], { env: process.env }).pid;
             rmSync(path, { force: true });
             writePidFile(path, { pid: dead });
             await claimRecorderPidfile(path, 9999);
@@ -260,7 +260,7 @@ describe("claimRecorderPidfile (single-winner atomic claim)", () => {
         const dir = tmp();
         const path = join(dir, "recorder.pid");
         try {
-            const dead = Bun.spawnSync([process.execPath, "-e", ""]).pid;
+            const dead = Bun.spawnSync([process.execPath, "-e", ""], { env: process.env }).pid;
             const stale = writePidFile(path, { pid: dead });
             const staleContent = readFileSync(path, "utf8");
             expect(stale.pid).toBe(dead);

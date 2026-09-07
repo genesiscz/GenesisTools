@@ -45,7 +45,7 @@ describe("resolveCloneIdHex — Phase 7 plumbing helper", () => {
             const a = join(dir, "a.bin");
             writeFileSync(a, Buffer.alloc(4 * 1024 * 1024, 42));
             const b = join(dir, "b.bin");
-            const cp = spawnSync("cp", ["-c", a, b]);
+            const cp = spawnSync("cp", ["-c", a, b], { env: process.env });
             if (cp.status !== 0) {
                 // Not on APFS — skip body
                 return;

@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const TASK_TOOL = resolve(import.meta.dir, "../../../tools");
 
 function help(subcommand: string): string {
-    const r = spawnSync("bun", [TASK_TOOL, "task", subcommand, "--help"], { encoding: "utf-8" });
+    const r = spawnSync("bun", [TASK_TOOL, "task", subcommand, "--help"], { env: process.env, encoding: "utf-8" });
     return (r.stdout ?? "") + (r.stderr ?? "");
 }
 

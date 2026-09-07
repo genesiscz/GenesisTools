@@ -104,6 +104,7 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
 
         // Live process must attach to the NEW name (this is the bug: config-only retarget).
         const ps = Bun.spawnSync(["/bin/ps", "-p", String(listed!.pid), "-o", "command="], {
+            env: process.env,
             stdio: ["ignore", "pipe", "ignore"],
         });
         expect(ps.exitCode).toBe(0);
@@ -147,7 +148,7 @@ describe.skipIf(!hasTtydDeps)("spawnTtyd persist-failure cleanup", () => {
 
         const pgrepTtyd = (): string[] =>
             new TextDecoder()
-                .decode(Bun.spawnSync(["pgrep", "-f", "ttyd.*--port"]).stdout)
+                .decode(Bun.spawnSync(["pgrep", "-f", "ttyd.*--port"], { env: process.env }).stdout)
                 .trim()
                 .split("\n")
                 .filter(Boolean);

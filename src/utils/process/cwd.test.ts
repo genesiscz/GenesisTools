@@ -11,7 +11,12 @@ const MODULE = resolve(import.meta.dir, "cwd.ts");
 function spawnProbe(cwd: string): string {
     const code = `import { resolveAncestorCwd } from ${SafeJSON.stringify(MODULE, { strict: true })};
 console.log(resolveAncestorCwd() ?? "");`;
-    const proc = Bun.spawnSync([process.execPath, "-e", code], { cwd, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync([process.execPath, "-e", code], {
+        env: process.env,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     if (proc.exitCode !== 0) {
         throw new Error(`probe failed: ${proc.stderr.toString()}`);
     }

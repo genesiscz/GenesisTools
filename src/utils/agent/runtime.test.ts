@@ -6,6 +6,7 @@ import { getAgentRuntimeContext, gitCommonRoot } from "./runtime";
 
 function git(args: string[], cwd: string): void {
     const r = Bun.spawnSync(["git", "-c", "user.email=t@t.t", "-c", "user.name=t", ...args], {
+        env: process.env,
         cwd,
         stdout: "pipe",
         stderr: "pipe",

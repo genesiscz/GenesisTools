@@ -33,9 +33,9 @@ afterEach(() => {
 
 function initGitRepo(): string {
     const dir = makeTempDir("boards-cfg-");
-    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
-    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+    execFileSync("git", ["init", "-q", "-b", "main"], { env: process.env, cwd: dir });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { env: process.env, cwd: dir });
+    execFileSync("git", ["config", "user.name", "Test"], { env: process.env, cwd: dir });
     return dir;
 }
 
@@ -123,8 +123,11 @@ describe("repoSlugFromRemote", () => {
 describe("gitProvenance", () => {
     it("reports a short commit and owner/name repo for a repo with an origin remote", () => {
         const repo = initGitRepo();
-        execFileSync("git", ["remote", "add", "origin", "git@github.com:LEFTEQ/vitrinka.git"], { cwd: repo });
-        execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], { cwd: repo });
+        execFileSync("git", ["remote", "add", "origin", "git@github.com:LEFTEQ/vitrinka.git"], {
+            env: process.env,
+            cwd: repo,
+        });
+        execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "init"], { env: process.env, cwd: repo });
 
         const { commit, repo: slug } = gitProvenance(repo);
         expect(commit).toMatch(/^[0-9a-f]{7,}$/);

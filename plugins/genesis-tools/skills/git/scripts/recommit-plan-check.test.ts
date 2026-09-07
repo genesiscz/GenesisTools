@@ -12,7 +12,12 @@ interface RunResult {
 }
 
 function run(repo: TestRepo, args: string[]): RunResult {
-    const proc = Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: repo.dir, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync([process.execPath, SCRIPT, ...args], {
+        env: process.env,
+        cwd: repo.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     return { exitCode: proc.exitCode ?? -1, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
 }
 

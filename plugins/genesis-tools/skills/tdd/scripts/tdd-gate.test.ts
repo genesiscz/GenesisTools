@@ -96,7 +96,12 @@ describe("green blockers", () => {
     });
 
     test("a stale branch-named session does not outrank the session the last red wrote", () => {
-        Bun.spawnSync(["git", "init", "-b", "feat-x"], { cwd: projectDir, stdout: "pipe", stderr: "pipe" });
+        Bun.spawnSync(["git", "init", "-b", "feat-x"], {
+            env: process.env,
+            cwd: projectDir,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
         writeTestFile("t.test.ts", ASSERTION_TEST_FILE);
         gate(["red", "--cmd", "exit 1", "--test-file", "t.test.ts", "--session", "feat-x"]);
         gate(["red", "--cmd", "exit 1", "--test-file", "t.test.ts", "--session", "task2"]);

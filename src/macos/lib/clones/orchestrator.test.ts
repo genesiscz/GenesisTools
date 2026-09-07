@@ -82,7 +82,9 @@ describe.skipIf(skip.unlessMac)("buildMeasureReport keep rule", () => {
             const payload = Buffer.alloc(2 * 1024 * 1024, 0x5a);
             writeFileSync(join(out, "external.bin"), payload);
             // Clone INTO the measured root; the partner stays outside it.
-            expect(spawnSync("cp", ["-c", join(out, "external.bin"), join(inn, "intree.bin")]).status).toBe(0);
+            expect(
+                spawnSync("cp", ["-c", join(out, "external.bin"), join(inn, "intree.bin")], { env: process.env }).status
+            ).toBe(0);
             // Add an independent local file so the dir clears minReal and is
             // kept by pruneTree — the cross-tree clone alone would have ~0 real.
             writeFileSync(join(inn, "local.bin"), Buffer.alloc(5 * 1024 * 1024, 0x9b));

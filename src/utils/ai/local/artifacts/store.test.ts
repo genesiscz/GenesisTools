@@ -111,7 +111,9 @@ describe("ensure", () => {
         mkdirSync(join(stage, "sherpa-onnx-pyannote-segmentation-3-0"), { recursive: true });
         writeFileSync(join(stage, "sherpa-onnx-pyannote-segmentation-3-0", "model.onnx"), Buffer.alloc(6));
         const archive = join(root, "seg.tar.bz2");
-        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "sherpa-onnx-pyannote-segmentation-3-0"]).exited;
+        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "sherpa-onnx-pyannote-segmentation-3-0"], {
+            env: process.env,
+        }).exited;
         const archiveBytes = await Bun.file(archive).arrayBuffer();
         rmSync(stage, { recursive: true, force: true });
         rmSync(archive, { force: true });
@@ -138,7 +140,7 @@ describe("ensure", () => {
         mkdirSync(join(stage, "other"), { recursive: true });
         writeFileSync(join(stage, "other", "unrelated.onnx"), Buffer.alloc(2));
         const archive = join(root, "other.tar.bz2");
-        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "other"]).exited;
+        await Bun.spawn(["tar", "cjf", archive, "-C", stage, "other"], { env: process.env }).exited;
         const archiveBytes = await Bun.file(archive).arrayBuffer();
         rmSync(stage, { recursive: true, force: true });
         rmSync(archive, { force: true });

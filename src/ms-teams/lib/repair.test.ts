@@ -137,6 +137,7 @@ describe("CLI dry-run", () => {
         const before = readdirSync(indexedDb).sort();
         const script = join(import.meta.dir, "../index.ts");
         const r = spawnSync("bun", [script, "repair", "idb", "--dry-run", "--root", root, "--tmp", tmp], {
+            env: process.env,
             encoding: "utf8",
         });
         expect(r.status).toBe(0);
@@ -147,7 +148,10 @@ describe("CLI dry-run", () => {
     test("repair cache without --yes exits 1", () => {
         const { root, tmp } = fakeTree();
         const script = join(import.meta.dir, "../index.ts");
-        const r = spawnSync("bun", [script, "repair", "cache", "--root", root, "--tmp", tmp], { encoding: "utf8" });
+        const r = spawnSync("bun", [script, "repair", "cache", "--root", root, "--tmp", tmp], {
+            env: process.env,
+            encoding: "utf8",
+        });
         expect(r.status).toBe(1);
         expect(`${r.stdout}${r.stderr}`).toContain("--yes");
     });

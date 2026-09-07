@@ -16,7 +16,7 @@ async function readmeThroughAPipe(markdown: string): Promise<{ stdout: string; e
             `printReadmeAndExit(${SafeJSON.stringify(dir)});\n`
     );
 
-    const proc = Bun.spawn([process.execPath, "run", script], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([process.execPath, "run", script], { env: process.env, stdout: "pipe", stderr: "pipe" });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     rmSync(dir, { recursive: true, force: true });
@@ -57,7 +57,7 @@ describe("printReadmeAndExit", () => {
                 `printReadmeAndExit(${SafeJSON.stringify(dir)});\n`
         );
 
-        const proc = Bun.spawn([process.execPath, "run", script], { stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawn([process.execPath, "run", script], { env: process.env, stdout: "pipe", stderr: "pipe" });
         const stdout = await new Response(proc.stdout).text();
         const exitCode = await proc.exited;
         rmSync(dir, { recursive: true, force: true });

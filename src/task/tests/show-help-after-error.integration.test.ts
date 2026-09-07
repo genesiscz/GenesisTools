@@ -6,6 +6,7 @@ const TASK_TOOL = resolve(import.meta.dir, "../../../tools");
 
 test("tools task <unknown> prints usage after error (B3)", () => {
     const result = spawnSync("bun", [TASK_TOOL, "task", "definitely-not-a-real-subcommand"], {
+        env: process.env,
         encoding: "utf-8",
     });
     expect(result.status).not.toBe(0);
@@ -16,6 +17,7 @@ test("tools task <unknown> prints usage after error (B3)", () => {
 
 test("tools question <unknown> prints usage after error (B3 — cross-tool)", () => {
     const result = spawnSync("bun", [TASK_TOOL, "question", "definitely-not-a-real-subcommand"], {
+        env: process.env,
         encoding: "utf-8",
     });
     expect(result.status).not.toBe(0);

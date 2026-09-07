@@ -25,7 +25,7 @@ const MARKERS = [
  * and the assertion that follows blames the check for the harness's problem.
  */
 async function git(cwd: string, args: string[]): Promise<void> {
-    const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["git", ...args], { env: process.env, cwd, stdout: "pipe", stderr: "pipe" });
     const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
 
     if (code !== 0) {

@@ -46,8 +46,8 @@ function makeCloneFixture(): string {
     const fixture = makeTmp("du-cache-fix-");
     const orig = join(fixture, "orig.bin");
     writeFileSync(orig, Buffer.alloc(CLONE_BYTES, "x"));
-    execFileSync("cp", ["-c", orig, join(fixture, "clone1.bin")]);
-    execFileSync("cp", ["-c", orig, join(fixture, "clone2.bin")]);
+    execFileSync("cp", ["-c", orig, join(fixture, "clone1.bin")], { env: process.env });
+    execFileSync("cp", ["-c", orig, join(fixture, "clone2.bin")], { env: process.env });
     return fixture;
 }
 
@@ -263,14 +263,14 @@ describe.skipIf(!isDarwin)("extent cache", () => {
         const cacheDir = makeTmp("du-cache-dir-");
         const sub = join(fixture, "sub");
         mkdirSync(sub);
-        execFileSync("cp", ["-c", join(fixture, "orig.bin"), join(sub, "deep.bin")]);
+        execFileSync("cp", ["-c", join(fixture, "orig.bin"), join(sub, "deep.bin")], { env: process.env });
 
         scan(fixture, cacheDir, true);
 
         // A fully-warm scan skips the rewrite entirely (clonesize.c: `opened == 0`),
         // which would make this test vacuous. Add an unseen file so the subtree scan
         // takes a miss, opens it, and genuinely rewrites the cache.
-        execFileSync("cp", ["-c", join(fixture, "orig.bin"), join(sub, "fresh.bin")]);
+        execFileSync("cp", ["-c", join(fixture, "orig.bin"), join(sub, "fresh.bin")], { env: process.env });
 
         const subScan = scan(sub, cacheDir);
         expect(subScan.files_opened).toBeGreaterThan(0);

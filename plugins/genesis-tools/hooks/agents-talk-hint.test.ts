@@ -16,6 +16,7 @@ afterAll(() => {
 // Regression test: SessionStart report 2026-09-02 — installed hooks cannot resolve monorepo dependencies.
 test("emits the agents-talk reminder from a dependency-free plugin directory", () => {
     const proc = Bun.spawnSync([process.execPath, isolatedHook], {
+        env: process.env,
         stdin: Buffer.from("{}"),
         stdout: "pipe",
         stderr: "pipe",

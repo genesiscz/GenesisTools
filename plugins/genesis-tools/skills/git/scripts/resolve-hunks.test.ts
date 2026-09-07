@@ -41,7 +41,11 @@ describe("resolveHunks with diff3 conflict style", () => {
     test("the CLI refuses to write while a base marker would remain", () => {
         const file = join(dir, "conflicted.txt");
         writeFileSync(file, `${DIFF3}||||||| stray\n`);
-        const proc = Bun.spawnSync([process.execPath, SCRIPT, file, "ours"], { stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawnSync([process.execPath, SCRIPT, file, "ours"], {
+            env: process.env,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
 
         expect(proc.exitCode).toBe(1);
         expect(proc.stderr.toString()).toContain("markers would remain");

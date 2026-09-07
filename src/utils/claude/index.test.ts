@@ -14,6 +14,7 @@ describe("findClaudeCommand timeout cleanup", () => {
             timeoutMs: 100,
             spawnProbe: () =>
                 Bun.spawn({
+                    env: process.env,
                     cmd: ["bash", "-c", `exec -a ${marker} sleep 30`],
                     stdio: ["ignore", "pipe", "pipe"],
                 }),
@@ -22,7 +23,7 @@ describe("findClaudeCommand timeout cleanup", () => {
         await findClaudeCommand();
         await new Promise((r) => setTimeout(r, 200));
 
-        const after = Bun.spawnSync(["pgrep", "-f", marker]).stdout.toString().trim();
+        const after = Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim();
         expect(after).toBe("");
     });
 });

@@ -4,7 +4,7 @@ describe("killChild", () => {
     test("escalates to SIGKILL if the child ignores SIGTERM within the grace period", async () => {
         const { killWithEscalation: killChild } = await import("@genesiscz/utils/process/killWithEscalation");
 
-        const proc = Bun.spawn(["sh", "-c", "trap '' TERM; sleep 30"]);
+        const proc = Bun.spawn(["sh", "-c", "trap '' TERM; sleep 30"], { env: process.env });
         await new Promise((r) => setTimeout(r, 100));
 
         const exited = await killChild(proc, { graceMs: 500 });

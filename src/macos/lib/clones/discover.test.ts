@@ -12,7 +12,7 @@ import {
 } from "@app/macos/lib/clones/discover";
 
 function git(cwd: string, ...args: string[]): void {
-    const res = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+    const res = spawnSync("git", ["-C", cwd, ...args], { env: process.env, encoding: "utf8" });
     expect(res.status).toBe(0);
 }
 

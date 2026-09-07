@@ -248,7 +248,7 @@ function gitInit(dir: string): void {
 
 function commitAll(dir: string, message: string, isoDate: string): void {
     const gitEnv = { GIT_AUTHOR_DATE: isoDate, GIT_COMMITTER_DATE: isoDate };
-    spawnSync("git", ["add", "-A"], { cwd: dir });
+    spawnSync("git", ["add", "-A"], { env: process.env, cwd: dir });
     const r = spawnSync("git", ["commit", "-q", "-m", message], {
         cwd: dir,
         env: { ...appEnv.getProcessEnv(), ...gitEnv },

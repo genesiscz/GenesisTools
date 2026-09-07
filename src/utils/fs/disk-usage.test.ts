@@ -172,7 +172,7 @@ describe.skipIf(skip.unlessMac)("clone-family dedup (intra-tree)", () => {
         try {
             const a = join(dir, "a.bin");
             writeFileSync(a, Buffer.alloc(4 * 1024 * 1024, 9));
-            expect(spawnSync("cp", ["-c", a, join(dir, "b.bin")]).status).toBe(0);
+            expect(spawnSync("cp", ["-c", a, join(dir, "b.bin")], { env: process.env }).status).toBe(0);
 
             const families = findCloneFamilies(dir);
             // both files share one clone id
@@ -666,7 +666,7 @@ describe("bulk fast path vs process.cwd()", () => {
                 `const entries = [...walkFiles(${SafeJSON.stringify(tree)})];`,
                 `console.log(entries.map((e) => e.privateSize !== undefined).join(","));`,
             ].join("\n");
-            const r = spawnSync(process.execPath, ["-e", script], { cwd, encoding: "utf8" });
+            const r = spawnSync(process.execPath, ["-e", script], { env: process.env, cwd, encoding: "utf8" });
             expect(r.status).toBe(0);
             expect(r.stdout.trim()).toBe("true");
         } finally {

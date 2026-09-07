@@ -64,7 +64,7 @@ afterEach(async () => {
 describe("record-session-cmux tty gate", () => {
     test("a headless claude (tty '??') is not recorded", async () => {
         // A plain spawned sleep has no controlling tty, same as `claude -p`.
-        const headless = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const headless = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
         try {
             await runHook(PAYLOAD, { CLAUDE_PID: String(headless.pid) });

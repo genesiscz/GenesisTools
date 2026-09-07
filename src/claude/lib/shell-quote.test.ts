@@ -20,6 +20,7 @@ function throughShell(value: string): { seen: string; marker: boolean; stray: st
 
     try {
         const probe = Bun.spawnSync(["/bin/sh", "-c", `printf %s ${shellSingleQuote(value)}; test ! -e ./INJECTED`], {
+            env: process.env,
             cwd: dir,
             stdout: "pipe",
             stderr: "pipe",

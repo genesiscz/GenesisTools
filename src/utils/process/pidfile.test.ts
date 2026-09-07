@@ -56,7 +56,7 @@ describe("pidfile", () => {
         // The incident, reproduced: the recorded owner is gone and the kernel
         // handed its number to an unrelated program. The pid is alive; the
         // identity does not match.
-        const stranger = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const stranger = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
         try {
             writeFileSync(
@@ -125,7 +125,7 @@ describe("pidfile", () => {
 
     describe("legacy bare-number pidfiles", () => {
         test("are still readable, and the caller's expectation supplies the missing identity", async () => {
-            const stranger = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+            const stranger = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
             try {
                 writeFileSync(path, String(stranger.pid));
@@ -147,7 +147,7 @@ describe("pidfile", () => {
         });
 
         test("without an expectation the verdict is unverified, and the two readers disagree on purpose", async () => {
-            const stranger = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+            const stranger = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
             try {
                 writeFileSync(path, String(stranger.pid));

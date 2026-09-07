@@ -633,6 +633,7 @@ describe("log command JSON", () => {
         await writeFile(file, docWith("- **State:** old"));
 
         const proc = Bun.spawn(["bun", join(import.meta.dir, "resolve.ts"), "log", file], {
+            env: process.env,
             stdin: new Response("@@HERE@@\n- **State:** new\n@@LOG@@\n## 2026-07-29 06:47 — second\n"),
             stdout: "pipe",
             stderr: "pipe",

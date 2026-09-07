@@ -201,7 +201,7 @@ async function makeTmpRepo(): Promise<string> {
     writeFileSync(join(dir, "ignored.log"), "noise\n");
     writeFileSync(join(dir, ".gitignore"), "*.log\n");
     const git = (args: string[]) =>
-        Bun.spawn(["git", ...args], { cwd: dir, stdout: "ignore", stderr: "ignore" }).exited;
+        Bun.spawn(["git", ...args], { env: process.env, cwd: dir, stdout: "ignore", stderr: "ignore" }).exited;
     await git(["init"]);
     await git(["add", "-A"]);
     return dir;

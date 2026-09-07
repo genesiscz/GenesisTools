@@ -11,6 +11,7 @@ describe("tools launcher verbose flag", () => {
     // this case is opt-in via RUN_WIP_E2E=1 until it lands.
     it.skipIf(skip.wip)("allows --verbose after nested subcommands", async () => {
         const proc = Bun.spawn([TOOLS_BIN, "macos", "mail", "search", "--verbose"], {
+            env: process.env,
             stdout: "pipe",
             stderr: "pipe",
         });
@@ -29,6 +30,7 @@ describe("tools launcher verbose flag", () => {
 
     it("preserves --verbose for tools that declare it", async () => {
         const proc = Bun.spawn([TOOLS_BIN, "json", "--verbose"], {
+            env: process.env,
             stdin: "pipe",
             stdout: "pipe",
             stderr: "pipe",

@@ -13,7 +13,7 @@ async function runGuard(files: Record<string, string>): Promise<{ code: number; 
         writeFileSync(join(root, name), contents);
     }
 
-    const proc = Bun.spawn(["bash", GUARD, root], { stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["bash", GUARD, root], { env: process.env, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, code] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -83,7 +83,7 @@ describe("argless provider factories", () => {
  */
 describe("unscannable roots", () => {
     async function runGuardOnRoot(root: string): Promise<{ code: number; output: string }> {
-        const proc = Bun.spawn(["bash", GUARD, root], { stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawn(["bash", GUARD, root], { env: process.env, stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr, code] = await Promise.all([
             new Response(proc.stdout).text(),
             new Response(proc.stderr).text(),

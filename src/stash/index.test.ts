@@ -5,6 +5,7 @@ const stashCli = join(import.meta.dir, "index.ts");
 
 async function runCli(args: string[]): Promise<{ exitCode: number; stderr: string; stdout: string }> {
     const proc = Bun.spawn(["bun", "run", stashCli, ...args], {
+        env: process.env,
         stdout: "pipe",
         stderr: "pipe",
     });

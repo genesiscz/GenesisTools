@@ -178,7 +178,12 @@ test("reinstall updates a stable runtime entrypoint without rewriting shell conf
     expect(second.runtimePath).not.toBe(first.runtimePath);
     expect(readFileSync(second.rcPath, "utf8")).toBe(rc);
     expect(readFileSync(second.hookPath, "utf8")).toBe(hook);
-    const proc = Bun.spawn([process.execPath, entry], { cwd: tmpdir(), stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn([process.execPath, entry], {
+        env: process.env,
+        cwd: tmpdir(),
+        stdout: "pipe",
+        stderr: "pipe",
+    });
     expect(await new Response(proc.stdout).text()).toBe("version-two");
     expect(await proc.exited).toBe(0);
 });

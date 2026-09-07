@@ -8,6 +8,7 @@ const FIXTURE = join(import.meta.dir, "__fixtures__/stdout-fixture.ts");
 describe.skipIf(skip.onWindows)("writeStdout", () => {
     it("delivers a large payload intact through a slow pipe consumer", async () => {
         const proc = Bun.spawn(["sh", "-c", `bun run '${FIXTURE}' 300000 | cat`], {
+            env: process.env,
             stdout: "pipe",
             stderr: "pipe",
         });

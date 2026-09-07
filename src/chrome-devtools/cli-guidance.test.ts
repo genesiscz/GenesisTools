@@ -7,6 +7,7 @@ import { captureDir } from "./lib/paths.ts";
 
 function run(args: string[]): { code: number; text: string } {
     const r = Bun.spawnSync({
+        env: process.env,
         cmd: ["bun", `${import.meta.dir}/index.ts`, ...args],
         stdout: "pipe",
         stderr: "pipe",

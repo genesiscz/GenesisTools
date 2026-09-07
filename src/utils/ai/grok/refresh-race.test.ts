@@ -80,6 +80,7 @@ const token = await refreshGrokAuth({ path: ${SafeJSON.stringify(authPath)} });
 console.log(token ? "TOKEN" : "NULL");`;
 
     return Bun.spawn(["bun", "-e", script], {
+        env: process.env,
         cwd: join(import.meta.dir, "..", "..", "..", ".."),
         stdout: "pipe",
         stderr: "pipe",

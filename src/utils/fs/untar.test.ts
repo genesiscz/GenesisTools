@@ -9,6 +9,7 @@ async function makeTgz(): Promise<Uint8Array> {
     writeFileSync(join(dir, "hello.txt"), "hello world");
     writeFileSync(join(dir, "big.bin"), new Uint8Array(1500).fill(7));
     const proc = Bun.spawn(["tar", "czf", "-", "-C", dir, "hello.txt", "big.bin"], {
+        env: process.env,
         stdout: "pipe",
         stderr: "pipe",
     });

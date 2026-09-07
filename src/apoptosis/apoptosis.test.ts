@@ -646,6 +646,7 @@ describe("CLI --json (e2e)", () => {
 
         const entry = join(import.meta.dir, "index.ts");
         const proc = Bun.spawn({
+            env: process.env,
             cmd: ["bun", entry, dir, "--json", "--no-state", "--ext", "ts"],
             stdout: "pipe",
             stderr: "pipe",

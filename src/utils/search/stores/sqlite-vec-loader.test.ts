@@ -20,7 +20,7 @@ async function runFixture(source: string, preload?: string): Promise<{ stdout: s
 
     try {
         const args = preload ? ["--preload", preload, fixturePath] : ["run", fixturePath];
-        const proc = Bun.spawn(["bun", ...args], { cwd: dir, stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawn(["bun", ...args], { env: process.env, cwd: dir, stdout: "pipe", stderr: "pipe" });
         const stdout = await new Response(proc.stdout).text();
         const exitCode = await proc.exited;
         return { stdout, exitCode };

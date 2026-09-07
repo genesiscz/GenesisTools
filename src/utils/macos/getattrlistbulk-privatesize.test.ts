@@ -42,8 +42,8 @@ describe.skipIf(!isDarwin)("getattrlistbulk privateSize — Phase 8 layout verif
 
             const src = join(dir, "clone-a.bin");
             writeFileSync(src, Buffer.alloc(4 * 1024 * 1024, 0xa5));
-            const cpB = spawnSync("cp", ["-c", src, join(dir, "clone-b.bin")]);
-            const cpC = spawnSync("cp", ["-c", src, join(dir, "clone-c.bin")]);
+            const cpB = spawnSync("cp", ["-c", src, join(dir, "clone-b.bin")], { env: process.env });
+            const cpC = spawnSync("cp", ["-c", src, join(dir, "clone-c.bin")], { env: process.env });
             if (cpB.status !== 0 || cpC.status !== 0) {
                 // tmpdir is not on APFS — bail without failing (test is APFS-only)
                 return;
@@ -109,8 +109,8 @@ describe.skipIf(!isDarwin)("getattrlistbulk privateSize — Phase 8 layout verif
         try {
             const src = join(dir, "a.bin");
             writeFileSync(src, Buffer.alloc(4 * 1024 * 1024, 0x77));
-            const cpB = spawnSync("cp", ["-c", src, join(dir, "b.bin")]);
-            const cpC = spawnSync("cp", ["-c", src, join(dir, "c.bin")]);
+            const cpB = spawnSync("cp", ["-c", src, join(dir, "b.bin")], { env: process.env });
+            const cpC = spawnSync("cp", ["-c", src, join(dir, "c.bin")], { env: process.env });
             if (cpB.status !== 0 || cpC.status !== 0) {
                 return;
             }

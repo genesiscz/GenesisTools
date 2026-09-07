@@ -20,7 +20,7 @@ function fixture(): string {
     mkdirSync(join(outer, "plain", "node_modules"), { recursive: true });
     writeFileSync(join(outer, "repo", ".gitignore"), "node_modules\n");
     writeFileSync(join(outer, "repo", "pkg", "composer.json"), "{}\n");
-    expect(spawnSync("git", ["-C", join(outer, "repo"), "init", "-q"]).status).toBe(0);
+    expect(spawnSync("git", ["-C", join(outer, "repo"), "init", "-q"], { env: process.env }).status).toBe(0);
     return outer;
 }
 
@@ -117,7 +117,7 @@ describe("targets", () => {
         try {
             mkdirSync(join(outer, "repo", "build-ios"), { recursive: true });
             writeFileSync(join(outer, "repo", "build-ios", "f.txt"), "x");
-            expect(spawnSync("git", ["-C", join(outer, "repo"), "init", "-q"]).status).toBe(0);
+            expect(spawnSync("git", ["-C", join(outer, "repo"), "init", "-q"], { env: process.env }).status).toBe(0);
 
             const res = await expandTargets({ dirs: [outer], targets: ["build-*"] });
             expect(res.roots).toEqual([join(outer, "repo", "build-ios")]);

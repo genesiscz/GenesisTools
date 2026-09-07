@@ -9,7 +9,7 @@ describe("ripgrepBinary", () => {
         const rg = ripgrepBinary();
         expect(rg).not.toBeNull();
 
-        const proc = Bun.spawn([rg as string, "--version"], { stdout: "pipe", stderr: "ignore" });
+        const proc = Bun.spawn([rg as string, "--version"], { env: process.env, stdout: "pipe", stderr: "ignore" });
         const text = await new Response(proc.stdout).text();
         expect(await proc.exited).toBe(0);
         expect(text).toStartWith("ripgrep ");

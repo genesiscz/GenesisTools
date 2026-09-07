@@ -27,7 +27,7 @@ let png = rep.representation(using: .png, properties: [:])!
 try! png.write(to: URL(fileURLWithPath: "${TEST_IMAGE}"))
     `,
             ],
-            { stdout: "pipe", stderr: "pipe" }
+            { env: process.env, stdout: "pipe", stderr: "pipe" }
         );
         const stderr = await new Response(proc.stderr).text();
         const exitCode = await proc.exited;

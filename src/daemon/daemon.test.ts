@@ -134,7 +134,7 @@ describe("daemon pidfile atomic takeover", () => {
         // handed 891 to WiFiCloudAssetsXPCService, and `kill(pid, 0)` happily
         // confirmed "alive". Every launchd respawn then exited with
         // EXIT_ALREADY_RUNNING — 4284 restarts in ~12h with nothing polling.
-        const foreign = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const foreign = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
         try {
             writeFileSync(pidFile, String(foreign.pid));

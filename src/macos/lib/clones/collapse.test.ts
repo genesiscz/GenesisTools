@@ -95,7 +95,7 @@ describe.skipIf(skip.unlessMac)("collapseDuplicates keep prefers already-cloned 
 
             const payload = Buffer.alloc(1024 * 1024, 0x5a);
             writeFileSync(origin, payload);
-            expect(spawnSync("cp", ["-c", origin, shared]).status).toBe(0);
+            expect(spawnSync("cp", ["-c", origin, shared], { env: process.env }).status).toBe(0);
             writeFileSync(fullCopy, payload);
 
             expect(fullCopy < shared).toBe(true);
@@ -129,7 +129,7 @@ describe.skipIf(skip.unlessMac)("collapseDuplicates keep prefers already-cloned 
 
             const payload = Buffer.alloc(1024 * 1024, 0x5a);
             writeFileSync(origin, payload);
-            expect(spawnSync("cp", ["-c", origin, shared]).status).toBe(0);
+            expect(spawnSync("cp", ["-c", origin, shared], { env: process.env }).status).toBe(0);
             writeFileSync(fullCopy, payload);
             const copyPrivateBefore = getPrivateSize(fullCopy) as number;
             expect(copyPrivateBefore).toBeGreaterThan(512 * 1024);
@@ -163,8 +163,10 @@ describe.skipIf(skip.unlessMac)("collapseDuplicates keep prefers already-cloned 
             const originB = join(outer, "origin-b.bin");
             writeFileSync(originA, payloadA);
             writeFileSync(originB, payloadB);
-            expect(spawnSync("cp", ["-c", originA, join(sharedDir, "index.js")]).status).toBe(0);
-            expect(spawnSync("cp", ["-c", originB, join(sharedDir, "lib", "a.js")]).status).toBe(0);
+            expect(spawnSync("cp", ["-c", originA, join(sharedDir, "index.js")], { env: process.env }).status).toBe(0);
+            expect(spawnSync("cp", ["-c", originB, join(sharedDir, "lib", "a.js")], { env: process.env }).status).toBe(
+                0
+            );
             writeFileSync(join(fullDir, "index.js"), payloadA);
             writeFileSync(join(fullDir, "lib", "a.js"), payloadB);
 

@@ -21,7 +21,7 @@ describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
             writeFileSync(src, buf);
 
             // APFS clone (cp -c forces clonefile)
-            expect(spawnSync("cp", ["-c", src, dst]).status).toBe(0);
+            expect(spawnSync("cp", ["-c", src, dst], { env: process.env }).status).toBe(0);
 
             const clonedPrivate = getPrivateSize(dst);
             expect(clonedPrivate).not.toBeNull();
@@ -29,7 +29,9 @@ describe.skipIf(skip.unlessMac)("apfs getPrivateSize (clone semantics)", () => {
             expect(clonedPrivate as number).toBeLessThan(256 * 1024);
 
             // modify one block of dst → that block goes private (COW)
-            spawnSync("dd", ["if=/dev/zero", `of=${dst}`, "bs=1", "count=4096", "seek=1048576", "conv=notrunc"]);
+            spawnSync("dd", ["if=/dev/zero", `of=${dst}`, "bs=1", "count=4096", "seek=1048576", "conv=notrunc"], {
+                env: process.env,
+            });
             const modifiedPrivate = getPrivateSize(dst) as number;
             expect(modifiedPrivate).toBeGreaterThan(clonedPrivate as number);
 
@@ -52,7 +54,7 @@ describe.skipIf(skip.unlessMac)("apfs clone identity", () => {
         const dst = join(dir, "b.bin");
         try {
             writeFileSync(src, Buffer.alloc(1024 * 1024, 7));
-            expect(spawnSync("cp", ["-c", src, dst]).status).toBe(0);
+            expect(spawnSync("cp", ["-c", src, dst], { env: process.env }).status).toBe(0);
 
             const idSrc = getCloneId(src);
             const idDst = getCloneId(dst);

@@ -24,7 +24,7 @@ describe("handleShell timeout cleanup", () => {
         }
 
         await new Promise((r) => setTimeout(r, 200));
-        const after = Bun.spawnSync(["pgrep", "-f", marker]).stdout.toString().trim();
+        const after = Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim();
         expect(after).toBe("");
     });
 });

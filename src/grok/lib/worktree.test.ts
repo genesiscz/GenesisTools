@@ -7,7 +7,7 @@ import { worktreeDelta, worktreeState } from "./worktree";
 const scratch = (): string => mkdtempSync(join(tmpdir(), "grok-worktree-test-"));
 
 const gitInit = (dir: string): void => {
-    Bun.spawnSync({ cmd: ["git", "init", "-q"], cwd: dir, stdout: "ignore", stderr: "ignore" });
+    Bun.spawnSync({ env: process.env, cmd: ["git", "init", "-q"], cwd: dir, stdout: "ignore", stderr: "ignore" });
 };
 
 describe("worktreeDelta", () => {

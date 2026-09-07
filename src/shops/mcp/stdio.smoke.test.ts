@@ -16,6 +16,7 @@ interface JsonRpcFrame {
 
 async function runInitializeAndListTools(): Promise<{ initialize: JsonRpcResponse; listTools: JsonRpcResponse }> {
     const proc = Bun.spawn(["bun", "src/shops/index.ts", "mcp"], {
+        env: process.env,
         cwd: process.cwd(),
         stdin: "pipe",
         stdout: "pipe",

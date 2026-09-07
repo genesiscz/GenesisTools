@@ -66,7 +66,7 @@ describeOnDarwin("getattrlistbulk", () => {
         // visibly, which is the signal we want during dev.
         const dir = withTmpDir("galb-clones");
         writeFileSync(join(dir, "src.bin"), Buffer.alloc(4096, 0x42));
-        const cp = spawnSync("cp", ["-c", join(dir, "src.bin"), join(dir, "clone.bin")]);
+        const cp = spawnSync("cp", ["-c", join(dir, "src.bin"), join(dir, "clone.bin")], { env: process.env });
         if (cp.status !== 0) {
             // Non-APFS volume in /tmp on this machine — skip rather than fail.
             return;

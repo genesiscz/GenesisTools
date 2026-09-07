@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 function git(args: string[]): string {
-    const proc = Bun.spawnSync(["git", "-C", root, ...args]);
+    const proc = Bun.spawnSync(["git", "-C", root, ...args], { env: process.env });
     return proc.stdout.toString().trim();
 }
 
@@ -69,7 +69,7 @@ describe("commitStore", () => {
     it("a pre-staged file outside the allowlist is unstaged, not committed", async () => {
         await ensureStoreScaffold(root);
         await Bun.write(join(root, "secrets.env"), "TOKEN=oops\n");
-        Bun.spawnSync(["git", "-C", root, "add", "secrets.env"]);
+        Bun.spawnSync(["git", "-C", root, "add", "secrets.env"], { env: process.env });
 
         await Bun.write(join(root, "persisted", "demo", "demo.ts"), "// body\n");
         await commitStore("feat: create demo", root);
@@ -119,7 +119,7 @@ describe("remote", () => {
 
     it("auto-push delivers store commits to a configured remote", async () => {
         const bare = await mkdtemp(join(tmpdir(), "scripts-remote-"));
-        Bun.spawnSync(["git", "init", "--bare", "-b", "main", bare]);
+        Bun.spawnSync(["git", "init", "--bare", "-b", "main", bare], { env: process.env });
 
         try {
             await setStoreRemote(bare, root);
@@ -129,7 +129,9 @@ describe("remote", () => {
             await Bun.write(join(root, "persisted", "demo", "demo.ts"), "// body\n");
             await commitStore("feat: create demo", root);
 
-            const remoteLog = Bun.spawnSync(["git", "-C", bare, "log", "-1", "--format=%s", "main"]);
+            const remoteLog = Bun.spawnSync(["git", "-C", bare, "log", "-1", "--format=%s", "main"], {
+                env: process.env,
+            });
             expect(remoteLog.stdout.toString().trim()).toBe("feat: create demo");
         } finally {
             await rm(bare, { recursive: true, force: true });

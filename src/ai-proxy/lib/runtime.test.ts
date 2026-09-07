@@ -116,7 +116,11 @@ describe("inspectProxyPid", () => {
         mkdirSync(join(home, "ai-proxy"), { recursive: true });
         writeFileSync(entry, "await Bun.sleep(30_000);\n");
 
-        const proc = Bun.spawn(["bun", "run", entry, "serve"], { stdout: "ignore", stderr: "ignore" });
+        const proc = Bun.spawn(["bun", "run", entry, "serve"], {
+            env: process.env,
+            stdout: "ignore",
+            stderr: "ignore",
+        });
         cleanups.push(() => proc.kill());
         writeProxyPid(proc.pid);
 
