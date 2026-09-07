@@ -1,3 +1,4 @@
+import { UpstreamStatusError } from "@genesiscz/utils/ai/http-auth";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
@@ -5,7 +6,7 @@ import { GrokAuthExpiredError, isAuthHttpStatus } from "./auth-errors";
 import { buildCliProxyHeaders } from "./headers";
 import { GROK_CLI_CHAT_PROXY_BASE_URL, grokAuthPath } from "./paths";
 import { refreshGrokAuth, refreshGrokAuthOrThrow } from "./refresh";
-import type { GrokBillingConfig, GrokProbeResult, GrokSettings } from "./types";
+import type { GrokBillingConfig, GrokCreditsConfig, GrokProbeResult, GrokSettings } from "./types";
 
 export interface GrokSubscriptionClientOptions {
     token: string;
@@ -216,7 +217,9 @@ export class GrokSubscriptionClient {
             return;
         }
 
-        throw new Error(`Grok API ${endpoint} failed: HTTP ${response.status}`);
+        // The status rides on the error: the usage poll gate reads it to keep a 502 from
+        // the CLI proxy off this account's ladder, since every account draws the same one.
+        throw new UpstreamStatusError(response.status, `Grok API ${endpoint} failed: HTTP ${response.status}`);
     }
 
     async getModels(): Promise<unknown> {
@@ -231,16 +234,33 @@ export class GrokSubscriptionClient {
         return (await response.json()) as GrokSettings;
     }
 
-    async getBilling(): Promise<GrokBillingConfig> {
-        const response = await this.fetch("/billing");
-        await this.ensureOk(response, "/billing");
-        const payload = (await response.json()) as GrokBillingConfig | { config?: GrokBillingConfig };
-
+    /**
+     * Both billing forms answer inside a `{ config: … }` envelope, and both have been seen
+     * bare. Unwrapping in one place keeps the two readers from drifting apart.
+     */
+    private unwrapConfig<T>(payload: T | { config?: T }): T {
         if (typeof payload === "object" && payload !== null && "config" in payload && payload.config) {
             return payload.config;
         }
 
-        return payload as GrokBillingConfig;
+        return payload as T;
+    }
+
+    async getBilling(): Promise<GrokBillingConfig> {
+        const response = await this.fetch("/billing");
+        await this.ensureOk(response, "/billing");
+        return this.unwrapConfig((await response.json()) as GrokBillingConfig | { config?: GrokBillingConfig });
+    }
+
+    /**
+     * Subscription usage, which `/billing` alone never reports: on a pure subscription every
+     * figure in the plain form stays zero while this one carries the real percentage.
+     */
+    async getCredits(): Promise<GrokCreditsConfig> {
+        const path = "/billing?format=credits";
+        const response = await this.fetch(path);
+        await this.ensureOk(response, path);
+        return this.unwrapConfig((await response.json()) as GrokCreditsConfig | { config?: GrokCreditsConfig });
     }
 
     async getUser(): Promise<unknown> {

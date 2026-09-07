@@ -41,6 +41,67 @@ function createProcessHarness(): {
 }
 
 describe("AppServerClient", () => {
+    // The reader used to await the handler, so a handler that never settled held every
+    // later response line and a handler that threw tore the loop down.
+    test("a hanging notification handler does not delay a later response", async () => {
+        const harness = createProcessHarness();
+        const client = new AppServerClient(harness.process, {
+            onNotification: () => new Promise<void>(() => {}),
+        });
+        const resultPromise = client.request<{ ok: boolean }>("thread/read");
+
+        await Bun.sleep(0);
+        const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as { id: number };
+
+        harness.push({ method: "turn/started", params: {} });
+        harness.push({ id: request.id, result: { ok: true } });
+
+        await expect(resultPromise).resolves.toEqual({ ok: true });
+        await client.close();
+    });
+
+    test("a rejecting notification handler does not reject pending requests", async () => {
+        const harness = createProcessHarness();
+        const seen: string[] = [];
+        const client = new AppServerClient(harness.process, {
+            onNotification: async (notification) => {
+                seen.push(notification.method);
+                throw new Error("handler exploded");
+            },
+        });
+        const resultPromise = client.request<{ ok: boolean }>("thread/read");
+
+        await Bun.sleep(0);
+        const request = SafeJSON.parse(harness.writes[0] ?? "", { strict: true }) as { id: number };
+
+        harness.push({ method: "turn/started", params: {} });
+        await Bun.sleep(10);
+        harness.push({ id: request.id, result: { ok: true } });
+
+        await expect(resultPromise).resolves.toEqual({ ok: true });
+        expect(seen).toEqual(["turn/started"]);
+        await client.close();
+    });
+
+    // Ordering survives the detachment: the queue is a chain, not a fan-out.
+    test("notifications reach the handler in arrival order", async () => {
+        const harness = createProcessHarness();
+        const seen: string[] = [];
+        const client = new AppServerClient(harness.process, {
+            onNotification: async (notification) => {
+                await Bun.sleep(notification.method === "first" ? 5 : 0);
+                seen.push(notification.method);
+            },
+        });
+
+        harness.push({ method: "first", params: {} });
+        harness.push({ method: "second", params: {} });
+        await Bun.sleep(30);
+
+        expect(seen).toEqual(["first", "second"]);
+        await client.close();
+    });
+
     test("correlates request responses by id", async () => {
         const harness = createProcessHarness();
         const client = new AppServerClient(harness.process);

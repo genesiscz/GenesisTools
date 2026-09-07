@@ -158,3 +158,39 @@ describe("normalizeSpend", () => {
         ).toBeNull();
     });
 });
+
+describe("scoped model display names", () => {
+    function scopedResponse(displayName: string): UsageResponse {
+        return {
+            limits: [
+                {
+                    kind: "weekly_scoped",
+                    group: "weekly",
+                    percent: 7,
+                    severity: "normal",
+                    resets_at: null,
+                    scope: { model: { id: null, display_name: displayName }, surface: null },
+                    is_active: true,
+                },
+            ],
+        } as UsageResponse;
+    }
+
+    // The bare family name is what the live API sends today, and it must not move.
+    test("a bare family name still keys the canonical bucket", () => {
+        expect(normalizeLimits(scopedResponse("Sonnet"))[0].bucket).toBe("seven_day_sonnet");
+        expect(normalizeLimits(scopedResponse("Opus"))[0].bucket).toBe("seven_day_opus");
+    });
+
+    // A fuller display name used to key `seven_day_claude opus 4.1`, which has no label,
+    // no period and no place in the configured prominent list.
+    test("a full display name resolves to the same canonical bucket", () => {
+        expect(normalizeLimits(scopedResponse("Claude Opus 4.1"))[0].bucket).toBe("seven_day_opus");
+        expect(normalizeLimits(scopedResponse("Claude Sonnet 4.5"))[0].bucket).toBe("seven_day_sonnet");
+    });
+
+    // An unknown family keeps the old lowercase fallback rather than being dropped.
+    test("an unknown family falls back to the lowercased name", () => {
+        expect(normalizeLimits(scopedResponse("Haiku"))[0].bucket).toBe("seven_day_haiku");
+    });
+});
