@@ -122,6 +122,16 @@ export interface UsageQuery {
     to: string;
     app?: string | string[];
     accountId?: string | string[];
+    /**
+     * Bucket width. When set, the result carries `points` as well as the
+     * folded totals. `minute` is honoured here: each row is timestamped to the
+     * millisecond, unlike the transcript store.
+     */
+    grain?: SpendGrain;
+    /** Also split each point by `provider/modelId`. Ignored without `grain`. */
+    byModel?: boolean;
+    /** Bucketing zone. Defaults to the system zone; the day-files stay UTC-keyed. */
+    timeZone?: string;
 }
 
 /** Folded totals for a set of events. */
@@ -142,4 +152,74 @@ export interface UsageQueryResult {
     byModel: Record<string, UsageAggregate>;
     /** The matching rows, oldest first. */
     events: UsageEvent[];
+    /**
+     * Present only when the query named a `grain`, so a caller that did not ask
+     * for a series cannot mistake an empty array for "no spend".
+     */
+    points?: SpendSeriesPoint[];
 }
+
+/**
+ * Bucket width of a spend series.
+ *
+ * `minute` is honoured by the call log, which timestamps each call to the
+ * millisecond. Transcript spend is hour-resolution at best, so
+ * `buildSpendSeries` rejects `minute` rather than drawing a per-minute line
+ * out of hourly data.
+ */
+export type SpendGrain = "minute" | "hour" | "day" | "week";
+
+/** Cost and tokens of one slice of a point (one account, one model). */
+export interface SpendSeriesBucket {
+    costUsd: number;
+    tokens: number;
+}
+
+/**
+ * One bucket of a spend series.
+ *
+ * Declared here, in L7, rather than in `src/ai-spend`, because BOTH series
+ * producers return it: the call log (`queryUsage({ grain })`) and the
+ * transcript store (`buildSpendSeries`). `src/ai-spend/lib/series.ts` imports
+ * it; nothing under `src/utils/ai/usage` may import ai-spend, so the shape has
+ * to live on the lower layer or be duplicated.
+ */
+export interface SpendSeriesPoint {
+    /** Bucket start: `YYYY-MM-DD`, `YYYY-MM-DDTHH`, or `YYYY-MM-DDTHH:mm`. */
+    t: string;
+    costUsd: number;
+    tokens: number;
+    byAccount: Record<string, SpendSeriesBucket>;
+    byModel?: Record<string, SpendSeriesBucket>;
+}
+
+/**
+ * The account identity a series legend needs, without the config entry behind it.
+ *
+ * ⚠️ Not the same `AccountRef` as `src/utils/ai/config/refs.ts`, which is the
+ * `@account/<id>` string form. That one points AT an account; this one carries
+ * the fields a chart legend renders. They are never imported together.
+ */
+export interface AccountRef {
+    accountId: string;
+    accountName: string;
+    /** Plugin id: `anthropic-sub`, `openai-sub`, `grok-sub`. */
+    provider: string;
+    label?: string;
+}
+
+/**
+ * Transcripts under a home that no account claims. A real id, not `undefined`,
+ * so a series legend and a `--account` filter can both name that group.
+ */
+export const UNBOUND_ACCOUNT_ID = "(unbound)";
+
+/**
+ * Every Anthropic transcript, as one row. `~/.claude/projects` carries no
+ * account marker, so the transcript store cannot split Claude by account
+ * (campaign decision D6) — per-account Claude numbers come from the call log.
+ */
+export const CLAUDE_ALL_ACCOUNT_ID = "claude-all";
+
+/** Display name of the `CLAUDE_ALL_ACCOUNT_ID` row. Never the synthetic id. */
+export const CLAUDE_ALL_ACCOUNT_NAME = "claude (all accounts)";

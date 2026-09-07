@@ -11,10 +11,25 @@
  * up with what ccusage reports for the same files.
  */
 
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+
 /** The agents `monitor` knows how to read. */
 export type AgentId = "claude" | "codex" | "grok";
 
 export const AGENT_IDS: readonly AgentId[] = ["claude", "codex", "grok"];
+
+/**
+ * The provider plugin that owns each agent's accounts.
+ *
+ * An agent is a transcript dialect; a plugin is a login. They are one-to-one
+ * today and this map is the only place that says so, so a driver never hardcodes
+ * a plugin id and the accounts wiring never hardcodes an agent id.
+ */
+export const AGENT_PLUGIN_IDS: Record<AgentId, string> = {
+    claude: "anthropic-sub",
+    codex: "openai-sub",
+    grok: "grok-sub",
+};
 
 export interface DriverUsageEvent {
     /**
@@ -68,10 +83,37 @@ export interface CreateParserOptions {
     state: unknown;
 }
 
+/**
+ * One tree to walk, plus who it belongs to.
+ *
+ * `accountId` absent means nobody claims it: the default roots, and any home
+ * `discoverHomes` turned up that no account references. Those events report
+ * under `UNBOUND_ACCOUNT_ID` rather than being dropped — a home that is not
+ * bound yet still cost money.
+ */
+export interface DriverRoot {
+    path: string;
+    /** `AccountEntry.id`. Absent for an unbound root. */
+    accountId?: string;
+    /** The provider home this root hangs off (`~/.codex-work`), when known. */
+    home?: string;
+}
+
 export interface MonitorDriver {
     id: AgentId;
     /** Directory trees to walk. Missing directories are skipped, not an error. */
     roots(home: string): string[];
+    /**
+     * The same trees, split per account, via `plugin.accounts.spendScope`.
+     * Absent means this agent cannot attribute transcripts to an account, so
+     * every root stays unbound.
+     *
+     * `userHome` is the same home `roots()` got. A provider whose accounts share
+     * ONE tree (anthropic) needs it to stay inside that home: its `spendScope`
+     * answers for the real `$HOME`, and without this argument an injected home
+     * would silently pull the real `~/.claude/projects` in beside it.
+     */
+    rootsForAccounts?(accounts: AccountEntry[], userHome: string): DriverRoot[];
     /** File-name test, applied BEFORE stat() so non-transcripts cost nothing. */
     isTranscript(name: string): boolean;
     /** How deep below a root transcripts can sit. */

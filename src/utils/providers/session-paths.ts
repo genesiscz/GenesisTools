@@ -62,6 +62,29 @@ export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()
     return roots;
 }
 
+/**
+ * Session roots of ONE provider home, e.g. `~/.codex-work` or a grok
+ * `GROK_HOME`. The argument is a provider home, not the user's home directory
+ * that `nativeSessionRoots` takes.
+ *
+ * Deliberately narrower than `nativeSessionRoots`: no `CODEX_HOME` /
+ * `GROK_HOME` / `CLAUDE_CONFIG_DIR` lookup and no headless worker home. The
+ * caller already knows which home it is asking about — an account's
+ * `spendScope`, or a home `discoverHomes` found — and folding the ambient
+ * overrides back in would attribute another home's transcripts to it.
+ */
+export function nativeSessionRootsForHome(kind: NativeSessionProvider, home: string): string[] {
+    if (kind === "claude") {
+        return [join(home, "projects")];
+    }
+
+    if (kind === "codex") {
+        return [join(home, "sessions"), join(home, "archived_sessions")];
+    }
+
+    return [join(home, "sessions")];
+}
+
 export function isNativeTranscript(kind: NativeSessionProvider, fileName: string): boolean {
     if (kind === "grok") {
         return fileName === "updates.jsonl";
