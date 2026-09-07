@@ -3,8 +3,7 @@ import { createBoxTable, formatTable } from "@genesiscz/utils/table";
 import { alert } from "@mdit/plugin-alert";
 import chalk, { type ChalkInstance } from "chalk";
 import cliHtml from "cli-html";
-import MarkdownIt from "markdown-it";
-import type Token from "markdown-it/lib/token.mjs";
+import MarkdownIt, { type Env, type MarkdownIt as MarkdownItInstance, type Token } from "markdown-it";
 // @ts-expect-error - no types available for markdown-it-task-lists
 import taskLists from "markdown-it-task-lists";
 
@@ -94,7 +93,7 @@ const NO_LINE_NUMBER_LANGS = new Set([
  * - Shell/config blocks don't show line numbers
  * - Code blocks (ts, js, python, etc.) show line numbers
  */
-function createFencePlugin(md: MarkdownIt): void {
+function createFencePlugin(md: MarkdownItInstance): void {
     const defaultFence = md.renderer.rules.fence?.bind(md.renderer.rules);
 
     md.renderer.rules.fence = (tokens, idx, options, env, slf) => {
@@ -186,7 +185,7 @@ function parseTableTokens(tokens: Token[], startIdx: number): ParsedTableTokens 
             idx++;
             while (idx < tokens.length && tokens[idx].type !== "thead_close") {
                 if (tokens[idx].type === "th_open") {
-                    const style = tokens[idx].attrGet("style") || "";
+                    const style = String(tokens[idx].attrGet("style") ?? "");
                     if (style.includes("text-align:center")) {
                         data.alignments.push("center");
                     } else if (style.includes("text-align:right")) {
@@ -507,9 +506,9 @@ function renderTableWithEngine(data: TableData): string {
     return renderAsciiTable(data);
 }
 
-function createTablePlugin(md: MarkdownIt): void {
+function createTablePlugin(md: MarkdownItInstance): void {
     // Override render to post-process tables with our ASCII renderer
-    md.render = (src: string, env?: object): string => {
+    md.render = (src: string, env?: Env): string => {
         const tokens = md.parse(src, env || {});
         let html = "";
 
@@ -530,7 +529,7 @@ function createTablePlugin(md: MarkdownIt): void {
 /**
  * Configure and create the markdown-it instance with plugins.
  */
-function createMarkdownRenderer(): MarkdownIt {
+function createMarkdownRenderer(): MarkdownItInstance {
     const md = new MarkdownIt({
         html: true,
         linkify: true,
@@ -543,13 +542,13 @@ function createMarkdownRenderer(): MarkdownIt {
     // Add GitHub-style alerts (> [!NOTE], > [!WARNING], etc.)
     md.use(alert, {
         deep: false,
-        openRender: (tokens, index) => {
+        openRenderer: (tokens, index) => {
             const token = tokens[index];
             const color = currentPalette.alertColors[token.markup] || "blue";
             return `<blockquote style="border-left-color: ${color}">`;
         },
-        closeRender: () => "</blockquote>\n",
-        titleRender: (tokens, index) => {
+        closeRenderer: () => "</blockquote>\n",
+        titleRenderer: (tokens, index) => {
             const token = tokens[index];
             const icons: Record<string, string> = {
                 important: "❗",
@@ -574,7 +573,7 @@ function createMarkdownRenderer(): MarkdownIt {
 }
 
 // Singleton instance
-let mdInstance: MarkdownIt | null = null;
+let mdInstance: MarkdownItInstance | null = null;
 
 export interface MarkdownRenderOptions {
     /** Max output width in columns. Defaults to terminal width or 80. */

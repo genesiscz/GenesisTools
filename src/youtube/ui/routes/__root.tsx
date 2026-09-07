@@ -11,7 +11,7 @@ import { AppShell, AppSidebar, type SidebarNavItem } from "@genesiscz/utils/ui/c
 import { cn } from "@genesiscz/utils/ui/lib/utils";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
-import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Youtube } from "lucide-react";
+import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Tv } from "lucide-react";
 import type React from "react";
 import { useEffect } from "react";
 
@@ -121,7 +121,7 @@ function RootLayout() {
                                 label: "",
                                 theme: "primary",
                                 items: [
-                                    { title: "Channels", url: "/", icon: Youtube },
+                                    { title: "Channels", url: "/", icon: Tv },
                                     { title: "History", url: "/history", icon: History },
                                     { title: "Collections", url: "/collections", icon: Library },
                                     { title: "Digest", url: "/digest", icon: Newspaper },

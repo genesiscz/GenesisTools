@@ -28,7 +28,8 @@ export async function untarGz(body: Uint8Array): Promise<TarEntry[]> {
     const done = new Promise<void>((resolve, reject) => {
         ex.on("entry", (header, stream, next) => {
             const chunks: Buffer[] = [];
-            stream.on("data", (c: Buffer) => {
+            stream.on("data", (chunk) => {
+                const c = chunk as Buffer;
                 totalBytes += c.length;
                 if (totalBytes > MAX_DECOMPRESSED_BYTES) {
                     reject(new Error(`tar body exceeds ${MAX_DECOMPRESSED_BYTES} bytes decompressed`));
@@ -62,7 +63,7 @@ export async function tarGz(entries: TarEntry[]): Promise<Uint8Array> {
     const p = pack();
     const chunks: Buffer[] = [];
     const done = new Promise<void>((resolve, reject) => {
-        p.on("data", (c: Buffer) => chunks.push(c));
+        p.on("data", (c) => chunks.push(c as Buffer));
         p.on("end", () => resolve());
         p.on("error", reject);
     });

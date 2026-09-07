@@ -43,7 +43,7 @@ describe("drawer content packing", () => {
 
         const rgba = toRgba("#7aa2f7");
         expect(rgba).toBeInstanceOf(RGBA);
-        expect(rgba?.buffer).toBeInstanceOf(Float32Array);
+        expect(rgba?.buffer).toBeInstanceOf(Uint16Array);
         expect(rgba?.buffer.length).toBe(4);
     });
 
@@ -69,12 +69,12 @@ describe("drawer content packing", () => {
 
                     if (chunk.fg !== undefined) {
                         expect(chunk.fg).toBeInstanceOf(RGBA);
-                        expect((chunk.fg as RGBA).buffer).toBeInstanceOf(Float32Array);
+                        expect((chunk.fg as RGBA).buffer).toBeInstanceOf(Uint16Array);
                     }
 
                     if (chunk.bg !== undefined) {
                         expect(chunk.bg).toBeInstanceOf(RGBA);
-                        expect((chunk.bg as RGBA).buffer).toBeInstanceOf(Float32Array);
+                        expect((chunk.bg as RGBA).buffer).toBeInstanceOf(Uint16Array);
                     }
                 }
             }

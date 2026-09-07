@@ -7,7 +7,7 @@ import { MATCHER_CONFIG } from "@app/shops/lib/matcher-config";
 import { compatPackCount } from "@app/shops/lib/multipack-guard";
 import { similarityScore } from "@genesiscz/utils/fuzzy-match";
 import { logger } from "@genesiscz/utils/logger";
-import { sql } from "kysely";
+import { type SqlBool, sql } from "kysely";
 
 export interface BulkMatcherArgs {
     matcher: Matcher;
@@ -111,7 +111,7 @@ export class BulkMatcher {
                     .onRef("m.brand_normalized", "=", "p.brand_normalized")
                     .onRef("m.unit", "=", "p.unit")
                     .onRef("m.unit_amount", "=", "p.unit_amount")
-                    .on(sql`IFNULL(m.flavor_key, '') = IFNULL(p.flavor_key, '')`)
+                    .on(sql<SqlBool>`IFNULL(m.flavor_key, '') = IFNULL(p.flavor_key, '')`)
             )
             .select([
                 "p.id as productId",
