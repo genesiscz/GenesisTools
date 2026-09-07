@@ -18,6 +18,8 @@ interface SpawnCliOptions {
     prompt?: string;
     promptFile?: string;
     agents?: boolean;
+    skills?: boolean;
+    rules?: boolean;
     session?: string;
     writableRoot?: string[];
 }
@@ -36,6 +38,14 @@ export function registerSpawnCommand(program: Command): void {
         .option("--prompt <text>", "Start the first turn with this prompt")
         .option("--prompt-file <path>", "Read the first prompt from a file")
         .option("--no-agents", "Disable tools agents integration")
+        .option(
+            "--no-skills",
+            "accepted for parity with grok/claude; codex has no isolation control (see references/codex.md)"
+        )
+        .option(
+            "--no-rules",
+            "accepted for parity with grok/claude; codex has no isolation control (see references/codex.md)"
+        )
         .option("--session <id>", "Parent tools agents session id")
         .option("--writable-root <path...>", "Additional writable roots")
         .action(async (options: SpawnCliOptions) => {
@@ -45,6 +55,12 @@ export function registerSpawnCommand(program: Command): void {
 
             if (options.mode !== "review" && options.mode !== "task") {
                 throw new Error("--mode must be review or task");
+            }
+
+            if (options.skills === false || options.rules === false) {
+                out.log.warn(
+                    "codex has no skills/rules isolation control: --no-skills/--no-rules are accepted for parity and do nothing. Use a lean --home instead (references/codex.md)."
+                );
             }
 
             const prompt = options.promptFile ? readFileSync(options.promptFile, "utf8") : options.prompt;

@@ -27,35 +27,63 @@ import {
  *    `--resume`, so a read-only session silently became writable on turn 2.
  */
 describe("worker isolation env", () => {
-    test("every claude-compat pickup is switched off and GROK_HOME is pinned", () => {
+    test("side-effect pickups are off, surfaces are on by default, GROK_HOME is pinned", () => {
         const built = buildTurnEnv({ PATH: "/usr/bin" }, "/tmp/worker-home");
 
         expect(built.GROK_HOME).toBe("/tmp/worker-home");
         expect(built.PATH).toBe("/usr/bin");
         expect(built).toMatchObject({
-            GROK_CLAUDE_SKILLS_ENABLED: "0",
-            GROK_CLAUDE_RULES_ENABLED: "0",
-            GROK_CLAUDE_AGENTS_ENABLED: "0",
+            GROK_CLAUDE_SKILLS_ENABLED: "1",
+            GROK_CLAUDE_RULES_ENABLED: "1",
+            GROK_CLAUDE_AGENTS_ENABLED: "1",
             GROK_CLAUDE_MCPS_ENABLED: "0",
             GROK_CLAUDE_HOOKS_ENABLED: "0",
             GROK_CLAUDE_SESSIONS_ENABLED: "0",
         });
     });
 
+    test("--no-skills / --no-rules switch the surface toggles off", () => {
+        const built = buildTurnEnv({}, "/tmp/worker-home", null, undefined, { skills: false, rules: false });
+
+        expect(built).toMatchObject({
+            GROK_CLAUDE_SKILLS_ENABLED: "0",
+            GROK_CLAUDE_RULES_ENABLED: "0",
+            GROK_CLAUDE_AGENTS_ENABLED: "0",
+        });
+    });
+
     /**
      * The ambient environment is the attacker here: whoever launches `tools grok`
-     * may already export GROK_CLAUDE_SKILLS_ENABLED=1, and a spread that put the
-     * caller's env last would hand the worker the user's ~200 personal skills.
+     * may already export GROK_CLAUDE_HOOKS_ENABLED=1, and a spread that put the
+     * caller's env last would run the user's hooks inside the worker. The
+     * surfaces come from the session's choice, so an ambient value cannot flip
+     * them either way.
      */
-    test("an ambient GROK_CLAUDE_* value cannot re-enable a pickup", () => {
+    test("an ambient GROK_CLAUDE_* value cannot override the session's choice", () => {
         const built = buildTurnEnv(
             { GROK_CLAUDE_SKILLS_ENABLED: "1", GROK_CLAUDE_HOOKS_ENABLED: "1", GROK_HOME: "/home/attacker" },
-            "/tmp/worker-home"
+            "/tmp/worker-home",
+            null,
+            undefined,
+            { skills: false, rules: true }
         );
 
         expect(built.GROK_CLAUDE_SKILLS_ENABLED).toBe("0");
         expect(built.GROK_CLAUDE_HOOKS_ENABLED).toBe("0");
         expect(built.GROK_HOME).toBe("/tmp/worker-home");
+    });
+});
+
+describe("worker contract on argv", () => {
+    test("every turn carries --rules with the shared contract, read-only or not", () => {
+        for (const args of [
+            buildRunArgs({ sessionId: "s-1", model: undefined, readOnly: true }, ["-p", "hi"]),
+            buildSteerArgs({ sessionId: "s-1" }, false, ["-p", "again"]),
+        ]) {
+            const rules = args[args.indexOf("--rules") + 1] ?? "";
+            expect(rules).toContain("RESULT: ");
+            expect(rules).toContain("Stop and report");
+        }
     });
 });
 

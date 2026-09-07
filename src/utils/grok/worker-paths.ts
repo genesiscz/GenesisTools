@@ -14,6 +14,30 @@ export function defaultWorkerHome(): string {
     return join(grokRoot(), "worker-home");
 }
 
+/**
+ * The shared home a session without `--worker-home` runs in. Two of them, one
+ * per skills policy, because the `~/.agents` skills tier is switched off in the
+ * home's config.toml and a home shared by sessions with opposite choices would
+ * rewrite that file under each other (PR #364 review). Both match the
+ * `worker-home*` glob the usage scanners walk.
+ */
+export function defaultWorkerHomeFor(skills: boolean): string {
+    return skills ? defaultWorkerHome() : join(grokRoot(), "worker-home-noskills");
+}
+
+/** The fixed skills policy of a managed home, or null for a caller-chosen `--worker-home`. */
+export function managedHomeSkillsPolicy(workerHome: string): boolean | null {
+    if (workerHome === defaultWorkerHomeFor(true)) {
+        return true;
+    }
+
+    if (workerHome === defaultWorkerHomeFor(false)) {
+        return false;
+    }
+
+    return null;
+}
+
 function safeSessionPath(name: string, suffix: string): string {
     return safeNamedPath({ root: sessionsDir(), name, suffix, label: "session name" });
 }

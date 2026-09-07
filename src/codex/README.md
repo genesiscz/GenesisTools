@@ -10,13 +10,19 @@ tools codex spawn \
 
 tools codex status --name reviewer
 tools codex tail --name reviewer --follow
+tools codex logs --name reviewer --format compact   # the transcript door every backend shares (json|jsonl|events|raw)
 tools codex steer --name reviewer --body "Focus on the auth path"
 tools codex interrupt --name reviewer
 tools codex read --name reviewer
 tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
 tools codex stop --name reviewer
+
+tools codex login [name] [--home ~/.codex-work]   # browser login, written to the codex home's auth.json
+tools codex usage [--json] [--range 24h]          # the shared usage dashboard pinned to this provider
 ```
+
+`login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.
 
 Sessions are read-only by default. For implementation work, use `--write ask` for supervised approvals or
 `--write allow` for a trusted bounded worker. `--write deny` is explicitly read-only.

@@ -1,11 +1,12 @@
 import { existsSync, statSync } from "node:fs";
+import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { formatStoredEventLine, type StoredCodexEvent } from "../lib/adapter";
 import { sessionEventsPath } from "../lib/paths";
 import { CodexSessionStore } from "../lib/store";
-import { printLogs } from "./logs";
+import { type LogsOptions, printLogs, printTranscript } from "./logs";
 
 /**
  * A size snapshot can land in the middle of a record the session is still
@@ -77,7 +78,14 @@ export function registerTailCommand(program: Command): void {
         .option("--tail <count>", "Show the last N existing events", "20")
         .option("--follow", "Follow until the session closes")
         .option("--events", "Print normalized worker events instead of raw notifications")
-        .action(async (options: { name: string; tail: string; follow?: boolean; events?: boolean }) => {
+        .option("--format [value]", `render the session as a transcript: ${TRANSCRIPT_FORMATS.join(" | ")}`)
+        .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+        .action(async (options: LogsOptions & { tail: string; follow?: boolean }) => {
+            if (options.format !== undefined) {
+                await printTranscript(options, options.follow === true, "tail");
+                return;
+            }
+
             await printLogs(options);
             if (!options.follow) {
                 return;

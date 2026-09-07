@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import type { WorkerSurfaces } from "@genesiscz/utils/worker/isolation";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { sessionMetaPath, sessionsDir } from "./paths";
 
@@ -20,6 +21,8 @@ export interface GrokSessionMeta {
     readOnly: boolean;
     /** Credential the worker runs under; absent means "subscription when ~/.grok/auth.json exists". */
     auth?: "subscription" | "api-key";
+    /** The user's personal surfaces the worker loads; absent means both on (sessions from before the flag). */
+    surfaces?: WorkerSurfaces;
     turns: number;
     createdAt: string;
     /** The agents-bus swarm of the session that started this worker, if any. */

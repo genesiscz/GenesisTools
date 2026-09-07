@@ -1,17 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
+import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken } from "@genesiscz/utils/claude/token-verify";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
-import { formatWorkerEvent } from "@genesiscz/utils/worker/events";
+import { isToolCall } from "@genesiscz/utils/worker/events";
 import { runningTurnPids as findRunningTurns, type RunningTurn } from "@genesiscz/utils/worker/ps";
+import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { workerTurnLogPath } from "../lib/worker/paths";
+import { workerTurnErrPath, workerTurnLogPath } from "../lib/worker/paths";
 import { ClaudeWorkerStore } from "../lib/worker/store";
-import { parseTurnEvents } from "../lib/worker/stream";
 import { type ClaudeTurnResult, type PinnedAccount, spawnWorker, steerWorker } from "../lib/worker/worker";
 import { launchGateForVerdict } from "./exec";
 
@@ -67,23 +69,21 @@ function readPrompt(options: { prompt?: string; promptFile?: string }): string {
 }
 
 function printTurn(result: ClaudeTurnResult): void {
-    out.printlnErr(
-        pc.dim(
-            `turn ${result.turn} · exit ${result.exitCode} · ${result.completed ? "completed" : "did NOT complete"} · ${result.events.length} events · log ${result.logPath}`
-        )
-    );
-
-    if (result.stderr.trim()) {
-        out.printlnErr(pc.yellow(result.stderr.trim()));
-    }
-
-    if (result.report) {
-        out.print(`${result.report}\n`);
-    }
-
-    if (!result.completed) {
-        process.exitCode = 1;
-    }
+    printWorkerTurn({
+        backend: "claude",
+        name: result.meta.name,
+        turn: result.turn,
+        ended: result.completed,
+        exitCode: result.exitCode,
+        report: result.report,
+        stderr: result.stderr,
+        errPath: workerTurnErrPath(result.meta.name, result.turn),
+        toolCalls: result.events.filter(isToolCall),
+        // No git snapshot is taken around a claude turn; the brief plus a git status check hold policy.
+        worktree: null,
+        logPath: result.logPath,
+        transcriptHint: `tools claude worker read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+    });
 }
 
 /** Live claude processes belonging to this worker's session uuid, via ps. */
@@ -110,6 +110,8 @@ export function registerWorkerCommand(program: Command): void {
         .option("--prompt-file <path>", "Read the prompt from a file")
         .option("-m, --model <model>", "Model for the session")
         .option("--safe-mode", "Launch with claude --safe-mode (skip CLAUDE.md, hooks, skills, MCP)")
+        .option("--no-skills", "same as --safe-mode: claude cannot drop skills without dropping rules too")
+        .option("--no-rules", "same as --safe-mode: claude cannot drop rules without dropping skills too")
         .action(
             async (options: {
                 name: string;
@@ -119,7 +121,21 @@ export function registerWorkerCommand(program: Command): void {
                 promptFile?: string;
                 model?: string;
                 safeMode?: boolean;
+                skills?: boolean;
+                rules?: boolean;
             }) => {
+                // The one switch claude -p has is --safe-mode, all or nothing. A
+                // trivial turn cost $0.11 with the surfaces on and $0.06 without
+                // (2026-09-01); the default follows the other backends: on.
+                const safeMode = options.safeMode === true || options.skills === false || options.rules === false;
+                if (safeMode && !options.safeMode) {
+                    out.printlnErr(
+                        pc.yellow(
+                            "claude has no separate skills/rules switch; --no-skills or --no-rules means --safe-mode."
+                        )
+                    );
+                }
+
                 const account = await resolvePinnedAccount(options.account);
                 const result = await spawnWorker({
                     name: options.name,
@@ -127,7 +143,7 @@ export function registerWorkerCommand(program: Command): void {
                     cwd: options.cwd,
                     prompt: readPrompt(options),
                     model: options.model,
-                    safeMode: options.safeMode,
+                    safeMode,
                 });
                 printTurn(result);
             }
@@ -155,35 +171,73 @@ export function registerWorkerCommand(program: Command): void {
 
     worker
         .command("read")
-        .description("Re-print a finished turn's transcript, raw or as shared worker events")
+        .description("Re-print a finished turn's transcript: raw stream-json (default) or a chosen --format")
         .requiredOption("--name <name>", "Worker name")
         .option("--turn <n>", "Turn number (default: last)")
-        .option("--events", "Print normalized worker events instead of raw stream-json")
-        .action(async (options: { name: string; turn?: string; events?: boolean }) => {
+        .option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")}`)
+        .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+        .option("--events", "alias of --format events")
+        .action(
+            async (options: {
+                name: string;
+                turn?: string;
+                format?: string | boolean;
+                thoughts?: string | boolean;
+                events?: boolean;
+            }) => {
+                const store = new ClaudeWorkerStore();
+                const meta = store.readMeta(options.name);
+                if (!meta) {
+                    throw new Error(`Claude worker not found: ${options.name}.`);
+                }
+
+                const turn = options.turn ? Number.parseInt(options.turn, 10) : meta.turns;
+                const path = workerTurnLogPath(options.name, turn);
+                if (!existsSync(path)) {
+                    throw new Error(`No transcript for turn ${turn} of '${options.name}'.`);
+                }
+
+                if (options.format === undefined && !options.events) {
+                    out.print(readFileSync(path, "utf8"));
+                    return;
+                }
+
+                await runTranscriptDoor({
+                    tool: "tools claude worker read",
+                    subcommand: ["worker", "read"],
+                    provider: "claude",
+                    query: options.name,
+                    format: options.format,
+                    thoughts: options.thoughts,
+                    events: options.events,
+                    turnFile: path,
+                });
+            }
+        );
+
+    worker
+        .command("tail")
+        .description("Follow the running turn's transcript as it is written; stops when the turn ends")
+        .requiredOption("--name <name>", "Worker name")
+        .option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")} (default compact)`)
+        .option("--thoughts [value]", `reasoning in the compact and events formats: ${THOUGHT_MODES.join(" | ")}`)
+        .action(async (options: { name: string; format?: string | boolean; thoughts?: string | boolean }) => {
             const store = new ClaudeWorkerStore();
             const meta = store.readMeta(options.name);
             if (!meta) {
                 throw new Error(`Claude worker not found: ${options.name}.`);
             }
 
-            const turn = options.turn ? Number.parseInt(options.turn, 10) : meta.turns;
-            const path = workerTurnLogPath(options.name, turn);
-            if (!existsSync(path)) {
-                throw new Error(`No transcript for turn ${turn} of '${options.name}'.`);
-            }
-
-            const text = readFileSync(path, "utf8");
-            if (!options.events) {
-                out.print(text);
-                return;
-            }
-
-            for (const event of parseTurnEvents(text, meta.sessionId)) {
-                const line = formatWorkerEvent(event);
-                if (line) {
-                    out.println(line);
-                }
-            }
+            await runTranscriptDoor({
+                tool: "tools claude worker tail",
+                subcommand: ["worker", "tail"],
+                provider: "claude",
+                query: options.name,
+                format: options.format,
+                thoughts: options.thoughts,
+                follow: true,
+                stillRunning: async () => (await runningTurnPids(meta.sessionId)).length > 0,
+            });
         });
 
     worker
