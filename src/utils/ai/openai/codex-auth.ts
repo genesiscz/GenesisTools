@@ -1,7 +1,10 @@
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
+import { generatePkcePair } from "../oauth/pkce";
 
 // OpenAI Codex OAuth constants (reverse-engineered from Codex CLI)
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -10,6 +13,16 @@ export const WHAM_BASE_URL = "https://chatgpt.com/backend-api/wham";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
+
+/**
+ * Deadline for one token-endpoint round trip.
+ *
+ * The refresh below runs INSIDE the AI config lock — the same physical lock file
+ * the anthropic refresh takes — so an unbounded request here wedges every other
+ * account's refresh too, not just this one. One attempt, so 15 s sits well inside
+ * the `NETWORKED_LOCK_WAIT_MS` a waiting caller allows.
+ */
+export const TOKEN_REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Shape of ~/.codex/auth.json as written by the official Codex CLI.
@@ -41,6 +54,12 @@ export interface CodexTokens {
     refreshToken: string;
     expiresAt: number; // Unix timestamp in ms (0 if unknown — will trigger refresh)
     accountId?: string;
+    /**
+     * The OIDC id token when the server issued one. It carries the email and the
+     * plan claims the access token does not always have, which is what home
+     * discovery reads to name a profile without a network call.
+     */
+    idToken?: string;
 }
 
 /** Default path for Codex CLI's auth cache */
@@ -83,6 +102,7 @@ export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise
                 refreshToken: data.tokens.refresh_token,
                 expiresAt,
                 accountId: data.tokens.account_id,
+                idToken: data.tokens.id_token,
             };
         }
 
@@ -101,6 +121,32 @@ export async function readCodexAuthJson(path: string = CODEX_AUTH_PATH): Promise
     } catch {
         return null;
     }
+}
+
+/**
+ * Write an auth file in the shape the official Codex CLI reads, so the CLI, the
+ * ChatGPT app and GenesisTools share ONE token per profile (decision D3).
+ *
+ * Mode 0600: this file is the whole subscription grant, and the CLI writes it
+ * the same way. `mkdir` is recursive because `--home <dir>` may name a profile
+ * directory that does not exist yet.
+ */
+export async function writeCodexAuthJson(path: string, tokens: CodexTokens): Promise<void> {
+    const payload: CodexAuthJsonOfficial = {
+        auth_mode: "chatgpt",
+        tokens: {
+            ...(tokens.idToken ? { id_token: tokens.idToken } : {}),
+            access_token: tokens.accessToken,
+            refresh_token: tokens.refreshToken,
+            ...(tokens.accountId ? { account_id: tokens.accountId } : {}),
+        },
+        last_refresh: new Date().toISOString(),
+    };
+
+    mkdirSync(dirname(path), { recursive: true });
+    await Bun.write(path, SafeJSON.stringify(payload, null, 2));
+    chmodSync(path, 0o600);
+    logger.info({ path }, "codex: wrote auth.json in the official CLI shape");
 }
 
 /**
@@ -161,9 +207,7 @@ export class CodexOAuthClient {
      * Returns the URL to open in the user's browser.
      */
     async startLogin(): Promise<string> {
-        const verifier = this.generateRandomString(43);
-        const challenge = await this.sha256Base64Url(verifier);
-        const state = this.generateRandomString(32);
+        const { verifier, challenge, state } = await generatePkcePair({ verifierBytes: 43 });
 
         this.pendingSession = { verifier, state };
 
@@ -221,6 +265,7 @@ export class CodexOAuthClient {
             refreshToken: data.refresh_token,
             expiresAt: Date.now() + expiresIn * 1000,
             accountId: extractAccountId(data.id_token ?? accessToken),
+            idToken: data.id_token,
         };
     }
 
@@ -238,6 +283,7 @@ export class CodexOAuthClient {
                 refresh_token: refreshToken,
                 client_id: CLIENT_ID,
             }),
+            signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
         });
 
         if (!res.ok) {
@@ -264,24 +310,6 @@ export class CodexOAuthClient {
      */
     needsRefresh(expiresAt: number, bufferMs: number = 30_000): boolean {
         return Date.now() + bufferMs >= expiresAt;
-    }
-
-    private generateRandomString(length: number): string {
-        const bytes = new Uint8Array(length);
-        crypto.getRandomValues(bytes);
-        return btoa(String.fromCharCode(...bytes))
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=+$/, "");
-    }
-
-    private async sha256Base64Url(input: string): Promise<string> {
-        const encoded = new TextEncoder().encode(input);
-        const hash = await crypto.subtle.digest("SHA-256", encoded);
-        return btoa(String.fromCharCode(...new Uint8Array(hash)))
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=+$/, "");
     }
 }
 
@@ -368,6 +396,10 @@ export async function resolveCodexAccountToken(
     }
 
     if (wantsRefresh) {
+        // The same lock file the anthropic refresh holds across ITS network call,
+        // so the plain 5 s default was never the right budget here: a sibling
+        // provider's refresh could hold the lock longer than codex was willing to
+        // wait, and codex threw LockTimeoutError for contention it did not cause.
         accessToken = await config.withLock(async (data) => {
             const acc = data.accounts.find((a) => a.name === accountName);
 
@@ -398,7 +430,7 @@ export async function resolveCodexAccountToken(
             acc.tokens.expiresAt = refreshed.expiresAt;
 
             return refreshed.accessToken;
-        });
+        }, NETWORKED_LOCK_WAIT_MS);
     }
 
     return { token: accessToken, accountId: extractAccountId(accessToken) };
