@@ -3,6 +3,13 @@ export type HandoffStatus = "open" | "claimed" | "done" | "cancelled";
 export interface HandoffTarget {
     sessionId?: string;
     sessionName?: string;
+    /**
+     * Intended RECIPIENT harness — claude | codex | grok | copilot (see
+     * `src/handoff/targeting.ts`). Never the author's harness: that is
+     * `postedBy.agent` / `postedByContext.agent`, which the fold stamps from the
+     * posting session and which this field must never be confused with.
+     */
+    agent?: string;
 }
 
 export interface HandoffTaskInput {
@@ -113,6 +120,8 @@ export type HandoffEvent =
           ev: "post";
           editId: string;
           title: string;
+          /** Final slug, resolved by the caller (supplied or title-derived) — the fold only copies it. */
+          name?: string;
           description?: string;
           tasks: HandoffTaskInput[];
           target?: HandoffTarget;
@@ -139,6 +148,8 @@ export type HandoffEvent =
     | (HandoffEventBase & {
           ev: "modify_handoff";
           title?: string;
+          /** Replacement slug, already normalized by the caller; null clears it. */
+          name?: string | null;
           description?: string;
           target?: HandoffTarget | null;
           refs?: string[];
@@ -163,6 +174,12 @@ export type HandoffPublicEvent = Omit<HandoffEvent, "editId"> & { outcome?: Fold
 export interface Handoff {
     id: string;
     title: string;
+    /**
+     * Human-readable slug this handoff can also be fetched by. Absent on records
+     * posted before names existed — those stay reachable by id, which is why
+     * nothing here may assume a name is present.
+     */
+    name?: string;
     description?: string;
     status: HandoffStatus;
     tasks: HandoffTask[];
@@ -205,10 +222,13 @@ export interface HandoffActionResult {
 export interface HandoffListRow {
     id: string;
     title: string;
+    name?: string;
     status: HandoffStatus;
     tasks: string;
     progress?: string;
     target?: HandoffTarget;
+    /** Recipient warnings for the LISTING session — absent when there is nothing to say. */
+    warnings?: string[];
     postedBy: { sessionName: string | null };
     claimedBy?: {
         sessionId: string | null;

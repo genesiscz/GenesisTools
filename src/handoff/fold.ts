@@ -252,6 +252,10 @@ export function applyHandoffEvent(
             updatedTs: event.ts,
         };
 
+        if (event.name !== undefined) {
+            next.name = event.name;
+        }
+
         if (event.description !== undefined) {
             next.description = event.description;
         }
@@ -625,6 +629,16 @@ export function applyHandoffEvent(
 
             if (event.title !== undefined && event.title.trim().length > 0) {
                 next.title = event.title;
+            }
+
+            // A title edit never renames: agents were handed the old name and
+            // must keep resolving it until the poster says otherwise.
+            if (event.name !== undefined) {
+                if (event.name === null) {
+                    delete next.name;
+                } else {
+                    next.name = event.name;
+                }
             }
 
             if (event.description !== undefined) {

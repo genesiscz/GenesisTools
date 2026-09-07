@@ -43,6 +43,7 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
     db.exec(`CREATE TABLE IF NOT EXISTS handoffs (
         id                     TEXT PRIMARY KEY,
         title                  TEXT NOT NULL,
+        name                   TEXT,
         description            TEXT,
         status                 TEXT NOT NULL DEFAULT 'open',
         tasks                  TEXT NOT NULL,
@@ -92,6 +93,9 @@ function createTables(db: Database): { eventsTableCreated: boolean } {
     );
     // Who finished it — needed for the reopen-by-finisher credential (§2 reopen_handoff).
     ensureColumn(db, "handoffs", "finished_by", "ALTER TABLE handoffs ADD COLUMN finished_by TEXT");
+    // Readable name (nullable: every handoff posted before names existed has none).
+    ensureColumn(db, "handoffs", "name", "ALTER TABLE handoffs ADD COLUMN name TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_handoffs_name ON handoffs(name);");
 
     return { eventsTableCreated: !hadEventsTable && tableExists(db, "handoff_events") };
 }
@@ -121,6 +125,7 @@ export function openHandoffModel(dbPath?: string): Database {
 interface HandoffRow {
     id: string;
     title: string;
+    name: string | null;
     description: string | null;
     status: string;
     tasks: string;
@@ -185,6 +190,10 @@ function rowToHandoff(row: HandoffRow): Handoff {
         updatedTs: row.updated_ts,
     };
 
+    if (row.name !== null) {
+        handoff.name = row.name;
+    }
+
     if (row.description !== null) {
         handoff.description = row.description;
     }
@@ -209,15 +218,16 @@ function rowToHandoff(row: HandoffRow): Handoff {
 }
 
 const UPSERT_SQL = `INSERT OR REPLACE INTO handoffs
-    (id, title, description, status, tasks, target, refs, posted_by_context, posted_by_session_id,
+    (id, title, name, description, status, tasks, target, refs, posted_by_context, posted_by_session_id,
      posted_by_session_name, project, claimed_by, comments, edit_id, created_ts, updated_ts,
      finished_ts, attachments, finished_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 function upsertHandoff(db: Database, h: Handoff): void {
     db.prepare(UPSERT_SQL).run(
         h.id,
         h.title,
+        h.name ?? null,
         h.description ?? null,
         h.status,
         SafeJSON.stringify(h.tasks, { strict: true }),
@@ -241,6 +251,16 @@ function upsertHandoff(db: Database, h: Handoff): void {
 export function getHandoffById(db: Database, id: string): Handoff | null {
     const row = db.query("SELECT * FROM handoffs WHERE id = ?").get(id) as HandoffRow | null;
     return row ? rowToHandoff(row) : null;
+}
+
+/**
+ * Every handoff carrying this exact name, newest-updated first. Duplicates are
+ * legal (two posters can pick the same slug), so this returns a list and the
+ * caller decides — silently taking the newest would work the wrong handoff.
+ */
+export function findHandoffsByName(db: Database, name: string): Handoff[] {
+    const rows = db.query("SELECT * FROM handoffs WHERE name = ? ORDER BY updated_ts DESC").all(name) as HandoffRow[];
+    return rows.map(rowToHandoff);
 }
 
 export function listHandoffRows(db: Database, opts: { statuses?: string[]; project?: string } = {}): Handoff[] {

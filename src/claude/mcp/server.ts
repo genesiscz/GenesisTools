@@ -100,13 +100,22 @@ const SERVER_INSTRUCTIONS =
     '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
     "HANDOFFS (cross-agent task handoff): `handoff_post` creates. `handoff_get` reads. `handoff_list` lists. " +
     "`handoff_action` changes. To delegate work, handoff_post {title, tasks} → copy the returned `paste` block " +
-    'into the receiving agent\'s chat. Receiving agent: handoff_get {id} (default include:["tasks"] — full task ' +
-    "array) → claim (claim: true) → work the tasks " +
+    "into the receiving agent's chat. Address it with target {sessionId|sessionName|agent}, where agent is the " +
+    "intended RECIPIENT harness (claude | codex | grok | copilot), and give it a readable name (or let one be " +
+    'derived from the title) so it can be fetched as handoff_get {name: "fix-active-filter"}; a name shared by ' +
+    "several handoffs is refused with the candidate ids instead of guessing. " +
+    'Receiving agent: handoff_get {id or name} (default include:["tasks"] — full task ' +
+    "array) → READ warnings[] FIRST: it fires when the handoff is addressed to another session or another " +
+    "harness, and then the task is not yours — do not work it unless your user explicitly says to. It is a " +
+    "warning, never a block, and a session whose own identity cannot be detected is told the check was " +
+    "unverifiable rather than being called a mismatch. → claim (claim: true) → work the tasks " +
     "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do; " +
     "uncheck_task keeps prior proof) → " +
     'finish_handoff when all resolved. Pass include:["events"] on handoff_get for a bare {events, info} ' +
     "activity trace (editId-free; each event carries `outcome` — a refused action is journaled with " +
     "outcome.applied false and the reason, so the trace never reads as though it happened). " +
+    "handoff_list is never recipient-filtered by default; agent: '<harness>' and session: '<id-or-name>' are " +
+    "opt-in filters on the intended recipient, usable alone or together. " +
     "Poster edits anytime from its own session via handoff_action " +
     "(add_tasks/modify_task/modify_handoff/cancel_handoff); from other sessions pass the editId. Progress is " +
     'live on the dev-dashboard /qa "Agent tasks" tab (SSE via /api/qa/stream type=handoff).\n\n' +

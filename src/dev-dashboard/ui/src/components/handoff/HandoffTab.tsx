@@ -71,10 +71,14 @@ function HandoffRow({
                         → {row.claimedBy.map((c) => c.sessionName ?? c.sessionId ?? "unnamed").join(", ")}
                     </span>
                 ) : null}
-                {row.target !== undefined ? (
+                {row.name !== undefined ? <span>{row.name}</span> : null}
+                {row.target?.sessionName !== undefined || row.target?.sessionId !== undefined ? (
                     <span className="rounded border border-[var(--dd-border)] px-1 py-px">
                         @{row.target.sessionName ?? row.target.sessionId}
                     </span>
+                ) : null}
+                {row.target?.agent !== undefined ? (
+                    <span className="rounded border border-[var(--dd-border)] px-1 py-px">{row.target.agent}</span>
                 ) : null}
                 <span>{row.ageHours < 24 ? `${row.ageHours}h` : `${Math.round(row.ageHours / 24)}d`}</span>
             </div>

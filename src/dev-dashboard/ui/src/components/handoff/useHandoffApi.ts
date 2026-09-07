@@ -82,6 +82,7 @@ export function useHandoffCreate() {
     return useMutation({
         mutationFn: (input: {
             title: string;
+            name?: string;
             description?: string;
             tasks: HandoffTaskInput[];
             target?: HandoffTarget;
