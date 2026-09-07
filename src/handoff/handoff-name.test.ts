@@ -72,7 +72,13 @@ describe("resolving by name", () => {
     test("a duplicate name is refused with its candidates instead of silently picking one", () => {
         const env = freshEnv();
         const first = postHandoff({ title: "Ship the fix", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
-        const second = postHandoff({ title: "Ship the fix", tasks: [{ text: "two" }] }, env.depsFor(POSTER)).handoff;
+        const secondPost = postHandoff({ title: "Ship the fix", tasks: [{ text: "two" }] }, env.depsFor(POSTER));
+        const second = secondPost.handoff;
+
+        // The poster is told at post time, instead of the receiver finding out at lookup time.
+        const nameInfo = secondPost.info.find((line) => line.includes("Readable name")) ?? "";
+        expect(nameInfo).toContain(`already carried by ${first.id}`);
+        expect(nameInfo).toContain("refused as ambiguous");
 
         expect(() => getHandoff({ name: "ship-the-fix" }, env.depsFor(WORKER))).toThrow(/ambiguous/);
 

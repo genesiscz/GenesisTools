@@ -338,7 +338,7 @@ export const HANDOFF_ACTION_INPUT_SCHEMA = {
                             },
                             title: { type: "string", description: "modify_handoff: replacement title" },
                             name: {
-                                type: "string",
+                                type: ["string", "null"],
                                 description:
                                     "modify_handoff: replacement readable name (slugified); null or an empty string clears it. A title edit never renames",
                             },

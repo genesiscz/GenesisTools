@@ -354,8 +354,12 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         ];
 
         if (handoff.name !== undefined) {
+            // A title-derived name can already be taken; promising a lookup that will be refused as ambiguous helps nobody.
+            const clashes = findHandoffsByName(db, handoff.name).filter((h) => h.id !== handoff.id);
             info.push(
-                `Readable name: "${handoff.name}" — receivers can also call handoff_get { name: "${handoff.name}" }.`
+                clashes.length === 0
+                    ? `Readable name: "${handoff.name}" — receivers can also call handoff_get { name: "${handoff.name}" }.`
+                    : `Readable name "${handoff.name}" is already carried by ${clashes.map((h) => h.id).join(", ")} — handoff_get { name } will be refused as ambiguous. Hand out the id, or rename via handoff_action modify_handoff { name }.`
             );
         }
 
