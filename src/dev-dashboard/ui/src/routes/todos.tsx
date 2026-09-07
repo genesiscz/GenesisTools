@@ -188,7 +188,8 @@ export function TodosRoute() {
                 <p className="dd-accent-text text-lg font-bold">Reminders permission needed</p>
                 <p className="max-w-md text-sm text-[var(--dd-text-secondary)]">
                     macOS does not let you add apps manually here (no “+” button). Click below to show Apple’s
-                    permission dialog — allow access for <strong className="text-[var(--dd-text-primary)]">bun</strong>
+                    permission dialog — allow access for{" "}
+                    <strong className="text-[var(--dd-text-primary)]">GenesisTools</strong>
                     {requestAccessMutation.data?.status ? ` (status: ${requestAccessMutation.data.status})` : ""}.
                 </p>
                 <p className="max-w-md text-xs text-[var(--dd-text-secondary)] opacity-80">

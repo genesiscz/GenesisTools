@@ -172,6 +172,27 @@ describe("runDarwinkitGuarded", () => {
         expect(err.diagnostics.stderrTail ?? "").toContain("fatal: kvc raise");
     });
 
+    it("rewraps 'Transport already started' as a crash so the shared client is dropped and respawned", async () => {
+        const fake = new FakeDarwinKit();
+        let rejected: unknown = null;
+
+        try {
+            await runDarwinkitGuarded(
+                asClient(fake),
+                "test.stale-transport",
+                async () => {
+                    throw new Error("Transport already started");
+                },
+                { timeoutMs: 1_000 }
+            );
+        } catch (err) {
+            rejected = err;
+        }
+
+        expect(rejected).toBeInstanceOf(DarwinkitCrashError);
+        expect((rejected as Error).cause).toBeInstanceOf(Error);
+    });
+
     it("does not leak listeners across sequential calls", async () => {
         const fake = new FakeDarwinKit();
 
