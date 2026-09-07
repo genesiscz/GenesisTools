@@ -56,8 +56,15 @@ export async function waitForTerminalText({
             result.code !== 0 &&
             result.stderr.includes("Failed to read terminal text")
         ) {
-            await runCmuxOk(["rpc", "surface.focus", SafeJSON.stringify({ surface_id: surfaceRef })]);
             activated = true;
+            try {
+                await runCmuxOk(["rpc", "surface.focus", SafeJSON.stringify({ surface_id: surfaceRef })]);
+            } catch (error) {
+                logger.warn(
+                    { error, surfaceRef },
+                    "[restore] optional terminal activation failed; continuing readiness polling"
+                );
+            }
         }
 
         await Bun.sleep(intervalMs);

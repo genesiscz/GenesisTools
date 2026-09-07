@@ -58,7 +58,7 @@ async function captureLiveProfile(): Promise<Profile> {
             session,
             {
                 ttyCommands: new Map(),
-                surfaceSessions: new Map(),
+                surfaceSessions: await loadSurfaceSessions(),
                 surfaceCommands: loadCapturedCommands(),
                 surfaceScreens: loadSavedScreens(),
             },

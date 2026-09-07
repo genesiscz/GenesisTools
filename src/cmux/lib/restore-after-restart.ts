@@ -67,7 +67,7 @@ export function filterReplayByAgents(profile: Profile, agents: AgentKind[]): Pro
                         // Filter the prepared command that will actually run; the tab
                         // title can still name an agent that ran here previously.
                         const command = cleanLaunchCommand(surface.command ?? "").replace(
-                            /^\/\S*\/(?=(?:codex|claude|grok|tools)(?:\s|$))/,
+                            /^\S*\/(?=(?:codex|claude|grok|tools)(?:\s|$))/,
                             ""
                         );
                         const kind = agentKindFromLauncher(command);

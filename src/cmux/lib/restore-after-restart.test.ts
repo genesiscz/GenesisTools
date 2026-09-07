@@ -121,4 +121,19 @@ describe("filterReplayByAgents", () => {
         expect(surfaces[0]).toMatchObject({ command: undefined });
         expect(surfaces[1]).toMatchObject({ command: "tail -f app.log" });
     });
+
+    test("agent filtering also recognizes relative executable paths", () => {
+        for (const command of ["./codex resume fixture", "~/bin/codex resume fixture", "bin/codex resume fixture"]) {
+            const input = structuredClone(profile);
+            input.windows[0].workspaces[0].panes[0].surfaces = [
+                { type: "terminal", title: "old - grok", command, command_source: "shell-journal" },
+            ];
+            expect(filterReplayByAgents(input, ["grok"]).windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
+                command: undefined,
+            });
+            expect(filterReplayByAgents(input, ["codex"]).windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
+                command,
+            });
+        }
+    });
 });

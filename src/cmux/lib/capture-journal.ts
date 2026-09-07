@@ -60,7 +60,15 @@ export function recordCapturedCommand(
 
     const fd = openSync(path, "a", 0o600);
     try {
-        writeSync(fd, encoded);
+        const bytes = Buffer.from(encoded);
+        let offset = 0;
+        while (offset < bytes.length) {
+            const written = writeSync(fd, bytes, offset, bytes.length - offset);
+            if (written === 0) {
+                throw new Error("Unable to append the complete capture record");
+            }
+            offset += written;
+        }
         fsyncSync(fd);
     } finally {
         closeSync(fd);

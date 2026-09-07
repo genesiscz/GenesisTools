@@ -7,7 +7,7 @@ describe("restored prompt scan", () => {
     afterEach(() => mock.restore());
 
     function setup() {
-        spyOn(socket, "paneList").mockImplementation(async (workspaceRef) => ({
+        const panes = spyOn(socket, "paneList").mockImplementation(async (workspaceRef) => ({
             workspace_ref: workspaceRef,
             window_ref: "window:2",
             container_frame: { width: 800, height: 600 },
@@ -29,11 +29,14 @@ describe("restored prompt scan", () => {
                 { ref: "surface:40", type: "browser" },
             ],
         });
-        return spyOn(cli, "runCmuxOk").mockResolvedValue({ code: 0, stdout: "Launch anyway?", stderr: "" });
+        return {
+            panes,
+            read: spyOn(cli, "runCmuxOk").mockResolvedValue({ code: 0, stdout: "Launch anyway?", stderr: "" }),
+        };
     }
 
     test("reads only listed terminals and reports their prompts", async () => {
-        const read = setup();
+        const { read } = setup();
         const result = await scanForInteractivePrompts(["workspace:5"]);
         expect(read.mock.calls).toEqual([[["read-screen", "--workspace", "workspace:5", "--surface", "surface:36"]]]);
         expect(result).toEqual({
@@ -49,14 +52,14 @@ describe("restored prompt scan", () => {
     });
 
     test("records read failures instead of claiming an empty successful scan", async () => {
-        setup().mockRejectedValue(new Error("surface closed"));
+        setup().read.mockRejectedValue(new Error("surface closed"));
         const result = await scanForInteractivePrompts(["workspace:5"]);
         expect(result).toEqual({ waiting: [], failures: [expect.stringContaining("surface:36")] });
     });
 
     test("continues scanning later workspaces after a listing failure", async () => {
-        setup();
-        spyOn(socket, "paneList").mockRejectedValueOnce(new Error("workspace closed"));
+        const { panes } = setup();
+        panes.mockRejectedValueOnce(new Error("workspace closed"));
         const result = await scanForInteractivePrompts(["workspace:5", "workspace:6"]);
         expect(result.failures).toHaveLength(1);
         expect(result.waiting[0]?.workspaceRef).toBe("workspace:6");

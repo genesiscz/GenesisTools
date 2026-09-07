@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
     cpSync,
     existsSync,
@@ -6,6 +6,7 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    readlinkSync,
     renameSync,
     symlinkSync,
     writeFileSync,
@@ -178,4 +179,36 @@ test("uninstall retains the separator between surrounding rc statements", async 
     writeFileSync(rcPath, `${readFileSync(rcPath, "utf8")}export SECOND=two\n`);
     uninstallCapture({ home });
     expect(readFileSync(rcPath, "utf8")).toBe("export FIRST=one\nexport SECOND=two\n");
+});
+
+test("a malformed manifest is reported invalid and repaired by reinstall", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cmux-manifest-repair-"));
+    await installCapture({ home, screens: false });
+    writeFileSync(join(home, ".genesis-tools/cmux/runtime/installation.json"), "{broken");
+    expect(captureInstallationStatus({ home }).runtimeValid).toBe(false);
+    expect((await installCapture({ home, screens: false })).runtimeValid).toBe(true);
+});
+
+test("an rc edit during bundling cannot publish a new runtime link", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cmux-install-race-"));
+    await installCapture({ home, screens: false });
+    const link = join(home, ".genesis-tools/cmux/runtime/capture-record.js");
+    const originalLink = readlinkSync(link);
+    const entry = join(home, "recorder.ts");
+    writeFileSync(entry, 'process.stdout.write("new runtime");');
+    const build = Bun.build.bind(Bun);
+    const spy = spyOn(Bun, "build").mockImplementation(async (options) => {
+        const result = await build(options);
+        writeFileSync(join(home, ".zshrc"), "# changed during build\n");
+        return result;
+    });
+    try {
+        await expect(installCapture({ home, screens: false, recorderEntrypoint: entry })).rejects.toThrow(
+            "changed during installation"
+        );
+        expect(readlinkSync(link)).toBe(originalLink);
+        expect(readFileSync(join(home, ".zshrc"), "utf8")).toBe("# changed during build\n");
+    } finally {
+        spy.mockRestore();
+    }
 });

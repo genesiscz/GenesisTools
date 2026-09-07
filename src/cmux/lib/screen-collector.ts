@@ -24,11 +24,18 @@ export async function collectTerminalScreens(input: {
 
         try {
             if (panel.stableSurfaceId && input.journalDirectory) {
-                associateCapturedSurface({
-                    directory: input.journalDirectory,
-                    surfaceId: panel.id,
-                    stableSurfaceId: panel.stableSurfaceId,
-                });
+                try {
+                    associateCapturedSurface({
+                        directory: input.journalDirectory,
+                        surfaceId: panel.id,
+                        stableSurfaceId: panel.stableSurfaceId,
+                    });
+                } catch (error) {
+                    logger.warn(
+                        { error, surfaceId: panel.id },
+                        "[cmux-screens] identity association failed; continuing viewport capture"
+                    );
+                }
             }
             const text = stripAnsi(await input.readText(panel.id))
                 .trimEnd()

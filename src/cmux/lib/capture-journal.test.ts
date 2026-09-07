@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,4 +152,27 @@ test("the first command is linked after native autosave eventually supplies a st
     const stableSurfaceId = "55555555-5555-4555-8555-555555555555";
     associateCapturedSurface({ directory, surfaceId, stableSurfaceId });
     expect(loadCapturedCommands({ directory }).get(stableSurfaceId)?.command).toBe("tail -f service.log");
+});
+
+test("short appends are retried until a complete UTF-8 record is persisted", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cmux-short-write-"));
+    const original = fs.writeSync;
+    const spy = spyOn(fs, "writeSync").mockImplementation((fd, data, offset, length) => {
+        if (typeof data === "string") {
+            return original(fd, data);
+        }
+        return original(
+            fd,
+            data,
+            typeof offset === "number" ? offset : 0,
+            Math.min(typeof length === "number" ? length : data.byteLength, 7)
+        );
+    });
+    try {
+        recordCapturedCommand({ directory, surfaceId, command: "echo café", cwd: "/tmp", phase: "completed" });
+        expect(loadCapturedCommands({ directory }).get(surfaceId)?.command).toBe("echo café");
+        expect(spy.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+        spy.mockRestore();
+    }
 });

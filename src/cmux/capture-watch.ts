@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { autosaveDir, listAutosaveFiles, readAutosaveSession } from "@app/cmux/lib/autosave";
 import { advanceScreenEpoch, pruneSavedScreens } from "@app/cmux/lib/screen-cache";
@@ -49,7 +49,9 @@ try {
     process.exit(1);
 }
 
-writeFileSync(pidPath, ownership, { mode: 0o600 });
+const temporaryPidPath = `${pidPath}.${ownerToken}.tmp`;
+writeFileSync(temporaryPidPath, ownership, { mode: 0o600 });
+renameSync(temporaryPidPath, pidPath);
 process.on("SIGTERM", () => {
     stopping = true;
 });

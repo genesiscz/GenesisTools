@@ -66,4 +66,16 @@ test("a new bundled collector version replaces the old owner without signaling i
     } finally {
         uninstallCapture({ home });
     }
+    for (let attempt = 0; attempt < 60 && screenCollectorStatus(root).running; attempt++) {
+        await Bun.sleep(25);
+    }
+    expect(screenCollectorStatus(root).running).toBe(false);
+});
+
+test("a malformed owner record reports not running instead of throwing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cmux-owner-repair-"));
+    await installCapture({ home, screens: false });
+    const root = join(home, ".genesis-tools/cmux");
+    writeFileSync(join(root, "screens.pid.json"), "{broken");
+    expect(screenCollectorStatus(root)).toMatchObject({ running: false, ownerMatches: false });
 });

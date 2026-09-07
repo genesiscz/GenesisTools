@@ -110,7 +110,12 @@ export async function restoreProfile(
                     previousWorkspace,
                     "--window",
                     created.window_ref,
-                ]);
+                ]).catch((error) => {
+                    logger.warn(
+                        { error, workspaceRef: created.workspace_ref },
+                        "[restore] workspace reorder failed; continuing restore"
+                    );
+                });
             }
 
             previousWorkspaceByWindow.set(created.window_ref, created.workspace_ref);
@@ -521,7 +526,7 @@ export function formatWaitingPanes(waiting: WaitingPane[], actor: "Rescue" | "Re
 }
 
 function internalRestoreCommand(parts: string[]): string {
-    return `function _genesis_cmux_restore_internal { ${parts.join(" && ")}; }; _genesis_cmux_restore_internal; unfunction _genesis_cmux_restore_internal\n`;
+    return `function _genesis_cmux_restore_internal { ${parts.join(" && ")}; }; _genesis_cmux_restore_internal; unset -f _genesis_cmux_restore_internal\n`;
 }
 
 async function replayTerminal(

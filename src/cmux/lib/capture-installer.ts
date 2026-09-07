@@ -199,12 +199,16 @@ export function captureInstallationStatus(options: CaptureInstallOptions = {}): 
     let runtimeFile: string | undefined;
 
     if (existsSync(location.manifestPath)) {
-        const manifest = manifestSchema.safeParse(SafeJSON.parse(readFileSync(location.manifestPath, "utf8")));
-        if (manifest.success) {
-            runtimeFile = manifest.data.runtimeFile;
-            runtimePath = join(location.runtimeDir, manifest.data.runtimeFile);
-            runtimeValid =
-                existsSync(runtimePath) && digest(readFileSync(runtimePath, "utf8")) === manifest.data.sha256;
+        try {
+            const manifest = manifestSchema.safeParse(SafeJSON.parse(readFileSync(location.manifestPath, "utf8")));
+            if (manifest.success) {
+                runtimeFile = manifest.data.runtimeFile;
+                runtimePath = join(location.runtimeDir, manifest.data.runtimeFile);
+                runtimeValid =
+                    existsSync(runtimePath) && digest(readFileSync(runtimePath, "utf8")) === manifest.data.sha256;
+            }
+        } catch (error) {
+            logger.warn({ error, path: location.manifestPath }, "[cmux-install] invalid installation manifest");
         }
     }
 
@@ -322,15 +326,19 @@ export async function installCapture(
         directory: join(location.root, "command-journal"),
     });
     const runtimeChanged = atomicWrite(runtimePath, runtime);
-    const linkChanged = updateRuntimeLink(location.runtimeDir, runtimeFile);
+
     const watcherChanged =
         watcher && watcherFile ? atomicWrite(join(location.runtimeDir, watcherFile), watcher) : false;
+    if (readRc(location.rcPath) !== before) {
+        throw new Error("Shell configuration changed during installation; review it again before installing.");
+    }
+    const backupPath = replaceRc({ path: location.rcPath, before, after });
+    const linkChanged = updateRuntimeLink(location.runtimeDir, runtimeFile);
     const hookChanged = atomicWrite(location.hookPath, hook);
     const manifestChanged = atomicWrite(
         location.manifestPath,
         `${SafeJSON.stringify({ version: 1, runtimeFile, sha256, watcherFile })}\n`
     );
-    const backupPath = replaceRc({ path: location.rcPath, before, after });
     const collectorChanged = watcherFile
         ? await enableScreenCollector({
               root: location.root,

@@ -89,3 +89,20 @@ test("ordinary default and two-line shell prompts are recognized", () => {
         expect(isShellPromptReady(prompt)).toBe(true);
     }
 });
+
+test("a failed optional focus RPC does not abort readiness polling", async () => {
+    spyOn(cli, "runCmux")
+        .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "Failed to read terminal text" })
+        .mockResolvedValue({ code: 0, stdout: "host% ", stderr: "" });
+    const activate = spyOn(cli, "runCmuxOk").mockRejectedValue(new Error("focus unavailable"));
+    await waitForTerminalText({
+        workspaceRef: "workspace:5",
+        surfaceRef: "surface:40",
+        matches: isShellPromptReady,
+        description: "shell",
+        intervalMs: 1,
+        timeoutMs: 100,
+        activateOnUnavailable: true,
+    });
+    expect(activate).toHaveBeenCalledTimes(1);
+});

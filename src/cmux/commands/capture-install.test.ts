@@ -35,7 +35,7 @@ async function rawInvoke(input: { tool: "cmux" | "zsh"; action: string; home: st
 async function invoke(input: { tool: "cmux" | "zsh"; action: string; home: string }) {
     const { output, error, exitCode } = await rawInvoke({ ...input, flags: ["--yes"] });
     expect({ exitCode, error: exitCode === 0 ? "" : error }).toEqual({ exitCode: 0, error: "" });
-    return SafeJSON.parse(output) as { installed: boolean; hookPath: string; runtimePath: string };
+    return SafeJSON.parse(output, { strict: true }) as { installed: boolean; hookPath: string; runtimePath: string };
 }
 
 test.each([

@@ -13,6 +13,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
 const ownerSchema = z.object({ pid: z.number().int().positive(), ownerToken: z.string().uuid() });
@@ -46,7 +47,14 @@ export function screenCollectorStatus(root: string): ScreenCollectorStatus {
         return { enabled, running: false, ownerMatches: false };
     }
 
-    const owner = ownerSchema.safeParse(parseJSON<object>(pidText));
+    let parsed: object | null;
+    try {
+        parsed = parseJSON<object>(pidText);
+    } catch (error) {
+        logger.debug({ error, root }, "[cmux-screens] unreadable ownership record");
+        return { enabled, running: false, ownerMatches: false };
+    }
+    const owner = ownerSchema.safeParse(parsed);
     if (!owner.success) {
         return { enabled, running: false, ownerMatches: false };
     }

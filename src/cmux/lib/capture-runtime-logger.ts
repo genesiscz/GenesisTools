@@ -16,7 +16,6 @@ export function createCaptureRuntimeLogger(options: { directory?: string } = {})
             return;
         }
 
-        previous = signature;
         const directory = options.directory ?? join(env.tools.getHome(), ".genesis-tools/cmux");
         let line = `${SafeJSON.stringify({ at: new Date().toISOString(), level, message, ...detail })}\n`;
         if (Buffer.byteLength(line) > 65536) {
@@ -31,6 +30,7 @@ export function createCaptureRuntimeLogger(options: { directory?: string } = {})
             }
 
             appendFileSync(path, line, { mode: 0o600 });
+            previous = signature;
         } catch (error) {
             process.stderr.write(
                 `cmux capture diagnostic log failed: ${error instanceof Error ? error.message : String(error)}\n`
