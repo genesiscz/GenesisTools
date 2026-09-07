@@ -107,6 +107,47 @@ describe("no-mock-module-prompts", () => {
     });
 });
 
+describe("test-spawn-needs-env (test files only)", () => {
+    const inTest = (source: string) => rules(source, "src/foo.test.ts");
+    const CP = 'import { spawnSync, execSync } from "node:child_process";\n';
+
+    test("flags Bun.spawn / Bun.spawnSync without env, with or without an options object", () => {
+        expect(inTest('Bun.spawnSync(["ls"]);')).toContain("test-spawn-needs-env");
+        expect(inTest('Bun.spawn(["ls"], { stdout: "pipe" });')).toContain("test-spawn-needs-env");
+        expect(inTest('Bun.spawn({ cmd: ["ls"], stdout: "pipe" });')).toContain("test-spawn-needs-env");
+    });
+
+    test("passes when env is given in any form", () => {
+        expect(inTest('Bun.spawn(["ls"], { stdout: "pipe", env: process.env });')).toEqual([]);
+        expect(inTest('Bun.spawn(["ls"], { env: { ...process.env, X: "1" } });')).toEqual([]);
+        expect(inTest('const env = process.env; Bun.spawn(["ls"], { env });')).toEqual([]);
+        expect(inTest('Bun.spawn({ cmd: ["ls"], env: process.env });')).toEqual([]);
+    });
+
+    test("does not guess about options it cannot see into", () => {
+        expect(inTest('Bun.spawn(["ls"], opts);')).toEqual([]);
+        expect(inTest('Bun.spawn(["ls"], { ...base, stdout: "pipe" });')).toEqual([]);
+        expect(inTest('Bun.spawn(["ls"], withEnv({ stdout: "pipe" }));')).toEqual([]);
+    });
+
+    test("flags node:child_process calls without env, but only when the module is imported", () => {
+        expect(inTest(`${CP}spawnSync("ls", ["-la"], { encoding: "utf8" });`)).toContain("test-spawn-needs-env");
+        expect(inTest(`${CP}execSync("ls");`)).toContain("test-spawn-needs-env");
+        expect(inTest(`${CP}spawnSync("ls", ["-la"], { encoding: "utf8", env: process.env });`)).toEqual([]);
+        // A bare spawn() from somewhere else (a local helper, a mock) is not the rule's business.
+        expect(inTest('spawnSync("ls", ["-la"], { encoding: "utf8" });')).toEqual([]);
+    });
+
+    test("stays out of production files and honours the suppression comment", () => {
+        expect(rules('Bun.spawnSync(["ls"]);', "src/foo.ts")).toEqual([]);
+        expect(inTest('// lint-rules-ignore: child writes nothing\nBun.spawnSync(["ls"]);')).toEqual([]);
+    });
+
+    test("the literal rules stay off in test files even though the spawn rule runs there", () => {
+        expect(inTest('const p = "/tmp/x"; Bun.spawnSync(["ls"], { env: process.env });')).toEqual([]);
+    });
+});
+
 describe("the biome.json override that disabled plugins for tests", () => {
     /**
      * biome.json carries `{"includes": ["**\/*.test.ts", …], "plugins": []}`, so

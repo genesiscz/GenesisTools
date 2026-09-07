@@ -130,6 +130,107 @@ const PROMPT_METHODS = new Set([
 const MOCKED_PROMPT_MODULE =
     /^["'`]@(?:app|genesiscz)\/utils\/prompts\/p(?:\/(?:inquirer|clack|opentui)-backend)?["'`]$|^["'`]inquirer\/prompts["'`]$/;
 
+/**
+ * Test-only rule. The bun test preload gives every test process its own temp
+ * root by setting TMPDIR on process.env (src/utils/bun/preload-test-tmpdir.ts),
+ * but Bun does not forward a MUTATED process.env to a child spawned without an
+ * explicit `env` — measured 2026-09-07 on bun 1.3.13 for Bun.spawn, Bun.spawnSync
+ * and node:child_process alike: the child still sees the TMPDIR the parent was
+ * started with. Such a child writes its fixtures into the real temp folder, which
+ * is how that folder reached 33,694 entries and 3.2 GB the same day.
+ */
+const SPAWN_ENV_RULE = {
+    name: "test-spawn-needs-env",
+    severity: "error" as const,
+    message:
+        "A test that spawns a child must pass `env` (`env: process.env`, or `{ ...process.env, X: … }`). Bun does " +
+        "not forward the test temp root (TMPDIR, set on process.env by the bun test preload) to a child spawned " +
+        "without it, so the child writes into the real temp folder.",
+};
+
+const BUN_SPAWN_CALLEES = new Set(["Bun.spawn", "Bun.spawnSync"]);
+const CHILD_PROCESS_CALLEES = new Set(["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"]);
+const CHILD_PROCESS_IMPORT = /["'](?:node:)?child_process["']/;
+/**
+ * The callee filter runs in Rust: a call_expression whose `function` field IS one
+ * of the spawn names. A `$FN($$$ARGS)` pattern would hand every call in every
+ * test file to JS first, which is the cost the header of this file is about.
+ */
+const SPAWN_CALL_MATCHER = {
+    rule: {
+        kind: "call_expression",
+        has: {
+            field: "function",
+            regex: `^(?:${[...BUN_SPAWN_CALLEES, ...CHILD_PROCESS_CALLEES].map((name) => name.replace(".", "\\.")).join("|")})$`,
+        },
+    },
+};
+/** Argument kinds the rule can see through. Anything else may carry an env, so it passes. */
+const TRANSPARENT_ARG_KINDS = new Set([
+    "string",
+    "template_string",
+    "array",
+    "object",
+    "number",
+    "true",
+    "false",
+    "null",
+]);
+
+/** Test files: the literal rules stay OFF here (see pluginsDisabledFor); the spawn rule runs ONLY here. */
+export function isTestFile(file: string): boolean {
+    return /\.test\.tsx?$/.test(file) || /(^|\/)__tests__\//.test(file);
+}
+
+/**
+ * True when the call's arguments visibly or possibly carry an `env`: an object
+ * literal with an `env` property (pair or shorthand) or a spread, or any argument
+ * past the first that the rule cannot see into (a variable, a call, a member).
+ * The first argument is the command and never counts as options.
+ */
+function spawnArgsCarryEnv(args: SgNode[]): boolean {
+    return args.some((arg, index) => {
+        const kind = arg.kind();
+
+        if (kind === "object") {
+            return arg.children().some((child) => {
+                const childKind = child.kind();
+
+                if (childKind === "pair") {
+                    return child.field("key")?.text() === "env";
+                }
+
+                return (
+                    (childKind === "shorthand_property_identifier" && child.text() === "env") ||
+                    childKind === "spread_element"
+                );
+            });
+        }
+
+        return index > 0 && !TRANSPARENT_ARG_KINDS.has(kind);
+    });
+}
+
+/**
+ * Classify one call_expression the matcher let through. Returns whether it
+ * violates, and whether that verdict still depends on the file importing
+ * child_process (a bare `spawn(...)` can be anything until the import says otherwise).
+ */
+function spawnCallVerdict(node: SgNode): { violates: boolean; needsChildProcessImport: boolean } {
+    const callee = node.field("function")?.text() ?? "";
+    const isBun = BUN_SPAWN_CALLEES.has(callee);
+    const isBare = CHILD_PROCESS_CALLEES.has(callee);
+
+    if (!isBun && !isBare) {
+        return { violates: false, needsChildProcessImport: false };
+    }
+
+    // The `arguments` node's named children are the arguments; the parens and commas are anonymous.
+    const args = (node.field("arguments")?.children() ?? []).filter((child) => child.isNamed());
+
+    return { violates: !spawnArgsCarryEnv(args), needsChildProcessImport: isBare };
+}
+
 function langFor(file: string): Lang | null {
     if (file.endsWith(".tsx") || file.endsWith(".jsx")) {
         return Lang.Tsx;
@@ -175,7 +276,13 @@ export function pluginsDisabledFor(file: string): boolean {
 export function checkSource(file: string, source: string): Finding[] {
     const lang = langFor(file);
 
-    if (lang === null || pluginsDisabledFor(file)) {
+    if (lang === null) {
+        return [];
+    }
+
+    const testFile = isTestFile(file);
+
+    if (pluginsDisabledFor(file) && !testFile) {
         return [];
     }
 
@@ -201,6 +308,21 @@ export function checkSource(file: string, source: string): Finding[] {
             text: node.text().split("\n")[0].slice(0, 120),
         });
     };
+
+    if (testFile) {
+        // Test files get exactly one rule. The literal rules below stay off for them.
+        const importsChildProcess = CHILD_PROCESS_IMPORT.test(source);
+
+        for (const node of root.findAll(SPAWN_CALL_MATCHER)) {
+            const verdict = spawnCallVerdict(node);
+
+            if (verdict.violates && (!verdict.needsChildProcessImport || importsChildProcess)) {
+                record(node, SPAWN_ENV_RULE);
+            }
+        }
+
+        return findings;
+    }
 
     // ONE walk for every literal rule. The GritQL version paid for a separate
     // whole-tree match per rule, which is most of why it cost 9 seconds.
@@ -349,11 +471,21 @@ function render(finding: Finding): string {
  */
 async function scanAll(files: string[]): Promise<Finding[]> {
     const byLang = new Map<Lang, string[]>();
+    const testsByLang = new Map<Lang, string[]>();
 
     for (const file of files) {
         const lang = langFor(file);
 
-        if (lang === null || pluginsDisabledFor(file)) {
+        if (lang === null) {
+            continue;
+        }
+
+        if (isTestFile(file)) {
+            testsByLang.set(lang, [...(testsByLang.get(lang) ?? []), file]);
+            continue;
+        }
+
+        if (pluginsDisabledFor(file)) {
             continue;
         }
 
@@ -364,10 +496,12 @@ async function scanAll(files: string[]): Promise<Finding[]> {
     // and reading every file back would put the cost straight back. Only the
     // files that matched get read, once, at the end.
     const unfiltered: Finding[] = [];
+    /** Bare `spawn(...)` findings that still need the file's imports to confirm they are child_process calls. */
+    const needsImportCheck = new Set<Finding>();
 
-    const push = (node: SgNode, rule: { name: string; severity: Severity; message: string }): void => {
+    const push = (node: SgNode, rule: { name: string; severity: Severity; message: string }): Finding => {
         const { line, column } = node.range().start;
-        unfiltered.push({
+        const finding: Finding = {
             file: node.getRoot().filename(),
             line: line + 1,
             column: column + 1,
@@ -375,7 +509,9 @@ async function scanAll(files: string[]): Promise<Finding[]> {
             severity: rule.severity,
             message: rule.message,
             text: node.text().split("\n")[0].slice(0, 120),
-        });
+        };
+        unfiltered.push(finding);
+        return finding;
     };
 
     const guard = (handle: (nodes: SgNode[]) => void) => (err: Error | null, nodes: SgNode[]) => {
@@ -444,13 +580,43 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         ]);
     }
 
+    for (const [lang, paths] of testsByLang) {
+        await findInFiles(
+            lang,
+            { paths, matcher: SPAWN_CALL_MATCHER },
+            guard((nodes) => {
+                for (const node of nodes) {
+                    const verdict = spawnCallVerdict(node);
+
+                    if (!verdict.violates) {
+                        continue;
+                    }
+
+                    const finding = push(node, SPAWN_ENV_RULE);
+
+                    if (verdict.needsChildProcessImport) {
+                        needsImportCheck.add(finding);
+                    }
+                }
+            })
+        );
+    }
+
     const sources = new Map<string, string[]>();
 
     for (const file of new Set(unfiltered.map((finding) => finding.file))) {
         sources.set(file, (await Bun.file(file).text()).split("\n"));
     }
 
-    return unfiltered.filter((finding) => !isSuppressed(sources.get(finding.file) ?? [], finding.line));
+    return unfiltered.filter((finding) => {
+        const lines = sources.get(finding.file) ?? [];
+
+        if (needsImportCheck.has(finding) && !CHILD_PROCESS_IMPORT.test(lines.join("\n"))) {
+            return false;
+        }
+
+        return !isSuppressed(lines, finding.line);
+    });
 }
 
 if (import.meta.main) {
@@ -476,7 +642,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 6 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 7 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }
