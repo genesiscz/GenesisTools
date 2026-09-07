@@ -183,21 +183,48 @@ class FileSecretStore implements SecretStore {
         }
     }
 
+    /**
+     * A write whose value is already stored is skipped. The v3 facade resolves
+     * every SecureRef to its value on read and re-applies every account on save,
+     * so one token refresh used to re-encrypt all 33 secrets of 11 accounts
+     * (2,045 vault rewrites in three hours on 2026-09-06). The check runs under
+     * the vault lock so it compares against what a concurrent writer left, and a
+     * stored entry that will not decrypt is replaced, never reported.
+     */
     async set(path: string, value: string): Promise<SecureRef> {
         const ref = secureRef(path);
-        const entry = encryptEntry(await masterKey(), path, value);
+        const master = await masterKey();
+        const entry = encryptEntry(master, path, value);
 
-        await this.storage.withFileLock({
+        const written = await this.storage.withFileLock({
             file: this.vaultPath(),
             fn: async () => {
                 const vault = this.read();
+                if (this.holdsValue(master, path, vault.entries[path], value)) {
+                    return false;
+                }
+
                 vault.entries[path] = entry;
                 this.write(vault);
+                return true;
             },
         });
 
-        logger.debug({ path }, "stored secret in vault");
+        logger.debug({ path }, written ? "stored secret in vault" : "vault secret unchanged, rewrite skipped");
         return ref;
+    }
+
+    private holdsValue(master: Buffer, path: string, stored: VaultEntry | undefined, value: string): boolean {
+        if (!stored) {
+            return false;
+        }
+
+        try {
+            return decryptEntry(master, path, stored) === value;
+        } catch (err) {
+            logger.debug({ err, path }, "stored vault entry does not decrypt; overwriting it");
+            return false;
+        }
     }
 
     async delete(path: string): Promise<boolean> {

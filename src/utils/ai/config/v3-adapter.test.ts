@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -46,8 +46,11 @@ function config(accounts: AccountEntry[], defaults: AiConfigData["defaults"] = {
     return { version: CONFIG_VERSION, accounts, defaults };
 }
 
+let home: string;
+
 beforeEach(() => {
-    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "gt-adapter-")));
+    home = mkdtempSync(join(tmpdir(), "gt-adapter-"));
+    env.testing.set("GENESIS_TOOLS_HOME", home);
     _setMasterKeyProvidersForTest(fakeKeyring());
     _resetSecretsForTest();
 });
@@ -128,6 +131,21 @@ describe("applyV3Tokens", () => {
         expect(isSecureRef(entry.credentials.apiKey)).toBe(true);
         expect(entry.credentials.expiresAt).toBe(99);
         expect(await (await secrets()).get("ai/acc_max/apiKey")).toBe("sk-literal");
+    });
+
+    test("re-applying the values a v3 read resolved leaves the vault file untouched", async () => {
+        const entry = account();
+        await applyV3Tokens(entry, { accessToken: "sk-ant-live", refreshToken: "rt-live", longLivedToken: "llt" });
+        const vaultFile = join(home, ".genesis-tools", "security", "vault.json");
+        const before = readFileSync(vaultFile, "utf8");
+
+        // What a facade save does for every account, changed or not: read the
+        // resolved v3 shape back and apply it again.
+        await applyV3Tokens(entry, toV3Account(entry, config([entry])).tokens);
+
+        expect(readFileSync(vaultFile, "utf8")).toBe(before);
+        expect(isSecureRef(entry.credentials.accessToken)).toBe(true);
+        expect(await (await secrets()).get("ai/acc_max/refreshToken")).toBe("rt-live");
     });
 
     test("apiKeyEnv from a legacy caller becomes useEnvApiKey", async () => {
