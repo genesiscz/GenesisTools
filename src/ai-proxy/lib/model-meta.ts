@@ -57,6 +57,20 @@ import { fetchDirect } from "@genesiscz/utils/net/fetch-direct";
 import { isObject } from "@genesiscz/utils/object";
 import { matchGlob } from "@genesiscz/utils/string";
 
+/**
+ * A catalog build that must not change what it looks at.
+ *
+ * The two subscription catalogs live-read a token to ask the vendor for its
+ * model list, and resolving an EXPIRED one rotates a single-use grant and
+ * rewrites the config. That is fine while serving a request, and wrong for
+ * `tools ai-proxy models` / `accounts list`, which only print a table — see
+ * CLAUDE.md, "A diagnostic must never mutate". Under `probe` those calls read
+ * the stored token and fall back to the static catalog rather than refreshing.
+ */
+export interface CatalogOptions {
+    probe?: boolean;
+}
+
 export function buildGrokModelDescription(meta: {
     visibility: string;
     speed: string;
@@ -228,14 +242,17 @@ export const ANTHROPIC_MESSAGES_BASE_URL = "https://api.anthropic.com/v1";
  * availability for Claude — not a per-id chat "probe" like Grok. On failure,
  * falls back to the static catalog with probeStatus=skip.
  */
-export async function listAnthropicSubProxyModels(account: AiProxyAccountConfig): Promise<ProxyModelMeta[]> {
+export async function listAnthropicSubProxyModels(
+    account: AiProxyAccountConfig,
+    options?: CatalogOptions
+): Promise<ProxyModelMeta[]> {
     let records: AnthropicSubModelRecord[] = ANTHROPIC_SUB_STATIC_CATALOG;
     let source: ProxyModelMeta["source"] = "static";
     let probeStatus: ProxyModelMeta["probeStatus"] = "skipped";
 
     try {
         const billingName = account.anthropicSub?.accountName ?? account.name;
-        const { token } = await resolveAccountToken(billingName);
+        const { token } = await resolveAccountToken(billingName, { noRefresh: options?.probe });
         const live = await tryFetchAnthropicSubModels(token);
 
         if (live && live.length > 0) {
@@ -299,13 +316,16 @@ export const WHAM_RESPONSES_BASE_URL = WHAM_BASE_URL;
  * Codex/ChatGPT catalog. Prefers live WHAM GET /models (plan-filtered).
  * That is the availability signal for Codex — not a chat probe.
  */
-export async function listOpenAiSubProxyModels(account: AiProxyAccountConfig): Promise<ProxyModelMeta[]> {
+export async function listOpenAiSubProxyModels(
+    account: AiProxyAccountConfig,
+    options?: CatalogOptions
+): Promise<ProxyModelMeta[]> {
     let records: WhamModelRecord[] = OPENAI_SUB_STATIC_CATALOG.filter((record) => record.visibility === "list");
     let source: ProxyModelMeta["source"] = "static";
     let probeStatus: ProxyModelMeta["probeStatus"] = "skipped";
 
     try {
-        const { token, accountId } = await resolveOpenAiSubToken(account);
+        const { token, accountId } = await resolveOpenAiSubToken(account, { noRefresh: options?.probe });
         const live = await tryFetchWhamModels(token, accountId);
 
         if (live && live.length > 0) {

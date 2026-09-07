@@ -25,7 +25,7 @@ export async function runAccountsList(): Promise<void> {
     const rows: AccountListRow[] = [];
 
     for (const account of config.accounts) {
-        const modelCount = (await buildProxyModelCatalog([account])).length;
+        const modelCount = (await buildProxyModelCatalog([account], { probe: true })).length;
         rows.push({ account, modelCount });
     }
 

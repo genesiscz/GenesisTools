@@ -25,7 +25,7 @@ export interface OpenAiSubToken {
  */
 export async function resolveOpenAiSubToken(
     account: AiProxyAccountConfig,
-    options?: { forceRefresh?: boolean }
+    options?: { forceRefresh?: boolean; noRefresh?: boolean }
 ): Promise<OpenAiSubToken> {
     const accountName = account.openaiSub?.accountName;
 
@@ -48,7 +48,7 @@ export async function resolveOpenAiSubToken(
  */
 export async function resolveOpenAiSubFailoverToken(
     accountName: string,
-    options?: { forceRefresh?: boolean }
+    options?: { forceRefresh?: boolean; noRefresh?: boolean }
 ): Promise<OpenAiSubToken> {
     return resolveCodexAccountToken(accountName, options);
 }

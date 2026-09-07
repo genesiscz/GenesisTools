@@ -1,4 +1,5 @@
 import {
+    type CatalogOptions,
     listAnthropicSubProxyModels,
     listCopilotProxyModels,
     listGrokProxyModels,
@@ -12,7 +13,10 @@ import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok";
 
 export { catalogFilePath, loadCatalogFile, type ModelsCatalogFile } from "@app/ai-proxy/lib/catalog-file";
 
-export async function buildProxyModelCatalog(accounts: AiProxyAccountConfig[]): Promise<ProxyModelMeta[]> {
+export async function buildProxyModelCatalog(
+    accounts: AiProxyAccountConfig[],
+    options?: CatalogOptions
+): Promise<ProxyModelMeta[]> {
     const models: ProxyModelMeta[] = [];
 
     for (const account of accounts) {
@@ -30,11 +34,11 @@ export async function buildProxyModelCatalog(accounts: AiProxyAccountConfig[]): 
         }
 
         if (account.provider === "anthropic-subscription") {
-            models.push(...(await listAnthropicSubProxyModels(account)));
+            models.push(...(await listAnthropicSubProxyModels(account, options)));
         }
 
         if (account.provider === "openai-subscription") {
-            models.push(...(await listOpenAiSubProxyModels(account)));
+            models.push(...(await listOpenAiSubProxyModels(account, options)));
         }
 
         if (account.provider === "xai-api-key") {

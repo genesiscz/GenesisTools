@@ -10,7 +10,7 @@ export async function runModelsCommand(options: {
     cursorIds?: boolean;
 }): Promise<void> {
     const config = await loadConfig();
-    let models = await buildProxyModelCatalog(config.accounts);
+    let models = await buildProxyModelCatalog(config.accounts, { probe: true });
 
     if (options.provider) {
         models = models.filter((model) => model.providerSlug === options.provider);
