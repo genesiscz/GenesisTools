@@ -1,4 +1,4 @@
-import type { OAuthProfileResponse } from "@genesiscz/utils/claude/auth";
+import { determineAccountLabel } from "@genesiscz/utils/claude/account-label";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -163,27 +163,6 @@ export function updateConfig(updater: (config: ClaudeConfig) => void): Promise<C
         // Write back the full merged config
         Object.assign(raw, config);
     });
-}
-
-export function determineAccountLabel(profile: OAuthProfileResponse | undefined): string | undefined {
-    if (!profile) {
-        return undefined;
-    }
-
-    const tier = profile.organization.rate_limit_tier;
-
-    if (tier.includes("max")) {
-        // Extract multiplier: "max_5x" → "max 5x", "max_20x" → "max 20x"
-        const match = tier.match(/max[_\s]*(\d+x?)/i);
-        // Fall back to raw tier value (e.g. "max_5") rather than just "max"
-        return match ? `max ${match[1]}` : tier.replace(/_/g, " ");
-    }
-
-    if (tier.includes("pro")) {
-        return "pro";
-    }
-
-    return profile.organization.billing_type;
 }
 
 /**

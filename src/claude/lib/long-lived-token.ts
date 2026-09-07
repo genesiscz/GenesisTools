@@ -1,16 +1,32 @@
-import type { AIConfigData } from "@genesiscz/utils/config/ai.types";
+import { vaultPathFor } from "@genesiscz/utils/ai/config/migrations/2026-08-secretsToVault";
+import type { AiConfigData } from "@genesiscz/utils/ai/config/schema";
+import { secrets } from "@genesiscz/utils/security";
 
 /**
  * Attach a long-lived token to an account IN PLACE.
  *
- * Deliberately a mutator over the on-disk data rather than a
- * `updateAccount({ tokens: { ...account.tokens, … } })` spread: the browser flow
- * that produces the token takes minutes, and the poll daemon rotates the
- * access/refresh pair during it. Spreading a stale in-memory `tokens` object
- * would write that dead pair back and cost the account its login.
+ * Deliberately a mutator over the on-disk data rather than an
+ * `editAccount({ credentials: { ...account.credentials, … } })` spread: the
+ * browser flow that produces the token takes minutes, and the poll daemon
+ * rotates the access/refresh pair during it. Spreading a stale in-memory
+ * `credentials` object would write that dead pair back and cost the account its
+ * login.
+ *
+ * Called from inside `AiConfigStore.mutate`, so the vault write below happens
+ * under the config lock — the order `AiConfigStore.withLock` documents, config
+ * lock first and vault lock second.
  */
 export interface ApplyLongLivedTokenInput {
-    accountName: string;
+    /**
+     * The IMMUTABLE account id, never the renameable name.
+     *
+     * The lookup below scans the whole v4 accounts array, which is not filtered
+     * by provider. Two accounts named `work` on different providers therefore
+     * sent an Anthropic long-lived token (and its org uuid) into whichever entry
+     * happened to come first, even when the caller had selected the other one by
+     * explicit id (PR #359 review t7).
+     */
+    accountId: string;
     token: string;
     /**
      * Known only when WE minted the token (`login-long --setup-token`). A pasted
@@ -30,19 +46,20 @@ export interface ApplyLongLivedTokenInput {
     organizationUuid?: string;
 }
 
-export function applyLongLivedToken(data: AIConfigData, input: ApplyLongLivedTokenInput): void {
-    const entry = data.accounts.find((a) => a.name === input.accountName);
+export async function applyLongLivedToken(data: AiConfigData, input: ApplyLongLivedTokenInput): Promise<void> {
+    const entry = data.accounts.find((a) => a.id === input.accountId);
 
     if (!entry) {
-        throw new Error(`Account "${input.accountName}" not found while saving the long-lived token`);
+        throw new Error(`Account "${input.accountId}" not found while saving the long-lived token`);
     }
 
-    entry.tokens.longLivedToken = input.token;
+    const vault = await secrets();
+    entry.credentials.longLivedToken = await vault.set(vaultPathFor(entry.id, "longLivedToken"), input.token);
 
     if (input.expiresAt === undefined) {
-        delete entry.tokens.longLivedTokenExpiresAt;
+        delete entry.credentials.longLivedTokenExpiresAt;
     } else {
-        entry.tokens.longLivedTokenExpiresAt = input.expiresAt;
+        entry.credentials.longLivedTokenExpiresAt = input.expiresAt;
     }
 
     if (input.organizationUuid) {

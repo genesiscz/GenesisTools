@@ -9,14 +9,17 @@ import {
     _resetSecretsForTest,
     _setMasterKeyProvidersForTest,
     isSecureRef,
+    resolveSecret,
     secrets,
 } from "@genesiscz/utils/security";
+import type { LoginOutcome } from "../providers/account-features";
 import type { BindContext, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
 import { AiConfigStore } from "./AiConfigStore";
 import {
     AccountInUseError,
     addAccount,
+    applyLoginOutcome,
     clearCredentials,
     editAccount,
     removeAccount,
@@ -196,6 +199,163 @@ describe("removeAccount", () => {
         const result = await removeAccount("lonely");
 
         expect(result.referrers).toHaveLength(0);
+        expect(readRawConfig().accounts).toHaveLength(0);
+    });
+});
+
+describe("applyLoginOutcome", () => {
+    function outcome(overrides: Partial<LoginOutcome> = {}): LoginOutcome {
+        return {
+            provider: "fake",
+            credentials: { accessToken: "sk-access", refreshToken: "sk-refresh", expiresAt: 1234 },
+            ...overrides,
+        };
+    }
+
+    test("a first login mints the account, vaults the secrets and writes no plaintext", async () => {
+        const result = await applyLoginOutcome({ name: "work", outcome: outcome() });
+
+        expect(result.created).toBe(true);
+        expect(result.account.id).toBe("acc_work");
+        expect(isSecureRef(result.account.credentials.accessToken)).toBe(true);
+
+        const onDisk = readFileSync(configPath(), "utf8");
+        expect(onDisk).not.toContain("sk-access");
+        expect(onDisk).not.toContain("sk-refresh");
+        expect(await (await secrets()).get("ai/acc_work/accessToken")).toBe("sk-access");
+        expect(result.account.credentials.expiresAt).toBe(1234);
+    });
+
+    // A flow returns only what it obtained, so a plain overwrite dropped every
+    // other credential the account carried. That is the bug `mergeAccountEntry`
+    // exists to prevent, restated on the v4 store.
+    test("a re-login preserves the long-lived token, the secondary grant, the label and the apps", async () => {
+        await applyLoginOutcome({
+            name: "work",
+            apps: ["claude", "ask"],
+            outcome: outcome({
+                credentials: {
+                    accessToken: "sk-old-access",
+                    longLivedToken: "sk-ant-oat01-keepme",
+                    secondary: { accessToken: "sk-secondary", accountUuid: "acct-1" },
+                },
+                accountFields: { label: "max 5x" },
+            }),
+        });
+
+        const result = await applyLoginOutcome({ name: "work", outcome: outcome() });
+
+        expect(result.created).toBe(false);
+        expect(await resolveSecret(result.account.credentials.longLivedToken)).toBe("sk-ant-oat01-keepme");
+        expect(await resolveSecret(result.account.credentials.secondary?.accessToken)).toBe("sk-secondary");
+        expect(result.account.credentials.secondary?.accountUuid).toBe("acct-1");
+        expect(result.account.label).toBe("max 5x");
+        expect(result.account.apps).toEqual(["claude", "ask"]);
+        // The new pair still landed.
+        expect(await resolveSecret(result.account.credentials.accessToken)).toBe("sk-access");
+    });
+
+    test("a provider switch replaces the credentials wholesale", async () => {
+        registerPlugin(fakePlugin({ id: "other", kind: "subscription", credential: { fields: [], envKeys: [] } }));
+
+        await applyLoginOutcome({
+            name: "work",
+            outcome: outcome({ credentials: { accessToken: "sk-old", longLivedToken: "sk-ant-oat01-stale" } }),
+        });
+
+        const result = await applyLoginOutcome({
+            name: "work",
+            outcome: { provider: "other", credentials: { authFile: "/tmp/other/auth.json" } },
+        });
+
+        expect(result.account.provider).toBe("other");
+        expect(result.account.credentials.longLivedToken).toBeUndefined();
+        expect(result.account.credentials.accessToken).toBeUndefined();
+        expect(result.account.credentials.authFile).toBe("/tmp/other/auth.json");
+        expect(result.account.billing.mode).toBe("subscription");
+
+        // PR #360 review t11: asserting only the config fields passed while the
+        // old vendor's tokens stayed in the vault forever, unreachable because
+        // `clearCredentials` works off the config that no longer names them.
+        const vault = await secrets();
+        expect(await vault.list(`ai/${result.account.id}/`)).toEqual([]);
+    });
+
+    // `login-secondary` resolves an account by id and then wrote it back by
+    // name, which picks the first namesake across every provider (PR #360
+    // review t4). The namesake here is an API-key account whose vault entry a
+    // provider switch would have deleted.
+    test("an id targets THAT account when two share a name, and the namesake keeps its secrets", async () => {
+        registerPlugin(fakePlugin({ id: "other", kind: "subscription", credential: { fields: [], envKeys: [] } }));
+        await applyLoginOutcome({ name: "work", outcome: outcome() });
+
+        const raw = readRawConfig();
+        raw.accounts.push({
+            id: "acc_work_other",
+            name: "work",
+            provider: "other",
+            enabled: true,
+            billing: { mode: "subscription" },
+            credentials: { authFile: "/tmp/other/auth.json" },
+            useEnvApiKey: false,
+        });
+        writeConfig(raw);
+
+        const result = await applyLoginOutcome({
+            id: "acc_work_other",
+            name: "work",
+            outcome: {
+                provider: "other",
+                credentials: { secondary: { accessToken: "sk-secondary", accountUuid: "acct-2" } },
+            },
+        });
+
+        expect(result.created).toBe(false);
+        expect(result.account.id).toBe("acc_work_other");
+        expect(result.account.credentials.authFile).toBe("/tmp/other/auth.json");
+        expect(await resolveSecret(result.account.credentials.secondary?.accessToken)).toBe("sk-secondary");
+
+        const namesake = readRawConfig().accounts.find((entry) => entry.id === "acc_work");
+        expect(namesake?.provider).toBe("fake");
+        expect(await (await secrets()).get("ai/acc_work/accessToken")).toBe("sk-access");
+    });
+
+    test("an id that no longer exists writes nothing rather than minting a namesake", async () => {
+        await expect(applyLoginOutcome({ id: "acc_gone", name: "work", outcome: outcome() })).rejects.toThrow(
+            /no longer exists/
+        );
+        expect(readRawConfig().accounts).toEqual([]);
+    });
+
+    test("an empty app default is filled once and never overwritten", async () => {
+        const first = await applyLoginOutcome({
+            name: "work",
+            outcome: outcome(),
+            defaultForApps: ["claude", "ask"],
+        });
+
+        expect(first.defaultsSet).toEqual(["claude", "ask"]);
+
+        const config = (await AiConfigStore.load()).data();
+        expect(config.defaults.app?.claude?.chat?.model).toBe(`@account/${first.account.id}`);
+        expect(config.defaults.app?.ask?.chat?.model).toBe(`@account/${first.account.id}`);
+
+        const second = await applyLoginOutcome({
+            name: "personal",
+            outcome: outcome(),
+            defaultForApps: ["claude", "ask"],
+        });
+
+        expect(second.defaultsSet).toEqual([]);
+        expect((await AiConfigStore.load()).data().defaults.app?.claude?.chat?.model).toBe(
+            `@account/${first.account.id}`
+        );
+    });
+
+    test("refuses an unknown provider before writing anything", async () => {
+        await expect(applyLoginOutcome({ name: "work", outcome: outcome({ provider: "nope" }) })).rejects.toThrow(
+            'Unknown AI provider "nope"'
+        );
         expect(readRawConfig().accounts).toHaveLength(0);
     });
 });

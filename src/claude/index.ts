@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 
@@ -83,9 +83,13 @@ async function main(): Promise<void> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("ExitPromptError") || message === "Cancelled") {
+            await out.flush();
             process.exit(0);
         }
         logger.error(`Error: ${message}`);
+        // Drain before exiting: `out.*` writes are fire-and-forget, so exiting in
+        // the same tick can lose the diagnostic entirely (PR #360 review t12).
+        await out.flush();
         process.exit(1);
     }
 }
