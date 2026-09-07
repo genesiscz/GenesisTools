@@ -27,5 +27,7 @@ describe("fable-replace selftest", () => {
         } finally {
             rmSync(scratch, { recursive: true, force: true });
         }
-    });
+        // The selftest runs ~3 s alone but well past bun's 5 s default when the whole suite runs 16x
+        // in parallel; the spawnSync timeout above is the real bound, so the test budget matches it.
+    }, 120_000);
 });
