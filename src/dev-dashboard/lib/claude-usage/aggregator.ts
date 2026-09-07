@@ -1,5 +1,5 @@
 import type { AccountUsage } from "@app/claude/lib/usage/api";
-import { UsageHistoryDb } from "@app/claude/lib/usage/history-db";
+import { DEFAULT_LIMITS_PROVIDER, UsageHistoryDb } from "@app/claude/lib/usage/history-db";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
@@ -103,7 +103,7 @@ export function getUsageHistory(
     // (UsageHistoryDb's default ctor). It must NOT be closed here — closing it
     // breaks every later request that reuses the cached singleton handle.
     const historyDb = db ?? new UsageHistoryDb();
-    const snapshots = historyDb.getSnapshots(opts.account, opts.bucket, opts.minutes);
+    const snapshots = historyDb.getSnapshots(opts.account, opts.bucket, opts.minutes, DEFAULT_LIMITS_PROVIDER);
 
     if (snapshots.length === 0) {
         return { snapshots: [], hint: "Run 'tools claude daemon install' to start polling." };
@@ -124,7 +124,7 @@ export function getUsageHistoryMulti(
     const historyDb = db ?? new UsageHistoryDb();
     const series = opts.buckets.map((bucket) => ({
         bucket,
-        snapshots: historyDb.getSnapshots(opts.account, bucket, opts.minutes),
+        snapshots: historyDb.getSnapshots(opts.account, bucket, opts.minutes, DEFAULT_LIMITS_PROVIDER),
     }));
 
     if (series.every((s) => s.snapshots.length === 0)) {
