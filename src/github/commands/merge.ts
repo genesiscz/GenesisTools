@@ -1,6 +1,7 @@
 // Safe PR merge command — retargets stack dependents before optional branch delete.
 
 import { resolveMergeMethod, type SafeMergeResult, safeMergePull } from "@app/github/lib/merge";
+import { describeSquashMessage } from "@app/github/lib/squash-message";
 import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -25,6 +26,8 @@ export interface MergeCommandOptions {
     deleteRemote?: boolean;
     subject?: string;
     body?: string;
+    /** Resolve the PR and show the squash message, then stop before any write. */
+    dryRun?: boolean;
     format?: "text" | "json";
     verbose?: boolean;
 }
@@ -32,11 +35,32 @@ export interface MergeCommandOptions {
 function formatTextSummary(result: SafeMergeResult): string {
     const lines: string[] = [];
     lines.push("");
-    lines.push(chalk.green(`✔ MERGED ${result.owner}/${result.repo}#${result.number} (${result.method})`));
+
+    if (result.dryRun) {
+        lines.push(
+            chalk.yellow(
+                `○ DRY RUN ${result.owner}/${result.repo}#${result.number} (${result.method}) — nothing merged`
+            )
+        );
+    } else {
+        lines.push(chalk.green(`✔ MERGED ${result.owner}/${result.repo}#${result.number} (${result.method})`));
+    }
+
     lines.push(`  title:  ${result.title}`);
     lines.push(`  head:   ${result.headRef}`);
     lines.push(`  base:   ${result.baseRef}`);
     lines.push(`  sha:    ${result.mergeSha || "(n/a)"}`);
+
+    if (result.squashMessage) {
+        for (const line of describeSquashMessage(result.squashMessage)) {
+            lines.push(`  ${line}`);
+        }
+    }
+
+    if (result.dryRun) {
+        lines.push(`  dependents found: ${result.dependentsFound.length}`);
+        return lines.join("\n");
+    }
 
     if (result.rebaseMode) {
         lines.push(`  rebase: ${result.rebaseMode}`);
@@ -112,10 +136,16 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
     const { owner, repo, number } = parsed;
     const { log } = logger.scoped("github:merge");
 
-    log.info({ owner, repo, number, method, deleteBranch, noRestack: Boolean(options.noRestack) }, "safe merge start");
+    const dryRun = Boolean(options.dryRun);
+    log.info(
+        { owner, repo, number, method, deleteBranch, dryRun, noRestack: Boolean(options.noRestack) },
+        "safe merge start"
+    );
     out.println(
         chalk.bold(
-            `Safe merge ${owner}/${repo}#${number} (${method}${deleteBranch ? ", delete-branch after retarget" : ""})`
+            `Safe merge ${owner}/${repo}#${number} (${method}${deleteBranch ? ", delete-branch after retarget" : ""}${
+                dryRun ? ", dry run" : ""
+            })`
         )
     );
 
@@ -128,6 +158,7 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         noRestack: Boolean(options.noRestack),
         commitTitle: options.subject,
         commitMessage: options.body,
+        dryRun,
         log: (message) => {
             out.println(message);
             log.debug(message);
@@ -138,7 +169,10 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
         {
             number: result.number,
             mergeSha: result.mergeSha,
+            dryRun: Boolean(result.dryRun),
             rebaseMode: result.rebaseMode,
+            squashTitleGenerated: result.squashMessage?.titleGenerated,
+            squashBodyGenerated: result.squashMessage?.bodyGenerated,
             headRestacked: Boolean(result.headRestack?.rebased),
             dependentsRetargeted: result.retargeted.length,
             dependentsRestacked: result.dependentsRestacked.length,
@@ -164,7 +198,9 @@ export async function mergeCommand(input: string, options: MergeCommandOptions):
                     headRef: result.headRef,
                     baseRef: result.baseRef,
                     mergeSha: result.mergeSha,
+                    dryRun: Boolean(result.dryRun),
                     rebaseMode: result.rebaseMode ?? null,
+                    squashMessage: result.squashMessage ?? null,
                     headRestack: result.headRestack ?? null,
                     dependents: result.retargeted,
                     dependentsRestacked: result.dependentsRestacked,
@@ -212,8 +248,15 @@ export function createMergeCommand(): Command {
             "After retargeting dependents, delete the remote head branch (never passes delete to the merge API)"
         )
         .option("--delete-remote", "Alias for --delete-branch")
-        .option("--subject <title>", "Commit title (merge/squash commit_title; ignored for --ff-only)")
-        .option("--body <text>", "Commit message body (merge/squash commit_message; ignored for --ff-only)")
+        .option(
+            "--subject <title>",
+            "Commit title (merge/squash commit_title; ignored for --ff-only). --squash defaults to the PR title plus (#N)"
+        )
+        .option(
+            "--body <text>",
+            "Commit message body (merge/squash commit_message; ignored for --ff-only). --squash defaults to one '* <subject>' bullet per PR commit"
+        )
+        .option("--dry-run", "Resolve the PR, print the squash message and dependents, then stop before any write")
         .option("-f, --format <format>", "Output format: text|json", "text")
         .option("-v, --verbose", "Verbose logging (reserved)")
         .action(async (input: string, opts: MergeCommandOptions) => {

@@ -31,6 +31,7 @@ import {
     parsePullStackNumber,
     posixShellSingleQuote,
 } from "./native-stack";
+import { buildSquashMessage, commitSubjectOf, type PullCommitSubject, type SquashMessage } from "./squash-message";
 
 /** GitHub API merge methods plus local-ref fast-forward. */
 export type MergeMethod = "merge" | "rebase" | "squash" | "ff-only";
@@ -85,6 +86,8 @@ export interface MergePullResult {
 export interface MergeGitHubClient {
     getPull(owner: string, repo: string, number: number): Promise<PullRef>;
     listOpenPullsByBase(owner: string, repo: string, base: string): Promise<DependentPull[]>;
+    /** Every commit on the PR in GitHub's order (oldest first), across all pages. */
+    listPullCommits(owner: string, repo: string, number: number): Promise<PullCommitSubject[]>;
     mergePull(owner: string, repo: string, number: number, options: MergePullOptions): Promise<MergePullResult>;
     /**
      * True fast-forward: move `baseRef` to `headSha` only if base is an ancestor
@@ -120,6 +123,11 @@ export interface SafeMergeOptions {
     noRestack?: boolean;
     commitTitle?: string;
     commitMessage?: string;
+    /**
+     * Resolve the PR and derive the squash message, then stop before any write
+     * (no merge, no retarget, no branch delete).
+     */
+    dryRun?: boolean;
     /** Progress / decision logs (caller routes to stdout). */
     log?: (message: string) => void;
     client?: MergeGitHubClient;
@@ -160,6 +168,10 @@ export interface SafeMergeResult {
     mergeSha: string;
     /** How the merge was applied when method=rebase (stack-safe path). */
     rebaseMode?: "stack-safe-ff" | "api-rewrite";
+    /** The squash commit message that was (or, on dry run, would be) sent. */
+    squashMessage?: SquashMessage;
+    /** True when nothing was written: the run stopped before the merge call. */
+    dryRun?: boolean;
     headRestack?: RestackBranchResult;
     dependentsFound: DependentPull[];
     retargeted: RetargetResult[];
@@ -206,6 +218,31 @@ function retargetRow(input: {
     }
 
     return row;
+}
+
+/**
+ * Walk a page-numbered GitHub list to its end. A page shorter than `perPage`
+ * is the last one; a large PR is never silently cut at page one.
+ */
+export async function collectPages<T>(
+    fetchPage: (page: number, perPage: number) => Promise<T[]>,
+    perPage = 100
+): Promise<T[]> {
+    const results: T[] = [];
+    let page = 1;
+
+    while (true) {
+        const data = await fetchPage(page, perPage);
+        results.push(...data);
+
+        if (data.length < perPage) {
+            break;
+        }
+
+        page++;
+    }
+
+    return results;
 }
 
 /**
@@ -283,6 +320,25 @@ export function createOctokitMergeClient(): MergeGitHubClient {
             }
 
             return results;
+        },
+
+        async listPullCommits(owner, repo, number) {
+            const commits = await collectPages(async (page, perPage) => {
+                const { data } = await withRetry(
+                    () =>
+                        octokit.rest.pulls.listCommits({
+                            owner,
+                            repo,
+                            pull_number: number,
+                            per_page: perPage,
+                            page,
+                        }),
+                    { label: `GET /repos/${owner}/${repo}/pulls/${number}/commits (page ${page})` }
+                );
+                return data;
+            });
+
+            return commits.map((commit) => ({ sha: commit.sha, subject: commitSubjectOf(commit.commit.message) }));
         },
 
         async mergePull(owner, repo, number, options) {
@@ -432,6 +488,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         noRestack = false,
         commitTitle,
         commitMessage,
+        dryRun = false,
         log,
     } = options;
     const client = options.client ?? createOctokitMergeClient();
@@ -470,6 +527,47 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         for (const dep of dependents) {
             logLine(log, `  dependent #${dep.number} "${dep.title}" (${dep.headRef} → ${dep.baseRef})`);
         }
+    }
+
+    let squashMessage: SquashMessage | undefined;
+
+    if (method === "squash") {
+        logLine(log, `Listing commits of #${number} for the squash message...`);
+        const commits = await client.listPullCommits(owner, repo, number);
+        squashMessage = buildSquashMessage({
+            number: pr.number,
+            title: pr.title,
+            commits,
+            commitTitle,
+            commitMessage,
+        });
+        const titleSource = squashMessage.titleGenerated ? "generated from PR title" : "--subject";
+        const bodySource = squashMessage.bodyGenerated
+            ? `generated from ${squashMessage.commitCount} commit subject(s)`
+            : "--body";
+        logLine(log, `  squash subject (${titleSource}): ${squashMessage.title}`);
+        logLine(log, `  squash body (${bodySource}): ${squashMessage.commitCount} line(s)`);
+    }
+
+    if (dryRun) {
+        logLine(log, "Dry run: stopping before the merge call (nothing written)");
+        return {
+            owner,
+            repo,
+            number: pr.number,
+            title: pr.title,
+            method,
+            headRef: pr.headRef,
+            baseRef: pr.baseRef,
+            mergeSha: "",
+            squashMessage,
+            dryRun: true,
+            dependentsFound: dependents,
+            retargeted: [],
+            dependentsRestacked: [],
+            branchDeleted: false,
+            remainingWork: [],
+        };
     }
 
     // Tip of the PR head before any rewrite — used as --onto oldBase for children.
@@ -538,8 +636,8 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         }
         mergeResult = await client.mergePull(owner, repo, number, {
             method: method as GithubApiMergeMethod,
-            commitTitle,
-            commitMessage,
+            commitTitle: squashMessage?.title ?? commitTitle,
+            commitMessage: squashMessage?.body ?? commitMessage,
         });
     }
 
@@ -849,6 +947,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
         baseRef: pr.baseRef,
         mergeSha: mergeResult.sha || effectiveHeadSha,
         rebaseMode,
+        squashMessage,
         headRestack,
         dependentsFound: toRetarget,
         retargeted,

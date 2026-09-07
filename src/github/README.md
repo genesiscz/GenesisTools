@@ -54,7 +54,9 @@ tools github get https://github.com/owner/repo/blob/main/src/index.ts --clipboar
 tools github merge 123 --rebase           # stack-safe: restack+FF (preserves SHAs) + restack children
 tools github merge 123 --rebase --no-restack  # legacy GitHub rewrite rebase (breaks cascades)
 tools github merge 123 --ff-only          # true FF (base ref → head SHA; keeps commit SHAs)
-tools github merge 123 --squash --delete-branch --subject "feat: ship (#123)"
+tools github merge 123 --squash --delete-branch   # subject = PR title (#123), body = one bullet per commit
+tools github merge 123 --squash --dry-run         # print the generated squash message, merge nothing
+tools github merge 123 --squash --subject "feat: ship (#123)" --body "* one\n* two"   # explicit values win
 tools github merge https://github.com/owner/repo/pull/123 --merge --delete-remote
 
 # Cache + rate limit status
@@ -109,6 +111,16 @@ GitHub only auto-retargets dependent PRs when a branch is deleted via the **web 
 
 Exactly one of `--merge`, `--rebase`, `--squash`, or `--ff-only` is required.
 All progress logs go to stdout.
+
+**`--squash` writes a real commit message by default.** Without `--subject` the
+subject is the PR title plus ` (#N)` (not doubled when the title already ends
+with it). Without `--body` the body is every PR commit subject, oldest first,
+as `* <subject>` bullets separated by single newlines (all pages are fetched,
+so a 300-commit PR lists 300 bullets). The CLI prints the message and says
+which part was generated and which came from a flag. Commit text is passed to
+the GitHub API as data, never through a shell. `--merge` is unchanged: no
+default message is generated there. `--dry-run` resolves the PR, lists
+dependents, prints the squash message and stops before any write.
 
 Run any subcommand with `--help` for its full option list. The most common flags (`--format ai|json`, `--limit`, `--last`, `--no-bots`, `--min-reactions`, `--stats`, `--clipboard`) work across multiple subcommands.
 

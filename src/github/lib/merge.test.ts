@@ -9,6 +9,7 @@ import {
     safeMergePull,
 } from "./merge";
 import { NATIVE_STACK_BASE_ERROR } from "./native-stack";
+import type { PullCommitSubject } from "./squash-message";
 import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
 
 type CallLog = Array<{ op: string; args: unknown[] }>;
@@ -18,6 +19,8 @@ function makeMock(opts: {
     dependents?: DependentPull[];
     /** Dependents returned after merge (defaults to pre-merge list). */
     postMergeDependents?: DependentPull[];
+    /** Commit subjects returned by listPullCommits (oldest first). */
+    commits?: PullCommitSubject[];
     mergeResult?: MergePullResult;
     /** Fail updatePullBase for these PR numbers. */
     failRetarget?: number[];
@@ -74,6 +77,10 @@ function makeMock(opts: {
                 };
             }
             return { ...opts.pr, number, merged };
+        },
+        async listPullCommits(_owner, _repo, number) {
+            calls.push({ op: "listPullCommits", args: [number] });
+            return (opts.commits ?? []).map((c) => ({ ...c }));
         },
         async listOpenPullsByBase(_owner, _repo, base) {
             calls.push({ op: "listOpenPullsByBase", args: [base] });
@@ -514,10 +521,13 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(retargetCalls[0].args).toEqual([2, "main"]);
     });
 
-    test("passes squash subject/body through to merge API", async () => {
-        const { client, calls } = makeMock({ pr: basePr() });
+    test("passes explicit squash subject/body through to merge API unchanged", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            commits: [{ sha: "1111111", subject: "ignored: explicit values win" }],
+        });
 
-        await safeMergePull({
+        const result = await safeMergePull({
             owner: "o",
             repo: "r",
             number: 1,
@@ -533,6 +543,120 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
             commitTitle: "feat: ship it (#1)",
             commitMessage: "commit one\ncommit two",
         });
+        expect(result.squashMessage?.titleGenerated).toBe(false);
+        expect(result.squashMessage?.bodyGenerated).toBe(false);
+    });
+
+    test("squash without --subject/--body sends PR title (#N) and one bullet per commit", async () => {
+        const logs: string[] = [];
+        const { client, calls } = makeMock({
+            pr: basePr({ number: 42, title: "feat: widgets — bigger and `better`" }),
+            commits: [
+                { sha: "1111111", subject: "feat(widgets): add the frame" },
+                { sha: "2222222", subject: 'fix(widgets): "quoted" subject with $HOME and `ticks`' },
+                { sha: "3333333", subject: "chore: trailing whitespace   " },
+            ],
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 42,
+            method: "squash",
+            client,
+            log: (m) => logs.push(m),
+        });
+
+        const mergeCall = calls.find((c) => c.op === "mergePull");
+        expect(mergeCall?.args[1]).toEqual({
+            method: "squash",
+            commitTitle: "feat: widgets — bigger and `better` (#42)",
+            commitMessage:
+                "* feat(widgets): add the frame\n" +
+                '* fix(widgets): "quoted" subject with $HOME and `ticks`\n' +
+                "* chore: trailing whitespace",
+        });
+        expect(result.squashMessage).toEqual({
+            title: "feat: widgets — bigger and `better` (#42)",
+            body:
+                "* feat(widgets): add the frame\n" +
+                '* fix(widgets): "quoted" subject with $HOME and `ticks`\n' +
+                "* chore: trailing whitespace",
+            titleGenerated: true,
+            bodyGenerated: true,
+            commitCount: 3,
+        });
+        // The commit list is fetched before the merge call, never after.
+        const ops = calls.map((c) => c.op);
+        expect(ops.indexOf("listPullCommits")).toBeLessThan(ops.indexOf("mergePull"));
+        expect(logs.some((l) => l.includes("squash subject (generated from PR title)"))).toBe(true);
+        expect(logs.some((l) => l.includes("squash body (generated from 3 commit subject(s))"))).toBe(true);
+    });
+
+    test("squash keeps a PR title that already ends with (#N) and honours only one of the overrides", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr({ number: 7, title: "fix: thing (#7)" }),
+            commits: [{ sha: "1111111", subject: "fix: thing" }],
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 7,
+            method: "squash",
+            commitMessage: "",
+            client,
+        });
+
+        const mergeCall = calls.find((c) => c.op === "mergePull");
+        expect(mergeCall?.args[1]).toEqual({ method: "squash", commitTitle: "fix: thing (#7)", commitMessage: "" });
+        expect(result.squashMessage?.titleGenerated).toBe(true);
+        expect(result.squashMessage?.bodyGenerated).toBe(false);
+    });
+
+    test("--merge does not list commits and sends no generated message", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            commits: [{ sha: "1111111", subject: "would be a bullet under --squash" }],
+        });
+
+        const result = await safeMergePull({ owner: "o", repo: "r", number: 1, method: "merge", client });
+
+        expect(calls.map((c) => c.op)).not.toContain("listPullCommits");
+        expect(calls.find((c) => c.op === "mergePull")?.args[1]).toEqual({
+            method: "merge",
+            commitTitle: undefined,
+            commitMessage: undefined,
+        });
+        expect(result.squashMessage).toBeUndefined();
+    });
+
+    test("dry run resolves the squash message and dependents but never writes", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr({ number: 5, title: "feat: five" }),
+            commits: [{ sha: "1111111", subject: "one" }],
+            dependents: [dep({ number: 6 })],
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 5,
+            method: "squash",
+            deleteBranch: true,
+            dryRun: true,
+            client,
+        });
+
+        const ops = calls.map((c) => c.op);
+        expect(ops).toEqual(["getPull", "listOpenPullsByBase", "listPullCommits"]);
+        expect(result.dryRun).toBe(true);
+        expect(result.mergeSha).toBe("");
+        expect(result.squashMessage?.title).toBe("feat: five (#5)");
+        expect(result.squashMessage?.body).toBe("* one");
+        expect(result.dependentsFound.map((d) => d.number)).toEqual([6]);
+        expect(result.retargeted).toEqual([]);
+        expect(result.branchDeleted).toBe(false);
     });
 
     test("detects child closed after retarget (simulates the gh bug path)", async () => {
