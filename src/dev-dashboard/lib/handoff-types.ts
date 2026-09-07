@@ -29,18 +29,21 @@ export interface HandoffGetResponse {
     handoff: PublicHandoff;
     editId?: string;
     info: string[];
+    /** Recipient warnings for the calling identity — absent when there is nothing to say. */
+    warnings?: string[];
 }
 
 export interface HandoffActionResponse {
     handoff: PublicHandoff;
     results: HandoffActionResult[];
     info: string[];
+    warnings?: string[];
 }
 
 export interface HandoffPostResponse {
     handoff: PublicHandoff;
     editId: string;
-    paste: { _agent: string; id: string; title: string; tasks: string };
+    paste: { _agent: string; id: string; title: string; tasks: string; name?: string };
     info: string[];
 }
 

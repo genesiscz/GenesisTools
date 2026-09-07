@@ -256,7 +256,7 @@ It registers **27 tools across 4 capability groups**:
 | Capability | Tools | Purpose |
 |------------|-------|---------|
 | `question_answer` | `question_answer` | Capture a question and your complete answer to the local question store, reviewable later with `tools question log` / `tools question tail`. |
-| `handoff` | `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action` | Cross-agent task handoff: post a task list, claim it, check items off with proof, finish. |
+| `handoff` | `handoff_post`, `handoff_get`, `handoff_list`, `handoff_action` | Cross-agent task handoff: post a task list, address it to a session or a harness (`target.agent`: claude / codex / grok / copilot), fetch it by id or readable name, claim it, check items off with proof, finish. A session that is not the intended recipient gets a warning, never a block. |
 | `annotate` | `annotate_image` | Annotate an image (arrows, boxes, labels) for review. |
 | `boards` | 21 `boards_*` tools | Dev-dashboard annotation boards: create and compose boards, push screenshot sets, list and answer work, wait for new annotations. |
 

@@ -52,6 +52,8 @@ export function handoffRoutes(): RouteDef[] {
                             offset: offsetRaw !== null ? Number.parseInt(offsetRaw, 10) : undefined,
                             open: ctx.query.get("open") === "1",
                             project: ctx.query.get("project") ?? undefined,
+                            agent: ctx.query.get("agent") ?? undefined,
+                            session: ctx.query.get("session") ?? undefined,
                         },
                         deps
                     );
@@ -69,7 +71,8 @@ export function handoffRoutes(): RouteDef[] {
                 try {
                     const deps = await dashboardDeps();
                     const id = ctx.query.get("id") ?? "";
-                    const res = getHandoff({ id }, deps);
+                    const name = ctx.query.get("name") ?? undefined;
+                    const res = getHandoff({ id, name }, deps);
 
                     return { kind: "json", status: 200, body: res };
                 } catch (err) {
@@ -121,9 +124,14 @@ export function handoffRoutes(): RouteDef[] {
             handler: async (ctx) => {
                 try {
                     const deps = await dashboardDeps();
-                    const body = await ctx.readJson<{ id?: string; editId?: string; actions?: HandoffActionInput[] }>();
+                    const body = await ctx.readJson<{
+                        id?: string;
+                        name?: string;
+                        editId?: string;
+                        actions?: HandoffActionInput[];
+                    }>();
                     const res = executeHandoffActions(
-                        { id: body.id ?? "", editId: body.editId, actions: body.actions ?? [] },
+                        { id: body.id ?? "", name: body.name, editId: body.editId, actions: body.actions ?? [] },
                         deps
                     );
 
@@ -141,6 +149,7 @@ export function handoffRoutes(): RouteDef[] {
                     const deps = await dashboardDeps();
                     const body = await ctx.readJson<{
                         title?: string;
+                        name?: string;
                         description?: string;
                         tasks?: HandoffTaskInput[];
                         target?: HandoffTarget;
@@ -149,6 +158,7 @@ export function handoffRoutes(): RouteDef[] {
                     const res = postHandoff(
                         {
                             title: body.title ?? "",
+                            name: body.name,
                             description: body.description,
                             tasks: body.tasks ?? [],
                             target: body.target,

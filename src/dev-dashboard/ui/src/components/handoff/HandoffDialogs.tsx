@@ -141,7 +141,9 @@ export function HandoffCreateDialog({
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
     const [tasks, setTasks] = useState<TaskDraft[]>([{ text: "", acceptanceCriteria: "" }]);
+    const [name, setName] = useState("");
     const [targetName, setTargetName] = useState("");
+    const [targetAgent, setTargetAgent] = useState("");
     const [refs, setRefs] = useState("");
 
     const setTask = (index: number, patch: Partial<TaskDraft>): void => {
@@ -157,9 +159,10 @@ export function HandoffCreateDialog({
     const submit = (): void => {
         const payload: {
             title: string;
+            name?: string;
             description?: string;
             tasks: HandoffTaskInput[];
-            target?: { sessionName: string };
+            target?: { sessionName?: string; agent?: string };
             refs?: string[];
         } = {
             title: title.trim(),
@@ -178,8 +181,15 @@ export function HandoffCreateDialog({
             payload.description = description.trim();
         }
 
-        if (targetName.trim().length > 0) {
-            payload.target = { sessionName: targetName.trim() };
+        if (name.trim().length > 0) {
+            payload.name = name.trim();
+        }
+
+        if (targetName.trim().length > 0 || targetAgent.trim().length > 0) {
+            payload.target = {
+                ...(targetName.trim().length > 0 ? { sessionName: targetName.trim() } : {}),
+                ...(targetAgent.trim().length > 0 ? { agent: targetAgent.trim() } : {}),
+            };
         }
 
         const refList = refs
@@ -198,7 +208,9 @@ export function HandoffCreateDialog({
                 setTitle("");
                 setDescription("");
                 setTasks([{ text: "", acceptanceCriteria: "" }]);
+                setName("");
                 setTargetName("");
+                setTargetAgent("");
                 setRefs("");
             },
         });
@@ -320,6 +332,30 @@ export function HandoffCreateDialog({
                                 </Button>
                             </div>
                             <div className="grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <Label className={LABEL_CLASS} htmlFor="handoff-create-name">
+                                        Readable name (optional)
+                                    </Label>
+                                    <Input
+                                        id="handoff-create-name"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        className={INPUT_CLASS}
+                                        placeholder="derived from the title"
+                                    />
+                                </div>
+                                <div>
+                                    <Label className={LABEL_CLASS} htmlFor="handoff-create-agent">
+                                        Target harness (optional)
+                                    </Label>
+                                    <Input
+                                        id="handoff-create-agent"
+                                        value={targetAgent}
+                                        onChange={(e) => setTargetAgent(e.target.value)}
+                                        className={INPUT_CLASS}
+                                        placeholder="claude | codex | grok | copilot"
+                                    />
+                                </div>
                                 <div>
                                     <Label className={LABEL_CLASS} htmlFor="handoff-create-target">
                                         Target session name (optional)
