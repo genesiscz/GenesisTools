@@ -32,6 +32,20 @@ describe("harness names", () => {
         expect(canonicalAgent("copilot")).toBe("copilot");
     });
 
+    test("inherited object keys are not harnesses either", () => {
+        // A plain-object alias table would answer Object.prototype members.
+        for (const key of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+            expect(canonicalAgent(key)).toBeNull();
+            expect(isKnownAgent(key)).toBe(false);
+            expect(normalizeAgentInput(key)).toBe(key.toLowerCase());
+        }
+
+        const by = on("claude-code", "sess-me");
+        const check = recipientCheck({ target: { agent: "constructor" }, by });
+        expect(check.agent).toBe("unverifiable");
+        expect(check.warnings.join(" ")).toContain('"constructor", which is not a documented harness');
+    });
+
     test("an undocumented name is not a harness", () => {
         expect(canonicalAgent("borg")).toBeNull();
         expect(canonicalAgent("")).toBeNull();

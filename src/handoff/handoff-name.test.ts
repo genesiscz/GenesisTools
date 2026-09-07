@@ -103,6 +103,21 @@ describe("resolving by name", () => {
         expect(getHandoff({ id: a.id, name: "alpha-work" }, env.depsFor(WORKER)).handoff.id).toBe(a.id);
     });
 
+    test("two names that disagree are refused too, even when one arrives in the id field", () => {
+        const env = freshEnv();
+        postHandoff({ title: "Alpha work", tasks: [{ text: "one" }] }, env.depsFor(POSTER));
+        const b = postHandoff({ title: "Beta work", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+
+        expect(() => getHandoff({ id: "alpha-work", name: "beta-work" }, env.depsFor(WORKER))).toThrow(
+            /point at different handoffs/
+        );
+        expect(() =>
+            executeHandoffActions({ id: "alpha-work", name: "beta-work", actions: ["claim"] }, env.depsFor(WORKER))
+        ).toThrow(/point at different handoffs/);
+        // The same name twice is one reference, not a conflict.
+        expect(getHandoff({ id: "beta-work", name: "Beta Work" }, env.depsFor(WORKER)).handoff.id).toBe(b.id);
+    });
+
     test("an unknown name and an unknown id fail differently, and both say where to look", () => {
         const env = freshEnv();
 
@@ -208,5 +223,27 @@ describe("names survive edits and reach handoff_action", () => {
         );
         expect(res.results[0].ok).toBe(true);
         expect(res.handoff.target).toEqual({ agent: "grok" });
+    });
+
+    test("the action response warns from the target AFTER the batch, not before it", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Ship the fix", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        const codexWorker = { ...byFor("sess-codex", "codex-worker"), agent: "codex" };
+
+        // Untargeted → retargeted away from the caller: the warning appears in this response.
+        const away = executeHandoffActions(
+            { id: posted.id, actions: [{ action: "modify_handoff", target: { agent: "grok" } }] },
+            env.depsFor(POSTER)
+        );
+        expect(away.results[0].ok).toBe(true);
+        expect((away.warnings ?? []).join(" ")).toContain('targets harness "grok"');
+
+        // Mismatched → retargeted to the caller: the stale warning is gone from this response.
+        const back = executeHandoffActions(
+            { id: posted.id, actions: [{ action: "modify_handoff", target: { agent: "codex" } }] },
+            env.depsFor({ ...codexWorker, sessionId: POSTER.sessionId })
+        );
+        expect(back.results[0].ok).toBe(true);
+        expect(back.warnings).toBeUndefined();
     });
 });

@@ -233,6 +233,15 @@ function resolveHandoffRef(db: Database, input: { id?: string; name?: string }):
     const matches = lookup !== undefined ? findHandoffsByName(db, lookup) : [];
 
     if (matches.length === 1) {
+        // Both fields were names: the one not used for the lookup must name the same handoff.
+        const other = rawName.length > 0 && rawId.length > 0 ? normalizeHandoffName(rawId) : undefined;
+
+        if (other !== undefined && other !== lookup) {
+            throw new Error(
+                `The id and the name point at different handoffs: "${rawId}" is not "${lookup}". Pass one of them, not both.`
+            );
+        }
+
         return matches[0];
     }
 
@@ -830,7 +839,6 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
         catchUpHandoffs(db, deps.base);
         const existing = resolveHandoffRef(db, input);
         const id = existing.id;
-        const recipient = recipientCheck({ target: existing.target, by });
 
         const stamp = (): { ts: string; uid: string; id: string; by: HandoffEventBy; editId?: string } => ({
             ts: nowIso(deps),
@@ -901,6 +909,9 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
             "handoff actions executed"
         );
 
+        // Checked against the FOLDED target: a modify_handoff that retargets in this
+        // batch must produce (or clear) the warning in this same response.
+        const recipient = recipientCheck({ target: handoff.target, by });
         const full = publicHandoff(handoff, deps.base);
         let projectedEvents: HandoffPublicEvent[] | undefined;
 

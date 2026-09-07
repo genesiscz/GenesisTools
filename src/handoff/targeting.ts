@@ -47,7 +47,10 @@ export function canonicalAgent(raw: string | null | undefined): HandoffAgent | n
         return null;
     }
 
-    return AGENT_ALIASES[raw.trim().toLowerCase()] ?? null;
+    const key = raw.trim().toLowerCase();
+
+    // Own-property check: "constructor" or "__proto__" must not read as a harness.
+    return Object.hasOwn(AGENT_ALIASES, key) ? AGENT_ALIASES[key] : null;
 }
 
 export function isKnownAgent(raw: string | null | undefined): boolean {
