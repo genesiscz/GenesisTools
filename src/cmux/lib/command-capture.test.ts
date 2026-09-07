@@ -297,3 +297,15 @@ describe("etimeToSeconds", () => {
         expect(etimeToSeconds("garbage")).toBe(0);
     });
 });
+
+test("compound agent commands remain verbatim when a session is known", () => {
+    for (const original of [
+        "claude --model custom; printf done",
+        "grok && printf done",
+        "codex | cat",
+        "claude\nprintf done",
+        "claude > output.log",
+    ]) {
+        expect(deriveReplayCommand({ original, sessionId: "fixture-session" }).command).toBe(original);
+    }
+});

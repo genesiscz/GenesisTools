@@ -19,6 +19,23 @@ export interface AutosavePanel {
     directory?: string;
     ttyName?: string;
     listeningPorts?: number[];
+    browser?: { urlString?: string };
+    terminal?: {
+        workingDirectory?: string;
+        scrollback?: string;
+        tmuxStartCommand?: string;
+        agent?: {
+            kind: "claude" | "grok" | "codex";
+            sessionId?: string;
+            workingDirectory?: string;
+            launchCommand?: { arguments?: string[]; executablePath?: string; workingDirectory?: string };
+        };
+        resumeBinding?: { kind: "claude" | "grok" | "codex"; checkpointId?: string; cwd?: string; command?: string };
+    };
+}
+
+export function panelWorkingDirectory(panel: AutosavePanel): string | undefined {
+    return panel.directory ?? panel.terminal?.workingDirectory;
 }
 
 export interface AutosaveLayoutPaneNode {

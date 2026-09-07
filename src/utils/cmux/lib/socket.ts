@@ -134,7 +134,14 @@ export interface PaneListResponse {
 }
 
 export async function paneList(workspaceRef: string): Promise<PaneListResponse> {
-    return rpc<PaneListResponse>("pane.list", { workspace: workspaceRef });
+    // Raw pane.list can ignore workspace and return the focused workspace. The
+    // CLI honors the target and now preserves the geometry used by restore.
+    const layout = await runCmuxJSON<PaneListResponse>(["list-panes", "--workspace", workspaceRef]);
+    if (workspaceRef.startsWith("workspace:") && layout.workspace_ref !== workspaceRef) {
+        throw new Error(`cmux returned ${layout.workspace_ref} when asked for ${workspaceRef}`);
+    }
+
+    return layout;
 }
 
 export interface WindowEntry {

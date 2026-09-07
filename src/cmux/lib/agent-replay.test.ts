@@ -48,6 +48,10 @@ function terminal(title: string, extra: Partial<TerminalSurface> = {}): Terminal
 }
 
 describe("inferLauncherFromTitle", () => {
+    test("recognizes Claude's quarter-circle status titles", () => {
+        expect(inferLauncherFromTitle("◐ account migration")).toBe("claude");
+        expect(inferLauncherFromTitle("◑ transcript work")).toBe("claude");
+    });
     test("detects a grok tab even when the live title has a spinner prefix", () => {
         expect(inferLauncherFromTitle("PRs merged into release/2026-09-03 - grok")).toBe("grok");
         expect(inferLauncherFromTitle("project-notes - grok · 33a9c763")).toBe("grok");
@@ -362,5 +366,36 @@ describe("withInferredReplayCommands", () => {
             expect(surface.command).not.toContain(decoy);
             expect(surface.command_original).toBeUndefined();
         }
+    });
+});
+
+test("shell journal commands survive restoration even when the title names another agent", () => {
+    const profile = profileWith([
+        {
+            type: "terminal",
+            title: "grok",
+            command: "codex --model custom",
+            command_source: "shell-journal",
+            cwd: "/launch cwd",
+        },
+    ]);
+    const restored = withInferredReplayCommands(profile, catalog([grokSession()]));
+    expect(restored.windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
+        command: "codex --model custom",
+        command_source: "shell-journal",
+        cwd: "/launch cwd",
+    });
+});
+
+test("raw journal launchers can infer matching sessions without trusting conflicting titles", () => {
+    const profile = profileWith([
+        terminal("PRs merged into release/2026-09-03 - grok", {
+            command: "grok --model custom",
+            command_source: "shell-journal",
+        }),
+    ]);
+    const restored = withInferredReplayCommands(profile, catalog([grokSession()]));
+    expect(restored.windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
+        command: `grok --model custom -r ${GROK_ID}`,
     });
 });

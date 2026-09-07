@@ -14,6 +14,7 @@
  *   tools cmux send-self <text> [--no-enter]
  */
 
+import { registerCaptureCommand } from "@app/cmux/commands/capture";
 import { registerDoctorCommand } from "@app/cmux/commands/doctor";
 import { registerProfilesCommand } from "@app/cmux/commands/profiles";
 import { registerRescueCommand } from "@app/cmux/commands/rescue";
@@ -35,6 +36,7 @@ program
     .showHelpAfterError(true)
     .option("-v, --verbose", "Enable debug logging");
 
+registerCaptureCommand(program);
 registerProfilesCommand(program);
 registerRestoreAfterRestartCommand(program);
 registerSendSelfCommand(program);

@@ -4,10 +4,22 @@ import {
     type ReplayCatalogSession,
     replayCommandForSurface,
 } from "@app/cmux/lib/agent-replay";
-import { panelsById, readAutosaveSession } from "@app/cmux/lib/autosave";
-import { collectTtyLaunchCommands, loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/command-capture";
-import { captureSurfaceState, cwdFromTitle } from "@app/cmux/lib/shell-probe";
-import type { Pane, Profile, ProfileScope, Surface, Window, Workspace } from "@app/cmux/lib/types";
+import { type AutosaveSession, panelsById, panelWorkingDirectory, readAutosaveSession } from "@app/cmux/lib/autosave";
+import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
+import {
+    collectTtyLaunchCommands,
+    isAgentLauncher,
+    loadSurfaceSessions,
+    type SurfaceSessionInfo,
+} from "@app/cmux/lib/command-capture";
+import { loadSavedScreens, preferredScreenText } from "@app/cmux/lib/screen-cache";
+import {
+    captureSurfaceState,
+    cwdFromTitle,
+    lastCommandFromCapture,
+    type SurfaceCaptureResult,
+} from "@app/cmux/lib/shell-probe";
+import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
@@ -39,23 +51,78 @@ interface SurfaceListEntry {
  * per tty), cmux's autosave (surface uuid → tty), and the claude session journals
  * (surface uuid → session id + account). All readable without the cmux socket.
  */
-interface CommandCaptureContext {
+export interface CommandCaptureContext {
     ttyCommands: Map<string, string>;
     panelTty: Map<string, string>;
+    panelCwd: Map<string, string>;
     surfaceSessions: Map<string, SurfaceSessionInfo>;
     replayCatalog: ReplayCatalog;
+    surfaceCommands?: Map<string, CapturedCommand>;
+    panelScreens?: Map<string, ScreenSnapshot>;
+    panelBrowserUrls?: Map<string, string>;
 }
 
-export async function buildCommandCaptureContext(): Promise<CommandCaptureContext> {
-    const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
+export function capturedCommandsByPanelId(
+    autosave: AutosaveSession,
+    commands: Map<string, CapturedCommand>
+): Map<string, CapturedCommand> {
+    const aliases = new Map([...commands].map(([id, command]) => [id.toLowerCase(), command]));
 
+    for (const [id, panel] of panelsById(autosave)) {
+        const command =
+            (panel.stableSurfaceId ? commands.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
+            commands.get(panel.id.toLowerCase());
+
+        if (command) {
+            aliases.set(id.toLowerCase(), command);
+        }
+    }
+
+    return aliases;
+}
+
+export async function buildCommandCaptureContext(options: { commands?: boolean } = {}): Promise<CommandCaptureContext> {
+    const [ttyCommands, surfaceSessions] =
+        options.commands === false
+            ? [new Map<string, string>(), new Map<string, SurfaceSessionInfo>()]
+            : await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
+
+    let surfaceCommands = options.commands === false ? new Map<string, CapturedCommand>() : loadCapturedCommands();
     const panelTty = new Map<string, string>();
+    const panelCwd = new Map<string, string>();
+    const panelScreens = new Map<string, ScreenSnapshot>();
+    const cachedScreens = loadSavedScreens();
+    const panelBrowserUrls = new Map<string, string>();
     const grokCwds: string[] = [];
     try {
         const session = readAutosaveSession();
+        surfaceCommands = capturedCommandsByPanelId(session, surfaceCommands);
         for (const [id, panel] of panelsById(session)) {
+            const cached =
+                (panel.stableSurfaceId ? cachedScreens.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
+                cachedScreens.get(panel.id.toLowerCase());
+            const text = preferredScreenText(panel.terminal?.scrollback, cached?.text);
+            if (text) {
+                panelScreens.set(id.toLowerCase(), { text, rows: text.split("\n").length });
+            }
+
+            if (panel.browser?.urlString) {
+                panelBrowserUrls.set(id.toLowerCase(), panel.browser.urlString);
+            }
+            const surfaceSession =
+                (panel.stableSurfaceId ? surfaceSessions.get(panel.stableSurfaceId) : undefined) ??
+                surfaceSessions.get(panel.id);
+
+            if (surfaceSession) {
+                surfaceSessions.set(id.toLowerCase(), surfaceSession);
+            }
+
+            const cwd = panelWorkingDirectory(panel);
+            if (cwd) {
+                panelCwd.set(id.toLowerCase(), cwd);
+            }
             if (panel.ttyName) {
-                panelTty.set(id, panel.ttyName);
+                panelTty.set(id.toLowerCase(), panel.ttyName);
             }
         }
 
@@ -76,7 +143,16 @@ export async function buildCommandCaptureContext(): Promise<CommandCaptureContex
         logger.debug({ error }, "[snapshot] autosave unavailable — foreground command capture degraded");
     }
 
-    return { ttyCommands, panelTty, surfaceSessions, replayCatalog: { sessions: loadGrokCatalog(grokCwds) } };
+    return {
+        ttyCommands,
+        panelTty,
+        panelCwd,
+        surfaceSessions,
+        surfaceCommands,
+        panelScreens,
+        panelBrowserUrls,
+        replayCatalog: { sessions: options.commands === false ? [] : loadGrokCatalog(grokCwds) },
+    };
 }
 
 interface ListPaneSurfacesResponse {
@@ -112,7 +188,10 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
     const allWorkspaces = await collectAllWorkspaces(allWindows);
 
     const ctx = await getIdentifyContext();
-    const capture = options.captureHistory ? await buildCommandCaptureContext() : undefined;
+    const capture =
+        options.captureHistory || options.captureScreen || options.captureCwd
+            ? await buildCommandCaptureContext({ commands: options.captureHistory })
+            : undefined;
     const targetWorkspaces = filterWorkspaces(allWorkspaces, options, ctx.focusedWorkspaceRef);
     const targetWindowRefs = new Set(targetWorkspaces.map((ws) => ws.window_ref));
     const targetWindows = allWindows.filter((w) => targetWindowRefs.has(w.ref));
@@ -327,10 +406,13 @@ async function captureSurface(
     const title = entry.title ?? "";
     if (entry.type === "browser") {
         const url = await browserUrl(entry.ref);
-        return { type: "browser", title, url: url ?? undefined };
+        return {
+            type: "browser",
+            title,
+            url: url ?? (entry.id ? capture?.panelBrowserUrls?.get(entry.id.toLowerCase()) : undefined),
+        };
     }
 
-    const cwd = options.captureCwd ? cwdFromTitle(title) : undefined;
     // Skip screen capture for the surface running this very save command — its
     // visible content is dominated by the `tools cmux profiles save` invocation
     // and the running clack prompts, which would replay back into the restored
@@ -344,13 +426,63 @@ async function captureSurface(
         history: options.captureHistory,
     });
 
+    return buildTerminalSurfaceSnapshot({
+        entry,
+        captureCwd: options.captureCwd,
+        captureScreen: options.captureScreen && !isCaller,
+        captureHistory: options.captureHistory,
+        captured,
+        capture,
+    });
+}
+
+export function buildTerminalSurfaceSnapshot(input: {
+    entry: SurfaceListEntry;
+    captureCwd: boolean;
+    captureScreen?: boolean;
+    captureHistory?: boolean;
+    captured: SurfaceCaptureResult;
+    capture?: CommandCaptureContext;
+}): Surface {
+    const { entry, captureCwd, captured, capture } = input;
+    const title = entry.title ?? "";
+    const id = entry.id?.toLowerCase();
+    const journal = id ? capture?.surfaceCommands?.get(id) : undefined;
+    const fallbackScreen = id ? capture?.panelScreens?.get(id) : undefined;
+    const screen = input.captureScreen !== false ? (captured.screen ?? fallbackScreen) : undefined;
+    const cwd = captureCwd
+        ? (journal?.cwd ?? (id ? capture?.panelCwd.get(id) : undefined) ?? cwdFromTitle(title))
+        : undefined;
+
+    if (input.captureHistory === false) {
+        return { type: "terminal", title, cwd, screen };
+    }
+
+    if (journal && !isAgentLauncher(journal.command)) {
+        return {
+            type: "terminal",
+            title,
+            cwd,
+            screen,
+            command: journal.command,
+            command_source: "shell-journal",
+            drift: [
+                `exact command recovered from shell journal (${journal.phase}${journal.exitStatus !== undefined ? `, exit ${journal.exitStatus}` : ""})`,
+            ],
+        };
+    }
+
     // The foreground process on the pane's tty beats scrollback parsing: a pane
     // running a fullscreen TUI (claude, grok, vim) shows no shell prompt to parse,
     // but its launch command is right there in the process table.
-    const tty = capture && entry.id ? capture.panelTty.get(entry.id) : undefined;
+    const tty = id ? capture?.panelTty.get(id) : undefined;
     const foreground = tty ? capture?.ttyCommands.get(tty) : undefined;
-    const original = foreground ?? captured.command.value;
-    const session = capture && entry.id ? capture.surfaceSessions.get(entry.id) : undefined;
+    const textCommand = captured.command.value ? captured.command : lastCommandFromCapture(fallbackScreen?.text);
+    const original = journal?.command ?? foreground ?? textCommand.value;
+    const session =
+        capture && entry.id
+            ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
+            : undefined;
     // Always "claude": this id comes from the Claude cmux-refs journal and
     // nowhere else. Typing it from the tab title made any pane whose title ends
     // in the word "grok" (including a shell in a directory named grok) replay
@@ -365,21 +497,27 @@ async function captureSurface(
           }
         : undefined;
     const derived = replayCommandForSurface(
-        { title, cwd, command: original },
+        { title, cwd, command: original, command_source: journal ? "shell-journal" : undefined },
         capture?.replayCatalog ?? { sessions: [] },
         preferred
     );
     if (!derived.command) {
-        return { type: "terminal", title, cwd, screen: captured.screen };
+        return { type: "terminal", title, cwd, screen };
     }
 
     return {
         type: "terminal",
         title,
         cwd,
-        screen: captured.screen,
+        screen,
         command: derived.command,
-        command_source: foreground ? "foreground" : derived.command !== original ? "inferred" : captured.command.source,
+        command_source: journal
+            ? "shell-journal"
+            : foreground
+              ? "foreground"
+              : derived.command !== original
+                ? "inferred"
+                : textCommand.source,
         command_original: derived.command !== original ? original : undefined,
         drift: derived.drift.length > 0 ? derived.drift : undefined,
     };

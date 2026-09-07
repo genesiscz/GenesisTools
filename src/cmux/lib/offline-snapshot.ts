@@ -3,9 +3,20 @@ import {
     type AutosaveSession,
     type AutosaveWorkspace,
     flattenLayout,
+    panelWorkingDirectory,
     readAutosaveSession,
 } from "@app/cmux/lib/autosave";
-import { collectTtyLaunchCommands, loadSurfaceSessions, type SurfaceSessionInfo } from "@app/cmux/lib/command-capture";
+import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
+import {
+    agentKindFromLauncher,
+    collectTtyLaunchCommands,
+    deriveReplayCommand,
+    isAgentLauncher,
+    loadSurfaceSessions,
+    type SurfaceSessionInfo,
+} from "@app/cmux/lib/command-capture";
+import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "@app/cmux/lib/screen-cache";
+import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -16,8 +27,8 @@ import { logger } from "@genesiscz/utils/logger";
  * with the process table and the claude session journals. This is the rescue
  * path for a UI-thread livelock, where every socket state command starves.
  *
- * Not captured offline: visible screen contents (needs `capture-pane`) and
- * browser URLs. Both degrade gracefully on restore.
+ * Native scrollback and browser URLs are preserved when the autosave contains
+ * them. No live UI activation is required for this recovery path.
  */
 
 const DEFAULT_CELL_WIDTH_PX = 8;
@@ -27,6 +38,8 @@ export interface OfflineCaptureDeps {
     ttyCommands: Map<string, string>;
     surfaceSessions: Map<string, SurfaceSessionInfo>;
     grokSessions?: ReplayCatalogSession[];
+    surfaceCommands?: Map<string, CapturedCommand>;
+    surfaceScreens?: Map<string, SavedSurfaceScreen>;
 }
 
 export interface OfflineCaptureOptions {
@@ -47,7 +60,17 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
     const grokSessions = loadGrokCatalog(cwds);
 
-    return buildOfflineProfile(session, { ttyCommands, surfaceSessions, grokSessions }, options);
+    return buildOfflineProfile(
+        session,
+        {
+            ttyCommands,
+            surfaceSessions,
+            grokSessions,
+            surfaceCommands: loadCapturedCommands(),
+            surfaceScreens: loadSavedScreens(),
+        },
+        options
+    );
 }
 
 export function buildOfflineProfile(
@@ -110,12 +133,77 @@ export function buildOfflinePanes(
             }
 
             if (panel.type === "browser") {
-                surfaces.push({ type: "browser", title: panel.title ?? "" });
+                surfaces.push({ type: "browser", title: panel.title ?? "", url: panel.browser?.urlString });
                 continue;
             }
 
-            const original = panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined;
-            const session = deps.surfaceSessions.get(panel.id);
+            const captured =
+                (panel.stableSurfaceId ? deps.surfaceCommands?.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
+                deps.surfaceCommands?.get(panel.id.toLowerCase());
+            const cachedScreen =
+                (panel.stableSurfaceId ? deps.surfaceScreens?.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
+                deps.surfaceScreens?.get(panel.id.toLowerCase());
+            const text = preferredScreenText(panel.terminal?.scrollback, cachedScreen?.text);
+            const screen = text ? { text, rows: text.split("\n").length } : undefined;
+            const original =
+                captured?.command ??
+                (panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined) ??
+                panel.terminal?.tmuxStartCommand ??
+                lastCommandFromCapture(text).value;
+            const session =
+                deps.surfaceSessions.get(panel.id) ??
+                (panel.stableSurfaceId ? deps.surfaceSessions.get(panel.stableSurfaceId) : undefined);
+            const cwd = captured?.cwd ?? panelWorkingDirectory(panel) ?? workspace.currentDirectory;
+
+            if (captured && !isAgentLauncher(captured.command)) {
+                surfaces.push({
+                    type: "terminal",
+                    title: panel.title ?? "",
+                    screen,
+                    cwd,
+                    command: captured.command,
+                    command_source: "shell-journal",
+                    drift: [
+                        `exact command recovered from shell journal (${captured.phase}${captured.exitStatus !== undefined ? `, exit ${captured.exitStatus}` : ""})`,
+                    ],
+                });
+                continue;
+            }
+            const agent = panel.terminal?.agent;
+            const binding = panel.terminal?.resumeBinding;
+            const nativeKind = agent?.kind ?? binding?.kind;
+            const nativeSessionId = agent?.sessionId ?? binding?.checkpointId;
+            const launchArgs = agent?.launchCommand?.arguments ?? [];
+            const headless = launchArgs.some((arg) =>
+                ["-p", "--prompt", "--prompt-file", "--output-format"].includes(arg)
+            );
+            if (
+                nativeKind &&
+                nativeSessionId &&
+                !headless &&
+                (!captured || agentKindFromLauncher(captured.command) === nativeKind)
+            ) {
+                const quote = (arg: string) =>
+                    /^[a-zA-Z0-9_./:=@+-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+                const original = captured?.command ?? [nativeKind, ...launchArgs.slice(1)].map(quote).join(" ");
+                const derived = deriveReplayCommand({
+                    original,
+                    sessionId: nativeSessionId,
+                    account: session?.account,
+                });
+                surfaces.push({
+                    type: "terminal",
+                    title: panel.title ?? "",
+                    screen,
+                    cwd: captured?.cwd ?? agent?.workingDirectory ?? binding?.cwd ?? cwd,
+                    command: derived.command,
+                    command_source: captured ? "shell-journal" : "offline",
+                    command_original: captured && derived.command !== captured.command ? captured.command : undefined,
+                    resume: { kind: nativeKind, sessionId: nativeSessionId },
+                    drift: [`resume target recovered from cmux autosave (${nativeKind})`, ...derived.drift],
+                });
+                continue;
+            }
             // Always "claude": the surface-session journal only records Claude
             // sessions, so typing the kind from the tab title turned a claude
             // uuid into a `grok -r` argument on any pane whose title ends in
@@ -124,14 +212,19 @@ export function buildOfflinePanes(
                 ? {
                       kind: "claude",
                       sessionId: session.sessionId,
-                      cwd: panel.directory ?? "",
+                      cwd: cwd ?? "",
                       title: panel.title ?? "",
                       account: session.account,
                   }
                 : undefined;
 
             const derived = replayCommandForSurface(
-                { title: panel.title ?? "", cwd: panel.directory, command: original },
+                {
+                    title: panel.title ?? "",
+                    cwd,
+                    command: original,
+                    command_source: captured ? "shell-journal" : undefined,
+                },
                 { sessions: deps.grokSessions ?? [] },
                 preferred
             );
@@ -139,9 +232,10 @@ export function buildOfflinePanes(
             surfaces.push({
                 type: "terminal",
                 title: panel.title ?? "",
-                cwd: panel.directory,
+                screen,
+                cwd,
                 command: derived.command,
-                command_source: derived.command ? "offline" : undefined,
+                command_source: derived.command ? (captured ? "shell-journal" : "offline") : undefined,
                 command_original: derived.command && derived.command !== original ? original : undefined,
                 drift: derived.drift.length > 0 ? derived.drift : undefined,
             });

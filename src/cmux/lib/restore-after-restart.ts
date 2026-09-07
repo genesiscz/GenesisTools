@@ -1,6 +1,5 @@
-import { inferLauncherFromTitle } from "@app/cmux/lib/agent-replay";
-import { agentKindFromLauncher, isAgentLauncher } from "@app/cmux/lib/command-capture";
-import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
+import { agentKindFromLauncher, cleanLaunchCommand } from "@app/cmux/lib/command-capture";
+import type { Profile } from "@app/cmux/lib/types";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 
 export type RestoreRestartSource = "previous" | "live" | "profile";
@@ -48,12 +47,6 @@ export function parseAgentList(raw: string | undefined): AgentKind[] {
     return kinds;
 }
 
-function surfaceKind(surface: TerminalSurface): AgentKind | undefined {
-    return (
-        inferLauncherFromTitle(surface.title) ?? (surface.command ? agentKindFromLauncher(surface.command) : undefined)
-    );
-}
-
 /** Drop inferred resume commands for agents the user did not ask to restore. */
 export function filterReplayByAgents(profile: Profile, agents: AgentKind[]): Profile {
     const allowed = new Set(agents);
@@ -71,13 +64,27 @@ export function filterReplayByAgents(profile: Profile, agents: AgentKind[]): Pro
                             return surface;
                         }
 
-                        const kind = surfaceKind(surface);
-                        if (!kind || allowed.has(kind)) {
-                            return surface;
-                        }
-
-                        if (surface.command && isAgentLauncher(surface.command)) {
-                            return { ...surface, command: undefined, command_source: undefined };
+                        // Filter the prepared command that will actually run; the tab
+                        // title can still name an agent that ran here previously.
+                        const command = cleanLaunchCommand(surface.command ?? "").replace(
+                            /^\/\S*\/(?=(?:codex|claude|grok|tools)(?:\s|$))/,
+                            ""
+                        );
+                        const kind = agentKindFromLauncher(command);
+                        const restoresItself =
+                            /^tools\s+cmux\s+(?:restore-after-restart|profiles\s+restore)(?:\s|$)/.test(command);
+                        if (restoresItself || (kind && !allowed.has(kind))) {
+                            return {
+                                ...surface,
+                                command: undefined,
+                                command_source: undefined,
+                                command_original: surface.command,
+                                drift: [
+                                    restoresItself
+                                        ? "skipped restore command to avoid recursive restoration"
+                                        : `skipped ${kind}: agent not selected`,
+                                ],
+                            };
                         }
 
                         return surface;

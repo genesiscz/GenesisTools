@@ -30,7 +30,7 @@ export interface ReplayCatalog {
     sessions: ReplayCatalogSession[];
 }
 
-const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○]\s*/u;
+const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳⠐●○◐◑◒◓]\s*/u;
 
 export function inferLauncherFromTitle(title: string): AgentKind | undefined {
     if (/\s-\s+grok\b/i.test(title) || /\bgrok\s*$/i.test(title.trim())) {
@@ -41,7 +41,7 @@ export function inferLauncherFromTitle(title: string): AgentKind | undefined {
         return "codex";
     }
 
-    if (/^[✳⠐]/.test(title.trim())) {
+    if (/^[✳⠐◐◑◒◓]/.test(title.trim())) {
         return "claude";
     }
 
@@ -220,13 +220,18 @@ function pinnedSessionForSurface(
 }
 
 export function replayCommandForSurface(
-    surface: Pick<TerminalSurface, "title" | "cwd" | "command">,
+    surface: Pick<TerminalSurface, "title" | "cwd" | "command" | "command_source">,
     catalog: ReplayCatalog,
     preferred?: ReplayCatalogSession
 ): { command?: string; drift: string[] } {
     const captured = surface.command?.trim();
-    const launcher = inferLauncherFromTitle(surface.title);
+    const titleLauncher = inferLauncherFromTitle(surface.title);
     const capturedKind = captured ? agentKindFromLauncher(captured) : undefined;
+    const trusted = surface.command_source === "shell-journal";
+    const launcher = trusted ? capturedKind : titleLauncher;
+    if (trusted && captured && !isAgentLauncher(captured)) {
+        return { command: surface.command, drift: [] };
+    }
     // A crash capture often attributes the surviving grok tty to a Claude tab.
     // The tab title is the identity; a mismatched launcher is discarded.
     const original = captured && capturedKind && launcher && capturedKind !== launcher ? undefined : captured;
@@ -287,6 +292,16 @@ export function withInferredReplayCommands(profile: Profile, catalog: ReplayCata
                     ...pane,
                     surfaces: pane.surfaces.map((surface) => {
                         if (surface.type !== "terminal") {
+                            return surface;
+                        }
+
+                        if (
+                            (surface.resume ||
+                                (surface.command_source === "shell-journal" &&
+                                    (!isAgentLauncher(surface.command ?? "") ||
+                                        resumeTargetFromCommand(surface.command ?? "")))) &&
+                            surface.command
+                        ) {
                             return surface;
                         }
 

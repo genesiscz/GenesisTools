@@ -1,5 +1,7 @@
 import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
 import { readAutosaveSession, readPreviousAutosaveSession } from "@app/cmux/lib/autosave";
+import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
+import { loadSurfaceSessions } from "@app/cmux/lib/command-capture";
 import { renderProfileCommandDetail, renderProfileTree } from "@app/cmux/lib/format";
 import { buildOfflineProfile } from "@app/cmux/lib/offline-snapshot";
 import { buildPlan, type RestoreOptions, reportWaitingPrompts, restoreProfile } from "@app/cmux/lib/restore";
@@ -11,6 +13,7 @@ import {
     parseRestoreSource,
     type RestoreRestartSource,
 } from "@app/cmux/lib/restore-after-restart";
+import { loadSavedScreens } from "@app/cmux/lib/screen-cache";
 import { captureProfile, getCmuxVersion } from "@app/cmux/lib/snapshot";
 import { ProfileNotFoundError, ProfileStore } from "@app/cmux/lib/store";
 import type { Profile } from "@app/cmux/lib/types";
@@ -32,6 +35,7 @@ interface RestartFlags {
     list?: boolean;
     dryRun?: boolean;
     yes?: boolean;
+    window?: string;
 }
 
 const SOURCES: RestoreRestartSource[] = ["previous", "live", "profile"];
@@ -52,17 +56,27 @@ async function captureLiveProfile(): Promise<Profile> {
         const session = readAutosaveSession();
         return buildOfflineProfile(
             session,
-            { ttyCommands: new Map(), surfaceSessions: new Map() },
+            {
+                ttyCommands: new Map(),
+                surfaceSessions: new Map(),
+                surfaceCommands: loadCapturedCommands(),
+                surfaceScreens: loadSavedScreens(),
+            },
             { name: "restart-live", note: "autosave fallback for restore-after-restart" }
         );
     }
 }
 
-function capturePreviousProfile(): Profile {
+async function capturePreviousProfile(): Promise<Profile> {
     const session = readPreviousAutosaveSession();
     return buildOfflineProfile(
         session,
-        { ttyCommands: new Map(), surfaceSessions: new Map() },
+        {
+            ttyCommands: new Map(),
+            surfaceSessions: await loadSurfaceSessions({ beforeMs: session.savedAtMs }),
+            surfaceCommands: loadCapturedCommands({ beforeMs: session.savedAtMs }),
+            surfaceScreens: loadSavedScreens({ beforeMs: session.savedAtMs }),
+        },
         { name: "restart-previous", note: "previous autosave (pre-restart)" }
     );
 }
@@ -159,6 +173,7 @@ export function registerRestoreAfterRestartCommand(program: Command): void {
         .option("--enter", "Press Enter after typing each resume command")
         .option("--no-replay", "Only cd into cwd, do not type resume commands")
         .option("--prefix <str>", "Workspace name prefix (default restart-)")
+        .option("--window <ref>", "Restore into this cmux window")
         .option("--list", "Print the layout and inferred commands, then exit")
         .option("--dry-run", "Print the restore plan without modifying cmux")
         .option("-y, --yes", "Do not ask for confirmation")
@@ -238,6 +253,7 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
         enter: enter && flags.replay !== false,
         yes: Boolean(flags.yes),
         dryRun: Boolean(flags.dryRun),
+        window: flags.window,
     };
 
     const plan = buildPlan(inferred, opts);
@@ -288,13 +304,13 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
             },
         });
         spinner.stop(`Restored ${outcome.workspaces.length} workspace(s) in ${Date.now() - startedAt} ms`);
-        p.outro(pc.green("Done."));
         if (opts.enter) {
             await reportWaitingPrompts(
                 outcome.workspaces.map((w) => w.ref),
                 "Restore"
             );
         }
+        p.outro(pc.green("Done."));
     } catch (error) {
         spinner.stop("Restore failed.");
         logger.error({ error }, "[restore-after-restart] failed");

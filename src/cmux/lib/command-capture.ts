@@ -101,10 +101,12 @@ export interface SurfaceSessionInfo {
 }
 
 /** surface uuid (CMUX_SURFACE_ID) → newest known claude session + account. */
-export async function loadSurfaceSessions(): Promise<Map<string, SurfaceSessionInfo>> {
+export async function loadSurfaceSessions(
+    options: { beforeMs?: number } = {}
+): Promise<Map<string, SurfaceSessionInfo>> {
     const out = new Map<string, { sessionId: string; account?: string; at: number }>();
     try {
-        const refs = loadAllSessionCmuxRefs();
+        const refs = loadAllSessionCmuxRefs(undefined, options);
         const pins = await loadPins({ readOnly: true });
 
         for (const entry of refs.values()) {
@@ -151,10 +153,40 @@ const CC_RUN_LAUNCHER = /^tools (?:cc|claude) run(?![\w-])/;
 const GROK_LAUNCHER = /^grok(?![\w-])/;
 const CODEX_LAUNCHER = /^codex(?![\w-])/;
 
+function isSimpleAgentCommand(command: string): boolean {
+    let quote: string | undefined;
+    for (let index = 0; index < command.length; index++) {
+        const char = command[index];
+        if (char === "\n" || char === "\r" || char === "`" || (char === "$" && command[index + 1] === "(")) {
+            return false;
+        }
+
+        if (char === "\\" && quote !== "'") {
+            index++;
+            continue;
+        }
+
+        if (quote) {
+            if (char === quote) {
+                quote = undefined;
+            }
+        } else if (char === "'" || char === '"') {
+            quote = char;
+        } else if (/[;&|<>()#]/.test(char)) {
+            return false;
+        }
+    }
+
+    return quote === undefined;
+}
+
 export function isAgentLauncher(command: string): boolean {
     const trimmed = command.trim();
 
-    return CLAUDE_LAUNCHER.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed);
+    return (
+        isSimpleAgentCommand(command) &&
+        (CLAUDE_LAUNCHER.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed))
+    );
 }
 
 export function agentKindFromLauncher(command: string): "claude" | "grok" | "codex" | undefined {
@@ -389,8 +421,8 @@ export function deriveReplayCommand(input: {
     account?: string;
 }): ReplayDerivation {
     const original = input.original.trim();
-    if (!input.sessionId) {
-        return { command: original, drift: [] };
+    if (!input.sessionId || !isAgentLauncher(input.original)) {
+        return { command: input.original, drift: [] };
     }
 
     if (GROK_LAUNCHER.test(original)) {

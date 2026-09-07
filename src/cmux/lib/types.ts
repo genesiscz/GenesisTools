@@ -2,7 +2,7 @@ export const PROFILE_VERSION = 1;
 
 export type ProfileScope = "all" | "window" | "workspace";
 
-export type CommandSource = "scrollback" | "foreground" | "offline" | "manual" | "inferred" | "none";
+export type CommandSource = "scrollback" | "foreground" | "offline" | "shell-journal" | "manual" | "inferred" | "none";
 
 export interface ScreenSnapshot {
     /** Raw rendered text returned by `cmux capture-pane` at save time. ANSI-stripped. */
@@ -41,6 +41,8 @@ export interface TerminalSurface {
      */
     command?: string;
     command_source?: CommandSource;
+    /** Exact native autosave binding; survives title-based inference on later restores. */
+    resume?: { kind: "claude" | "grok" | "codex"; sessionId: string };
     /**
      * The command as originally captured, before any enrichment (account added,
      * `-- --resume <sessionId>` appended). Present only when `command` differs.

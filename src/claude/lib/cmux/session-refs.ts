@@ -45,7 +45,7 @@ const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const MAX_JOURNAL_READ_BYTES = 512 * 1024;
 
-function readJournalTail(refsPath: string): string | null {
+function readJournalTail(refsPath: string, historical: boolean = false): string | null {
     if (!existsSync(refsPath)) {
         return null;
     }
@@ -53,7 +53,7 @@ function readJournalTail(refsPath: string): string | null {
     try {
         const size = statSync(refsPath).size;
 
-        if (size <= MAX_JOURNAL_READ_BYTES) {
+        if (historical || size <= MAX_JOURNAL_READ_BYTES) {
             return readFileSync(refsPath, "utf8");
         }
 
@@ -85,15 +85,18 @@ function readJournalTail(refsPath: string): string | null {
  * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
  * Terminal/tmux launches) are kept — callers that need a cmux target filter.
  */
-export function loadAllSessionCmuxRefs(refsPath: string = CMUX_REFS_PATH): Map<string, SessionCmuxRefs> {
+export function loadAllSessionCmuxRefs(
+    refsPath: string = CMUX_REFS_PATH,
+    options: { beforeMs?: number } = {}
+): Map<string, SessionCmuxRefs> {
     const refs = new Map<string, SessionCmuxRefs>();
-    const raw = readJournalTail(refsPath);
+    const raw = readJournalTail(refsPath, options.beforeMs !== undefined);
 
     if (raw === null) {
         return refs;
     }
 
-    const cutoff = Date.now() - MAX_AGE_MS;
+    const cutoff = (options.beforeMs ?? Date.now()) - MAX_AGE_MS;
 
     for (const line of raw.split("\n")) {
         if (!line.trim()) {
@@ -114,6 +117,10 @@ export function loadAllSessionCmuxRefs(refsPath: string = CMUX_REFS_PATH): Map<s
         }
 
         if (typeof entry.sessionId !== "string" || (entry.at ?? 0) < cutoff) {
+            continue;
+        }
+
+        if (options.beforeMs !== undefined && entry.at > options.beforeMs) {
             continue;
         }
 

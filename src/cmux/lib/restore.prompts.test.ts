@@ -19,6 +19,17 @@ describe("detectInteractivePrompt", () => {
         expect(detectInteractivePrompt(screen)).toContain("verify the highlighted session");
     });
 
+    // Regression test: 2026-09-07 live audit — failed resumes and cwd dialogs were reported as clear.
+    test.each([
+        ["ERROR: No saved session found with ID example", "resume failed"],
+        ["No conversation found with session ID: example", "resume failed"],
+        ["thread example already has an active writer (code -32600)", "already running"],
+        ["1. Use session directory (/tmp/project)\n2. Use current directory (/tmp/other)", "directory-choice"],
+        ["cmdand quote> %s%s", "shell continuation"],
+    ])("reports unresolved terminal state: %s", (screen, label) => {
+        expect(detectInteractivePrompt(screen)).toContain(label);
+    });
+
     test("returns undefined for a busy claude pane", () => {
         const screen = "✳ Cooking… (2m 3s · ↓ 1.2k tokens)\n  ⏵⏵ bypass permissions on";
         expect(detectInteractivePrompt(screen)).toBeUndefined();
@@ -50,4 +61,11 @@ describe("formatWaitingPanes", () => {
         expect(restore.slice(0, -1)).toEqual(rescue.slice(0, -1));
         expect(restore.at(-1)).toBe("  Restore does not auto-confirm these; answer each pane yourself.");
     });
+});
+
+// Regression test: 2026-09-07 panel audit — Codex is waiting before its session starts.
+test("reports the Codex directory trust prompt", () => {
+    expect(
+        detectInteractivePrompt("Do you trust the contents of this directory?\n1. Yes, continue\n2. No, quit")
+    ).toContain("directory-trust");
 });

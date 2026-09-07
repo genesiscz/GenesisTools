@@ -87,4 +87,38 @@ describe("filterReplayByAgents", () => {
         expect(surfaces[0] && surfaces[0].type === "terminal" ? surfaces[0].command : "missing").toBeUndefined();
         expect(surfaces[1] && surfaces[1].type === "terminal" ? surfaces[1].command : "missing").toContain("claude");
     });
+
+    test("the actual executable wins over a stale grok title", () => {
+        const input = structuredClone(profile);
+        input.windows[0].workspaces[0].panes[0].surfaces = [
+            {
+                type: "terminal",
+                title: "Old task - grok",
+                command: "/opt/homebrew/bin/codex resume test-session",
+                command_source: "foreground",
+            },
+        ];
+        const filtered = filterReplayByAgents(input, ["grok"]);
+        expect(filtered.windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({ command: undefined });
+        expect(filterReplayByAgents(input, ["codex"]).windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
+            command: "/opt/homebrew/bin/codex resume test-session",
+        });
+    });
+
+    test("never replays the restore command itself but retains other shell commands", () => {
+        const input = structuredClone(profile);
+        input.windows[0].workspaces[0].panes[0].surfaces = [
+            {
+                type: "terminal",
+                title: "Restore",
+                command: "tools cmux restore-after-restart --enter -y",
+                command_source: "foreground",
+            },
+            { type: "terminal", title: "Logs", command: "tail -f app.log", command_source: "foreground" },
+        ];
+        const surfaces = filterReplayByAgents(input, ["claude", "grok", "codex"]).windows[0].workspaces[0].panes[0]
+            .surfaces;
+        expect(surfaces[0]).toMatchObject({ command: undefined });
+        expect(surfaces[1]).toMatchObject({ command: "tail -f app.log" });
+    });
 });

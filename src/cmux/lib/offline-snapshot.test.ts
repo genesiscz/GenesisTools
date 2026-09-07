@@ -48,6 +48,89 @@ describe("flattenLayout", () => {
 });
 
 describe("buildOfflinePanes", () => {
+    test("uses stable surface journal IDs and terminal cwd even when the title is not a path", () => {
+        const ws = workspaceFixture();
+        ws.panels[0] = {
+            id: "a",
+            stableSurfaceId: "stable-a",
+            type: "terminal",
+            title: "✳ session",
+            terminal: { workingDirectory: "/tmp/project" },
+        };
+        const panes = buildOfflinePanes(ws, FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map([
+                ["stable-a", { sessionId: "11111111-aaaa-bbbb-cccc-222222222222", account: "work" }],
+            ]),
+        });
+        expect(panes[0].surfaces[0]).toMatchObject({
+            cwd: "/tmp/project",
+            command: expect.stringContaining("11111111-aaaa-bbbb-cccc-222222222222"),
+        });
+    });
+
+    test("restores native session metadata despite an uninformative title", () => {
+        const ws = workspaceFixture();
+        ws.panels[0] = {
+            id: "a",
+            type: "terminal",
+            title: "project",
+            directory: "/tmp/project",
+            terminal: {
+                agent: {
+                    kind: "codex",
+                    sessionId: "11111111-aaaa-bbbb-cccc-222222222222",
+                    launchCommand: { arguments: ["/opt/bin/codex", "--sandbox", "workspace-write"] },
+                },
+            },
+        };
+        const panes = buildOfflinePanes(ws, FRAME, { ttyCommands: new Map(), surfaceSessions: new Map() });
+        const surface = panes[0].surfaces[0];
+        expect(surface.type === "terminal" && surface.command).toContain("resume 11111111-aaaa-bbbb-cccc-222222222222");
+        expect(surface.type === "terminal" && surface.command).toContain("--sandbox workspace-write");
+    });
+
+    // Regression test: cmux restart verification, 2026-09-07 — agent cwd differs from the shell cwd.
+    test.each([
+        { agentCwd: "/tmp/agent-project", bindingCwd: "/tmp/binding-project", expected: "/tmp/agent-project" },
+        { agentCwd: undefined, bindingCwd: "/tmp/binding-project", expected: "/tmp/binding-project" },
+    ])("resumes native agents in their recorded directory: $expected", ({ agentCwd, bindingCwd, expected }) => {
+        const ws = workspaceFixture();
+        ws.panels[0].terminal = {
+            agent: {
+                kind: "codex",
+                sessionId: "11111111-aaaa-bbbb-cccc-222222222222",
+                workingDirectory: agentCwd,
+            },
+            resumeBinding: {
+                kind: "codex",
+                checkpointId: "11111111-aaaa-bbbb-cccc-222222222222",
+                cwd: bindingCwd,
+            },
+        };
+        const panes = buildOfflinePanes(ws, FRAME, { ttyCommands: new Map(), surfaceSessions: new Map() });
+        expect(panes[0].surfaces[0]).toMatchObject({ cwd: expected });
+    });
+
+    test("restores native resume bindings when the agent record is absent", () => {
+        const ws = workspaceFixture();
+        ws.panels[0] = {
+            id: "a",
+            type: "terminal",
+            title: "project",
+            directory: "/tmp/project",
+            terminal: {
+                resumeBinding: {
+                    kind: "codex",
+                    checkpointId: "11111111-aaaa-bbbb-cccc-222222222222",
+                    cwd: "/tmp/project",
+                },
+            },
+        };
+        expect(
+            buildOfflinePanes(ws, FRAME, { ttyCommands: new Map(), surfaceSessions: new Map() })[0].surfaces[0]
+        ).toMatchObject({ command: "codex resume 11111111-aaaa-bbbb-cccc-222222222222" });
+    });
     test("groups tabs per pane, keeps selection, joins commands via tty and enriches claude launchers", () => {
         const ws = workspaceFixture();
         const panes = buildOfflinePanes(ws, FRAME, {
@@ -124,4 +207,59 @@ describe("buildOfflinePanes", () => {
             expect(surface.command_source).toBe("offline");
         }
     });
+});
+
+test("offline recovery retains native terminal scrollback and a browser URL", () => {
+    const panes = buildOfflinePanes(
+        {
+            layout: { type: "pane", pane: { panelIds: ["shell", "web"], selectedPanelId: "shell" } },
+            panels: [
+                {
+                    id: "shell",
+                    type: "terminal",
+                    title: "Logs",
+                    directory: "/tmp/project",
+                    terminal: { scrollback: "➜  project tail -f app.log\nservice ready\n" },
+                },
+                { id: "web", type: "browser", title: "Reference", browser: { urlString: "https://example.test/docs" } },
+            ],
+        },
+        FRAME,
+        { ttyCommands: new Map(), surfaceSessions: new Map() }
+    );
+    expect(panes[0].surfaces[0]).toMatchObject({
+        screen: { text: "➜  project tail -f app.log\nservice ready", rows: 2 },
+        command: "tail -f app.log",
+    });
+    expect(panes[0].surfaces[1]).toMatchObject({ type: "browser", url: "https://example.test/docs" });
+});
+
+test("offline recovery finds cached viewport by persisted identity after a panel move", () => {
+    const panes = buildOfflinePanes(
+        {
+            layout: { type: "pane", pane: { panelIds: ["new-panel"] } },
+            panels: [
+                {
+                    id: "new-panel",
+                    stableSurfaceId: "22222222-2222-4222-8222-222222222222",
+                    type: "terminal",
+                    title: "Monitor",
+                    directory: "/tmp/project",
+                    terminal: { scrollback: "\u001b[0m  \n" },
+                },
+            ],
+        },
+        FRAME,
+        {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            surfaceScreens: new Map([
+                [
+                    "22222222-2222-4222-8222-222222222222",
+                    { surfaceId: "11111111-1111-4111-8111-111111111111", text: "CPU 2%\nMemory 40 MiB", atMs: 10 },
+                ],
+            ]),
+        }
+    );
+    expect(panes[0].surfaces[0]).toMatchObject({ screen: { text: "CPU 2%\nMemory 40 MiB", rows: 2 } });
 });

@@ -1,7 +1,38 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as cli from "@genesiscz/utils/cmux/lib/cli";
 import * as socket from "@genesiscz/utils/cmux/lib/socket";
 
 describe("cmux socket RPC params", () => {
+    test("paneList uses the workspace-scoped CLI and preserves geometry", async () => {
+        const layout = {
+            workspace_ref: "workspace:5",
+            window_ref: "window:2",
+            panes: [],
+            container_frame: { width: 100, height: 80 },
+        };
+        const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue(layout);
+        const rpcSpy = spyOn(socket, "rpc").mockResolvedValue({ ...layout, workspace_ref: "workspace:1" });
+        try {
+            expect(await socket.paneList("workspace:5")).toEqual(layout);
+            expect(cliSpy).toHaveBeenCalledWith(["list-panes", "--workspace", "workspace:5"]);
+            expect(rpcSpy).not.toHaveBeenCalled();
+        } finally {
+            cliSpy.mockRestore();
+            rpcSpy.mockRestore();
+        }
+    });
+
+    test("paneList rejects a response for another workspace", async () => {
+        const layout = { workspace_ref: "workspace:1", panes: [] };
+        const cliSpy = spyOn(cli, "runCmuxJSON").mockResolvedValue(layout);
+        const rpcSpy = spyOn(socket, "rpc").mockResolvedValue(layout);
+        try {
+            await expect(socket.paneList("workspace:5")).rejects.toThrow("workspace:1");
+        } finally {
+            cliSpy.mockRestore();
+            rpcSpy.mockRestore();
+        }
+    });
     afterEach(() => {
         socket.resetSocketPathCache();
     });

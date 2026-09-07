@@ -3,9 +3,18 @@ import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { lookupSessionCmuxRefs } from "./session-refs";
+import { loadAllSessionCmuxRefs, lookupSessionCmuxRefs } from "./session-refs";
 
 const SESSION = "7a4630a0-6834-47a1-a5b5-d3b3bbae58f9";
+
+test("historical lookup retains the pane before restart instead of a later resumed copy", () => {
+    const beforeMs = Date.now() - 1000;
+    const path = journal([
+        entry({ surfaceId: "original", at: beforeMs - 1 }),
+        entry({ surfaceId: "copy", at: beforeMs + 1 }),
+    ]);
+    expect(loadAllSessionCmuxRefs(path, { beforeMs }).get(SESSION)?.surfaceId).toBe("original");
+});
 
 function journal(lines: object[]): string {
     const dir = mkdtempSync(join(tmpdir(), "cmux-refs-"));

@@ -163,3 +163,14 @@ export async function runCmuxOk(args: string[], opts: CmuxTimeoutOpt = {}): Prom
     }
     return result;
 }
+
+/** Send shell code verbatim; `cmux send` interprets backslash escapes as keystrokes. */
+export async function sendSurfaceText({
+    surfaceRef,
+    text,
+}: {
+    surfaceRef: string;
+    text: string;
+}): Promise<CmuxRunResult> {
+    return runCmuxOk(["rpc", "surface.send_text", SafeJSON.stringify({ surface_id: surfaceRef, text })]);
+}

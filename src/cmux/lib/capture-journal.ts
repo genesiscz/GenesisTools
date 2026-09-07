@@ -1,0 +1,137 @@
+import {
+    closeSync,
+    existsSync,
+    fsyncSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    writeFileSync,
+    writeSync,
+} from "node:fs";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { z } from "zod";
+
+const MAX_JOURNAL_BYTES = 1024 * 1024;
+const recordSchema = z.object({
+    version: z.literal(1),
+    surfaceId: z.string().uuid(),
+    stableSurfaceId: z.string().uuid().optional(),
+    workspaceId: z.string().uuid().optional(),
+    command: z.string().min(1).max(65536),
+    cwd: z.string().startsWith("/"),
+    phase: z.enum(["running", "completed"]),
+    exitStatus: z.number().int().min(0).max(255).optional(),
+    atMs: z.number().finite().nonnegative(),
+});
+
+export type CapturedCommand = z.infer<typeof recordSchema>;
+
+export function captureJournalDirectory(): string {
+    return join(env.tools.getHome(), ".genesis-tools", "cmux", "command-journal");
+}
+
+/** One owning shell per surface writes synchronously before the command starts. */
+export function recordCapturedCommand(
+    input: Omit<CapturedCommand, "version" | "atMs"> & {
+        atMs?: number;
+        directory?: string;
+    }
+): void {
+    const record = recordSchema.parse({ ...input, version: 1, atMs: input.atMs ?? Date.now() });
+    record.surfaceId = record.surfaceId.toLowerCase();
+    record.stableSurfaceId = record.stableSurfaceId?.toLowerCase();
+    const directory = input.directory ?? captureJournalDirectory();
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (record.stableSurfaceId) {
+        associateCapturedSurface({ directory, surfaceId: record.surfaceId, stableSurfaceId: record.stableSurfaceId });
+    }
+    const path = join(directory, `${record.stableSurfaceId ?? record.surfaceId}.jsonl`);
+    const encoded = `${SafeJSON.stringify(record)}\n`;
+
+    if (existsSync(path) && statSync(path).size + Buffer.byteLength(encoded) > MAX_JOURNAL_BYTES) {
+        renameSync(path, `${path}.previous`);
+    }
+
+    const fd = openSync(path, "a", 0o600);
+    try {
+        writeSync(fd, encoded);
+        fsyncSync(fd);
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/** Cutoff prevents a reused surface from leaking a post-restart command into an old autosave. */
+export function loadCapturedCommands(
+    options: { directory?: string; beforeMs?: number } = {}
+): Map<string, CapturedCommand> {
+    const directory = options.directory ?? captureJournalDirectory();
+    const records = new Map<string, CapturedCommand>();
+
+    if (!existsSync(directory)) {
+        return records;
+    }
+
+    for (const name of readdirSync(directory)
+        .filter((name) => /^[a-f\d-]+\.jsonl(?:\.previous)?$/.test(name))
+        .sort()
+        .reverse()) {
+        const path = join(directory, name);
+        try {
+            for (const line of readFileSync(path, "utf8").split("\n")) {
+                if (!line) {
+                    continue;
+                }
+
+                try {
+                    const record = recordSchema.parse(SafeJSON.parse(line, { strict: true }));
+                    const alias = join(directory, `${record.surfaceId.toLowerCase()}.identity`);
+                    const storedIdentity =
+                        !record.stableSurfaceId && existsSync(alias)
+                            ? z.string().uuid().safeParse(readFileSync(alias, "utf8").trim())
+                            : undefined;
+                    const stableId =
+                        record.stableSurfaceId ?? (storedIdentity?.success ? storedIdentity.data : undefined);
+                    for (const id of [stableId, record.surfaceId]) {
+                        if (!id) {
+                            continue;
+                        }
+
+                        const key = id.toLowerCase();
+                        const prior = records.get(key);
+                        if (record.atMs <= (options.beforeMs ?? Infinity) && (!prior || record.atMs >= prior.atMs)) {
+                            records.set(key, record);
+                        }
+                    }
+                } catch (error) {
+                    logger.warn({ error, path }, "[cmux-capture] ignored invalid command journal entry");
+                }
+            }
+        } catch (error) {
+            logger.warn({ error, path }, "[cmux-capture] could not read command journal");
+        }
+    }
+
+    return records;
+}
+
+export function associateCapturedSurface(input: {
+    directory?: string;
+    surfaceId: string;
+    stableSurfaceId: string;
+}): void {
+    const surfaceId = z.string().uuid().parse(input.surfaceId).toLowerCase();
+    const stableId = z.string().uuid().parse(input.stableSurfaceId).toLowerCase();
+    const directory = input.directory ?? captureJournalDirectory();
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const alias = join(directory, `${surfaceId}.identity`);
+    if (!existsSync(alias) || readFileSync(alias, "utf8") !== stableId) {
+        writeFileSync(alias, stableId, { mode: 0o600 });
+    }
+}

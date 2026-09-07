@@ -2,6 +2,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { registerCaptureLifecycleCommands } from "@app/cmux/commands/capture-install";
 import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
@@ -36,6 +37,10 @@ program
     .description("Shell enhancement manager with toggleable features")
     .version("1.0.0")
     .showHelpAfterError(true);
+
+registerCaptureLifecycleCommands(
+    program.command("cmux").description("Install and inspect durable cmux command capture")
+);
 
 program
     .command("install")
