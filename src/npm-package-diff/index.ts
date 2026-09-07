@@ -398,8 +398,9 @@ class EnhancedPackageComparison {
 
         // Auto-detect based on lock files
         const cwd = process.cwd();
-        if (fs.existsSync(path.join(cwd, "bun.lockb"))) {
-            logger.debug("Detected bun from bun.lockb");
+        // bun 1.2+ writes the text lockfile `bun.lock`; `bun.lockb` is the older binary one.
+        if (fs.existsSync(path.join(cwd, "bun.lock")) || fs.existsSync(path.join(cwd, "bun.lockb"))) {
+            logger.debug("Detected bun from bun.lock / bun.lockb");
             return "bun";
         }
         if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) {

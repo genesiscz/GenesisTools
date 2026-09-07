@@ -9,7 +9,7 @@ Fix all TypeScript compilation errors systematically using a 4-phase workflow. Z
 
 ## Phase 1: Discovery
 
-1. Detect the package manager (check for `package-lock.json`, `yarn.lock`, `bun.lockb`, `pnpm-lock.yaml`).
+1. Detect the package manager (check for `package-lock.json`, `yarn.lock`, `bun.lock` or `bun.lockb`, `pnpm-lock.yaml`).
 2. Run the TypeScript compiler with a 1-2 minute timeout, redirecting output to a log file:
    ```
    tsgo --noEmit 2>&1 | tee tsc-<YYYY-MM-DD-HHmmss>.log
