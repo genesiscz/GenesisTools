@@ -353,9 +353,12 @@ export class Storage {
             mkdirSync(dir, { recursive: true });
         }
 
-        // Save raw JSON without metadata wrapper
-        const content = SafeJSON.stringify(data, null, 2);
-        await Bun.write(filePath, content);
+        // Temp-then-rename, not a direct write. Readers of these files (the poll
+        // gate, the per-provider snapshot cache) take no lock, and an in-place
+        // truncate publishes the prefix of a document to every one of them. The
+        // parse then fails and `getCacheFile` answers null, which callers read as
+        // "nothing cached" rather than as the corruption it is.
+        this.atomicWrite(filePath, SafeJSON.stringify(data, null, 2));
         logger.debug(`Cache written: ${filePath}`);
     }
 
@@ -377,7 +380,13 @@ export class Storage {
         try {
             const content = await Bun.file(filePath).text();
             return SafeJSON.parse(content) as T;
-        } catch {
+        } catch (error) {
+            // "Not cached" and "cached but unreadable" are the same answer to the
+            // caller, so the difference has to live in the log or it lives nowhere.
+            logger.warn(
+                { err: error, filePath },
+                "[storage] cache file exists but could not be read; treating as absent"
+            );
             return null;
         }
     }

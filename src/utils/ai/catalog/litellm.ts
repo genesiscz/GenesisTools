@@ -3,7 +3,17 @@ import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
 import type { ModelPricing } from "./types";
 
-const storage = new Storage("ask");
+/**
+ * Resolved LAZILY, like `securityStorage()`. A module-level `new Storage("ask")`
+ * captures the root at IMPORT time, before any test sets `GENESIS_TOOLS_HOME`, so
+ * the pricing cache was written into the user's REAL ~/.genesis-tools during
+ * `bun test` — the exact shape `real-home-guard.ts` exists to catch. It stayed
+ * invisible because `putCacheFile` wrote with `Bun.write`, which bypasses the
+ * guard; routing cache writes through the atomic path made it fail loudly.
+ */
+function storage(): Storage {
+    return new Storage("ask");
+}
 
 export const LITELLM_PRICING_URL =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -218,7 +228,7 @@ export class LiteLLMPricingFetcher {
         }
 
         try {
-            const data = await storage.getFileOrPut<Record<string, unknown>>(
+            const data = await storage().getFileOrPut<Record<string, unknown>>(
                 "litellm-pricing.json",
                 async () => {
                     this.logInfo("Fetching latest model pricing from LiteLLM...");

@@ -55,16 +55,34 @@ export function runMigrations(
 
     for (const m of migrations) {
         const scopedId = `${ctx.tableName}:${m.id}`;
-        const wasApplied = m.isApplied ? m.isApplied(db, ctx) : isAppliedDefault(db, scopedId);
+        const isApplied = () => (m.isApplied ? m.isApplied(db, ctx) : isAppliedDefault(db, scopedId));
 
-        if (wasApplied) {
+        if (isApplied()) {
             skipped.push(m.id);
             continue;
         }
 
         const start = performance.now();
-        db.run("BEGIN");
+        // IMMEDIATE, not a bare BEGIN. A deferred transaction takes its read
+        // snapshot on the first read and then fails with SQLITE_BUSY_SNAPSHOT the
+        // moment it upgrades to a write, if any other connection committed in
+        // between — and SQLite does NOT call the busy handler for that upgrade, so
+        // `busy_timeout` cannot absorb it. Four processes open this store (the
+        // 30s daemon, the TUI, the dev-dashboard, the ai-proxy) and each migrates
+        // on a read-write open, so that race is a normal Tuesday here.
+        db.run("BEGIN IMMEDIATE");
+
         try {
+            // Re-check now that the write lock is ours. The check above is
+            // unsynchronised: two processes both answered "not applied", and the
+            // loser re-ran DDL the winner had already committed, which surfaces as
+            // a hard `duplicate column name` on an ordinary start.
+            if (isApplied()) {
+                db.run("ROLLBACK");
+                skipped.push(m.id);
+                continue;
+            }
+
             m.apply(db, ctx);
             const ms = Math.round(performance.now() - start);
             db.run(`INSERT OR REPLACE INTO ${MIGRATIONS_TABLE} (id, applied_at, ms) VALUES (?, ?, ?)`, [
@@ -78,9 +96,13 @@ export function runMigrations(
         } catch (err) {
             try {
                 db.run("ROLLBACK");
-            } catch {
-                // Transaction may already have been rolled back by SQLite after a DDL failure.
+            } catch (rollbackErr) {
+                // Expected when SQLite already rolled the transaction back after a
+                // DDL failure. Logged rather than dropped, so a rollback that fails
+                // for any OTHER reason is not invisible.
+                logger.debug({ err: rollbackErr, migration: scopedId }, "[migrate] rollback after a failed migration");
             }
+
             throw err;
         }
     }

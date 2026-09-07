@@ -9,6 +9,19 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
 const ORPHANED_PID_RECHECK_MS = 100;
 
+/**
+ * Wait budget for a lock whose HOLDER runs a network call inside it, rather than
+ * a plain config edit.
+ *
+ * `DEFAULT_TIMEOUT_MS` was sized for the edit case, so a token refresh holding the
+ * config lock across its HTTP round trip timed every other caller out (observed
+ * 2026-09-06: nine accounts, one DNS outage, `LockTimeoutError` on every account
+ * but the first). Every refresh path that takes the config lock passes this, and
+ * bounds its own request with a deadline that fits inside it — an unbounded
+ * request would make any wait budget meaningless.
+ */
+export const NETWORKED_LOCK_WAIT_MS = 60_000;
+
 export class LockTimeoutError extends Error {
     constructor(lockPath: string, timeout: number) {
         super(`Failed to acquire file lock at ${lockPath} within ${timeout}ms. Another process may be holding it.`);
@@ -77,8 +90,12 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
 
         try {
             await unlink(tempPath);
-        } catch {
-            // best-effort cleanup
+        } catch (err) {
+            // Best effort, but never silent: this temp path ends in a random
+            // suffix, so `sweepStaleLocks` (which matches .lock/.login) never
+            // reaps it, and a leaked one sits in ~/.genesis-tools forever with
+            // nothing on record to explain it.
+            logger.debug({ err, tempPath }, "steal temp file left behind after a failed steal");
         }
 
         return false;
@@ -95,8 +112,10 @@ export async function attemptRenameSteal(lockPath: string, expectedContent: stri
     } finally {
         try {
             await unlink(tempPath);
-        } catch {
-            // best-effort cleanup; ENOENT if somehow already gone
+        } catch (err) {
+            // ENOENT if somehow already gone. Logged for the same reason as
+            // above: nothing sweeps this path by name.
+            logger.debug({ err, tempPath }, "steal temp file left behind after claiming the lock");
         }
     }
 

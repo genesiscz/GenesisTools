@@ -1,6 +1,27 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getPendingMigrations, type Migration, runMigrations } from "./migrations";
+
+/** Two handles on ONE file, configured the way `BaseDatabase` configures them. */
+function twoConnections(): { mine: Database; other: Database } {
+    const file = join(mkdtempSync(join(tmpdir(), "gt-migrations-")), "index.db");
+    const mine = new Database(file);
+    const other = new Database(file);
+
+    for (const db of [mine, other]) {
+        db.exec("PRAGMA journal_mode = WAL;");
+        db.exec("PRAGMA busy_timeout = 2000;");
+    }
+
+    return { mine, other };
+}
+
+function columnNames(db: Database, table: string): Set<string> {
+    return new Set((db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name));
+}
 
 const noopMigration: Migration = {
     id: "noop",
@@ -100,6 +121,72 @@ describe("runMigrations", () => {
         expect(row.applied_at).toBeLessThanOrEqual(after);
         expect(typeof row.ms).toBe("number");
         db.close();
+    });
+
+    /**
+     * The daemon, the TUI, the dev-dashboard and the ai-proxy all open the limits
+     * store, and each applies `USAGE_LIMITS_MIGRATIONS` on a read-write open. The
+     * applied-check ran OUTSIDE the transaction, so two processes both answered
+     * "not applied" and the loser then re-ran DDL the winner had already
+     * committed — a hard `duplicate column name` on an ordinary daemon start.
+     */
+    it("skips a migration another connection committed while we waited for the write lock", () => {
+        const { mine, other } = twoConnections();
+        mine.exec("CREATE TABLE t (x INTEGER)");
+
+        let applyCalls = 0;
+        let raced = false;
+        const m: Migration = {
+            id: "add-y",
+            description: "add the y column",
+            isApplied(db) {
+                const applied = columnNames(db, "t").has("y");
+
+                if (!applied && !raced) {
+                    raced = true;
+                    // The other process wins the race, right here.
+                    other.exec("ALTER TABLE t ADD COLUMN y INTEGER");
+                }
+
+                return applied;
+            },
+            apply(db) {
+                applyCalls++;
+                db.exec("ALTER TABLE t ADD COLUMN y INTEGER");
+            },
+        };
+
+        const result = runMigrations(mine, [m], { tableName: "usage_limits" });
+
+        expect(applyCalls).toBe(0);
+        expect(result.applied).toEqual([]);
+        expect(result.skipped).toEqual(["add-y"]);
+        expect([...columnNames(mine, "t")]).toEqual(["x", "y"]);
+        mine.close();
+        other.close();
+    });
+
+    // NEGATIVE CONTROL: taking the write lock up front must not stop an
+    // unraced migration from applying and committing on a real file with a
+    // second connection open on it.
+    it("still applies and commits a migration nobody else touched", () => {
+        const { mine, other } = twoConnections();
+        mine.exec("CREATE TABLE t (x INTEGER)");
+
+        const m: Migration = {
+            id: "add-z",
+            description: "add the z column",
+            apply(db) {
+                db.exec("ALTER TABLE t ADD COLUMN z INTEGER");
+            },
+        };
+
+        expect(runMigrations(mine, [m], { tableName: "usage_limits" }).applied).toEqual(["add-z"]);
+        // Committed, so the other connection sees it too.
+        expect(columnNames(other, "t").has("z")).toBe(true);
+        expect(other.query("SELECT id FROM _migrations WHERE id = 'usage_limits:add-z'").get()).not.toBeNull();
+        mine.close();
+        other.close();
     });
 
     it("rolls back migration DDL when apply throws", () => {

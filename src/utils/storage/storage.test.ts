@@ -218,3 +218,54 @@ describe("atomicWriteFileSync mode", () => {
         expect(statSync(target).mode & 0o777).toBe(0o644);
     });
 });
+
+/**
+ * The poll gate and the per-provider snapshot cache are written with
+ * `putCacheFile` from one process while three others read them with
+ * `getCacheFile`, and no reader takes the file lock. `Bun.write` truncates the
+ * destination in place, so a reader can catch the prefix of a document; the
+ * parse then throws, `getCacheFile` answers `null`, and the caller reads that as
+ * "nothing cached" — the gate loses every account's backoff for that round with
+ * no error anywhere. `legacy-cache.ts` already documents `putCacheFile` as the
+ * non-atomic one; this closes it.
+ */
+describe("Storage cache writes", () => {
+    let home: string;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "storage-cache-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+    });
+
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("replaces a cache file by rename rather than truncating it in place", async () => {
+        const storage = new Storage("cache-tool");
+        const path = join(storage.getCacheDir(), "poll-gate.json");
+
+        await storage.putCacheFile("poll-gate.json", { accounts: { work: 1 } }, "1 hour");
+        const before = statSync(path).ino;
+
+        await storage.putCacheFile("poll-gate.json", { accounts: { work: 2, personal: 3 } }, "1 hour");
+
+        // A new inode is the observable proof of temp-then-rename: an in-place
+        // rewrite keeps the same one, and that is the window a reader falls into.
+        expect(statSync(path).ino).not.toBe(before);
+    });
+
+    // NEGATIVE CONTROL: the round trip still works, and no temp file is orphaned
+    // beside the cache entry.
+    it("round-trips the payload and leaves no temp file behind", async () => {
+        const storage = new Storage("cache-tool");
+
+        await storage.putCacheFile("poll-gate.json", { accounts: { work: 2 } }, "1 hour");
+
+        const read = await storage.getCacheFile<{ accounts: Record<string, number> }>("poll-gate.json", "1 hour");
+
+        expect(read).toEqual({ accounts: { work: 2 } });
+        expect(readdirSync(storage.getCacheDir())).toEqual(["poll-gate.json"]);
+    });
+});
