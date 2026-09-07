@@ -19,6 +19,13 @@ export interface SqliteVecVectorStoreConfig {
 /** Max bind parameters per SQL IN(...) clause */
 const SQL_BATCH_SIZE = 500;
 
+/**
+ * sqlite-vec refuses `k` above this ("k value in knn query too large, provided N and the limit is 4096").
+ * The hybrid path over-fetches 15x (3x RRF pool, 5x for filtered cosine), so `--limit 500` asked for 7500
+ * and every month-window search in auto mode died. Clamped here, above the query that spends it.
+ */
+export const SQLITE_VEC_MAX_K = 4096;
+
 export class SqliteVecVectorStore implements VectorStore {
     private db: Database;
     private vecTable: string;
@@ -66,6 +73,7 @@ export class SqliteVecVectorStore implements VectorStore {
     search(queryVector: Float32Array, limit: number): VectorSearchHit[] {
         // sqlite-vec KNN query: MATCH + k constraint + ORDER BY distance
         const blob = new Uint8Array(queryVector.buffer, queryVector.byteOffset, queryVector.byteLength);
+        const k = Math.min(limit, SQLITE_VEC_MAX_K);
 
         const rows = this.db
             .query(
@@ -75,7 +83,7 @@ export class SqliteVecVectorStore implements VectorStore {
                   AND k = ?
                 ORDER BY distance`
             )
-            .all(blob, limit) as Array<{ doc_id: string; distance: number }>;
+            .all(blob, k) as Array<{ doc_id: string; distance: number }>;
 
         // With distance_metric=cosine, distance = 1 - cosine_similarity (range 0..2).
         // Convert to similarity: score = 1 - distance (range -1..1, typically 0..1 for normalized vectors).

@@ -7,14 +7,17 @@ import {
     resolveColumnsFromFlag,
     resolveListFilters,
 } from "@app/macos/lib/mail/command-helpers";
-import { resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
+import { DEFAULT_SEARCH_TIMEOUT_MS, resolveMailSearchMode, runMailSearch } from "@app/macos/lib/mail/search-runner";
 import * as p from "@clack/prompts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { logger } from "@genesiscz/utils/logger";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { SearchOptions } from "@genesiscz/utils/macos/mail/types";
+import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
+
+const prof = profiler.scope("macos-mail");
 
 interface SearchCommandOptions {
     withoutBody?: boolean;
@@ -32,6 +35,7 @@ interface SearchCommandOptions {
     maxDistance?: string;
     columns?: string | true;
     format?: string;
+    timeout?: string;
 }
 
 function buildSearchColumns({
@@ -85,6 +89,7 @@ export function registerSearchCommand(program: Command): void {
         .option("--mode <mode>", "Search mode: auto | fulltext | hybrid | vector (default: auto)", "auto")
         .option("--semantic", "Enable Apple NL re-ranking after RRF (not recommended — overwrites embedding scores)")
         .option("--max-distance <n>", "Max semantic distance to include (0–2, default: 1.2)", "1.2")
+        .option("--timeout <seconds>", "Abort a stage (index query, row fetch, Spotlight) after this long", "60")
         .option("--columns [cols]", `Columns to show (${ALL_COLUMN_KEYS.join(",")})`)
         .option("-f, --format <type>", "Output format: table, json, toon", "table")
         .action(async (query: string, options: SearchCommandOptions) => {
@@ -130,20 +135,27 @@ export function registerSearchCommand(program: Command): void {
                 // 100, which is higher than the list default.
                 const { filters, limit, offset } = resolveListFilters({ ...options, limit: options.limit ?? "100" });
 
-                const searchOpts: SearchOptions = await db.resolveMailboxFilter({
-                    query,
-                    withoutBody: options.withoutBody,
-                    ...filters,
-                    limit,
-                    offset,
-                });
+                const searchOpts: SearchOptions = await prof.measureAsync("search.mailbox", () =>
+                    db.resolveMailboxFilter({
+                        query,
+                        withoutBody: options.withoutBody,
+                        ...filters,
+                        limit,
+                        offset,
+                    })
+                );
 
+                const timeoutSeconds = Number.parseFloat(options.timeout ?? "");
                 const outcome = await runMailSearch(query, {
                     searchOpts,
                     mode: resolveMailSearchMode(options.mode),
                     jxa: options.jxa,
                     semantic: options.semantic,
                     maxDistance: options.maxDistance ? Number.parseFloat(options.maxDistance) : undefined,
+                    timeoutMs:
+                        Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+                            ? timeoutSeconds * 1000
+                            : DEFAULT_SEARCH_TIMEOUT_MS,
                     db,
                     onProgress: spinner,
                     onWarning: (message): void => {
@@ -171,7 +183,7 @@ export function registerSearchCommand(program: Command): void {
                     return;
                 }
 
-                await enrichWithBodies(messages, baseColumns);
+                await prof.measureAsync("search.bodies", () => enrichWithBodies(messages, baseColumns));
 
                 const finalColumns = buildSearchColumns({
                     columns: baseColumns,
@@ -182,7 +194,9 @@ export function registerSearchCommand(program: Command): void {
                 });
 
                 if (needsRecipients(finalColumns)) {
-                    const recipientsMap = await db.getRecipients(messages.map((m) => m.rowid));
+                    const recipientsMap = await prof.measureAsync("search.recipients", () =>
+                        db.getRecipients(messages.map((m) => m.rowid))
+                    );
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
@@ -194,11 +208,13 @@ export function registerSearchCommand(program: Command): void {
                 const totalCount = outcome.totalCount;
                 const paginatedMessages = messages.slice(paginationOffset, paginationOffset + pageLimit);
 
-                await outputFormattedResults({
-                    messages: paginatedMessages,
-                    columns: finalColumns,
-                    format: options.format ?? "table",
-                });
+                await prof.measureAsync("search.output", () =>
+                    outputFormattedResults({
+                        messages: paginatedMessages,
+                        columns: finalColumns,
+                        format: options.format ?? "table",
+                    })
+                );
 
                 if (!isStructuredOutput && !quiet && (options.format ?? "table") === "table") {
                     const rangeEnd = Math.min(paginationOffset + pageLimit, totalCount);

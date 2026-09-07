@@ -16,6 +16,8 @@ export const PROFILER_SCOPE_NAMES = [
     "pipeline",
     "ai-proxy",
     "ttyd",
+    "macos-mail",
+    "chrome-devtools",
 ] as const;
 
 export const PROFILING_DETAIL_VALUES = ["phases", "all"] as const;

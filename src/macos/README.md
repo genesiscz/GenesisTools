@@ -81,6 +81,37 @@ While a plan runs, the command prints one line per finished stage (discover, cac
 
 ---
 
+## Mail: search modes, the stage watchdog, mailbox names, benchmarks
+
+`tools macos mail search` runs against the FTS index at `~/.genesis-tools/indexer/macos-mail/index.db` (`--mode fulltext | hybrid | vector | auto`; `auto` is hybrid when the index has embeddings). Two facts that used to cost hours:
+
+- **The hybrid over-fetch used to kill any big page.** Hybrid asks sqlite-vec for `limit × 15` neighbours (3× for the RRF pool, 5× for a filtered cosine query) and sqlite-vec refuses `k > 4096`, so `--limit 500` over a month window died with `k value in knn query too large, provided 7500 and the limit is 4096` (2026-09-07). The store now clamps `k` (`SQLITE_VEC_MAX_K` in `src/utils/search/stores/sqlite-vec-store.ts`) and the search prints one warning naming the covered rank (`results past about 273 are ranked by fulltext matches only`). `--mode fulltext` never had the problem.
+- **Every stage has a hard deadline.** `--timeout <seconds>` (default 60) bounds the index query, the row fetch, the Spotlight and LIKE fallback and the attachments join separately; a stuck stage exits 1 with `mail search timed out after 60s in stage "<name>"` instead of a silent process. `PROFILE=macos-mail` (scope `macos-mail`, `src/utils/profile`) prints one `[profile:macos-mail] <stage> <ms>` line per stage for `search` and `list`; `-v` shows the stage transitions. The hour-long "hang" a keyword sweep reported on 2026-09-07 did not reproduce: the same queries back to back finish in about a second each, and a search with an open stdin pipe exits normally, so the watchdog is insurance, not a fix for a known stall.
+
+**Mailbox names** (`list <mailbox>`, `--mailbox`, `--account`): `INBOX` means every account's inbox (localized names included). Anything else is a case-insensitive substring of the percent-decoded, NFC-normalized mailbox URL, so `Deleted Messages`, `Deleted`, `Koš`, `Ko%C5%A1`, `Odstran` and `Archiv` all work; an accent-free `Kos` does not.
+
+### Benchmarks
+
+`bun src/macos/lib/mail/bench.ts "<label>" [rounds]` runs the arms below interleaved (A,B,C,A,B,C,…) and prints the table. Wall time on this machine swings with load, so treat anything under about 20 % as noise, and note the load average. The stage timers say the work itself is small: a fulltext month search spends ~15 ms in the index query, ~5 ms fetching rows; a month list ~26 ms in SQL and ~42 ms rendering 10 000 JSON rows. The rest of each ~330 ms is bun start-up plus the launcher.
+
+#### 2026-09-07 17:03, before the knn clamp and watchdog (load 41.7 / 29.6, 5 interleaved rounds)
+
+| Arm | min | median | max | exit codes | first error line |
+|---|---|---|---|---|---|
+| list month, limit 10000 | 334ms | 466ms | 1.3s | 0 |  |
+| search faktura, fulltext, limit 500 | 358ms | 383ms | 655ms | 0 |  |
+| search faktura, auto, limit 500 | 498ms | 730ms | 2.0s | 1 | ERROR: k value in knn query too large, provided 7500 and the limit is 4096 |
+
+#### 2026-09-07 17:09, after (load 14.3 / 29.5, 5 interleaved rounds)
+
+| Arm | min | median | max | exit codes | first error line |
+|---|---|---|---|---|---|
+| list month, limit 10000 | 334ms | 336ms | 348ms | 0 |  |
+| search faktura, fulltext, limit 500 | 311ms | 314ms | 380ms | 0 |  |
+| search faktura, auto, limit 500 | 643ms | 645ms | 699ms | 0 |  |
+
+The auto arm went from "fails every run" to a working ~645 ms (the embedding of the query plus the 4096-neighbour scan sit on top of the fulltext cost). The list and fulltext medians moved by less than the load swing between the two runs and are noise; the watchdog is a `Promise.race` per stage and adds nothing measurable.
+
 ## Permissions
 
 macOS keys every privacy grant (Calendars, Reminders, Contacts, Full Disk Access, Accessibility, Automation, Speech, Microphone, protected folders) to the **responsible process**. For a plain CLI that is the terminal that launched it, or `bun` itself under launchd, so every terminal needed its own grants and a launchd job had none. Since 2026-09-03 19:40 GenesisTools owns them itself:

@@ -14,7 +14,10 @@ import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
+import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
+
+const prof = profiler.scope("macos-mail");
 
 interface ListOptions {
     limit?: string;
@@ -77,7 +80,9 @@ export function registerListCommand(program: Command): void {
                 const spinner = isQuietOutput(format) ? createQuietSpinner() : p.spinner();
                 spinner.start(`Fetching latest ${limit} emails from ${targetMailbox}...`);
 
-                const rows = await db.listMessages(targetMailbox, limit, { ...filters, offset });
+                const rows = await prof.measureAsync("list.sql", () =>
+                    db.listMessages(targetMailbox, limit, { ...filters, offset })
+                );
 
                 if (rows.length === 0) {
                     spinner.stop(`No messages found in ${targetMailbox}.`);
@@ -90,18 +95,18 @@ export function registerListCommand(program: Command): void {
                 }
 
                 const rowids = rows.map((r) => r.rowid);
-                const attachmentsMap = await db.getAttachments(rowids);
+                const attachmentsMap = await prof.measureAsync("list.attachments", () => db.getAttachments(rowids));
                 const messages: MailMessage[] = rows.map((row) => {
                     const msg = rowToMessage(row);
                     msg.attachments = attachmentsMap.get(row.rowid) ?? [];
                     return msg;
                 });
 
-                await enrichWithBodies(messages, columns);
+                await prof.measureAsync("list.bodies", () => enrichWithBodies(messages, columns));
 
                 // Enrich with recipients if any recipient column is selected
                 if (needsRecipients(columns)) {
-                    const recipientsMap = await db.getRecipients(rowids);
+                    const recipientsMap = await prof.measureAsync("list.recipients", () => db.getRecipients(rowids));
 
                     for (const msg of messages) {
                         msg.recipients = recipientsMap.get(msg.rowid) ?? [];
@@ -110,11 +115,13 @@ export function registerListCommand(program: Command): void {
 
                 spinner.stop(`${messages.length} emails from ${targetMailbox}`);
 
-                await outputFormattedResults({
-                    messages,
-                    columns,
-                    format,
-                });
+                await prof.measureAsync("list.output", () =>
+                    outputFormattedResults({
+                        messages,
+                        columns,
+                        format,
+                    })
+                );
             } catch (error) {
                 p.log.error(error instanceof Error ? error.message : String(error));
                 process.exit(1);

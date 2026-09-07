@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { loadSqliteVec } from "./sqlite-vec-loader";
-import { SqliteVecVectorStore } from "./sqlite-vec-store";
+import { SQLITE_VEC_MAX_K, SqliteVecVectorStore } from "./sqlite-vec-store";
 
 describe("sqlite-vec loading", () => {
     it("loads the sqlite-vec extension into bun:sqlite", () => {
@@ -87,6 +87,20 @@ describe("SqliteVecVectorStore", () => {
         store.store("a", new Float32Array([1, 0, 0]));
         store.store("b", new Float32Array([0, 1, 0]));
         expect(store.count()).toBe(2);
+    });
+
+    it("clamps k to the sqlite-vec limit instead of throwing on a large limit", () => {
+        const store = new SqliteVecVectorStore(db, { tableName: "test", dimensions: 3 });
+        store.store("a", new Float32Array([1, 0, 0]));
+        store.store("b", new Float32Array([0, 1, 0]));
+
+        // Unclamped, sqlite-vec answers "k value in knn query too large, provided 7500 and the limit is 4096".
+        expect(() =>
+            db.query("SELECT doc_id FROM test_vec WHERE embedding MATCH ? AND k = ?").all(new Uint8Array(12), 7500)
+        ).toThrow(/too large/);
+
+        const results = store.search(new Float32Array([1, 0, 0]), SQLITE_VEC_MAX_K + 3404);
+        expect(results.map((r) => r.docId)).toEqual(["a", "b"]);
     });
 
     it("replaces vector for existing ID", () => {

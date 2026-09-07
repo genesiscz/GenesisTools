@@ -18,6 +18,8 @@ import { closeDarwinKit, rankBySimilarity } from "@genesiscz/utils/macos";
 import type { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import { ENVELOPE_INDEX_PATH } from "@genesiscz/utils/macos/mail/constants";
 import type { MailMessage, MailMessageRow, SearchOptions } from "@genesiscz/utils/macos/mail/types";
+import { profiler } from "@genesiscz/utils/profile";
+import { SQLITE_VEC_MAX_K } from "@genesiscz/utils/search/stores/sqlite-vec-store";
 
 export type MailSearchMode = "auto" | "fulltext" | "hybrid" | "vector";
 
@@ -48,6 +50,42 @@ export interface RunMailSearchOptions {
     db: MailDatabase;
     onProgress?: { start: (msg: string) => void; stop: (msg: string) => void };
     onWarning?: (message: string) => void;
+    /** Hard deadline per stage (index query, row fetch, fallback, attachments). Default 60 s. */
+    timeoutMs?: number;
+}
+
+export const DEFAULT_SEARCH_TIMEOUT_MS = 60_000;
+
+/**
+ * Wraps every stage of a search in a hard deadline. A stage that never settles rejects with an error that
+ * names the stage, so a stuck SQLite lock or Spotlight call ends as "timed out in stage X" instead of a
+ * silent process that lives for an hour (hunter A, 2026-09-07). The stuck promise is left behind; the
+ * command exits right after, which is the only way to abort a synchronous SQLite call.
+ */
+export function stageGuard(timeoutMs: number): <T>(label: string, fn: () => Promise<T>) => Promise<T> {
+    return async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
+        logger.debug(`[mail/search] stage ${label} start`);
+        const t0 = performance.now();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const deadline = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+                reject(
+                    new Error(
+                        `mail search timed out after ${Math.round(timeoutMs / 1000)}s in stage "${label}". ` +
+                            "Narrow --from/--to or --limit, or raise --timeout <seconds>."
+                    )
+                );
+            }, timeoutMs);
+        });
+
+        try {
+            const result = await Promise.race([fn(), deadline]);
+            logger.debug(`[mail/search] stage ${label} done in ${Math.round(performance.now() - t0)}ms`);
+            return result;
+        } finally {
+            clearTimeout(timer);
+        }
+    };
 }
 
 export interface MailSearchOutcome {
@@ -61,6 +99,27 @@ export interface MailSearchOutcome {
 
 const MAIL_INDEX_NAME = "macos-mail";
 const STABLE_INDEX_FETCH_LIMIT = 250;
+/** Hybrid over-fetch: 3x for the RRF pool, then 5x for a filtered cosine query (sqlite-fts5 driver). */
+const HYBRID_VECTOR_OVERFETCH = 15;
+const prof = profiler.scope("macos-mail");
+
+/**
+ * The vector side of a hybrid search asks sqlite-vec for `fetchLimit * 15` neighbours and sqlite-vec caps
+ * `k` at 4096, so past `4096 / 15` results the ranking is fulltext-only. Says so once per run.
+ */
+export function vectorCapWarning(fetchLimit: number, hasFilters: boolean): string | undefined {
+    const asked = fetchLimit * (hasFilters ? HYBRID_VECTOR_OVERFETCH : 3);
+
+    if (asked <= SQLITE_VEC_MAX_K) {
+        return undefined;
+    }
+
+    const covered = Math.floor(SQLITE_VEC_MAX_K / (hasFilters ? HYBRID_VECTOR_OVERFETCH : 3));
+    return (
+        `vector candidates capped at ${SQLITE_VEC_MAX_K} by sqlite-vec (the hybrid search asked for ${asked} for ` +
+        `--limit ${fetchLimit}); results past about ${covered} are ranked by fulltext matches only`
+    );
+}
 
 export async function runMailSearch(query: string, options: RunMailSearchOptions): Promise<MailSearchOutcome> {
     const searchOpts = options.searchOpts;
@@ -75,6 +134,9 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
     let rows: MailMessageRow[] = [];
     let searchMethod: "fts" | "spotlight+like" = "spotlight+like";
     let resolvedMethod: ResolvedMethod | undefined;
+    const guard = stageGuard(options.timeoutMs ?? DEFAULT_SEARCH_TIMEOUT_MS);
+    const stage = <T>(label: string, fn: () => Promise<T>): Promise<T> =>
+        guard(label, () => prof.measureAsync(label, fn));
 
     logger.debug(
         `[mail/search] mode=${resolvedMode} willUseIndex=${willUseIndex} ` +
@@ -87,24 +149,26 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
         const t0 = performance.now();
         const fetchLimit = Math.max((searchOpts.offset ?? 0) + (searchOpts.limit ?? 100), STABLE_INDEX_FETCH_LIMIT);
 
-        const ftsResults = await searchIndexReadonly(MAIL_INDEX_NAME, query, {
-            mode: resolvedMode,
-            limit: fetchLimit,
-            onWarning: options.onWarning,
-            ...((searchOpts.from || searchOpts.to) && {
-                coverageCheck: {
-                    from: searchOpts.from,
-                    to: searchOpts.to,
-                    onOutside: (advisory: string): void => {
-                        process.stderr.write(advisory);
+        const ftsResults = await stage(`search.index.${resolvedMode}`, () =>
+            searchIndexReadonly(MAIL_INDEX_NAME, query, {
+                mode: resolvedMode,
+                limit: fetchLimit,
+                onWarning: options.onWarning,
+                ...((searchOpts.from || searchOpts.to) && {
+                    coverageCheck: {
+                        from: searchOpts.from,
+                        to: searchOpts.to,
+                        onOutside: (advisory: string): void => {
+                            process.stderr.write(advisory);
+                        },
                     },
-                },
-            }),
-            ...(filterPredicate && {
-                filters: filterPredicate,
-                attach: { alias: "mailapp", dbPath: ENVELOPE_INDEX_PATH, mode: "ro" as const },
-            }),
-        });
+                }),
+                ...(filterPredicate && {
+                    filters: filterPredicate,
+                    attach: { alias: "mailapp", dbPath: ENVELOPE_INDEX_PATH, mode: "ro" as const },
+                }),
+            })
+        );
 
         const ms = performance.now() - t0;
         const ftsRowids: number[] = [];
@@ -137,7 +201,17 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
         }
 
         resolvedMethod = ftsResults[0]?.method;
-        rows = ftsRowids.length > 0 ? await options.db.getMessagesByRowids(ftsRowids, searchOpts) : [];
+        const capWarning =
+            resolvedMethod && resolvedMethod !== "bm25" ? vectorCapWarning(fetchLimit, !!filterPredicate) : undefined;
+
+        if (capWarning) {
+            logger.debug(`[mail/search] ${capWarning}`);
+            options.onWarning?.(capWarning);
+        }
+        rows =
+            ftsRowids.length > 0
+                ? await stage("search.index.rows", () => options.db.getMessagesByRowids(ftsRowids, searchOpts))
+                : [];
         searchMethod = "fts";
 
         const orderByRowid = new Map(ftsRowids.map((rowid, index) => [rowid, index]));
@@ -155,13 +229,15 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
         const t0 = performance.now();
 
         const [spotlightRowids, likeRows] = await Promise.all([
-            mdfindMailRowids(query),
-            options.db.searchMessages(searchOpts),
+            stage("search.fallback.spotlight", () => mdfindMailRowids(query)),
+            stage("search.fallback.like", () => options.db.searchMessages(searchOpts)),
         ]);
         const rowidSet = new Set<number>(likeRows.map((r) => r.rowid));
         const newSpotlightIds = spotlightRowids.filter((r) => !rowidSet.has(r));
         const spotlightRows =
-            newSpotlightIds.length > 0 ? await options.db.getMessagesByRowids(newSpotlightIds, searchOpts) : [];
+            newSpotlightIds.length > 0
+                ? await stage("search.fallback.rows", () => options.db.getMessagesByRowids(newSpotlightIds, searchOpts))
+                : [];
 
         rows = [...likeRows, ...spotlightRows];
         const fallbackOrder = new Map(rows.map((row, index) => [row.rowid, index]));
@@ -174,7 +250,7 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
 
     const isFts = searchMethod === "fts";
     const rowids = rows.map((r) => r.rowid);
-    const attachmentsMap = await options.db.getAttachments(rowids);
+    const attachmentsMap = await stage("search.attachments", () => options.db.getAttachments(rowids));
     const messages: MailMessage[] = rows.map((row) => {
         const msg = rowToMessage(row);
         msg.attachments = attachmentsMap.get(row.rowid) ?? [];
@@ -196,7 +272,9 @@ export async function runMailSearch(query: string, options: RunMailSearchOptions
                     .join(" ")
                     .slice(0, 2000),
             }));
-            const ranked = await rankBySimilarity(query, items, { maxDistance: maxDist, language: "en" });
+            const ranked = await stage("search.semantic", () =>
+                rankBySimilarity(query, items, { maxDistance: maxDist, language: "en" })
+            );
             const reordered: MailMessage[] = ranked.map((r) => {
                 const msg = r.item as MailMessage;
                 msg.semanticScore = r.score;
