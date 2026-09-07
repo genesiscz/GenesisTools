@@ -49,6 +49,7 @@ export function parseIncludeSections(raw: unknown): HandoffIncludeSection[] {
 export type HandoffCoreProjection = {
     id: string;
     title: string;
+    name?: string;
     description?: string;
     status: Handoff["status"];
     project: string | null;
@@ -96,6 +97,10 @@ export function projectHandoff({
         createdTs: handoff.createdTs,
         updatedTs: handoff.updatedTs,
     };
+
+    if (handoff.name !== undefined) {
+        core.name = handoff.name;
+    }
 
     if (handoff.description !== undefined) {
         core.description = handoff.description;

@@ -10,12 +10,23 @@ import { appendHandoffEvents } from "./log-store";
 import { isEventsOnlyInclude, type ProjectedHandoff, parseIncludeSections, projectHandoff } from "./project";
 import {
     catchUpHandoffs,
+    findHandoffsByName,
     getEventOutcome,
     getHandoffById,
     listHandoffEvents,
     listHandoffRows,
     openHandoffModel,
 } from "./read-model";
+import {
+    agentFilterMatches,
+    HANDOFF_AGENTS_LIST,
+    handoffNameFor,
+    isKnownAgent,
+    normalizeHandoffName,
+    normalizeTargetInput,
+    recipientCheck,
+    sessionFilterMatches,
+} from "./targeting";
 import type {
     Handoff,
     HandoffActionInput,
@@ -176,6 +187,7 @@ function stateInfo(h: Handoff, by: HandoffEventBy): string[] {
 function pasteAgentText(id: string): string {
     return (
         `You have been handed a task list. Call the genesis-tools MCP tool handoff_get with { id: "${id}" } to read it, ` +
+        "then check its `warnings` — if it says the handoff is addressed to another session or harness, stop and ask your user before working it. " +
         `then claim it by calling handoff_get again with { id: "${id}", claim: true } before working. ` +
         'Check each finished task off with handoff_action { id, actions: [{ action: "check_task", taskId, proof: { answer, commitIds } }] }. ' +
         'To refuse a task you can\'t do, send { action: "deny_task", taskId, reason }. ' +
@@ -185,12 +197,69 @@ function pasteAgentText(id: string): string {
     );
 }
 
+const REF_REQUIRED =
+    'Pass id or name — e.g. handoff_get { id: "h_x1y2z3ab" } or handoff_get { name: "fix-active-filter" }.';
+
+/**
+ * Resolve a handoff from an id, a readable name, or an `id` field that holds
+ * either. Deterministic on purpose: an id always wins, a unique name resolves,
+ * and an ambiguous name is refused WITH its candidates. Picking the newest of
+ * several same-named handoffs would silently work the wrong one.
+ */
+function resolveHandoffRef(db: Database, input: { id?: string; name?: string }): Handoff {
+    const rawId = typeof input.id === "string" ? input.id.trim() : "";
+    const rawName = typeof input.name === "string" ? input.name.trim() : "";
+
+    if (rawId.length === 0 && rawName.length === 0) {
+        throw new Error(REF_REQUIRED);
+    }
+
+    const byId = rawId.length > 0 ? getHandoffById(db, normalizeHandoffId(rawId)) : null;
+
+    if (byId !== null) {
+        const wanted = normalizeHandoffName(rawName);
+
+        if (wanted !== undefined && byId.name !== wanted) {
+            throw new Error(
+                `The id and the name point at different handoffs: ${byId.id} is called "${byId.name ?? "(unnamed)"}", not "${wanted}". Pass one of them, not both.`
+            );
+        }
+
+        return byId;
+    }
+
+    // The `id` field also accepts a name, so a paste of either resolves.
+    const lookup = normalizeHandoffName(rawName.length > 0 ? rawName : rawId);
+    const matches = lookup !== undefined ? findHandoffsByName(db, lookup) : [];
+
+    if (matches.length === 1) {
+        return matches[0];
+    }
+
+    if (matches.length > 1) {
+        const candidates = matches.map((h) => `${h.id} (${h.status}, updated ${h.updatedTs}) "${h.title}"`).join("; ");
+        throw new Error(
+            `Name "${lookup}" is ambiguous — ${matches.length} handoffs carry it: ${candidates}. Re-call with the id of the one you mean.`
+        );
+    }
+
+    if (rawId.length > 0) {
+        throw new Error(
+            `No handoff ${normalizeHandoffId(rawId)} — re-check the paste block or call handoff_list to find it.`
+        );
+    }
+
+    throw new Error(`No handoff named "${lookup ?? rawName}" — call handoff_list to see what exists.`);
+}
+
 // ---------------------------------------------------------------------------
 // handoff_post
 // ---------------------------------------------------------------------------
 
 export interface PostHandoffInput {
     title: string;
+    /** Readable slug this handoff can also be fetched by. Defaults to a slug of the title. */
+    name?: string;
     description?: string;
     tasks: HandoffTaskInput[];
     target?: HandoffTarget;
@@ -200,7 +269,7 @@ export interface PostHandoffInput {
 export interface PostHandoffResponse {
     handoff: PublicHandoff;
     editId: string;
-    paste: { _agent: string; id: string; title: string; tasks: string };
+    paste: { _agent: string; id: string; title: string; tasks: string; name?: string };
     info: string[];
 }
 
@@ -229,16 +298,20 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
         tasks,
         by,
     };
+    const name = handoffNameFor({ name: input.name, title });
+
+    if (name !== undefined) {
+        event.name = name;
+    }
 
     if (input.description !== undefined && input.description.trim().length > 0) {
         event.description = input.description;
     }
 
-    if (
-        input.target !== undefined &&
-        (input.target.sessionId !== undefined || input.target.sessionName !== undefined)
-    ) {
-        event.target = input.target;
+    const target = normalizeTargetInput(input.target);
+
+    if (target !== undefined) {
+        event.target = target;
     }
 
     if (input.refs !== undefined && input.refs.length > 0) {
@@ -255,7 +328,33 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
             throw new Error(`handoff_post failed to fold ${event.id} — check ~/.genesis-tools/logs for details.`);
         }
 
-        log.info({ id: handoff.id, tasks: handoff.tasks.length, by: by.sessionId }, "handoff posted");
+        log.info(
+            {
+                id: handoff.id,
+                name: handoff.name,
+                tasks: handoff.tasks.length,
+                by: by.sessionId,
+                targetAgent: target?.agent,
+            },
+            "handoff posted"
+        );
+
+        const info = [
+            "Posted. Copy `paste` into the target agent's chat.",
+            "You can edit from this session anytime via handoff_action (no editId needed).",
+        ];
+
+        if (handoff.name !== undefined) {
+            info.push(
+                `Readable name: "${handoff.name}" — receivers can also call handoff_get { name: "${handoff.name}" }.`
+            );
+        }
+
+        if (target?.agent !== undefined && !isKnownAgent(target.agent)) {
+            info.push(
+                `target.agent "${target.agent}" is not a documented harness (${HANDOFF_AGENTS_LIST}) — it is stored as given, but no recipient warning can ever fire for it.`
+            );
+        }
 
         return {
             handoff: publicHandoff(handoff, deps.base),
@@ -265,11 +364,9 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
                 id: handoff.id,
                 title: handoff.title,
                 tasks: `0/${handoff.tasks.length}`,
+                ...(handoff.name !== undefined ? { name: handoff.name } : {}),
             },
-            info: [
-                "Posted. Copy `paste` into the target agent's chat.",
-                "You can edit from this session anytime via handoff_action (no editId needed).",
-            ],
+            info,
         };
     });
 }
@@ -279,7 +376,10 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
 // ---------------------------------------------------------------------------
 
 export interface GetHandoffInput {
-    id: string;
+    /** Handoff id, or a readable name — both resolve here. */
+    id?: string;
+    /** Readable name, when you would rather not overload `id`. */
+    name?: string;
     claim?: boolean;
     unclaim?: boolean;
     /** MCP section scoping. Omit → full PublicHandoff (HTTP). MCP handlers default to ["tasks"]. */
@@ -290,6 +390,8 @@ export type GetHandoffFullResponse = {
     handoff: PublicHandoff;
     editId?: string;
     info: string[];
+    /** Recipient warnings for the CALLING session — absent when there is nothing to say. */
+    warnings?: string[];
 };
 
 export type GetHandoffScopedResponse =
@@ -297,10 +399,12 @@ export type GetHandoffScopedResponse =
           handoff: ProjectedHandoff;
           editId?: string;
           info: string[];
+          warnings?: string[];
       }
     | {
           events: HandoffPublicEvent[];
           info: string[];
+          warnings?: string[];
       };
 
 export type GetHandoffResponse = GetHandoffFullResponse | GetHandoffScopedResponse;
@@ -313,21 +417,18 @@ export function getHandoff(input: Omit<GetHandoffInput, "include">, deps?: Hando
 export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetHandoffResponse {
     if (input.claim === true && input.unclaim === true) {
         throw new Error(
-            `Pass either claim: true or unclaim: true, not both — e.g. handoff_get { id: "${input.id}", claim: true }.`
+            `Pass either claim: true or unclaim: true, not both — e.g. handoff_get { id: "${input.id ?? input.name}", claim: true }.`
         );
     }
 
     const sections = input.include !== undefined ? parseIncludeSections(input.include) : null;
-    const id = normalizeHandoffId(String(input.id ?? ""));
     const by = buildBy(deps);
 
     return withDb(deps, (db) => {
         catchUpHandoffs(db, deps.base);
-        const existing = getHandoffById(db, id);
-
-        if (existing === null) {
-            throw new Error(`No handoff ${id} — re-check the paste block or call handoff_list to find it.`);
-        }
+        const existing = resolveHandoffRef(db, input);
+        const id = existing.id;
+        const recipient = recipientCheck({ target: existing.target, by });
 
         const events: HandoffEvent[] = [];
         const extraInfo: string[] = [];
@@ -335,12 +436,21 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         let claimUid: string | undefined;
         let unclaimUid: string | undefined;
 
-        const autoClaim =
-            input.unclaim !== true &&
+        const addressedToThisSession =
             existing.target?.sessionId !== undefined &&
             targetMatchesSession(existing.target.sessionId, by.sessionId) &&
             !isClaimedBy(existing, by) &&
             (existing.status === "open" || existing.status === "claimed");
+
+        // A session-id hit under a harness the handoff is NOT addressed to must not
+        // claim silently: the poster named two recipients and only one of them is us.
+        const autoClaim = input.unclaim !== true && addressedToThisSession && recipient.agent !== "mismatch";
+
+        if (input.unclaim !== true && addressedToThisSession && recipient.agent === "mismatch") {
+            extraInfo.push(
+                `NOT auto-claimed: the target sessionId names this session, but the handoff is addressed to harness "${existing.target?.agent}". Claim explicitly only if your user asks you to.`
+            );
+        }
 
         if (autoClaim) {
             autoClaimUid = generateEventUid();
@@ -399,10 +509,11 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         }
 
         const info = [...extraInfo, ...stateInfo(handoff, by)];
+        const warnings = recipient.warnings.length > 0 ? { warnings: recipient.warnings } : {};
 
         if (sections !== null && isEventsOnlyInclude(sections)) {
             const { events: publicEvents } = listHandoffEvents({ db, handoffId: id });
-            return { events: publicEvents, info };
+            return { events: publicEvents, info, ...warnings };
         }
 
         const full = publicHandoff(handoff, deps.base);
@@ -415,6 +526,7 @@ export function getHandoff(input: GetHandoffInput, deps: HandoffDeps = {}): GetH
         const response = {
             handoff: sections === null ? full : projectHandoff({ handoff: full, sections, events: projectedEvents }),
             info,
+            ...warnings,
         } as GetHandoffFullResponse | Extract<GetHandoffScopedResponse, { handoff: unknown }>;
 
         // editId recovery: ONLY the posting session (or the dashboard owner) ever sees it (§3).
@@ -436,6 +548,10 @@ export interface ListHandoffsInput {
     mine?: boolean;
     open?: boolean;
     project?: string;
+    /** Opt-in: only handoffs whose INTENDED RECIPIENT harness is this one. Never the poster's. */
+    agent?: string;
+    /** Opt-in: only handoffs whose INTENDED RECIPIENT session is this id (or abbreviation) or name. */
+    session?: string;
     /** Only `"tasks"` is honored on list rows; other values no-op with an info line. */
     include?: string[];
 }
@@ -485,6 +601,19 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
             );
         }
 
+        // Opt-in only: with neither flag the listing stays exactly what it was.
+        const agentFilter = input.agent !== undefined && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
+        const sessionFilter =
+            input.session !== undefined && input.session.trim().length > 0 ? input.session.trim() : undefined;
+
+        if (agentFilter !== undefined) {
+            rows = rows.filter((h) => agentFilterMatches(h.target, agentFilter));
+        }
+
+        if (sessionFilter !== undefined) {
+            rows = rows.filter((h) => sessionFilterMatches(h.target, sessionFilter));
+        }
+
         const total = rows.length;
         const page = rows.slice(offset, offset + limit);
         const now = Date.now();
@@ -501,8 +630,17 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
                 ageHours: Math.round(((now - new Date(h.createdTs).getTime()) / 3_600_000) * 10) / 10,
             };
 
+            if (h.name !== undefined) {
+                row.name = h.name;
+            }
+
             if (h.target !== undefined) {
                 row.target = h.target;
+                const recipient = recipientCheck({ target: h.target, by });
+
+                if (recipient.warnings.length > 0) {
+                    row.warnings = recipient.warnings;
+                }
             }
 
             if (h.claimedBy.length > 0) {
@@ -541,6 +679,20 @@ export function listHandoffs(input: ListHandoffsInput = {}, deps: HandoffDeps = 
         });
 
         const info: string[] = [`${total} handoff${total === 1 ? "" : "s"} matched; showing ${page.length}.`];
+
+        if (agentFilter !== undefined) {
+            info.push(
+                isKnownAgent(agentFilter)
+                    ? `Filtered to handoffs addressed to harness "${agentFilter}" — the intended recipient, not the poster.`
+                    : `agent filter "${agentFilter}" is not a documented harness (${HANDOFF_AGENTS_LIST}) — matched as literal text against target.agent.`
+            );
+        }
+
+        if (sessionFilter !== undefined) {
+            info.push(
+                `Filtered to handoffs addressed to session "${sessionFilter}" — matches target.sessionId (exactly or by leading-segment abbreviation) or target.sessionName.`
+            );
+        }
 
         if (proofsClipped) {
             info.push("Task proofs are previews on list — call handoff_get for the full proof.");
@@ -627,7 +779,10 @@ function asStringArray(value: unknown): string[] | undefined {
 }
 
 export interface ExecuteActionsInput {
-    id: string;
+    /** Handoff id, or a readable name — both resolve here. */
+    id?: string;
+    /** Readable name, when you would rather not overload `id`. */
+    name?: string;
     editId?: string;
     actions: HandoffActionInput[];
     /** MCP section scoping. Omit → full PublicHandoff (HTTP). MCP handlers default to ["tasks"]. */
@@ -638,12 +793,15 @@ export type ExecuteActionsFullResponse = {
     handoff: PublicHandoff;
     results: HandoffActionResult[];
     info: string[];
+    /** Recipient warnings for the CALLING session — absent when there is nothing to say. */
+    warnings?: string[];
 };
 
 export type ExecuteActionsScopedResponse = {
     handoff: ProjectedHandoff;
     results: HandoffActionResult[];
     info: string[];
+    warnings?: string[];
 };
 
 export type ExecuteActionsResponse = ExecuteActionsFullResponse | ExecuteActionsScopedResponse;
@@ -665,17 +823,14 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
     }
 
     const sections = input.include !== undefined ? parseIncludeSections(input.include) : null;
-    const id = normalizeHandoffId(String(input.id ?? ""));
     const editId = normalizeEditId(input.editId);
     const by = buildBy(deps);
 
     return withDb(deps, (db) => {
         catchUpHandoffs(db, deps.base);
-        const existing = getHandoffById(db, id);
-
-        if (existing === null) {
-            throw new Error(`No handoff ${id} — re-check the paste block or call handoff_list to find it.`);
-        }
+        const existing = resolveHandoffRef(db, input);
+        const id = existing.id;
+        const recipient = recipientCheck({ target: existing.target, by });
 
         const stamp = (): { ts: string; uid: string; id: string; by: HandoffEventBy; editId?: string } => ({
             ts: nowIso(deps),
@@ -757,6 +912,7 @@ export function executeHandoffActions(input: ExecuteActionsInput, deps: HandoffD
             handoff: sections === null ? full : projectHandoff({ handoff: full, sections, events: projectedEvents }),
             results,
             info: stateInfo(handoff, by),
+            ...(recipient.warnings.length > 0 ? { warnings: recipient.warnings } : {}),
         } as ExecuteActionsResponse;
     });
 }
@@ -1083,19 +1239,51 @@ function parseAction(
             const title =
                 typeof payload.title === "string" && payload.title.trim().length > 0 ? payload.title : undefined;
             const description = typeof payload.description === "string" ? payload.description : undefined;
+            // An object that carries nothing usable clears the target, same as null.
             const target =
                 payload.target === null
                     ? null
-                    : payload.target !== null && typeof payload.target === "object"
-                      ? (payload.target as HandoffTarget)
+                    : payload.target !== undefined && typeof payload.target === "object"
+                      ? (normalizeTargetInput(payload.target) ?? null)
                       : undefined;
             const refs = asStringArray(payload.refs);
+            let name: string | null | undefined;
 
-            if (title === undefined && description === undefined && target === undefined && refs === undefined) {
+            if ("name" in payload) {
+                if (payload.name === null || (typeof payload.name === "string" && payload.name.trim().length === 0)) {
+                    name = null;
+                } else if (typeof payload.name !== "string") {
+                    return shapeFail(
+                        index,
+                        verb,
+                        'modify_handoff: name must be a string, or null to clear it — e.g. { action: "modify_handoff", name: "fix-active-filter" }.'
+                    );
+                } else {
+                    const slug = normalizeHandoffName(payload.name);
+
+                    if (slug === undefined) {
+                        return shapeFail(
+                            index,
+                            verb,
+                            `modify_handoff: name "${payload.name}" has no letters or digits to build a name from — try something like "fix-active-filter".`
+                        );
+                    }
+
+                    name = slug;
+                }
+            }
+
+            if (
+                title === undefined &&
+                name === undefined &&
+                description === undefined &&
+                target === undefined &&
+                refs === undefined
+            ) {
                 return shapeFail(
                     index,
                     verb,
-                    'modify_handoff needs at least one of title/description/target/refs — e.g. { action: "modify_handoff", title: "…" }. Tasks are edited via modify_task/add_tasks.'
+                    'modify_handoff needs at least one of title/name/description/target/refs — e.g. { action: "modify_handoff", title: "…" }. Tasks are edited via modify_task/add_tasks.'
                 );
             }
 
@@ -1106,6 +1294,7 @@ function parseAction(
                     ev: "modify_handoff",
                     ...stamp(),
                     ...(title !== undefined ? { title } : {}),
+                    ...(name !== undefined ? { name } : {}),
                     ...(description !== undefined ? { description } : {}),
                     ...(target !== undefined ? { target } : {}),
                     ...(refs !== undefined ? { refs } : {}),
