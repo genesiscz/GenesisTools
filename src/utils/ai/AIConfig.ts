@@ -428,7 +428,7 @@ export class AIConfig {
      * Mutate `data` in the callback; it's persisted automatically on return.
      * Use for operations that need async I/O while holding the lock (e.g. token refresh).
      */
-    async withLock<T>(fn: (data: AIConfigData) => Promise<T>, _timeout?: number): Promise<T> {
+    async withLock<T>(fn: (data: AIConfigData) => Promise<T>, timeout?: number): Promise<T> {
         const store = await AiConfigStore.load();
 
         return store.withLock(async (config) => {
@@ -462,6 +462,6 @@ export class AIConfig {
             this.data = applyDefaults(projectToV3(config));
 
             return result;
-        });
+        }, timeout);
     }
 }

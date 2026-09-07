@@ -137,6 +137,12 @@ export class AiConfigStore {
     }
 
     private static async readFrom(storage: Storage): Promise<{ config: AiConfigData; stamp: FileStamp }> {
+        // Stamped BEFORE the read, never after. A writer landing between the two
+        // leaves this store holding the OLD bytes under the NEW stamp, and
+        // `refreshIfStale` then compares equal forever: the config is stale for
+        // the life of the process, which is the exact failure this class exists
+        // to prevent. Stamping first can only ever cost one redundant re-read.
+        const stamp = AiConfigStore.stampOf(storage);
         const raw = await storage.getConfig<Record<string, unknown>>();
         if (!raw || Object.keys(raw).length === 0) {
             return { config: emptyConfig(), stamp: MISSING_FILE };
@@ -150,7 +156,7 @@ export class AiConfigStore {
             // Converting in memory is read-only: nothing is written back here.
             const adapted = adaptOlderConfig(raw);
             if (adapted) {
-                return { config: adapted, stamp: AiConfigStore.stampOf(storage) };
+                return { config: adapted, stamp };
             }
 
             throw new Error(
@@ -160,7 +166,7 @@ export class AiConfigStore {
             );
         }
 
-        return { config: parsed.data, stamp: AiConfigStore.stampOf(storage) };
+        return { config: parsed.data, stamp };
     }
 
     private static stampOf(storage: Storage): FileStamp {
@@ -246,7 +252,14 @@ export class AiConfigStore {
         });
     }
 
-    async withLock<T>(fn: (data: AiConfigData) => Promise<T>): Promise<T> {
+    /**
+     * `timeout` is how long to WAIT for the lock, not how long to hold it. A token
+     * refresh runs its network call inside `fn`, so when several accounts refresh at
+     * once each later one waits for every earlier one; the 5 s default was sized for a
+     * plain config edit and timed them out (observed 2026-09-06: nine accounts, one DNS
+     * outage, `LockTimeoutError` on every account but the first).
+     */
+    async withLock<T>(fn: (data: AiConfigData) => Promise<T>, timeout?: number): Promise<T> {
         return this.storage.withConfigLock(async () => {
             // BEFORE the callback, not only before the write: callers nest vault
             // writes inside `fn` (the lock-order contract says config lock first,
@@ -268,6 +281,6 @@ export class AiConfigStore {
             this.config = validated;
             this.stamp = AiConfigStore.stampOf(this.storage);
             return result;
-        });
+        }, timeout);
     }
 }

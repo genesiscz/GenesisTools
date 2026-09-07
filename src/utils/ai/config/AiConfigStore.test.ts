@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { AiConfigStore, adaptOlderConfig } from "./AiConfigStore";
 import { _clearExternalRefScanners, registerExternalRefScanner } from "./refs";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
@@ -200,6 +201,49 @@ describe("AiConfigStore freshness", () => {
 
         expect((await AiConfigStore.load()).accounts().map((a) => a.id)).toEqual(["acc_only"]);
     });
+
+    /**
+     * The stamp was taken AFTER the file had been read, so a writer landing in
+     * that window left the store holding the OLD content under the NEW stamp.
+     * `refreshIfStale` then compared equal forever and every later load served
+     * the stale config — precisely the staleness this class exists to prevent,
+     * and unrecoverable until some unrelated write moved the stamp again.
+     */
+    test("a write that lands between the read and the stamp is not cached forever", async () => {
+        const store = await AiConfigStore.load();
+        expect(store.accounts().length).toBe(3);
+
+        // One external write, so the next load takes the refresh path at all.
+        writeConfig(home, { ...SEED, accounts: [account("acc_first", "first-write")] });
+
+        // A SECOND writer lands inside that refresh, after the bytes are read.
+        // The two configs differ in size as well as content, so nothing here
+        // depends on millisecond mtime resolution.
+        const later: AiConfigData = {
+            ...SEED,
+            accounts: [account("acc_late", "landed-mid-read"), account("acc_pad", "second-account")],
+        };
+        const realGetConfig = Storage.prototype.getConfig;
+        const spy = spyOn(Storage.prototype, "getConfig").mockImplementation(async function <T extends object>(
+            this: Storage
+        ) {
+            const value = await realGetConfig.call<Storage, [], Promise<T | null>>(this);
+
+            if (this.getConfigPath() === configPath(home)) {
+                writeConfig(home, later);
+            }
+
+            return value;
+        });
+
+        try {
+            await AiConfigStore.load();
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect((await AiConfigStore.load()).accounts().map((a) => a.id)).toEqual(["acc_late", "acc_pad"]);
+    });
 });
 
 describe("AiConfigStore mutation", () => {
@@ -288,6 +332,22 @@ describe("AiConfigStore mutation", () => {
 
         const count = await store.withLock(async (data) => data.accounts.length);
         expect(count).toBe(3);
+    });
+
+    test("withLock passes the caller's wait budget to the config lock", async () => {
+        const store = await AiConfigStore.load();
+        const lock = spyOn(Storage.prototype, "withConfigLock");
+
+        try {
+            await store.withLock(async () => undefined, 60_000);
+            expect(lock).toHaveBeenCalledTimes(1);
+            expect(lock.mock.calls[0][1]).toBe(60_000);
+
+            await store.withLock(async () => undefined);
+            expect(lock.mock.calls[1][1]).toBeUndefined();
+        } finally {
+            lock.mockRestore();
+        }
     });
 });
 

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
+import { claudeOAuth, TOKEN_REQUEST_TIMEOUT_MS } from "./auth";
 import { clearInvalidGrant, readJournalRecovery } from "./subscription-auth";
 
 const HOME = join(tmpdir(), `sub-auth-test-${process.pid}`);
@@ -152,5 +154,39 @@ describe("invalid_grant cooldown persistence", () => {
         await clearInvalidGrant("acc");
 
         expect(readFileSync(COOLDOWN, "utf8")).toBe("{ not json");
+    });
+});
+
+describe("claudeOAuth.refresh runs inside the config lock, so it must be bounded", () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    it("carries a deadline, and the normal path still returns the rotated pair", () => {
+        let seen: RequestInit | undefined;
+
+        globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+            seen = init;
+
+            return new Response(SafeJSON.stringify({ access_token: "at-2", refresh_token: "rt-2", expires_in: 3600 }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        return claudeOAuth.refresh("rt-1").then((tokens) => {
+            expect(tokens.refreshToken).toBe("rt-2");
+            expect(seen?.signal).toBeInstanceOf(AbortSignal);
+        });
+    });
+
+    it("keeps three attempts plus their delays inside the wait budget other callers get", () => {
+        // `resolveAccountToken` retries the refresh up to 3 times with a 1 s fixed
+        // delay, all of it while HOLDING the lock. If that can outlast the budget a
+        // waiting caller allows, the budget stops meaning anything — which is how one
+        // DNS outage turned into a LockTimeoutError on every account but the first.
+        expect(TOKEN_REQUEST_TIMEOUT_MS * 3 + 2_000).toBeLessThan(NETWORKED_LOCK_WAIT_MS);
     });
 });

@@ -4,7 +4,7 @@ import { retry } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
@@ -362,7 +362,7 @@ export async function listAvailableAccounts(): Promise<SubscriptionAccount[]> {
  */
 export async function resolveAccountToken(accountName?: string, options?: ResolveOptions): Promise<ResolvedToken> {
     const forceRefresh = options?.forceRefresh ?? false;
-    const lockTimeout = options?.lockTimeout ?? 60_000;
+    const lockTimeout = options?.lockTimeout ?? NETWORKED_LOCK_WAIT_MS;
 
     const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
     const aiConfig = await AIConfig.load();
@@ -483,9 +483,12 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
                     throw new Error(`Token expired (invalid_grant). Run: tools claude login ${name}`);
                 }
             } else {
+                // `cause` keeps the transport code (ENOTFOUND, ConnectionRefused) so the
+                // poll gate can tell a dead network from a dead account.
                 throw new Error(
                     `Failed to refresh token for "${name}": ${err instanceof Error ? err.message : err}. ` +
-                        `Run \`tools claude login ${name}\` if this persists.`
+                        `Run \`tools claude login ${name}\` if this persists.`,
+                    { cause: err }
                 );
             }
         }
