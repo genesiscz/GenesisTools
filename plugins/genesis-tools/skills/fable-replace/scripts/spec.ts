@@ -399,7 +399,15 @@ export const parseSpec = ({ text, onWarning }: ParseSpecParams): FileEdit[] => {
                 i += 1;
             }
             if (!closed) {
-                fail(lineNo, "block never closed with >>>");
+                // Three of the day's spec errors on 2026-09-07 were this line on a whole-file create
+                // body of 5k to 23k chars: the heredoc had ended early on a body line equal to its
+                // delimiter, so the parser saw a body with no end. Name the cut point and the trap.
+                const read = body.length > 0 && body[body.length - 1] === "" ? body.slice(0, -1) : body;
+                const tail = read.slice(-3).map((l) => `"${l.length > 60 ? `${l.slice(0, 60)}…` : l}"`);
+                fail(
+                    lineNo,
+                    `block (${mods.kind}) never closed with >>>: the spec ended ${read.length} line(s) into its body, last line(s) read: ${tail.join(", ")}. Either the closing >>> is missing, or your heredoc ended early because a body line equals its delimiter (a line that is exactly EOF, say). Pick a delimiter that cannot appear in the bodies, or write the spec to a file and pass --spec <file>.`
+                );
             }
             const need = partsNeeded(mods.kind);
             if (parts.length > need) {

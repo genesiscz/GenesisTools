@@ -1501,7 +1501,15 @@ console.log("parseSpec");
     } catch (e) {
         err = String(e);
     }
-    check("unclosed block is an error", err.includes("never closed"));
+    check(
+        "unclosed block names the kind, the cut point and the heredoc trap",
+        err.includes("block (replace) never closed") &&
+            err.includes("1 line(s) into its body") &&
+            err.includes('last line(s) read: "x"') &&
+            err.includes("delimiter") &&
+            err.includes("--spec <file>"),
+        err
+    );
     err = "";
     try {
         parseSpec({ text: "<<<\nx\n===\ny\n>>>" });
@@ -1876,6 +1884,12 @@ console.log("round 2: cli");
     const dryMiss = runCli("@@ t.ts\n<<<\nconst zz = 1;\n===\nconst zz = 2;\n>>>\n", "--dry");
     check("cli: --dry with a MISS exits 1", dryMiss.status === 1 && dryMiss.out.includes("MISS"), dryMiss.out);
     const missing = runCli("", "--spec", path.join(dir, "nope.txt"));
+    const noStdin = runCli("");
+    check(
+        "cli: empty stdin exits 2 and names the heredoc trap",
+        noStdin.status === 2 && noStdin.out.includes("no spec on stdin") && noStdin.out.includes("heredoc"),
+        noStdin.out
+    );
     check(
         "cli: a missing --spec file is a clean SPEC ERROR, exit 2",
         missing.status === 2 && missing.out.includes("SPEC ERROR") && !missing.out.includes("    at "),

@@ -258,7 +258,9 @@ try {
 if (text.trim().length === 0) {
     entry.outcome = "spec-error";
     entry.message = "no spec on stdin and no --spec file";
-    console.error("no spec on stdin and no --spec file. Run with --help for the format.");
+    console.error(
+        "no spec on stdin and no --spec file. Run with --help for the format. If you wrote a heredoc, it did not reach this process: the delimiter line must close it and no body line may equal the delimiter. Or write the spec to a file and pass --spec <file>."
+    );
     process.exit(2);
 }
 entry.spec = {

@@ -47,6 +47,9 @@ skill loaded. Keep the quotes: an install path can contain spaces.
   line that is exactly `===` or `>>>` is special inside a block.
 - ⚠️ Pick a heredoc delimiter that cannot appear in the bodies (`FRSPEC`, not `EOF`): a body
   line equal to the delimiter ends the heredoc early and zsh rejects the whole command.
+  A whole-file `create` body is the usual victim: a file that contains a line `EOF` cuts the
+  heredoc there and the parser reports `block never closed with >>>` with the last lines it
+  read. For big bodies write the spec with the Write tool and pass `--spec <file>`.
 - Bodies are literal, line for line. An empty last line in an `after`/`before`/`append` body
   is a real blank line in the file (the usual "insert this block, then a gap"). A multi-line
   anchor for `after` inserts below the anchor's LAST line; `before` inserts above its FIRST.
@@ -166,6 +169,10 @@ Every MISS says why, and where to look. The hints, in order of what the runner t
 
 A MISS is not a failure of the tool. It is the tool telling you your model of the file is
 wrong, before anything was written. Re-read, fix the op, re-run.
+
+A MISS in a big multi-file spec re-sends the whole spec, because nothing was written. When the
+files are independent, `--partial` writes the clean files and the follow-up spec carries only
+the missed file's ops; the run still exits 1, so the miss is not lost.
 
 ## When you need a script instead
 
