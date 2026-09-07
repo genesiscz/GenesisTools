@@ -85,6 +85,18 @@ export async function resolveGrokSubToken(
         }
     }
 
+    // A named account that holds NEITHER reference NOR token is an error, not a
+    // licence to read whoever the Grok CLI is logged in as: after `logout` the
+    // entry survives without its file, and falling back to the default home
+    // would silently serve (and refresh) another user's credential (PR #360
+    // review t1).
+    if (!account.tokens.authFile && !account.tokens.accessToken) {
+        throw new Error(
+            `Account "${account.name}" holds no grok credential (no authFile, no accessToken). ` +
+                `Run: tools grok login ${account.name}`
+        );
+    }
+
     const authPath = account.tokens.authFile ?? grokAuthPath();
 
     // An explicit `authFile` reference wins over stored tokens (which can go
@@ -92,13 +104,27 @@ export async function resolveGrokSubToken(
     if (account.tokens.accessToken && !account.tokens.authFile) {
         // A stored token carries no refresh metadata of its own, and `authPath`
         // here is only the CLI's default file — whoever the CLI happens to be
-        // logged in as. Refreshing from it would hand back a DIFFERENT account's
-        // token and quietly cross a billing boundary, so expiry is fatal instead.
-        // This path never refreshes, so `noRefresh` has nothing to guard here.
+        // logged in as. Refreshing from it BLIND would hand back a DIFFERENT
+        // account's token and quietly cross a billing boundary. So the default
+        // file is used only when it PROVES it carries the same identity as the
+        // copy that expired; without that proof, expiry stays fatal.
         if (isTokenExpired(decodeJwtClaims(account.tokens.accessToken))) {
+            if (await holdsSameIdentity(account.tokens.accessToken, authPath)) {
+                logger.info(
+                    { account: account.name, authPath },
+                    "grok: stored accessToken expired; the default auth file proves the same identity, resolving from it"
+                );
+
+                return {
+                    token: await tokenFromAuthFile(authPath, options?.noRefresh),
+                    authPath,
+                    account: pick(account),
+                };
+            }
+
             logger.warn(
-                { account: account.name },
-                "grok: stored accessToken expired and the account references no authFile to refresh from"
+                { account: account.name, authPath },
+                "grok: stored accessToken expired and no auth file proves it belongs to this account"
             );
 
             throw new GrokAuthExpiredError(authPath);
@@ -108,6 +134,34 @@ export async function resolveGrokSubToken(
     }
 
     return { token: await tokenFromAuthFile(authPath, options?.noRefresh), authPath, account: pick(account) };
+}
+
+/**
+ * Does `authPath` hold the SAME paying identity as the stored copy?
+ *
+ * The `sub` claim of a Grok JWT is the xAI user id, and it survives expiry —
+ * decoding does not check `exp`. So an expired copy still names who it belonged
+ * to, and an auth file whose active entry names the same user is that account's
+ * own live credential, not a sibling's. That is the whole billing-boundary
+ * question, answered from data rather than from the file's location.
+ *
+ * The entry's own `user_id` counts as proof too: it is the same xAI user id, and
+ * it still identifies the file when the active token itself will not decode.
+ */
+async function holdsSameIdentity(storedToken: string, authPath: string): Promise<boolean> {
+    const stored = decodeJwtClaims(storedToken)?.sub;
+
+    if (!stored) {
+        return false;
+    }
+
+    const active = getActiveAuthEntry(await readAuthFileAsync(authPath));
+
+    if (!active) {
+        return false;
+    }
+
+    return decodeJwtClaims(active.key)?.sub === stored || active.user_id === stored;
 }
 
 /**

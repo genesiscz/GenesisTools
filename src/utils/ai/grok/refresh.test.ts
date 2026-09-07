@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { refreshGrokAuth } from "./refresh";
+import { GrokAuthExpiredError } from "./auth-errors";
+import { refreshGrokAuth, refreshGrokAuthOrThrow } from "./refresh";
 import type { GrokAuthEntry } from "./types";
 
 // Every token here is synthetic: an unsigned JWT whose payload carries only an
@@ -358,5 +360,45 @@ describe("refreshGrokAuth", () => {
         expect(await refreshGrokAuth({ path: authPath, force: true })).toBe(ROTATED);
         expect(calls.filter((call) => !call.url.includes(".well-known"))).toHaveLength(1);
         expect(readAuth()[ENTRY_KEY]?.key).toBe(ROTATED);
+    });
+});
+describe("refreshGrokAuthOrThrow", () => {
+    it("keeps an unreachable token endpoint as the cause, so the poll gate files it as transport", async () => {
+        writeAuth(defaultEntries());
+        globalThis.fetch = (async () => {
+            throw Object.assign(new Error("Unable to connect. Is the computer able to access the url?"), {
+                code: "ConnectionRefused",
+            });
+        }) as unknown as typeof fetch;
+
+        let thrown: unknown;
+
+        try {
+            await refreshGrokAuthOrThrow({ authPath, context: {}, onSuccess: "ok", onFailure: "no" });
+        } catch (err) {
+            thrown = err;
+        }
+
+        expect(thrown).toBeInstanceOf(GrokAuthExpiredError);
+        expect((thrown as Error).cause).toBeInstanceOf(Error);
+        expect(isTransportFailure(thrown)).toBe(true);
+    });
+
+    it("a refresh the issuer refused has no cause and stays an auth failure", async () => {
+        writeAuth(defaultEntries());
+        const calls: FetchCall[] = [];
+        stubFetch({ calls, token: { status: 400, body: SafeJSON.stringify({ error: "invalid_grant" }) } });
+
+        let thrown: unknown;
+
+        try {
+            await refreshGrokAuthOrThrow({ authPath, context: {}, onSuccess: "ok", onFailure: "no" });
+        } catch (err) {
+            thrown = err;
+        }
+
+        expect(thrown).toBeInstanceOf(GrokAuthExpiredError);
+        expect((thrown as Error).cause).toBeUndefined();
+        expect(isTransportFailure(thrown)).toBe(false);
     });
 });

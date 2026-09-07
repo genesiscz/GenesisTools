@@ -23,6 +23,9 @@ import {
     tryFetchWhamModels,
     type WhamModelRecord,
 } from "@genesiscz/utils/ai/openai/sub-models";
+// The one predicate in the repo for "did this failure happen below HTTP?".
+// Duplicating it here is how the poll gate and the proxy would drift apart.
+import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -274,6 +277,21 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     }
 
                     logger.warn({ err, key: candidate.key }, "ai-proxy: codex 401 refresh-retry failed");
+
+                    // A refresh that never reached auth.openai.com says NOTHING
+                    // about the grant. Cooling the account for 15 minutes and
+                    // answering 401 told the client its login had died because
+                    // DNS blinked. `markUnhealthy` cannot make this call itself:
+                    // it never sees the error, and its other call site is a real
+                    // 401 the server sent after a refresh that did go through.
+                    if (isTransportFailure(err)) {
+                        lastFailure = jsonError(
+                            502,
+                            `Failed to refresh the Codex subscription token: ${err instanceof Error ? err.message : String(err)}`
+                        );
+                        continue;
+                    }
+
                     markUnhealthy(candidate.key);
                     lastFailure = whamErrorResponse({ status: 401, bodyText: "" });
                     continue;

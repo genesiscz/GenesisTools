@@ -10,14 +10,25 @@
  * same file concurrently, so the rewrite is temp-file + rename (a reader sees
  * either the old file or the new one, never a torn one) and the file is re-read
  * immediately before writing so a fresher token from the CLI wins instead of
- * being clobbered. And several in-flight proxy requests can notice the expiry at
- * the same moment, so refreshes are single-flighted per auth path — one network
- * call, one rotation, no burnt refresh tokens.
+ * being clobbered. And several callers can notice the expiry at the same moment,
+ * so refreshes are single-flighted per auth path — one network call, one
+ * rotation, no burnt refresh tokens.
+ *
+ * That second guard has two layers, because a refresh token is single-use and
+ * the issuer may revoke the whole family when one is replayed. The in-process
+ * `inflight` map covers concurrent callers inside one process. It cannot see the
+ * OTHER processes that run against this same file on a normal day (the usage
+ * daemon, a TUI and ai-proxy), each of which has its own empty map, so a file
+ * lock covers those: whoever loses the race re-reads inside the lock, finds the
+ * token the winner just wrote, and returns it without spending anything. The
+ * `grok` CLI does not take this lock, which is what the mid-grant re-read below
+ * still exists for.
  */
 import { chmod, rename, unlink, writeFile } from "node:fs/promises";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt } from "@genesiscz/utils/jwt";
 import { logger } from "@genesiscz/utils/logger";
+import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { decodeJwtClaims, isAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import { grokAuthPath } from "./paths";
@@ -28,7 +39,7 @@ const AUTH_FILE_MODE = 0o600;
 const DISCOVERY_TIMEOUT_MS = 5_000;
 const TOKEN_TIMEOUT_MS = 15_000;
 
-const inflight = new Map<string, Promise<string | null>>();
+const inflight = new Map<string, Promise<RefreshGrokAuthResult>>();
 
 interface TokenResponse {
     access_token?: string;
@@ -150,6 +161,22 @@ function describeTokenError(body: string): string {
     }
 
     return redactTokens(body).slice(0, 200);
+}
+
+/**
+ * The grant, serialised across processes.
+ *
+ * `performRefresh` opens by re-reading the file and returning early when the
+ * on-disk token is already fresh, so holding the lock across the whole of it is
+ * what makes the loser of a race cheap: it wakes up, sees the winner's token and
+ * spends nothing. Doing the read outside and the grant inside would put the read
+ * before the write it needs to observe, which is the race itself.
+ *
+ * The holder is bounded by DISCOVERY_TIMEOUT_MS + TOKEN_TIMEOUT_MS = 20 s, well
+ * inside the wait budget the other processes are given.
+ */
+function performRefreshExclusively(authPath: string, force: boolean): Promise<string | null> {
+    return withFileLock(`${authPath}.lock`, () => performRefresh(authPath, force), NETWORKED_LOCK_WAIT_MS);
 }
 
 async function performRefresh(authPath: string, force: boolean): Promise<string | null> {
@@ -274,11 +301,15 @@ export async function refreshGrokAuthOrThrow(options: {
     onSuccess: string;
     onFailure: string;
 }): Promise<string> {
-    const refreshed = await refreshGrokAuth({ path: options.authPath, force: options.force });
+    const { token: refreshed, error } = await refreshGrokAuthDetailed({ path: options.authPath, force: options.force });
 
     if (!refreshed || isTokenExpired(decodeJwtClaims(refreshed))) {
         logger.warn({ authPath: options.authPath, ...options.context }, options.onFailure);
-        throw new GrokAuthExpiredError(options.authPath);
+        // A refresh the issuer REJECTED has no cause: the session is dead. A refresh that
+        // THREW (the token endpoint was unreachable) keeps that error as the cause, so
+        // the poll gate can file it as a transport failure instead of a 6h auth block
+        // (observed 2026-09-06: two DNS blips cost the grok card a day of "stale").
+        throw new GrokAuthExpiredError(options.authPath, error === undefined ? undefined : { cause: error });
     }
 
     logger.info({ authPath: options.authPath, ...options.context }, options.onSuccess);
@@ -297,12 +328,20 @@ export interface RefreshGrokAuthOptions {
     force?: boolean;
 }
 
+export interface RefreshGrokAuthResult {
+    /** The usable access token, or null when the refresh could not produce one. */
+    token: string | null;
+    /** Set only when the attempt THREW (endpoint unreachable, file unreadable); absent when the issuer answered and refused. */
+    error?: unknown;
+}
+
 /**
- * Refresh the Grok access token in `auth.json` and return the new one, or null
- * when the file cannot be refreshed (missing fields, issuer refused). Concurrent
+ * Refresh the Grok access token in `auth.json`. `token` is the new one, or null
+ * when the file cannot be refreshed (missing fields, issuer refused, request
+ * failed); `error` tells a thrown attempt apart from a refused one. Concurrent
  * callers on the same path share one refresh.
  */
-export function refreshGrokAuth(options?: RefreshGrokAuthOptions): Promise<string | null> {
+export function refreshGrokAuthDetailed(options?: RefreshGrokAuthOptions): Promise<RefreshGrokAuthResult> {
     const authPath = options?.path ?? grokAuthPath();
     const force = options?.force ?? false;
     // A soft refresh in flight may return the very token a forced caller was
@@ -314,10 +353,11 @@ export function refreshGrokAuth(options?: RefreshGrokAuthOptions): Promise<strin
         return existing;
     }
 
-    const next = performRefresh(authPath, force)
-        .catch((err: unknown) => {
+    const next = performRefreshExclusively(authPath, force)
+        .then((token): RefreshGrokAuthResult => ({ token }))
+        .catch((err: unknown): RefreshGrokAuthResult => {
             logger.warn({ err, authPath, force }, "grok refresh: refresh attempt failed");
-            return null;
+            return { token: null, error: err };
         })
         .finally(() => {
             inflight.delete(key);
@@ -326,4 +366,11 @@ export function refreshGrokAuth(options?: RefreshGrokAuthOptions): Promise<strin
     inflight.set(key, next);
 
     return next;
+}
+
+/** `refreshGrokAuthDetailed` for callers that only need the token. */
+export async function refreshGrokAuth(options?: RefreshGrokAuthOptions): Promise<string | null> {
+    const { token } = await refreshGrokAuthDetailed(options);
+
+    return token;
 }

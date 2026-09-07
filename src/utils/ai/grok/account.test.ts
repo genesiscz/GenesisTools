@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 // Tokens are synthetic unsigned JWTs carrying only an `exp`, and `fetch` is
@@ -27,10 +28,9 @@ import { resolveGrokSubToken } from "./account";
 import { GrokAuthExpiredError } from "./auth-errors";
 import type { GrokAuthEntry } from "./types";
 
-function jwt(expSecondsFromNow: number): string {
-    const payload = Buffer.from(SafeJSON.stringify({ exp: Math.floor(Date.now() / 1000) + expSecondsFromNow }), "utf-8")
-        .toString("base64url")
-        .replace(/=+$/, "");
+function jwt(expSecondsFromNow: number, sub?: string): string {
+    const claims = { exp: Math.floor(Date.now() / 1000) + expSecondsFromNow, ...(sub ? { sub } : {}) };
+    const payload = Buffer.from(SafeJSON.stringify(claims), "utf-8").toString("base64url").replace(/=+$/, "");
 
     return `e30.${payload}.sig`;
 }
@@ -38,7 +38,16 @@ function jwt(expSecondsFromNow: number): string {
 const EXPIRED = jwt(-3_600);
 const FRESH = jwt(3_600);
 
+/** Two identities, so "same user" and "some other user" are distinguishable. */
+const MINE = "user-1111";
+const THEIRS = "user-9999";
+const EXPIRED_MINE = jwt(-3_600, MINE);
+const FRESH_MINE = jwt(3_600, MINE);
+const EXPIRED_THEIRS = jwt(-3_600, THEIRS);
+
 let authPath: string;
+let grokHome: string;
+const envSnapshot = env.testing.snapshot();
 const originalFetch = globalThis.fetch;
 
 function writeAuth(entries: Record<string, GrokAuthEntry>): void {
@@ -83,12 +92,17 @@ function stubFetch(options: { calls: string[]; token?: { status?: number; body?:
 }
 
 beforeEach(() => {
-    authPath = join(mkdtempSync(join(tmpdir(), "grok-account-")), "auth.json");
+    grokHome = mkdtempSync(join(tmpdir(), "grok-account-"));
+    authPath = join(grokHome, "auth.json");
+    // `grokAuthPath()` reads GROK_HOME, so the "default" auth file the
+    // stored-copy branch reaches for is this temp file, never ~/.grok/auth.json.
+    env.testing.set("GROK_HOME", grokHome);
     account = { name: "grok", provider: "grok-sub", tokens: { authFile: authPath } };
 });
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
+    env.testing.restore(envSnapshot);
 });
 
 describe("resolveGrokSubToken", () => {
@@ -153,6 +167,90 @@ describe("resolveGrokSubToken", () => {
         stubFetch({ calls });
 
         await expect(resolveGrokSubToken("grok")).rejects.toThrow(GrokAuthExpiredError);
+        expect(calls).toHaveLength(0);
+    });
+
+    // The state `logout --auth-file` leaves behind: the entry survives, its file
+    // reference is gone, and the CLI's default home still holds a live login
+    // (PR #360 review t1). That login belongs to whoever ran `grok login`, not
+    // to this account.
+    it("refuses an account holding neither a file nor a token, even with a live default auth file", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: {} };
+        writeAuth({ [ENTRY_KEY]: { ...expiredEntries()[ENTRY_KEY], key: EXPIRED_MINE } });
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        await expect(resolveGrokSubToken("grok")).rejects.toThrow(/holds no grok credential/);
+        expect(calls).toHaveLength(0);
+        expect(readAuth()[ENTRY_KEY]?.refresh_token).toBe("refresh-one");
+    });
+
+    it("NEGATIVE CONTROL: the same default file still serves an account that references it", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: { authFile: authPath } };
+        writeAuth({ [ENTRY_KEY]: { ...expiredEntries()[ENTRY_KEY], key: FRESH_MINE } });
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        expect((await resolveGrokSubToken("grok")).token).toBe(FRESH_MINE);
+        expect(calls).toHaveLength(0);
+    });
+});
+
+describe("resolveGrokSubToken: an expired stored copy beside the default auth file", () => {
+    it("refreshes from the default auth file when it proves the same identity", async () => {
+        // The regression: the only grok-sub account on a migrated config holds a
+        // token copy and no authFile, so it could never refresh and every poll
+        // threw GrokAuthExpiredError forever, while ~/.grok/auth.json stayed fresh.
+        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        writeAuth(expiredEntries({ key: EXPIRED_MINE, user_id: MINE }));
+        const calls: string[] = [];
+        stubFetch({ calls, token: { body: SafeJSON.stringify({ access_token: FRESH_MINE }) } });
+
+        const resolved = await resolveGrokSubToken("grok");
+
+        expect(resolved.token).toBe(FRESH_MINE);
+        expect(resolved.authPath).toBe(authPath);
+        expect(calls.some((url) => url === `${ISSUER}/oauth2/token`)).toBe(true);
+    });
+
+    it("uses a still-fresh default auth file without spending the grant", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        writeAuth(expiredEntries({ key: FRESH_MINE }));
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        expect((await resolveGrokSubToken("grok")).token).toBe(FRESH_MINE);
+        expect(calls).toHaveLength(0);
+    });
+
+    it("refuses the default auth file when it belongs to a DIFFERENT identity", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        writeAuth(expiredEntries({ key: EXPIRED_THEIRS, user_id: THEIRS }));
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        // Refreshing here would hand back the other account's token and bill them.
+        await expect(resolveGrokSubToken("grok")).rejects.toThrow(GrokAuthExpiredError);
+        expect(calls).toHaveLength(0);
+    });
+
+    it("refuses when neither side names an identity", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED } };
+        writeAuth(expiredEntries());
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        await expect(resolveGrokSubToken("grok")).rejects.toThrow(GrokAuthExpiredError);
+        expect(calls).toHaveLength(0);
+    });
+
+    it("does not spend the grant on the identity-matched path during a probe", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: EXPIRED_MINE } };
+        writeAuth(expiredEntries({ key: EXPIRED_MINE, user_id: MINE }));
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        await expect(resolveGrokSubToken("grok", { noRefresh: true })).rejects.toThrow(/disabled for diagnosis/);
         expect(calls).toHaveLength(0);
     });
 });

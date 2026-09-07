@@ -617,4 +617,56 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(second.status).toBe(502);
         expect(upstreamCalled).toBe(false);
     });
+
+    it("does not cool the account when the forced refresh never reached the network", async () => {
+        // A 401 sends us to force-refresh. If THAT fails because auth.openai.com
+        // was unreachable, the grant is not dead and nothing was learned about it.
+        // Cooling the account for 15 minutes told the client its login had died
+        // because DNS blinked, and locked it out of the next request too.
+        primaryResolver = async (options) => {
+            if (options?.forceRefresh) {
+                throw Object.assign(new Error("Unable to connect. Is the computer able to access the url?"), {
+                    code: "ConnectionRefused",
+                });
+            }
+
+            return { token: "stale-token", accountId: TEST_ACCOUNT_ID };
+        };
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
+            new Response('{"detail":"Unauthorized"}', { status: 401 })) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const first = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+
+        // 502 "upstream unreachable", not 401 "your login is dead".
+        expect(first.status).toBe(502);
+
+        // The account is still usable: a recovered network serves the next request.
+        primaryResolver = async () => ({ token: TEST_TOKEN, accountId: TEST_ACCOUNT_ID });
+        let upstreamCalled = false;
+        globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
+            upstreamCalled = true;
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        const second = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+
+        expect(second.status).toBe(200);
+        expect(upstreamCalled).toBe(true);
+    });
 });

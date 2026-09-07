@@ -4,10 +4,15 @@ export class GrokAuthExpiredError extends Error {
     readonly authPath: string;
     readonly recoveryHint: string;
 
-    constructor(authPath?: string) {
+    /**
+     * `cause` carries the error that stopped the OIDC refresh when there was one (a
+     * dead network on the way to the token endpoint). The poll gate reads it: a refresh
+     * that never reached the issuer is a transport failure, not a dead session.
+     */
+    constructor(authPath?: string, options?: { cause?: unknown }) {
         const resolvedPath = authPath ?? grokAuthPath();
         const recoveryHint = formatAuthRecoveryHint(resolvedPath);
-        super(`Grok session token expired or invalid.\n${recoveryHint}`);
+        super(`Grok session token expired or invalid.\n${recoveryHint}`, options);
         this.name = "GrokAuthExpiredError";
         this.authPath = resolvedPath;
         this.recoveryHint = recoveryHint;
