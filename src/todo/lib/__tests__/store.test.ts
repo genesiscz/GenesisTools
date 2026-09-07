@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TodoStore } from "../store";
 import type { Todo } from "../types";
 
-const TEST_DIR = join(import.meta.dir, `.test-store-${Date.now()}`);
+// Under the OS temp root, never beside the test: a run killed between beforeEach and afterEach
+// used to leave a `.test-store-<ts>/` directory inside the repo (observed 2026-09-06).
+let TEST_DIR: string;
 
 let store: TodoStore;
 
 beforeEach(() => {
-    mkdirSync(TEST_DIR, { recursive: true });
+    TEST_DIR = mkdtempSync(join(tmpdir(), "todo-store-test-"));
     store = TodoStore.forProject(TEST_DIR, { storageRoot: join(TEST_DIR, ".storage") });
 });
 
