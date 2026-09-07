@@ -1,12 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { collectPages } from "./merge";
 import {
     buildSquashMessage,
+    collectPages,
+    collectPullCommits,
     commitSubjectOf,
     defaultSquashBody,
     defaultSquashTitle,
     describeSquashMessage,
+    type PullCommitSubject,
 } from "./squash-message";
+
+/** A page fetcher over a fixed list, with an optional hard cap like GitHub's 250 on pulls/{n}/commits. */
+function pagedSource(
+    total: number,
+    cap = Number.POSITIVE_INFINITY
+): {
+    fetch: (page: number, perPage: number) => Promise<PullCommitSubject[]>;
+    pages: number[];
+} {
+    const pages: number[] = [];
+    const all = Array.from({ length: total }, (_, i) => ({ sha: `sha${i}`, subject: `c${i}` }));
+    const visible = all.slice(0, Math.min(total, cap));
+
+    return {
+        pages,
+        async fetch(page, perPage) {
+            pages.push(page);
+            return visible.slice((page - 1) * perPage, page * perPage);
+        },
+    };
+}
 
 describe("defaultSquashTitle", () => {
     test("appends (#N) once", () => {
@@ -132,5 +155,59 @@ describe("collectPages", () => {
 
         expect(requested).toEqual([1, 2]);
         expect(items).toEqual([0, 1]);
+    });
+});
+
+describe("collectPullCommits", () => {
+    test("a PR under the cap comes straight from the PR commits endpoint", async () => {
+        const list = pagedSource(120);
+        const compare = pagedSource(120);
+        const logs: string[] = [];
+
+        const commits = await collectPullCommits({
+            expectedCount: 120,
+            listPullCommitsPage: list.fetch,
+            compareCommitsPage: compare.fetch,
+            log: (m) => logs.push(m),
+        });
+
+        expect(commits).toHaveLength(120);
+        expect(list.pages).toEqual([1, 2]);
+        expect(compare.pages).toEqual([]);
+        expect(logs).toEqual([]);
+    });
+
+    test("a 300-commit PR is walked through the compare endpoint once the 250 cap shows", async () => {
+        const list = pagedSource(300, 250);
+        const compare = pagedSource(300);
+        const logs: string[] = [];
+
+        const commits = await collectPullCommits({
+            expectedCount: 300,
+            listPullCommitsPage: list.fetch,
+            compareCommitsPage: compare.fetch,
+            log: (m) => logs.push(m),
+        });
+
+        expect(list.pages).toEqual([1, 2, 3]);
+        // 300 is three exactly full pages, so the walk needs a fourth, empty page to know it is done.
+        expect(compare.pages).toEqual([1, 2, 3, 4]);
+        expect(commits).toHaveLength(300);
+        expect(commits[0].subject).toBe("c0");
+        expect(commits[299].subject).toBe("c299");
+        expect(logs[0]).toContain("returned 250 of 300 commits");
+    });
+
+    test("a count that still does not match throws instead of producing a short body", async () => {
+        const list = pagedSource(300, 250);
+        const compare = pagedSource(280);
+
+        await expect(
+            collectPullCommits({
+                expectedCount: 300,
+                listPullCommitsPage: list.fetch,
+                compareCommitsPage: compare.fetch,
+            })
+        ).rejects.toThrow(/PR reports 300, compare returned 280.*--body/);
     });
 });

@@ -113,10 +113,12 @@ Exactly one of `--merge`, `--rebase`, `--squash`, or `--ff-only` is required.
 All progress logs go to stdout.
 
 **`--squash` writes a real commit message by default.** Without `--subject` the
-subject is the PR title plus ` (#N)` (not doubled when the title already ends
-with it). Without `--body` the body is every PR commit subject, oldest first,
-as `* <subject>` bullets separated by single newlines (all pages are fetched,
-so a 300-commit PR lists 300 bullets). The CLI prints the message and says
+subject is the PR title, a space, and `(#N)` (not doubled when the title already
+ends with it). Without `--body` the body is every PR commit subject, oldest
+first, as `* <subject>` bullets separated by single newlines. The PR-commits
+endpoint stops at 250 commits, so past that the compare endpoint is walked
+page by page; if the collected count still differs from the PR's own commit
+count the merge refuses rather than write a short body. The CLI prints the message and says
 which part was generated and which came from a flag. Commit text is passed to
 the GitHub API as data, never through a shell. `--merge` is unchanged: no
 default message is generated there. `--dry-run` resolves the PR, lists

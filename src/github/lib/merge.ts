@@ -31,7 +31,13 @@ import {
     parsePullStackNumber,
     posixShellSingleQuote,
 } from "./native-stack";
-import { buildSquashMessage, commitSubjectOf, type PullCommitSubject, type SquashMessage } from "./squash-message";
+import {
+    buildSquashMessage,
+    collectPullCommits,
+    commitSubjectOf,
+    type PullCommitSubject,
+    type SquashMessage,
+} from "./squash-message";
 
 /** GitHub API merge methods plus local-ref fast-forward. */
 export type MergeMethod = "merge" | "rebase" | "squash" | "ff-only";
@@ -49,6 +55,8 @@ export interface PullRef {
     headSha: string;
     /** Tip SHA of the base branch at PR resolution time. */
     baseSha: string;
+    /** Number of commits on the PR as GitHub counts them. */
+    commitCount: number;
     htmlUrl: string;
     /** GitHub native stack number, or null when the PR is not stacked. */
     stackNumber?: number | null;
@@ -86,8 +94,13 @@ export interface MergePullResult {
 export interface MergeGitHubClient {
     getPull(owner: string, repo: string, number: number): Promise<PullRef>;
     listOpenPullsByBase(owner: string, repo: string, base: string): Promise<DependentPull[]>;
-    /** Every commit on the PR in GitHub's order (oldest first), across all pages. */
-    listPullCommits(owner: string, repo: string, number: number): Promise<PullCommitSubject[]>;
+    /** Every commit on the PR, oldest first. Throws rather than return a partial list. */
+    listPullCommits(
+        owner: string,
+        repo: string,
+        pr: PullRef,
+        log?: (message: string) => void
+    ): Promise<PullCommitSubject[]>;
     mergePull(owner: string, repo: string, number: number, options: MergePullOptions): Promise<MergePullResult>;
     /**
      * True fast-forward: move `baseRef` to `headSha` only if base is an ancestor
@@ -221,31 +234,6 @@ function retargetRow(input: {
 }
 
 /**
- * Walk a page-numbered GitHub list to its end. A page shorter than `perPage`
- * is the last one; a large PR is never silently cut at page one.
- */
-export async function collectPages<T>(
-    fetchPage: (page: number, perPage: number) => Promise<T[]>,
-    perPage = 100
-): Promise<T[]> {
-    const results: T[] = [];
-    let page = 1;
-
-    while (true) {
-        const data = await fetchPage(page, perPage);
-        results.push(...data);
-
-        if (data.length < perPage) {
-            break;
-        }
-
-        page++;
-    }
-
-    return results;
-}
-
-/**
  * Create the default Octokit-backed client.
  */
 export function createOctokitMergeClient(): MergeGitHubClient {
@@ -275,6 +263,7 @@ export function createOctokitMergeClient(): MergeGitHubClient {
                 baseRef: data.base.ref,
                 headSha: data.head.sha,
                 baseSha: data.base.sha,
+                commitCount: data.commits,
                 htmlUrl: data.html_url,
                 stackNumber: parsePullStackNumber(data),
             };
@@ -322,23 +311,46 @@ export function createOctokitMergeClient(): MergeGitHubClient {
             return results;
         },
 
-        async listPullCommits(owner, repo, number) {
-            const commits = await collectPages(async (page, perPage) => {
-                const { data } = await withRetry(
-                    () =>
-                        octokit.rest.pulls.listCommits({
-                            owner,
-                            repo,
-                            pull_number: number,
-                            per_page: perPage,
-                            page,
-                        }),
-                    { label: `GET /repos/${owner}/${repo}/pulls/${number}/commits (page ${page})` }
-                );
-                return data;
-            });
+        async listPullCommits(owner, repo, pr, log) {
+            const basehead = `${pr.baseSha}...${pr.headSha}`;
 
-            return commits.map((commit) => ({ sha: commit.sha, subject: commitSubjectOf(commit.commit.message) }));
+            return collectPullCommits({
+                expectedCount: pr.commitCount,
+                log,
+                async listPullCommitsPage(page, perPage) {
+                    const { data } = await withRetry(
+                        () =>
+                            octokit.rest.pulls.listCommits({
+                                owner,
+                                repo,
+                                pull_number: pr.number,
+                                per_page: perPage,
+                                page,
+                            }),
+                        { label: `GET /repos/${owner}/${repo}/pulls/${pr.number}/commits (page ${page})` }
+                    );
+
+                    return data.map((commit) => ({ sha: commit.sha, subject: commitSubjectOf(commit.commit.message) }));
+                },
+                async compareCommitsPage(page, perPage) {
+                    const { data } = await withRetry(
+                        () =>
+                            octokit.rest.repos.compareCommitsWithBasehead({
+                                owner,
+                                repo,
+                                basehead,
+                                per_page: perPage,
+                                page,
+                            }),
+                        { label: `GET /repos/${owner}/${repo}/compare/${basehead} (page ${page})` }
+                    );
+
+                    return data.commits.map((commit) => ({
+                        sha: commit.sha,
+                        subject: commitSubjectOf(commit.commit.message),
+                    }));
+                },
+            });
         },
 
         async mergePull(owner, repo, number, options) {
@@ -533,7 +545,7 @@ export async function safeMergePull(options: SafeMergeOptions): Promise<SafeMerg
 
     if (method === "squash") {
         logLine(log, `Listing commits of #${number} for the squash message...`);
-        const commits = await client.listPullCommits(owner, repo, number);
+        const commits = await client.listPullCommits(owner, repo, pr, log);
         squashMessage = buildSquashMessage({
             number: pr.number,
             title: pr.title,

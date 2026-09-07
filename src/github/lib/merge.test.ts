@@ -73,13 +73,14 @@ function makeMock(opts: {
                     baseRef: dep.baseRef,
                     headSha: dep.headSha ?? "dddddddddddddddddddddddddddddddddddddddd",
                     baseSha: opts.pr.baseSha,
+                    commitCount: 1,
                     htmlUrl: dep.htmlUrl,
                 };
             }
             return { ...opts.pr, number, merged };
         },
-        async listPullCommits(_owner, _repo, number) {
-            calls.push({ op: "listPullCommits", args: [number] });
+        async listPullCommits(_owner, _repo, pr) {
+            calls.push({ op: "listPullCommits", args: [pr.number] });
             return (opts.commits ?? []).map((c) => ({ ...c }));
         },
         async listOpenPullsByBase(_owner, _repo, base) {
@@ -216,6 +217,7 @@ function basePr(over: Partial<PullRef> = {}): PullRef {
         baseRef: "main",
         headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        commitCount: 1,
         htmlUrl: "https://github.com/o/r/pull/1",
         ...over,
     };

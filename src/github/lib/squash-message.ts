@@ -52,6 +52,69 @@ export function defaultSquashBody(commits: PullCommitSubject[]): string {
     return commits.map((c) => `* ${commitSubjectOf(c.subject)}`).join("\n");
 }
 
+export interface CollectPullCommitsInput {
+    /** `commits` from the PR object: the authoritative count. */
+    expectedCount: number;
+    /** Page of `GET /pulls/{n}/commits` (GitHub caps the whole listing at 250). */
+    listPullCommitsPage: (page: number, perPage: number) => Promise<PullCommitSubject[]>;
+    /** Page of `GET /compare/{base}...{head}`, which paginates past 250. */
+    compareCommitsPage: (page: number, perPage: number) => Promise<PullCommitSubject[]>;
+    log?: (message: string) => void;
+}
+
+/**
+ * Every commit of a PR, oldest first. The PR-commits endpoint stops at 250
+ * commits no matter how it is paged, so when it comes back short of the PR's
+ * own commit count the compare endpoint is walked instead. A count that still
+ * does not match is an error: a squash body must never silently drop commits.
+ */
+export async function collectPullCommits(input: CollectPullCommitsInput): Promise<PullCommitSubject[]> {
+    const listed = await collectPages(input.listPullCommitsPage);
+
+    if (listed.length >= input.expectedCount) {
+        return listed;
+    }
+
+    input.log?.(
+        `  PR commits endpoint returned ${listed.length} of ${input.expectedCount} commits (250 cap); walking the compare endpoint`
+    );
+    const compared = await collectPages(input.compareCommitsPage);
+
+    if (compared.length !== input.expectedCount) {
+        throw new Error(
+            `Could not collect every PR commit for the squash body: PR reports ${input.expectedCount}, ` +
+                `compare returned ${compared.length}. Pass --body to supply the message yourself.`
+        );
+    }
+
+    return compared;
+}
+
+/**
+ * Walk a page-numbered GitHub list to its end. A page shorter than `perPage`
+ * is the last one.
+ */
+export async function collectPages<T>(
+    fetchPage: (page: number, perPage: number) => Promise<T[]>,
+    perPage = 100
+): Promise<T[]> {
+    const results: T[] = [];
+    let page = 1;
+
+    while (true) {
+        const data = await fetchPage(page, perPage);
+        results.push(...data);
+
+        if (data.length < perPage) {
+            break;
+        }
+
+        page++;
+    }
+
+    return results;
+}
+
 export function buildSquashMessage(input: SquashMessageInput): SquashMessage {
     const title = input.commitTitle || defaultSquashTitle(input.title, input.number);
     const body = input.commitMessage ?? defaultSquashBody(input.commits);
