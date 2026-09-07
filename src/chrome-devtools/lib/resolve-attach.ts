@@ -329,6 +329,34 @@ export function ownerOfPort(
     return command ? classifyProcessName(command) : null;
 }
 
+export type ActivePortEntry = { id: BrowserId; port: number; wsPath: string | null };
+
+/**
+ * Every DevToolsActivePort file with its port and the browser WebSocket path on line 2. The path is what
+ * Chrome 144+'s consent mode (chrome://inspect/#remote-debugging) leaves usable: /json/* answers 404 there.
+ */
+export function readDevToolsActivePortEntries(opts: {
+    home: string;
+    readFile: (abs: string) => string | null;
+    platform?: Platform;
+}): ActivePortEntry[] {
+    const entries: ActivePortEntry[] = [];
+    for (const { id, rel } of devtoolsPortRelpaths(opts.platform ?? currentPlatform())) {
+        const text = opts.readFile(`${opts.home}/${rel}`);
+        if (!text) {
+            continue;
+        }
+
+        const [portLine, pathLine] = text.split("\n").map((l) => l.trim());
+        const port = Number(portLine);
+        if (Number.isFinite(port) && port > 0) {
+            entries.push({ id, port, wsPath: pathLine?.startsWith("/devtools/browser/") ? pathLine : null });
+        }
+    }
+
+    return entries;
+}
+
 export function readDevToolsActivePorts(opts: {
     home: string;
     readFile: (abs: string) => string | null;
@@ -355,9 +383,16 @@ export function mergeProbePorts(...groups: number[][]): number[] {
 }
 
 export function readDevToolsActivePortsFromDisk(home?: string, platform: Platform = currentPlatform()): number[] {
+    return readDevToolsActivePortEntriesFromDisk(home, platform).map((e) => e.port);
+}
+
+export function readDevToolsActivePortEntriesFromDisk(
+    home?: string,
+    platform: Platform = currentPlatform()
+): ActivePortEntry[] {
     const base = home ?? (platform === "win32" ? (env.get("LOCALAPPDATA") ?? "") : env.paths.getHome());
 
-    return readDevToolsActivePorts({
+    return readDevToolsActivePortEntries({
         home: base,
         platform,
         readFile: (abs) => {
@@ -616,10 +651,14 @@ export type Endpoint = {
     pages: { title: string; url: string }[];
 };
 
+/** A browser in Chrome 144+'s consent mode: the port listens, /json/* is 404, only the browser WebSocket works. */
+export type ConsentEndpoint = { id: BrowserId; port: number; wsPath: string };
+
 export type Inventory = {
     running: BrowserId[];
     endpoints: Endpoint[];
     emptyDebugFlag?: BrowserId[];
+    consent?: ConsentEndpoint[];
 };
 
 export type AttachPlan = {
@@ -628,6 +667,7 @@ export type AttachPlan = {
     endpoints: Endpoint[];
     undebugged: BrowserId[];
     emptyDebugFlag: BrowserId[];
+    consent: ConsentEndpoint[];
     restartPort: number;
 };
 
@@ -653,6 +693,7 @@ export function planAttach(inventory: Inventory, opts?: { explicitPort?: number 
         running: inventory.running,
         undebugged,
         emptyDebugFlag,
+        consent: (inventory.consent ?? []).filter((c) => undebugged.includes(c.id)),
         restartPort,
     };
 
@@ -746,7 +787,19 @@ export function renderAttachPlan(
         const owned = plan.endpoints.filter((e) => e.owner === id);
         const off = plan.undebugged.includes(id);
 
-        if (off && !owned.length) {
+        const consent = plan.consent.find((c) => c.id === id);
+
+        if (off && !owned.length && consent) {
+            lines.push(`=== ${app}: own profile, consent mode (chrome://inspect/#remote-debugging is on) ===`);
+            lines.push(
+                `  port ${consent.port} listens, but /json/version and /json/list answer 404: only the browser WebSocket works,`,
+                `  and ${app} asks "Allow remote debugging?" on every connection.`,
+                `    ws://127.0.0.1:${consent.port}${consent.wsPath}`,
+                `  The ${opts.cmd} verbs need /json (targets, cookies, follow, har) and cannot drive this endpoint yet;`,
+                `  a CDP client that speaks the WebSocket directly can (Target.getTargets, Storage.getCookies per browserContextId).`,
+                `  For the tool's own verbs use a separate profile: ${opts.suggestCommand(["open", "--browser", id, "--port", String(plan.restartPort), "--user-data-dir", "<persistent dir>", "<url>"])}`
+            );
+        } else if (off && !owned.length) {
             const empty = plan.emptyDebugFlag.includes(id);
             lines.push(
                 empty

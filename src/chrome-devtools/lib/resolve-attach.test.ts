@@ -14,6 +14,7 @@ import {
     parseTasklistImages,
     planAttach,
     quitBrowser,
+    readDevToolsActivePortEntries,
     readDevToolsActivePorts,
     renderAttachPlan,
     waitForCdp,
@@ -182,6 +183,30 @@ describe("planAttach", () => {
         expect(text).toContain("osascript -e 'quit app \"Brave Browser\"'");
         expect(text).toContain('open -na "Brave Browser" --args --remote-debugging-port=9223');
         expect(text).toContain("tools chrome-devtools attach --port 9222");
+    });
+
+    test("a consent-mode Chrome is named as such, with its WebSocket, not as 'port is not on'", () => {
+        const plan = planAttach({
+            running: ["chrome"],
+            endpoints: [],
+            consent: [{ id: "chrome", port: 9333, wsPath: "/devtools/browser/abc" }],
+        });
+
+        expect(plan.status).toBe("none");
+        expect(plan.consent).toEqual([{ id: "chrome", port: 9333, wsPath: "/devtools/browser/abc" }]);
+
+        const { text, exitCode } = renderAttachPlan(plan, {
+            cmd: "tools chrome-devtools",
+            suggestCommand: suggest,
+            platform: "darwin",
+        });
+
+        expect(exitCode).toBe(1);
+        expect(text).toContain("consent mode (chrome://inspect/#remote-debugging is on)");
+        expect(text).toContain("ws://127.0.0.1:9333/devtools/browser/abc");
+        expect(text).toContain('asks "Allow remote debugging?"');
+        expect(text).not.toContain("debugging port is not on");
+        expect(text).toContain("--user-data-dir");
     });
 
     test("non-darwin render offers the tool's restart, not osascript", () => {
@@ -392,6 +417,31 @@ describe("discoverListeningCdpPorts", () => {
         };
 
         expect(discoverListeningCdpPorts(exec, "win32")).toEqual([9222]);
+    });
+});
+
+describe("readDevToolsActivePortEntries", () => {
+    test("keeps the browser WebSocket path from line 2 and drops anything that is not one", () => {
+        const entries = readDevToolsActivePortEntries({
+            home: "/h",
+            platform: "darwin",
+            readFile: (abs) => {
+                if (abs.endsWith("Google/Chrome/DevToolsActivePort")) {
+                    return "9222\n/devtools/browser/f83f-1\n";
+                }
+
+                if (abs.endsWith("Brave-Browser/DevToolsActivePort")) {
+                    return "9223\n";
+                }
+
+                return null;
+            },
+        });
+
+        expect(entries).toEqual([
+            { id: "chrome", port: 9222, wsPath: "/devtools/browser/f83f-1" },
+            { id: "brave", port: 9223, wsPath: null },
+        ]);
     });
 });
 

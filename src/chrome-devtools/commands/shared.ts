@@ -12,13 +12,14 @@ import { readRecorderMeta } from "../lib/recorder.ts";
 import {
     browsersWithEmptyDebugFlag,
     CDP_PORTS,
+    type ConsentEndpoint,
     discoverListeningCdpPorts,
     type Inventory,
     isPortSpecified,
     listRunningBrowsers,
     mergeProbePorts,
     ownerOfPort,
-    readDevToolsActivePortsFromDisk,
+    readDevToolsActivePortEntriesFromDisk,
 } from "../lib/resolve-attach.ts";
 
 const { log } = logger.scoped("chrome-devtools:cli");
@@ -91,14 +92,38 @@ async function isEndpointLive(port: number): Promise<boolean> {
     }
 }
 
+/** Chrome 144+ consent mode: the DevToolsActivePort file names a listening port whose /json/version is 404. */
+async function isConsentPort(port: number): Promise<boolean> {
+    try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
+
+        return res.status === 404;
+    } catch {
+        return false;
+    }
+}
+
 export async function scanInventory(): Promise<Inventory> {
     const running = listRunningBrowsers();
-    const ports = mergeProbePorts(CDP_PORTS, discoverListeningCdpPorts(), readDevToolsActivePortsFromDisk());
+    const activeEntries = readDevToolsActivePortEntriesFromDisk();
+    const ports = mergeProbePorts(
+        CDP_PORTS,
+        discoverListeningCdpPorts(),
+        activeEntries.map((e) => e.port)
+    );
     const found = (await Promise.all(ports.map(probe))).filter((x): x is NonNullable<typeof x> => x != null);
+    const consent: ConsentEndpoint[] = [];
+
+    for (const entry of activeEntries) {
+        if (entry.wsPath && !found.some((f) => f.port === entry.port) && (await isConsentPort(entry.port))) {
+            consent.push({ id: entry.id, port: entry.port, wsPath: entry.wsPath });
+        }
+    }
 
     return {
         running,
         emptyDebugFlag: browsersWithEmptyDebugFlag(),
+        consent,
         endpoints: found.map((f) => ({
             port: f.port,
             browser: f.browser,
