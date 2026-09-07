@@ -15,7 +15,7 @@ import { runStaleSweep } from "../lib/slot-lock";
 import type { FeedEvent } from "../lib/types";
 
 const RECENT_WINDOW_MS = 60 * 60 * 1000;
-const WATCH_DEBOUNCE_MS = 200;
+const WATCH_DEBOUNCE_MS = 0;
 
 const log = logger.child({ component: "agents:listen" });
 

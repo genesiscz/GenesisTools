@@ -2,7 +2,7 @@
 
 CLI for **bi-directional messaging across a swarm of LLM agents** (main agent ↔ subagent ↔ subagent), via a per-session append-only feed at `~/.genesis-tools/agents/<session-id>/feed.jsonl`. No daemon, no MCP server, no network. Built on the GenesisTools storage primitives.
 
-For the *protocol-level* documentation aimed at the agents themselves (when to call which command, mode choices, etc.), see [`plugins/genesis-tools/skills/agents-talk/SKILL.md`](../../plugins/genesis-tools/skills/agents-talk/SKILL.md) (`/gt:agents-talk`).
+For the *protocol-level* documentation aimed at the agents themselves (when to call which command, mode choices, etc.), see [`plugins/genesis-tools/skills/agents-talk/SKILL.md`](../../plugins/genesis-tools/skills/agents-talk/SKILL.md) (`genesis-tools:agents-talk`).
 
 The design background and research live in the tool's design notes, which are not published. That
 directory is gitignored, so the file is local to the machine it was written on and is not part of
@@ -15,7 +15,7 @@ a clone. The design decisions it records that still matter are summarised under
 tools agents login --agent-name lead --agent-main              # auto-registers + attaches, stream mode
 tools agents login --agent-name researcher                     # auto-registers + attaches (stream mode)
 tools agents login --agent-id agt_xxx --agent-name X            # attach with a chosen id
-tools agents login --agent-name X --once                       # one-shot (poll loop)
+tools agents login --agent-name X --once                       # drain queued batch, or block for mail
 tools agents login --agent-name lead --kinds message,error     # receiver-side verbosity filter
 tools agents login --agent-name lead --filter '.op=="approval_request"'
 tools agents message --from X --to Y --body '...'
@@ -43,6 +43,22 @@ The **main** agent's login stream is the swarm inbox: it receives every `message
 
 `login` prints one stdout-only `{type:"ready",...}` JSON line as soon as the slot is attached (not written to the feed). After that, stdout is feed events only. When stderr is not a TTY (piped into a harness monitor), login stays silent on stderr so diagnostics cannot be mistaken for events.
 
+## Codex and hosts without a monitor
+
+Check the tools exposed to each agent. Prefer native collaboration for Codex agents that can all use it. Use this bus for cross-host workers, agents without native peer messaging, shared feed history, broadcast, and correlated replies. A parent having a tool does not prove that every child has it.
+
+With a real monitor, subscribe to `login` stdout directly. Without one, an active agent awaits `login --once` or resumes that command's existing terminal execution handle. A terminal handle does not subscribe the model to future stdout. `--once` drains all queued matching events; with no match it blocks for up to eight hours. Never start a second receiver for the same identity.
+
+In Codex tool sets exposing `collaboration.send_message` and `followup_task`, the first sends to an agent without starting an idle turn; the second starts an idle turn. `wait_agent` waits for native events, not CLI stdout. See the skill for host-specific wake and receiver rules.
+
+For nonblocking communication between working Codex agents, send the full payload with the native tool and continue useful work. Incoming native messages are injected at message boundaries; receiving needs no login, polling, or wait call. Use `followup_task` with the payload when the recipient may be idle. If a child lacks native peer tools and there is no real monitor, a blocking `--once` receiver does not meet a nonblocking requirement.
+
+## Delivery and latency limits
+
+The login cursor advances after writing stdout and also advances past filtered events. It does not acknowledge model consumption or completed work. A reconnect can skip output the harness dropped, or duplicate an emission interrupted before its cursor write. Send an explicit reply after processing when that confirmation matters.
+
+Login and listen schedule filesystem notifications without an intentional debounce delay. Fallback checks remain every 150 ms for login and 1000 ms for listen. CLI startup, full-feed parsing, scheduling, and model turns add latency. A running receiver cannot wake an idle model by itself.
+
 ## Key files (per session)
 
 ```
@@ -68,12 +84,12 @@ The registry (who's registered, logged in/out) is derived by replaying `feed.jso
 
 ## V1 limits
 
-- `message_id` capped at `ffff` (65536 messages per session). Counter exhaustion is a hard error.
+- `message_id` runs from `0001` through `ffff` (65535 messages per session). Counter exhaustion is a hard error.
 - `private:true` is stored in the feed but **not enforced** (anyone with FS access reads everything). V2 will add per-recipient sharding.
 - No cross-session messaging. Each session is its own feed.
 - No HTTP / TCP transport. Local FS only.
 - One main per session (enforced via `is_main:true` uniqueness).
-- Listener (`listen`) is read-only; never claim it can interact.
+- Listener (`listen`) observes events; it does not send messages or interact with peers. Its session setup can reap stale locks.
 
 ## Build / test
 
@@ -86,4 +102,4 @@ tools agents discover --session demo
 
 ## Why a CLI, not an MCP server?
 
-Per the design research: MCP cannot push, only respond to tool calls. By using a CLI whose `login` writes JSONL to stdout, we let the agent's harness `Monitor` tool deliver lines as notifications — sidestepping the entire blocking-MCP-tool / lost-result class of bugs. Send is also a tool call (any `tools agents message`), but receive is a streaming process. This composes with every host that can spawn background processes and read stdout, not just hosts with an MCP client.
+The CLI lets any local worker send messages and receive JSONL without an MCP client. A host with a real monitor can turn login stdout into notifications. Other hosts explicitly await receive calls. Storing a shared feed, exposing stdout to a model, and scheduling an idle agent are separate responsibilities; the CLI provides the first two interfaces, while the host controls scheduling.

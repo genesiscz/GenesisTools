@@ -88,10 +88,37 @@ mksess() {
     echo "${RUN_ID}-$1-$$"
 }
 
-# Helper: log in (auto-register) and exit immediately via --once with no messages
-# Using `timeout 2` so it returns even when nothing's pending.
+# Registration completes at ready; a fixed sleep can kill startup on a loaded host.
 quick_login() {
-    timeout 2 ./tools agents login "$@" --once 2>/dev/null || true
+    bun -e '
+        import { SafeJSON } from "@genesiscz/utils/json";
+        const proc = Bun.spawn(["./tools", "agents", "login", ...process.argv.slice(1), "--once", "--format", "json"], {
+            stdout: "pipe",
+            stderr: "inherit",
+        });
+        const timer = setTimeout(() => proc.kill("SIGTERM"), 10_000);
+        let ready = false;
+        let partial = "";
+        const decoder = new TextDecoder();
+        try {
+            for await (const chunk of proc.stdout) {
+                partial += decoder.decode(chunk, { stream: true });
+                const lines = partial.split("\n");
+                partial = lines.pop() ?? "";
+                ready = lines.some((line) => line.trim() && SafeJSON.parse(line).type === "ready");
+                if (ready) {
+                    break;
+                }
+            }
+        } finally {
+            clearTimeout(timer);
+            proc.kill("SIGTERM");
+            await proc.exited;
+        }
+        if (!ready) {
+            throw new Error("quick_login exited before ready");
+        }
+    ' -- "$@" || exit 1
 }
 
 # ============================================================
@@ -352,7 +379,12 @@ assert_exit "--meta as array errors" "$RC" "1"
 assert_contains "  hint says must be object" "$OUT" "must be a JSON object"
 
 # 7.3 missing session resolution errors
-OUT=$(env -u CLAUDE_CODE_SESSION_ID ./tools agents discover 2>&1); RC=$?
+OUT=$(env \
+    -u GENESIS_AGENTS_SESSION -u GT_RENDEZVOUS_SESSION \
+    -u CLAUDE_CODE_SESSION_ID -u CODEX_THREAD_ID \
+    -u GROK_SESSION_ID -u COPILOT_AGENT_SESSION_ID \
+    GENESIS_TOOLS_HOME="$(mktemp -d)" \
+    ./tools agents discover 2>&1); RC=$?
 if [ "$RC" != "0" ] && grep -qF "could not resolve a session" <<<"$OUT"; then
     pass "no session resolvable → friendly error"
 else

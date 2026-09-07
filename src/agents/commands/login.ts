@@ -23,7 +23,7 @@ import { readSlotPayload, releaseSlot, runStaleSweep, slotLockPath, tryAcquireSl
 import type { AgentRecord, FeedEvent, SessionPaths, SlotLockPayload } from "../lib/types";
 
 const LISTEN_CAP_MS = 8 * 60 * 60 * 1000;
-const WATCH_DEBOUNCE_MS = 25;
+const WATCH_DEBOUNCE_MS = 0;
 const WATCH_POLL_MS = 150;
 
 const log = logger.child({ component: "agents:login" });

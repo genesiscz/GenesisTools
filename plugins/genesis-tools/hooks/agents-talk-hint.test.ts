@@ -27,7 +27,7 @@ test("emits the agents-talk reminder from a dependency-free plugin directory", (
         hookSpecificOutput: {
             hookEventName: "SessionStart",
             additionalContext:
-                "Before spawning subagents that need to communicate with each other or with you, invoke the `genesis-tools:agents-talk` skill (the cross-agent messaging protocol via `tools agents`). The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.",
+                "Before spawning subagents that need to communicate with each other or with you, invoke the `genesis-tools:agents-talk` skill (the channel-selection and cross-agent messaging protocol: working Codex peers use native messages without inbox waits; a shared bus uses `tools agents`). The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.",
         },
     });
     expect(proc.stderr.toString()).toBe("");
