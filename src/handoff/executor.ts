@@ -228,6 +228,14 @@ function resolveHandoffRef(db: Database, input: { id?: string; name?: string }):
         return byId;
     }
 
+    // An `h_`-prefixed value is an id claim (no slug can carry an underscore). Beside a
+    // name it must resolve as an id: a stale id never falls back to whatever the name finds.
+    if (rawId.startsWith("h_") && rawName.length > 0) {
+        throw new Error(
+            `No handoff ${rawId} — the id does not resolve, so the name "${rawName}" is not used. Re-call with just the one you mean.`
+        );
+    }
+
     // The `id` field also accepts a name, so a paste of either resolves.
     const lookup = normalizeHandoffName(rawName.length > 0 ? rawName : rawId);
     const matches = lookup !== undefined ? findHandoffsByName(db, lookup) : [];

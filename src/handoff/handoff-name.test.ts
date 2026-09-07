@@ -124,6 +124,22 @@ describe("resolving by name", () => {
         expect(getHandoff({ id: "beta-work", name: "Beta Work" }, env.depsFor(WORKER)).handoff.id).toBe(b.id);
     });
 
+    test("a stale h_ id beside a name never falls back to the name, even one spelled like the id", () => {
+        const env = freshEnv();
+        // A handoff whose readable name is the slug of a stale id: the one case where
+        // the two-name comparison alone would agree.
+        postHandoff({ title: "h_deadbeef", tasks: [{ text: "one" }] }, env.depsFor(POSTER));
+
+        expect(() => getHandoff({ id: "h_deadbeef", name: "h-deadbeef" }, env.depsFor(WORKER))).toThrow(
+            /No handoff h_deadbeef — the id does not resolve/
+        );
+        expect(() => getHandoff({ id: "h_deadbeef", name: "beta-work" }, env.depsFor(WORKER))).toThrow(
+            /No handoff h_deadbeef/
+        );
+        // Alone, the same value still resolves as a name, as documented.
+        expect(getHandoff({ name: "h-deadbeef" }, env.depsFor(WORKER)).handoff.name).toBe("h-deadbeef");
+    });
+
     test("an unknown name and an unknown id fail differently, and both say where to look", () => {
         const env = freshEnv();
 
