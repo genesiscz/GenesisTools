@@ -149,6 +149,34 @@ This sends window-addressed mouse events to the target process without warping t
 
 Current macOS requires a private CoreGraphics window-location setter for correct event routing. The tool checks that it exists before posting events and refuses the click if unavailable. This is a macOS compatibility constraint, not a Codex dependency. `press` remains the separate AX-action mechanism.
 
+### Independent software cursor and browser tabs
+
+`tools control cursor move` sends a window-addressed mouse-move event and saves its own named position. It never moves or restores the user's hardware pointer. `cursor click` uses that saved position; a refreshed token must belong to the same app launch and window. `cursor show` reads the saved state without operating the UI.
+
+For browser tabs and toolbar controls, inspect with `--scope chrome`. This explicitly omits web-area descendants, keeping tab references stable while page content changes. Web-content coordinates require the default `window` scope. Repeated AX references are visited once using actual object equality, rather than treating equal hashes as equal objects.
+
+```bash
+tools control see \
+  --app com.brave.Browser --window-id ID --scope chrome > /tmp/brave-state.json
+tools control cursor move \
+  --name brave --app com.brave.Browser \
+  --snapshot "$(jq -r .snapshot /tmp/brave-state.json)" --coords X,Y
+tools control see \
+  --app com.brave.Browser --window-id ID --scope chrome > /tmp/brave-after-move.json
+tools control cursor click \
+  --name brave --snapshot "$(jq -r .snapshot /tmp/brave-after-move.json)"
+tools control cursor show --name brave
+```
+
+Use the window ID and point from your observation. Movement can change hover state, so inspect again before clicking. An expired or changed snapshot refuses dispatch. The named cursor's saved position is independent of where the physical mouse currently sits.
+
+The reproducible tab verification script uses these same `tools control` commands to click every visible tab in a supplied existing window, verify each selection, and restore the original tab. It refuses hidden tabs or an inventory change instead of declaring partial coverage complete. Its proof output contains ordinals and hardware-pointer measurements, not page titles or URLs:
+
+```bash
+bun src/control/scripts/brave-tabs.ts \
+  --window-id ID --proof /tmp/brave-tabs-proof.json
+```
+
 ### Existing commands
 
 Existing selector commands and `tools control run` remain available. They do not acquire the `see`/`act` snapshot guarantees. In particular, `tools control snapshot` saves mouse/focus state for `restore`; it is unrelated to a `see` token. Do not pass new tokens or indexes to legacy commands. Inspect their own help before using them.

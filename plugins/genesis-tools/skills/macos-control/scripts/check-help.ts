@@ -44,7 +44,7 @@ const probes = [
     {
         argv: [...control, "see", "--help"],
         command: "control see",
-        flags: ["--app", "--window-index", "--window-id", "--depth", "--path"],
+        flags: ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope"],
     },
     {
         argv: [...control, "act", "--help"],
@@ -73,6 +73,17 @@ const probes = [
             "--selection",
             "--format",
         ],
+    },
+    {
+        argv: [...control, "cursor", "move", "--help"],
+        command: "control cursor move",
+        flags: ["--app", "--snapshot", "--coords", "--name"],
+    },
+    { argv: [...control, "cursor", "show", "--help"], command: "control cursor show", flags: ["--name"] },
+    {
+        argv: [...control, "cursor", "click", "--help"],
+        command: "control cursor click",
+        flags: ["--name", "--snapshot", "--button", "--double"],
     },
     { argv: [...control, "capture", "--help"], command: "control capture", flags: [] },
     { argv: [...control, "capture", "preflight", "--help"], command: "control capture preflight", flags: ["--app"] },
