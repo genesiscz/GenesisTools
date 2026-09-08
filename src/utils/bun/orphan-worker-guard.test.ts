@@ -62,6 +62,7 @@ await Bun.write(${SafeJSON.stringify(pidFile)}, String(child.pid));
 await Bun.sleep(1 << 30);
 `,
         ],
+        env: process.env,
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
