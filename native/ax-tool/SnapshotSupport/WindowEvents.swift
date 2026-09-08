@@ -35,6 +35,27 @@ public final class WindowEventFactory {
 
     deinit { dlclose(handle) }
 
+    public func drag(start: CGPoint, points: [CGPoint], stepDelay: Double,
+                     verify: (CGPoint) throws -> Void, post: (CGEvent) -> Void) throws {
+        let down = try mouse(type: .leftMouseDown, point: start, clickCount: 1)
+        var release = try mouse(type: .leftMouseUp, point: start, clickCount: 1)
+        post(down)
+        do {
+            for point in points {
+                Thread.sleep(forTimeInterval: stepDelay)
+                try verify(point)
+                let move = try mouse(type: .leftMouseDragged, point: point, clickCount: 1)
+                let nextRelease = try mouse(type: .leftMouseUp, point: point, clickCount: 1)
+                post(move)
+                release = nextRelease
+            }
+        } catch {
+            post(release)
+            throw WindowEventError.unavailable("drag interrupted after mouse-down: \(error.localizedDescription); inspect the partial outcome")
+        }
+        post(release)
+    }
+
     public func scroll(point: CGPoint, deltaX: Int32, deltaY: Int32) throws -> CGEvent {
         guard bounds.contains(point), let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
             wheelCount: 2, wheel1: deltaY, wheel2: deltaX, wheel3: 0) else {

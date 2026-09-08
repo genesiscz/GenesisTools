@@ -5,7 +5,7 @@ import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { nativeNeedsBuild } from "./native-build";
+import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
@@ -76,6 +76,7 @@ export function ensureBinary(): string {
 
     if (existsSync(join(SWIFT_SOURCE, "Package.swift"))) {
         logger.info({ source: SWIFT_SOURCE }, "ax-tool binary missing or stale; compiling native CLI");
+        const before = captureNativeSources(SWIFT_SOURCE);
         const r = spawnSync("swift", ["build", "-c", "release"], {
             cwd: SWIFT_SOURCE,
             timeout: 120_000,
@@ -83,6 +84,7 @@ export function ensureBinary(): string {
             stdio: ["pipe", "pipe", "pipe"],
         });
         if (r.status === 0 && existsSync(BINARY_PATH)) {
+            recordNativeBuild({ binary: BINARY_PATH, sourceDir: SWIFT_SOURCE, before });
             logger.info("ax-tool built successfully");
             return BINARY_PATH;
         }
@@ -99,7 +101,13 @@ export function ensureBinary(): string {
 
 export function runAx(args: string[], timeoutMs = 10_000): AxResult {
     logger.debug({ command: args[0], timeoutMs }, "running native control command");
-    const binary = ensureBinary();
+    let binary: string;
+    try {
+        binary = ensureBinary();
+    } catch (error) {
+        logger.error({ error }, "native control build unavailable");
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
 
     const r = spawnSync(binary, args, {
         timeout: timeoutMs,
@@ -108,7 +116,10 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
     });
 
     if (r.error) {
-        return { ok: false, error: `spawn error: ${r.error.message}` };
+        return {
+            ok: false,
+            error: `native execution failed: ${r.error.message}. An action may have partially completed; run see before retrying.`,
+        };
     }
 
     const stdout = (r.stdout ?? "").trim();
@@ -118,7 +129,7 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
     }
 
     try {
-        const parsed = SafeJSON.parse(stdout) as AxResult;
+        const parsed = SafeJSON.parse(stdout, { strict: true }) as AxResult;
 
         if (r.status !== 0 || r.signal) {
             parsed.ok = false;

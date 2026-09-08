@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import { ensureBinary } from "../lib/runner";
 
 interface Element {
@@ -57,7 +58,7 @@ async function command(argv: string[]): Promise<{ exit: number; stdout: string; 
     }
 }
 
-const directory = mkdtempSync(join(tmpdir(), "control-live-"));
+const directory = realpathSync(mkdtempSync(join(tmpdir(), "control-live-")));
 logger.info({ directory }, "fixture artifacts");
 const bundle = join(directory, "ControlFixture.app");
 const executableDir = join(bundle, "Contents", "MacOS");
@@ -108,7 +109,7 @@ let selectedWindowId: number | undefined;
 async function run(args: string[], succeeds = true): Promise<State> {
     logger.debug({ command: args[0], completedChecks: checks.length }, "live control step");
     const result = await command([native, ...args]);
-    const data = SafeJSON.parse(result.stdout) as State;
+    const data = SafeJSON.parse(result.stdout, { strict: true }) as State;
     assert.equal(result.exit, succeeds ? 0 : 1, result.stdout || result.stderr);
     assert.equal(data.ok, succeeds, result.stdout);
     return data;
@@ -217,7 +218,7 @@ try {
     assert.ok(button);
     const wrongWindow = await act(state, button.index, "click", [], false);
     const pointerBeforeResult = await command([native, "snapshot"]);
-    const pointerBefore = SafeJSON.parse(pointerBeforeResult.stdout) as {
+    const pointerBefore = SafeJSON.parse(pointerBeforeResult.stdout, { strict: true }) as {
         mouse: { x: number; y: number };
         pid: number;
     };
@@ -238,7 +239,10 @@ try {
         `${targetButton.x + targetButton.width / 2},${targetButton.y + targetButton.height / 2}`,
     ]);
     const pointerAfterResult = await command([native, "snapshot"]);
-    const pointerAfter = SafeJSON.parse(pointerAfterResult.stdout) as { mouse: { x: number; y: number }; pid: number };
+    const pointerAfter = SafeJSON.parse(pointerAfterResult.stdout, { strict: true }) as {
+        mouse: { x: number; y: number };
+        pid: number;
+    };
     if (verifyPointer) {
         assert.deepEqual(pointerAfter.mouse, pointerBefore.mouse);
     }
@@ -309,6 +313,12 @@ try {
         state = await see();
         assert.equal(find(state, "input").AXValue, "pasted 🐈");
         checks.push("paste replaces the selected text and restores the clipboard");
+        await act(state, find(state, "input").index, "select", ["--text", "pasted 🐈"]);
+        state = await see();
+        await act(state, find(state, "input").index, "type", ["--text", "--background"]);
+        state = await see();
+        assert.equal(find(state, "input").AXValue, "--background");
+        checks.push("option-looking text stays literal input and cannot enable background dispatch");
         const clickButton = state.elements.find((element) => element.AXTitle === "Increment");
         assert.ok(clickButton);
         await act(state, clickButton.index, "click");
@@ -349,7 +359,7 @@ try {
             "--direction",
             "down",
         ]);
-        const page = SafeJSON.parse(pageResult.stdout) as State;
+        const page = SafeJSON.parse(pageResult.stdout, { strict: true }) as State;
         assert.equal(pageResult.exit, page.ok ? 0 : 1);
         state = await see();
         const afterPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
@@ -385,10 +395,28 @@ try {
     out.result({ ok: true, checks, screenshot: state.screenshot.path, directory });
 } finally {
     if (fixturePid > 0) {
-        process.kill(fixturePid, "SIGTERM");
+        const identity = classifyPid(fixturePid, (command) => {
+            const trimmed = command.trim();
+            return trimmed === fixtureBinary || trimmed.startsWith(fixtureBinary.concat(" "));
+        });
+
+        if (identity.status === "live") {
+            try {
+                // pid-verified: classifyPid matched the exact temporary fixtureBinary path before cleanup signalling
+                process.kill(fixturePid, "SIGTERM");
+            } catch (err) {
+                logger.warn({ err, fixturePid }, "control fixture cleanup signal failed");
+            }
+        } else {
+            logger.warn({ fixturePid, status: identity.status }, "skipping unverified control fixture signal");
+        }
     }
 
-    launcher.kill();
+    try {
+        launcher.kill();
+    } catch (err) {
+        logger.warn({ err }, "control fixture launcher cleanup failed");
+    }
     await launcher.exited;
     const errors = await launcherErrors;
 

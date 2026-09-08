@@ -3,6 +3,28 @@ import XCTest
 @testable import SnapshotSupport
 
 final class WindowEventTests: XCTestCase {
+    func testInterruptedDragReleasesAtLastVerifiedPoint() throws {
+        // Regression: PR #376 t7 — interrupted drag must not drop at its planned destination.
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+        var posted: [CGEvent] = []
+        XCTAssertThrowsError(try factory.drag(start: CGPoint(x: 10, y: 10),
+            points: [CGPoint(x: 20, y: 20), CGPoint(x: 100, y: 100)], stepDelay: 0,
+            verify: { point in
+                if point.x == 100 { throw WindowEventError.unavailable("window changed") }
+            }, post: { posted.append($0) }))
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
+        XCTAssertEqual(posted.last?.location, CGPoint(x: 20, y: 20))
+    }
+
+    func testCompletedDragReleasesAtTheVerifiedDestination() throws {
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+        var posted: [CGEvent] = []
+        try factory.drag(start: CGPoint(x: 10, y: 10), points: [CGPoint(x: 100, y: 100)], stepDelay: 0,
+                         verify: { _ in }, post: { posted.append($0) })
+        XCTAssertEqual(posted.map(\.type), [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
+        XCTAssertEqual(posted.last?.location, CGPoint(x: 100, y: 100))
+    }
+
     func testWheelScrollCarriesTargetWindowAndBothAxes() throws {
         let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 100, y: 100, width: 500, height: 452))
         let event = try factory.scroll(point: CGPoint(x: 200, y: 250), deltaX: -60, deltaY: 120)

@@ -21,8 +21,28 @@ private func workflowFailure(_ message: String) -> Never {
     errorExit(message)
 }
 
+private var workflowInput: WorkflowArguments?
+
+private func workflowArgument(_ flag: String) -> String? {
+    workflowInput?.values[flag]
+}
+
+private func workflowFlag(_ flag: String) -> Bool {
+    workflowInput?.flags.contains(flag) == true
+}
+
+private func workflowParse(_ command: String) -> String {
+    do {
+        let parsed = try WorkflowArguments(Array(args.dropFirst(2)), command: command)
+        workflowInput = parsed
+        return parsed.values["--app"]!
+    } catch {
+        workflowFailure(error.localizedDescription)
+    }
+}
+
 private func workflowInteger(_ flag: String, defaultValue: Int? = nil) -> Int {
-    guard let raw = argValue(flag) else {
+    guard let raw = workflowArgument(flag) else {
         if let fallback = defaultValue {
             return fallback
         }
@@ -177,19 +197,20 @@ private func workflowWindowByID(_ id: Int, pid: pid_t) -> ObservedWindow {
     return window
 }
 
-func cmdSee(appName: String) {
+func cmdSee(appName _: String) {
+    let appName = workflowParse("see")
     workflowPermissions()
     let pid = resolveApp(appName)
     let launch = workflowLaunch(pid)
     let windows = axWindows(AXUIElementCreateApplication(pid))
-    let requested = argValue("--window-index")
+    let requested = workflowArgument("--window-index")
     guard !windows.isEmpty else {
         workflowFailure("no AX windows for \(appName); verify permissions and app state")
     }
-    if requested != nil && argValue("--window-id") != nil {
+    if requested != nil && workflowArgument("--window-id") != nil {
         workflowFailure("choose --window-index or --window-id, not both")
     }
-    if windows.count > 1 && requested == nil && argValue("--window-id") == nil {
+    if windows.count > 1 && requested == nil && workflowArgument("--window-id") == nil {
         jsonOutput(["ok": false, "error": "multiple windows; select --window-index from these current candidates",
                     "pid": pid, "windows": windows.enumerated().map { index, window in
                         ["index": index, "title": axStringAttribute(window, "AXTitle") ?? "",
@@ -199,7 +220,7 @@ func cmdSee(appName: String) {
     }
     let index: Int
     let window: ObservedWindow
-    if argValue("--window-id") != nil {
+    if workflowArgument("--window-id") != nil {
         window = workflowWindowByID(workflowInteger("--window-id"), pid: pid)
         guard let found = windows.firstIndex(where: { CFEqual($0, window.ax) }) else {
             workflowFailure("window list changed during selection; inspect again")
@@ -234,7 +255,7 @@ func cmdSee(appName: String) {
         jsonOutput(["ok": false, "error": "UI changed during screenshot capture; run see again", "changedElements": changes])
         exit(1)
     }
-    let path = argValue("--path") ?? FileManager.default.temporaryDirectory
+    let path = workflowArgument("--path") ?? FileManager.default.temporaryDirectory
         .appendingPathComponent("control-see-\(UUID().uuidString).png").path
     do {
         guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
@@ -282,24 +303,25 @@ private func workflowAXAction(_ element: AXUIElement, action: String) {
     }
 }
 
-func cmdAct(appName: String) {
-    guard let raw = argValue("--snapshot"), raw.count < 8192,
+func cmdAct(appName _: String) {
+    let appName = workflowParse("act")
+    guard let raw = workflowArgument("--snapshot"), raw.count < 8192,
           let data = Data(base64Encoded: raw),
           let token = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
         workflowFailure("invalid --snapshot token; run see again")
     }
-    let rawCoords = argValue("--coords")
-    if rawCoords != nil && argValue("--element") != nil {
+    let rawCoords = workflowArgument("--coords")
+    if rawCoords != nil && workflowArgument("--element") != nil {
         workflowFailure("choose --coords or --element, not both")
     }
     let elementIndex = rawCoords == nil ? workflowInteger("--element") : 0
-    guard let action = argValue("--action"), ["get", "press", "click", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
+    guard let action = workflowArgument("--action"), ["get", "press", "click", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
         workflowFailure("--action must be get, press, click, drag, set, perform, focus, scroll, type, key, select or paste")
     }
-    if !["click", "drag", "scroll"].contains(action) && (rawCoords != nil || args.contains("--background")) {
+    if !["click", "drag", "scroll"].contains(action) && (rawCoords != nil || workflowFlag("--background")) {
         workflowFailure("--coords and --background apply only to click, drag or pixel scroll")
     }
-    if action != "click" && (args.contains("--double") || argValue("--button") != nil) {
+    if action != "click" && (workflowFlag("--double") || workflowArgument("--button") != nil) {
         workflowFailure("--double and --button apply only to click")
     }
     workflowPermissions()
@@ -331,12 +353,12 @@ func cmdAct(appName: String) {
     case "press":
         workflowAXAction(element, action: "AXPress")
     case "perform":
-        guard let name = argValue("--ax-action") else {
+        guard let name = workflowArgument("--ax-action") else {
             workflowFailure("perform requires --ax-action from the observed actions list")
         }
         workflowAXAction(element, action: name)
     case "set":
-        guard let value = argValue("--value") else {
+        guard let value = workflowArgument("--value") else {
             workflowFailure("set requires --value")
         }
         var settable = DarwinBoolean(false)
@@ -356,9 +378,9 @@ func cmdAct(appName: String) {
             workflowFailure("select requires readable text in AXValue")
         }
         do {
-            let range = try snapshotSelection(in: value, text: argValue("--text"), range: argValue("--range"),
-                                               prefix: argValue("--prefix"), suffix: argValue("--suffix"),
-                                               mode: argValue("--selection") ?? "text")
+            let range = try snapshotSelection(in: value, text: workflowArgument("--text"), range: workflowArgument("--range"),
+                                               prefix: workflowArgument("--prefix"), suffix: workflowArgument("--suffix"),
+                                               mode: workflowArgument("--selection") ?? "text")
             var settable = DarwinBoolean(false)
             guard AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &settable) == .success,
                   settable.boolValue else {
@@ -408,7 +430,7 @@ func cmdAct(appName: String) {
         }
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
     case "scroll", "click", "drag":
-        let background = args.contains("--background")
+        let background = workflowFlag("--background")
         let frame = tree.frames[elementIndex]
         func parsePoint(_ raw: String) throws -> CGPoint {
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
@@ -463,12 +485,12 @@ func cmdAct(appName: String) {
             try verifyPoint(point, target: element)
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
             if action == "scroll" {
-                guard let direction = argValue("--direction"), ["up", "down", "left", "right"].contains(direction) else {
+                guard let direction = workflowArgument("--direction"), ["up", "down", "left", "right"].contains(direction) else {
                     throw WindowEventError.unavailable("scroll requires --direction up, down, left or right")
                 }
                 let pixels: Int
-                if argValue("--pixels") != nil {
-                    guard argValue("--pages") == nil else {
+                if workflowArgument("--pixels") != nil {
+                    guard workflowArgument("--pages") == nil else {
                         throw WindowEventError.unavailable("choose --pixels or --pages, not both")
                     }
                     pixels = workflowInteger("--pixels")
@@ -492,12 +514,12 @@ func cmdAct(appName: String) {
                 event.postToPid(pid)
                 Thread.sleep(forTimeInterval: 0.1)
             } else if action == "drag" {
-                guard let destination = argValue("--to") else {
+                guard let destination = workflowArgument("--to") else {
                     throw WindowEventError.unavailable("drag requires --to x,y in the snapshot window")
                 }
                 let end = try parsePoint(destination)
                 try verifyPoint(end, target: window.ax)
-                let duration = Double(argValue("--duration") ?? "0.3") ?? 0
+                let duration = Double(workflowArgument("--duration") ?? "0.3") ?? 0
                 guard duration.isFinite, (0.1...5).contains(duration) else {
                     throw WindowEventError.unavailable("--duration must be 0.1–5 seconds")
                 }
@@ -506,32 +528,18 @@ func cmdAct(appName: String) {
                     CGPoint(x: point.x + (end.x - point.x) * Double(step) / Double(steps),
                             y: point.y + (end.y - point.y) * Double(step) / Double(steps))
                 }
-                let down = try factory.mouse(type: .leftMouseDown, point: point, clickCount: 1)
-                let moves = try points.map { try factory.mouse(type: .leftMouseDragged, point: $0, clickCount: 1) }
-                let up = try factory.mouse(type: .leftMouseUp, point: end, clickCount: 1)
-                down.postToPid(pid)
-                do {
-                    for (offset, move) in moves.enumerated() {
-                        Thread.sleep(forTimeInterval: duration / Double(steps))
-                        try verifyPoint(points[offset], target: window.ax)
-                        move.postToPid(pid)
-                    }
-                } catch {
-                    // Release even when a gesture becomes invalid after mouse-down.
-                    up.postToPid(pid)
-                    throw WindowEventError.unavailable("drag interrupted after mouse-down: \(error.localizedDescription); inspect the partial outcome")
-                }
-                up.postToPid(pid)
+                try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
+                                 verify: { try verifyPoint($0, target: window.ax) }, post: { $0.postToPid(pid) })
                 Thread.sleep(forTimeInterval: 0.05)
             } else {
-                let button = argValue("--button") ?? "left"
+                let button = workflowArgument("--button") ?? "left"
                 let types: [String: (NSEvent.EventType, NSEvent.EventType)] = [
                     "left": (.leftMouseDown, .leftMouseUp), "right": (.rightMouseDown, .rightMouseUp),
                     "middle": (.otherMouseDown, .otherMouseUp)]
                 guard let (downType, upType) = types[button] else {
                     throw WindowEventError.unavailable("--button must be left, right or middle")
                 }
-                for click in 1...(args.contains("--double") ? 2 : 1) {
+                for click in 1...(workflowFlag("--double") ? 2 : 1) {
                     try verifyPoint(point, target: element)
                     let down = try factory.mouse(type: downType, point: point, clickCount: click)
                     let up = try factory.mouse(type: upType, point: point, clickCount: click)
@@ -550,13 +558,13 @@ func cmdAct(appName: String) {
         }
     case "paste":
         workflowFrontWindow(window, pid: pid, element: element)
-        guard let text = argValue("--text") else { workflowFailure("paste requires --text") }
+        guard let text = workflowArgument("--text") else { workflowFailure("paste requires --text") }
         do {
             let transaction = try ClipboardTransaction(board: .general)
             var restoration = "unchanged"
             do {
                 defer { restoration = transaction.restore() }
-                try transaction.write(text: text, format: argValue("--format") ?? "text")
+                try transaction.write(text: text, format: workflowArgument("--format") ?? "text")
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
                       let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
                       CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, element) else {
@@ -588,7 +596,7 @@ func cmdAct(appName: String) {
             workflowFailure(error.localizedDescription)
         }
     case "type":
-        guard let text = argValue("--text"), !text.contains("\n"), !text.contains("\r") else {
+        guard let text = workflowArgument("--text"), !text.contains("\n"), !text.contains("\r") else {
             workflowFailure("type requires single-line --text; use an explicit key action to submit")
         }
         workflowFrontWindow(window, pid: pid, element: element)
@@ -607,7 +615,7 @@ func cmdAct(appName: String) {
         }
     case "key":
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
-        guard let keys = argValue("--keys") else { workflowFailure("key requires --keys") }
+        guard let keys = workflowArgument("--keys") else { workflowFailure("key requires --keys") }
         let codes: [String: CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,
             "q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,
             "7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"l":37,"j":38,"k":40,"n":45,"m":46,

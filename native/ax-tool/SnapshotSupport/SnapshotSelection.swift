@@ -21,19 +21,22 @@ public func snapshotSelection(
             throw SnapshotError.invalid("text selection requires nonempty text")
         }
 
-        var matches: [Range<String.Index>] = []
+        var selectedMatch: Range<String.Index>?
         var searchStart = value.startIndex
         while searchStart < value.endIndex,
               let match = value.range(of: text, options: .literal, range: searchStart..<value.endIndex) {
             let before = value[..<match.lowerBound]
             let after = value[match.upperBound...]
             if (prefix == nil || before.hasSuffix(prefix!)) && (suffix == nil || after.hasPrefix(suffix!)) {
-                matches.append(match)
+                guard selectedMatch == nil else {
+                    throw SnapshotError.invalid("text selection is absent or ambiguous")
+                }
+                selectedMatch = match
             }
             searchStart = value.index(after: match.lowerBound)
         }
 
-        guard matches.count == 1, let match = matches.first else {
+        guard let match = selectedMatch else {
             throw SnapshotError.invalid("text selection is absent or ambiguous")
         }
 

@@ -131,11 +131,15 @@ them off for interactive use, where raising the app is what you asked for.
 
 ## Extended snapshot actions
 
-The independent workflow supports drag, select and paste. Drag accepts --to X,Y, optional --button left|right|middle, --duration 0.1..5, --coords and --background. Scroll accepts --direction up|down|left|right. --pages 1..20 derives synthetic wheel distance from the observed target viewport; --pixels 1..10000 requests an exact distance. The two modes are mutually exclusive, and either may use --coords and --background.
+`drag` uses the left mouse button, `--to X,Y`, optional `--duration 0.1..5`, `--coords` and `--background`. Only `click` accepts `--button left|right|middle`.
 
-Select accepts a UTF-16 --range START,LENGTH or a uniquely resolved --text target, with optional --prefix and --suffix. Paste requires --text, supports --format text|md|html and --selection text|cursor_before|cursor_after; the target must already be focused. Clipboard restoration is best-effort: the original is restored only when the observed clipboard change-count is still the one produced by the action; a concurrent copy creates a residual race and restoration is skipped. Public paste carries text and HTML data, but raw markup is not guaranteed to render as rich text.
+`scroll --direction up|down|left|right` derives wheel distance from the observed viewport with `--pages 1..20` (default one), or uses exact `--pixels 1..10000`. The modes are mutually exclusive and both support coordinates/background delivery.
 
-The background event path uses localized Apple private SPI CGEventSetWindowLocation plus WebKit's private window field 51, and refuses when the setter is unavailable. --verify-pointer is a live-smoke opt-in and requires an idle pointer; --background-only avoids focus. These are compatibility boundaries for the independent tool and do not claim Sky internals or parity across all applications.
+`select` accepts a UTF-16 `--range START,LENGTH` or a unique literal `--text MATCH`, with optional `--prefix`/`--suffix` describing the immediate surroundings of a text match. `--selection text|cursor_before|cursor_after` chooses the range or caret. These are select-only options.
+
+`paste --text PAYLOAD --format text|md|html` uses the focused input's current selection. Select another range or caret through `select → see → paste`; selection flags on paste are rejected. `type` rejects more than 256 UTF-16 code units before dispatch; use paste for longer text.
+
+Clipboard restoration skips observed competing writes, but remains best effort because AppKit has no atomic compare-and-swap. HTML paste also supplies raw markup as plain text, so rich rendering depends on the receiver.
 
 ## Tests
 

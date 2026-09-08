@@ -25,9 +25,8 @@ test("action help exposes native drag selection and paste options", () => {
     expect(result.stdout).toContain("--to");
     expect(result.stdout).toContain("--range");
     expect(result.stdout).toContain("--format");
-    expect(result.stdout).toContain("--to");
-    expect(result.stdout).toContain("--range");
-    expect(result.stdout).toContain("--format");
+    expect(result.stdout).toContain("256 UTF-16 units");
+    expect(result.stdout).toContain("--button [name]");
 });
 
 test("an invalid drag button is rejected before native resolution", () => {
@@ -81,5 +80,34 @@ test("an unknown action is rejected before app resolution", () => {
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("--action");
+    expect(result.stderr).not.toContain("app not found");
+});
+
+test("type rejects text over 256 UTF-16 units before native resolution", () => {
+    const result = spawnSync(
+        "bun",
+        [
+            entry,
+            "act",
+            "--app",
+            "nonexistent-control-fixture",
+            "--snapshot",
+            "invalid",
+            "--element",
+            "0",
+            "--action",
+            "type",
+            "--text",
+            "x".repeat(257),
+        ],
+        {
+            env: process.env,
+            encoding: "utf8",
+            timeout: 30_000,
+        }
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("256 UTF-16 units");
+    expect(result.stderr).toContain("paste");
     expect(result.stderr).not.toContain("app not found");
 });

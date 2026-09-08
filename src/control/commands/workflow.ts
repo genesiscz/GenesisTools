@@ -93,15 +93,15 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--value <text>", "set: AXValue text, read back to verify; no keystrokes")
         .option("--ax-action <name>", "perform: exact action from the element's actions list")
         .option("--direction [name]", "scroll: direction up, down, left or right; page or pixel wheel mode")
-        .option("--text <text>", "type: literal single-line text into the already focused element")
+        .option("--text <text>", "type/select/paste: text; type is single-line and limited to 256 UTF-16 units")
         .option(
             "--keys <combo>",
             "key: comma-separated modifiers cmd,ctrl,alt,shift plus a letter, digit, return, tab, escape, backspace or arrow"
         )
         .option("--double", "click: double-click the observed element")
-        .option("--coords <x,y>", "click: global screen points inside the snapshot window; alternative to --element")
-        .option("--background", "click: deliver to the snapshot window without activation or moving the real pointer")
-        .option("--button [name]", "click/drag: left, right or middle")
+        .option("--coords <x,y>", "click/drag/scroll: global screen point; alternative to --element")
+        .option("--background", "click/drag/scroll: deliver without explicit activation or pointer movement")
+        .option("--button [name]", "click: left, right or middle")
         .option("--to <x,y>", "drag: global destination point")
         .option("--duration <seconds>", "drag: duration from 0.1 to 5 seconds")
         .option(
@@ -110,10 +110,10 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option("--pixels <n>", "scroll: exact synthetic wheel pixels from 1 to 10000; mutually exclusive with --pages")
         .option("--range <start,length>", "select: UTF-16 selection range")
-        .option("--prefix <text>", "paste: text before the payload")
-        .option("--suffix <text>", "paste: text after the payload")
-        .option("--selection [mode]", "paste: text, cursor_before or cursor_after")
-        .option("--format [name]", "paste: text, md or html")
+        .option("--prefix <text>", "select: immediate prefix before the unique text match")
+        .option("--suffix <text>", "select: immediate suffix after the unique text match")
+        .option("--selection [mode]", "select: text, cursor_before or cursor_after")
+        .option("--format [name]", "paste: text, md or html; consumes the current selection")
         .action((opts: WorkflowOptions) => {
             if (typeof opts.action !== "string" || !ACTIONS.some((action) => action === opts.action)) {
                 logger.error(suggestEnumFlag("tools control act", "--action", ACTIONS));
@@ -144,6 +144,12 @@ export function registerWorkflowCommands(program: Command): void {
                 "--action",
                 opts.action,
             ];
+
+            if (opts.action === "type" && opts.text !== undefined && opts.text.length > 256) {
+                logger.error("type text exceeds 256 UTF-16 units; use paste for longer text");
+                process.exitCode = 1;
+                return;
+            }
 
             for (const [flag, value] of [
                 ["value", opts.value],
