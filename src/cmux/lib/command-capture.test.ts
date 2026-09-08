@@ -1,10 +1,25 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
     agentKindFromLauncher,
+    claudeSessionFromArgv,
     cleanLaunchCommand,
     deriveReplayCommand,
+    discoverCcRunAliases,
     isAgentLauncher,
+    resumeTargetFromCommand,
+    setCcRunAliases,
 } from "@app/cmux/lib/command-capture";
+
+beforeAll(() => {
+    setCcRunAliases(["cr"]);
+});
+
+afterAll(() => {
+    setCcRunAliases(undefined);
+});
 
 describe("cleanLaunchCommand", () => {
     test("strips the bun wrapper down to `tools`", () => {
@@ -308,4 +323,92 @@ test("compound agent commands remain verbatim when a session is known", () => {
     ]) {
         expect(deriveReplayCommand({ original, sessionId: "fixture-session" }).command).toBe(original);
     }
+});
+describe("a shell alias that execs `tools cc run` is a cc run launcher", () => {
+    // 2026-09-08: every Claude pane was started as `cr work`. The launcher
+    // regex did not know `cr`, so the pane replayed `cr work` verbatim and
+    // opened a NEW session while the surface journal knew the id all along.
+    const sessionId = "931c9dee-1ced-43da-bf10-40e0b048320c";
+
+    test("is recognised and typed as claude", () => {
+        expect(isAgentLauncher("cr work")).toBe(true);
+        expect(agentKindFromLauncher("cr work")).toBe("claude");
+        expect(isAgentLauncher("crontab -l")).toBe(false);
+        expect(agentKindFromLauncher("cr-tool")).toBeUndefined();
+    });
+
+    test("gets the pane's session appended after --", () => {
+        const result = deriveReplayCommand({ original: "cr work", sessionId });
+        expect(result.command).toBe(`cr work -- --resume ${sessionId}`);
+        expect(result.drift).toEqual([`-- --resume ${sessionId} added (session that was active in this pane)`]);
+    });
+
+    test("drops a fuzzy cc-run --resume query and pins the concrete id after --", () => {
+        const result = deriveReplayCommand({ original: "cr work --resume 292767", sessionId });
+        expect(result.command).toBe(`cr work -- --resume ${sessionId}`);
+        expect(result.drift).toEqual([`resume target "292767" replaced with the session that was active here`]);
+    });
+
+    test("keeps every other flag", () => {
+        const result = deriveReplayCommand({ original: "cr work -m fable", sessionId });
+        expect(result.command).toBe(`cr work -m fable -- --resume ${sessionId}`);
+    });
+
+    test("adds the pinned account right after the alias when the original had none", () => {
+        const result = deriveReplayCommand({ original: "cr -m fable", sessionId, account: "work" });
+        expect(result.command).toBe(`cr work -m fable -- --resume ${sessionId}`);
+    });
+
+    test("the pinned id survives into the profile and back out", () => {
+        expect(resumeTargetFromCommand(`cr work -- --resume ${sessionId}`)).toBe(sessionId);
+        expect(resumeTargetFromCommand("cr work --resume 292767")).toBeUndefined();
+    });
+
+    test("an alias is not a launcher once the override is cleared and none is discovered", () => {
+        setCcRunAliases([]);
+        try {
+            expect(isAgentLauncher("cr work")).toBe(false);
+        } finally {
+            setCcRunAliases(["cr"]);
+        }
+    });
+});
+
+describe("discoverCcRunAliases", () => {
+    test("names the wrappers whose body execs tools cc run, and nothing else", () => {
+        const dir = mkdtempSync(join(tmpdir(), "cc-run-aliases-"));
+        writeFileSync(join(dir, "cr"), '#!/usr/bin/env bash\n# cr\nexec tools cc run "$@"\n');
+        writeFileSync(join(dir, "cu"), '#!/usr/bin/env bash\nexec tools cc usage "$@"\n');
+        writeFileSync(join(dir, "ccr"), '#!/usr/bin/env bash\nexec tools claude run "$@"\n');
+        writeFileSync(join(dir, "notes.ts"), 'const x = "exec tools cc run";\n');
+        chmodSync(join(dir, "cr"), 0o755);
+
+        expect(discoverCcRunAliases(dir)).toEqual(["ccr", "cr"]);
+    });
+
+    test("a missing directory yields no aliases", () => {
+        expect(discoverCcRunAliases(join(tmpdir(), "does-not-exist-cc-run-aliases"))).toEqual([]);
+    });
+});
+
+describe("claudeSessionFromArgv", () => {
+    const id = "f2f57edd-be32-4dae-be97-3fc3923afca9";
+
+    test("reads the concrete uuid a live claude process resumes", () => {
+        expect(claudeSessionFromArgv(`/Users/x/.bun/bin/claude --dangerously-skip-permissions --resume ${id}`)).toBe(
+            id
+        );
+        expect(claudeSessionFromArgv(`claude --resume ${id.toUpperCase()}`)).toBe(id);
+    });
+
+    test("a fresh session, a bare picker or a fuzzy query has no id", () => {
+        expect(claudeSessionFromArgv("/Users/x/.bun/bin/claude --dangerously-skip-permissions")).toBeUndefined();
+        expect(claudeSessionFromArgv("claude --resume")).toBeUndefined();
+        expect(claudeSessionFromArgv("claude --resume 292767")).toBeUndefined();
+    });
+
+    test("only a claude process counts", () => {
+        expect(claudeSessionFromArgv(`bun tools claude mcp --resume ${id}`)).toBeUndefined();
+        expect(claudeSessionFromArgv(`grok -r ${id}`)).toBeUndefined();
+    });
 });

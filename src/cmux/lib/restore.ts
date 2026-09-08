@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { queueReplayCommand } from "@app/cmux/lib/replay-input";
 import { isShellPromptReady, waitForTerminalText } from "@app/cmux/lib/terminal-ready";
 import type { Pane, Profile, Surface, Workspace } from "@app/cmux/lib/types";
+import { resolveWindowRef } from "@app/cmux/lib/window-ref";
 import * as p from "@clack/prompts";
 import { runCmuxJSON, runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
-import { paneList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
+import { paneList, windowList, workspaceCreate } from "@genesiscz/utils/cmux/lib/socket";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { applySplitTree, measureCellDelta, type SplitTree } from "@genesiscz/utils/cmux/split-tree";
 import { logger } from "@genesiscz/utils/logger";
@@ -93,6 +94,7 @@ export async function restoreProfile(
 ): Promise<RestoreOutcome> {
     const outcome: RestoreOutcome = { workspaces: [] };
     const previousWorkspaceByWindow = new Map<string, string>();
+    const targetWindow = opts.window ? resolveWindowRef(opts.window, await windowList()) : undefined;
     const totalWorkspaces = playable.windows.reduce((acc, w) => acc + w.workspaces.length, 0);
     let visited = 0;
 
@@ -104,7 +106,7 @@ export async function restoreProfile(
 
             const created = await workspaceCreate({
                 name: targetTitle,
-                window: opts.window,
+                window: targetWindow,
                 cwd: ws.current_directory,
             });
             const previousWorkspace = previousWorkspaceByWindow.get(created.window_ref);

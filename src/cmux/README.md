@@ -101,6 +101,32 @@ Captured commands are reported with their **drift**: every difference between wh
 process table showed and what will actually be replayed (an account added, a
 `-- --resume <id>` appended). Restore prints the diff rather than hiding the rewrite.
 
+### How a Claude pane is pinned to its session
+
+The shell journal records the command as typed, so a pane started through a wrapper
+script is saved as that wrapper (`cr work`). Any executable under `~/.aliases/` whose body
+runs `exec tools cc run` or `exec tools claude run` counts as a cc run launcher, so it gets
+the same treatment as the spelled-out form. The session id comes from two places, in this
+order:
+
+1. The pane's tty in the process table: a live `claude … --resume <uuid>` names the session
+   it runs, whatever the journal remembers from an earlier occupant of that pane.
+2. The Claude cmux journal (`~/.genesis-tools/claude-code/cmux-refs.jsonl`), written by the
+   Claude hooks with the pane's `CMUX_SURFACE_ID`, which also covers a session started fresh
+   in that pane.
+
+The id lands after `--` (`cr work -- --resume <uuid>`), where claude itself reads it. A
+cc run level `--resume <query>` is a fuzzy search that can prompt or pick a renamed session,
+so it is removed and never replayed. A Claude pane whose id cannot be resolved keeps its
+command and gets the drift line `no claude session id resolved for this pane; restore starts
+a NEW claude session`. When two panes resolve to one session id, the pane whose tab title
+names the session keeps the resume and the other gets no command, because a second
+`--resume` of a running session forks it.
+
+`--window` on `profiles save --scope window` and on `restore-after-restart` accepts the
+`window:N` ref, the index or the uuid that `cmux list-windows` prints; an unknown value
+lists the open windows.
+
 ## Recovery: `doctor` and `rescue`
 
 ```bash

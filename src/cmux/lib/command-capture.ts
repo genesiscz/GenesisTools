@@ -1,7 +1,10 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -50,15 +53,14 @@ export function etimeToSeconds(etime: string): number {
     return parseEtime(etime) / 1000;
 }
 
-/**
- * tty name (e.g. `ttys012`) → the cleaned launch command running on it.
- * The launch command is the OLDEST non-shell process on the tty (largest etime):
- * the shell comes first, the typed command next, and everything after is its
- * children. Pid ordering is NOT usable here — pids wrap, so a transient
- * `sleep 1` background job can carry a lower pid than the hours-old wrapper.
- */
-export async function collectTtyLaunchCommands(): Promise<Map<string, string>> {
-    const map = new Map<string, { ageSeconds: number; command: string }>();
+interface TtyProcess {
+    tty: string;
+    ageSeconds: number;
+    command: string;
+}
+
+async function readTtyProcessTable(): Promise<TtyProcess[]> {
+    const out: TtyProcess[] = [];
     try {
         const proc = Bun.spawn(["ps", "-axo", "tty=,etime=,command="], {
             stdin: "ignore",
@@ -74,25 +76,85 @@ export async function collectTtyLaunchCommands(): Promise<Map<string, string>> {
                 continue;
             }
             const [, tty, etime, command] = match;
-            if (isShellOrLogin(command)) {
-                continue;
-            }
-            const ageSeconds = etimeToSeconds(etime);
-            const existing = map.get(tty);
-            if (!existing || ageSeconds > existing.ageSeconds) {
-                map.set(tty, { ageSeconds, command });
-            }
+            out.push({ tty, ageSeconds: etimeToSeconds(etime), command });
         }
     } catch (error) {
         logger.warn({ error }, "[command-capture] ps tty scan failed");
     }
 
-    const out = new Map<string, string>();
-    for (const [tty, entry] of map) {
-        out.set(tty, cleanLaunchCommand(entry.command));
+    return out;
+}
+
+export interface TtyCapture {
+    /** tty → cleaned launch command (see `collectTtyLaunchCommands`). */
+    launchCommands: Map<string, string>;
+    /** tty → the Claude session id a `claude … --resume <uuid>` process on that tty runs. */
+    claudeSessions: Map<string, string>;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The session id in a live claude process's argv, or undefined. Only a concrete
+ * uuid counts: `--resume` alone opens the picker and a query is fuzzy.
+ */
+export function claudeSessionFromArgv(command: string): string | undefined {
+    const tokens = command.trim().split(/\s+/);
+    const base = tokens[0]?.split("/").pop();
+
+    if (base !== "claude") {
+        return undefined;
     }
 
-    return out;
+    const at = tokens.indexOf("--resume");
+    const value = at === -1 ? undefined : tokens[at + 1];
+
+    return value && UUID_RE.test(value) ? value.toLowerCase() : undefined;
+}
+
+/**
+ * One process-table read, two answers per tty: the launch command the user
+ * typed, and the Claude session a `claude --resume <uuid>` on that tty is
+ * running. The argv is live truth for a resumed session, where the surface
+ * journal can still carry the id of whatever ran in the pane before.
+ */
+export async function collectTtyCapture(): Promise<TtyCapture> {
+    const oldest = new Map<string, TtyProcess>();
+    const claudeSessions = new Map<string, string>();
+
+    for (const entry of await readTtyProcessTable()) {
+        const sessionId = claudeSessionFromArgv(entry.command);
+        if (sessionId && !claudeSessions.has(entry.tty)) {
+            claudeSessions.set(entry.tty, sessionId);
+        }
+
+        if (isShellOrLogin(entry.command)) {
+            continue;
+        }
+
+        const existing = oldest.get(entry.tty);
+        if (!existing || entry.ageSeconds > existing.ageSeconds) {
+            oldest.set(entry.tty, entry);
+        }
+    }
+
+    const launchCommands = new Map<string, string>();
+    for (const [tty, entry] of oldest) {
+        launchCommands.set(tty, cleanLaunchCommand(entry.command));
+    }
+
+    return { launchCommands, claudeSessions };
+}
+
+/**
+ * tty name (e.g. `ttys012`) → the cleaned launch command running on it.
+ * The launch command is the OLDEST non-shell process on the tty (largest etime):
+ * the shell comes first, the typed command next, and everything after is its
+ * children. Pid ordering is NOT usable here — pids wrap, so a transient
+ * `sleep 1` background job can carry a lower pid than the hours-old wrapper.
+ */
+export async function collectTtyLaunchCommands(): Promise<Map<string, string>> {
+    return (await collectTtyCapture()).launchCommands;
 }
 
 export interface SurfaceSessionInfo {
@@ -130,6 +192,24 @@ export async function loadSurfaceSessions(
     return new Map([...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account }]));
 }
 
+/** session id → pinned account, for ids the process table (not the journal) supplied. */
+export async function loadPinnedAccounts(sessionIds: Iterable<string>): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    try {
+        const pins = await loadPins({ readOnly: true });
+        for (const sessionId of sessionIds) {
+            const account = pins.get(sessionId)?.account;
+            if (account) {
+                out.set(sessionId, account);
+            }
+        }
+    } catch (error) {
+        logger.warn({ error }, "[command-capture] session pins unavailable");
+    }
+
+    return out;
+}
+
 export interface ReplayDerivation {
     command: string;
     drift: string[];
@@ -148,8 +228,79 @@ export interface ReplayDerivation {
 // `(?![\w-])` rather than `\b`: a word boundary sits between "x" and "-", so
 // `/^codex\b/` also matched `codex-gateway serve`, and that pane was then
 // rewritten into `codex resume <uuid>` on restore.
-const CLAUDE_LAUNCHER = /^(tools cc run|tools claude run|tools (?:cc|claude) start|claude)(?![\w-])/;
-const CC_RUN_LAUNCHER = /^tools (?:cc|claude) run(?![\w-])/;
+// A shell wrapper that execs `tools cc run` under another name is a cc run
+// launcher too. Every Claude pane on this machine is started through
+// `~/.aliases/cr`, so the shell journal records `cr work`; while the regex
+// only knew the spelled-out forms, that pane replayed `cr work` verbatim and
+// opened a NEW session, although the surface journal had the id all along
+// (2026-09-08, every renamed session lost after a reboot).
+const CC_RUN_EXEC_RE = /^\s*exec\s+tools\s+(?:cc|claude)\s+run(?![\w-])/m;
+
+/** Names of executable wrappers in `dir` whose body execs `tools cc run`. */
+export function discoverCcRunAliases(dir: string): string[] {
+    const names: string[] = [];
+    try {
+        for (const name of readdirSync(dir)) {
+            const path = join(dir, name);
+            try {
+                if (!statSync(path).isFile() || !/^[\w.-]+$/.test(name)) {
+                    continue;
+                }
+
+                if (CC_RUN_EXEC_RE.test(readFileSync(path, "utf8").slice(0, 4096))) {
+                    names.push(name);
+                }
+            } catch (error) {
+                logger.debug({ error, path }, "[command-capture] alias candidate unreadable");
+            }
+        }
+    } catch (error) {
+        logger.debug({ error, dir }, "[command-capture] no alias directory to scan");
+    }
+
+    return names.sort();
+}
+
+let ccRunAliases: string[] | undefined;
+
+/** Override (tests) or reset (`undefined`) the discovered cc run alias names. */
+export function setCcRunAliases(names: string[] | undefined): void {
+    ccRunAliases = names;
+    launchers = undefined;
+}
+
+export function ccRunAliasNames(): string[] {
+    if (!ccRunAliases) {
+        ccRunAliases = discoverCcRunAliases(join(env.tools.getHome(), ".aliases"));
+    }
+
+    return ccRunAliases;
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+interface Launchers {
+    claude: RegExp;
+    ccRun: RegExp;
+}
+
+let launchers: Launchers | undefined;
+
+function launcherRes(): Launchers {
+    if (!launchers) {
+        const aliases = ccRunAliasNames().map(escapeRegExp);
+        const ccRun = ["tools (?:cc|claude) run", ...aliases].join("|");
+        launchers = {
+            claude: new RegExp(`^(?:${ccRun}|tools (?:cc|claude) start|claude)(?![\\w-])`),
+            ccRun: new RegExp(`^(?:${ccRun})(?![\\w-])`),
+        };
+    }
+
+    return launchers;
+}
+
 const GROK_LAUNCHER = /^grok(?![\w-])/;
 const CODEX_LAUNCHER = /^codex(?![\w-])/;
 
@@ -185,7 +336,7 @@ export function isAgentLauncher(command: string): boolean {
 
     return (
         isSimpleAgentCommand(command) &&
-        (CLAUDE_LAUNCHER.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed))
+        (launcherRes().claude.test(trimmed) || GROK_LAUNCHER.test(trimmed) || CODEX_LAUNCHER.test(trimmed))
     );
 }
 
@@ -197,7 +348,7 @@ export function agentKindFromLauncher(command: string): "claude" | "grok" | "cod
     if (CODEX_LAUNCHER.test(trimmed)) {
         return "codex";
     }
-    if (CLAUDE_LAUNCHER.test(trimmed)) {
+    if (launcherRes().claude.test(trimmed)) {
         return "claude";
     }
 
@@ -433,11 +584,11 @@ export function deriveReplayCommand(input: {
         return replaceCodexResume(original, input.sessionId);
     }
 
-    if (!CLAUDE_LAUNCHER.test(original)) {
+    if (!launcherRes().claude.test(original)) {
         return { command: original, drift: [] };
     }
 
-    if (!CC_RUN_LAUNCHER.test(original)) {
+    if (!launcherRes().ccRun.test(original)) {
         // Bare `claude …` launchers keep their command verbatim (rebuilding as
         // `tools cc run` would drop options and change the launcher the user ran).
         return replaceResumeInPlace(original, input.sessionId);
@@ -482,7 +633,7 @@ export function resumeTargetFromCommand(command: string): string | undefined {
 
     // cc run's OWN `--resume` takes a search query that can prompt, so only the
     // pass-through flag after `--` names a session id.
-    if (CC_RUN_LAUNCHER.test(original)) {
+    if (launcherRes().ccRun.test(original)) {
         const separator = passthroughStart(original);
 
         if (separator === undefined || match.start < separator) {
@@ -516,18 +667,16 @@ function replaceCcRunResume(original: string, sessionId: string, pinnedAccount?:
     // Both launcher spellings, or `tools claude run personal` would lose the
     // explicit account and replay under the journal's one (or none) while the
     // drift line claimed the original had no account.
-    const accountMatch = original.match(/^tools (?:cc|claude) run\s+(?!-)(\S+)/);
+    const launcherEnd = original.match(launcherRes().ccRun)?.[0].length ?? original.length;
+    const accountMatch = original.slice(launcherEnd).match(/^\s+(?!-)(\S+)/);
     const account = accountMatch?.[1] ?? pinnedAccount;
     let command = original;
 
     if (!accountMatch && pinnedAccount) {
-        const runToken = tokenizeCommand(command)[2];
         drift.push(
             `account "${pinnedAccount}" added from the session pin journal — the original had none (it may have been picked interactively)`
         );
-        command = runToken
-            ? `${command.slice(0, runToken.end)} ${pinnedAccount}${command.slice(runToken.end)}`
-            : `${command} ${pinnedAccount}`;
+        command = `${command.slice(0, launcherEnd)} ${pinnedAccount}${command.slice(launcherEnd)}`;
     }
 
     if (!account) {

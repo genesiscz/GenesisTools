@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    dedupeResumeTargets,
     inferLauncherFromTitle,
     matchGrokSession,
     type ReplayCatalog,
@@ -397,5 +398,83 @@ test("raw journal launchers can infer matching sessions without trusting conflic
     const restored = withInferredReplayCommands(profile, catalog([grokSession()]));
     expect(restored.windows[0].workspaces[0].panes[0].surfaces[0]).toMatchObject({
         command: `grok --model custom -r ${GROK_ID}`,
+    });
+});
+
+describe("dedupeResumeTargets", () => {
+    // 2026-09-08: `cr work --resume 292767` and `cr work --resume log` both
+    // fuzzy-matched f2f57edd, so one session was resumed twice and claude
+    // forked it.
+    const id = "f2f57edd-be32-4dae-be97-3fc3923afca9";
+
+    function terminals(profile: Profile): TerminalSurface[] {
+        return profile.windows[0].workspaces[0].panes[0].surfaces.filter(
+            (surface): surface is TerminalSurface => surface.type === "terminal"
+        );
+    }
+
+    test("the pane whose title names the session keeps the resume; the other loses its command", () => {
+        const profile = profileWith([
+            terminal("✳ col-294936-pr-7210-logouts", { command: `claude --resume ${id}`, command_source: "inferred" }),
+            terminal("◑ col-292767-neco-se-nepovedlo-repro", {
+                command: `claude --resume ${id}`,
+                command_source: "inferred",
+            }),
+        ]);
+        const session = claudeSession({ sessionId: id, title: "col-292767-neco-se-nepovedlo-repro" });
+
+        const [loser, winner] = terminals(dedupeResumeTargets(profile, catalog([session])));
+
+        expect(winner.command).toBe(`claude --resume ${id}`);
+        expect(winner.drift).toBeUndefined();
+        expect(loser.command).toBeUndefined();
+        expect(loser.command_source).toBeUndefined();
+        expect(loser.command_original).toBe(`claude --resume ${id}`);
+        expect(loser.drift).toEqual([
+            `duplicate resume of claude ${id} dropped: pane "◑ col-292767-neco-se-nepovedlo-repro" keeps it, this pane gets no command`,
+        ]);
+    });
+
+    test("with no title evidence the first claimant wins", () => {
+        const profile = profileWith([
+            terminal("✳ first", { command: `grok -r ${GROK_ID}` }),
+            terminal("✳ second", { command: `grok -r ${GROK_ID}` }),
+        ]);
+
+        const [first, second] = terminals(dedupeResumeTargets(profile, catalog([])));
+
+        expect(first.command).toBe(`grok -r ${GROK_ID}`);
+        expect(second.command).toBeUndefined();
+    });
+
+    test("distinct sessions and non-agent panes are untouched", () => {
+        const other = "aaaaaaaa-1111-4111-8111-111111111111";
+        const profile = profileWith([
+            terminal("✳ a", { command: `claude --resume ${id}` }),
+            terminal("✳ b", { command: `claude --resume ${other}` }),
+            terminal("vim", { command: "vim notes.md" }),
+        ]);
+
+        expect(dedupeResumeTargets(profile, catalog([]))).toBe(profile);
+    });
+});
+
+describe("an agent launcher with no resolvable session says so", () => {
+    test("the drift names the new-session outcome instead of staying silent", () => {
+        const surface = terminal("✳ GenesisTools azure-devops port", {
+            command: "claude",
+            command_source: "shell-journal",
+        });
+
+        const resolved = replayCommandForSurface(surface, catalog([]));
+
+        expect(resolved.command).toBe("claude");
+        expect(resolved.drift).toEqual([
+            "no claude session id resolved for this pane; restore starts a NEW claude session",
+        ]);
+
+        const prepared = withInferredReplayCommands(profileWith([surface]), catalog([]));
+        const [pane] = prepared.windows[0].workspaces[0].panes[0].surfaces;
+        expect(pane.type === "terminal" ? pane.drift : undefined).toEqual(resolved.drift);
     });
 });

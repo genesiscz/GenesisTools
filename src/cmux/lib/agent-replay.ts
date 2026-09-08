@@ -7,7 +7,7 @@ import {
     isAgentLauncher,
     resumeTargetFromCommand,
 } from "@app/cmux/lib/command-capture";
-import type { Profile, TerminalSurface } from "@app/cmux/lib/types";
+import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { listCodexSessionsFromRoots } from "@genesiscz/utils/agent-sessions/codex-sessions";
 import { grokSessionsRoot, listGrokSessionsFromRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
@@ -258,6 +258,15 @@ export function replayCommandForSurface(
         (kind === "codex" ? matchCodexSession(surface.title, surface.cwd, catalog.sessions) : undefined);
 
     if (!hit) {
+        if (original && kind) {
+            // Say it, do not hide it: replaying a bare launcher opens a NEW
+            // session and paints the old screen over it.
+            return {
+                command: original,
+                drift: [`no ${kind} session id resolved for this pane; restore starts a NEW ${kind} session`],
+            };
+        }
+
         if (original) {
             return { command: original, drift: [] };
         }
@@ -326,7 +335,7 @@ export function withInferredReplayCommands(profile: Profile, catalog: ReplayCata
                         }
 
                         if (resolved.command === surface.command) {
-                            return surface;
+                            return resolved.drift.length > 0 ? { ...surface, drift: resolved.drift } : surface;
                         }
 
                         return {
@@ -341,6 +350,100 @@ export function withInferredReplayCommands(profile: Profile, catalog: ReplayCata
             })),
         })),
     };
+}
+
+function mapTerminalSurfaces(profile: Profile, map: (surface: TerminalSurface, path: string) => Surface): Profile {
+    return {
+        ...profile,
+        windows: profile.windows.map((window, w) => ({
+            ...window,
+            workspaces: window.workspaces.map((workspace, ws) => ({
+                ...workspace,
+                panes: workspace.panes.map((pane, p) => ({
+                    ...pane,
+                    surfaces: pane.surfaces.map((surface, s) =>
+                        surface.type === "terminal" ? map(surface, `${w}/${ws}/${p}/${s}`) : surface
+                    ),
+                })),
+            })),
+        })),
+    };
+}
+
+interface ResumeClaim {
+    path: string;
+    surface: TerminalSurface;
+}
+
+function titleNamesSession(surface: TerminalSurface, session: ReplayCatalogSession): boolean {
+    return titleMatchKeys(surface.title, session.kind).some((key) => sessionMatchesKey(session, key));
+}
+
+/**
+ * One session, one pane. A second `--resume <id>` of a running Claude session
+ * is refused or forked by claude itself, so it is always wrong. Two panes
+ * claimed one id on 2026-09-08 because `--resume 292767` and `--resume log`
+ * both fuzzy-matched the same session. The pane whose tab title names the
+ * session keeps the command; every other claimant gets no command and a drift
+ * line naming the winner.
+ */
+export function dedupeResumeTargets(profile: Profile, catalog: ReplayCatalog): Profile {
+    const claims = new Map<string, ResumeClaim[]>();
+
+    mapTerminalSurfaces(profile, (surface, path) => {
+        const command = surface.command?.trim();
+        const kind = command ? agentKindFromLauncher(command) : undefined;
+        const sessionId = command ? resumeTargetFromCommand(command) : undefined;
+
+        if (kind && sessionId) {
+            const key = `${kind}:${sessionId}`;
+            claims.set(key, [...(claims.get(key) ?? []), { path, surface }]);
+        }
+
+        return surface;
+    });
+
+    const losers = new Map<string, { kind: AgentKind; sessionId: string; winner: string }>();
+
+    for (const [key, claimants] of claims) {
+        if (claimants.length < 2) {
+            continue;
+        }
+
+        const [kind, sessionId] = key.split(":") as [AgentKind, string];
+        const session = catalog.sessions.find((entry) => entry.kind === kind && entry.sessionId === sessionId);
+        const winner =
+            (session ? claimants.find((claim) => titleNamesSession(claim.surface, session)) : undefined) ??
+            claimants[0];
+
+        for (const claim of claimants) {
+            if (claim !== winner) {
+                losers.set(claim.path, { kind, sessionId, winner: winner.surface.title });
+            }
+        }
+    }
+
+    if (losers.size === 0) {
+        return profile;
+    }
+
+    return mapTerminalSurfaces(profile, (surface, path) => {
+        const loser = losers.get(path);
+
+        if (!loser) {
+            return surface;
+        }
+
+        return {
+            ...surface,
+            command: undefined,
+            command_source: undefined,
+            command_original: surface.command,
+            drift: [
+                `duplicate resume of ${loser.kind} ${loser.sessionId} dropped: pane "${loser.winner}" keeps it, this pane gets no command`,
+            ],
+        };
+    });
 }
 
 export function grokSessionsDir(): string {
@@ -442,5 +545,5 @@ export async function loadReplayCatalog(profile: Profile): Promise<ReplayCatalog
 
 export async function prepareProfileForRestore(profile: Profile): Promise<Profile> {
     const catalog = await loadReplayCatalog(profile);
-    return withInferredReplayCommands(profile, catalog);
+    return dedupeResumeTargets(withInferredReplayCommands(profile, catalog), catalog);
 }

@@ -7,8 +7,9 @@ import {
 import { type AutosaveSession, panelsById, panelWorkingDirectory, readAutosaveSession } from "@app/cmux/lib/autosave";
 import { type CapturedCommand, loadCapturedCommands } from "@app/cmux/lib/capture-journal";
 import {
-    collectTtyLaunchCommands,
+    collectTtyCapture,
     isAgentLauncher,
+    loadPinnedAccounts,
     loadSurfaceSessions,
     type SurfaceSessionInfo,
 } from "@app/cmux/lib/command-capture";
@@ -21,6 +22,7 @@ import {
 } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, ProfileScope, ScreenSnapshot, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import { resolveWindowRef } from "@app/cmux/lib/window-ref";
 import { runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { withFocusedWorkspace } from "@genesiscz/utils/cmux/lib/focus-guard";
 import {
@@ -82,10 +84,12 @@ export function capturedCommandsByPanelId(
 }
 
 export async function buildCommandCaptureContext(options: { commands?: boolean } = {}): Promise<CommandCaptureContext> {
-    const [ttyCommands, surfaceSessions] =
+    const [tty, surfaceSessions] =
         options.commands === false
-            ? [new Map<string, string>(), new Map<string, SurfaceSessionInfo>()]
-            : await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
+            ? [{ launchCommands: new Map<string, string>(), claudeSessions: new Map<string, string>() }, new Map()]
+            : await Promise.all([collectTtyCapture(), loadSurfaceSessions()]);
+    const ttyCommands = tty.launchCommands;
+    const argvAccounts = await loadPinnedAccounts(tty.claudeSessions.values());
 
     let surfaceCommands = options.commands === false ? new Map<string, CapturedCommand>() : loadCapturedCommands();
     const panelTty = new Map<string, string>();
@@ -123,6 +127,16 @@ export async function buildCommandCaptureContext(options: { commands?: boolean }
             }
             if (panel.ttyName) {
                 panelTty.set(id.toLowerCase(), panel.ttyName);
+            }
+
+            // A `claude --resume <uuid>` on the pane's tty is the live session,
+            // whatever the surface journal remembers from an earlier occupant.
+            const argvSession = panel.ttyName ? tty.claudeSessions.get(panel.ttyName) : undefined;
+            if (argvSession && argvSession !== surfaceSession?.sessionId) {
+                surfaceSessions.set(id.toLowerCase(), {
+                    sessionId: argvSession,
+                    account: argvAccounts.get(argvSession) ?? surfaceSession?.account,
+                });
             }
         }
 
@@ -192,7 +206,8 @@ export async function captureProfile(options: SnapshotOptions, progress: Snapsho
         options.captureHistory || options.captureScreen || options.captureCwd
             ? await buildCommandCaptureContext({ commands: options.captureHistory })
             : undefined;
-    const targetWorkspaces = filterWorkspaces(allWorkspaces, options, ctx.focusedWorkspaceRef);
+    const targetWindowRef = options.targetWindowRef ? resolveWindowRef(options.targetWindowRef, allWindows) : undefined;
+    const targetWorkspaces = filterWorkspaces(allWorkspaces, { ...options, targetWindowRef }, ctx.focusedWorkspaceRef);
     const targetWindowRefs = new Set(targetWorkspaces.map((ws) => ws.window_ref));
     const targetWindows = allWindows.filter((w) => targetWindowRefs.has(w.ref));
 

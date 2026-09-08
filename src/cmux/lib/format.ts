@@ -183,7 +183,18 @@ export function renderProfileCommandDetail(profile: Profile): string[] {
                     }
 
                     if (!surface.command) {
+                        // A dropped command (a duplicate resume, an unselected
+                        // agent) still owes the user its reason.
+                        if (surface.command_original) {
+                            lines.push(`      ${pc.red(`- ${surface.command_original}`)}`);
+                        }
+
                         lines.push(`      ${pc.dim("(no command)")}`);
+
+                        for (const note of surface.drift ?? []) {
+                            lines.push(`      ${pc.yellow(`⚠ drift: ${note}`)}`);
+                        }
+
                         return;
                     }
 
