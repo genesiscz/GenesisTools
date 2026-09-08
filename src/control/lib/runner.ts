@@ -99,26 +99,94 @@ export function ensureBinary(): string {
     );
 }
 
-export function runAx(args: string[], timeoutMs = 10_000): AxResult {
+export interface AxSpawnRequest {
+    binary: string;
+    args: string[];
+    timeoutMs: number;
+    maxBufferBytes: number;
+}
+
+export interface AxSpawnResult {
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string | null;
+    stderr: string | null;
+    error?: Error & { code?: string };
+}
+
+export interface AxRunBoundary {
+    ensureBinary: () => string;
+    spawn: (options: AxSpawnRequest) => AxSpawnResult;
+}
+
+export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
+
+export const DEFAULT_AX_RUN_BOUNDARY: AxRunBoundary = {
+    ensureBinary,
+    spawn: ({ binary, args, timeoutMs, maxBufferBytes }) => {
+        const result = spawnSync(binary, args, {
+            timeout: timeoutMs,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+            maxBuffer: maxBufferBytes,
+        });
+        return {
+            status: result.status,
+            signal: result.signal,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            error: result.error,
+        };
+    },
+};
+
+function isAxResult(value: unknown): value is AxResult {
+    return (
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        typeof (value as { ok?: unknown }).ok === "boolean"
+    );
+}
+
+export function runAxWithBoundary({
+    args,
+    timeoutMs = 10_000,
+    boundary,
+}: {
+    args: string[];
+    timeoutMs?: number;
+    boundary: AxRunBoundary;
+}): AxResult {
     logger.debug({ command: args[0], timeoutMs }, "running native control command");
     let binary: string;
     try {
-        binary = ensureBinary();
+        binary = boundary.ensureBinary();
     } catch (error) {
         logger.error({ error }, "native control build unavailable");
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
 
-    const r = spawnSync(binary, args, {
-        timeout: timeoutMs,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-    });
+    const r = boundary.spawn({ binary, args, timeoutMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+
+    if (r.error?.code === "ENOBUFS") {
+        return {
+            ok: false,
+            error: "native output exceeded the 32 MiB per-stream budget; the command may have partially completed; no retry was attempted",
+        };
+    }
+
+    if (r.error?.code === "ETIMEDOUT") {
+        return {
+            ok: false,
+            error: `native execution timed out after ${timeoutMs}ms; the action may have partially completed; no retry was attempted`,
+        };
+    }
 
     if (r.error) {
         return {
             ok: false,
-            error: `native execution failed: ${r.error.message}. An action may have partially completed; run see before retrying.`,
+            error: `native execution failed: ${r.error.message}; the action may have partially completed; no retry was attempted`,
         };
     }
 
@@ -129,11 +197,18 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
     }
 
     try {
-        const parsed = SafeJSON.parse(stdout, { strict: true }) as AxResult;
+        const parsed = SafeJSON.parse(stdout, { strict: true });
+        if (!isAxResult(parsed)) {
+            maybeRecord(args, false);
+            return { ok: false, error: `invalid native result envelope: ${stdout.slice(0, 200)}` };
+        }
 
-        if (r.status !== 0 || r.signal) {
+        if (r.signal) {
             parsed.ok = false;
-            parsed.error ??= `native command exited ${r.status ?? r.signal}`;
+            parsed.error ??= `native command terminated by ${r.signal}; the action may have partially completed; no retry was attempted`;
+        } else if (r.status !== 0) {
+            parsed.ok = false;
+            parsed.error ??= `native command exited ${r.status}`;
         }
 
         logger.debug({ command: args[0], ok: parsed.ok, error: parsed.error }, "native control completed");
@@ -144,6 +219,10 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
         maybeRecord(args, false);
         return { ok: false, error: `invalid JSON: ${stdout.slice(0, 200)}` };
     }
+}
+
+export function runAx(args: string[], timeoutMs = 10_000): AxResult {
+    return runAxWithBoundary({ args, timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
 }
 
 export function getBinaryPath(): string {

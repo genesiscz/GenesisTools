@@ -27,9 +27,11 @@ tools control act \
   --action press
 ```
 
-Replace `N` with the observed index. Refresh with `see` after every action, including focus. `act --help` lists get, press, click, drag, set, perform, focus, scroll, type, key, select and paste. Physical input requires the exact window already focused; AX actions remain explicitly separate. Stale app instances, closed/wrong windows, changed observable trees, expired tokens and invalid indexes fail before dispatch. `ok: true` acknowledges dispatch, not the outcome of the user's task.
+Replace `N` with the observed index. Refresh with `see` after every action, including focus. `act --help` lists get, press, click, move, drag, set, perform, focus, scroll, type, key, select and paste. Foreground pointer actions require the exact window already focused; `--background` pointer actions retain geometry and hit-ownership checks without requiring focus. Keyboard/text input requires the intended input/window focused, and AX actions remain explicitly separate. Stale app instances, closed/wrong windows, changed observable trees, expired tokens and invalid indexes fail before dispatch. `ok: true` acknowledges dispatch, not the outcome of the user's task.
 
 The screenshot and tree belong to the same window. Indexes are specific to that observation, not persistent AX object identities. Replacement or reordering of completely indistinguishable anonymous controls cannot be detected. Standard window buttons exclude decorative glyph descendants. Unsupported AX values are marked unreadable. The tool cannot lock out concurrent desktop changes; inspect errors and refresh rather than replaying automatically.
+
+The wrapper accepts native output up to 32 MiB per stream. Exceeding that budget fails explicitly and never retries an action automatically; execution may already have partially completed. Use a smaller observation depth or the explicit browser-chrome scope for large trees, and refresh before deciding what to do next.
 
 This workflow uses native `ax-tool` with macOS APIs, not Codex, Sky or Peekaboo. A shell, Bun, Swift, and the relevant macOS grants are sufficient. The normal launcher attributes permissions to GenesisTools.app; directly invoking the binary can have a different responsible process. The CLI rebuilds when its native sources change. Direct native callers should run `swift build --package-path native/ax-tool -c release` after source changes.
 
