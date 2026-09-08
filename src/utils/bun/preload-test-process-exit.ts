@@ -15,6 +15,8 @@
  * `preload` — so production `tools` invocations keep the real
  * `process.exit` and still exit with the original code/output.
  */
+import { afterEach } from "bun:test";
+import { installOrphanWorkerGuard } from "./orphan-worker-guard";
 
 export class ProcessExitError extends Error {
     readonly code: number;
@@ -30,8 +32,6 @@ export class ProcessExitError extends Error {
 // `bun test` (one shared process) that lingering value makes the whole run
 // exit non-zero even with 0 failures — a false red. bun derives its own exit
 // from pass/fail, so reset the side effect after every test, globally.
-import { afterEach } from "bun:test";
-
 afterEach(() => {
     process.exitCode = 0;
 });
@@ -45,3 +45,5 @@ function throwingExit(code?: number | string | null): never {
 process.exit = throwingExit as typeof process.exit;
 
 (globalThis as typeof globalThis & { __realProcessExit?: typeof realExit }).__realProcessExit = realExit;
+
+installOrphanWorkerGuard();
