@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
 import { assertTabInventoryUnchanged, fingerprintTabInventory } from "./browser-tabs";
 
+test("literal AXTitle memory-like text remains distinct", () => {
+    const expected = fingerprintTabInventory([
+        { AXTitle: "Guide - High memory usage - 123 MB", AXDescription: "Shared" },
+    ]);
+    const actual = fingerprintTabInventory([
+        { AXTitle: "Guide - Inactive tab - 456 MB freed up", AXDescription: "Shared" },
+    ]);
+    expect(() => assertTabInventoryUnchanged({ expected, actual })).toThrow("tab inventory changed");
+});
+
 test("ordinary title text resembling a memory label remains identity", () => {
     const expected = fingerprintTabInventory([{ AXDescription: "Guide - Memory usage - troubleshooting" }]);
     const actual = fingerprintTabInventory([{ AXDescription: "Guide - Memory usage - 123 MB" }]);

@@ -133,7 +133,7 @@ them off for interactive use, where raising the app is what you asked for.
 
 `drag` uses the left mouse button, `--to X,Y`, optional `--duration 0.1..5`, `--coords` and `--background`. Only `click` accepts `--button left|right|middle`.
 
-`scroll --direction up|down|left|right` derives wheel distance from the observed viewport with `--pages 1..20` (default one), or uses exact `--pixels 1..10000`. The modes are mutually exclusive and both support coordinates/background delivery.
+`scroll --direction up|down|left|right` derives wheel distance from the observed viewport with `--pages 1..20` (default one), or uses exact `--pixels 1..10000`. The modes are mutually exclusive and both support coordinates/background delivery. Page mode resolves the nearest receiving AX scroll-area viewport at the verified point; it refuses and requests `--pixels` if that viewport cannot be established.
 
 `select` accepts a UTF-16 `--range START,LENGTH` or a unique literal `--text MATCH`, with optional `--prefix`/`--suffix` describing the immediate surroundings of a text match. `--selection text|cursor_before|cursor_after` chooses the range or caret. These are select-only options.
 

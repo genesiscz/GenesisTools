@@ -91,7 +91,7 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 | `set` | Set the value of a text field |
 | `type` | Type keystrokes and hard-verify the result |
 | `hotkey` | Send a key combo via CGEvent |
-| `scroll` | Synthetic wheel scrolling with --direction and either viewport-distance --pages 1..20 or exact --pixels 1..10000; the two modes are mutually exclusive and both may use --coords/--background. Send wheel events with `--direction`, or scroll an element into view without it |
+| `scroll` | Legacy wheel scrolling with `--direction` and `--amount`, or scroll an element into view without direction. Snapshot-scoped `act --action scroll` has its own page/pixel options below |
 | `window` | Get window bounds and state, or mutate with `--action move\|resize\|minimize\|maximize\|close\|focus` |
 
 ⚠️ **`type` inserts at the current cursor.** Use `--end` to jump to the end of the field first, or `--clear` to replace the whole field. Without either, you get text spliced into the middle of whatever was there.
@@ -223,7 +223,7 @@ tools control cursor click \
 
 `drag` uses the left mouse button and accepts `--to X,Y`, `--duration 0.1..5`, `--coords` and `--background`. `click --button left|right|middle` selects a mouse button for clicks. Background drag and right-click passed the dedicated AppKit fixture; receiving apps must accept background events. The tool does not explicitly activate or raise the app, but an app may change its own key window in response.
 
-`scroll --direction up|down|left|right` uses viewport-sized wheel distance with `--pages 1..20` (default one), or an exact distance with `--pixels 1..10000`. These are mutually exclusive. Both modes accept `--coords` and `--background`.
+`scroll --direction up|down|left|right` uses viewport-sized wheel distance with `--pages 1..20` (default one), or an exact distance with `--pixels 1..10000`. These are mutually exclusive. Both modes accept `--coords` and `--background`. Page mode uses the nearest receiving AX scroll area's viewport at the verified point, including when targeting a child row. If that viewport cannot be established, the command refuses and requests explicit `--pixels`.
 
 `select` accepts a UTF-16 `--range START,LENGTH` or a unique literal `--text MATCH`. With a literal match, `--prefix` and `--suffix` disambiguate its immediate surroundings. `--selection text|cursor_before|cursor_after` chooses the selected range or caret. These options belong only to `select`.
 

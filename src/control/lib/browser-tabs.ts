@@ -17,9 +17,7 @@ function stableLabel(value: string | undefined): string {
 export function fingerprintTabInventory(tabs: readonly TabIdentity[]): string[] {
     return tabs.map((tab) =>
         createHash("sha256")
-            .update(
-                SafeJSON.stringify([tab.AXIdentifier ?? "", stableLabel(tab.AXTitle), stableLabel(tab.AXDescription)])
-            )
+            .update(SafeJSON.stringify([tab.AXIdentifier ?? "", tab.AXTitle ?? "", stableLabel(tab.AXDescription)]))
             .digest("hex")
     );
 }

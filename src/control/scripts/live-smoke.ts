@@ -156,6 +156,13 @@ function find(state: State, identifier: string): Element {
     return element;
 }
 
+function assertOnePageScrollFraction(value: string | undefined): void {
+    const actual = Number(value);
+    const expected = 160 / (600 - 160);
+    assert.ok(Number.isFinite(actual), `scrollbar value is not numeric: ${value}`);
+    assert.ok(Math.abs(actual - expected) < 0.08, `expected one 160px page near ${expected}, received ${actual}`);
+}
+
 try {
     const deadline = Date.now() + 10_000;
 
@@ -275,12 +282,17 @@ try {
         state = await see();
         assert.equal(find(state, "dragStatus").AXValue, "dragged");
         checks.push("window-addressed drag delivers down, movement and release");
-        const scroll = find(state, "scroll");
+        const scrollChild = state.elements.find(
+            (element) => element.role === "AXStaticText" && element.AXValue === "Row 0"
+        );
+        assert.ok(scrollChild);
         const before = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
-        await act(state, scroll.index, "scroll", ["--background", "--direction", "down", "--pages", "1"]);
+        await act(state, scrollChild.index, "scroll", ["--background", "--direction", "down", "--pages", "1"]);
         state = await see();
-        assert.notEqual(state.elements.find((element) => element.role === "AXScrollBar")?.AXValue, before);
-        checks.push("background page-sized wheel scrolling changes the test viewport");
+        const afterChildPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
+        assert.notEqual(afterChildPage, before);
+        assertOnePageScrollFraction(afterChildPage);
+        checks.push("background page scroll from a child uses its receiving 160px viewport");
         await act(state, find(state, "input").index, "select", ["--text", "ee"]);
         state = await see();
         assert.equal((find(state, "input") as Element & { AXSelectedText?: string }).AXSelectedText, "ee");
@@ -340,8 +352,10 @@ try {
         assert.ok(offscreen && !offscreen.visible);
         const clipped = await act(state, offscreen.index, "click", [], false);
         assert.match(clipped.error ?? "", /outside.*clip/);
-        const scroll = state.elements.find((element) => element.role === "AXScrollArea");
-        assert.ok(scroll);
+        const coordinateRow = state.elements.find(
+            (element) => element.role === "AXStaticText" && element.AXValue === "Row 0"
+        ) as (Element & { x: number; y: number; width: number; height: number }) | undefined;
+        assert.ok(coordinateRow);
         const scrollbar = state.elements.find((element) => element.role === "AXScrollBar");
         assert.ok(scrollbar);
         const beforeScroll = scrollbar.AXValue;
@@ -352,10 +366,10 @@ try {
             String(fixturePid),
             "--snapshot",
             state.snapshot,
-            "--element",
-            String(scroll.index),
             "--action",
             "scroll",
+            "--coords",
+            `${coordinateRow.x + coordinateRow.width / 2},${coordinateRow.y + coordinateRow.height / 2}`,
             "--direction",
             "down",
         ]);
@@ -365,7 +379,8 @@ try {
         const afterPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
         assert.equal(page.ok, true, page.error);
         assert.notEqual(afterPage, beforeScroll);
-        checks.push("page-sized wheel scroll changes the observed scrollbar");
+        assertOnePageScrollFraction(afterPage);
+        checks.push("coordinate page scroll uses the receiving 160px viewport");
         await act(state, find(state, "scroll").index, "scroll", ["--direction", "down", "--pixels", "80"]);
         state = await see();
         assert.notEqual(state.elements.find((element) => element.role === "AXScrollBar")?.AXValue, afterPage);

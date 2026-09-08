@@ -464,7 +464,7 @@ func cmdAct(appName _: String) {
             }
             return point
         }
-        func verifyPoint(_ point: CGPoint, target: AXUIElement) throws {
+        func verifyPoint(_ point: CGPoint, target: AXUIElement) throws -> AXUIElement {
             let listed = CGWindowListCopyWindowInfo(.optionIncludingWindow, window.id) as? [[CFString: Any]] ?? []
             guard listed.contains(where: { info in
                 guard (info[kCGWindowNumber] as? CGWindowID) == window.id,
@@ -488,24 +488,61 @@ func cmdAct(appName _: String) {
             guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success else {
                 throw WindowEventError.unavailable("cannot verify event hit target")
             }
-            var ancestor = hit
+            guard let hit else {
+                throw WindowEventError.unavailable("cannot verify event hit target")
+            }
+            var ancestor: AXUIElement? = hit
             for _ in 0..<50 {
                 guard let current = ancestor else { break }
                 if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
                     throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
                 }
-                if CFEqual(current, target) { return }
+                if CFEqual(current, target) {
+                    return hit
+                }
                 guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
                 ancestor = (parent as! AXUIElement)
             }
             throw WindowEventError.unavailable("observed target is occluded or hit testing disagrees; no event dispatched")
+        }
+        func pageViewport(_ point: CGPoint, target: AXUIElement) throws -> (element: AXUIElement, observed: ScrollViewportAncestor) {
+            let hit = try verifyPoint(point, target: target)
+            var elements: [AXUIElement] = []
+            var ancestors: [ScrollViewportAncestor] = []
+            var current: AXUIElement? = hit
+            for _ in 0..<50 {
+                guard let candidate = current else {
+                    break
+                }
+                let reference = elements.count
+                elements.append(candidate)
+                ancestors.append(ScrollViewportAncestor(
+                    identity: reference,
+                    role: axStringAttribute(candidate, "AXRole") ?? "",
+                    frame: axFrame(candidate)
+                ))
+                if CFEqual(candidate, window.ax) {
+                    let viewport = try resolveScrollViewport(
+                        ancestors: ancestors,
+                        selectedWindowIdentity: reference,
+                        selectedWindowFrame: window.bounds,
+                        point: point
+                    )
+                    return (elements[viewport.identity], viewport)
+                }
+                guard let parent = axAttribute(candidate, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else {
+                    break
+                }
+                current = (parent as! AXUIElement)
+            }
+            throw ScrollViewportError.unavailable
         }
         do {
             guard rawCoords != nil || tree.rows[elementIndex]["visible"] as? Bool == true else {
                 throw WindowEventError.unavailable("element center is outside its window/scroll clip")
             }
             let point = try rawCoords.map(parsePoint) ?? CGPoint(x: frame.midX, y: frame.midY)
-            try verifyPoint(point, target: element)
+            _ = try verifyPoint(point, target: element)
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
             if action == "move" {
                 let event = try factory.mouse(type: .mouseMoved, point: point, clickCount: 0)
@@ -516,6 +553,7 @@ func cmdAct(appName _: String) {
                     throw WindowEventError.unavailable("scroll requires --direction up, down, left or right")
                 }
                 let pixels: Int
+                let pageViewportObservation: (element: AXUIElement, observed: ScrollViewportAncestor)?
                 if workflowArgument("--pixels") != nil {
                     guard workflowArgument("--pages") == nil else {
                         throw WindowEventError.unavailable("choose --pixels or --pages, not both")
@@ -524,20 +562,27 @@ func cmdAct(appName _: String) {
                     guard (1...10000).contains(pixels) else {
                         throw WindowEventError.unavailable("--pixels must be 1–10000")
                     }
+                    pageViewportObservation = nil
                 } else {
                     let pages = workflowInteger("--pages", defaultValue: 1)
                     guard (1...20).contains(pages) else {
                         throw WindowEventError.unavailable("--pages must be 1–20")
                     }
-                    let distance = (["left", "right"].contains(direction) ? frame.width : frame.height) * Double(pages)
-                    guard distance.isFinite, distance >= 1, distance <= 1_000_000 else {
-                        throw WindowEventError.unavailable("viewport has no usable page distance")
-                    }
-                    pixels = Int(distance.rounded())
+                    let viewport = try pageViewport(point, target: element)
+                    let axis: PageScrollAxis = ["left", "right"].contains(direction) ? .horizontal : .vertical
+                    pixels = try pageScrollDistance(viewport: viewport.observed, axis: axis, pages: pages)
+                    pageViewportObservation = viewport
                 }
                 let delta = Int32(pixels)
                 let event = try factory.scroll(point: point, deltaX: direction == "left" ? delta : direction == "right" ? -delta : 0,
                                                deltaY: direction == "up" ? delta : direction == "down" ? -delta : 0)
+                if let viewport = pageViewportObservation {
+                    let refreshed = try pageViewport(point, target: element)
+                    guard CFEqual(refreshed.element, viewport.element) else {
+                        throw ScrollViewportError.changed
+                    }
+                    try validateScrollViewportUnchanged(expected: viewport.observed, current: refreshed.observed)
+                }
                 event.postToPid(pid)
                 Thread.sleep(forTimeInterval: 0.1)
             } else if action == "drag" {
@@ -545,7 +590,7 @@ func cmdAct(appName _: String) {
                     throw WindowEventError.unavailable("drag requires --to x,y in the snapshot window")
                 }
                 let end = try parsePoint(destination)
-                try verifyPoint(end, target: window.ax)
+                _ = try verifyPoint(end, target: window.ax)
                 let duration = Double(workflowArgument("--duration") ?? "0.3") ?? 0
                 guard duration.isFinite, (0.1...5).contains(duration) else {
                     throw WindowEventError.unavailable("--duration must be 0.1–5 seconds")
@@ -556,7 +601,7 @@ func cmdAct(appName _: String) {
                             y: point.y + (end.y - point.y) * Double(step) / Double(steps))
                 }
                 try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
-                                 verify: { try verifyPoint($0, target: $0 == point ? element : window.ax) }, post: { $0.postToPid(pid) })
+                                 verify: { _ = try verifyPoint($0, target: $0 == point ? element : window.ax) }, post: { $0.postToPid(pid) })
                 Thread.sleep(forTimeInterval: 0.05)
             } else {
                 let button = workflowArgument("--button") ?? "left"
@@ -567,7 +612,7 @@ func cmdAct(appName _: String) {
                     throw WindowEventError.unavailable("--button must be left, right or middle")
                 }
                 for click in 1...(workflowFlag("--double") ? 2 : 1) {
-                    try verifyPoint(point, target: element)
+                    _ = try verifyPoint(point, target: element)
                     let down = try factory.mouse(type: downType, point: point, clickCount: click)
                     let up = try factory.mouse(type: upType, point: point, clickCount: click)
                     if button == "middle" {
