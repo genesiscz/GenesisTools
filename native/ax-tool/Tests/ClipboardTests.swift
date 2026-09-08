@@ -18,6 +18,39 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(board.data(forType: NSPasteboard.PasteboardType("test.binary")), Data([1, 2, 3]))
     }
 
+    func testCompetingWritePreventsPastePrimitive() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let transaction = try ClipboardTransaction(board: board)
+        try transaction.write(text: "requested payload", format: "text")
+        board.clearContents()
+        board.setString("competing payload", forType: .string)
+        var calls = 0
+        XCTAssertThrowsError(try transaction.dispatchPaste {
+            calls += 1
+            throw WindowEventError.unavailable("primitive must not be reached")
+        }) { error in
+            XCTAssertEqual(error.localizedDescription, "clipboard ownership changed before paste; no shortcut dispatched")
+        }
+        XCTAssertEqual(calls, 0)
+        XCTAssertEqual(transaction.restore(), "skipped-concurrent-change")
+        XCTAssertEqual(board.string(forType: .string), "competing payload")
+    }
+
+    func testOwnedPayloadReachesPastePrimitive() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let transaction = try ClipboardTransaction(board: board)
+        try transaction.write(text: "requested payload", format: "text")
+        defer { transaction.restore() }
+        var calls = 0
+        try transaction.dispatchPaste {
+            calls += 1
+            XCTAssertEqual(board.string(forType: .string), "requested payload")
+        }
+        XCTAssertEqual(calls, 1)
+    }
+
     func testRestoreDoesNotOverwriteAnotherClipboardWriter() throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }

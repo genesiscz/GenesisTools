@@ -653,9 +653,11 @@ func cmdAct(appName _: String) {
                 down.flags = .maskCommand
                 up.flags = .maskCommand
                 let before = axStringAttribute(element, "AXValue")
-                down.postToPid(pid)
-                Thread.sleep(forTimeInterval: 0.05)
-                up.postToPid(pid)
+                try transaction.dispatchPaste {
+                    down.postToPid(pid)
+                    Thread.sleep(forTimeInterval: 0.05)
+                    up.postToPid(pid)
+                }
                 // Keep the pasteboard available while the receiver consumes its queued shortcut.
                 let deadline = Date().addingTimeInterval(1)
                 repeat {

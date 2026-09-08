@@ -47,6 +47,13 @@ public final class ClipboardTransaction {
         ownedCount = board.changeCount
     }
 
+    public func dispatchPaste(_ primitive: () throws -> Void) throws {
+        guard let expected = ownedCount, board.changeCount == expected else {
+            throw WindowEventError.unavailable("clipboard ownership changed before paste; no shortcut dispatched")
+        }
+        try primitive()
+    }
+
     /// Best effort: skip observed competing writes. AppKit has no atomic compare-and-swap.
     @discardableResult public func restore() -> String {
         guard let expected = ownedCount else { return "unchanged" }
