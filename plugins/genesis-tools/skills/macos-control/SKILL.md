@@ -111,7 +111,7 @@ This shell example needs `jq` only to read the token. Other clients can parse th
 | `set` | `--value TEXT` | Set AXValue and read it back; fails if not settable; no typing fallback |
 | `perform` | `--ax-action NAME` | Invoke an exact action present in the observed actions list |
 | `focus` | none | Explicitly activate and raise the selected window, then focus the selected element |
-| `scroll` | `--direction` (`up`, `down`, `left`, `right`) | Wheel distance uses viewport-sized `--pages 1–20` (default one) or exact `--pixels 1–10000`; accepts `--coords` and `--background` |
+| `scroll` | `--direction` (`up`, `down`, `left`, `right`) | Wheel distance uses the receiving AX scroll-area viewport for `--pages 1–20` (default one), or exact `--pixels 1–10000`; accepts `--coords` and `--background`. Missing viewport requires explicit pixels |
 | `type` | `--text TEXT` | Single-line Unicode typing into the focused element, limited to 256 UTF-16 code units; use `paste` for longer text |
 | `select` | `--text MATCH` or `--range START,LENGTH` | Select a unique literal match or UTF-16 range; `--selection` (`text`, `cursor_before`, `cursor_after`) chooses selection or caret |
 | `paste` | `--text PAYLOAD`, optional `--format` (`text`, `md`, `html`) | Paste at the current selection in the already focused input; clipboard restoration is best effort |
