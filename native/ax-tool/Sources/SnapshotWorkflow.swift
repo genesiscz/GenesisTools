@@ -315,19 +315,9 @@ func cmdAct(appName _: String) {
         workflowFailure("invalid --snapshot token; run see again")
     }
     let rawCoords = workflowArgument("--coords")
-    if rawCoords != nil && workflowArgument("--element") != nil {
-        workflowFailure("choose --coords or --element, not both")
-    }
+
     let elementIndex = rawCoords == nil ? workflowInteger("--element") : 0
-    guard let action = workflowArgument("--action"), ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
-        workflowFailure("--action must be get, press, click, drag, set, perform, focus, scroll, type, key, select or paste")
-    }
-    if !["click", "move", "drag", "scroll"].contains(action) && (rawCoords != nil || workflowFlag("--background")) {
-        workflowFailure("--coords and --background apply only to click, drag or pixel scroll")
-    }
-    if action != "click" && (workflowFlag("--double") || workflowArgument("--button") != nil) {
-        workflowFailure("--double and --button apply only to click")
-    }
+    let action = workflowArgument("--action")!
     workflowPermissions()
     let pid = resolveApp(appName)
     let launch = workflowLaunch(pid)

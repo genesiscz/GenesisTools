@@ -5,6 +5,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+import { assertTabInventoryUnchanged, fingerprintTabInventory } from "../lib/browser-tabs";
 
 interface Element {
     index: number;
@@ -17,6 +18,9 @@ interface Element {
     visible: boolean;
     AXSelected?: string;
     AXValue?: string;
+    AXIdentifier?: string;
+    AXTitle?: string;
+    AXDescription?: string;
 }
 interface Observation {
     ok: boolean;
@@ -78,14 +82,22 @@ function tabs(state: Observation): Element[] {
 }
 
 async function verifyAll(options: Options): Promise<void> {
+    let expectedInventory: string[] | undefined;
     const see = async (): Promise<Observation> => {
         let lastError: Error | undefined;
         for (let attempt = 0; attempt < 8; attempt++) {
             try {
-                return SafeJSON.parse(
+                const observation = SafeJSON.parse(
                     await control(["see", "--app", options.app, "--window-id", options.windowId, "--scope", "chrome"]),
                     { strict: true }
                 ) as Observation;
+                if (expectedInventory) {
+                    assertTabInventoryUnchanged({
+                        expected: expectedInventory,
+                        actual: fingerprintTabInventory(tabs(observation)),
+                    });
+                }
+                return observation;
             } catch (error) {
                 lastError = error instanceof Error ? error : new Error(String(error));
                 if (!lastError.message.includes("UI changed")) {
@@ -103,6 +115,7 @@ async function verifyAll(options: Options): Promise<void> {
     };
     let state = await see();
     const initialTabs = tabs(state);
+    expectedInventory = fingerprintTabInventory(initialTabs);
     const original = initialTabs.findIndex((tab) => tab.AXSelected === "1" || tab.AXValue === "1");
     const visited: {
         ordinal: number;
@@ -188,6 +201,7 @@ async function verifyAll(options: Options): Promise<void> {
         windowId: Number(options.windowId),
         cursor: options.cursor,
         tabCount: initialTabs.length,
+        inventoryVerified: true,
         visited,
         restoredOriginalTab: restoration !== null,
         restoration,
