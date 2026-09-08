@@ -189,6 +189,27 @@ export function logTicksFor(max: number): number[] {
 }
 
 /** Bar/line chart over labeled points. Tooltip on hover; legend when 2+ series. */
+/** Tick text stays narrow so the y-axis column never runs under the rotated axis label. */
+function compactTick(v: number): string {
+    const n = Math.abs(v);
+    if (n >= 1_000_000) {
+        return `${(v / 1_000_000).toFixed(v % 1_000_000 === 0 ? 0 : 1)}M`;
+    }
+
+    if (n >= 10_000) {
+        return `${Math.round(v / 1000)}k`;
+    }
+
+    return v.toLocaleString("en-US");
+}
+
+/** A rotated axis label longer than the plot height is clipped; shorten it with an ellipsis instead. */
+function fitAxisLabel(label: string, height: number): string {
+    const maxChars = Math.max(12, Math.floor((height - 48) / 6.2));
+
+    return label.length > maxChars ? `${label.slice(0, maxChars - 1)}…` : label;
+}
+
 export function DayChart({ labels, series, log = false, yLabel, markers, height = 300, ariaLabel }: DayChartProps) {
     const data = chartRows(labels, series, log);
 
@@ -216,13 +237,16 @@ export function DayChart({ labels, series, log = false, yLabel, markers, height 
                         tick={AXIS_TICK}
                         tickLine={false}
                         axisLine={{ stroke: "var(--border)" }}
-                        width={48}
+                        width={yLabel ? 74 : 48}
+                        tickFormatter={compactTick}
                         label={
                             yLabel
                                 ? {
-                                      value: yLabel,
+                                      value: fitAxisLabel(yLabel, height),
                                       angle: -90,
                                       position: "insideLeft",
+                                      offset: 4,
+                                      style: { textAnchor: "middle" },
                                       fill: "var(--dim)",
                                       fontSize: 11,
                                   }
@@ -234,7 +258,7 @@ export function DayChart({ labels, series, log = false, yLabel, markers, height 
                         labelStyle={{ color: "var(--text)", fontWeight: 600 }}
                         cursor={{ fill: "var(--border)", opacity: 0.3 }}
                     />
-                    {series.length >= 2 ? (
+                    {series.length >= 1 ? (
                         <Legend
                             verticalAlign="top"
                             wrapperStyle={{ fontSize: 12, color: "var(--dim)", paddingBottom: 8 }}
