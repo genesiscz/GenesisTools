@@ -18,6 +18,12 @@ public enum SnapshotDispatchError: Error, LocalizedError {
     }
 }
 
+public func validatePointerHitEnabled(_ enabledStates: [Bool?]) throws {
+    guard !enabledStates.contains(false) else {
+        throw SnapshotDispatchError.rejected("element is disabled; no action dispatched")
+    }
+}
+
 public struct SnapshotDispatchContext {
     public let token: SnapshotToken
     public let observedPID: Int32

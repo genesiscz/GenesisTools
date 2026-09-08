@@ -79,6 +79,18 @@ final class SnapshotDispatchTests: XCTestCase {
         assertRejected(makeContext(observedElementIndex: 4), message: "element index outside snapshot")
     }
 
+    func testDisabledCoordinateHitOrAncestorIsRejected() {
+        for enabledStates: [Bool?] in [[false, true], [true, false, true]] {
+            XCTAssertThrowsError(try validatePointerHitEnabled(enabledStates)) { error in
+                XCTAssertEqual(error.localizedDescription, "element is disabled; no action dispatched")
+            }
+        }
+    }
+
+    func testEnabledCoordinateHitAndUnknownAncestorRemainAllowed() {
+        XCTAssertNoThrow(try validatePointerHitEnabled([true, nil, true]))
+    }
+
     func testDisabledMutationDoesNotReachPrimitiveDispatch() {
         assertRejected(makeContext(targetEnabled: false), message: "element is disabled; no action dispatched")
     }

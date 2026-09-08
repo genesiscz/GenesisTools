@@ -182,3 +182,26 @@ test("the real subprocess boundary accepts valid native JSON larger than one MiB
 
     expect(result.payload.length).toBe(payloadBytes);
 });
+
+test("an exit with no stdout surfaces trimmed stderr", () => {
+    const boundary: AxRunBoundary = {
+        ensureBinary: () => "/fixture/ax-tool",
+        spawn: () => ({ status: 3, signal: null, stdout: "", stderr: "  fixture stderr  " }),
+    };
+
+    expect(runAxWithBoundary({ args: ["see"], boundary })).toEqual({ ok: false, error: "fixture stderr" });
+});
+
+test("a native error message survives a nonzero exit", () => {
+    const boundary: AxRunBoundary = {
+        ensureBinary: () => "/fixture/ax-tool",
+        spawn: () => ({
+            status: 4,
+            signal: null,
+            stdout: '{"ok":false,"error":"snapshot token expired"}',
+            stderr: "",
+        }),
+    };
+
+    expect(runAxWithBoundary({ args: ["act"], boundary })).toEqual({ ok: false, error: "snapshot token expired" });
+});

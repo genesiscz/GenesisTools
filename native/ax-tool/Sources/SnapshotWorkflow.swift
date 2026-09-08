@@ -282,10 +282,11 @@ func cmdSee(appName _: String) {
 }
 
 private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: AXUIElement? = nil) {
-    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+    let currentFrontmost = frontmostPid()
+    guard currentFrontmost == pid,
           let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
           CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
-        workflowFailure("wrong frontmost app/window (expected PID \(pid), frontmost PID \(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1)); use an explicit focus action, then run see again")
+        workflowFailure("wrong frontmost app/window (expected PID \(pid), frontmost PID \(currentFrontmost ?? -1)); use an explicit focus action, then run see again")
     }
     if let element {
         guard let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
@@ -355,7 +356,7 @@ func cmdAct(appName _: String) {
     let app = AXUIElementCreateApplication(pid)
     let focusedWindow = axAttribute(app, "AXFocusedWindow")
     let focusedInput = axAttribute(app, "AXFocusedUIElement")
-    let windowFocused = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+    let windowFocused = frontmostPid() == pid
         && focusedWindow.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax) } == true
     let inputFocused = (action == "key" && CFEqual(element, window.ax))
         || focusedInput.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, element) } == true
@@ -421,7 +422,7 @@ func cmdAct(appName _: String) {
             workflowFailure(error.localizedDescription)
         }
     case "focus":
-        guard let app = NSRunningApplication(processIdentifier: pid), app.activate(options: [.activateIgnoringOtherApps]) else {
+        guard bringFrontmost(pid) else {
             workflowFailure("app activation failed")
         }
         workflowAXAction(window.ax, action: "AXRaise")
@@ -442,11 +443,11 @@ func cmdAct(appName _: String) {
         let deadline = Date().addingTimeInterval(1)
         while Date() < deadline {
             let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow")
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+            if frontmostPid() == pid,
                let focused, CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) {
                 break
             }
-            Thread.sleep(forTimeInterval: 0.02)
+            CFRunLoopRunInMode(.defaultMode, 0.02, false)
         }
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
     case "scroll", "click", "move", "drag":
@@ -477,7 +478,7 @@ func cmdAct(appName _: String) {
                 throw WindowEventError.unavailable("window or element geometry changed; inspect before retrying")
             }
             if !background {
-                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                guard frontmostPid() == pid,
                       let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
                       CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
                     throw WindowEventError.unavailable("wrong frontmost app/window; focus explicitly and refresh")
@@ -492,12 +493,15 @@ func cmdAct(appName _: String) {
                 throw WindowEventError.unavailable("cannot verify event hit target")
             }
             var ancestor: AXUIElement? = hit
+            var enabledStates: [Bool?] = []
             for _ in 0..<50 {
                 guard let current = ancestor else { break }
+                enabledStates.append((axAttribute(current, "AXEnabled") as? NSNumber)?.boolValue)
                 if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
                     throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
                 }
                 if CFEqual(current, target) {
+                    try validatePointerHitEnabled(enabledStates)
                     return hit
                 }
                 guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
@@ -637,7 +641,7 @@ func cmdAct(appName _: String) {
             do {
                 defer { restoration = transaction.restore() }
                 try transaction.write(text: text, format: workflowArgument("--format") ?? "text")
-                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                guard frontmostPid() == pid,
                       let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
                       CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, element) else {
                     throw WindowEventError.unavailable("focus changed before paste; clipboard restored without dispatch")

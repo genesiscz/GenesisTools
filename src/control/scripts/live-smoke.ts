@@ -204,11 +204,29 @@ try {
 
     const invalid = await act(state, 99999, "press", [], false);
     assert.match(invalid.error ?? "", /index outside/);
-    const disabled = state.elements.find((element) => element.AXTitle === "Disabled");
+    const disabled = state.elements.find((element) => element.AXTitle === "Disabled") as
+        | (Element & { x: number; y: number; width: number; height: number })
+        | undefined;
     assert.ok(disabled);
     await act(state, disabled.index, "press", [], false);
+    const disabledCoordinate = await run(
+        [
+            "act",
+            "--app",
+            String(fixturePid),
+            "--snapshot",
+            state.snapshot,
+            "--action",
+            "move",
+            "--background",
+            "--coords",
+            `${disabled.x + disabled.width / 2},${disabled.y + disabled.height / 2}`,
+        ],
+        false
+    );
+    assert.match(disabledCoordinate.error ?? "", /element is disabled/);
     assert.equal(find(await see(), "counter").AXValue, "10");
-    checks.push("invalid index and disabled button do not mutate the counter");
+    checks.push("invalid index plus element and cursor coordinate actions refuse a disabled button");
 
     windowIndex = 1;
     const second = await see();
