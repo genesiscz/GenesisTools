@@ -16,6 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerCaptureCommands } from "./commands/capture";
 import { registerCompareScreenshotCommand } from "./commands/compare-screenshot";
+import { registerCursorCommands } from "./commands/cursor";
 import { registerDiscoveryCommands } from "./commands/discovery";
 import { registerDrawCommand } from "./commands/draw";
 import { registerInteractCommands } from "./commands/interact";
@@ -36,6 +37,7 @@ program
 
 registerCaptureCommands(program);
 registerCompareScreenshotCommand(program);
+registerCursorCommands(program);
 registerDiscoveryCommands(program);
 registerDrawCommand(program);
 registerInteractCommands(program);

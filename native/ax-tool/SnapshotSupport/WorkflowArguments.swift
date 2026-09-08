@@ -20,7 +20,7 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path"]
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope"]
             flagOptions = []
         case "act":
             valueOptions = [
@@ -61,7 +61,7 @@ public struct WorkflowArguments {
             throw WorkflowArgumentError.invalid("--app required")
         }
         if command == "act" {
-            guard let action = parsedValues["--action"], ["get", "press", "click", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
+            guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
                 throw WorkflowArgumentError.invalid("--action required and must name a supported action")
             }
             guard parsedValues["--snapshot"] != nil else {
@@ -87,7 +87,7 @@ public struct WorkflowArguments {
         }
 
         try reject(["--button", "--double"], unless: ["click"])
-        try reject(["--background", "--coords"], unless: ["click", "drag", "scroll"])
+        try reject(["--background", "--coords"], unless: ["click", "move", "drag", "scroll"])
         try reject(["--prefix", "--suffix", "--selection", "--range"], unless: ["select"])
         try reject(["--format"], unless: ["paste"])
         try reject(["--text"], unless: ["type", "select", "paste"])

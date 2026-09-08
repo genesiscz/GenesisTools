@@ -39,6 +39,7 @@ public final class WindowEventFactory {
                      verify: (CGPoint) throws -> Void, post: (CGEvent) -> Void) throws {
         let down = try mouse(type: .leftMouseDown, point: start, clickCount: 1)
         var release = try mouse(type: .leftMouseUp, point: start, clickCount: 1)
+        try verify(start)
         post(down)
         do {
             for point in points {

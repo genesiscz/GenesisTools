@@ -101,16 +101,16 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
     return ObservedWindow(ax: ax, id: id, bounds: frame)
 }
 
-private func workflowTree(_ window: AXUIElement, depth: Int) -> ObservedTree {
+private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTree {
     guard (1...50).contains(depth) else {
         workflowFailure("--depth must be between 1 and 50")
     }
     var tree = ObservedTree(digest: "")
-    var visited = Set<CFHashCode>()
+    var visited = SnapshotObjectSet()
     func walk(_ element: AXUIElement, level: Int, clip: CGRect) {
         let identity = CFHash(element)
-        guard visited.insert(identity).inserted else {
-            workflowFailure("AX tree repeats an element; cannot issue unambiguous snapshot indices")
+        guard visited.insert(element) else {
+            return
         }
         guard tree.elements.count < 4000 else {
             workflowFailure("AX tree exceeds 4000 elements; snapshot refused rather than truncated")
@@ -124,12 +124,13 @@ private func workflowTree(_ window: AXUIElement, depth: Int) -> ObservedTree {
         // Expose the actual button as a leaf; those decorative descendants are not controls.
         let subrole = axStringAttribute(element, "AXSubrole") ?? ""
         let windowButton = ["AXCloseButton", "AXZoomButton", "AXFullScreenButton", "AXMinimizeButton"].contains(subrole)
-        let children = windowButton ? [] : (rawChildren as? [AXUIElement] ?? [])
+        let role = axStringAttribute(element, "AXRole") ?? ""
+        let omittedWebContent = scope == "chrome" && role == "AXWebArea"
+        let children = windowButton || omittedWebContent ? [] : (rawChildren as? [AXUIElement] ?? [])
         guard level < depth || children.isEmpty else {
             workflowFailure("AX tree exceeds --depth \(depth); increase depth and run see again")
         }
         let frame = axFrame(element)
-        let role = axStringAttribute(element, "AXRole") ?? ""
         var row: [String: Any] = [
             "index": tree.elements.count, "depth": level, "role": role,
             "identity": identity,
@@ -137,6 +138,7 @@ private func workflowTree(_ window: AXUIElement, depth: Int) -> ObservedTree {
             "visible": frame.width > 0 && frame.height > 0 && clip.contains(CGPoint(x: frame.midX, y: frame.midY)),
             "actions": axActionNames(element).sorted(),
         ]
+        if omittedWebContent { row["childrenOmitted"] = "chrome scope" }
         for key in ["AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXValue", "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange"] {
             if let value = axAttribute(element, key) {
                 if key == "AXSelectedTextRange", CFGetTypeID(value) == AXValueGetTypeID() {
@@ -234,12 +236,14 @@ func cmdSee(appName _: String) {
         window = workflowWindow(windows[index], pid: pid)
     }
     let depth = workflowInteger("--depth", defaultValue: 20)
-    let tree = workflowTree(window.ax, depth: depth)
+    let scope = workflowArgument("--scope") ?? "window"
+    guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
+    let tree = workflowTree(window.ax, depth: depth, scope: scope)
     guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
         workflowFailure("screenshot failed for the selected window; no snapshot issued")
     }
     let refreshed = workflowWindow(window.ax, pid: pid)
-    let after = workflowTree(window.ax, depth: depth)
+    let after = workflowTree(window.ax, depth: depth, scope: scope)
     guard refreshed.id == window.id, workflowLaunch(pid) == launch, after.digest == tree.digest else {
         var changes: [[String: Any]] = []
         for index in 0..<max(tree.rows.count, after.rows.count) {
@@ -263,7 +267,7 @@ func cmdSee(appName _: String) {
         }
         try png.write(to: URL(fileURLWithPath: path), options: .atomic)
         let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
-                                  digest: tree.digest, created: Date().timeIntervalSince1970)
+                                  digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
         let encoded = try JSONEncoder().encode(token).base64EncodedString()
         let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
         jsonOutput(["ok": true, "app": appName, "pid": pid,
@@ -271,7 +275,7 @@ func cmdSee(appName _: String) {
                                "x": window.bounds.minX, "y": window.bounds.minY,
                                "width": window.bounds.width, "height": window.bounds.height],
                     "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
-                    "snapshot": encoded, "expiresInSeconds": 120, "elements": publicRows])
+                    "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "elements": publicRows])
     } catch {
         workflowFailure("cannot save snapshot: \(error.localizedDescription)")
     }
@@ -315,10 +319,10 @@ func cmdAct(appName _: String) {
         workflowFailure("choose --coords or --element, not both")
     }
     let elementIndex = rawCoords == nil ? workflowInteger("--element") : 0
-    guard let action = workflowArgument("--action"), ["get", "press", "click", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
+    guard let action = workflowArgument("--action"), ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
         workflowFailure("--action must be get, press, click, drag, set, perform, focus, scroll, type, key, select or paste")
     }
-    if !["click", "drag", "scroll"].contains(action) && (rawCoords != nil || workflowFlag("--background")) {
+    if !["click", "move", "drag", "scroll"].contains(action) && (rawCoords != nil || workflowFlag("--background")) {
         workflowFailure("--coords and --background apply only to click, drag or pixel scroll")
     }
     if action != "click" && (workflowFlag("--double") || workflowArgument("--button") != nil) {
@@ -335,7 +339,7 @@ func cmdAct(appName _: String) {
         workflowFailure(error.localizedDescription)
     }
     let window = workflowWindowByID(token.window, pid: pid)
-    let tree = workflowTree(window.ax, depth: token.depth)
+    let tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
     do {
         _ = try token.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
                                element: elementIndex, count: tree.elements.count, now: Date().timeIntervalSince1970)
@@ -343,9 +347,35 @@ func cmdAct(appName _: String) {
         workflowFailure(error.localizedDescription)
     }
     let element = tree.elements[elementIndex]
+    if token.effectiveScope == "chrome", action != "get",
+       axStringAttribute(element, "AXRole") == "AXWebArea" || (action == "key" && CFEqual(element, window.ax)) {
+        workflowFailure("this action requires window scope or an inspected browser-chrome input")
+    }
     if action != "get", (axAttribute(element, "AXEnabled") as? Bool) == false {
         workflowFailure("element is disabled; no action dispatched")
     }
+    let operation: SnapshotDispatchOperation
+    switch action {
+    case "get": operation = .read
+    case "focus": operation = .focus
+    case "click", "move", "drag", "scroll": operation = .pointer(background: workflowFlag("--background"))
+    case "type", "key", "paste": operation = .input
+    default: operation = .mutation
+    }
+    let app = AXUIElementCreateApplication(pid)
+    let focusedWindow = axAttribute(app, "AXFocusedWindow")
+    let focusedInput = axAttribute(app, "AXFocusedUIElement")
+    let windowFocused = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+        && focusedWindow.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax) } == true
+    let inputFocused = (action == "key" && CFEqual(element, window.ax))
+        || focusedInput.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, element) } == true
+    let context = SnapshotDispatchContext(token: token, observedPID: pid, observedProcessLaunch: launch,
+        observedWindowID: Int(window.id), observedTreeDigest: tree.digest, observedElementIndex: elementIndex,
+        observedElementCount: tree.elements.count, observedAt: Date().timeIntervalSince1970,
+        targetEnabled: (axAttribute(element, "AXEnabled") as? Bool) != false,
+        windowFocused: windowFocused, inputFocused: inputFocused, operation: operation)
+    do {
+    try dispatchSnapshotAction(context: context) {
     switch action {
     case "get":
         jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id])
@@ -429,7 +459,7 @@ func cmdAct(appName _: String) {
             Thread.sleep(forTimeInterval: 0.02)
         }
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
-    case "scroll", "click", "drag":
+    case "scroll", "click", "move", "drag":
         let background = workflowFlag("--background")
         let frame = tree.frames[elementIndex]
         func parsePoint(_ raw: String) throws -> CGPoint {
@@ -471,6 +501,9 @@ func cmdAct(appName _: String) {
             var ancestor = hit
             for _ in 0..<50 {
                 guard let current = ancestor else { break }
+                if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
+                    throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
+                }
                 if CFEqual(current, target) { return }
                 guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
                 ancestor = (parent as! AXUIElement)
@@ -484,7 +517,11 @@ func cmdAct(appName _: String) {
             let point = try rawCoords.map(parsePoint) ?? CGPoint(x: frame.midX, y: frame.midY)
             try verifyPoint(point, target: element)
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
-            if action == "scroll" {
+            if action == "move" {
+                let event = try factory.mouse(type: .mouseMoved, point: point, clickCount: 0)
+                event.postToPid(pid)
+                Thread.sleep(forTimeInterval: 0.05)
+            } else if action == "scroll" {
                 guard let direction = workflowArgument("--direction"), ["up", "down", "left", "right"].contains(direction) else {
                     throw WindowEventError.unavailable("scroll requires --direction up, down, left or right")
                 }
@@ -529,7 +566,7 @@ func cmdAct(appName _: String) {
                             y: point.y + (end.y - point.y) * Double(step) / Double(steps))
                 }
                 try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
-                                 verify: { try verifyPoint($0, target: window.ax) }, post: { $0.postToPid(pid) })
+                                 verify: { try verifyPoint($0, target: $0 == point ? element : window.ax) }, post: { $0.postToPid(pid) })
                 Thread.sleep(forTimeInterval: 0.05)
             } else {
                 let button = workflowArgument("--button") ?? "left"
@@ -649,4 +686,8 @@ func cmdAct(appName _: String) {
     }
     jsonOutput(["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id,
                 "refreshRequired": true, "note": "action dispatched; use see to verify the resulting UI"])
+    }
+    } catch {
+        workflowFailure(error.localizedDescription)
+    }
 }

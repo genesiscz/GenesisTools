@@ -7,6 +7,7 @@ const ACTIONS = [
     "get",
     "press",
     "click",
+    "move",
     "drag",
     "set",
     "perform",
@@ -27,6 +28,7 @@ interface WorkflowOptions {
     windowIndex?: string;
     windowId?: string;
     depth?: string;
+    scope?: string | boolean;
     path?: string;
     snapshot?: string;
     element?: string;
@@ -61,9 +63,18 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--window-index <n>", "zero-based AX window index from a see ambiguity result")
         .option("--window-id <id>", "stable CG window ID from a previous see; alternative to --window-index")
         .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
+        .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
         .action((opts: WorkflowOptions) => {
+            if (opts.scope !== undefined && !["window", "chrome"].includes(String(opts.scope))) {
+                logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome"]));
+                process.exitCode = 1;
+                return;
+            }
             const args = ["see", "--app", opts.app];
+            if (typeof opts.scope === "string") {
+                args.push("--scope", opts.scope);
+            }
 
             for (const [flag, value] of [
                 ["window-index", opts.windowIndex],
@@ -99,8 +110,8 @@ export function registerWorkflowCommands(program: Command): void {
             "key: comma-separated modifiers cmd,ctrl,alt,shift plus a letter, digit, return, tab, escape, backspace or arrow"
         )
         .option("--double", "click: double-click the observed element")
-        .option("--coords <x,y>", "click/drag/scroll: global screen point; alternative to --element")
-        .option("--background", "click/drag/scroll: deliver without explicit activation or pointer movement")
+        .option("--coords <x,y>", "click/move/drag/scroll: global screen point; alternative to --element")
+        .option("--background", "click/move/drag/scroll: deliver without explicit activation or pointer movement")
         .option("--button [name]", "click: left, right or middle")
         .option("--to <x,y>", "drag: global destination point")
         .option("--duration <seconds>", "drag: duration from 0.1 to 5 seconds")

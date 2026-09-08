@@ -3,6 +3,23 @@ import XCTest
 @testable import SnapshotSupport
 
 final class WindowEventTests: XCTestCase {
+    func testRejectedDragStartPostsNoMouseEvents() throws {
+        // Regression: PR #376 t7 — validate the start immediately before mouse-down.
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+        var posted: [CGEvent] = []
+
+        XCTAssertThrowsError(try factory.drag(start: CGPoint(x: 10, y: 10),
+            points: [CGPoint(x: 20, y: 20)], stepDelay: 0,
+            verify: { point in
+                if point == CGPoint(x: 10, y: 10) {
+                    throw WindowEventError.unavailable("window changed")
+                }
+            }, post: { posted.append($0) })) { error in
+                XCTAssertEqual(error.localizedDescription, "window changed")
+            }
+        XCTAssertTrue(posted.isEmpty)
+    }
+
     func testInterruptedDragReleasesAtLastVerifiedPoint() throws {
         // Regression: PR #376 t7 — interrupted drag must not drop at its planned destination.
         let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))

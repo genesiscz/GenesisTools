@@ -198,6 +198,27 @@ This tool needs macOS Accessibility permission for the process that runs it, and
 - The `macos-control` skill wraps this tool with the discovery-first workflow and the frame-by-frame review loop for recordings.
 - `hittest` is the tie-breaker when a click "works" but the wrong thing responds. It reports which element the system would actually deliver the event to, which is not always the element you targeted.
 
+### Independent software cursor
+
+`cursor move --app APP --snapshot TOKEN --coords X,Y --name NAME` moves a named software cursor through a process-targeted mouse-move event. It saves its own coordinates without moving the hardware pointer. `cursor show --name NAME` reads that position; `cursor click --name NAME --snapshot FRESH_TOKEN` clicks it. Fresh tokens must match the saved app launch and window. Stale tokens fail natively, and failed moves do not overwrite cursor state.
+
+For browser tab strips and toolbars, `see --scope chrome` omits web-area descendants explicitly. The token remembers that scope and cannot be used to dispatch pointer events inside omitted web content. Use the default `window` scope to inspect and operate page content.
+
+```bash
+tools control see \
+  --app com.brave.Browser --window-id ID --scope chrome > /tmp/brave-state.json
+tools control cursor move \
+  --app com.brave.Browser --name brave \
+  --snapshot "$(jq -r .snapshot /tmp/brave-state.json)" --coords X,Y
+# Refresh after movement before choosing the click.
+tools control see \
+  --app com.brave.Browser --window-id ID --scope chrome > /tmp/brave-next.json
+tools control cursor click \
+  --name brave --snapshot "$(jq -r .snapshot /tmp/brave-next.json)"
+```
+
+`bun src/control/scripts/brave-tabs.ts --window-id ID --proof /tmp/brave-proof.json` verifies every visible browser tab through the real CLI, compares hardware-pointer positions, and restores the initial tab. It does not click page controls or submit forms. Hidden tabs and a changed tab inventory cause a failure rather than partial-success reporting.
+
 ### Snapshot drag, selection and paste
 
 `drag` uses the left mouse button and accepts `--to X,Y`, `--duration 0.1..5`, `--coords` and `--background`. `click --button left|right|middle` selects a mouse button for clicks. Background drag and right-click passed the dedicated AppKit fixture; receiving apps must accept background events. The tool does not explicitly activate or raise the app, but an app may change its own key window in response.

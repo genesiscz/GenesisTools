@@ -2198,14 +2198,15 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
     remains available for legacy discovery and screen metadata.
 
     Usage:
-      ax-tool see --app <name> [--window-index N | --window-id ID] [--depth 20] [--path shot.png]
+      ax-tool see --app <name> [--window-index N | --window-id ID] [--depth 20] [--scope window|chrome] [--path shot.png]
                       Indexed AX tree + exact-window PNG + 120-second snapshot token; multiple windows require an index.
       ax-tool act --app <name> --snapshot TOKEN --element N --action ACTION
-                      ACTION: get|press|click|drag|set|perform|focus|scroll|type|key|select|paste
+                      ACTION: get|press|click|move|drag|set|perform|focus|scroll|type|key|select|paste
                       set: --value TEXT; perform: --ax-action AXName; type: --text TEXT (single line, max 256 UTF-16 units); key: --keys cmd,a
                       click: --button left|right|middle; --double
                       drag: --to x,y [--duration 0.1–5]; left-button only, destination in the snapshot window
-                      click/drag/scroll: --coords x,y replaces --element; --background skips explicit activation and pointer movement
+                      click/move/drag/scroll: --coords x,y replaces --element; --background skips explicit activation and pointer movement
+                      move sends a window-addressed hover event; named cursor storage is provided by tools control cursor
                       scroll: --direction up|down|left|right [--pages 1–20 | --pixels 1–10000]
                               pages use observed viewport dimensions (default: one page); pixels use an exact wheel distance
                       select: --text TEXT [--prefix TEXT] [--suffix TEXT] OR --range utf16Start,length

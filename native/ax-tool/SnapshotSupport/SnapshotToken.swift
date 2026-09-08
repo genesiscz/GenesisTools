@@ -15,8 +15,10 @@ public struct SnapshotToken: Codable {
     public let depth: Int
     public let digest: String
     public let created: Double
+    public let scope: String?
+    public var effectiveScope: String { scope ?? "window" }
 
-    public init(pid: Int32, launch: Double, window: Int, depth: Int, digest: String, created: Double) {
+    public init(pid: Int32, launch: Double, window: Int, depth: Int, digest: String, created: Double, scope: String = "window") {
         self.version = 1
         self.pid = pid
         self.launch = launch
@@ -24,10 +26,12 @@ public struct SnapshotToken: Codable {
         self.depth = depth
         self.digest = digest
         self.created = created
+        self.scope = scope
     }
 
     public func validate(pid: Int32, launch: Double, window: Int, digest: String, element: Int, count: Int, now: Double) throws -> Int {
-        guard self.window > 0, depth > 0, depth <= 50, !self.digest.isEmpty else {
+        guard self.window > 0, depth > 0, depth <= 50, !self.digest.isEmpty,
+              ["window", "chrome"].contains(effectiveScope) else {
             throw SnapshotError.invalid("invalid snapshot metadata; run see again")
         }
         guard version == 1, self.pid == pid, self.launch == launch else {
