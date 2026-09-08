@@ -93,6 +93,7 @@ tools control act \
   --action press
 tools control see \
   --app com.apple.calculator \
+  --window-id "$(jq -r .window.id /tmp/calculator-state.json)" \
   --path /tmp/calculator-after.png > /tmp/calculator-after.json
 tools json /tmp/calculator-after.json
 ```
@@ -105,15 +106,20 @@ This shell example needs `jq` only to read the token. Other clients can parse th
 |---|---|---|
 | `get` | none | Read the exact indexed element after validation |
 | `press` | none | Invoke the element's exposed AXPress; does not raise another window |
-| `click` | optional `--double` | Physical click at the element center or an observed global point; --background avoids activation and pointer movement, but the receiving app must accept background events |
+| `click` | optional `--double`, `--button` (`left`, `right`, `middle`) | Window-addressed mouse click at the element center or observed point; `--background` skips explicit activation |
+| `drag` | `--to X,Y`, optional `--duration 0.1–5` | Left-button drag within the selected window; accepts `--coords` and `--background` |
 | `set` | `--value TEXT` | Set AXValue and read it back; fails if not settable; no typing fallback |
 | `perform` | `--ax-action NAME` | Invoke an exact action present in the observed actions list |
 | `focus` | none | Explicitly activate and raise the selected window, then focus the selected element |
-| `scroll` | `--direction up` or `down` | Synthetic wheel scrolling derives distance from the observed target viewport for --pages 1–20, or uses exact --pixels 1–10000. The modes are mutually exclusive, either may use --coords/--background, and the result must be verified |
-| `type` | `--text TEXT` | Single-line Unicode typing into the already focused element, confined to its process |
+| `scroll` | `--direction` (`up`, `down`, `left`, `right`) | Wheel distance uses viewport-sized `--pages 1–20` (default one) or exact `--pixels 1–10000`; accepts `--coords` and `--background` |
+| `type` | `--text TEXT` | Single-line Unicode typing into the focused element, limited to 256 UTF-16 code units; use `paste` for longer text |
+| `select` | `--text MATCH` or `--range START,LENGTH` | Select a unique literal match or UTF-16 range; `--selection` (`text`, `cursor_before`, `cursor_after`) chooses selection or caret |
+| `paste` | `--text PAYLOAD`, optional `--format` (`text`, `md`, `html`) | Paste at the current selection in the already focused input; clipboard restoration is best effort |
 | `key` | `--keys cmd,a`, for example | One supported key plus modifiers, confined to the selected process and focused window |
 
 Refresh after `focus`, too. `type` and `key` do not silently focus an input. Use an explicit key action to submit; embedded newlines in `type` are refused. Keyboard layouts and app event handling can vary, so verify the actual resulting text. `refreshRequired: true` means the action was dispatched, not that a business operation succeeded.
+
+For `select --text`, optional `--prefix` and `--suffix` disambiguate the text immediately surrounding a match. They do not add content to a paste payload. Use `select → see → paste` to replace a chosen match or paste at its before/after caret. Selection options on `paste` are rejected. HTML paste also provides the raw markup as plain text; rich rendering depends on the receiving app. Clipboard restoration skips observed competing copies, but AppKit has no atomic compare-and-swap, so a narrow concurrent-copy race remains.
 
 Snapshots expire after 120 seconds. Validation covers process start time, window identity, indexed tree contents, geometry, state and index bounds. The tree and screenshot come from the same window, and capture refuses changes observed during inspection. Truncated trees fail rather than issuing partial references; increase `--depth` up to 50 when needed. Offscreen, minimized or ambiguous window mappings fail explicitly.
 
@@ -168,13 +174,3 @@ bun src/control/scripts/live-smoke.ts
 ```
 
 Run ordinary tests with `bun run test src/control` and native unit tests with `swift test --package-path native/ax-tool`. Never turn a failed live flow into a success claim by switching to an unrelated provider or discarding the refusal case.
-
-### Additional native actions
-
-The independent control CLI also supports drag, select and paste. Drag accepts --to X,Y, optional --button left/right/middle, --duration 0.1–5, --coords and --background. Background drag and right-click have passed the dedicated AppKit fixture twice; they still depend on the receiving app accepting background events. A successful dispatch is not proof of acceptance.
-
-Scroll accepts --direction up, down, left or right. --pages 1–20 derives synthetic wheel distance from the observed target viewport; --pixels 1–10000 requests an exact distance. The modes are mutually exclusive, either may use --coords and --background, and background behavior depends on the receiving app; refresh and verify the result.
-
-Select accepts --range START,LENGTH as a UTF-16 range or a uniquely resolved --text target, with optional --prefix and --suffix. Paste requires --text and a focused target; --format accepts text, md or html, and --selection accepts text, cursor_before or cursor_after. Clipboard restoration is best-effort: the original is restored only when the observed clipboard change-count is still the one produced by the action; a concurrent copy creates a residual race and restoration is skipped. Public paste can carry text and HTML data, but raw markup is not guaranteed to render as rich text.
-
-The background event path uses the localized Apple private SPI CGEventSetWindowLocation and WebKit's private window field 51. It refuses when the setter is unavailable. This documents the independent CLI's compatibility boundary and does not claim full Sky internals or parity across all applications.
