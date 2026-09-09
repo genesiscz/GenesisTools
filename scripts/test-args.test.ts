@@ -20,3 +20,16 @@ test("no positional path leaves the roots empty for the caller's own default", (
     expect(profileArgs(["--profile"], 8)).toEqual({ jobs: 8, roots: [] });
     expect(profileArgs(["--profile", "--jobs", "2"], 8)).toEqual({ jobs: 2, roots: [] });
 });
+
+test("a --jobs value that is not a positive count falls back to the default", () => {
+    // `Array.from({ length: Math.min(NaN, files.length) })` is EMPTY, so a bad `--jobs`
+    // profiled zero files and reported "0 file(s) failed" with exit 0 — a silent green.
+    expect(profileArgs(["--profile", "--jobs"], 8)).toEqual({ jobs: 8, roots: [] });
+    expect(profileArgs(["--profile", "--jobs", "abc"], 8)).toEqual({ jobs: 8, roots: [] });
+    expect(profileArgs(["--profile", "--jobs", "0"], 8)).toEqual({ jobs: 8, roots: [] });
+    expect(profileArgs(["--profile", "--jobs", "-2"], 8)).toEqual({ jobs: 8, roots: [] });
+});
+
+test("a fractional --jobs value is floored, never zero", () => {
+    expect(profileArgs(["--profile", "--jobs", "2.7"], 8)).toEqual({ jobs: 2, roots: [] });
+});
