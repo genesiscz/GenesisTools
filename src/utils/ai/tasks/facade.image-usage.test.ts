@@ -71,10 +71,23 @@ function imagePlugin(id: string): ProviderPlugin {
     };
 }
 
+/**
+ * A day either side of now, which is every row this file writes.
+ *
+ * Not the open-ended window this used to pass: `queryUsage` walks every UTC day
+ * the range touches and probes one file per day, so 1970 to 2999 spent about
+ * three seconds on 376k `existsSync` calls — per call, inside a poll loop.
+ */
+function usageWindow(): { from: string; to: string } {
+    const now = Date.now();
+
+    return { from: new Date(now - 86_400_000).toISOString(), to: new Date(now + 86_400_000).toISOString() };
+}
+
 /** `recordUsage` is fired, not awaited, so give the append one turn to land. */
 async function recordedEvents() {
     for (let attempt = 0; attempt < 50; attempt++) {
-        const result = queryUsage({ from: "1970-01-01", to: "2999-01-01" });
+        const result = queryUsage(usageWindow());
 
         if (result.events.length > 0) {
             return result.events;
@@ -202,6 +215,6 @@ describe("ai.image records usage", () => {
         writeConfig([account("acc_or", "openrouter")]);
 
         await expect(ai.image("a red circle", { model: "@account/acc_or:some/model" })).rejects.toThrow(/exploded/);
-        expect(queryUsage({ from: "1970-01-01", to: "2999-01-01" }).events).toEqual([]);
+        expect(queryUsage(usageWindow()).events).toEqual([]);
     });
 });
