@@ -35,17 +35,12 @@ test("permits ordinary native TUI controls and prompt text", () => {
     ]);
 });
 
-test.each([
-    "--oss",
-    "--local-provider",
-    "exec",
-    "app-server",
-    "mcp",
-    "remote-control",
-    "review",
-])("rejects non-account-bound native path %s", (arg) => {
-    expect(() => validateTuiArgs([arg])).toThrow();
-});
+test.each(["--oss", "--local-provider", "exec", "app-server", "mcp", "remote-control", "review"])(
+    "rejects non-account-bound native path %s",
+    (arg) => {
+        expect(() => validateTuiArgs([arg])).toThrow();
+    }
+);
 
 test("consumes the launcher separator so native flags do not become an initial prompt", () => {
     expect(validateTuiArgs(["--", "--no-alt-screen"])).toEqual(["--no-alt-screen"]);
@@ -58,16 +53,12 @@ test("does not treat native option values or subcommand arguments as replacement
     expect(validateTuiArgs(["resume", "--last", "--", "review"])).toEqual(["resume", "--last", "--", "review"]);
 });
 
-test.each([
-    "plugin",
-    "queue",
-    "archive",
-    "delete",
-    "migrate-rollouts",
-    "unarchive",
-])("account terminals reject native management command %s", (command) => {
-    expect(() => validateTuiArgs([command])).toThrow("account-bound terminal");
-});
+test.each(["plugin", "queue", "archive", "delete", "migrate-rollouts", "unarchive"])(
+    "account terminals reject native management command %s",
+    (command) => {
+        expect(() => validateTuiArgs([command])).toThrow("account-bound terminal");
+    }
+);
 
 test("a second separator does not end account-bypass validation", () => {
     expect(() => validateTuiArgs(["--", "foo", "--", "--remote=ws://evil"])).toThrow("does not accept");

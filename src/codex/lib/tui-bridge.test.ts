@@ -85,22 +85,20 @@ test("native TUI handshake reuses the authenticated app-server connection", asyn
     }
 });
 
-test.each([
-    "account/logout",
-    "account/login/start",
-    "config/batchWrite",
-    "config/value/write",
-])("refuses %s on an account-bound terminal", async (method) => {
-    const w = wire();
-    try {
-        w.bridge.ready({ userAgent: "fixture" });
-        await w.bridge.receive({ id: 9, method, params: {} });
-        expect(w.messages[0]).toMatchObject({ id: 9, error: { code: -32600 } });
-        expect(w.requests).toHaveLength(0);
-    } finally {
-        await w.client.close();
+test.each(["account/logout", "account/login/start", "config/batchWrite", "config/value/write"])(
+    "refuses %s on an account-bound terminal",
+    async (method) => {
+        const w = wire();
+        try {
+            w.bridge.ready({ userAgent: "fixture" });
+            await w.bridge.receive({ id: 9, method, params: {} });
+            expect(w.messages[0]).toMatchObject({ id: 9, error: { code: -32600 } });
+            expect(w.requests).toHaveLength(0);
+        } finally {
+            await w.client.close();
+        }
     }
-});
+);
 
 test("forwards approvals and releases a waiting server when the terminal disconnects", async () => {
     const w = wire();

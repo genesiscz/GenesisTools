@@ -105,30 +105,30 @@ test("configured Claude home honors realpath aliases without requiring a move", 
 });
 
 // Regression: an unavailable native UUID must never select a different session that only mentions it.
-test.each([
-    "title",
-    "body",
-] as const)("missing full Claude UUID does not fall back to %s mentions", async (location) => {
-    const source = fixture();
-    const missing = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    const row =
-        location === "title"
-            ? { type: "custom-title", sessionId: ID, customTitle: `Discussing ${missing}` }
-            : {
-                  type: "assistant",
-                  sessionId: ID,
-                  cwd: "/projects/shop",
-                  message: { content: [{ type: "text", text: `Referenced ${missing}` }] },
-              };
-    appendFileSync(source.file, `${SafeJSON.stringify(row)}\n`);
-    const db = new Database(":memory:");
-    try {
-        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [source.root], database: db });
-        expect(await loadClaudeResumeCandidates({ query: missing, cwd: "/projects/shop", adapter })).toEqual([]);
-    } finally {
-        db.close();
+test.each(["title", "body"] as const)(
+    "missing full Claude UUID does not fall back to %s mentions",
+    async (location) => {
+        const source = fixture();
+        const missing = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        const row =
+            location === "title"
+                ? { type: "custom-title", sessionId: ID, customTitle: `Discussing ${missing}` }
+                : {
+                      type: "assistant",
+                      sessionId: ID,
+                      cwd: "/projects/shop",
+                      message: { content: [{ type: "text", text: `Referenced ${missing}` }] },
+                  };
+        appendFileSync(source.file, `${SafeJSON.stringify(row)}\n`);
+        const db = new Database(":memory:");
+        try {
+            const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [source.root], database: db });
+            expect(await loadClaudeResumeCandidates({ query: missing, cwd: "/projects/shop", adapter })).toEqual([]);
+        } finally {
+            db.close();
+        }
     }
-});
+);
 
 test("a full Claude UUID resolves across projects while ordinary text remains scoped", async () => {
     const source = fixture();

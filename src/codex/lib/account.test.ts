@@ -80,33 +80,30 @@ test("binds the requested account without rewriting its credential file", async 
     expect(readFileSync(join(home, "account-auth.json"), "utf8")).toBe(before);
 });
 
-test.each([
-    "disabled",
-    "provider",
-    "identity",
-    "expired",
-    "deleted",
-])("refuses %s credentials instead of falling back to another account", async (scenario) => {
-    const binding = await CodexAccountBinding.create("work", { allowRefresh: true });
-    if (scenario === "disabled") {
-        account.enabled = false;
+test.each(["disabled", "provider", "identity", "expired", "deleted"])(
+    "refuses %s credentials instead of falling back to another account",
+    async (scenario) => {
+        const binding = await CodexAccountBinding.create("work", { allowRefresh: true });
+        if (scenario === "disabled") {
+            account.enabled = false;
+        }
+        if (scenario === "provider") {
+            account.provider = "anthropic-sub";
+        }
+        if (scenario === "identity") {
+            saveAuth("workspace-b");
+        }
+        if (scenario === "expired") {
+            saveAuth("workspace-a", Date.now() - 10000);
+        }
+        if (scenario === "deleted") {
+            account.id = "replacement";
+        }
+        saveConfig();
+        await expect(binding.tokens()).rejects.toThrow();
+        expect(readFileSync(join(home, "account-auth.json"), "utf8")).toContain("never-spend-this");
     }
-    if (scenario === "provider") {
-        account.provider = "anthropic-sub";
-    }
-    if (scenario === "identity") {
-        saveAuth("workspace-b");
-    }
-    if (scenario === "expired") {
-        saveAuth("workspace-a", Date.now() - 10000);
-    }
-    if (scenario === "deleted") {
-        account.id = "replacement";
-    }
-    saveConfig();
-    await expect(binding.tokens()).rejects.toThrow();
-    expect(readFileSync(join(home, "account-auth.json"), "utf8")).toContain("never-spend-this");
-});
+);
 
 test("concurrent broker refreshes spend the grant once and persist the rotated pair", async () => {
     account.credentials = {
@@ -182,186 +179,192 @@ test("a diagnostic probe never refreshes expired vault credentials", async () =>
 });
 
 // Exercise the real usage handshake and cleanup; only the OS child is synthetic.
-test.each([
-    "success",
-    "initialize",
-    "account/login/start",
-    "refresh-probe",
-    "refresh-owned",
-    "refresh-owned-wrong",
-])("usage authenticates before reading quotas and cleans its owned home (phase=%s)", async (phase) => {
-    const isRefresh = phase.startsWith("refresh-");
-    if (isRefresh) {
-        account.credentials = {
-            accessToken: token("workspace-a"),
-            refreshToken: "owned-refresh",
-            expiresAt: Date.now() + 3600000,
-        };
-        saveConfig();
-    }
-    let refreshes = 0;
-    let callbackError: string | undefined;
-    let pendingRateId: number | undefined;
-    const network = spyOn(globalThis, "fetch").mockImplementation(
-        Object.assign(
-            async (_input: URL | RequestInfo, init?: RequestInit) => {
-                refreshes++;
-                expect(SafeJSON.parse(String(init?.body))).toMatchObject({ refresh_token: "owned-refresh" });
-                return Response.json({
-                    access_token: token("workspace-a", Date.now() + 7200000),
-                    refresh_token: "rotated",
-                    expires_in: 7200,
-                });
-            },
-            { preconnect: fetch.preconnect }
-        )
-    );
-    try {
-        let temporaryHome = "";
-        let exited = false;
-        let closes = 0;
-        const methods: string[] = [];
-        const snapshot = await pollCodexAccount(
-            account,
-            { probe: !phase.startsWith("refresh-owned") },
-            {
-                spawnProcess(options) {
-                    temporaryHome = options.home!;
-                    expect(temporaryHome).not.toBe(home);
-                    expect(options.config).toContain('cli_auth_credentials_store="ephemeral"');
-                    expect(options.unsetEnv).toContain("CODEX_ACCESS_TOKEN");
-                    mkdirSync(join(temporaryHome, "nested"));
-                    writeFileSync(join(temporaryHome, "nested", "state.db"), "synthetic vendor state");
-                    let output!: ReadableStreamDefaultController<Uint8Array>;
-                    let finish!: (code: number) => void;
-                    const process: AppServerProcess = {
-                        pid: 123,
-                        stdout: new ReadableStream({
-                            start(controller) {
-                                output = controller;
-                            },
-                        }),
-                        stderr: new ReadableStream({
-                            start(controller) {
-                                controller.close();
-                            },
-                        }),
-                        exited: new Promise<number>((resolve) => {
-                            finish = resolve;
-                        }),
-                        stdin: {
-                            write(value) {
-                                const request = SafeJSON.parse(String(value), { strict: true }) as {
-                                    id?: number;
-                                    method: string;
-                                    error?: { message: string };
-                                    result?: { accessToken: string };
-                                    params?: {
-                                        capabilities?: { experimentalApi?: boolean };
-                                        type?: string;
-                                        chatgptAccountId?: string;
+test.each(["success", "initialize", "account/login/start", "refresh-probe", "refresh-owned", "refresh-owned-wrong"])(
+    "usage authenticates before reading quotas and cleans its owned home (phase=%s)",
+    async (phase) => {
+        const isRefresh = phase.startsWith("refresh-");
+        if (isRefresh) {
+            account.credentials = {
+                accessToken: token("workspace-a"),
+                refreshToken: "owned-refresh",
+                expiresAt: Date.now() + 3600000,
+            };
+            saveConfig();
+        }
+        let refreshes = 0;
+        let callbackError: string | undefined;
+        let pendingRateId: number | undefined;
+        const network = spyOn(globalThis, "fetch").mockImplementation(
+            Object.assign(
+                async (_input: URL | RequestInfo, init?: RequestInit) => {
+                    refreshes++;
+                    expect(SafeJSON.parse(String(init?.body))).toMatchObject({ refresh_token: "owned-refresh" });
+                    return Response.json({
+                        access_token: token("workspace-a", Date.now() + 7200000),
+                        refresh_token: "rotated",
+                        expires_in: 7200,
+                    });
+                },
+                { preconnect: fetch.preconnect }
+            )
+        );
+        try {
+            let temporaryHome = "";
+            let exited = false;
+            let closes = 0;
+            const methods: string[] = [];
+            const snapshot = await pollCodexAccount(
+                account,
+                { probe: !phase.startsWith("refresh-owned") },
+                {
+                    spawnProcess(options) {
+                        temporaryHome = options.home!;
+                        expect(temporaryHome).not.toBe(home);
+                        expect(options.config).toContain('cli_auth_credentials_store="ephemeral"');
+                        expect(options.unsetEnv).toContain("CODEX_ACCESS_TOKEN");
+                        mkdirSync(join(temporaryHome, "nested"));
+                        writeFileSync(join(temporaryHome, "nested", "state.db"), "synthetic vendor state");
+                        let output!: ReadableStreamDefaultController<Uint8Array>;
+                        let finish!: (code: number) => void;
+                        const process: AppServerProcess = {
+                            pid: 123,
+                            stdout: new ReadableStream({
+                                start(controller) {
+                                    output = controller;
+                                },
+                            }),
+                            stderr: new ReadableStream({
+                                start(controller) {
+                                    controller.close();
+                                },
+                            }),
+                            exited: new Promise<number>((resolve) => {
+                                finish = resolve;
+                            }),
+                            stdin: {
+                                write(value) {
+                                    const request = SafeJSON.parse(String(value), { strict: true }) as {
+                                        id?: number;
+                                        method: string;
+                                        error?: { message: string };
+                                        result?: { accessToken: string };
+                                        params?: {
+                                            capabilities?: { experimentalApi?: boolean };
+                                            type?: string;
+                                            chatgptAccountId?: string;
+                                        };
                                     };
-                                };
-                                if (request.id === 999 && !request.method) {
-                                    callbackError = request.error?.message;
-                                    if (phase === "refresh-owned") {
-                                        expect(request.result?.accessToken).toBeTruthy();
+                                    if (request.id === 999 && !request.method) {
+                                        callbackError = request.error?.message;
+                                        if (phase === "refresh-owned") {
+                                            expect(request.result?.accessToken).toBeTruthy();
+                                        }
+                                        const response = callbackError
+                                            ? { id: pendingRateId, error: { message: callbackError } }
+                                            : {
+                                                  id: pendingRateId,
+                                                  result: { rateLimits: { primary: { usedPercent: 17 } } },
+                                              };
+                                        output.enqueue(new TextEncoder().encode(`${SafeJSON.stringify(response)}\n`));
+                                        return String(value).length;
                                     }
-                                    const response = callbackError
-                                        ? { id: pendingRateId, error: { message: callbackError } }
-                                        : {
-                                              id: pendingRateId,
-                                              result: { rateLimits: { primary: { usedPercent: 17 } } },
-                                          };
+                                    methods.push(request.method);
+                                    if (request.id === undefined) {
+                                        return String(value).length;
+                                    }
+                                    if (request.method === "initialize") {
+                                        expect(request.params?.capabilities?.experimentalApi).toBe(true);
+                                    }
+                                    if (request.method === "account/login/start") {
+                                        expect(request.params?.type).toBe("chatgptAuthTokens");
+                                        expect(request.params?.chatgptAccountId).toBe("workspace-a");
+                                    }
+                                    if (request.method === "account/rateLimits/read" && isRefresh) {
+                                        pendingRateId = request.id;
+                                        output.enqueue(
+                                            new TextEncoder().encode(
+                                                `${SafeJSON.stringify({
+                                                    id: 999,
+                                                    method: "account/chatgptAuthTokens/refresh",
+                                                    params: {
+                                                        previousAccountId: phase.endsWith("wrong")
+                                                            ? "workspace-b"
+                                                            : "workspace-a",
+                                                    },
+                                                })}\n`
+                                            )
+                                        );
+                                        return String(value).length;
+                                    }
+                                    const result =
+                                        request.method === "account/login/start"
+                                            ? { type: "chatgptAuthTokens" }
+                                            : request.method === "account/rateLimits/read"
+                                              ? { rateLimits: { primary: { usedPercent: 17 } } }
+                                              : {};
+                                    const response =
+                                        request.method === phase
+                                            ? { id: request.id, error: { message: "synthetic login failure" } }
+                                            : { id: request.id, result };
                                     output.enqueue(new TextEncoder().encode(`${SafeJSON.stringify(response)}\n`));
                                     return String(value).length;
-                                }
-                                methods.push(request.method);
-                                if (request.id === undefined) {
-                                    return String(value).length;
-                                }
-                                if (request.method === "initialize") {
-                                    expect(request.params?.capabilities?.experimentalApi).toBe(true);
-                                }
-                                if (request.method === "account/login/start") {
-                                    expect(request.params?.type).toBe("chatgptAuthTokens");
-                                    expect(request.params?.chatgptAccountId).toBe("workspace-a");
-                                }
-                                if (request.method === "account/rateLimits/read" && isRefresh) {
-                                    pendingRateId = request.id;
-                                    output.enqueue(
-                                        new TextEncoder().encode(
-                                            `${SafeJSON.stringify({
-                                                id: 999,
-                                                method: "account/chatgptAuthTokens/refresh",
-                                                params: {
-                                                    previousAccountId: phase.endsWith("wrong")
-                                                        ? "workspace-b"
-                                                        : "workspace-a",
-                                                },
-                                            })}\n`
-                                        )
-                                    );
-                                    return String(value).length;
-                                }
-                                const result =
-                                    request.method === "account/login/start"
-                                        ? { type: "chatgptAuthTokens" }
-                                        : request.method === "account/rateLimits/read"
-                                          ? { rateLimits: { primary: { usedPercent: 17 } } }
-                                          : {};
-                                const response =
-                                    request.method === phase
-                                        ? { id: request.id, error: { message: "synthetic login failure" } }
-                                        : { id: request.id, result };
-                                output.enqueue(new TextEncoder().encode(`${SafeJSON.stringify(response)}\n`));
-                                return String(value).length;
+                                },
+                                end() {
+                                    return 0;
+                                },
                             },
-                            end() {
-                                return 0;
+                            kill() {
+                                closes += 1;
+                                queueMicrotask(() => {
+                                    exited = true;
+                                    output.close();
+                                    finish(0);
+                                });
                             },
-                        },
-                        kill() {
-                            closes += 1;
-                            queueMicrotask(() => {
-                                exited = true;
-                                output.close();
-                                finish(0);
-                            });
-                        },
-                    };
-                    return process;
-                },
-            }
-        ).catch((error: Error) => error);
-        if (isRefresh) {
-            expect(methods).toEqual(["initialize", "initialized", "account/login/start", "account/rateLimits/read"]);
-            expect(refreshes).toBe(phase === "refresh-owned" ? 1 : 0);
-            if (phase === "refresh-owned") {
-                expect(snapshot).toMatchObject({ limits: [{ percentUsed: 17 }] });
-                expect(callbackError).toBeUndefined();
-            } else {
+                        };
+                        return process;
+                    },
+                }
+            ).catch((error: Error) => error);
+            if (isRefresh) {
+                expect(methods).toEqual([
+                    "initialize",
+                    "initialized",
+                    "account/login/start",
+                    "account/rateLimits/read",
+                ]);
+                expect(refreshes).toBe(phase === "refresh-owned" ? 1 : 0);
+                if (phase === "refresh-owned") {
+                    expect(snapshot).toMatchObject({ limits: [{ percentUsed: 17 }] });
+                    expect(callbackError).toBeUndefined();
+                } else {
+                    expect(snapshot).toBeInstanceOf(Error);
+                    expect(callbackError).toContain(phase.endsWith("wrong") ? "different account" : "unavailable");
+                }
+            } else if (phase !== "success") {
                 expect(snapshot).toBeInstanceOf(Error);
-                expect(callbackError).toContain(phase.endsWith("wrong") ? "different account" : "unavailable");
+                expect(methods).toEqual(
+                    phase === "initialize" ? ["initialize"] : ["initialize", "initialized", "account/login/start"]
+                );
+            } else {
+                expect(snapshot).toMatchObject({ accountId: account.id, limits: [{ percentUsed: 17 }] });
+                expect(methods).toEqual([
+                    "initialize",
+                    "initialized",
+                    "account/login/start",
+                    "account/rateLimits/read",
+                ]);
             }
-        } else if (phase !== "success") {
-            expect(snapshot).toBeInstanceOf(Error);
-            expect(methods).toEqual(
-                phase === "initialize" ? ["initialize"] : ["initialize", "initialized", "account/login/start"]
-            );
-        } else {
-            expect(snapshot).toMatchObject({ accountId: account.id, limits: [{ percentUsed: 17 }] });
-            expect(methods).toEqual(["initialize", "initialized", "account/login/start", "account/rateLimits/read"]);
+            expect(exited).toBe(true);
+            expect(closes).toBe(1);
+            expect(temporaryHome).not.toBe("");
+            expect(existsSync(temporaryHome)).toBe(false);
+            expect(existsSync(home)).toBe(true);
+        } finally {
+            network.mockRestore();
         }
-        expect(exited).toBe(true);
-        expect(closes).toBe(1);
-        expect(temporaryHome).not.toBe("");
-        expect(existsSync(temporaryHome)).toBe(false);
-        expect(existsSync(home)).toBe(true);
-    } finally {
-        network.mockRestore();
     }
-});
+);
 
 test("legacy token resolver and launcher share one refresh owner and the networked lock budget", async () => {
     account.credentials = {
