@@ -7,6 +7,7 @@ import { registerCodexHistoryCommand } from "./commands/history";
 import { registerInterruptCommand } from "./commands/interrupt";
 import { registerCodexLoginCommand } from "./commands/login";
 import { registerLogsCommand } from "./commands/logs";
+import { registerMigrateHomeCommand } from "./commands/migrate-home";
 import { registerReadCommand } from "./commands/read";
 import { registerReviewCommand } from "./commands/review";
 import { registerRollbackCommand } from "./commands/rollback";
@@ -25,6 +26,7 @@ program.name("codex").description("Spawn, monitor, and steer Codex app-server se
 
 registerCodexLoginCommand(program);
 registerCodexHistoryCommand(program);
+registerMigrateHomeCommand(program);
 registerRunCommand(program);
 registerSpawnCommand(program);
 registerSteerCommand(program);
