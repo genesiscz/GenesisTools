@@ -7,6 +7,7 @@ import {
     readdirSync,
     readFileSync,
     readlinkSync,
+    realpathSync,
     renameSync,
     symlinkSync,
     writeFileSync,
@@ -335,4 +336,32 @@ test("status detects and reinstall repairs a missing managed recorder symlink", 
     renameSync(entry, `${entry}.old`);
     expect(captureInstallationStatus({ home }).runtimeValid).toBe(false);
     expect((await installCapture({ home, screens: false })).runtimeValid).toBe(true);
+});
+
+test("a dangling rc symlink reports not-installed instead of throwing", async () => {
+    // A dotfiles repo that is not cloned yet leaves `~/.zshrc` pointing at nothing. `lstat`
+    // still succeeds on the link, so the ENOENT came out of `realpath` — and `capture status`
+    // is an inspection, which must report rather than die.
+    const home = mkdtempSync(join(tmpdir(), "cmux-install-dangling-"));
+    symlinkSync(join(home, "dotfiles", ".zshrc"), join(home, ".zshrc"));
+
+    const status = await captureInstallationStatus({ home });
+
+    expect(status.managedBlock).toBe(false);
+    expect(status.legacySource).toBe(false);
+    expect(status.rcPath).toBe(join(home, ".zshrc"));
+});
+
+test("negative control: a symlink that resolves is still followed to its target", async () => {
+    const home = mkdtempSync(join(tmpdir(), "cmux-install-linked-"));
+    const real = join(home, "dotfiles");
+    mkdirSync(real, { recursive: true });
+    const target = join(real, ".zshrc");
+    writeFileSync(target, "# real rc\n");
+    symlinkSync(target, join(home, ".zshrc"));
+
+    const status = await captureInstallationStatus({ home });
+
+    expect(status.rcPath).toBe(realpathSync(target));
+    expect(status.managedBlock).toBe(false);
 });

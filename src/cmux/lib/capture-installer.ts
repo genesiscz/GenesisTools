@@ -56,6 +56,19 @@ export interface CaptureInstallationStatus {
     screens: ScreenCollectorStatus;
 }
 
+/** The link target when it resolves, the link itself when it does not. Never throws for ENOENT. */
+function realpathOr(path: string): string {
+    try {
+        return realpathSync(path);
+    } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+            throw error;
+        }
+
+        return path;
+    }
+}
+
 function paths(options: CaptureInstallOptions) {
     const home = resolve(options.home ?? env.tools.getHome());
     const root = join(home, ".genesis-tools/cmux");
@@ -69,7 +82,11 @@ function paths(options: CaptureInstallOptions) {
         }
     }
 
-    const rcPath = symlink ? realpathSync(configuredRc) : configuredRc;
+    // `lstat` succeeds on a DANGLING symlink and `realpath` then throws ENOENT, so a dotfiles
+    // repo that is not cloned yet turned `capture status` — an inspection — into a raw stack
+    // trace. The link itself is the honest answer then: the rc reader treats a path that does
+    // not exist as an empty file, which reads as "not installed".
+    const rcPath = symlink ? realpathOr(configuredRc) : configuredRc;
     return {
         home,
         root,
