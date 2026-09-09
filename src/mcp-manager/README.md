@@ -242,7 +242,7 @@ diff + confirmation and goes through the backup path; `-y` auto-confirms.
 -   Servers are enabled if they exist in config
 -   Extra Codex homes (for example `~/.codex-shop`) are listed under `harnesses.codex.syncTo.homes` in the unified config. The first `sync` or save writes default homes when that block is missing. Extra homes keep dest-only servers and home-bound env (such as `node_repl` `CODEX_HOME`). A dest HTTP server that still uses `headers` is replaced with `http_headers`.
 
-### Harness homes
+### Harness homes (Codex only)
 
 The unified config (`~/.genesis-tools/mcp-manager/config.json`) may contain:
 
@@ -255,7 +255,17 @@ The unified config (`~/.genesis-tools/mcp-manager/config.json`) may contain:
 }
 ```
 
-Missing harnesses get defaults on the next `sync` or save: Claude `~/.claude.json`, Gemini `~/.gemini/settings.json`, Cursor `~/.cursor/mcp.json`, Codex `~/.codex`.
+`syncTo.homes` is where `sync` writes; `syncFrom.homes` is where `listServers` /
+`sync from` read, first home winning a name clash. Writes always go to the first
+`syncTo` home, so reading a shop home never moves an install into it.
+
+**Only Codex reads this block.** The Claude, Gemini and Cursor providers build
+their config path in their constructors from the OS home (see
+`utils/providers/claude.ts`) and ignore `harnesses` entirely, so an entry for them
+is written by the defaults pass but changes nothing. `ensureHarnessDefaults` still
+fills every harness on the next `sync` or save — Claude `~/.claude.json`, Gemini
+`~/.gemini/settings.json`, Cursor `~/.cursor/mcp.json`, Codex `~/.codex` — so the
+file shows the paths in use even where they are not configurable.
 
 ### Cursor (`~/.cursor/mcp.json`)
 

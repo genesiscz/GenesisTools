@@ -2,7 +2,6 @@ import path from "node:path";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { HarnessSyncDirection, HarnessSyncMap, MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { env } from "@genesiscz/utils/env";
-import { SafeJSON } from "@genesiscz/utils/json";
 
 export const DEFAULT_HARNESS_HOMES: Record<MCPProviderName, string[]> = {
     claude: ["~/.claude.json"],
@@ -153,8 +152,53 @@ export function mergeCodexServersForHome(args: {
     return next;
 }
 
+/** End of value, a path separator, or the quote/space that closes the path inside a larger argument. */
+const PATH_BOUNDARY = new Set(["/", "\\", '"', "'", " ", "\t", ":", ",", ";"]);
+
+function* stringValues(value: unknown): Generator<string> {
+    if (typeof value === "string") {
+        yield value;
+        return;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            yield* stringValues(item);
+        }
+
+        return;
+    }
+
+    if (value && typeof value === "object") {
+        for (const item of Object.values(value)) {
+            yield* stringValues(item);
+        }
+    }
+}
+
+/**
+ * Codex homes are prefixes of each other by design (`~/.codex`, `~/.codex-shop`),
+ * so a substring test binds a shop-home server to the primary home and drops it
+ * from both. The home only counts when it ends at a real path boundary.
+ */
 function serverMentionsPath(server: CodexHomeServer, homePath: string): boolean {
-    return SafeJSON.stringify(server).includes(homePath);
+    const home = homePath.replace(/[/\\]+$/, "");
+
+    if (!home) {
+        return false;
+    }
+
+    for (const value of stringValues(server)) {
+        for (let at = value.indexOf(home); at !== -1; at = value.indexOf(home, at + 1)) {
+            const next = value[at + home.length];
+
+            if (next === undefined || PATH_BOUNDARY.has(next)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 function isUsableCodexServer(server: CodexHomeServer): boolean {

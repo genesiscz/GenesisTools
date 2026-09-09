@@ -70,6 +70,31 @@ Authorization = "Bearer test-jina-key"
         expect(config?.headers).toEqual({ Authorization: "Bearer test-jina-key" });
     });
 
+    // PR #374 review: syncFromHomes was assigned and never read, so the configured
+    // `harnesses.codex.syncFrom.homes` list changed nothing.
+    it("reads servers from every configured syncFrom home, first home winning a name clash", async () => {
+        const primary = join(homeDir, ".codex");
+        const extra = join(homeDir, ".codex-shop");
+        mkdirSync(primary, { recursive: true });
+        mkdirSync(extra, { recursive: true });
+        await Bun.write(join(primary, "config.toml"), '[mcp_servers.shared]\ncommand = "from-primary"\n');
+        await Bun.write(
+            join(extra, "config.toml"),
+            '[mcp_servers.shared]\ncommand = "from-shop"\n\n[mcp_servers.shop_only]\ncommand = "peekaboo"\n'
+        );
+
+        const primaryOnly = new CodexProvider({ syncToHomes: [primary, extra], syncFromHomes: [primary] });
+        expect((await primaryOnly.listServers()).map((s) => s.name)).toEqual(["shared"]);
+        expect(await primaryOnly.getServerConfig("shop_only")).toBeNull();
+
+        const both = new CodexProvider({ syncToHomes: [primary, extra], syncFromHomes: [primary, extra] });
+        expect((await both.listServers()).map((s) => s.name).sort()).toEqual(["shared", "shop_only"]);
+        expect((await both.getServerConfig("shared"))?.command).toBe("from-primary");
+        expect((await both.getServerConfig("shop_only"))?.command).toBe("peekaboo");
+        // Reads reaching the shop home must not move writes there.
+        expect(both.getConfigPath()).toBe(join(primary, "config.toml"));
+    });
+
     it("writes enabled HTTP servers to extra homes without replacing a home-bound dest server", async () => {
         const primary = join(homeDir, ".codex");
         const extra = join(homeDir, ".codex-shop");

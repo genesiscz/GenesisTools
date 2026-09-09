@@ -142,3 +142,70 @@ describe("resolveHarnessHomes", () => {
         expect(resolveHarnessHomes(config, "codex", "syncFrom")).toEqual([join(home, ".codex")]);
     });
 });
+
+// PR #374 review: `serverMentionsPath` was a substring test, so `~/.codex-shop`
+// contained `~/.codex` and every shop-bound server was skipped for BOTH homes.
+describe("mergeCodexServersForHome with prefix-colliding homes", () => {
+    const primary = "/Users/x/.codex";
+    const shop = "/Users/x/.codex-shop";
+    const allHomes = [primary, shop];
+    const shopBound = { command: "node_repl", env: { CODEX_HOME: shop } };
+    const primaryBound = { command: "node_repl", env: { CODEX_HOME: primary } };
+
+    it("writes a shop-bound server to the shop home", () => {
+        const next = mergeCodexServersForHome({
+            dest: {},
+            incoming: { node_repl: shopBound },
+            destHome: shop,
+            allHomes,
+        });
+
+        expect(next.node_repl).toEqual(shopBound);
+    });
+
+    it("keeps a shop-bound server out of the primary home", () => {
+        const next = mergeCodexServersForHome({
+            dest: {},
+            incoming: { node_repl: shopBound },
+            destHome: primary,
+            allHomes,
+        });
+
+        expect(next.node_repl).toBeUndefined();
+    });
+
+    it("does not treat a primary-bound dest server as bound to the shop home", () => {
+        const next = mergeCodexServersForHome({
+            dest: { node_repl: primaryBound },
+            incoming: { node_repl: shopBound },
+            destHome: shop,
+            allHomes,
+            protectHomeBound: true,
+        });
+
+        expect(next.node_repl).toEqual(shopBound);
+    });
+
+    it("still protects a genuinely dest-bound server", () => {
+        const next = mergeCodexServersForHome({
+            dest: { node_repl: shopBound },
+            incoming: { node_repl: { command: "node_repl" } },
+            destHome: shop,
+            allHomes,
+            protectHomeBound: true,
+        });
+
+        expect(next.node_repl).toEqual(shopBound);
+    });
+
+    it("matches a home nested inside a longer path, and inside a joined argument", () => {
+        for (const incoming of [
+            { command: "node_repl", args: [`${shop}/bin/serve`] },
+            { command: "sh", args: ["-c", `CODEX_HOME=${shop} node_repl`] },
+        ]) {
+            expect(
+                mergeCodexServersForHome({ dest: {}, incoming: { s: incoming }, destHome: primary, allHomes }).s
+            ).toBeUndefined();
+        }
+    });
+});

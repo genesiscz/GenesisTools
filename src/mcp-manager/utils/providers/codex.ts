@@ -57,12 +57,26 @@ export class CodexProvider extends MCPProvider {
     }
 
     async readConfig(): Promise<CodexGenericConfig> {
-        if (!(await this.configExists())) {
+        return this.readConfigAt(this.configPath);
+    }
+
+    private async readConfigAt(configPath: string): Promise<CodexGenericConfig> {
+        if (!existsSync(configPath)) {
             return { mcp_servers: {} };
         }
 
-        const content = await readFile(this.configPath, "utf-8");
+        const content = await readFile(configPath, "utf-8");
         return TOML.parse(content) as CodexGenericConfig;
+    }
+
+    /**
+     * Reads answer from every configured `syncFrom` home, first home wins on a name
+     * clash. Writes stay on `this.configPath` (the primary `syncTo` home) — reading a
+     * shop home must never make the next install land there.
+     */
+    private syncFromConfigPaths(): string[] {
+        const homes = this.syncFromHomes.length > 0 ? this.syncFromHomes : [codexHomeDir(this.configPath)];
+        return homes.map(codexConfigPathForHome);
     }
 
     async writeConfig(config: unknown): Promise<WriteResult> {
@@ -97,12 +111,19 @@ export class CodexProvider extends MCPProvider {
     }
 
     async listServers(): Promise<MCPServerInfo[]> {
-        const config = await this.readConfig();
         const servers: MCPServerInfo[] = [];
+        const seen = new Set<string>();
 
-        // Codex doesn't have explicit enable/disable, so all servers are enabled
-        if (config.mcp_servers) {
-            for (const [name, serverConfig] of Object.entries(config.mcp_servers)) {
+        for (const configPath of this.syncFromConfigPaths()) {
+            const config = await this.readConfigAt(configPath);
+
+            // Codex doesn't have explicit enable/disable, so all servers are enabled
+            for (const [name, serverConfig] of Object.entries(config.mcp_servers ?? {})) {
+                if (seen.has(name)) {
+                    continue;
+                }
+
+                seen.add(name);
                 servers.push({
                     name,
                     config: this.codexToUnified(serverConfig),
@@ -116,9 +137,15 @@ export class CodexProvider extends MCPProvider {
     }
 
     async getServerConfig(serverName: string): Promise<UnifiedMCPServerConfig | null> {
-        const config = await this.readConfig();
-        const serverConfig = config.mcp_servers?.[serverName];
-        return serverConfig ? this.codexToUnified(serverConfig) : null;
+        for (const configPath of this.syncFromConfigPaths()) {
+            const serverConfig = (await this.readConfigAt(configPath)).mcp_servers?.[serverName];
+
+            if (serverConfig) {
+                return this.codexToUnified(serverConfig);
+            }
+        }
+
+        return null;
     }
 
     async enableServer(serverName: string, _projectPath?: string | null): Promise<void> {
