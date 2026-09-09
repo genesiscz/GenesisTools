@@ -123,6 +123,47 @@ test("forwards approvals and releases a waiting server when the terminal disconn
     }
 });
 
+test("a reconnected terminal serves requests and notifications again", async () => {
+    // Regression test: PR #370 review thread 5 — the terminal server admits a replacement peer on
+    // the SAME bridge, so a one-way disconnect left the new socket open but answered every
+    // request with the account-bound rejection and dropped every notification.
+    const w = wire();
+    try {
+        w.bridge.ready({ userAgent: "fixture" });
+        const abandoned = w.bridge.serverRequest({ id: 30, method: "item/fileChange/requestApproval", params: {} });
+        w.bridge.disconnect();
+        await expect(abandoned).rejects.toThrow("disconnected");
+        w.messages.length = 0;
+
+        // Still disconnected: this is the state the replacement socket used to be admitted into.
+        await w.bridge.receive({ id: 31, method: "initialize", params: {} });
+        expect(w.messages[0]).toMatchObject({ id: 31, error: { code: -32600 } });
+
+        w.messages.length = 0;
+        w.bridge.connect();
+        await w.bridge.receive({ id: 32, method: "initialize", params: {} });
+        w.bridge.notification({ method: "thread/started", params: { thread: { id: "fixture-thread" } } });
+
+        expect(w.messages[0]).toEqual({ id: 32, result: { userAgent: "fixture" } });
+        expect(w.messages[1]).toEqual({
+            method: "thread/started",
+            params: { thread: { id: "fixture-thread" } },
+        });
+        const approval = w.bridge.serverRequest({
+            id: 33,
+            method: "item/commandExecution/requestApproval",
+            params: { command: "touch example" },
+        });
+        const forwarded = w.messages[2];
+
+        expect(forwarded).toMatchObject({ method: "item/commandExecution/requestApproval" });
+        await w.bridge.receive({ id: forwarded?.id, result: { decision: "accept" } });
+        await expect(approval).resolves.toEqual({ decision: "accept" });
+    } finally {
+        await w.client.close();
+    }
+});
+
 test("refuses nested provider overrides before forwarding thread start", async () => {
     const w = wire();
     try {

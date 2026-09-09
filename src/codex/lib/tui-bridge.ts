@@ -52,6 +52,15 @@ export class CodexTuiBridge {
         this.initialized = initialized;
     }
 
+    /**
+     * The terminal server admits a replacement peer on the SAME bridge after a socket drops, and
+     * `disconnect()` is one-way. Without this, the new socket opened, then met the account-bound
+     * rejection on its own `initialize` and never received a notification.
+     */
+    connect(): void {
+        this.connected = true;
+    }
+
     notification(notification: RpcNotification): void {
         if (this.connected && this.initialized) {
             this.options.send({ method: notification.method, params: notification.params });

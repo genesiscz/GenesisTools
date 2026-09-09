@@ -132,20 +132,58 @@ test.each(modes)(
             // recovered by killing `tools codex run`. The server clears it when the admitted
             // connection closes, which the client observes slightly later, so poll briefly.
             const deadlineForReconnect = Date.now() + 5000;
+            let retry: WebSocket | undefined;
             let reconnected = false;
             while (!reconnected && Date.now() < deadlineForReconnect) {
-                const retry = new WebSocket(`ws+unix://${server.socketPath}:/`);
+                const attempt = new WebSocket(`ws+unix://${server.socketPath}:/`);
                 reconnected = await new Promise<boolean>((resolve) => {
-                    retry.onopen = () => resolve(true);
-                    retry.onerror = () => resolve(false);
+                    attempt.onopen = () => resolve(true);
+                    attempt.onerror = () => resolve(false);
                 });
-                retry.close();
 
-                if (!reconnected) {
-                    await Bun.sleep(25);
+                if (reconnected) {
+                    retry = attempt;
+                    break;
                 }
+
+                attempt.close();
+                await Bun.sleep(25);
             }
             expect(reconnected).toBe(true);
+
+            // An open socket is not a working one: the bridge is shared, and the first peer's
+            // close disconnected it for good, so the replacement used to get the account-bound
+            // rejection on every request and no notifications at all.
+            const afterReconnect: Array<Record<string, unknown>> = [];
+            retry!.onmessage = (event) => {
+                afterReconnect.push(SafeJSON.parse(String(event.data), { strict: true }));
+            };
+            retry!.send(SafeJSON.stringify({ id: 3, method: "account/read", params: { refreshToken: false } }));
+            const roundTripDeadline = Date.now() + 5000;
+            while (!afterReconnect.some((message) => message.id === 3) && Date.now() < roundTripDeadline) {
+                await Bun.sleep(5);
+            }
+            const answered = afterReconnect.find((message) => message.id === 3);
+
+            expect(answered).toBeDefined();
+            expect(answered).not.toHaveProperty("error");
+            expect(answered).toMatchObject({ result: { account: { type: "chatgpt" } } });
+
+            if (mode === "fixture") {
+                // The fixture app-server emits `thread/started` for every `account/read`, so a
+                // relayed notification proves the bridge forwards to the replacement peer too.
+                const notificationDeadline = Date.now() + 5000;
+                while (
+                    !afterReconnect.some((message) => message.method === "thread/started") &&
+                    Date.now() < notificationDeadline
+                ) {
+                    await Bun.sleep(5);
+                }
+
+                expect(afterReconnect.some((message) => message.method === "thread/started")).toBe(true);
+            }
+
+            retry!.close();
         } finally {
             await server.close();
         }

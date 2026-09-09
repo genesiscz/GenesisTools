@@ -137,6 +137,9 @@ export async function openTerminalServer(options: {
             });
             sockets.handleUpgrade(request, connection, head, (ws) => {
                 socket = ws;
+                // The bridge outlives each peer, and the previous peer's close disconnected it,
+                // so a replacement has to be re-attached or it is admitted into a dead relay.
+                activeBridge.connect();
                 ws.on("message", (data) => {
                     let message: unknown;
                     try {
@@ -152,12 +155,24 @@ export async function openTerminalServer(options: {
                         ws.close(1011, "Codex relay failed");
                     });
                 });
+                // A superseded peer still emits `close` and `error`, and the raw connection's own
+                // close already released the latch, so an unguarded handler would tear down the
+                // relay belonging to the peer that replaced it.
                 ws.on("close", () => {
+                    if (socket !== ws) {
+                        return;
+                    }
+
                     socket = undefined;
                     activeBridge.disconnect();
                 });
                 ws.on("error", (error) => {
                     logger.debug({ error }, "Codex terminal socket failed");
+
+                    if (socket !== ws) {
+                        return;
+                    }
+
                     activeBridge.disconnect();
                 });
             });
