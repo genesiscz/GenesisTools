@@ -39,19 +39,35 @@ export function resolveCodexAuthDestination(ctx: AccountFlowContext): string {
     return ctx.account?.credentials.authFile ?? CODEX_AUTH_PATH;
 }
 
+/** One message for every way a callback can fail to belong to this login. */
+const MISMATCHED_STATE =
+    "OAuth callback state does not match this login. Paste the callback from the current authorization.";
+
 /**
  * The one `state` comparison this flow makes, from both halves: the loopback
- * listener refuses a foreign callback before the browser is told it worked, and
- * the paste prompt refuses one before the exchange. A callback that carries no
- * `state` at all leaves nothing to compare, which is why it passes — that was
- * the behaviour before the listener existed, and it does not change here.
+ * listener refuses a foreign callback without settling, and the paste prompt
+ * refuses one before the exchange.
+ *
+ * `required` is the difference between them. The listener demands `state`,
+ * because a real provider callback always carries it and one without it is some
+ * other local process reaching a loopback port. The paste prompt does not,
+ * because pasting a bare code with no `#state` is a legitimate thing a user
+ * does and has to keep working.
  */
-export function callbackStateError(state: string | undefined, expected: string | null): string | undefined {
-    if (state === undefined || state === expected) {
+export function callbackStateError(
+    state: string | undefined,
+    expected: string | null,
+    options: { required?: boolean } = {}
+): string | undefined {
+    if (state === undefined) {
+        return options.required ? MISMATCHED_STATE : undefined;
+    }
+
+    if (state === expected) {
         return undefined;
     }
 
-    return "OAuth callback state does not match this login. Paste the callback from the current authorization.";
+    return MISMATCHED_STATE;
 }
 
 /**
@@ -125,7 +141,7 @@ export async function codexLogin(
     // A `null` here means the port is taken and the paste prompt is the flow.
     const listener = await startListener({
         redirectUri: CODEX_REDIRECT_URI,
-        verify: ({ state }) => callbackStateError(state, expectedState),
+        verifyState: (state) => callbackStateError(state, expectedState, { required: true }),
     });
 
     let code: string;

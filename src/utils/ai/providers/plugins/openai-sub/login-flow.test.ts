@@ -125,9 +125,16 @@ function ephemeralListener(
     };
 }
 
+/** A bind probe is never called back, so it has nothing to refuse. */
+const neverCalledBack = (): undefined => undefined;
+
 /** Binding the same port again is the only honest proof the listener is gone. */
 async function expectPortReleased(port: number): Promise<void> {
-    const probe = await startCallbackListener({ redirectUri: CODEX_REDIRECT_URI, port });
+    const probe = await startCallbackListener({
+        redirectUri: CODEX_REDIRECT_URI,
+        port,
+        verifyState: neverCalledBack,
+    });
     expect(probe).not.toBeNull();
     await probe?.close();
 }
@@ -275,22 +282,61 @@ describe("Codex loopback callback listener", () => {
         await expectPortReleased(flow.port);
     });
 
-    test("a mismatched callback state never reaches the token exchange", async () => {
+    test.each([
+        ["a mismatched state", "code=foreign-grant&state=wrong-state"],
+        ["no state at all", "code=foreign-grant"],
+        ["a provider error and no state", "error=access_denied&error_description=nope"],
+    ] as const)("a foreign loopback request carrying %s cannot end the login", async (_label, query) => {
+        const { ctx, requests } = setup();
+        const exchange = spyOn(codexOAuth, "exchangeCode");
+        try {
+            const flow = browserLogin(ctx);
+            const refused = await flow.callback(() => query);
+            expect(refused.status).toBe(400);
+            // Nothing was exchanged and, crucially, the login is still waiting.
+            expect(exchange).not.toHaveBeenCalled();
+            expect(requests).toEqual([]);
+
+            const accepted = await flow.callback((state) => `code=callback-grant&state=${state}`);
+            expect(accepted.status).toBe(200);
+            const outcome = await flow.outcome;
+            expect(outcome.credentials.accessToken).toBe("access-invented");
+            expect(requests).toEqual(["callback-grant"]);
+            await expectPortReleased(flow.port);
+        } finally {
+            exchange.mockRestore();
+        }
+    });
+
+    test("a provider error carrying the matching state does end the login", async () => {
         const { ctx, requests } = setup();
         const exchange = spyOn(codexOAuth, "exchangeCode").mockImplementation(async () => {
-            throw new Error("a refused callback must never be exchanged");
+            throw new Error("a refused authorization must never be exchanged");
         });
         try {
             const flow = browserLogin(ctx);
-            const response = await flow.callback(() => "code=callback-grant&state=wrong-state");
+            const response = await flow.callback(
+                (state) => `error=access_denied&error_description=user+refused&state=${state}`
+            );
             expect(response.status).toBe(400);
-            await expect(flow.outcome).rejects.toThrow(/state/i);
+            await expect(flow.outcome).rejects.toThrow(/access_denied: user refused/);
             expect(exchange).not.toHaveBeenCalled();
             expect(requests).toEqual([]);
             await expectPortReleased(flow.port);
         } finally {
             exchange.mockRestore();
         }
+    });
+
+    test("NEGATIVE CONTROL: a pasted bare code with no state still completes a login", async () => {
+        const { ctx, requests, opened } = setup();
+        // "Neither" rather than "copy": nothing may reach the real browser OR the
+        // real clipboard, and it is the truer model of already holding a code.
+        ctx.authorizationInteraction = { chooseUrlAction: async () => "none", readCode: async () => "bare-grant" };
+        const outcome = await codexLogin(ctx, noListener);
+        expect(outcome.credentials.accessToken).toBe("access-invented");
+        expect(requests).toEqual(["bare-grant"]);
+        expect(opened).toEqual([]);
     });
 
     test("an abandoned browser falls back to the paste prompt", async () => {
@@ -322,7 +368,11 @@ describe("Codex loopback callback listener", () => {
 
     test("a taken port falls back to the paste prompt and still completes the login", async () => {
         const { ctx, requests, opened } = setup();
-        const held = await startCallbackListener({ redirectUri: CODEX_REDIRECT_URI, port: 0 });
+        const held = await startCallbackListener({
+            redirectUri: CODEX_REDIRECT_URI,
+            port: 0,
+            verifyState: neverCalledBack,
+        });
 
         if (!held) {
             throw new Error("An ephemeral port must always bind");

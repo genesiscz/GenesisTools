@@ -46,14 +46,17 @@ export interface CallbackListener {
 export interface CallbackListenerOptions {
     /** The redirect URI registered with the provider; its port and path are what get served. */
     redirectUri: string;
+    /**
+     * Decide from its `state` whether a callback belongs to the waiting sign-in.
+     * Returning a message refuses the request WITHOUT settling the listener.
+     *
+     * Required, not optional. A listener without one accepts anything that
+     * reaches the port, and accepting is what ends a login.
+     */
+    verifyState(state: string | undefined): string | undefined;
     /** Overrides the redirect URI's port. Tests pass 0 to take an ephemeral one. */
     port?: number;
     timeoutMs?: number;
-    /**
-     * Refuse a callback before it settles. The returned message is what the flow
-     * receives as `{ error }`; the browser only learns that it was refused.
-     */
-    verify?(params: CallbackParams): string | undefined;
 }
 
 export type StartCallbackListener = (options: CallbackListenerOptions) => Promise<CallbackListener | null>;
@@ -165,6 +168,25 @@ export async function startCallbackListener(options: CallbackListenerOptions): P
             return respond(410, "Already finished", "This sign-in already completed. You can close this tab.");
         }
 
+        // `state` says whether this request belongs to the waiting sign-in, so it
+        // is checked BEFORE the request is read as a success or as an error. A
+        // refusal answers 400 and leaves the listener waiting: any local process
+        // can reach a loopback port, and one that could SETTLE it would end a
+        // sign-in the user had just completed in the browser. Only the deadline
+        // closes an unclaimed listener.
+        //
+        // The trade: a genuine provider error that arrives with no `state` is now
+        // ignored until that deadline, and the login falls back to the paste
+        // prompt instead of reporting it. Losing that message is the cheaper
+        // failure.
+        const state = url.searchParams.get("state") ?? undefined;
+        const refusal = options.verifyState(state);
+
+        if (refusal) {
+            logger.warn({ port: bound, refusal }, "[oauth] ignored a callback that is not part of this sign-in");
+            return respond(400, "Sign-in refused", "This callback belongs to a different sign-in. Check the terminal.");
+        }
+
         const failure = url.searchParams.get("error");
 
         if (failure) {
@@ -180,15 +202,7 @@ export async function startCallbackListener(options: CallbackListenerOptions): P
             return respond(400, "Incomplete callback", "No authorization code arrived. Check the terminal.");
         }
 
-        const params: CallbackParams = { code, state: url.searchParams.get("state") ?? undefined };
-        const refusal = options.verify?.(params);
-
-        if (refusal) {
-            finish({ error: refusal });
-            return respond(400, "Sign-in refused", "This callback belongs to a different sign-in. Check the terminal.");
-        }
-
-        finish(params);
+        finish({ code, state });
         return respond(200, "Signed in", "You can close this tab and go back to the terminal.");
     }
 

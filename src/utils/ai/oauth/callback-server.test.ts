@@ -19,8 +19,12 @@ async function portIsFree(port: number): Promise<boolean> {
     }
 }
 
+/** Stands in for the real flow's check: only `session` belongs to this sign-in. */
+const acceptSession = (state: string | undefined): string | undefined =>
+    state === "session" ? undefined : "this callback belongs to a different sign-in";
+
 async function listening(): Promise<CallbackListener> {
-    const listener = await startCallbackListener({ redirectUri: REDIRECT_URI, port: 0 });
+    const listener = await startCallbackListener({ redirectUri: REDIRECT_URI, port: 0, verifyState: acceptSession });
 
     if (listener === null) {
         throw new Error("An ephemeral port must always bind");
@@ -61,14 +65,18 @@ describe("loopback OAuth callback listener", () => {
         expect(await portIsFree(port)).toBe(true);
     });
 
-    test("a refused state never reaches the flow as a usable code", async () => {
+    test.each([
+        ["a wrong state", "?code=foreign-grant&state=wrong"],
+        ["no state at all", "?code=foreign-grant"],
+        ["a provider error with no state", "?error=access_denied&error_description=nope"],
+    ] as const)("a foreign request with %s cannot consume the login", async (_label, query) => {
         const seen: Array<string | undefined> = [];
         const listener = await startCallbackListener({
             redirectUri: REDIRECT_URI,
             port: 0,
-            verify: ({ state }) => {
+            verifyState: (state) => {
                 seen.push(state);
-                return "state does not match";
+                return acceptSession(state);
             },
         });
 
@@ -76,16 +84,19 @@ describe("loopback OAuth callback listener", () => {
             throw new Error("An ephemeral port must always bind");
         }
 
-        const response = await fetch(callbackUrl(listener, "?code=grant&state=wrong"));
-        expect(response.status).toBe(400);
-        expect(await listener.callback).toEqual({ error: "state does not match" });
-        expect(seen).toEqual(["wrong"]);
+        const refused = await fetch(callbackUrl(listener, query));
+        expect(refused.status).toBe(400);
+        // The listener is still up and still waiting, which is the whole point.
+        const accepted = await fetch(callbackUrl(listener, "?code=real-grant&state=session"));
+        expect(accepted.status).toBe(200);
+        expect(await listener.callback).toEqual({ code: "real-grant", state: "session" });
+        expect(seen).toHaveLength(2);
         await listener.close();
         expect(await portIsFree(listener.port)).toBe(true);
     });
 
     test.each([
-        ["?error=access_denied&error_description=nope", /access_denied/],
+        ["?error=access_denied&error_description=nope&state=session", /access_denied/],
         ["?state=session", /no .*code/i],
     ] as const)("reports an unusable callback %s as an error", async (query, expected) => {
         const listener = await listening();
@@ -123,7 +134,12 @@ describe("loopback OAuth callback listener", () => {
     });
 
     test("an abandoned browser times out, resolves null and releases the port", async () => {
-        const listener = await startCallbackListener({ redirectUri: REDIRECT_URI, port: 0, timeoutMs: 25 });
+        const listener = await startCallbackListener({
+            redirectUri: REDIRECT_URI,
+            port: 0,
+            timeoutMs: 25,
+            verifyState: acceptSession,
+        });
 
         if (listener === null) {
             throw new Error("An ephemeral port must always bind");
@@ -144,20 +160,26 @@ describe("loopback OAuth callback listener", () => {
 
     test("a busy port yields no listener instead of failing the login", async () => {
         const held = await listening();
-        expect(await startCallbackListener({ redirectUri: REDIRECT_URI, port: held.port })).toBeNull();
+        const second = { redirectUri: REDIRECT_URI, port: held.port, verifyState: acceptSession };
+        expect(await startCallbackListener(second)).toBeNull();
         await held.close();
     });
 
     test("takes the port and path from the registered redirect URI", async () => {
-        const listener = await startCallbackListener({ redirectUri: "http://localhost:1455/oauth/done", port: 0 });
+        const listener = await startCallbackListener({
+            redirectUri: "http://localhost:1455/oauth/done",
+            port: 0,
+            verifyState: acceptSession,
+        });
 
         if (listener === null) {
             throw new Error("An ephemeral port must always bind");
         }
 
-        expect((await fetch(`http://127.0.0.1:${listener.port}/auth/callback?code=grant`)).status).toBe(404);
-        expect((await fetch(`http://127.0.0.1:${listener.port}/oauth/done?code=grant`)).status).toBe(200);
-        expect(await listener.callback).toEqual({ code: "grant", state: undefined });
+        const wrongPath = `http://127.0.0.1:${listener.port}/auth/callback?code=grant&state=session`;
+        expect((await fetch(wrongPath)).status).toBe(404);
+        expect((await fetch(`http://127.0.0.1:${listener.port}/oauth/done?code=grant&state=session`)).status).toBe(200);
+        expect(await listener.callback).toEqual({ code: "grant", state: "session" });
         await listener.close();
     });
 });
