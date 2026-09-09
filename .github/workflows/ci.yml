@@ -29,14 +29,14 @@ jobs:
           # referenced as ${{ matrix.testTimeout }} (a plain matrix int IS
           # valid in step-level timeout-minutes; only non-matrix contexts /
           # raw ternaries are rejected there).
-          # Linux discovery was still actively passing tests at the former 4m limit
-          # (run 34145881728, over 9,600 results). Allow the full suite and its serial
-          # phase to finish; the completion-marker guard still rejects real hangs.
-          # The task/tests integration lane is gated
-          # out of the default suite (see package.json `test`) and run on demand
-          # via `bun run test:task`, so it is not part of this step's budget.
-          # windows med 136s / healthy ~150s -> 7m.
-          inc='{"os":"ubuntu-latest","testTimeout":8}'
+          # ubuntu: the full suite plus its serial phase finishes in 205-215 s on the
+          # 4-vCPU runner (2026-09-09, runs 34386793154 and 34387174349, measured after the
+          # spotify CLI test stopped spawning 75 bun processes), so 4m keeps ~30 s of
+          # margin and the completion-marker guard still rejects a real hang. The
+          # task/tests integration lane is gated out of the default suite (see
+          # package.json `test`) and run on demand via `bun run test:task`, so it is not
+          # part of this step's budget. windows med 136s / healthy ~150s -> 7m.
+          inc='{"os":"ubuntu-latest","testTimeout":4}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
@@ -57,7 +57,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — must exceed the per-OS testTimeout (8m/7m) + cold
+    # Backstop only — must exceed the per-OS testTimeout (4m/7m) + cold
     # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
     # logs fire first. Real worst case ~12m (windows cold); 15m has margin.
     timeout-minutes: 15
@@ -121,7 +121,7 @@ jobs:
       # Run the WHOLE suite. Discovery only — never fail the job here; the
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
-      # Tripwire: per-OS matrix.testTimeout (ubuntu 8m, windows 7m). A plain
+      # Tripwire: per-OS matrix.testTimeout (ubuntu 4m, windows 7m). A plain
       # matrix int IS valid in step-level timeout-minutes (matrix resolves at
       # job-expansion); only raw ternaries / non-matrix contexts are rejected.
       # On timeout the partial tee'd log still uploads (continue-on-error).
