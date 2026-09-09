@@ -91,70 +91,83 @@ export async function buildCommandCaptureContext(options: { commands?: boolean }
     const ttyCommands = tty.launchCommands;
     const argvAccounts = await loadPinnedAccounts(tty.claudeSessions.values());
 
-    let surfaceCommands = options.commands === false ? new Map<string, CapturedCommand>() : loadCapturedCommands();
+    // Read the autosave BEFORE the journal: its panel ids bound the journal scan to
+    // the live surfaces instead of every surface this machine has ever had.
+    let session: AutosaveSession | undefined;
+    try {
+        session = readAutosaveSession();
+    } catch (error) {
+        logger.debug({ error }, "[snapshot] autosave unavailable — foreground command capture degraded");
+    }
+
+    let surfaceCommands =
+        options.commands === false
+            ? new Map<string, CapturedCommand>()
+            : loadCapturedCommands({ surfaceIds: session ? panelsById(session).keys() : undefined });
     const panelTty = new Map<string, string>();
     const panelCwd = new Map<string, string>();
     const panelScreens = new Map<string, ScreenSnapshot>();
     const cachedScreens = loadSavedScreens();
     const panelBrowserUrls = new Map<string, string>();
     const grokCwds: string[] = [];
-    try {
-        const session = readAutosaveSession();
-        surfaceCommands = capturedCommandsByPanelId(session, surfaceCommands);
-        for (const [id, panel] of panelsById(session)) {
-            const cached =
-                (panel.stableSurfaceId ? cachedScreens.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
-                cachedScreens.get(panel.id.toLowerCase());
-            const text = preferredScreenText(panel.terminal?.scrollback, cached?.text);
-            if (text) {
-                panelScreens.set(id.toLowerCase(), { text, rows: text.split("\n").length });
-            }
-
-            if (panel.browser?.urlString) {
-                panelBrowserUrls.set(id.toLowerCase(), panel.browser.urlString);
-            }
-            const surfaceSession =
-                (panel.stableSurfaceId ? surfaceSessions.get(panel.stableSurfaceId) : undefined) ??
-                surfaceSessions.get(panel.id);
-
-            if (surfaceSession) {
-                surfaceSessions.set(id.toLowerCase(), surfaceSession);
-            }
-
-            const cwd = panelWorkingDirectory(panel);
-            if (cwd) {
-                panelCwd.set(id.toLowerCase(), cwd);
-            }
-            if (panel.ttyName) {
-                panelTty.set(id.toLowerCase(), panel.ttyName);
-            }
-
-            // A `claude --resume <uuid>` on the pane's tty is the live session,
-            // whatever the surface journal remembers from an earlier occupant.
-            const argvSession = panel.ttyName ? tty.claudeSessions.get(panel.ttyName) : undefined;
-            if (argvSession && argvSession !== surfaceSession?.sessionId) {
-                surfaceSessions.set(id.toLowerCase(), {
-                    sessionId: argvSession,
-                    account: argvAccounts.get(argvSession) ?? surfaceSession?.account,
-                });
-            }
-        }
-
-        for (const window of session.windows) {
-            for (const workspace of window.tabManager.workspaces) {
-                if (workspace.currentDirectory) {
-                    grokCwds.push(workspace.currentDirectory);
+    if (session) {
+        try {
+            surfaceCommands = capturedCommandsByPanelId(session, surfaceCommands);
+            for (const [id, panel] of panelsById(session)) {
+                const cached =
+                    (panel.stableSurfaceId ? cachedScreens.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
+                    cachedScreens.get(panel.id.toLowerCase());
+                const text = preferredScreenText(panel.terminal?.scrollback, cached?.text);
+                if (text) {
+                    panelScreens.set(id.toLowerCase(), { text, rows: text.split("\n").length });
                 }
 
-                for (const panel of workspace.panels) {
-                    if (panel.directory) {
-                        grokCwds.push(panel.directory);
+                if (panel.browser?.urlString) {
+                    panelBrowserUrls.set(id.toLowerCase(), panel.browser.urlString);
+                }
+                const surfaceSession =
+                    (panel.stableSurfaceId ? surfaceSessions.get(panel.stableSurfaceId) : undefined) ??
+                    surfaceSessions.get(panel.id);
+
+                if (surfaceSession) {
+                    surfaceSessions.set(id.toLowerCase(), surfaceSession);
+                }
+
+                const cwd = panelWorkingDirectory(panel);
+                if (cwd) {
+                    panelCwd.set(id.toLowerCase(), cwd);
+                }
+                if (panel.ttyName) {
+                    panelTty.set(id.toLowerCase(), panel.ttyName);
+                }
+
+                // A `claude --resume <uuid>` on the pane's tty is the live session,
+                // whatever the surface journal remembers from an earlier occupant.
+                const argvSession = panel.ttyName ? tty.claudeSessions.get(panel.ttyName) : undefined;
+                if (argvSession && argvSession !== surfaceSession?.sessionId) {
+                    surfaceSessions.set(id.toLowerCase(), {
+                        sessionId: argvSession,
+                        account: argvAccounts.get(argvSession) ?? surfaceSession?.account,
+                    });
+                }
+            }
+
+            for (const window of session.windows) {
+                for (const workspace of window.tabManager.workspaces) {
+                    if (workspace.currentDirectory) {
+                        grokCwds.push(workspace.currentDirectory);
+                    }
+
+                    for (const panel of workspace.panels) {
+                        if (panel.directory) {
+                            grokCwds.push(panel.directory);
+                        }
                     }
                 }
             }
+        } catch (error) {
+            logger.debug({ error }, "[snapshot] autosave unreadable — foreground command capture degraded");
         }
-    } catch (error) {
-        logger.debug({ error }, "[snapshot] autosave unavailable — foreground command capture degraded");
     }
 
     return {

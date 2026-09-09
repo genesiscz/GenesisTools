@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
@@ -188,4 +188,48 @@ test("the lightweight shell spool rotates within two bounded generations", async
         expect(stat.size).toBeLessThan(1024 * 1024);
         expect(stat.mode & 0o777).toBe(0o600);
     }
+});
+
+// PR #374 review: the record kept the preexec cwd, so after a completed `cd` the
+// snapshot restored the directory the cd left, not the one it entered.
+test("a completed cd records the directory the shell ended in, not the one it started in", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "cmux-cwd-after-cd-"));
+    const launchDir = realpathSync(mkdtempSync(join(tmpdir(), "cmux-cwd-launch-")));
+    const target = realpathSync(mkdtempSync(join(tmpdir(), "cmux-cwd-target-")));
+    const hook = join(directory, "hook.zsh");
+    await Bun.write(
+        hook,
+        renderCaptureShell({
+            bunPath: process.execPath,
+            recorderPath: resolve("src/cmux/capture-record.ts"),
+            directory,
+        })
+    );
+    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+        cwd: launchDir,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { PATH: "/bin:/usr/bin", HOME: directory, CMUX_SURFACE_ID: "11111111-1111-4111-8111-111111111111" },
+    });
+    proc.stdin.write(`source '${hook}'\ncd -- '${target}'\n`);
+    proc.stdin.end();
+    const [errors, code] = await Promise.all([
+        new Response(proc.stderr).text(),
+        proc.exited,
+        new Response(proc.stdout).text(),
+    ]);
+    expect(errors).not.toContain("capture failed");
+    expect(code).toBe(0);
+
+    expect(loadCapturedCommands({ directory }).get("11111111-1111-4111-8111-111111111111")).toMatchObject({
+        command: `cd -- '${target}'`,
+        phase: "completed",
+        cwd: target,
+    });
+
+    // The `running` record still carries the launch directory, so a command caught
+    // mid-flight is restored where it was started.
+    const journal = readFileSync(join(directory, "11111111-1111-4111-8111-111111111111.shell"), "utf8");
+    expect(journal).toContain(launchDir);
 });

@@ -24,6 +24,7 @@ const recordSchema = z.object({
     stableSurfaceId: z.string().uuid().optional(),
     workspaceId: z.string().uuid().optional(),
     command: z.string().min(1).max(65536),
+    /** The shell's cwd when the record was written: the launch dir while running, where the command left it once completed. */
     cwd: z.string().startsWith("/"),
     phase: z.enum(["running", "completed"]),
     exitStatus: z.number().int().min(0).max(255).optional(),
@@ -110,9 +111,38 @@ function journalLines(name: string, text: string): string[] {
     return lines;
 }
 
-/** Cutoff prevents a reused surface from leaking a post-restart command into an old autosave. */
+function identityAlias(
+    directory: string,
+    runtimeId: string,
+    cache: Map<string, string | undefined>
+): string | undefined {
+    if (cache.has(runtimeId)) {
+        return cache.get(runtimeId);
+    }
+
+    const alias = join(directory, `${runtimeId}.identity`);
+    let resolved: string | undefined;
+    try {
+        const parsed = existsSync(alias) ? z.string().uuid().safeParse(readFileSync(alias, "utf8").trim()) : undefined;
+        resolved = parsed?.success ? parsed.data.toLowerCase() : undefined;
+    } catch (error) {
+        logger.debug({ error, alias }, "[cmux-capture] identity alias unavailable");
+    }
+
+    cache.set(runtimeId, resolved);
+    return resolved;
+}
+
+/**
+ * Cutoff prevents a reused surface from leaking a post-restart command into an old autosave.
+ *
+ * `surfaceIds` bounds the scan. Rotation caps each journal FILE, never the directory:
+ * a closed surface keeps its journal until someone deletes it by hand, so a save that
+ * did not filter reparsed the machine's whole capture history to find a handful of
+ * live surfaces. Runtime and stable ids are both accepted.
+ */
 export function loadCapturedCommands(
-    options: { directory?: string; beforeMs?: number } = {}
+    options: { directory?: string; beforeMs?: number; surfaceIds?: Iterable<string> } = {}
 ): Map<string, CapturedCommand> {
     const directory = options.directory ?? captureJournalDirectory();
     const records = new Map<string, CapturedCommand>();
@@ -122,10 +152,17 @@ export function loadCapturedCommands(
         return records;
     }
 
+    const wanted = options.surfaceIds ? new Set([...options.surfaceIds].map((id) => id.toLowerCase())) : undefined;
+
     for (const name of readdirSync(directory)
         .filter((name) => /^[a-f\d-]+\.(?:jsonl|shell)(?:\.previous)?$/.test(name))
         .sort()
         .reverse()) {
+        const runtimeId = name.slice(0, name.indexOf("."));
+        if (wanted && !wanted.has(runtimeId) && !wanted.has(identityAlias(directory, runtimeId, aliases) ?? "")) {
+            continue;
+        }
+
         const path = join(directory, name);
         try {
             for (const line of journalLines(name, readFileSync(path, "utf8"))) {
@@ -135,20 +172,8 @@ export function loadCapturedCommands(
 
                 try {
                     const record = recordSchema.parse(SafeJSON.parse(line, { strict: true }));
-                    const runtimeId = record.surfaceId.toLowerCase();
-                    if (!record.stableSurfaceId && !aliases.has(runtimeId)) {
-                        aliases.set(runtimeId, undefined);
-                        const alias = join(directory, `${runtimeId}.identity`);
-                        try {
-                            const parsed = existsSync(alias)
-                                ? z.string().uuid().safeParse(readFileSync(alias, "utf8").trim())
-                                : undefined;
-                            aliases.set(runtimeId, parsed?.success ? parsed.data.toLowerCase() : undefined);
-                        } catch (error) {
-                            logger.debug({ error, alias }, "[cmux-capture] identity alias unavailable");
-                        }
-                    }
-                    const stableId = record.stableSurfaceId ?? aliases.get(runtimeId);
+                    const stableId =
+                        record.stableSurfaceId ?? identityAlias(directory, record.surfaceId.toLowerCase(), aliases);
                     record.stableSurfaceId = stableId;
                     for (const id of [stableId, record.surfaceId]) {
                         if (!id) {

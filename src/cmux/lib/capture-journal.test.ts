@@ -228,3 +228,34 @@ test("each alias is loaded once and normalized into returned command records", (
         spy.mockRestore();
     }
 });
+
+// PR #374 review: closed-surface journals are retained forever, so an unfiltered
+// load reparsed the machine's whole capture history on every workspace save.
+test("a surface filter reads only the wanted journals, by runtime or stable id", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cmux-filter-test-"));
+    const otherId = "22222222-2222-4222-8222-222222222222";
+    const movedId = "55555555-5555-4555-8555-555555555555";
+    const stableSurfaceId = "33333333-3333-4333-8333-333333333333";
+    recordCapturedCommand({ directory, surfaceId, command: "wanted", cwd: "/a", phase: "completed", atMs: 10 });
+    recordCapturedCommand({
+        directory,
+        surfaceId: otherId,
+        command: "closed",
+        cwd: "/b",
+        phase: "completed",
+        atMs: 20,
+    });
+    recordCapturedCommand({ directory, surfaceId: movedId, command: "moved", cwd: "/c", phase: "completed", atMs: 30 });
+    associateCapturedSurface({ directory, surfaceId: movedId, stableSurfaceId });
+
+    const read = spyOn(fs, "readFileSync");
+    const filtered = loadCapturedCommands({ directory, surfaceIds: [surfaceId, stableSurfaceId] });
+    expect(filtered.get(surfaceId)?.command).toBe("wanted");
+    expect(filtered.get(stableSurfaceId)?.command).toBe("moved");
+    expect(filtered.has(otherId)).toBe(false);
+    expect(read.mock.calls.some(([path]) => String(path).includes(`${otherId}.shell`))).toBe(false);
+    read.mockRestore();
+
+    // Without a filter every retained journal is still read — the old behaviour.
+    expect(loadCapturedCommands({ directory }).get(otherId)?.command).toBe("closed");
+});

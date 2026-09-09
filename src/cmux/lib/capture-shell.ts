@@ -62,6 +62,10 @@ _genesis_cmux_capture_preexec() {
 _genesis_cmux_capture_precmd() {
     local command_status=$?
     if [[ -n "$_GENESIS_CMUX_CAPTURE_COMMAND" ]]; then
+        # The record's cwd is the shell's cwd AT WRITE TIME, so a completed \`cd\`
+        # reports where the shell now is. Keeping the preexec value here would make
+        # restore --no-replay land in the directory the cd left.
+        typeset -g _GENESIS_CMUX_CAPTURE_CWD="$PWD"
         _genesis_cmux_capture_write completed "$command_status" || print -u2 -- 'cmux command completion capture failed'
         unset _GENESIS_CMUX_CAPTURE_COMMAND _GENESIS_CMUX_CAPTURE_CWD
     fi

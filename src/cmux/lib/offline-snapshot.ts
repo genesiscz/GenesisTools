@@ -3,6 +3,7 @@ import {
     type AutosaveSession,
     type AutosaveWorkspace,
     flattenLayout,
+    panelsById,
     panelWorkingDirectory,
     readAutosaveSession,
 } from "@app/cmux/lib/autosave";
@@ -68,7 +69,7 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
             ttyCommands,
             surfaceSessions,
             grokSessions,
-            surfaceCommands: loadCapturedCommands(),
+            surfaceCommands: loadCapturedCommands({ surfaceIds: panelsById(session).keys() }),
             surfaceScreens: options.captureScreen === false ? undefined : loadSavedScreens(),
         },
         options

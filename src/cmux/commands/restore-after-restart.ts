@@ -1,5 +1,5 @@
 import { prepareProfileForRestore } from "@app/cmux/lib/agent-replay";
-import { readAutosaveSession, readPreviousAutosaveSession } from "@app/cmux/lib/autosave";
+import { panelsById, readAutosaveSession, readPreviousAutosaveSession } from "@app/cmux/lib/autosave";
 import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
 import { loadSurfaceSessions } from "@app/cmux/lib/command-capture";
 import { renderProfileCommandDetail, renderProfileTree } from "@app/cmux/lib/format";
@@ -65,7 +65,7 @@ async function captureLiveProfile(): Promise<Profile> {
             {
                 ttyCommands: new Map(),
                 surfaceSessions: await loadSurfaceSessions(),
-                surfaceCommands: loadCapturedCommands(),
+                surfaceCommands: loadCapturedCommands({ surfaceIds: panelsById(session).keys() }),
                 surfaceScreens: loadSavedScreens(),
             },
             { name: "restart-live", note: "autosave fallback for restore-after-restart" }
@@ -80,7 +80,10 @@ async function capturePreviousProfile(): Promise<Profile> {
         {
             ttyCommands: new Map(),
             surfaceSessions: await loadSurfaceSessions({ beforeMs: session.savedAtMs }),
-            surfaceCommands: loadCapturedCommands({ beforeMs: session.savedAtMs }),
+            surfaceCommands: loadCapturedCommands({
+                beforeMs: session.savedAtMs,
+                surfaceIds: panelsById(session).keys(),
+            }),
             surfaceScreens: loadSavedScreens({ beforeMs: session.savedAtMs }),
         },
         { name: "restart-previous", note: "previous autosave (pre-restart)" }
