@@ -167,6 +167,11 @@ const config = defineConfig({
         // `tests/e2e/**/*.spec.ts` (see playwright.config.ts).
         include: ["src/**/*.test.{ts,tsx}"],
         exclude: ["**/node_modules/**", "**/dist/**", "tests/e2e/**"],
+        // Three test files import `src/drizzle/index.ts`, which opens the sqlite file and runs the
+        // migrations at import. Parallel workers on a fresh database (every CI checkout) raced that
+        // migration: "database is locked" or "table already exists" in one run out of three. The
+        // suite is ten files in three seconds, so one worker at a time costs nothing.
+        fileParallelism: false,
     },
 });
 
