@@ -124,7 +124,7 @@ describe("openai-sub usage.poll", () => {
     it("reports an unbound account instead of polling the CLI default home", async () => {
         let opened = 0;
         const snapshot = await pollCodexAccount(
-            entry("personal", { accessToken: "at", refreshToken: "rt" }),
+            entry("personal"),
             {},
             {
                 openClient: async () => {
@@ -193,4 +193,34 @@ describe("openai-sub usage.poll", () => {
         expect(snapshot.auth?.reason).toBe("not logged in");
         expect(client.closed).toBe(1);
     });
+});
+
+describe("vault account usage", () => {
+    it("polls a selected vault account without requiring or falling back to a native home", async () => {
+        const account = entry("vault", { accessToken: "selected-access", refreshToken: "selected-refresh" });
+        const client = fakeClient(CAMEL);
+        const selected: AccountEntry[] = [];
+        const snapshot = await pollCodexAccount(
+            account,
+            { probe: true },
+            {
+                openClient: async (boundAccount, options) => {
+                    selected.push(boundAccount);
+                    expect(options.probe).toBe(true);
+                    return client;
+                },
+            }
+        );
+        expect(selected).toEqual([account]);
+        expect(snapshot.accountId).toBe(account.id);
+        expect(snapshot.limits).toHaveLength(2);
+        expect(client.closed).toBe(1);
+    });
+});
+
+it("vault credential stamps are independent of an old native data directory", async () => {
+    const { codexCredentialStamp } = await import("./usage");
+    const account = entry("vault", { accessToken: "vault-access", expiresAt: 12345, dataDir: "/obsolete-profile" });
+    expect(codexHomeFor(account)).toBeNull();
+    expect(await codexCredentialStamp(account)).toBe(12345);
 });

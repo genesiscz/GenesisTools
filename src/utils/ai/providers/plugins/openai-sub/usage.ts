@@ -1,6 +1,10 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
+import { CodexAccountBinding } from "../../../openai/account-binding";
+import { buildAccountLaunchOptions } from "../../../openai/account-launch-options";
 import { AppServerClient, spawnAppServer } from "../../../openai/app-server-client";
 import { fileMtimeMs } from "../../../usage-poll/credential-stamp";
 import type { AccountUsageFeature, AccountUsageSnapshot, LimitWindow, UsagePollOptions } from "../../account-features";
@@ -9,13 +13,10 @@ import type { AccountUsageFeature, AccountUsageSnapshot, LimitWindow, UsagePollO
  * `accounts.usage` for the Codex (ChatGPT plan) subscription (spec 2026-09-04 section 6.6).
  *
  * The Codex CLI reports rate limits only over its app-server, so one poll starts a short
- * lived `codex app-server` for the account's `CODEX_HOME`, asks `account/rateLimits/read`
- * and stops it again. That is why the floor between two polls is 120s rather than 30s: a
- * process spawn per account per tick is not free.
- *
- * `probe` changes nothing here. Reading rate limits does not rotate our credential; if the
- * app-server refreshes its own auth file while running, that is the vendor CLI's behaviour
- * and is exactly what happens when the user runs `codex` themselves.
+ * lived isolated `codex app-server`, supplies the selected account's external tokens,
+ * asks `account/rateLimits/read` and stops it. The 120s floor bounds process overhead.
+ * File references are read-only. Vault grants have one shared refresh owner; probes
+ * never refresh tokens, including through an app-server callback.
  */
 
 const MIN_INTERVAL_MS = 120_000;
@@ -73,8 +74,10 @@ export interface CodexUsageClient {
 }
 
 export interface CodexUsageDeps {
-    /** Opens a client against one `CODEX_HOME`. Defaults to spawning `codex app-server`. */
-    openClient?(home: string): Promise<CodexUsageClient>;
+    /** Opens an isolated client already authenticated to this account. */
+    openClient?(account: AccountEntry, options: UsagePollOptions): Promise<CodexUsageClient>;
+    /** Process boundary for protocol/lifecycle tests; production uses the shared spawner. */
+    spawnProcess?: typeof spawnAppServer;
 }
 
 function pickNumber(...values: Array<number | undefined>): number | undefined {
@@ -153,7 +156,7 @@ export function codexHomeFor(account: AccountEntry): string | null {
         return dirname(authFile);
     }
 
-    return account.credentials.dataDir ?? null;
+    return account.credentials.accessToken ? null : (account.credentials.dataDir ?? null);
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
@@ -173,33 +176,79 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Pr
     }
 }
 
-async function spawnClient(home: string): Promise<CodexUsageClient> {
-    const client = new AppServerClient(spawnAppServer({ cwd: home, home }));
+async function spawnClient(
+    account: AccountEntry,
+    options: UsagePollOptions,
+    spawnProcess: typeof spawnAppServer = spawnAppServer
+): Promise<CodexUsageClient> {
+    const binding = await CodexAccountBinding.create(account.id, { allowRefresh: !options.probe });
+    // Resolve first: expired diagnostic credentials must fail before any vendor process starts.
+    const tokens = await binding.tokens({ refresh: !options.probe });
+    const home = await mkdtemp(join(tmpdir(), "gt-codex-usage-"));
+    let client: AppServerClient | undefined;
+    const cleanup = async () => {
+        await client?.close();
+        if (client) {
+            try {
+                await withTimeout(client.process.exited, 2000, "codex usage shutdown");
+            } catch {
+                client.process.kill("SIGKILL");
+                await withTimeout(client.process.exited, 2000, "codex usage forced shutdown");
+            }
+        }
+        // This directory was created exclusively for this poll, never supplied by a user.
+        await rm(home, { recursive: true, force: true });
+    };
 
     try {
+        client = new AppServerClient(
+            spawnProcess(buildAccountLaunchOptions({ sharedHome: home, cwd: home, accountName: account.name })),
+            {
+                onServerRequest: async (request) => {
+                    if (request.method !== "account/chatgptAuthTokens/refresh" || options.probe) {
+                        throw new Error("Account refresh is unavailable during this usage request");
+                    }
+                    const params = request.params as { previousAccountId?: string | null } | undefined;
+                    return binding.refresh(params?.previousAccountId ?? null);
+                },
+            }
+        );
         await withTimeout(
             client.request("initialize", {
                 clientInfo: { name: "genesis-tools-usage", title: "GenesisTools usage", version: "0.1.0" },
-                capabilities: null,
+                capabilities: { experimentalApi: true },
             }),
             REQUEST_TIMEOUT_MS,
             "codex app-server initialize"
         );
         await client.notify("initialized");
+        const result = await withTimeout(
+            client.request<{ type: string }>("account/login/start", { type: "chatgptAuthTokens", ...tokens }),
+            REQUEST_TIMEOUT_MS,
+            "codex account authentication"
+        );
+        if (result.type !== "chatgptAuthTokens") {
+            throw new Error("Codex did not accept the selected account's external credentials");
+        }
     } catch (err) {
         // `pollCodexAccount`'s finally only covers a client it received. A handshake that
         // times out throws before that, and the `codex app-server` child would survive
         // every failed poll, one process per minute.
-        await client.close();
+        await cleanup();
         throw err;
     }
 
-    return client;
+    const ready = client;
+    return {
+        request: (method, params) => ready.request(method, params),
+        notify: (method, params) => ready.notify(method, params),
+        close: cleanup,
+    };
 }
 
 export async function pollCodexAccount(
     account: AccountEntry,
-    _opts: UsagePollOptions = {},
+    opts: UsagePollOptions = {},
     deps: CodexUsageDeps = {}
 ): Promise<AccountUsageSnapshot> {
     const fetchedAt = new Date().toISOString();
@@ -213,7 +262,7 @@ export async function pollCodexAccount(
         ...(account.label === undefined ? {} : { label: account.label }),
     };
 
-    if (home === null) {
+    if (home === null && !account.credentials.accessToken) {
         // Reported, not thrown: an unbound account is a configuration state, not a failure
         // that should climb the poll gate's backoff ladder.
         logger.debug({ account: account.name }, "[usage] codex account names no home; not polling the CLI default");
@@ -225,19 +274,22 @@ export async function pollCodexAccount(
         };
     }
 
-    const open = deps.openClient ?? spawnClient;
+    const open = deps.openClient ?? ((selected, options) => spawnClient(selected, options, deps.spawnProcess));
     let client: CodexUsageClient;
 
     try {
-        client = await open(home);
+        client = await open(account, opts);
     } catch (err) {
         // `Bun.spawn` on a missing `codex` binary, or on a CODEX_HOME that no longer
         // exists, throws a bare ENOENT naming `posix_spawn`. That reached the dashboard
         // card verbatim and told the reader nothing about what to do next. `cause` is kept
         // so the poll gate still sees a handshake deadline underneath.
         throw new Error(
-            `Could not start "codex app-server" for ${home}: ${err instanceof Error ? err.message : err}. ` +
-                "Check the Codex CLI is installed and that this account's CODEX_HOME exists. Run: codex login",
+            // A vault-backed account has no native home at all, and `for null` read as a bug in
+            // the message rather than the intended "this account carries its own grant".
+            `Could not start "codex app-server" for ${home ?? `account ${account.name}`}: ` +
+                `${err instanceof Error ? err.message : err}. ` +
+                "Check the Codex CLI is installed and re-login with: tools codex login <account>",
             { cause: err }
         );
     }
@@ -278,7 +330,7 @@ export async function codexCredentialStamp(account: AccountEntry): Promise<numbe
     const home = codexHomeFor(account);
 
     if (!home) {
-        return undefined;
+        return account.credentials.expiresAt;
     }
 
     return fileMtimeMs(account.credentials.authFile ?? join(home, "auth.json"));

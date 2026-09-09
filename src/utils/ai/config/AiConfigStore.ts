@@ -130,6 +130,13 @@ export class AiConfigStore {
         return AiConfigStore.instance;
     }
 
+    /** Fresh diagnostic snapshot: adapt legacy data in memory without running migrations. */
+    static async readOnly(): Promise<AiConfigStore> {
+        const storage = new Storage("ai");
+        const { config, stamp } = await AiConfigStore.readFrom(storage);
+        return new AiConfigStore(storage, config, stamp);
+    }
+
     static invalidate(): void {
         AiConfigStore.instance = null;
         AiConfigStore.loading = null;

@@ -1,6 +1,15 @@
+import { join } from "node:path";
+import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { env } from "@genesiscz/utils/env";
 import { resolveSecret } from "@genesiscz/utils/security";
-import { extractAccountId, extractEmail, extractPlanType, readCodexAuthJson } from "../../../openai/codex-auth";
+import {
+    CODEX_AUTH_PATH,
+    extractAccountId,
+    extractEmail,
+    extractPlanType,
+    readCodexAuthJson,
+} from "../../../openai/codex-auth";
 import { OpenAISubResolver } from "../../../resolvers/OpenAISubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
@@ -28,17 +37,17 @@ const presentation: AccountFeatures["presentation"] = {
 
 export const openAiSubPlugin: ProviderPlugin = {
     id: "openai-sub",
+    codingAgent: codexHistoryReader,
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {
-        // The Codex CLI auth file is the source of truth; the resolver reads it
-        // per request, so nothing here is required up front.
+        // Named login owns a vault grant; explicit native imports retain a read-only file reference.
         fields: ["authFile", "accessToken", "refreshToken"],
         envKeys: [],
     },
 
     async bind(ctx: BindContext): Promise<ProviderBinding> {
-        const detected = await resolver.resolve(ctx.account.name, { noRefresh: ctx.probe });
+        const detected = await resolver.resolve(ctx.account.id, { noRefresh: ctx.probe });
 
         return {
             accountId: ctx.account.id,
@@ -55,7 +64,7 @@ export const openAiSubPlugin: ProviderPlugin = {
      */
     async health(ctx: BindContext) {
         try {
-            await resolver.resolve(ctx.account.name, { noRefresh: true });
+            await resolver.resolve(ctx.account.id, { noRefresh: true });
             return { ok: true, detail: "codex subscription token resolved" };
         } catch (err) {
             return { ok: false, detail: err instanceof Error ? err.message : String(err) };
@@ -66,6 +75,10 @@ export const openAiSubPlugin: ProviderPlugin = {
         presentation,
         logoutTargets: ["oauth", "authFile"],
         login: codexLogin,
+        nativeAuthFile: () => {
+            const nativeHome = env.codex.getHomeOverride();
+            return nativeHome ? join(nativeHome, "auth.json") : CODEX_AUTH_PATH;
+        },
         usage: codexUsage,
         discoverHomes: () => discoverCodexHomes(),
 

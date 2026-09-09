@@ -6,26 +6,23 @@ export class OpenAISubResolver implements AccountResolver {
     readonly providerType: AIProvider = "openai-sub";
 
     async resolve(accountName: string, options?: ResolveAccountOptions): Promise<DetectedProvider> {
-        const { resolveCodexAccountToken, WHAM_BASE_URL } = await import("../openai/codex-auth");
-        // Only this initial read is gated; the per-request closure below keeps its
-        // refresh, because a diagnostic caller never issues a request.
-        const { token, accountId } = await resolveCodexAccountToken(accountName, { noRefresh: options?.noRefresh });
+        const { WHAM_BASE_URL } = await import("../openai/codex-auth");
+        const { CodexAccountBinding } = await import("../openai/account-binding");
+        const binding = await CodexAccountBinding.create(accountName, { allowRefresh: !options?.noRefresh });
+        const { accessToken: token, chatgptAccountId: accountId } = await binding.tokens();
 
-        const { AIConfig } = await import("../AIConfig");
-        const config = await AIConfig.load();
-        const entry = config.getAccount(accountName);
+        const { AiConfigStore } = await import("../config/AiConfigStore");
+        const config = await AiConfigStore.readOnly();
+        const entry = config.account(binding.accountId);
 
         const { createOpenAI } = await import("@ai-sdk/openai");
         // Per-request token resolve so a long-running process follows CLI /
         // account refreshes instead of serving the token from detection time.
         const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-            const fresh = await resolveCodexAccountToken(accountName);
+            const fresh = await binding.tokens();
             const headers = new Headers(init?.headers);
-            headers.set("Authorization", `Bearer ${fresh.token}`);
-
-            if (fresh.accountId) {
-                headers.set("ChatGPT-Account-Id", fresh.accountId);
-            }
+            headers.set("Authorization", `Bearer ${fresh.accessToken}`);
+            headers.set("ChatGPT-Account-Id", fresh.chatgptAccountId);
 
             return fetch(input, { ...init, headers });
         };

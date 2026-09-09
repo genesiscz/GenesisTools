@@ -1,7 +1,8 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { codexHomesIn } from "@genesiscz/utils/providers/session-paths";
 import { AiConfigStore } from "../../../config/AiConfigStore";
 import type { AccountEntry } from "../../../config/schema";
 import { extractAccountId, extractEmail, extractPlanType, readCodexAuthJson } from "../../../openai/codex-auth";
@@ -17,26 +18,6 @@ export interface DiscoverCodexOptions {
     root?: string;
     /** Accounts to match homes against. Read from the store when omitted. */
     accounts?: AccountEntry[];
-}
-
-function codexHomesIn(root: string): string[] {
-    if (!existsSync(root)) {
-        return [];
-    }
-
-    const homes: string[] = [];
-
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
-        if (!entry.isDirectory()) {
-            continue;
-        }
-
-        if (entry.name === ".codex" || entry.name.startsWith(".codex-")) {
-            homes.push(join(root, entry.name));
-        }
-    }
-
-    return homes.sort();
 }
 
 /**
@@ -62,7 +43,7 @@ function boundAccountId(home: string, accounts: AccountEntry[]): string | undefi
 
 export async function discoverCodexHomes(options: DiscoverCodexOptions = {}): Promise<DiscoveredHome[]> {
     const root = options.root ?? homedir();
-    const accounts = options.accounts ?? (await AiConfigStore.load()).accounts({ provider: "openai-sub" });
+    const accounts = options.accounts ?? (await AiConfigStore.readOnly()).accounts({ provider: "openai-sub" });
     const found: DiscoveredHome[] = [];
 
     for (const home of codexHomesIn(root)) {

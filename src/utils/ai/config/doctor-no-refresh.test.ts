@@ -343,7 +343,7 @@ describe("openai-sub probe purity", () => {
                 name: "codex-main",
                 provider: "openai-sub",
                 credentials: {
-                    accessToken: "codex-stale-at",
+                    accessToken: `e30.${Buffer.from(SafeJSON.stringify({ exp: Math.floor((Date.now() - HOUR) / 1000), "https://api.openai.com/auth": { chatgpt_account_id: "workspace-invented" } })).toString("base64url")}.fixture`,
                     refreshToken: "codex-single-use-rt",
                     expiresAt: Date.now() - HOUR,
                 },

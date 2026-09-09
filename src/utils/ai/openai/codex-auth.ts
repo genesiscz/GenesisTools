@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
 import { generatePkcePair } from "../oauth/pkce";
 
 // OpenAI Codex OAuth constants (reverse-engineered from Codex CLI)
@@ -342,96 +341,11 @@ export async function resolveCodexAccountToken(
         noRefresh?: boolean;
     }
 ): Promise<ResolvedCodexToken> {
-    const { AIConfig } = await import("../AIConfig");
-    const config = await AIConfig.load();
-    const entry = config.getAccount(accountName);
-
-    if (!entry) {
-        throw new Error(`openai-sub account "${accountName}" not found in AI config.`);
+    const { CodexAccountBinding } = await import("./account-binding");
+    if (options?.noRefresh && options.forceRefresh) {
+        throw new Error("Codex token refresh is disabled for diagnosis");
     }
-
-    // Reference mode: `tokens.authFile` points at the Codex CLI cache
-    // (~/.codex/auth.json). Live-read, never copied — the CLI owns refresh.
-    // An explicit reference wins over any stored (possibly stale) tokens.
-    if (entry.tokens.authFile) {
-        if (options?.forceRefresh) {
-            throw new Error(
-                `openai-sub account "${accountName}" references the Codex CLI cache — the proxy cannot refresh it. Run \`codex login\`.`
-            );
-        }
-
-        const tokens = await readCodexAuthJson(entry.tokens.authFile);
-
-        if (!tokens?.accessToken) {
-            throw new Error(`No Codex CLI auth at ${entry.tokens.authFile}. Run \`codex login\`.`);
-        }
-
-        if (tokens.expiresAt && codexOAuth.needsRefresh(tokens.expiresAt)) {
-            logger.warn(
-                { path: entry.tokens.authFile, account: accountName },
-                "codex: CLI-cache token is expired — run `codex login` (this reference mode never writes the cache)"
-            );
-        }
-
-        return { token: tokens.accessToken, accountId: tokens.accountId ?? extractAccountId(tokens.accessToken) };
-    }
-
-    let accessToken = entry.tokens.accessToken;
-
-    if (!accessToken) {
-        throw new Error(`No access token for openai-sub account "${accountName}". Run \`tools ask config\`.`);
-    }
-
-    const staleToken = accessToken;
-    const wantsRefresh =
-        options?.forceRefresh === true ||
-        (entry.tokens.expiresAt != null && codexOAuth.needsRefresh(entry.tokens.expiresAt));
-
-    // Guard above the consuming call: everything inside the lock rotates and writes.
-    if (wantsRefresh && options?.noRefresh) {
-        throw new Error(
-            `The access token for openai-sub account "${accountName}" is expired and refresh is disabled for ` +
-                "diagnosis (it would spend a single-use grant and rewrite the config). Run: codex login"
-        );
-    }
-
-    if (wantsRefresh) {
-        // The same lock file the anthropic refresh holds across ITS network call,
-        // so the plain 5 s default was never the right budget here: a sibling
-        // provider's refresh could hold the lock longer than codex was willing to
-        // wait, and codex threw LockTimeoutError for contention it did not cause.
-        accessToken = await config.withLock(async (data) => {
-            const acc = data.accounts.find((a) => a.name === accountName);
-
-            if (!acc) {
-                throw new Error(`openai-sub account "${accountName}" not found in AI config.`);
-            }
-
-            // Another caller/process already rotated the token while we waited
-            // for the lock — use theirs. On forceRefresh (upstream said 401),
-            // "already rotated" means a token DIFFERENT from the one that failed.
-            const alreadyFresh =
-                acc.tokens.accessToken &&
-                acc.tokens.expiresAt &&
-                !codexOAuth.needsRefresh(acc.tokens.expiresAt) &&
-                (!options?.forceRefresh || acc.tokens.accessToken !== staleToken);
-
-            if (alreadyFresh && acc.tokens.accessToken) {
-                return acc.tokens.accessToken;
-            }
-
-            if (!acc.tokens.refreshToken) {
-                throw new Error(`Token for "${accountName}" is expired and no refresh token is available.`);
-            }
-
-            const refreshed = await codexOAuth.refresh(acc.tokens.refreshToken);
-            acc.tokens.accessToken = refreshed.accessToken;
-            acc.tokens.refreshToken = refreshed.refreshToken;
-            acc.tokens.expiresAt = refreshed.expiresAt;
-
-            return refreshed.accessToken;
-        }, NETWORKED_LOCK_WAIT_MS);
-    }
-
-    return { token: accessToken, accountId: extractAccountId(accessToken) };
+    const binding = await CodexAccountBinding.create(accountName, { allowRefresh: !options?.noRefresh });
+    const tokens = await binding.tokens({ refresh: !options?.noRefresh, forceRefresh: options?.forceRefresh });
+    return { token: tokens.accessToken, accountId: tokens.chatgptAccountId };
 }
