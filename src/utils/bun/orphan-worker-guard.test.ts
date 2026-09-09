@@ -19,7 +19,7 @@ function pidAlive(pid: number): boolean {
 
 /** The watchdog is a `/bin/sh` whose script embeds the guarded pid, so pgrep finds it by that. */
 function watchdogRunning(selfPid: number): boolean {
-    const found = Bun.spawnSync(["pgrep", "-f", `self=${selfPid}`]);
+    const found = Bun.spawnSync(["pgrep", "-f", `self=${selfPid}`], { env: process.env });
     return found.stdout.toString().trim().length > 0;
 }
 
