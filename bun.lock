@@ -318,9 +318,9 @@
       "peerDependencies": {
         "@ai-sdk/assemblyai": "latest",
         "@ai-sdk/gladia": "latest",
-        "ink": "^6.8.0",
-        "react": "19.2.5",
-        "react-dom": "19.2.5",
+        "ink": "^7.1.1",
+        "react": "19.2.8",
+        "react-dom": "19.2.8",
       },
       "optionalPeers": [
         "@ai-sdk/assemblyai",
