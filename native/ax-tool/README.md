@@ -113,3 +113,12 @@ Defaults are unchanged, but every disruptive behaviour can now be opted out of:
 
 Use all three when the tool runs unattended while someone is working. Leave
 them off for interactive use, where raising the app is what you asked for.
+
+## SnapshotSupport (groundwork)
+
+`SnapshotSupport/SnapshotToken.swift` is a separate SwiftPM target whose `validate` refuses an
+element index for a replaced window, another process instance, an expired snapshot or an index
+outside the snapshot. No `ax-tool` command issues or checks a token yet: the existing `snapshot`
+command captures mouse and focus, not a tree, so there is no digest for a token to guard. The
+target ships with its tests as groundwork for a tree-snapshot command; until that command exists
+the executable's dependency on it changes no behaviour.
