@@ -273,6 +273,13 @@ function finish(code: number): never {
 // .claude/work/ for anything that wants to diff two runs. Isolation costs a
 // module cache per file, so totals here run above a bun-native run; the
 // ranking is what this mode is for, not the sum.
+//
+// Read the ranking with one caveat, measured 2026-09-09: a file that spawns
+// child processes in a loop inflates 6-10x under --jobs 8 (ai-credentials-guard
+// 22 s in the profile, 2.1 s alone; tdd-gate 20 s vs 2.0 s). That is
+// contention, not work, and optimising such a file buys nothing on a machine
+// that is not already saturated. Confirm any suspect with --jobs 1 before
+// touching it; only a file that stays heavy alone is really heavy.
 // ---------------------------------------------------------------------------
 
 interface ProfileRow {
