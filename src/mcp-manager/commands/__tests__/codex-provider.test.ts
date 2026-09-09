@@ -95,6 +95,44 @@ Authorization = "Bearer test-jina-key"
         expect(both.getConfigPath()).toBe(join(primary, "config.toml"));
     });
 
+    it("a disabled server is removed from every home the sync writes to", async () => {
+        // Codex has no disabled state, so `listServers` reports whatever it finds as enabled.
+        // Deleting a disabled server from the primary home only left it in the extra home, the
+        // next `sync-from` read it back as enabled, and the following `sync` reinstalled it —
+        // a disable that never stuck.
+        const primary = join(homeDir, ".codex");
+        const extra = join(homeDir, ".codex-shop");
+        mkdirSync(primary, { recursive: true });
+        mkdirSync(extra, { recursive: true });
+        await Bun.write(
+            join(primary, "config.toml"),
+            '[mcp_servers.browsermcp]\ncommand = "browsermcp"\n\n[mcp_servers.keep]\ncommand = "keep"\n'
+        );
+        await Bun.write(
+            join(extra, "config.toml"),
+            '[mcp_servers.browsermcp]\ncommand = "browsermcp"\n\n[mcp_servers.shop_only]\ncommand = "peekaboo"\n'
+        );
+
+        const provider = new CodexProvider({ syncToHomes: [primary, extra], syncFromHomes: [primary, extra] });
+
+        await provider.syncServers({
+            browsermcp: { command: "browsermcp", _meta: { enabled: { codex: false } } },
+            keep: { command: "keep", _meta: { enabled: { codex: true } } },
+        });
+
+        const read = (home: string) =>
+            (TOML.parse(readFileSync(join(home, "config.toml"), "utf-8")) as { mcp_servers?: Record<string, unknown> })
+                .mcp_servers ?? {};
+
+        expect(read(primary).browsermcp).toBeUndefined();
+        expect(read(extra).browsermcp).toBeUndefined();
+        // Negative controls: the enabled server lands, and a server only the extra home knows
+        // about is never touched by a disable it was not named in.
+        expect(read(primary).keep).toMatchObject({ command: "keep" });
+        expect(read(extra).keep).toMatchObject({ command: "keep" });
+        expect(read(extra).shop_only).toMatchObject({ command: "peekaboo" });
+    });
+
     it("writes enabled HTTP servers to extra homes without replacing a home-bound dest server", async () => {
         const primary = join(homeDir, ".codex");
         const extra = join(homeDir, ".codex-shop");

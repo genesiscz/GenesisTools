@@ -263,7 +263,13 @@ export class CodexProvider extends MCPProvider {
                 this.syncServersAtCurrentPath(servers, {
                     destHome: codexHomeDir(home),
                     allHomes: homes.map(codexHomeDir),
-                    deleteDisabled: isPrimary,
+                    // Every home, not only the primary. Codex has no disabled state, so
+                    // `listServers` reports whatever survives in ANY syncFrom home as enabled:
+                    // leaving a disabled server in an extra home meant the next `sync-from`
+                    // read it back as enabled and the following `sync` reinstalled it. The
+                    // deletion is keyed by a name the UNIFIED config marks disabled, so a
+                    // server only that home knows about is never touched.
+                    deleteDisabled: true,
                     protectHomeBound: !isPrimary,
                 })
             );
