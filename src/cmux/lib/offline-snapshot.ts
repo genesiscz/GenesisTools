@@ -25,6 +25,7 @@ import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -47,6 +48,15 @@ export interface OfflineCaptureDeps {
     surfaceCommands?: Map<string, CapturedCommand>;
     surfaceScreens?: Map<string, SavedSurfaceScreen>;
     captureScreen?: boolean;
+    /**
+     * The surface running the save, lowercased. Its screen is skipped, the same rule the online
+     * path applies through `isCaller` (`snapshot.ts`): that pane shows the `tools cmux profiles
+     * save` invocation and the clack prompts, and restore would `cat` them back verbatim.
+     *
+     * The offline path cannot ask cmux who called it — that socket is the thing that is down —
+     * so it reads `CMUX_SURFACE_ID`, which is the same id `capture-shell.zsh` keys its spool on.
+     */
+    callerSurfaceId?: string;
 }
 
 export interface OfflineCaptureOptions {
@@ -65,6 +75,7 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
             ])
         ),
     ];
+    const callerSurfaceId = env.getProcessEnv().CMUX_SURFACE_ID?.toLowerCase() || undefined;
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
     // This is the livelock rescue: the shared history database may be held by a starving process,
     // and a full grok discovery walks tens of thousands of files. Read the index or read nothing.
@@ -78,6 +89,7 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
             grokSessions,
             surfaceCommands: loadCapturedCommands({ surfaceIds: panelsById(session).keys() }),
             surfaceScreens: options.captureScreen === false ? undefined : loadSavedScreens(),
+            ...(callerSurfaceId === undefined ? {} : { callerSurfaceId }),
         },
         options
     );
@@ -157,8 +169,18 @@ export function buildOfflinePanes(
             const cachedScreen =
                 (panel.stableSurfaceId ? deps.surfaceScreens?.get(panel.stableSurfaceId.toLowerCase()) : undefined) ??
                 deps.surfaceScreens?.get(panel.id.toLowerCase());
+            const isCaller =
+                deps.callerSurfaceId !== undefined &&
+                (panel.id.toLowerCase() === deps.callerSurfaceId ||
+                    panel.stableSurfaceId?.toLowerCase() === deps.callerSurfaceId);
+
+            if (isCaller && deps.captureScreen !== false) {
+                logger.debug({ panelId: panel.id }, "[offline-snapshot] skipping screen capture for caller surface");
+            }
+
             const text = preferredScreenText(panel.terminal?.scrollback, cachedScreen?.text);
-            const screen = deps.captureScreen !== false && text ? { text, rows: text.split("\n").length } : undefined;
+            const screen =
+                deps.captureScreen !== false && !isCaller && text ? { text, rows: text.split("\n").length } : undefined;
             const original =
                 captured?.command ??
                 (panel.ttyName ? deps.ttyCommands.get(panel.ttyName) : undefined) ??

@@ -288,3 +288,64 @@ test("offline screen opt-out omits both cached and native terminal output", () =
         }
     }
 });
+
+describe("buildOfflinePanes screen capture", () => {
+    function terminalWorkspace(): ReturnType<typeof workspaceFixture> {
+        const ws = workspaceFixture();
+        // `id` stays "a": the fixture's layout names the panels by id, and renaming one drops
+        // it from every pane, which is a green assertion about nothing.
+        ws.panels[0] = {
+            id: "a",
+            stableSurfaceId: "STABLE-AAAA",
+            type: "terminal",
+            title: "shell",
+            terminal: { workingDirectory: "/tmp/project", scrollback: "tools cmux profiles save --offline\nsaving…" },
+        };
+
+        return ws;
+    }
+
+    test("the pane running the save keeps its screen out of the profile", () => {
+        // The online path already refuses this through `isCaller` in snapshot.ts: that pane
+        // shows the save invocation and the clack prompts, and restore `cat`s the saved screen
+        // straight back into the restored pane. Offline capture only started saving screens in
+        // this branch, and it had no equivalent guard.
+        const panes = buildOfflinePanes(terminalWorkspace(), FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            callerSurfaceId: "stable-aaaa",
+        });
+
+        expect(panes[0].surfaces[0]).toMatchObject({ type: "terminal" });
+        expect(panes[0].surfaces[0].type === "terminal" && panes[0].surfaces[0].screen).toBeUndefined();
+    });
+
+    test("the panel id matches the caller too, not only the stable id", () => {
+        const panes = buildOfflinePanes(terminalWorkspace(), FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            callerSurfaceId: "a",
+        });
+
+        expect(panes[0].surfaces[0].type === "terminal" && panes[0].surfaces[0].screen).toBeUndefined();
+    });
+
+    test("negative control: every other pane still gets its screen", () => {
+        const panes = buildOfflinePanes(terminalWorkspace(), FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            callerSurfaceId: "some-other-surface",
+        });
+
+        expect(panes[0].surfaces[0].type === "terminal" && panes[0].surfaces[0].screen).toMatchObject({ rows: 2 });
+    });
+
+    test("negative control: with no caller known nothing is skipped", () => {
+        const panes = buildOfflinePanes(terminalWorkspace(), FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+        });
+
+        expect(panes[0].surfaces[0].type === "terminal" && panes[0].surfaces[0].screen).toMatchObject({ rows: 2 });
+    });
+});
