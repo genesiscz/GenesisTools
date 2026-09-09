@@ -1,3 +1,5 @@
+import type { RunLoginOptions, RunLoginResult } from "@app/ai/lib/accounts/run-login";
+import { runLogin } from "@app/ai/lib/accounts/run-login";
 import { loadAskConfig, saveAskConfig } from "@ask/config";
 import { modelSelector } from "@ask/providers/ModelSelector";
 import { providerManager } from "@ask/providers/ProviderManager";
@@ -289,122 +291,53 @@ async function addFromClaudeAccount(): Promise<void> {
     p.log.success(`Account "${entry.name}" added from tools claude.`);
 }
 
-async function addViaOAuthFlow(): Promise<void> {
-    const { claudeOAuth, fetchOAuthProfile } = await import("@genesiscz/utils/claude/auth");
+/** The shared accounts core, injected so the delegation is testable without a browser. */
+export type SubscriptionLogin = (opts: RunLoginOptions) => Promise<RunLoginResult>;
 
-    const spinner = p.spinner();
-    spinner.start("Generating authorization URL...");
-    const authUrl = await claudeOAuth.startLogin();
-    spinner.stop("Authorization URL ready.");
-
-    p.note(
-        [
-            "1. Open the URL below in your browser",
-            "2. Log in with your Claude account (if needed)",
-            "3. Click 'Authorize' to grant access",
-            "4. Copy the code shown on the callback page",
-            "   (format: code#state or just the code part)",
-        ].join("\n"),
-        "OAuth Login"
-    );
-
-    out.println();
-    out.println(`  ${pc.cyan(authUrl)}`);
-    out.println();
-
-    const openBrowser = await p.confirm({
-        message: "Open URL in browser?",
-        initialValue: true,
-    });
-
-    if (p.isCancel(openBrowser)) {
-        return;
-    }
-
-    if (openBrowser) {
-        const { Browser } = await import("@genesiscz/utils/browser");
-        await Browser.open(authUrl);
-    }
-
-    const code = await p.text({
-        message: "Paste the authorization code:",
-        placeholder: "code#state",
-        validate: (val) => {
-            if (!val?.trim()) {
-                return "Code is required";
-            }
-        },
-    });
-
-    if (p.isCancel(code)) {
-        return;
-    }
-
-    spinner.start("Exchanging code for tokens...");
-    let tokens: Awaited<ReturnType<typeof claudeOAuth.exchangeCode>>;
-
-    try {
-        tokens = await claudeOAuth.exchangeCode(code as string);
-        spinner.stop("Tokens received.");
-    } catch (err) {
-        spinner.stop(`Token exchange failed: ${err}`);
-        return;
-    }
-
-    spinner.start("Fetching account profile...");
-    let profile: Awaited<ReturnType<typeof fetchOAuthProfile>> | null = null;
-
-    try {
-        profile = await fetchOAuthProfile(tokens.accessToken);
-        spinner.stop("Profile fetched.");
-    } catch (err) {
-        spinner.stop(pc.yellow(`Profile fetch failed: ${err instanceof Error ? err.message : err}`));
-        p.log.warn("Continuing without profile info — token is still valid.");
-    }
-
-    const infoLines: string[] = [];
-
-    if (tokens.account) {
-        infoLines.push(`${pc.dim("Account:")} ${pc.cyan(tokens.account.email)}`);
-    }
-
-    if (profile) {
-        const tier = profile.organization.rate_limit_tier;
-        infoLines.push(`${pc.dim("Plan:")} ${tier}`);
-    }
-
-    infoLines.push(`${pc.dim("Expires:")} ${new Date(tokens.expiresAt).toLocaleString()}`);
-    infoLines.push(`${pc.dim("Refresh:")} ${pc.green("available")}`);
-
-    p.note(infoLines.join("\n"), "Account Authorized");
-
-    // Determine label and name
-    const { determineAccountLabel } = await import("@genesiscz/utils/claude/account-label");
-    const label = determineAccountLabel(profile ?? undefined);
-    const accountName = tokens.account?.email?.split("@")[0]?.toLowerCase() ?? "subscription";
-
-    const entry: AIAccountEntry = {
-        name: accountName,
+/**
+ * The Anthropic subscription login, delegated whole to the shared accounts core.
+ *
+ * It used to run its own authorization round trip and write through the
+ * deprecated `AIConfig` facade, so not one of the login guards applied here: a
+ * name guessed from the token's email could replace another provider's account,
+ * a grant proving a different identity overwrote the stored one without a word,
+ * and a refusal left the vendor file replaced (PR #368 review t3). What is left
+ * below is ask's own bookkeeping, which the shared core knows nothing about.
+ */
+export async function addViaOAuthFlow(login: SubscriptionLogin = runLogin): Promise<void> {
+    const result = await login({
         provider: "anthropic-sub",
-        tokens: {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: tokens.expiresAt,
-        },
-        label,
-        apps: ["ask", "claude"],
-    };
+        tool: "tools ask",
+        subcommand: ["configure"],
+        // This wizard always asked what to call the account before the flows moved
+        // to the shared lib, and the top-level `login` commands do not.
+        promptName: true,
+    });
 
-    const aiConfig = await AIConfig.load();
-    await aiConfig.addAccountWithDefaults(entry);
+    if (!result.ok || !result.account) {
+        return;
+    }
 
-    // Also update ask config for backward compat
+    // The shared lib writes through the v4 store, which this wizard's in-memory
+    // v3 view cannot see; re-read before the next screen renders a stale list.
+    AIConfig.invalidate();
+    await linkAskConfigToAccount(result.account);
+    p.log.success(`Account "${result.account.name}" added via OAuth.`);
+}
+
+/**
+ * Point ask's own config at an account the shared core just wrote.
+ *
+ * `askConfig.claude` predates the account model and still names the account by
+ * name, so it is kept in step here rather than inside the shared write.
+ */
+export async function linkAskConfigToAccount(account: { name: string; label?: string }): Promise<void> {
     const askConfig = await loadAskConfig();
 
     askConfig.claude = {
-        accountRef: entry.name,
-        accountLabel: label,
-        accountName: entry.name,
+        accountRef: account.name,
+        accountLabel: account.label,
+        accountName: account.name,
     };
 
     if (!askConfig.defaultProvider) {
@@ -412,7 +345,6 @@ async function addViaOAuthFlow(): Promise<void> {
     }
 
     await saveAskConfig(askConfig);
-    p.log.success(`Account "${entry.name}" added via OAuth.`);
 }
 
 async function addOAuthKey(): Promise<void> {
