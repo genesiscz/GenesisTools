@@ -46,8 +46,11 @@ export interface GrokCreditsConfig {
     currentPeriod?: { type?: string; start?: string; end?: string };
     /** 0 to 100, the whole subscription allowance. Observed equal to the `productUsage` sum. */
     creditUsagePercent?: number;
-    /** Per-product split, `GrokBuild` and `GrokChat` on this plan. */
-    productUsage?: Array<{ product: string; usagePercent: number }>;
+    /**
+     * Per-product split, `GrokBuild` and `GrokChat` on this plan. A product the account has not
+     * touched arrives without `usagePercent` (observed 2026-09-09), so it is optional here.
+     */
+    productUsage?: Array<{ product: string; usagePercent?: number }>;
     onDemandCap?: GrokMoneyValue;
     onDemandUsed?: GrokMoneyValue;
     prepaidBalance?: GrokMoneyValue;

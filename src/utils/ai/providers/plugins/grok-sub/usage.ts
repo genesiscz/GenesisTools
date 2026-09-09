@@ -107,7 +107,7 @@ export function toProductWindows(credits: GrokCreditsConfig): LimitWindow[] {
         key: `product:${entry.product.toLowerCase()}`,
         label: productLabel(entry.product),
         kind: "scoped" as const,
-        percentUsed: entry.usagePercent,
+        percentUsed: entry.usagePercent ?? 0,
         ...(resetsAt === undefined ? {} : { resetsAt }),
     }));
 }

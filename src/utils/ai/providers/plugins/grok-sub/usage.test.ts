@@ -121,6 +121,17 @@ describe("toProductWindows", () => {
         ]);
     });
 
+    it("a product the account never touched reads as 0 %, never a window without a number", () => {
+        // Observed 2026-09-09: xAI omits `usagePercent` for an unused product, and every renderer
+        // calls `percentUsed.toFixed`, so `tools ai usage --no-tui` crashed after printing the rows.
+        const windows = toProductWindows({
+            ...CREDITS,
+            productUsage: [{ product: "GrokBuild", usagePercent: 30 }, { product: "GrokImagine" }],
+        });
+        expect(windows.map((w) => w.percentUsed)).toEqual([30, 0]);
+        expect(windows[1]?.resetsAt).toBe(PERIOD_END);
+    });
+
     it("returns nothing when the payload has no split", () => {
         expect(toProductWindows({ ...CREDITS, productUsage: undefined })).toEqual([]);
     });
