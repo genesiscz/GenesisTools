@@ -16,6 +16,13 @@ function createProcessHarness(): {
         },
     });
 
+    // A real app-server dies on SIGTERM. A fake one that never exits makes close() wait out
+    // both 2 s reap grace periods on every test, 24 s for this file.
+    let exit: (code: number) => void = () => {};
+    const exited = new Promise<number>((resolve) => {
+        exit = resolve;
+    });
+
     return {
         process: {
             pid: 42,
@@ -30,8 +37,10 @@ function createProcessHarness(): {
             },
             stdout,
             stderr: new ReadableStream<Uint8Array>({ start() {} }),
-            exited: new Promise<number>(() => {}),
-            kill() {},
+            exited,
+            kill() {
+                exit(0);
+            },
         },
         writes,
         push(message) {
