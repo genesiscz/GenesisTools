@@ -105,6 +105,15 @@ jobs:
         continue-on-error: true
         timeout-minutes: ${{ matrix.testTimeout }}
         shell: bash
+        env:
+          # The orphan-worker guard forks a /bin/sh watchdog per worker that execs
+          # `sleep 1` every second. On a 4-vCPU runner those forks pile up as the run
+          # goes on: minute-two throughput fell from ~2,900 to ~1,600 tests and the
+          # suite never reached the budget, while the same tree with the guard off
+          # finished all 10,211 tests in 209 s (bisect 2026-09-09, runs 34371400960
+          # vs 34371404874/34371445859; reverting the toon bump changed nothing).
+          # A CI VM is discarded after the job, so there is no orphan to guard against.
+          GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS: "1"
         run: |
           set -o pipefail
           bun run test 2>&1 | tee "test-${{ runner.os }}.log"
