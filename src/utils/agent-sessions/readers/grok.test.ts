@@ -168,6 +168,103 @@ test("scan prefers canonical chat, excludes usage updates, and links tool result
     expect(searchable).not.toContain("USAGE_UPDATE_MUST_NOT_BE_CHAT");
 });
 
+test("scan reads native grok tool calls, standalone tool results and reasoning summaries", async () => {
+    // Real Grok never emits Anthropic-shaped blocks: the call is a top-level `tool_calls` entry
+    // whose `arguments` is a JSON STRING, the result is its own record keyed by `tool_call_id`,
+    // and reasoning arrives as a `summary` array. Until these were parsed, `--tool`, `--file`,
+    // `--commit` and `--commit-msg` could not match anything on the grok door.
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-native-tools-"));
+    const root = join(home, "sessions");
+    const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
+    mkdirSync(directory, { recursive: true });
+    const chatPath = join(directory, "chat_history.jsonl");
+    const rows = [
+        {
+            type: "user",
+            timestamp: "2026-09-01T10:00:00.000Z",
+            content: [{ type: "text", text: "<user_query>Fix the invoice rounding</user_query>" }],
+        },
+        {
+            type: "assistant",
+            timestamp: "2026-09-01T10:01:00.000Z",
+            content: "Editing it",
+            tool_calls: [
+                {
+                    id: "call-1",
+                    name: "Edit",
+                    arguments: '{"file_path":"src/invoice.ts","new_string":"integer cents"}',
+                },
+            ],
+        },
+        {
+            type: "tool_result",
+            timestamp: "2026-09-01T10:02:00.000Z",
+            tool_call_id: "call-1",
+            content: "applied to src/invoice.ts",
+        },
+        {
+            type: "reasoning",
+            timestamp: "2026-09-01T10:03:00.000Z",
+            summary: [{ type: "summary_text", text: "Confirm against git show 1a2b3c4d5e" }],
+        },
+        {
+            type: "assistant",
+            timestamp: "2026-09-01T10:04:00.000Z",
+            content: "Running it",
+            tool_calls: [{ id: "call-2", name: "Bash", arguments: "bun run test --bail" }],
+        },
+    ];
+    writeFileSync(chatPath, rows.map((row) => SafeJSON.stringify(row, { strict: true })).join("\n"));
+    const source: NativeSessionSource<"grok"> = {
+        kind: "grok",
+        root,
+        sourceHome: home,
+        filePath: chatPath,
+        dataPaths: [chatPath],
+        metadataPaths: [],
+    };
+    const records = [];
+    for await (const record of scanGrokRecords(source)) {
+        records.push(record);
+    }
+
+    expect(records.map((record) => record.entries.length)).toEqual([1, 2, 1, 1, 2]);
+    expect(records[1]?.entries.map((entry) => entry.role)).toEqual(["assistant", "tool"]);
+    expect(records[1]?.entries[1]).toMatchObject({
+        role: "tool",
+        tool: "Edit",
+        toolEvent: "call",
+        inputText: "src/invoice.ts integer cents",
+        paths: ["src/invoice.ts"],
+        line: 2,
+        timestamp: "2026-09-01T10:01:00.000Z",
+    });
+    // The result record carries no tool name of its own; it inherits the call's name and paths.
+    expect(records[2]?.entries[0]).toMatchObject({
+        role: "tool",
+        tool: "Edit",
+        toolEvent: "result",
+        text: "applied to src/invoice.ts",
+        paths: ["src/invoice.ts"],
+        line: 3,
+    });
+    expect(records[3]?.entries[0]).toMatchObject({
+        role: "thinking",
+        text: "Confirm against git show 1a2b3c4d5e",
+        commits: ["1a2b3c4d5e"],
+        line: 4,
+    });
+    // A non-JSON argument string is not dropped: it stays searchable as plain text.
+    expect(records[4]?.entries[1]).toMatchObject({
+        role: "tool",
+        tool: "Bash",
+        toolEvent: "call",
+        text: "bun run test --bail",
+        inputText: "bun run test --bail",
+        paths: [],
+    });
+});
+
 test("selected reads preserve exact EOF originals and report incomplete coverage", async () => {
     const home = mkdtempSync(join(tmpdir(), "gt-grok-selected-"));
     const root = join(home, "sessions");
