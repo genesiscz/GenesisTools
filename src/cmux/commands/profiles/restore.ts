@@ -65,7 +65,9 @@ async function runRestore(name: string, flags: RestoreFlags): Promise<void> {
         out.log.warn("--enter has no effect with --no-replay; commands are not typed at all.");
     }
 
-    const playable = await prepareProfileForRestore(profile);
+    // A dry run reports the plan and changes nothing, so it reads the indexed catalog rather than
+    // refreshing it, which would write to the shared history databases.
+    const playable = await prepareProfileForRestore(profile, { cached: opts.dryRun });
     const plan = buildPlan(playable, opts);
 
     p.intro(pc.bgCyan(pc.black(" cmux profiles restore ")));

@@ -244,7 +244,10 @@ async function runRestoreAfterRestart(flags: RestartFlags): Promise<void> {
     }
 
     const raw = await loadProfile(source, profileName);
-    const inferred = filterReplayByAgents(await prepareProfileForRestore(raw), agents);
+    // `--list` and `--dry-run` report and stop, so they read the indexed catalog instead of
+    // refreshing it, which would write to the shared history databases.
+    const preview = Boolean(flags.list) || Boolean(flags.dryRun);
+    const inferred = filterReplayByAgents(await prepareProfileForRestore(raw, { cached: preview }), agents);
 
     if (flags.list) {
         out.println(renderProfileTree(inferred));

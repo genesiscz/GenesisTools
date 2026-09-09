@@ -488,17 +488,26 @@ export function loadGrokCatalog(
 
 export function loadCodexCatalog(
     cwds: string[],
-    roots: string[] = nativeSessionRoots("codex", homedir())
+    roots: string[] = nativeSessionRoots("codex", homedir()),
+    options: { cached?: boolean } = {}
 ): Promise<ReplayCatalogSession[]> {
-    return loadNativeCatalog({ kind: "codex", cwds, roots });
+    return loadNativeCatalog({ kind: "codex", cwds, roots, cached: options.cached });
 }
 
-export async function loadClaudeCatalog(): Promise<ReplayCatalogSession[]> {
-    const listing = await getSessionListing({ excludeSubagents: true });
+export async function loadClaudeCatalog(options: { cached?: boolean } = {}): Promise<ReplayCatalogSession[]> {
     const pins = await loadPins({ readOnly: true });
     const out: ReplayCatalogSession[] = [];
+    const records = options.cached
+        ? ((await createNativeHistoryAdapter({ kind: "claude" }).listCached?.({ all: true })) ?? []).map((session) => ({
+              sessionId: session.sessionId,
+              cwd: session.cwd,
+              customTitle: session.title,
+              summary: undefined,
+              firstPrompt: session.prompt,
+          }))
+        : (await getSessionListing({ excludeSubagents: true })).sessions;
 
-    for (const record of listing.sessions) {
+    for (const record of records) {
         if (!record.sessionId || !record.cwd) {
             continue;
         }
@@ -540,18 +549,24 @@ export function collectProfileCwds(profile: Profile): string[] {
     return cwds;
 }
 
-export async function loadReplayCatalog(profile: Profile): Promise<ReplayCatalog> {
+/**
+ * `cached` reads only what is already indexed, for callers that report a plan without carrying it
+ * out (`--dry-run`, `--list`). An ordinary restore refreshes the catalog first, which initializes
+ * the shared history schema and synchronizes source metadata — durable writes a preview must not
+ * make. The cost is that a preview can name fewer resume commands than the run it previews.
+ */
+export async function loadReplayCatalog(profile: Profile, options: { cached?: boolean } = {}): Promise<ReplayCatalog> {
     const cwds = collectProfileCwds(profile);
     const [grok, claude, codex] = await Promise.all([
-        loadGrokCatalog(cwds),
-        loadClaudeCatalog(),
-        loadCodexCatalog(cwds),
+        loadGrokCatalog(cwds, grokSessionsDir(), { cached: options.cached }),
+        loadClaudeCatalog({ cached: options.cached }),
+        loadCodexCatalog(cwds, nativeSessionRoots("codex", homedir()), { cached: options.cached }),
     ]);
 
     return { sessions: [...grok, ...claude, ...codex] };
 }
 
-export async function prepareProfileForRestore(profile: Profile): Promise<Profile> {
-    const catalog = await loadReplayCatalog(profile);
+export async function prepareProfileForRestore(profile: Profile, options: { cached?: boolean } = {}): Promise<Profile> {
+    const catalog = await loadReplayCatalog(profile, options);
     return dedupeResumeTargets(withInferredReplayCommands(profile, catalog), catalog);
 }
