@@ -72,12 +72,57 @@ function previewFromArguments(raw: string): string {
     return raw;
 }
 
+/** The text of a `response_item` message: its `input_text` / `output_text` parts, in order. */
+function contentText(content: unknown): string {
+    if (!Array.isArray(content)) {
+        return "";
+    }
+
+    return content
+        .filter(isRecord)
+        .map((part) => asString(part.text))
+        .filter((text) => text.length > 0)
+        .join("\n");
+}
+
+/** A reasoning summary arrives as `summary[].text` or as `summary_text`, a string or a list. */
+function reasoningText(value: unknown): string {
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => (isRecord(entry) ? asString(entry.text) : asString(entry)))
+            .filter((text) => text.length > 0)
+            .join("\n");
+    }
+
+    return asString(value);
+}
+
+/**
+ * Codex files its own context blocks (plugin lists, AGENTS.md, environment) as `user` messages.
+ * Their metadata names what they carry; a real prompt is the one kind `user.text`, and a message
+ * with no metadata at all comes from an older rollout that never injected context this way.
+ */
+function isTypedPrompt(payload: Record<string, unknown>): boolean {
+    const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+        ? payload.internal_chat_message_metadata_passthrough
+        : undefined;
+    const kinds = metadata?.content_item_kinds;
+
+    return !Array.isArray(kinds) || kinds.includes("user.text");
+}
+
+/**
+ * Native rollouts record the model's messages as `response_item` items with content parts, the
+ * reasoning as `response_item/reasoning` (summary usually empty, the text lives in the
+ * `item_completed` event) and the per-call tokens as `token_usage_record`; the streamed
+ * `event_msg` user/agent messages below them exist only in older files.
+ */
 export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): TranscriptTurn[] {
     const turns: TranscriptTurn[] = [];
     let assistant: TranscriptTurn | null = null;
 
     const flushAssistant = () => {
-        if (assistant && (assistant.text || assistant.tools.length > 0)) {
+        if (assistant && (assistant.text || assistant.tools.length > 0 || assistant.usage || assistant.reasoning)) {
             turns.push(assistant);
         }
         assistant = null;
@@ -93,6 +138,51 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
         const at = asString(parsed.timestamp) || null;
         const payloadType = asString(payload.type);
 
+        if (type === "response_item" && payloadType === "message") {
+            const role = asString(payload.role);
+            const text = contentText(payload.content);
+
+            if (role === "user") {
+                flushAssistant();
+                if (text && isTypedPrompt(payload)) {
+                    turns.push({ id: `codex-user-${turns.length + 1}`, role: "user", at, text, tools: [] });
+                }
+            } else if (role === "assistant" && text) {
+                assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
+                assistant.text += assistant.text ? `\n${text}` : text;
+            }
+            // `developer` and `system` messages are instructions, not conversation.
+            continue;
+        }
+        if (type === "response_item" && payloadType === "reasoning") {
+            const summary = reasoningText(payload.summary);
+            if (summary) {
+                assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
+                assistant.reasoning = assistant.reasoning ? `${assistant.reasoning}\n${summary}` : summary;
+            }
+            continue;
+        }
+        if (type === "event_msg" && payloadType === "item_completed") {
+            const item = isRecord(payload.item) ? payload.item : {};
+            const summary = asString(item.type) === "Reasoning" ? reasoningText(item.summary_text) : "";
+            if (summary && !(assistant?.reasoning ?? "").includes(summary)) {
+                assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
+                assistant.reasoning = assistant.reasoning ? `${assistant.reasoning}\n${summary}` : summary;
+            }
+            continue;
+        }
+        if (type === "token_usage_record") {
+            const usage = isRecord(payload.usage) ? payload.usage : {};
+            const count = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
+            assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
+            assistant.usage = {
+                inputTokens: count(usage.input_tokens),
+                cacheReadTokens: count(usage.cached_input_tokens),
+                outputTokens: count(usage.output_tokens),
+                reasoningTokens: count(usage.reasoning_output_tokens),
+            };
+            continue;
+        }
         if (type === "event_msg" && (payloadType === "user_message" || payloadType === "user_message_delta")) {
             flushAssistant();
             const text = asString(payload.message) || asString(payload.text);
