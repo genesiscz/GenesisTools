@@ -194,3 +194,45 @@ describe("scoped model display names", () => {
         expect(normalizeLimits(scopedResponse("Haiku"))[0].bucket).toBe("seven_day_haiku");
     });
 });
+
+describe("normalizeSpend guards the wire", () => {
+    test("a spend row without a usable percent reads as 0, never as undefined", () => {
+        // `ApiSpend.percent` is a cast over `res.json()`, so the declared `number` is a claim
+        // about the wire and not a fact — `used` and `limit` beside it are already nullable.
+        // Every renderer calls `percentUsed.toFixed`, which is the crash 5ee4db79d fixed for
+        // grok; the same field reached here through `toLimitWindows` with no guard at all.
+        for (const percent of [undefined, null, "12", Number.NaN, Number.POSITIVE_INFINITY]) {
+            const result = normalizeSpend({
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 0, resets_at: null },
+                spend: {
+                    used: { amount_minor: 900, currency: "USD", exponent: 2 },
+                    limit: null,
+                    percent,
+                    severity: "normal",
+                    enabled: true,
+                    cap: null,
+                },
+            } as unknown as UsageResponse);
+
+            expect(result?.percent).toBe(0);
+        }
+    });
+
+    test("a real percent still survives", () => {
+        const result = normalizeSpend({
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: { utilization: 0, resets_at: null },
+            spend: {
+                used: { amount_minor: 900, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 3000, currency: "USD", exponent: 2 },
+                percent: 30,
+                severity: "normal",
+                enabled: true,
+                cap: null,
+            },
+        } as unknown as UsageResponse);
+
+        expect(result?.percent).toBe(30);
+    });
+});

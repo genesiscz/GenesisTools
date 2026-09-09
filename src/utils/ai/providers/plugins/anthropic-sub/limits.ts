@@ -163,7 +163,9 @@ export function normalizeSpend(usage: UsageResponse): NormalizedSpend | null {
         used_exponent: raw.used.exponent,
         limit_minor: raw.limit?.amount_minor ?? null,
         limit_exponent: raw.limit?.exponent ?? null,
-        percent: raw.percent,
+        // Guarded like `utilization` above it: `ApiSpend` is a cast over `res.json()`, so an
+        // absent `percent` arrives as `undefined` and every renderer calls `.toFixed` on it.
+        percent: typeof raw.percent === "number" && Number.isFinite(raw.percent) ? raw.percent : 0,
         severity: normalizeSeverity(raw.severity),
         enabled: raw.enabled,
         cap_minor: raw.cap?.money?.amount_minor ?? null,
