@@ -8,26 +8,21 @@
  * The fixtures double as the format documentation: the streaming-history shape Spotify
  * exports, and the three files the harvest and enrichment produce.
  */
+import "./cli-env";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { env as envUtil } from "@genesiscz/utils/env";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
+import { type Command, CommanderError } from "commander";
+import { createSpotifyProgram } from "../index";
+import { restoreCliEnv, root } from "./cli-env";
 
-const CLI = resolve(dirname(import.meta.dir), "index.ts");
-
-const root = mkdtempSync(join(tmpdir(), "spotify-cli-test-"));
-// Through the shared accessor rather than reading `process.env` here: these commands run as
-// child processes, so the overrides have to be handed over as an environment rather than set
-// in this one, and `snapshot()` is the supported way to get the base to build on.
-const env = {
-    ...envUtil.testing.snapshot(),
-    GENESIS_TOOLS_HOME: root,
-    SPOTIFY_CONFIG_PATH: join(root, "profiles.json"),
-    SPOTIFY_CACHE_DIR: join(root, "cache"),
-    NO_COLOR: "1",
-};
+// `root` and the environment come from `./cli-env`, imported first so they are in place before
+// `paths.ts` builds its Storage. Every command below runs IN THIS PROCESS: spawning `bun index.ts`
+// 75 times cost about 90 s of the suite, most of it bun start-up, and sat on the critical path
+// of the CI budget.
 
 interface Ev {
     ts: string;
@@ -199,15 +194,70 @@ interface RunResult {
     all: string;
 }
 
-async function run(args: string[]): Promise<RunResult> {
-    const proc = Bun.spawn(["bun", CLI, ...args], { env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+/**
+ * Swap a stream's `write` for the length of one command. The write callback still fires,
+ * because `out.flush()` waits for it, and nothing reaches the terminal, so a run's output is
+ * exactly what the child process used to print.
+ */
+function captureStream(stream: NodeJS.WriteStream, sink: (text: string) => void): () => void {
+    const original = stream.write;
+    const write: typeof stream.write = (chunk: Uint8Array | string, ...rest: unknown[]) => {
+        sink(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        const callback = rest.find((arg): arg is () => void => typeof arg === "function");
+        callback?.();
+        return true;
+    };
+    stream.write = write;
 
-    return { exitCode, stdout, stderr, all: stdout + stderr };
+    return () => {
+        stream.write = original;
+    };
+}
+
+/** Commander copies exit handling at creation, and the subcommands exist before this runs. */
+function withExitOverride(command: Command): void {
+    command.exitOverride();
+
+    for (const child of command.commands) {
+        withExitOverride(child);
+    }
+}
+
+async function run(args: string[]): Promise<RunResult> {
+    const program = createSpotifyProgram();
+    withExitOverride(program);
+    let stdout = "";
+    let stderr = "";
+    const restoreStdout = captureStream(process.stdout, (text) => {
+        stdout += text;
+    });
+    const restoreStderr = captureStream(process.stderr, (text) => {
+        stderr += text;
+    });
+    process.exitCode = undefined;
+    let exitCode = 0;
+
+    try {
+        await runTool(program, { tool: "spotify" }, ["bun", "spotify", ...args]);
+        exitCode = typeof process.exitCode === "number" ? process.exitCode : 0;
+    } catch (error) {
+        if (error instanceof CommanderError) {
+            exitCode = error.exitCode;
+        } else {
+            // What `index.ts` prints before it exits 1.
+            stderr += `${error instanceof Error ? error.message : String(error)}\n`;
+            exitCode = 1;
+        }
+    } finally {
+        restoreStdout();
+        restoreStderr();
+        process.exitCode = undefined;
+    }
+
+    const plainStdout = stripAnsi(stdout);
+    const plainStderr = stripAnsi(stderr);
+
+    return { exitCode, stdout: plainStdout, stderr: plainStderr, all: plainStdout + plainStderr };
 }
 
 /** Asserts exit 0 first, so a crash reports the crash instead of a missing-needle diff. */
@@ -272,6 +322,7 @@ beforeAll(async () => {
 
 afterAll(() => {
     rmSync(root, { recursive: true, force: true });
+    restoreCliEnv();
 });
 
 describe("profiles", () => {

@@ -25,15 +25,17 @@ import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
 
-const program = new Command();
+/** The whole CLI, fresh each time: `runTool` adds its own options to the program it is given. */
+export function createSpotifyProgram(): Command {
+    const program = new Command();
 
-program
-    .name("spotify")
-    .description("Spotify listening analytics from your own export, plus cross-library compatibility")
-    .showHelpAfterError()
-    .addHelpText(
-        "after",
-        `
+    program
+        .name("spotify")
+        .description("Spotify listening analytics from your own export, plus cross-library compatibility")
+        .showHelpAfterError()
+        .addHelpText(
+            "after",
+            `
 ${pc.bold("Getting started")}
   tools spotify profile add me --history ~/Spotify/streaming-history --data ~/Spotify/data
   tools spotify analytics summary
@@ -61,26 +63,29 @@ ${pc.bold("Notes")}
   'plays' is always personal. The library's 'playcount' is global and never mixed in.
   Genres come from MusicBrainz and Last.fm; Spotify exposes none anywhere.
 `
-    );
+        );
 
-registerProfiles(program);
+    registerProfiles(program);
 
-const analytics = program
-    .command("analytics")
-    .description("every report over your listening history and library — run bare for the list");
-registerAnalytics(analytics);
-registerLibrary(analytics);
-registerCompat(analytics);
+    const analytics = program
+        .command("analytics")
+        .description("every report over your listening history and library — run bare for the list");
+    registerAnalytics(analytics);
+    registerLibrary(analytics);
+    registerCompat(analytics);
 
-registerPipeline(program);
-registerPlay(program);
-registerUiCommand(program);
+    registerPipeline(program);
+    registerPlay(program);
+    registerUiCommand(program);
 
-enhanceHelp(program);
+    enhanceHelp(program);
+
+    return program;
+}
 
 async function main(): Promise<void> {
     try {
-        await runTool(program, { tool: "spotify" });
+        await runTool(createSpotifyProgram(), { tool: "spotify" });
     } catch (error) {
         out.error(error instanceof Error ? error.message : String(error));
         await out.flush();
@@ -88,4 +93,6 @@ async function main(): Promise<void> {
     }
 }
 
-await main();
+if (import.meta.main) {
+    await main();
+}
