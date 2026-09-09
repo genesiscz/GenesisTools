@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -256,6 +256,47 @@ test("summary-only results apply limit after global metadata-mtime ordering", as
         expect(response.results.map((result) => result.metadata.nativeId)).toEqual(["second-native"]);
     } finally {
         current.database.close();
+    }
+});
+
+test("an eager search orders candidates from the metadata it already loaded", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-service-order-reuse-"));
+    const older = fixtureSource({
+        root,
+        name: "older",
+        nativeId: "older-native",
+        timestamp: "2026-09-01T10:00:00.000Z",
+    });
+    const newer = fixtureSource({
+        root,
+        name: "newer",
+        nativeId: "newer-native",
+        timestamp: "2026-09-03T10:00:00.000Z",
+    });
+    const reader = fixtureReader({ fixtures: [older, newer] });
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const history = new HistoryService({
+        providerId: "fixture-provider",
+        reader,
+        repository,
+        roots: [root],
+        now: () => new Date("2026-09-08T12:00:00.000Z"),
+    });
+    // Relevance ranking takes the eager path, where the candidates' rows are already in `byPath`.
+    // A second `filePaths` query there re-ran the same json_each lookup and re-decoded every
+    // bounded field array only to read one timestamp.
+    const listMetadata = spyOn(repository.metadata, "listMetadata");
+    try {
+        const response = await history.search({ query: "needle", sortByRelevance: true });
+        const scopedReads = listMetadata.mock.calls.filter((call) => (call[0].filePaths?.length ?? 0) > 0);
+
+        expect(response.results.map((result) => result.metadata.nativeId)).toEqual(["newer-native", "older-native"]);
+        expect(scopedReads).toHaveLength(1);
+    } finally {
+        listMetadata.mockRestore();
+        database.close();
     }
 });
 

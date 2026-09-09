@@ -696,18 +696,29 @@ export class HistoryService {
         // `filePaths`, which is how a Claude search avoids loading the whole corpus's metadata. So
         // read the timestamps for the CANDIDATES only: one query, already narrowed by ripgrep,
         // which is a different and much smaller thing than the load the lazy path exists to avoid.
+        // The eager path already holds those very rows in `byPath`, and re-asking for them ran the
+        // identical `json_each` query and re-decoded every bounded field array to read one stamp.
         const candidateOrderTimes = new Map<string, number>();
+        const recordOrderTime = (metadata: CachedHistoryMetadata) => {
+            const recorded = metadata.lastTimestamp ?? metadata.firstTimestamp;
+            const parsed = recorded ? Date.parse(recorded) : Number.NaN;
 
-        if (candidates.length > 0) {
+            if (!Number.isNaN(parsed)) {
+                candidateOrderTimes.set(metadata.filePath, parsed);
+            }
+        };
+
+        if (candidates.length > 0 && lazyMetadata) {
             for (const metadata of repository.metadata.listMetadata({
                 providerId,
                 filePaths: candidates.map((candidate) => candidate.source.filePath),
             })) {
-                const recorded = metadata.lastTimestamp ?? metadata.firstTimestamp;
-                const parsed = recorded ? Date.parse(recorded) : Number.NaN;
-
-                if (!Number.isNaN(parsed)) {
-                    candidateOrderTimes.set(metadata.filePath, parsed);
+                recordOrderTime(metadata);
+            }
+        } else {
+            for (const candidate of candidates) {
+                for (const metadata of byPath.get(candidate.source.filePath) ?? []) {
+                    recordOrderTime(metadata);
                 }
             }
         }
