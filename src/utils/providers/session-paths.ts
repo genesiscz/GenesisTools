@@ -4,6 +4,33 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
 
+/**
+ * Every home `CODEX_HOME` names, in order. Codex accepts a comma-separated LIST and writes to
+ * the first entry, so `codexHomeOverrides()[0]` is the primary home and the rest are read-only
+ * companions. Empty when the variable is unset.
+ *
+ * One reader, because three call sites split it their own way while two more read the whole
+ * string as a single path: with `CODEX_HOME=~/.codex-work,~/.codex` those two resolved one
+ * directory named `…/.codex-work,~/.codex`, which nothing on disk answers to.
+ */
+export function codexHomeOverrides(): string[] {
+    const override = env.codex.getHomeOverride();
+
+    if (!override) {
+        return [];
+    }
+
+    return override
+        .split(",")
+        .map((path) => path.trim())
+        .filter((path) => path.length > 0);
+}
+
+/** The home Codex itself writes to, or `undefined` when `CODEX_HOME` is unset. */
+export function primaryCodexHome(): string | undefined {
+    return codexHomeOverrides()[0];
+}
+
 export type NativeSessionProvider = "claude" | "grok" | "codex";
 
 /**
@@ -33,13 +60,7 @@ export function nativeSessionRoots(kind: NativeSessionProvider, home = homedir()
     }
 
     if (kind === "codex") {
-        const override = env.codex.getHomeOverride();
-        const homes = override
-            ? override
-                  .split(",")
-                  .map((path) => path.trim())
-                  .filter((path) => path.length > 0)
-            : [];
+        const homes = codexHomeOverrides();
         const bases = homes.length > 0 ? homes : [join(home, ".codex")];
         const roots: string[] = [];
         for (const base of bases) {

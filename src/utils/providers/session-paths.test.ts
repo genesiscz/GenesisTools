@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import {
+    codexHomeOverrides,
     codexHomesIn,
     isNativeTranscript,
     nativeSessionRoots,
     nativeSessionRootsForHome,
     nativeTranscriptMaxDepth,
+    primaryCodexHome,
 } from "./session-paths";
 
 describe("nativeSessionRoots", () => {
@@ -157,5 +159,35 @@ describe("codexHomesIn", () => {
 
     test("an absent root has no homes", () => {
         expect(codexHomesIn(join(tmpdir(), "codex-homes-absent-does-not-exist"))).toEqual([]);
+    });
+});
+
+describe("codexHomeOverrides", () => {
+    test("a comma list becomes one entry per home, trimmed", async () => {
+        await env.testing.withOverrides({ CODEX_HOME: "/a/codex, /b/codex ,, " }, () => {
+            expect(codexHomeOverrides()).toEqual(["/a/codex", "/b/codex"]);
+        });
+    });
+
+    test("an unset variable answers with nothing at all", async () => {
+        await env.testing.withOverrides({ CODEX_HOME: "" }, () => {
+            expect(codexHomeOverrides()).toEqual([]);
+            expect(primaryCodexHome()).toBeUndefined();
+        });
+    });
+
+    test("the primary home is the first entry, never the whole string", async () => {
+        // `join(raw, "auth.json")` and `resolve(raw)` both produced one directory named
+        // `/a/codex,/b/codex`, which nothing on disk answers to: `tools codex spawn` recorded
+        // it as the session home and `--import-native` reported no native credential.
+        await env.testing.withOverrides({ CODEX_HOME: "/a/codex,/b/codex" }, () => {
+            expect(primaryCodexHome()).toBe("/a/codex");
+        });
+    });
+
+    test("a single home is still that home", async () => {
+        await env.testing.withOverrides({ CODEX_HOME: "/only/codex" }, () => {
+            expect(primaryCodexHome()).toBe("/only/codex");
+        });
     });
 });

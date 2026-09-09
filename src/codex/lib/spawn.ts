@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
@@ -128,7 +129,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     // Always record the home this session will actually run in. Leaving it unset let the daemon
     // configure Computer Use against ~/.codex while the app-server inherited an ambient
     // CODEX_HOME, so the MCP runtime and the server it serves pointed at different directories.
-    const home = resolve(options.home ?? env.codex.getHomeOverride() ?? join(homedir(), ".codex"));
+    const home = resolve(options.home ?? primaryCodexHome() ?? join(homedir(), ".codex"));
 
     const launch: LaunchConfig = {
         ...(options.computerUse ? { computerUse: true } : {}),

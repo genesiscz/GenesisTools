@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { codexHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
-import { env } from "@genesiscz/utils/env";
+import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
 import { resolveSecret } from "@genesiscz/utils/security";
 import {
     CODEX_AUTH_PATH,
@@ -76,7 +76,10 @@ export const openAiSubPlugin: ProviderPlugin = {
         logoutTargets: ["oauth", "authFile"],
         login: codexLogin,
         nativeAuthFile: () => {
-            const nativeHome = env.codex.getHomeOverride();
+            // The primary entry, not the raw variable: `CODEX_HOME` is a comma-separated list,
+            // and joining the whole string produced `~/.codex-a,~/.codex-b/auth.json`, which
+            // `--import-native` then reported as "no native credential".
+            const nativeHome = primaryCodexHome();
             return nativeHome ? join(nativeHome, "auth.json") : CODEX_AUTH_PATH;
         },
         usage: codexUsage,
