@@ -8,8 +8,8 @@ import {
     resumeTargetFromCommand,
 } from "@app/cmux/lib/command-capture";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
-import { listCodexSessionsFromRoots } from "@genesiscz/utils/agent-sessions/codex-sessions";
-import { grokSessionsRoot, listGrokSessionsFromRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
+import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
+import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
@@ -450,16 +450,27 @@ export function grokSessionsDir(): string {
     return grokSessionsRoot();
 }
 
-export function loadGrokCatalog(cwds: string[], sessionsRoot: string = grokSessionsDir()): ReplayCatalogSession[] {
-    const unique = new Set(cwds.filter((cwd) => cwd.length > 0));
+async function loadNativeCatalog(options: {
+    kind: "codex" | "grok";
+    cwds: string[];
+    roots: string[];
+    /** Read only what is already indexed. The rescue path must not sync or write. */
+    cached?: boolean;
+}): Promise<ReplayCatalogSession[]> {
+    const unique = new Set(options.cwds.filter((cwd) => cwd.length > 0));
     if (unique.size === 0) {
         return [];
     }
 
-    return listGrokSessionsFromRoot(sessionsRoot)
+    const adapter = createNativeHistoryAdapter({ kind: options.kind, roots: options.roots });
+    const sessions =
+        options.cached && adapter.listCached
+            ? await adapter.listCached({ all: true })
+            : await adapter.list({ all: true });
+    return sessions
         .filter((session) => unique.has(session.cwd))
         .map((session) => ({
-            kind: "grok" as const,
+            kind: options.kind,
             sessionId: session.sessionId,
             cwd: session.cwd,
             title: session.title,
@@ -467,24 +478,19 @@ export function loadGrokCatalog(cwds: string[], sessionsRoot: string = grokSessi
         }));
 }
 
+export function loadGrokCatalog(
+    cwds: string[],
+    sessionsRoot: string = grokSessionsDir(),
+    options: { cached?: boolean } = {}
+): Promise<ReplayCatalogSession[]> {
+    return loadNativeCatalog({ kind: "grok", cwds, roots: [sessionsRoot], cached: options.cached });
+}
+
 export function loadCodexCatalog(
     cwds: string[],
     roots: string[] = nativeSessionRoots("codex", homedir())
-): ReplayCatalogSession[] {
-    const unique = new Set(cwds.filter((cwd) => cwd.length > 0));
-    if (unique.size === 0) {
-        return [];
-    }
-
-    return listCodexSessionsFromRoots(roots)
-        .filter((session) => unique.has(session.cwd))
-        .map((session) => ({
-            kind: "codex" as const,
-            sessionId: session.sessionId,
-            cwd: session.cwd,
-            title: session.title,
-            prompt: session.prompt,
-        }));
+): Promise<ReplayCatalogSession[]> {
+    return loadNativeCatalog({ kind: "codex", cwds, roots });
 }
 
 export async function loadClaudeCatalog(): Promise<ReplayCatalogSession[]> {
@@ -536,9 +542,11 @@ export function collectProfileCwds(profile: Profile): string[] {
 
 export async function loadReplayCatalog(profile: Profile): Promise<ReplayCatalog> {
     const cwds = collectProfileCwds(profile);
-    const grok = loadGrokCatalog(cwds);
-    const claude = await loadClaudeCatalog();
-    const codex = loadCodexCatalog(cwds);
+    const [grok, claude, codex] = await Promise.all([
+        loadGrokCatalog(cwds),
+        loadClaudeCatalog(),
+        loadCodexCatalog(cwds),
+    ]);
 
     return { sessions: [...grok, ...claude, ...codex] };
 }

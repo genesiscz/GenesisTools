@@ -1,4 +1,9 @@
-import { loadGrokCatalog, type ReplayCatalogSession, replayCommandForSurface } from "@app/cmux/lib/agent-replay";
+import {
+    grokSessionsDir,
+    loadGrokCatalog,
+    type ReplayCatalogSession,
+    replayCommandForSurface,
+} from "@app/cmux/lib/agent-replay";
 import {
     type AutosaveSession,
     type AutosaveWorkspace,
@@ -61,7 +66,9 @@ export async function captureOfflineProfile(options: OfflineCaptureOptions): Pro
         ),
     ];
     const [ttyCommands, surfaceSessions] = await Promise.all([collectTtyLaunchCommands(), loadSurfaceSessions()]);
-    const grokSessions = loadGrokCatalog(cwds);
+    // This is the livelock rescue: the shared history database may be held by a starving process,
+    // and a full grok discovery walks tens of thousands of files. Read the index or read nothing.
+    const grokSessions = await loadGrokCatalog(cwds, grokSessionsDir(), { cached: true });
 
     return buildOfflineProfile(
         session,

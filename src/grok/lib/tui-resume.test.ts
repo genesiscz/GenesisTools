@@ -11,18 +11,23 @@ const SESSION = {
 
 describe("buildGrokTuiSpawn", () => {
     test("resumes the picked session in its own cwd", () => {
-        const spawn = buildGrokTuiSpawn(SESSION);
+        const spawn = buildGrokTuiSpawn({ session: SESSION, binary: "/fixture/grok" });
 
         expect(spawn.cmd.slice(1)).toEqual(["-r", "sess_0001"]);
+        expect(spawn.cmd[0]).toBe("/fixture/grok");
         expect(spawn.cwd).toBe("/tmp/grok-tui-resume");
     });
 
     test("the child env comes from the env facade, so a test override reaches it", async () => {
         await env.testing.withOverrides({ GROK_TUI_RESUME_PROBE: "on" }, () => {
-            expect(buildGrokTuiSpawn(SESSION).env.GROK_TUI_RESUME_PROBE).toBe("on");
+            expect(buildGrokTuiSpawn({ session: SESSION, binary: "/fixture/grok" }).env.GROK_TUI_RESUME_PROBE).toBe(
+                "on"
+            );
         });
 
-        expect(buildGrokTuiSpawn(SESSION).env.GROK_TUI_RESUME_PROBE).toBeUndefined();
+        expect(
+            buildGrokTuiSpawn({ session: SESSION, binary: "/fixture/grok" }).env.GROK_TUI_RESUME_PROBE
+        ).toBeUndefined();
     });
 });
 
@@ -80,5 +85,23 @@ describe("resolveGrokTuiSession", () => {
         expect(session).toBeUndefined();
         expect(process.exitCode).toBe(1);
         process.exitCode = 0;
+    });
+});
+
+test("bare resume delegates selection to native Grok instead of a wrapper picker", () => {
+    const spawn = buildGrokTuiSpawn({ binary: "/fixture/grok" });
+    expect(spawn.cmd.slice(1)).toEqual(["--resume"]);
+    expect(spawn.cwd).toBe(process.cwd());
+});
+
+test("query resume opens the selected session's native home without changing the parent environment", async () => {
+    await env.testing.withOverrides({ GROK_HOME: "/personal-home" }, () => {
+        const launch = buildGrokTuiSpawn({
+            session: { ...SESSION, sourceHome: "/worker-home" },
+            binary: "/fixture/grok",
+        });
+        expect(launch.env.GROK_HOME).toBe("/worker-home");
+        expect(env.getProcessEnv().GROK_HOME).toBe("/personal-home");
+        expect(buildGrokTuiSpawn({ binary: "/fixture/grok" }).env.GROK_HOME).toBe("/personal-home");
     });
 });

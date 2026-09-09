@@ -178,7 +178,7 @@ export async function buildCommandCaptureContext(options: { commands?: boolean }
         surfaceCommands,
         panelScreens,
         panelBrowserUrls,
-        replayCatalog: { sessions: options.commands === false ? [] : loadGrokCatalog(grokCwds) },
+        replayCatalog: { sessions: options.commands === false ? [] : await loadGrokCatalog(grokCwds) },
     };
 }
 

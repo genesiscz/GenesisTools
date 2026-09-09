@@ -75,12 +75,15 @@ export interface QuickStatsResponse {
 
 // Helper to serialize a conversation result
 export function serializeResult(result: Awaited<ReturnType<typeof getAllConversations>>[0]): SerializableConversation {
-	// Use userMessageCount + assistantMessageCount when available (from getAllConversations),
-	// otherwise fall back to matchedMessages.length (from searchConversations)
-	const messageCount =
+	// A query-less listing never hydrates messages — that is what took `--format json` from 34 MB
+	// to 2 KB — so both counts arrive as 0 and a zero is indistinguishable from a real one. The
+	// indexed count is the same total these are summed into, and `serializeSessionMetadata` below
+	// already reads it the same way. On a migrated index it covers 12,054 of 12,058 sources.
+	const hydrated =
 		result.userMessageCount !== undefined && result.assistantMessageCount !== undefined
 			? result.userMessageCount + result.assistantMessageCount
 			: result.matchedMessages.length;
+	const messageCount = hydrated || (getFileIndex(result.filePath)?.messageCount ?? 0);
 
 	return {
 		filePath: result.filePath,

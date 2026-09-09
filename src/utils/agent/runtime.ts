@@ -2,7 +2,8 @@ import { realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
 import { resolveAgentHost } from "@genesiscz/utils/agent/host";
-import { getSessionMetadataBySessionId } from "@genesiscz/utils/claude/history-cache";
+import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
+import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { env as appEnv } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
@@ -118,15 +119,17 @@ export function getAgentRuntimeContext(
 
     const merged = { ...base, ...agentPartial, ...overrides };
 
-    if (!merged.sessionTitle && merged.agent === "claude-code" && merged.sessionId) {
+    const historyProvider = PROVIDER_ALIASES[merged.agent === "claude-code" ? "claude" : merged.agent];
+
+    if (!merged.sessionTitle && historyProvider && merged.sessionId) {
         try {
-            const meta = getSessionMetadataBySessionId(merged.sessionId);
+            const meta = readCachedHistoryTitle({ providerId: historyProvider, sessionId: merged.sessionId });
             merged.sessionTitle = meta?.customTitle ?? meta?.summary ?? null;
         } catch (error) {
             // History index is optional — log so a missing/corrupt index is diagnosable.
             logger.debug(
                 { error, sessionId: merged.sessionId },
-                "agent-runtime: failed to backfill claude session title"
+                "agent-runtime: failed to backfill cached session title"
             );
         }
     }
