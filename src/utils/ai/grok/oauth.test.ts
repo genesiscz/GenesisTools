@@ -137,7 +137,7 @@ describe("GrokOAuthClient", () => {
 });
 
 describe("identityFromGrokTokens", () => {
-    test("reads the user out of the id token and the team and tier out of the access token", () => {
+    test("reads the email out of the id token and the user, team and tier out of the access token", () => {
         expect(identityFromGrokTokens({ accessToken: ACCESS, idToken: ID_TOKEN })).toEqual({
             userId: "user-1111",
             email: "alice@example.com",
@@ -146,11 +146,33 @@ describe("identityFromGrokTokens", () => {
         });
     });
 
-    test("falls back to the access token's sub when there is no id token", () => {
+    test("works from the access token alone", () => {
         expect(identityFromGrokTokens({ accessToken: ACCESS })).toEqual({
             userId: "user-1111",
             teamId: "team-2222",
             tier: 5,
+        });
+    });
+
+    /**
+     * `identityOf` and `holdsSameIdentity` both read the ACCESS token's `sub`, so a login
+     * that preferred the id token's would give the same account two user ids the moment an
+     * issuer spelled them differently, and its own re-login would be refused as a stranger.
+     */
+    test("prefers the access token's sub when the two tokens disagree", () => {
+        const otherSub = jwt({ sub: "user-9999", email: "alice@example.com" });
+
+        expect(identityFromGrokTokens({ accessToken: ACCESS, idToken: otherSub })).toMatchObject({
+            userId: "user-1111",
+            email: "alice@example.com",
+        });
+    });
+
+    test("falls back to the id token's sub for an access token that carries none", () => {
+        const noSub = jwt({ exp: EXP, tier: 5 });
+
+        expect(identityFromGrokTokens({ accessToken: noSub, idToken: ID_TOKEN })).toMatchObject({
+            userId: "user-1111",
         });
     });
 

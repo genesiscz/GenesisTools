@@ -153,7 +153,7 @@ export const grokOAuth = new GrokOAuthClient();
 
 /** What the tokens say about their owner. Decode only, never a network call. */
 export interface GrokTokenIdentity {
-    /** The xAI user id: `sub` of the id token, or of the access token. */
+    /** The xAI user id: `sub` of the ACCESS token, or of the id token when it has none. */
     userId?: string;
     email?: string;
     /** `team_id` of the access token, the same claim `GrokJwtClaims` reads. */
@@ -161,10 +161,19 @@ export interface GrokTokenIdentity {
     tier?: number;
 }
 
+/**
+ * The ACCESS token's `sub` wins, and it has to: two other places already answer "who owns
+ * this" from that claim and nothing else — `identityOf` in the plugin, which is what a
+ * `--auth-file` re-login is compared against, and `holdsSameIdentity` in grok/account.ts,
+ * which decides whether an auth file may serve an account. Reading a different token here
+ * would let one account present two user ids and refuse its own re-login. The id token is
+ * the fallback for a `sub` the access token does not carry, and stays first for `email`,
+ * which the access token usually omits.
+ */
 export function identityFromGrokTokens(tokens: Pick<GrokTokens, "accessToken" | "idToken">): GrokTokenIdentity {
     const access = claimsOf(tokens.accessToken);
     const id = tokens.idToken === undefined ? {} : claimsOf(tokens.idToken);
-    const userId = text(id.sub) ?? text(access.sub);
+    const userId = text(access.sub) ?? text(id.sub);
     const email = text(id.email) ?? text(access.email);
     const teamId = text(access.team_id);
 

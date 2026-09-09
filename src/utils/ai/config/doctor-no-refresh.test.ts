@@ -335,6 +335,61 @@ describe("grok-sub probe purity", () => {
     });
 });
 
+/**
+ * The same rule for the OTHER grok credential shape.
+ *
+ * `tools grok login` without `--home` stores the grant in the vault, and that grant has its
+ * own refresh path (`resolveStoredGrokGrant`) which never reads an auth file. The block
+ * above therefore proves nothing about it: it exercises `refreshGrokAuth`, a different
+ * function, against a file this account does not have.
+ */
+describe("grok-sub probe purity with a vault grant", () => {
+    beforeEach(async () => {
+        await seed([
+            account({
+                id: "acc_grok_vault",
+                name: "grok-vault",
+                provider: "grok-sub",
+                // What the browser login writes: no file reference, tokens in the vault
+                // (the migration chain moves them there while `seed` settles), and the
+                // expiry beside them.
+                credentials: {
+                    accessToken: expiredJwt(),
+                    refreshToken: "grok-vault-single-use-rt",
+                    expiresAt: Date.now() - HOUR,
+                },
+            }),
+        ]);
+        spyOnFetch();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    test("health names the login instead of spending the stored grant", async () => {
+        const before = readFileSync(configPath(), "utf8");
+        const plugin = providerPlugin("grok-sub");
+
+        const health = await plugin.health?.({ account: await loadAccount("grok-vault") });
+
+        expect(fetchCalls).toEqual([]);
+        expect(health?.ok).toBe(false);
+        expect(health?.detail).toContain("refresh is disabled");
+        expect(health?.detail).toContain("tools grok login grok-vault");
+        // The grant is untouched: neither the config nor the vault entry moved.
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(await storedRefreshToken()).toBe("grok-vault-single-use-rt");
+    });
+
+    test("negative control: a bind without probe still reaches the OIDC token endpoint", async () => {
+        const plugin = providerPlugin("grok-sub");
+
+        await expect(plugin.bind({ account: await loadAccount("grok-vault") })).rejects.toThrow();
+        expect(fetchCalls).toEqual(["https://auth.x.ai/oauth2/token"]);
+    });
+});
+
 describe("openai-sub probe purity", () => {
     beforeEach(async () => {
         await seed([
