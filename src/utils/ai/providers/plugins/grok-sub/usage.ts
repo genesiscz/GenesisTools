@@ -1,5 +1,6 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveSecretSync } from "@genesiscz/utils/security";
 import type { AccountEntry } from "../../../config/schema";
 import { grokCredentialRefusal, resolveGrokSubToken } from "../../../grok/account";
 import { GrokSubscriptionClient, type GrokSubscriptionClientOptions } from "../../../grok/client";
@@ -225,7 +226,13 @@ export function grokCredentialStamp(account: AccountEntry): Promise<number | und
  * it starts, and the account is neither retried nor backed off (issue #378).
  */
 export function grokMissingCredential(account: AccountEntry): MissingCredential | undefined {
-    if (account.credentials.authFile || account.credentials.accessToken) {
+    // Resolved, not raw. The resolver reads the v3 projection, and `toV3Account` only
+    // carries `tokens.accessToken` once `resolveSecretSync` returns a VALUE, so a vault
+    // pointer the store cannot answer (entry gone, or no master key available
+    // synchronously — the launchd daemon's normal state) is no credential to it. Testing
+    // the raw field would call that pointer a credential, and the account would be polled
+    // only for the resolver to refuse it with this very message, which is issue #378.
+    if (account.credentials.authFile || resolveSecretSync(account.credentials.accessToken)) {
         return undefined;
     }
 

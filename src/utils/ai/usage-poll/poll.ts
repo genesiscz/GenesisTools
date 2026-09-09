@@ -297,8 +297,15 @@ export async function __fetchProviderSnapshots(
     // fix is a login, and the snapshot names it.
     const needsLogin = new Map<string, MissingCredential>();
 
+    // ASYNC on purpose: everything below belongs to ONE account, and `Promise.allSettled`
+    // is already written to turn a rejection into that account's error row. A plain
+    // callback throws SYNCHRONOUSLY out of `map`, before `allSettled` ever sees it, so a
+    // plugin hook that throws — `missingCredential` is declared synchronous, which makes
+    // this its likeliest shape — rejects the whole round instead. The shared cache then
+    // marks every account of the provider stale, or rethrows on a cold cache, and one
+    // plugin's bug reads as the provider being down.
     const settled = await Promise.allSettled(
-        accounts.map((account) => {
+        accounts.map(async (account) => {
             const missing = entry.usage.missingCredential?.(account);
 
             if (missing) {

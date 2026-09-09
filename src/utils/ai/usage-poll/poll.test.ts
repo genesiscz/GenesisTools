@@ -432,6 +432,77 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
         expect(await loadPollGate(PROVIDER)).toEqual({});
     });
 
+    // The control that makes the test above mean something. A hook read as "this provider
+    // cannot be polled" rather than "this ACCOUNT holds nothing" would take every sibling
+    // down with the one that is logged out, which is worse than the bug it fixes.
+    test("an account the hook does not refuse is still polled in the same round", async () => {
+        useTempHome();
+        const personal: AccountEntry = { ...work, id: "acc_personal", name: "personal" };
+        const polled: string[] = [];
+        const built = plugin({ polled, stamp: undefined });
+        built.usage.missingCredential = (target) =>
+            target.name === "work"
+                ? { message: 'Account "work" holds nothing.', remedy: "tools fake login work" }
+                : undefined;
+
+        const snapshots = await __fetchProviderSnapshots(built, [work, personal], {}, new Set());
+
+        expect(polled).toEqual(["personal"]);
+        expect(snapshots[0].needsLogin).toEqual({ remedy: "tools fake login work" });
+        expect(snapshots[1].needsLogin).toBeUndefined();
+        expect(snapshots[1].error).toBeUndefined();
+    });
+
+    // A FILTERED round knows nothing about the accounts it excluded, so it must not prune
+    // and the release has to reach the gate through `successes` alone. Both halves are
+    // asserted: the refused account's block goes, and the excluded account keeps its own.
+    test("a filtered round releases the block and leaves the excluded account's backoff alone", async () => {
+        useTempHome();
+        const failedAt = Date.now();
+        let gate = recordFailure({}, "work", "session expired", failedAt);
+        gate = recordFailure(gate, "work", "session expired", failedAt);
+        await savePollGate(PROVIDER, recordFailure(gate, "personal", "session expired", failedAt));
+        const polled: string[] = [];
+        const built = plugin({ polled, stamp: undefined });
+        built.usage.missingCredential = () => ({
+            message: 'Account "work" holds nothing.',
+            remedy: "tools fake login work",
+        });
+
+        await __fetchProviderSnapshots(built, [work], { accountFilter: ["work"] }, new Set());
+
+        const after = await loadPollGate(PROVIDER);
+        expect(polled).toEqual([]);
+        expect(after.work).toBeUndefined();
+        expect(after.personal?.failures).toBe(1);
+    });
+
+    // A plugin hook that throws costs its own account, not the provider. Run inside a plain
+    // `map` callback the throw escapes BEFORE `Promise.allSettled`, rejecting the whole
+    // round: the shared cache then marks every account of the provider stale, or rethrows
+    // outright on a cold cache, and one plugin's bug reads as the provider being down.
+    test("a missingCredential that throws fails only its own account", async () => {
+        useTempHome();
+        const personal: AccountEntry = { ...work, id: "acc_personal", name: "personal" };
+        const polled: string[] = [];
+        const built = plugin({ polled, stamp: undefined });
+        built.usage.missingCredential = (target) => {
+            if (target.name === "work") {
+                throw new Error("the preflight hook is broken");
+            }
+
+            return undefined;
+        };
+
+        const snapshots = await __fetchProviderSnapshots(built, [work, personal], {}, new Set());
+
+        expect(polled).toEqual(["personal"]);
+        expect(snapshots[0].error).toContain("the preflight hook is broken");
+        expect(snapshots[0].needsLogin).toBeUndefined();
+        expect(snapshots[1].error).toBeUndefined();
+        expect((await loadPollGate(PROVIDER)).work.failures).toBe(1);
+    });
+
     // Negative control: a row that failed for real this round must NOT be dressed up as a
     // pause, or a live outage would read as "come back later".
     test("a live failure carries no block", async () => {

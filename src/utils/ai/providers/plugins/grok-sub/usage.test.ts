@@ -1,4 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { _resetSecretsForTest } from "@genesiscz/utils/security";
 import type { AccountEntry } from "../../../config/schema";
 import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
 import type { GrokUsageClient, GrokUsageDeps } from "./usage";
@@ -232,6 +237,56 @@ describe("grokMissingCredential", () => {
         expect(grokMissingCredential(entry("grok", credentials))).toBeUndefined();
     });
 });
+
+/**
+ * `tools grok login` stores the token in the vault, so the config field is a POINTER, and
+ * the resolver only sees a credential once the vault answers: `toV3Account` keeps
+ * `tokens.accessToken` only when `resolveSecretSync` returns a value. A pointer to an entry
+ * that is gone — or one no master key can open synchronously, which is the launchd daemon's
+ * normal state — is therefore no credential to the resolver either. Reading the raw field
+ * would call it a credential, poll the account, and earn it the very backoff issue #378 is
+ * about.
+ *
+ * The temp home has no vault file at all, so the store answers "no entry" without ever
+ * reaching for a master key.
+ */
+describe("grokMissingCredential and a vault pointer", () => {
+    const ref = { type: "secure", path: "ai/acc_grok/accessToken" } as const;
+    let home: string | undefined;
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "grok-missing-credential-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        _resetSecretsForTest();
+    });
+
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        _resetSecretsForTest();
+
+        if (home) {
+            rmSync(home, { recursive: true, force: true });
+            home = undefined;
+        }
+    });
+
+    it("counts a pointer the vault cannot answer as no credential", () => {
+        expect(grokMissingCredential(entry("grok", { accessToken: ref }))).toEqual({
+            message: 'Account "grok" holds no grok credential (no authFile, no accessToken).',
+            remedy: "tools grok login grok",
+        });
+    });
+
+    // Negative control: the check must not have become "any unresolvable field means no
+    // credential". An auth file is a live reference the resolver reads on its own, and it
+    // wins over stored tokens there, so it still answers for the account.
+    it("still says nothing when an auth file sits beside the unresolvable pointer", () => {
+        expect(
+            grokMissingCredential(entry("grok", { authFile: "/tmp/.grok/auth.json", accessToken: ref }))
+        ).toBeUndefined();
+    });
+});
+
 describe("a grok-sub account with a stored grant", () => {
     it("hands the grant's refresh path to the client instead of an auth file", async () => {
         const source = { hint: "Run: tools grok login work", refresh: async () => "rotated" };
