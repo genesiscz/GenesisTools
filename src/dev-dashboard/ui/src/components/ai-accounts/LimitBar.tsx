@@ -58,16 +58,28 @@ export function formatResetsIn(resetsAt: string | undefined, nowMs: number): str
  * (JPY) gained two it does not have. Same rule as `formatMoney` in
  * `src/utils/ai/usage-poll/format-money.ts`, which the CLI door prints.
  */
-export function formatMoney(money: NonNullable<LimitWindow["money"]>): string {
-    const scale = 10 ** money.exponent;
-    const used = (money.usedMinor / scale).toFixed(money.exponent);
-    const symbol = money.currency === "USD" ? "$" : `${money.currency} `;
+function amount(minor: number, exponent: number): string {
+    return (minor / 10 ** exponent).toFixed(Math.max(0, exponent));
+}
 
-    if (money.limitMinor === undefined) {
-        return `${symbol}${used}`;
+function symbolFor(currency: string): string {
+    return currency === "USD" ? "$" : `${currency} `;
+}
+
+export function formatMoney(money: NonNullable<LimitWindow["money"]>): string {
+    const used = amount(money.usedMinor, money.exponent);
+    const symbol = symbolFor(money.currency);
+
+    if (money.limitMinor !== undefined) {
+        return `${symbol}${used} / ${symbol}${amount(money.limitMinor, money.limitExponent ?? money.exponent)}`;
     }
 
-    return `${symbol}${used} / ${symbol}${(money.limitMinor / scale).toFixed(money.exponent)}`;
+    if (money.capMinor !== undefined) {
+        const capSymbol = symbolFor(money.capCurrency ?? money.currency);
+        return `${symbol}${used} / ${capSymbol}${amount(money.capMinor, money.exponent)}`;
+    }
+
+    return `${symbol}${used}`;
 }
 
 /** One provider-neutral limit row: label, value, bar, reset hint. */

@@ -13,12 +13,25 @@ export type LimitKind = "session" | "weekly" | "monthly" | "scoped" | "credit";
 
 export type LimitSeverity = "ok" | "warn" | "critical";
 
-/** Credit-style windows report money instead of a percentage. Minor units, like cents. */
+/**
+ * Credit-style windows report money instead of a percentage. Minor units, like cents.
+ *
+ * The last three fields were missing here while `flattenSnapshotsCache` forwarded the cache
+ * entries verbatim, so they were on the wire and invisible to the card: a limit stated with
+ * its own exponent printed off by a power of ten, and a configured ceiling with no limit
+ * printed as no ceiling at all.
+ */
 export interface LimitMoney {
     usedMinor: number;
     limitMinor?: number;
     currency: string;
     exponent: number;
+    /** Exponent of `limitMinor` when the provider states it separately from `exponent`. */
+    limitExponent?: number;
+    /** Hard spend ceiling the account is configured with, when the provider reports one. */
+    capMinor?: number;
+    /** Currency of `capMinor`, which need not be the currency the spend is billed in. */
+    capCurrency?: string;
 }
 
 /** One rate-limit window, provider-neutral. Claude has 5 to 6, codex 2, grok 1. */

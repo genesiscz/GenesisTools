@@ -7,20 +7,33 @@ import type { LimitWindow } from "@genesiscz/utils/ai/providers/account-features
  * `tools ai accounts show` line; it lives here so a CLI door can import it without
  * pulling Ink and React into its startup.
  */
+function amount(minor: number, exponent: number): string {
+    return (minor / 10 ** exponent).toFixed(Math.max(0, exponent));
+}
+
 export function formatMoney(window: LimitWindow): string | null {
     if (!window.money) {
         return null;
     }
 
-    const { usedMinor, limitMinor, currency, exponent } = window.money;
-    const divisor = 10 ** exponent;
-    const used = (usedMinor / divisor).toFixed(exponent);
+    const { usedMinor, limitMinor, limitExponent, capMinor, capCurrency, currency, exponent } = window.money;
+    const used = amount(usedMinor, exponent);
 
-    if (limitMinor === undefined) {
-        return `${used} ${currency}`;
+    // `limitExponent` exists because a provider may state the limit's exponent separately from
+    // the spend's. `record.ts` already stores `limitExponent ?? exponent`, and the claude-only
+    // door (`formatSpendBalance`) already prints it, so ignoring it here made the two doors
+    // disagree about the same account by a power of ten.
+    if (limitMinor !== undefined) {
+        return `${used} / ${amount(limitMinor, limitExponent ?? exponent)} ${currency}`;
     }
 
-    return `${used} / ${(limitMinor / divisor).toFixed(exponent)} ${currency}`;
+    // No limit but a configured ceiling: `formatSpendBalance` shows the cap here, and printing
+    // the bare spend instead read as "no ceiling at all" for an account that has one.
+    if (capMinor !== undefined) {
+        return `${used} / ${amount(capMinor, exponent)} ${capCurrency ?? currency}`;
+    }
+
+    return `${used} ${currency}`;
 }
 
 /**

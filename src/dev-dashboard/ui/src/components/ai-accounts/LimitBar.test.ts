@@ -46,3 +46,21 @@ describe("percentOf", () => {
         expect(limitColor(fromDisk)).toBe("var(--dd-accent-from)");
     });
 });
+
+describe("formatMoney honours the limit exponent and the cap", () => {
+    test("a limit with its own exponent is not scaled by the spend's", () => {
+        expect(formatMoney({ usedMinor: 900, limitMinor: 30, currency: "USD", exponent: 2, limitExponent: 0 })).toBe(
+            "$9.00 / $30"
+        );
+    });
+
+    test("a configured ceiling with no limit is printed", () => {
+        expect(formatMoney({ usedMinor: 900, currency: "USD", exponent: 2, capMinor: 3000 })).toBe("$9.00 / $30.00");
+    });
+
+    test("the cap keeps its own currency", () => {
+        expect(formatMoney({ usedMinor: 900, currency: "USD", exponent: 2, capMinor: 3000, capCurrency: "EUR" })).toBe(
+            "$9.00 / EUR 30.00"
+        );
+    });
+});
