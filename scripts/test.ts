@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
+import { profileArgs } from "./test-args";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
 
 /**
@@ -392,9 +393,7 @@ async function runProfile(jobs: number, roots: string[]): Promise<number> {
 const profileIndex = args.indexOf("--profile");
 
 if (profileIndex !== -1) {
-    const jobsIndex = args.indexOf("--jobs");
-    const jobs = jobsIndex !== -1 ? Number(args[jobsIndex + 1]) : Math.min(8, cpus().length);
-    const roots = args.filter((arg, index) => !arg.startsWith("-") && index !== jobsIndex + 1);
+    const { jobs, roots } = profileArgs(args, Math.min(8, cpus().length));
     finish(await runProfile(jobs, roots));
 }
 
