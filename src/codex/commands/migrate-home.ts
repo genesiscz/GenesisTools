@@ -189,6 +189,7 @@ export async function runMigrateHome(options: MigrateHomeCliOptions): Promise<vo
     const proceed = await p.confirm({
         message: `Copy ${report.totals.toCopy} rollout(s) into ${report.destination} now?`,
         initialValue: false,
+        danger: true,
     });
 
     if (!proceed) {
