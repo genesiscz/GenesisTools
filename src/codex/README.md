@@ -110,6 +110,57 @@ copy is currently rejected: the tested native fork path cannot load that separat
 store. No native SQLite rows are synthesized, and native databases are never symlinked
 between homes. Cross-provider history conversion is outside this command's scope.
 
+## Merging Codex homes (`migrate-home`)
+
+`tools codex migrate-home` folds the transcripts of other Codex homes into one home, so a plain
+`codex resume` and the Desktop app see every past conversation in one place. It copies; it never
+moves and never unlinks.
+
+```bash
+tools codex migrate-home                                   # dry run over every ~/.codex-* sibling
+tools codex migrate-home --from ~/.codex-foltyn --to ~/.codex
+tools codex migrate-home --from ~/.codex-foltyn,~/.codex-work --desktop --apply
+tools codex migrate-home --json                            # machine-readable report
+```
+
+`--from` takes a repeated flag or a comma-separated list, and defaults to every `~/.codex-*`
+sibling holding a `sessions/` directory, minus backups and the destination. `--to` defaults to
+`~/.codex`. Without `--apply` nothing is written. In a TTY the command shows the plan and then
+asks; without a TTY it needs `--apply`.
+
+Safety rules, all of them load-bearing:
+
+- **It refuses while either home is in use.** Any process holding `logs_2.sqlite`,
+  `queue_1.sqlite`, `goals_1.sqlite`, a `thread-writer-locks/*.lock` or anything under
+  `sessions/` blocks the run, and the report names the pids. If `lsof` cannot answer, the
+  answer is `unknown` and the run refuses too — a home that might be live is treated as live.
+- **It refuses on any native-id collision** rather than picking a winner. A rollout already at
+  the same relative path with identical bytes is this command's own earlier run, which is what
+  makes a repeat a no-op.
+- **The destination is backed up first** by APFS clone into
+  `~/.genesis-tools/codex/migrate-home/<stamp>/`, both `sessions/` and
+  `.codex-global-state.json`. The source needs no backup because it is never touched.
+- **Every copy is verified** by size and SHA-256 before the run counts it.
+- **The date tree is preserved verbatim.** Paths are never re-derived from the rollout header
+  timestamp, which differs from the filename timestamp.
+- `--archive-source` renames each source `sessions/` to `sessions.migrated-<stamp>` after the
+  copy verifies. It is off by default and it still deletes nothing.
+
+`--desktop` also merges `.codex-global-state.json`, which is what makes the sessions appear
+under the right projects in the Codex Desktop app. Projects are merged **by normalised root
+path, never by id**: the destination already holds one project under a raw UUID beside nine
+under `local-<md5>`, so an id-keyed merge would add a second entry for the same directory on
+every run. Unseen ids are appended to `project-order`, thread assignments are taken from the
+source only for threads the destination lacks and are remapped onto the destination's project
+id, and `selected-project` is left alone. The merged file is written atomically.
+
+What it does **not** carry: `auth.json`, `history.jsonl` (the up-arrow recall buffer), and the
+per-home SQLite databases. After a run, re-index with `tools codex history index sync`. Note
+that the index keys a session on `[provider, source home, native id]`, so a moved rollout is a
+new key and `session_metadata.source_home` no longer names the home it came from. The
+per-rollout mapping was captured out of band in
+`GenesisBrain/GenesisTools/AILaunchers/Verify-CodexAccountProvenance.md`.
+
 ## Computer Use and JavaScript
 
 When the official Mac runtime and helper are installed in the selected shared home,
