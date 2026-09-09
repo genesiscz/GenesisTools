@@ -48,6 +48,12 @@ export interface CollisionReport {
     destinationMeta: RolloutMetaIds;
 }
 
+export interface SkippedRollout {
+    nativeId: string;
+    path: string;
+    holders: ProcessHolder[];
+}
+
 export interface SourceReport {
     home: string;
     sessionsDir: string;
@@ -56,6 +62,8 @@ export interface SourceReport {
     alreadyPresent: number;
     collisions: CollisionReport[];
     copied: number;
+    /** Rollouts a live process still writes: left for a later run, never copied half-written. */
+    skippedLive: SkippedRollout[];
     archivedTo?: string;
 }
 
@@ -128,6 +136,7 @@ export interface MigrateHomeReport {
         alreadyPresent: number;
         collisions: number;
         copied: number;
+        skippedLive: number;
     };
     backups: { sessions?: string; globalState?: string };
     desktop: DesktopReport[];
@@ -290,6 +299,8 @@ export function inspectHome(home: string, inspect: (query: OpenFilesQuery) => Op
         }
     }
 
+    files.push(join(home, GLOBAL_STATE_FILE));
+
     const result = inspect({ files, directories: [sessionsDirOf(home)] });
 
     if (result === "unknown") {
@@ -297,6 +308,40 @@ export function inspectHome(home: string, inspect: (query: OpenFilesQuery) => Op
     }
 
     return { home, status: result.length > 0 ? "busy" : "clear", holders: result };
+}
+
+type HeldPathIndex = Map<string, ProcessHolder[]>;
+
+function comparablePath(path: string, realpath: (value: string) => string): string {
+    try {
+        return realpath(path);
+    } catch (error) {
+        // `lsof` may name a path that is gone by the time we look; the string still compares.
+        log.debug({ path, error }, "path has no realpath, comparing it as written");
+        return resolve(path);
+    }
+}
+
+/** Every open handle from every inspected home, keyed by comparable path. */
+function heldPathIndex(reports: BusyReport[], realpath: (value: string) => string): HeldPathIndex {
+    const index: HeldPathIndex = new Map();
+
+    for (const report of reports) {
+        for (const holder of report.holders) {
+            const key = comparablePath(holder.path, realpath);
+            index.set(key, [...(index.get(key) ?? []), holder]);
+        }
+    }
+
+    return index;
+}
+
+function holdersOfPath(index: HeldPathIndex, path: string, realpath: (value: string) => string): ProcessHolder[] {
+    return index.get(comparablePath(path, realpath)) ?? [];
+}
+
+function describeHolders(holders: ProcessHolder[]): string {
+    return [...new Set(holders.map((holder) => `${holder.command}(${holder.pid})`))].join(", ");
 }
 
 export function mergeDesktopState(
@@ -465,7 +510,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         archiveSourceRequested: options.archiveSource === true,
         busy: [],
         sources: [],
-        totals: { rollouts: 0, toCopy: 0, alreadyPresent: 0, collisions: 0, copied: 0 },
+        totals: { rollouts: 0, toCopy: 0, alreadyPresent: 0, collisions: 0, copied: 0, skippedLive: 0 },
         backups: {},
         desktop: [],
         refusals: [],
@@ -506,6 +551,8 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         report.busy.push(inspectHome(home, inspect));
     }
 
+    const heldPaths = heldPathIndex(report.busy, realpath);
+
     const destinationSessions = sessionsDirOf(destination);
     const destinationRollouts = new Map<string, RolloutFile>();
 
@@ -527,6 +574,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
             alreadyPresent: 0,
             collisions: [],
             copied: 0,
+            skippedLive: [],
         };
 
         for (const file of rollouts) {
@@ -565,6 +613,15 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
                 continue;
             }
 
+            const holders = holdersOfPath(heldPaths, file.path, realpath);
+
+            if (holders.length > 0) {
+                // A rollout a live `codex` still appends to would copy half-written. Leave it for a
+                // later run, which finds it again once the process is gone.
+                source.skippedLive.push({ nativeId: file.nativeId, path: file.path, holders });
+                continue;
+            }
+
             source.toCopy += 1;
             claimedBySource.set(file.nativeId, { home, file });
             planned.push({ source, file, destination: join(destinationSessions, file.relativePath) });
@@ -575,18 +632,35 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         report.totals.toCopy += source.toCopy;
         report.totals.alreadyPresent += source.alreadyPresent;
         report.totals.collisions += source.collisions.length;
+        report.totals.skippedLive += source.skippedLive.length;
     }
 
+    const destinationState = join(destination, GLOBAL_STATE_FILE);
+
+    // A home in use is not a refusal by itself: the copy only adds files its holders never touch,
+    // and a rollout still being written was skipped above. Only the two operations that would pull
+    // something out from under a live process still refuse.
     for (const busy of report.busy) {
-        if (busy.status === "busy") {
-            report.refusals.push({
-                reason: "busy",
-                detail: `${busy.home} is open in ${[...new Set(busy.holders.map((h) => `${h.command}(${h.pid})`))].join(", ")}`,
-            });
-        } else if (busy.status === "unknown") {
+        if (busy.status === "unknown") {
             report.refusals.push({
                 reason: "busy",
                 detail: `Could not determine whether ${busy.home} is in use; refusing rather than guessing`,
+            });
+        } else if (busy.status === "busy" && options.archiveSource && busy.home !== destination) {
+            report.refusals.push({
+                reason: "busy",
+                detail: `${busy.home} is open in ${describeHolders(busy.holders)}; --archive-source needs a source no process holds`,
+            });
+        }
+    }
+
+    if (options.desktop) {
+        const holders = holdersOfPath(heldPaths, destinationState, realpath);
+
+        if (holders.length > 0) {
+            report.refusals.push({
+                reason: "busy",
+                detail: `Codex Desktop state ${destinationState} is open in ${describeHolders(holders)}; close the Desktop on that home or rerun without --desktop`,
             });
         }
     }
@@ -615,8 +689,6 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         await clonePath(destinationSessions, backup, true);
         report.backups.sessions = backup;
     }
-
-    const destinationState = join(destination, GLOBAL_STATE_FILE);
 
     if (existsSync(destinationState)) {
         const backup = join(backupRoot, GLOBAL_STATE_FILE);

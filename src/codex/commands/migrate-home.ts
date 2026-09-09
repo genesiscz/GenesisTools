@@ -45,7 +45,7 @@ function busyCell(busy: BusyReport): string {
     }
 
     if (busy.status === "busy") {
-        return formatDotStatus("err", "in use");
+        return formatDotStatus("warn", "in use");
     }
 
     return formatDotStatus("warn", "unknown");
@@ -68,7 +68,15 @@ function renderReport(report: MigrateHomeReport): void {
     out.println(homes.toString());
 
     if (report.sources.length > 0) {
-        const sources = createBoxTable(["SOURCE", "ROLLOUTS", "TO COPY", "ALREADY THERE", "COLLISIONS", "COPIED"]);
+        const sources = createBoxTable([
+            "SOURCE",
+            "ROLLOUTS",
+            "TO COPY",
+            "ALREADY THERE",
+            "COLLISIONS",
+            "LIVE, SKIPPED",
+            "COPIED",
+        ]);
 
         for (const source of report.sources) {
             sources.push([
@@ -77,6 +85,7 @@ function renderReport(report: MigrateHomeReport): void {
                 String(source.toCopy),
                 String(source.alreadyPresent),
                 source.collisions.length > 0 ? pc.red(String(source.collisions.length)) : "0",
+                source.skippedLive.length > 0 ? pc.yellow(String(source.skippedLive.length)) : "0",
                 String(source.copied),
             ]);
         }
@@ -88,6 +97,17 @@ function renderReport(report: MigrateHomeReport): void {
         for (const collision of source.collisions) {
             out.println(
                 `  ${pc.red("collision")} ${collision.nativeId}\n    source      ${collision.sourcePath}\n    destination ${collision.destinationPath}\n    payload.id  ${collision.sourceMeta.id ?? "—"} vs ${collision.destinationMeta.id ?? "—"}\n    session_id  ${collision.sourceMeta.sessionId ?? "—"} vs ${collision.destinationMeta.sessionId ?? "—"}`
+            );
+        }
+    }
+
+    for (const source of report.sources) {
+        for (const skipped of source.skippedLive) {
+            const holders = [...new Set(skipped.holders.map((holder) => `${holder.command}(${holder.pid})`))].join(
+                ", "
+            );
+            out.println(
+                `  ${pc.yellow("skipped, held open")} ${skipped.nativeId}\n    ${skipped.path}\n    held by ${holders}; rerun once it is closed`
             );
         }
     }

@@ -202,24 +202,103 @@ describe("migrateHome transcripts", () => {
         expect(existsSync(join(root, "backups"))).toBe(false);
     });
 
-    test("refuses while a home is held open, naming the process", async () => {
+    test("copies while a home's databases are held open, and skips only the rollout a process still writes", async () => {
         const root = scratch();
         const destination = makeHome(root, ".codex", []);
-        const source = makeHome(root, ".codex-alpha", [{ date: "2026-09-07", uuid: uuid("0031") }]);
+        const source = makeHome(root, ".codex-alpha", [
+            { date: "2026-09-07", uuid: uuid("0031") },
+            { date: "2026-09-07", uuid: uuid("0032") },
+        ]);
+        const live = enumerateRollouts(join(source, "sessions")).find((file) => file.nativeId === uuid("0031"));
+        expect(live).toBeDefined();
+        // Codex holds its sqlite files and the rollout it is appending to; the other rollout is free.
+        const holding = (query: OpenFilesQuery): OpenFilesResult =>
+            (query.directories ?? []).includes(join(source, "sessions"))
+                ? [
+                      { pid: 4242, command: "codex", path: join(source, "logs_2.sqlite") },
+                      { pid: 4242, command: "codex", path: live?.path ?? "" },
+                  ]
+                : [];
+
+        const first = await migrateHome({
+            from: [source],
+            to: destination,
+            apply: true,
+            backupRoot: join(root, "backups"),
+            stamp: "s1",
+            inspectOpenFiles: holding,
+        });
+
+        expect(first.refusals).toEqual([]);
+        expect(first.applied).toBe(true);
+        expect(first.busy.find((entry) => entry.home === source)?.status).toBe("busy");
+        expect(first.sources[0]?.copied).toBe(1);
+        expect(first.sources[0]?.skippedLive.map((entry) => entry.nativeId)).toEqual([uuid("0031")]);
+        expect(first.sources[0]?.skippedLive[0]?.holders.map((holder) => holder.pid)).toEqual([4242]);
+        expect(first.totals.skippedLive).toBe(1);
+        expect(enumerateRollouts(join(destination, "sessions")).map((file) => file.nativeId)).toEqual([uuid("0032")]);
+
+        const second = await migrateHome({
+            from: [source],
+            to: destination,
+            apply: true,
+            backupRoot: join(root, "backups"),
+            stamp: "s2",
+            inspectOpenFiles: clear,
+        });
+
+        expect(second.sources[0]?.copied).toBe(1);
+        expect(second.sources[0]?.alreadyPresent).toBe(1);
+        expect(second.totals.skippedLive).toBe(0);
+        expect(enumerateRollouts(join(destination, "sessions"))).toHaveLength(2);
+    });
+
+    test("--archive-source refuses while the source is held open, so a live process never loses its sessions directory", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", []);
+        const source = makeHome(root, ".codex-alpha", [{ date: "2026-09-07", uuid: uuid("0034") }]);
         const before = treeFingerprint(destination);
 
         const report = await migrateHome({
             from: [source],
             to: destination,
             apply: true,
+            archiveSource: true,
             backupRoot: join(root, "backups"),
             stamp: "s",
             inspectOpenFiles: busyOn(source),
         });
 
         expect(report.applied).toBe(false);
-        expect(report.busy.find((entry) => entry.home === source)?.status).toBe("busy");
-        expect(report.refusals.map((refusal) => refusal.detail).join(" ")).toContain("codex(4242)");
+        expect(report.refusals.map((refusal) => refusal.detail).join(" ")).toContain("needs a source no process holds");
+        expect(existsSync(join(source, "sessions"))).toBe(true);
+        expect(treeFingerprint(destination)).toBe(before);
+    });
+
+    test("--desktop refuses while the destination Desktop state is held open, and copies nothing rather than half of the job", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", [], { "local-projects": {}, "project-order": [] });
+        const source = makeHome(root, ".codex-alpha", [{ date: "2026-09-07", uuid: uuid("0035") }], {
+            "local-projects": {},
+            "project-order": [],
+        });
+        const before = treeFingerprint(destination);
+        const stateHeld = (): OpenFilesResult => [
+            { pid: 777, command: "Codex", path: join(destination, ".codex-global-state.json") },
+        ];
+
+        const report = await migrateHome({
+            from: [source],
+            to: destination,
+            apply: true,
+            desktop: true,
+            backupRoot: join(root, "backups"),
+            stamp: "s",
+            inspectOpenFiles: stateHeld,
+        });
+
+        expect(report.applied).toBe(false);
+        expect(report.refusals.map((refusal) => refusal.detail).join(" ")).toContain("Codex Desktop state");
         expect(treeFingerprint(destination)).toBe(before);
     });
 
