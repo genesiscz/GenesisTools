@@ -60,6 +60,9 @@ export async function launchDevtoolsBrowser(port = DEFAULT_PORT): Promise<Launch
         url: "https://www.youtube.com",
         extension: dist,
         userDataDir,
+        // The mkdtemp above is this launch's own dir and holds no logins, so it is
+        // the one case that may run with the local-network checks off.
+        disposableProfile: true,
         // logPath makes the launcher spawn the binary itself and keep its
         // stdio: an all-ignore stdio stalls Chrome before the CDP port opens,
         // and the log is the only account of a failed launch.

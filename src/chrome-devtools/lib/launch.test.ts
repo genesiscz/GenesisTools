@@ -34,17 +34,37 @@ describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", (
 });
 
 describe("launchArgs — an explicit profile dir", () => {
-    test("isolates like --fresh, using the dir given instead of /tmp/cdp-profile-<port>", () => {
+    test("isolates using the dir given instead of /tmp/cdp-profile-<port>", () => {
         const args = launchArgs(9333, { userDataDir: "/tmp/genesis-yt-devtools-chrome-abc", extension: "/dist/ext" });
         expect(args).toContain("--user-data-dir=/tmp/genesis-yt-devtools-chrome-abc");
-        expect(args).toContain("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
         expect(args.some((a) => a === "--user-data-dir=/tmp/cdp-profile-9333")).toBe(false);
+    });
+
+    test("a caller that made the dir for this launch declares it disposable and gets the downgrade", () => {
+        const args = launchArgs(9333, {
+            userDataDir: "/tmp/genesis-yt-devtools-chrome-abc",
+            extension: "/dist/ext",
+            disposableProfile: true,
+        });
+        expect(args).toContain("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
     });
 
     test("a persistent --user-data-dir alone keeps the network protections: it holds logins like the real profile", () => {
         const args = launchArgs(9444, { userDataDir: "/Users/x/.genesis-tools/chrome-devtools/chrome/profile" });
         expect(args).toContain("--user-data-dir=/Users/x/.genesis-tools/chrome-devtools/chrome/profile");
         expect(args.some((a) => a.startsWith("--disable-features"))).toBe(false);
+    });
+
+    // PR #374 review: --extension and --fresh both used to force the downgrade, and
+    // the explicit dir won the path, so `open --user-data-dir <logins> --extension x`
+    // ran the credential-bearing profile with the protections off.
+    test("--extension or --fresh beside a persistent --user-data-dir still keeps the protections", () => {
+        const profile = "/Users/x/.genesis-tools/chrome-devtools/chrome/profile";
+        for (const opts of [{ extension: "/dist/ext" }, { fresh: true }, { fresh: true, extension: "/dist/ext" }]) {
+            const args = launchArgs(9445, { ...opts, userDataDir: profile });
+            expect(args).toContain(`--user-data-dir=${profile}`);
+            expect(args.some((a) => a.startsWith("--disable-features"))).toBe(false);
+        }
     });
 });
 

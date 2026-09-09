@@ -30,21 +30,23 @@ export const COLD_PROFILE_TIMEOUT_MS = 30_000;
 /** Chromium launch flags. Exported for tests: the --user-data-dir rule is what keeps `open` off the real profile. */
 export function launchArgs(
     port: number,
-    opts: { fresh?: boolean; extension?: string; userDataDir?: string }
+    opts: { fresh?: boolean; extension?: string; userDataDir?: string; disposableProfile?: boolean }
 ): string[] {
     const args = [`--remote-debugging-port=${port}`, "--no-first-run", "--no-default-browser-check"];
+    const explicitDir = opts.userDataDir !== undefined;
 
-    if (opts.fresh || opts.extension || opts.userDataDir) {
+    if (opts.fresh || opts.extension || explicitDir) {
         args.push(`--user-data-dir=${opts.userDataDir ?? freshProfileDir(port)}`);
     }
 
-    if (opts.fresh || opts.extension) {
+    if ((!explicitDir && (opts.fresh || opts.extension)) || opts.disposableProfile) {
         // Local/private-network access checks block CDP-driven fetches to dev
-        // servers, so THROWAWAY profiles disable them. A persistent
-        // --user-data-dir profile keeps logins between runs, so it keeps every
-        // protection too, exactly like the user's real profile (plain open /
-        // restart): a session that holds credentials must never run
-        // security-downgraded.
+        // servers, so THROWAWAY profiles disable them: the /tmp dir this launcher
+        // creates, or one the caller declares disposable. An arbitrary
+        // --user-data-dir keeps logins between runs, so it keeps every protection
+        // too, exactly like the user's real profile (plain open / restart) —
+        // including when --extension or --fresh is passed alongside it. A session
+        // that holds credentials must never run security-downgraded.
         args.push("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
     }
 
@@ -94,6 +96,12 @@ export interface LaunchCdpOpts {
     extension?: string;
     /** Explicit profile dir, e.g. a per-launch mkdtemp. Implies isolation like --fresh. */
     userDataDir?: string;
+    /**
+     * The caller made `userDataDir` for this launch and throws it away afterwards.
+     * Only such a profile may run with the local/private-network checks disabled;
+     * a directory the launcher did not create is assumed to hold credentials.
+     */
+    disposableProfile?: boolean;
     timeoutMs?: number;
     /** Own the browser's stdio and write it here. Required to get a pid back, and to see WHY a launch failed. */
     logPath?: string;
@@ -155,6 +163,7 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
         fresh: opts.fresh,
         extension: opts.extension,
         userDataDir: opts.userDataDir,
+        disposableProfile: opts.disposableProfile,
     });
     const url = opts.url ?? "about:blank";
     let pid: number | null = null;

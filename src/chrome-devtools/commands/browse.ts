@@ -69,6 +69,12 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
+            if (opts.fresh && opts.userDataDir) {
+                out.log.error("--fresh and --user-data-dir contradict each other: one is throwaway, the other is not.");
+                out.log.info("  Drop --fresh to reuse the directory, or drop --user-data-dir for a throwaway profile.");
+                process.exit(1);
+            }
+
             if (!opts.fresh && !opts.extension && !opts.userDataDir && listRunningBrowsers().includes(id)) {
                 out.log.error(`${name} is already running. The debug flag cannot be added to a live process.`);
                 out.log.info(`  ${suggest(["restart", "--browser", id, "--port", String(port)])}`);
