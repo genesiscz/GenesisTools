@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# Runs `tools git worktree init --hook` the first time a new worktree is checked out.
+#
+# Why post-checkout: it is the only git hook that fires on `git worktree add`, and it fires
+# no matter who ran it. Claude Code's EnterWorktree, the Agent tool's isolation:"worktree",
+# Codex, Grok, and a human at a terminal all go through the same path. Nothing here depends
+# on a harness-specific hook, which is the point.
+#
+# Args: $1 = previous HEAD, $2 = new HEAD, $3 = 1 for a branch checkout, 0 for a file checkout.
+
+# A file checkout is not a new worktree.
+[ "$3" = "1" ] || exit 0
+
+# In the main checkout `.git` is a directory; in a linked worktree it is a FILE. That single
+# test is what keeps this from re-running on every `git checkout` in the main repo.
+[ -f ".git" ] || exit 0
+
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+REPO_ROOT="${COMMON_DIR%/.git}"
+[ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT" ] || exit 0
+
+# GenesisTools itself carries `tools` at its root; any other repo relies on `tools` from PATH,
+# which is what GenesisTools' install.sh puts there. Never block a checkout either way: a
+# worktree that exists but is not installed is recoverable, an aborted checkout is not.
+if [ -x "$REPO_ROOT/tools" ] && command -v bun >/dev/null 2>&1; then
+    bun "$REPO_ROOT/tools" git worktree init --hook || true
+elif command -v tools >/dev/null 2>&1; then
+    tools git worktree init --hook || true
+fi
+
+exit 0

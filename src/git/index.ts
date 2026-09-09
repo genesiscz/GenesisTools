@@ -20,6 +20,7 @@ import { registerHealthCommand } from "@app/git/commands/health";
 import { registerMergedCommand } from "@app/git/commands/merged";
 import { registerMonsterCommand } from "@app/git/commands/monster";
 import { registerRebaseCascadeCommand } from "@app/git/commands/rebase-cascade";
+import { registerWorktreeCommand } from "@app/git/commands/worktree";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
@@ -50,6 +51,7 @@ registerMergedCommand(program, storage);
 registerRebaseCascadeCommand(program, storage);
 registerConfigCommand(program, storage);
 registerBaseCommand(program, storage);
+registerWorktreeCommand(program, storage);
 enhanceHelp(program);
 
 function showHelpFull(): void {

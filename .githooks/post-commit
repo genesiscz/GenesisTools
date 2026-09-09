@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# Copies this worktree's `.claude/plans` back into the main checkout after each commit.
+#
+# `.claude/plans/` is gitignored, so plans authored inside a worktree are destroyed by
+# `git worktree remove` with no warning. Git has NO worktree-removal hook (19 hooks, none
+# of them fire on removal), so there is nowhere to put a rescue step at the end. Syncing
+# forward on every commit is the closest thing to a guarantee that git offers.
+
+[ -f ".git" ] || exit 0
+
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+REPO_ROOT="${COMMON_DIR%/.git}"
+[ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT" ] || exit 0
+
+# Same resolution as post-checkout: GenesisTools carries `tools`, any other repo relies on
+# `tools` from PATH. Whether anything is copied is decided by `git.worktrees.plansSync`.
+if [ -x "$REPO_ROOT/tools" ] && command -v bun >/dev/null 2>&1; then
+    bun "$REPO_ROOT/tools" git worktree sync-plans --hook || true
+elif command -v tools >/dev/null 2>&1; then
+    tools git worktree sync-plans --hook || true
+fi
+
+exit 0

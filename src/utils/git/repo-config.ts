@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { createGit } from "./core";
@@ -40,11 +40,46 @@ export interface BranchEntry {
     deployDriver?: DeployDriver;
 }
 
+/**
+ * Where `tools git worktree init` puts a new worktree, and what it does once the
+ * directory exists. Absent means unconfigured, and `init` refuses rather than guessing:
+ * a wrong base directory scatters worktrees across the disk and is tedious to undo.
+ */
+export interface WorktreeSection {
+    /**
+     * Base directory for new worktrees. Relative paths resolve against the repo root, so
+     * `.claude/worktrees` nests them inside the repo and `../` puts them beside it.
+     */
+    base?: string;
+    /** Command run inside a freshly created worktree, e.g. `bun install`. Omit to skip. */
+    install?: string;
+    /** Copy `.claude/plans` back to the main checkout on every commit made in a worktree. */
+    plansSync?: boolean;
+}
+
+export const WORKTREE_BASE_PRESETS = [".claude/worktrees", ".worktrees", "../"] as const;
+
 export interface GitSection {
     /** Default PR/MR target and cascade target, e.g. `feature/next`. */
     mainPrBranch?: string;
     /** First match top-down wins. */
     branches?: BranchEntry[];
+    /** Worktree creation policy; see `tools git worktree config`. */
+    worktrees?: WorktreeSection;
+}
+
+/**
+ * Absolute base directory for new worktrees, or null when unconfigured.
+ * Kept separate from validation so a caller can distinguish "not set" from "set wrong".
+ */
+export function worktreeBaseDir(config: RepoConfig, repoRoot: string): string | null {
+    const base = config.git?.worktrees?.base;
+
+    if (typeof base !== "string" || base.trim() === "") {
+        return null;
+    }
+
+    return isAbsolute(base) ? base : resolve(repoRoot, base);
 }
 
 export interface RepoConfig {
@@ -194,6 +229,29 @@ export function validateRepoConfig(raw: unknown): string[] {
             problems.push(`${where}.environment must be a string`);
         }
     });
+
+    const worktrees = git.worktrees;
+
+    if (worktrees !== undefined) {
+        if (!isRecord(worktrees)) {
+            problems.push("`git.worktrees` must be an object");
+        } else {
+            if (worktrees.base !== undefined && (typeof worktrees.base !== "string" || !worktrees.base.trim())) {
+                problems.push("`git.worktrees.base` must be a non-empty string");
+            }
+
+            if (
+                worktrees.install !== undefined &&
+                (typeof worktrees.install !== "string" || !worktrees.install.trim())
+            ) {
+                problems.push("`git.worktrees.install` must be a non-empty command string");
+            }
+
+            if (worktrees.plansSync !== undefined && typeof worktrees.plansSync !== "boolean") {
+                problems.push("`git.worktrees.plansSync` must be a boolean");
+            }
+        }
+    }
 
     return problems;
 }
