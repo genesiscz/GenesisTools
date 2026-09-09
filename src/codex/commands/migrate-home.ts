@@ -163,10 +163,24 @@ function renderReport(report: MigrateHomeReport): void {
     renderCliKeyRow("provenance", report.provenanceNote, 12);
 }
 
-export async function runMigrateHome(options: MigrateHomeCliOptions): Promise<void> {
+/** The prompts this command asks. Injected so the order of the questions is testable. */
+export interface MigrateHomeInteraction {
+    interactive(): boolean;
+    confirm(options: { message: string; initialValue: boolean; danger?: boolean }): Promise<boolean>;
+}
+
+const terminalInteraction: MigrateHomeInteraction = {
+    interactive: isInteractive,
+    confirm: (options) => p.confirm(options),
+};
+
+export async function runMigrateHome(
+    options: MigrateHomeCliOptions,
+    interaction: MigrateHomeInteraction = terminalInteraction
+): Promise<void> {
     const destination = expandTilde(options.to ?? join(homedir(), ".codex"));
     const from = homeList(options.from);
-    const interactive = isInteractive();
+    const interactive = interaction.interactive();
     const base: MigrateHomeOptions = { from: from.length > 0 ? from : undefined, to: destination };
 
     let desktop = options.desktop === true;
@@ -180,8 +194,19 @@ export async function runMigrateHome(options: MigrateHomeCliOptions): Promise<vo
     }
 
     if (!options.desktop && interactive && !options.json) {
-        desktop = await p.confirm({
+        desktop = await interaction.confirm({
             message: "Also merge Codex Desktop projects and thread assignments?",
+            initialValue: false,
+        });
+    }
+
+    // Asked BEFORE the plan, like `--desktop` above it. `--archive-source` has refusals of its
+    // own (a source a live process holds), and asking after the plan meant those refusals were
+    // never evaluated: the user confirmed a copy of N rollouts, said yes to archiving, and the
+    // apply run then refused and copied nothing, after two confirmations that promised N.
+    if (!options.archiveSource && interactive && !options.json) {
+        archiveSource = await interaction.confirm({
+            message: "Rename each source sessions/ to sessions.migrated-<stamp> after the copy verifies?",
             initialValue: false,
         });
     }
@@ -214,7 +239,7 @@ export async function runMigrateHome(options: MigrateHomeCliOptions): Promise<vo
         return;
     }
 
-    const proceed = await p.confirm({
+    const proceed = await interaction.confirm({
         message: `Copy ${report.totals.toCopy} rollout(s) into ${report.destination} now?`,
         initialValue: false,
         danger: true,
@@ -223,13 +248,6 @@ export async function runMigrateHome(options: MigrateHomeCliOptions): Promise<vo
     if (!proceed) {
         out.log.info("Nothing was written.");
         return;
-    }
-
-    if (!options.archiveSource) {
-        archiveSource = await p.confirm({
-            message: "Rename each source sessions/ to sessions.migrated-<stamp> after the copy verifies?",
-            initialValue: false,
-        });
     }
 
     apply = true;
