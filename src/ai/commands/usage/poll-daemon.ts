@@ -18,6 +18,7 @@ const ANTHROPIC_SUB = "anthropic-sub";
  */
 export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]) {
     const out: Array<{
+        accountId: string;
         accountName: string;
         key: string;
         kind: AccountUsageSnapshot["limits"][number]["kind"];
@@ -37,6 +38,7 @@ export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]) {
             }
 
             out.push({
+                accountId: snapshot.accountId,
                 accountName: snapshot.accountName,
                 key: window.key,
                 kind: window.kind,

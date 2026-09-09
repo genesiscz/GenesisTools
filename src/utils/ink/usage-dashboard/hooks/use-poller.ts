@@ -33,6 +33,7 @@ export type PollOutcome =
 
 /** Every window that should raise a notification, flattened out of a round. */
 export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]): Array<{
+    accountId: string;
     accountName: string;
     key: string;
     kind: AccountUsageSnapshot["limits"][number]["kind"];
@@ -41,6 +42,7 @@ export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]): A
     resetsAt: string | null;
 }> {
     const out: Array<{
+        accountId: string;
         accountName: string;
         key: string;
         kind: AccountUsageSnapshot["limits"][number]["kind"];
@@ -62,6 +64,7 @@ export function notifiableWindows(snapshots: readonly AccountUsageSnapshot[]): A
             }
 
             out.push({
+                accountId: snapshot.accountId,
                 accountName: snapshot.accountName,
                 key: window.key,
                 kind: window.kind,
