@@ -2,15 +2,20 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { MissingCredential } from "@genesiscz/utils/ai/providers/account-features";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
+import { isSecureRef } from "@genesiscz/utils/security";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
+import type { StoredGrantSource } from "./client";
 import { grokAuthPath } from "./paths";
 import { refreshGrokAuthOrThrow } from "./refresh";
+import { resolveStoredGrokGrant } from "./stored-grant";
 
 export interface ResolvedGrokSubToken {
     token: string;
-    /** Auth file the token was read from (also usable for reload-on-expiry). */
-    authPath: string;
+    /** Auth file the token was read from (also usable for reload-on-expiry). Absent for a stored grant. */
+    authPath?: string;
+    /** Set for a grant `tools grok login` stored in the vault: the way to a fresh token, and the fix when that fails. */
+    storedGrant?: StoredGrantSource;
     account: { name: string; label?: string };
 }
 
@@ -106,6 +111,24 @@ export async function resolveGrokSubToken(
     if (!account.tokens.authFile && !account.tokens.accessToken) {
         const refusal = grokCredentialRefusal(account.name);
         throw new Error(`${refusal.message} Run: ${refusal.remedy}`);
+    }
+
+    // A grant our own `tools grok login` stored in the vault. It carries its own refresh
+    // token, so expiry is answered by the OIDC refresh grant against THAT grant, and the
+    // Grok CLI's file is never read for it: nothing in that file is this account's.
+    if (!account.tokens.authFile && (isSecureRef(account.tokens.accessToken) || account.tokens.refreshToken)) {
+        const name = account.name;
+
+        return {
+            token: await resolveStoredGrokGrant(name, {
+                ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
+            }),
+            storedGrant: {
+                refresh: (_reason, force) => resolveStoredGrokGrant(name, { force }),
+                hint: `Run: tools grok login ${name}`,
+            },
+            account: pick(account),
+        };
     }
 
     const authPath = account.tokens.authFile ?? grokAuthPath();

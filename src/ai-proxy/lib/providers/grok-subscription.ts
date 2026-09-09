@@ -68,10 +68,11 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         // token via the account's authFile reference (same store the other
         // subscription providers bill through).
         if (account.grok?.accountName) {
-            const { token, authPath } = await resolveGrokSubToken(account.grok.accountName);
+            const { token, authPath, storedGrant } = await resolveGrokSubToken(account.grok.accountName);
             const client = new GrokSubscriptionClient({
                 token,
-                authPath,
+                ...(authPath === undefined ? {} : { authPath }),
+                ...(storedGrant === undefined ? {} : { storedGrant }),
                 baseUrl: account.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL,
             });
 

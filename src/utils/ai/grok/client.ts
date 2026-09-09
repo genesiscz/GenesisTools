@@ -8,9 +8,20 @@ import { GROK_CLI_CHAT_PROXY_BASE_URL, grokAuthPath } from "./paths";
 import { refreshGrokAuth, refreshGrokAuthOrThrow } from "./refresh";
 import type { GrokBillingConfig, GrokCreditsConfig, GrokProbeResult, GrokSettings } from "./types";
 
+/**
+ * A grant `tools grok login` stored in the vault, as the client consumes it: no auth file
+ * to reload or rewrite, one way to a fresh token, and the command to run when that fails.
+ */
+export interface StoredGrantSource {
+    refresh(reason: string, force: boolean): Promise<string>;
+    hint: string;
+}
+
 export interface GrokSubscriptionClientOptions {
     token: string;
     authPath?: string;
+    /** Set for a stored grant. The client then never touches an auth file. */
+    storedGrant?: StoredGrantSource;
     baseUrl?: string;
     clientVersion?: string;
     /**
@@ -32,6 +43,7 @@ export interface GrokSubscriptionClientOptions {
 export class GrokSubscriptionClient {
     private token: string;
     private readonly authPath: string;
+    private readonly storedGrant: StoredGrantSource | undefined;
     private readonly baseUrl: string;
     private readonly clientVersion?: string;
     private readonly probe: boolean;
@@ -39,6 +51,7 @@ export class GrokSubscriptionClient {
     constructor(options: GrokSubscriptionClientOptions) {
         this.token = options.token;
         this.authPath = options.authPath ?? grokAuthPath();
+        this.storedGrant = options.storedGrant;
         this.baseUrl = options.baseUrl ?? GROK_CLI_CHAT_PROXY_BASE_URL;
         this.clientVersion = options.clientVersion;
         this.probe = options.probe ?? false;
@@ -67,6 +80,11 @@ export class GrokSubscriptionClient {
     }
 
     async reloadTokenFromDisk(): Promise<string | null> {
+        // A stored grant has no file; its refresh path is the only way to a newer token.
+        if (this.storedGrant) {
+            return null;
+        }
+
         const entries = await readAuthFileAsync(this.authPath);
         const active = getActiveAuthEntry(entries);
 
@@ -82,8 +100,14 @@ export class GrokSubscriptionClient {
         const claims = decodeJwtClaims(this.token);
 
         if (isTokenExpired(claims)) {
-            throw new GrokAuthExpiredError(this.authPath);
+            throw this.expiredError();
         }
+    }
+
+    private expiredError(): GrokAuthExpiredError {
+        return this.storedGrant
+            ? new GrokAuthExpiredError(undefined, { hint: this.storedGrant.hint })
+            : new GrokAuthExpiredError(this.authPath);
     }
 
     private async ensureFreshTokenInMemory(): Promise<void> {
@@ -117,6 +141,13 @@ export class GrokSubscriptionClient {
             return;
         }
 
+        if (this.storedGrant) {
+            throw new Error(
+                `Refusing to refresh the stored grok-sub grant during a diagnosis (${reason}): ` +
+                    `the OIDC grant is single-use. ${this.storedGrant.hint}`
+            );
+        }
+
         throw new Error(
             `Refusing to refresh the Grok token in ${this.authPath} during a diagnosis (${reason}): ` +
                 "the OIDC grant is single-use and refreshing would rotate the Grok CLI's refresh token " +
@@ -131,6 +162,11 @@ export class GrokSubscriptionClient {
      */
     private async refreshToken(reason: string): Promise<void> {
         this.assertMayRefresh(reason);
+
+        if (this.storedGrant) {
+            this.token = await this.storedGrant.refresh(reason, false);
+            return;
+        }
 
         this.token = await refreshGrokAuthOrThrow({
             authPath: this.authPath,
@@ -159,7 +195,9 @@ export class GrokSubscriptionClient {
                 // hand back that same credential and skip the retry entirely.
                 this.assertMayRefresh(`upstream returned ${response.status}`);
 
-                const refreshed = await refreshGrokAuth({ path: this.authPath, force: true });
+                const refreshed = this.storedGrant
+                    ? await this.storedGrant.refresh(`upstream returned ${response.status}`, true)
+                    : await refreshGrokAuth({ path: this.authPath, force: true });
 
                 if (refreshed && refreshed !== previousToken) {
                     this.token = refreshed;
@@ -191,7 +229,7 @@ export class GrokSubscriptionClient {
                 "grok: upstream returned auth-status, throwing GrokAuthExpiredError"
             );
 
-            throw new GrokAuthExpiredError(this.authPath);
+            throw this.expiredError();
         }
 
         return response;

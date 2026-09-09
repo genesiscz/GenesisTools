@@ -2,8 +2,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
 import { grokCredentialRefusal, resolveGrokSubToken } from "../../../grok/account";
-import { GrokSubscriptionClient } from "../../../grok/client";
-import { grokAuthPath } from "../../../grok/paths";
+import { GrokSubscriptionClient, type GrokSubscriptionClientOptions } from "../../../grok/client";import { grokAuthPath } from "../../../grok/paths";
 import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
 import { fileMtimeMs } from "../../../usage-poll/credential-stamp";
 import type {
@@ -47,9 +46,11 @@ export interface GrokUsageClient {
     getSettings(): Promise<GrokSettings>;
 }
 
+export type GrokUsageClientArgs = Pick<GrokSubscriptionClientOptions, "token" | "authPath" | "storedGrant" | "probe">;
+
 export interface GrokUsageDeps {
     resolveToken?: typeof resolveGrokSubToken;
-    createClient?(args: { token: string; authPath: string; probe: boolean }): GrokUsageClient;
+    createClient?(args: GrokUsageClientArgs): GrokUsageClient;
 }
 
 type PeriodKind = Extract<LimitKind, "weekly" | "monthly">;
@@ -170,10 +171,13 @@ export async function pollGrokAccount(
         ...(opts.probe === undefined ? {} : { noRefresh: opts.probe }),
     });
 
-    const create =
-        deps.createClient ??
-        ((args: { token: string; authPath: string; probe: boolean }) => new GrokSubscriptionClient(args));
-    const client = create({ token: resolved.token, authPath: resolved.authPath, probe: opts.probe ?? false });
+    const create = deps.createClient ?? ((args: GrokUsageClientArgs) => new GrokSubscriptionClient(args));
+    const client = create({
+        token: resolved.token,
+        ...(resolved.authPath === undefined ? {} : { authPath: resolved.authPath }),
+        ...(resolved.storedGrant === undefined ? {} : { storedGrant: resolved.storedGrant }),
+        probe: opts.probe ?? false,
+    });
 
     const [credits, settings] = await withTimeout(
         Promise.all([client.getCredits(), client.getSettings()]),
@@ -201,10 +205,16 @@ export async function pollGrokAccount(
 }
 
 /**
- * `grok login` rewrites the CLI's auth file, and that is the only signal we get: the
- * subscription has no login flow of ours to clear the poll gate from.
+ * A file-referenced account is re-logged-in with `grok login`, which rewrites the CLI's
+ * auth file, and that rewrite is the only signal we get. A grant stored by `tools grok
+ * login` has no file to stat, and the login itself clears the gate; the CLI's default
+ * file says nothing about that account.
  */
 export function grokCredentialStamp(account: AccountEntry): Promise<number | undefined> {
+    if (account.credentials.authFile === undefined && account.credentials.accessToken !== undefined) {
+        return Promise.resolve(undefined);
+    }
+
     return fileMtimeMs(account.credentials.authFile ?? grokAuthPath());
 }
 

@@ -15,7 +15,8 @@ tools grok read --name fix-auth [--turn 2] [--format compact|json|jsonl|events|r
 tools grok tail --name fix-auth [--format compact]   # follow the running turn; stops when the turn ends
 tools grok sessions
 
-tools grok login [name] [--home ~/.grok]     # runs `grok login` when the file is missing, then binds its auth.json
+tools grok login [name]                      # browser OIDC login (PKCE) stored in the vault, no Grok CLI needed
+tools grok login [name] --home ~/.grok       # the same login written into that GROK_HOME's auth.json instead
 tools grok usage [--json] [--range 24h]      # the shared usage dashboard pinned to this provider
 ```
 

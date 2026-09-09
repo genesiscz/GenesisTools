@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { AccountEntry } from "../../../config/schema";
 import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
-import type { GrokUsageClient } from "./usage";
+import type { GrokUsageClient, GrokUsageDeps } from "./usage";
 import {
-    grokMissingCredential,
-    pollGrokAccount,
+    grokCredentialStamp,
+    grokMissingCredential,    pollGrokAccount,
     toCreditWindow,
     toGrokLimits,
     toProductWindows,
@@ -229,5 +229,34 @@ describe("grokMissingCredential", () => {
         ["a stored token", { accessToken: "token-invented" }],
     ] as const)("says nothing for an account holding %s", (_label, credentials) => {
         expect(grokMissingCredential(entry("grok", credentials))).toBeUndefined();
+    });
+});
+describe("a grok-sub account with a stored grant", () => {
+    it("hands the grant's refresh path to the client instead of an auth file", async () => {
+        const source = { hint: "Run: tools grok login work", refresh: async () => "rotated" };
+        let seen: Parameters<NonNullable<GrokUsageDeps["createClient"]>>[0] | undefined;
+
+        await pollGrokAccount(
+            entry("work", { accessToken: "stored-invented" }),
+            {},
+            {
+                resolveToken: async () => ({
+                    token: "stored-invented",
+                    storedGrant: source,
+                    account: { name: "work" },
+                }),
+                createClient: (args) => {
+                    seen = args;
+                    return client();
+                },
+            }
+        );
+
+        expect(seen?.storedGrant).toBe(source);
+        expect(seen?.authPath).toBeUndefined();
+    });
+
+    it("has no credential file to stamp", async () => {
+        expect(await grokCredentialStamp(entry("work", { accessToken: "stored-invented" }))).toBeUndefined();
     });
 });

@@ -24,6 +24,16 @@ mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     },
 }));
 
+/** The vault path is a separate unit (stored-grant.test.ts); here only the routing to it is pinned. */
+const storedGrantCalls: Array<{ name: string; options: unknown }> = [];
+
+mock.module("./stored-grant", () => ({
+    resolveStoredGrokGrant: async (name: string, options: unknown) => {
+        storedGrantCalls.push({ name, options });
+        return "stored-token";
+    },
+}));
+
 import { resolveGrokSubToken } from "./account";
 import { GrokAuthExpiredError } from "./auth-errors";
 import type { GrokAuthEntry } from "./types";
@@ -252,5 +262,36 @@ describe("resolveGrokSubToken: an expired stored copy beside the default auth fi
 
         await expect(resolveGrokSubToken("grok", { noRefresh: true })).rejects.toThrow(/disabled for diagnosis/);
         expect(calls).toHaveLength(0);
+    });
+});
+
+describe("resolveGrokSubToken: a grant stored by tools grok login", () => {
+    it("routes to the stored grant, never to an auth file, and hands back its refresh path", async () => {
+        account = {
+            name: "grok",
+            provider: "grok-sub",
+            tokens: { accessToken: FRESH, refreshToken: "refresh-stored" },
+        };
+        storedGrantCalls.length = 0;
+
+        const resolved = await resolveGrokSubToken("grok", { noRefresh: true });
+
+        expect(resolved.token).toBe("stored-token");
+        expect(resolved.authPath).toBeUndefined();
+        expect(resolved.storedGrant?.hint).toBe("Run: tools grok login grok");
+        expect(storedGrantCalls).toEqual([{ name: "grok", options: { noRefresh: true } }]);
+
+        await resolved.storedGrant?.refresh("upstream returned 401", true);
+        expect(storedGrantCalls[1]).toEqual({ name: "grok", options: { force: true } });
+    });
+
+    // Negative control: a plain stored token with no refresh token is the older shape and
+    // keeps the identity-proof path (the describe above), not the vault path.
+    it("a stored token without a refresh token still resolves as before", async () => {
+        account = { name: "grok", provider: "grok-sub", tokens: { accessToken: FRESH } };
+        storedGrantCalls.length = 0;
+
+        expect((await resolveGrokSubToken("grok")).token).toBe(FRESH);
+        expect(storedGrantCalls).toEqual([]);
     });
 });

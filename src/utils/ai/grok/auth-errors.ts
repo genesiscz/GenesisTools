@@ -9,10 +9,17 @@ export class GrokAuthExpiredError extends Error {
      * dead network on the way to the token endpoint). The poll gate reads it: a refresh
      * that never reached the issuer is a transport failure, not a dead session.
      */
-    constructor(authPath?: string, options?: { cause?: unknown }) {
+    /**
+     * `hint` replaces the auth-file recovery lines for a grant that lives in the vault,
+     * where "run the Grok CLI" would point at a file this account never reads.
+     */
+    constructor(authPath?: string, options?: { cause?: unknown; hint?: string }) {
         const resolvedPath = authPath ?? grokAuthPath();
-        const recoveryHint = formatAuthRecoveryHint(resolvedPath);
-        super(`Grok session token expired or invalid.\n${recoveryHint}`, options);
+        const recoveryHint = options?.hint ?? formatAuthRecoveryHint(resolvedPath);
+        super(
+            `Grok session token expired or invalid.\n${recoveryHint}`,
+            options?.cause === undefined ? undefined : { cause: options.cause }
+        );
         this.name = "GrokAuthExpiredError";
         this.authPath = resolvedPath;
         this.recoveryHint = recoveryHint;

@@ -1,12 +1,13 @@
-import { dirname } from "node:path";
 import { grokHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
+import { resolveSecret } from "@genesiscz/utils/security";
 import { decodeJwtClaims, getActiveAuthEntry, readAuthFileAsync } from "../../../grok/auth";
-import { grokAuthPath, resolveGrokHome } from "../../../grok/paths";
+import { grokAuthPath } from "../../../grok/paths";
 import { GrokSubResolver } from "../../../resolvers/GrokSubResolver";
 import type { AccountFeatures } from "../../account-features";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../../plugin-types";
 import { discoverGrokHomes } from "./discover";
+import { grokLogin } from "./login";
 import { grokSpendScope } from "./spend";
 import { grokUsage } from "./usage";
 
@@ -35,7 +36,8 @@ export const grokSubPlugin: ProviderPlugin = {
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {
-        fields: ["authFile"],
+        // A named login owns a vault grant; `--home` / `--auth-file` keep a file reference.
+        fields: ["authFile", "accessToken", "refreshToken"],
         envKeys: [],
     },
 
@@ -72,38 +74,22 @@ export const grokSubPlugin: ProviderPlugin = {
 
     accounts: {
         presentation,
-        logoutTargets: ["authFile"],
+        login: grokLogin,
+        nativeAuthFile: () => grokAuthPath(),
+        logoutTargets: ["oauth", "authFile"],
         usage: grokUsage,
         discoverHomes: () => discoverGrokHomes(),
 
         /**
-         * No `login`: xAI has no in-process flow, so the Grok CLI does the browser
-         * round-trip and we bind the file it writes.
+         * Claims out of the auth file the account references, or out of its stored grant.
+         * Decode only, no OIDC grant; resolving the stored token is a READ.
          */
-        externalLogin(ctx) {
-            // `grok login` writes `$GROK_HOME/auth.json`, so an explicit auth file
-            // has to DICTATE the home, not just be reported alongside it: with
-            // `--auth-file` and no `--home` the CLI wrote the default home and the
-            // binder then reported "still no credential" (PR #360 review t14).
-            const home = ctx.home ?? (ctx.authFile ? dirname(ctx.authFile) : resolveGrokHome());
-
-            return {
-                command: ["grok", "login"],
-                env: { GROK_HOME: home },
-                authFile: ctx.authFile ?? grokAuthPath(home),
-            };
-        },
-
-        /** Claims out of the auth file the account references. Decode only, no OIDC grant. */
         async identityOf(account) {
             const authFile = account.credentials.authFile;
-
-            if (!authFile) {
-                return undefined;
-            }
-
-            const active = getActiveAuthEntry(await readAuthFileAsync(authFile));
-            const claims = active ? decodeJwtClaims(active.key) : null;
+            const token = authFile
+                ? getActiveAuthEntry(await readAuthFileAsync(authFile))?.key
+                : await resolveSecret(account.credentials.accessToken);
+            const claims = token ? decodeJwtClaims(token) : null;
 
             if (!claims) {
                 return undefined;

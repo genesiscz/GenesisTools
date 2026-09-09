@@ -89,7 +89,7 @@ async function resolveTokenEndpoint(issuer: string): Promise<string> {
  * file from that map would delete all of it, so the rewrite patches the raw
  * document and the map is used only to reason about entries.
  */
-async function readAuthDocument(
+export async function readAuthDocument(
     authPath: string,
     knownEntries: Map<string, GrokAuthEntry>
 ): Promise<Record<string, unknown>> {
@@ -114,7 +114,7 @@ async function readAuthDocument(
     return Object.fromEntries(knownEntries);
 }
 
-async function writeAuthFileAtomically(authPath: string, document: Record<string, unknown>): Promise<void> {
+export async function writeAuthFileAtomically(authPath: string, document: Record<string, unknown>): Promise<void> {
     const temp = `${authPath}.${process.pid}.${Date.now()}.tmp`;
     const payload = `${SafeJSON.stringify(document, { strict: true }, 2)}\n`;
 
@@ -146,7 +146,7 @@ function redactTokens(text: string): string {
  * A refusal is worth logging, the raw body is not: OAuth error payloads
  * sometimes quote the submitted `refresh_token` back at you.
  */
-function describeTokenError(body: string): string {
+export function describeTokenError(body: string): string {
     try {
         const parsed = SafeJSON.parse(body, { strict: true }) as { error?: unknown; error_description?: unknown };
         const parts = [parsed.error, parsed.error_description].filter(

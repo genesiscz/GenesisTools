@@ -222,3 +222,87 @@ describe("GrokSubscriptionClient probe purity", () => {
         expect(calls).toContain(`${ISSUER}/oauth2/token`);
     });
 });
+
+/**
+ * A grant `tools grok login` stored in the vault: the client has no auth file to reload or
+ * rewrite, so every path that used to touch disk goes through the stored grant's own
+ * refresh, and the recovery hint names the login, not a file.
+ */
+describe("GrokSubscriptionClient with a stored grant", () => {
+    function storedGrant(grant: (reason: string, force: boolean) => Promise<string>) {
+        const calls: Array<{ reason: string; force: boolean }> = [];
+
+        return {
+            calls,
+            source: {
+                hint: "Run: tools grok login work",
+                refresh: async (reason: string, force: boolean) => {
+                    calls.push({ reason, force });
+                    return grant(reason, force);
+                },
+            },
+        };
+    }
+
+    it("refreshes an expired token through the grant, never through a file", async () => {
+        const calls: string[] = [];
+        stubFetch({ calls, apiStatuses: [200] });
+        const grant = storedGrant(async () => ROTATED);
+        const client = new GrokSubscriptionClient({ token: EXPIRED, storedGrant: grant.source, baseUrl: BASE_URL });
+
+        await client.getModels();
+
+        expect(client.getToken()).toBe(ROTATED);
+        expect(grant.calls).toEqual([{ reason: "expired in memory and on disk", force: false }]);
+        expect(calls).toEqual([`${BASE_URL}/models`]);
+    });
+
+    it("asks the grant for a forced refresh after a 401 and retries once", async () => {
+        const calls: string[] = [];
+        stubFetch({ calls, apiStatuses: [401, 200] });
+        const grant = storedGrant(async () => ROTATED);
+        const client = new GrokSubscriptionClient({ token: FRESH, storedGrant: grant.source, baseUrl: BASE_URL });
+
+        await client.getModels();
+
+        expect(client.getToken()).toBe(ROTATED);
+        expect(grant.calls).toEqual([{ reason: "upstream returned 401", force: true }]);
+        expect(calls.filter((url) => url === `${BASE_URL}/models`)).toHaveLength(2);
+    });
+
+    it("a probe refuses to refresh and names the login", async () => {
+        stubFetch({ calls: [], apiStatuses: [200] });
+        const grant = storedGrant(async () => ROTATED);
+        const client = new GrokSubscriptionClient({
+            token: EXPIRED,
+            storedGrant: grant.source,
+            baseUrl: BASE_URL,
+            probe: true,
+        });
+
+        await expect(client.getSettings()).rejects.toThrow(/stored grok-sub grant.*Run: tools grok login work/);
+        expect(grant.calls).toEqual([]);
+    });
+
+    it("an expired token it cannot refresh reports the login, not an auth file", async () => {
+        stubFetch({ calls: [], apiStatuses: [200] });
+        const client = new GrokSubscriptionClient({
+            token: EXPIRED,
+            storedGrant: { hint: "Run: tools grok login work", refresh: async () => ROTATED },
+            baseUrl: BASE_URL,
+        });
+
+        const failure = (() => {
+            try {
+                client.assertTokenFresh();
+                return undefined;
+            } catch (err) {
+                return err;
+            }
+        })();
+
+        expect(failure).toBeInstanceOf(GrokAuthExpiredError);
+        expect(String(failure)).toContain("Run: tools grok login work");
+        expect(String(failure)).not.toContain("Auth file:");
+    });
+});
