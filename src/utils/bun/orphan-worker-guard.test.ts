@@ -9,6 +9,16 @@ import { skip } from "@genesiscz/utils/test/skip";
 const guardPath = join(import.meta.dir, "orphan-worker-guard.ts");
 const leftovers: number[] = [];
 
+/**
+ * CI exports `GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS=1` for the whole `bun run test` step, and
+ * `installOrphanWorkerGuard` returns immediately on that value. A child inheriting it would make
+ * this suite report on the environment instead of on the guard, so every spawn pins the flag to
+ * what its own case needs: armed children install the guard, the control child never does.
+ */
+function childEnv(guard: boolean): Record<string, string | undefined> {
+    return { ...process.env, GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS: guard ? "0" : "1" };
+}
+
 /** The watchdog is a `/bin/sh` whose script embeds the guarded pid, so pgrep finds it by that. */
 function watchdogRunning(selfPid: number): boolean {
     const found = Bun.spawnSync(["pgrep", "-f", `self=${selfPid}`], { env: process.env });
@@ -60,7 +70,7 @@ await Bun.write(${SafeJSON.stringify(pidFile)}, String(child.pid));
 await Bun.sleep(1 << 30);
 `,
         ],
-        env: process.env,
+        env: childEnv(opts.guard),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -155,7 +165,7 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
 
         const child = Bun.spawn({
             cmd: [process.execPath, childFile],
-            env: process.env,
+            env: childEnv(true),
             stdin: "ignore",
             stdout: "ignore",
             stderr: "ignore",
