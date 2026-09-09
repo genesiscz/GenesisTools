@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import {
     agentFillListingOptions,
     agentWaveStopAfter,
-    canUseMetadataListing,
     listingIndexSlice,
     listingPassesDate,
     listingStalePaths,
@@ -12,7 +11,7 @@ import {
     relevanceParseCap,
     selectRelevanceParseFiles,
     shouldLoadAgentListing,
-} from "./search";
+} from "@genesiscz/utils/agent-sessions/search-plan";
 import type { SearchResult } from "./types";
 
 function result(overrides: Partial<SearchResult> & Pick<SearchResult, "sessionId" | "isSubagent">): SearchResult {
@@ -221,21 +220,6 @@ describe("mergeSearchWaves", () => {
         const merged = mergeSearchWaves(mains, agents, { limit: 2 });
 
         expect(merged.map((s) => s.sessionId)).toEqual(["main-a", "agent-b"]);
-    });
-});
-
-describe("canUseMetadataListing", () => {
-    it("takes the fast path for a plain listing", () => {
-        expect(canUseMetadataListing({})).toBe(true);
-        expect(canUseMetadataListing({ since: new Date(0) })).toBe(true);
-    });
-
-    it("refuses the fast path for filters the listing cannot apply", () => {
-        // PR #343 review t17: these silently returned UNFILTERED results,
-        // because the listing branch only ever applied since/until.
-        expect(canUseMetadataListing({ excludeCurrentSession: "abc" })).toBe(false);
-        expect(canUseMetadataListing({ conversationDate: new Date(0) })).toBe(false);
-        expect(canUseMetadataListing({ conversationDateUntil: new Date(0) })).toBe(false);
     });
 });
 

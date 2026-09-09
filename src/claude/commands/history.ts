@@ -3,20 +3,25 @@ import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { extractShellQuirks, renderShellQuirksMarkdown } from "@app/claude/lib/history/extract-shell-quirks";
 import { HISTORY_TABLE_HEADERS, historyTablePlainRow } from "@app/claude/lib/history/format-table";
+import { searchIndexedClaudeHistory } from "@app/claude/lib/history/indexed-search";
 import {
     type AssistantMessage,
     type ConversationMessage,
     getAvailableProjects,
-    listConversationSummaries,
     parseDate,
     type SearchFilters,
     type SearchResult,
-    searchConversations,
     type TextBlock,
     type ToolUseBlock,
     type UserMessage,
 } from "@app/claude/lib/history/search";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import {
+    registerHistoryIndexCommand,
+    resolveHistoryQuery,
+    warnUnresolvedIdentities,
+} from "@genesiscz/utils/agent-sessions/history-cli";
+import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
@@ -256,6 +261,7 @@ async function runInteractive(): Promise<SearchFilters> {
 
 export function registerHistoryCommand(program: Command): void {
     const historyCmd = program.command("history").description("Search Claude Code conversation history");
+    registerHistoryIndexCommand(historyCmd, createClaudeAdapter());
 
     historyCmd
         .argument("[query]", "Search query (fuzzy match by default)")
@@ -285,6 +291,7 @@ export function registerHistoryCommand(program: Command): void {
         .option("--exclude-agents", "Exclude subagent conversations")
         .option("--exclude-thinking", "Exclude thinking blocks from search")
         .option("--format <type>", "Output format: ai (default), json", "ai")
+        .option("--json", "Machine-readable output (same as --format json)")
         .option(
             "--summary-only",
             "Search the metadata cache only: titles, summaries and the first 5000 chars of user text (faster)"
@@ -297,7 +304,8 @@ export function registerHistoryCommand(program: Command): void {
         .option("--conv-date <date>", "Filter by conversation start date (not message date)")
         .option("--conv-date-until <date>", "Filter conversation start date until")
         .option("--list-summaries", "Quick list of conversation topics (no content search)")
-        .action(async (query, options) => {
+        .action(async (positional, options) => {
+            const query = resolveHistoryQuery(positional, options);
             try {
                 let filters: SearchFilters;
 
@@ -329,7 +337,9 @@ export function registerHistoryCommand(program: Command): void {
                         tool: options.tool,
                         since: options.since ? parseDate(options.since) : undefined,
                         until: options.until ? parseDate(options.until) : undefined,
-                        limit: parseInt(options.limit, 10),
+                        // `--limit 0` has always meant "no ceiling" here; the shared service
+                        // reads a literal 0 as an empty result.
+                        limit: parseInt(options.limit, 10) || undefined,
                         context: parseInt(options.context, 10),
                         exact: options.exact,
                         regex: options.regex,
@@ -348,19 +358,35 @@ export function registerHistoryCommand(program: Command): void {
 
                 const p = profiler.scope("claude-history");
                 const results = options.listSummaries
-                    ? await p.measureAsync("history.list-summaries", () => listConversationSummaries(filters))
-                    : await p.measureAsync("history.search", () => searchConversations(filters));
+                    ? await p.measureAsync("history.list-summaries", async () => {
+                          // "Conversation topics" means the ones that have a topic: the previous
+                          // engine skipped every session with neither a summary nor a custom
+                          // title, and applied --limit only to what survived that filter.
+                          const listed = await searchIndexedClaudeHistory({
+                              filters: { ...filters, query: undefined, summaryOnly: true, limit: undefined },
+                          });
+                          const titled = listed.filter((result) => result.summary || result.customTitle);
+
+                          return filters.limit === undefined ? titled : titled.slice(0, filters.limit);
+                      })
+                    : await p.measureAsync("history.search", () => searchIndexedClaudeHistory({ filters }));
                 // No p.summary() here: both callees already summarise the same
                 // cached `claude-history` scope at each return, so a second call
                 // printed and persisted every row twice (PR #343 review t3 round
                 // 13). Summary ownership stays in the library, with the timers.
 
+                await warnUnresolvedIdentities(createClaudeAdapter(), "claude");
+
                 if (results.length === 0) {
+                    if (options.json || options.format === "json") {
+                        out.println(formatResultsAsJson([]));
+                        return;
+                    }
                     out.println(chalk.yellow("No conversations found matching your criteria."));
                     return;
                 }
 
-                if (options.format === "json") {
+                if (options.json || options.format === "json") {
                     out.println(formatResultsAsJson(results));
                 } else if (process.stdout.isTTY && !filters.context) {
                     formatResultsAsTable(results, filters);

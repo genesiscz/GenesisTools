@@ -1,18 +1,20 @@
-import { basename } from "node:path";
-import {
-    getSessionListing,
-    rgExtractSnippet,
-    rgSearchFiles,
-    type SessionMetadataRecord,
-    searchConversations,
-} from "@app/claude/lib/history/search";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as p from "@clack/prompts";
-import { findClaudeCommand, resolveProjectFilter } from "@genesiscz/utils/claude";
-import { getSessionMetadata } from "@genesiscz/utils/claude/history-cache";
+import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
+import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
+import type { AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { buildSessionTableOpts } from "@genesiscz/utils/claude/session-display";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
+import { formatClock, formatRelativeTime } from "@genesiscz/utils/format";
+import { out } from "@genesiscz/utils/logger";
+import { expandPath } from "@genesiscz/utils/paths";
 import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import { escapeShellArg } from "@genesiscz/utils/string";
+import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -29,9 +31,16 @@ export interface DisplaySession {
     branch: string;
     project: string;
     modified: string;
+    created?: string;
+    /** Friendly project name; `project` may hold the encoded transcript directory. */
+    projectName?: string;
     source: "cache" | "search";
     firstPrompt: string;
     matchSnippet?: string;
+    sourceHome?: string;
+    sourceKey?: string;
+    filePath?: string;
+    cwd?: string;
 }
 
 interface ResumeOptions {
@@ -51,6 +60,7 @@ function toDisplay(
         branch?: string | null;
         project?: string | null;
         timestamp?: string | null;
+        created?: string | null;
         source?: "cache" | "search";
         matchSnippet?: string;
     }
@@ -62,6 +72,7 @@ function toDisplay(
         branch: opts.branch || "",
         project: opts.project || "",
         modified: opts.timestamp || "",
+        created: opts.created ?? undefined,
         source: opts.source ?? "cache",
         firstPrompt: opts.firstPrompt || "",
         matchSnippet: opts.matchSnippet,
@@ -71,65 +82,13 @@ function toDisplay(
 function dedup(sessions: DisplaySession[]): DisplaySession[] {
     const seen = new Set<string>();
     return sessions.filter((s) => {
-        if (seen.has(s.sessionId)) {
+        const key = s.sourceKey ?? s.filePath ?? `${s.sourceHome ?? ""}:${s.sessionId}`;
+        if (seen.has(key)) {
             return false;
         }
-        seen.add(s.sessionId);
+        seen.add(key);
         return true;
     });
-}
-
-// --- Data ---
-
-type Spinner = ReturnType<typeof p.spinner>;
-
-function progressUpdater(spinner: Spinner) {
-    return (processed: number, total: number, file: string) => {
-        const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
-        const shortId = file.length > 8 ? file.slice(0, 8) : file;
-        spinner.message(`${processed}/${total} (${pct}%) ${shortId}...`);
-    };
-}
-
-interface LoadResult {
-    sessions: DisplaySession[];
-    total: number;
-    subagents: number;
-    project: string | undefined;
-    indexed: number;
-    staleRemoved: number;
-    reindexed: boolean;
-    projectCount: number;
-    scope: string;
-}
-
-async function loadSessions(allProjects: boolean, spinner: Spinner): Promise<LoadResult> {
-    const project = allProjects ? undefined : resolveProjectFilter();
-    const result = await getSessionListing({
-        project,
-        excludeSubagents: true,
-        onProgress: progressUpdater(spinner),
-    });
-    return {
-        sessions: result.sessions.map((s: SessionMetadataRecord) =>
-            toDisplay(s.sessionId || basename(s.filePath, ".jsonl"), {
-                title: s.customTitle,
-                summary: s.summary,
-                firstPrompt: s.firstPrompt,
-                branch: s.gitBranch,
-                project: s.project,
-                timestamp: new Date(s.mtime).toISOString(),
-            })
-        ),
-        total: result.total,
-        subagents: result.subagents,
-        project,
-        indexed: result.indexed,
-        staleRemoved: result.staleRemoved,
-        reindexed: result.reindexed,
-        projectCount: result.projectCount,
-        scope: result.scope,
-    };
 }
 
 function normalizeAlphanumeric(s: string): string {
@@ -174,21 +133,27 @@ function scoreContentMatch(s: DisplaySession, query: string): number {
 }
 
 function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[] {
-    const q = query.toLowerCase();
+    const q = query.trim().toLowerCase();
+    const exact = all.filter(
+        (s) => s.sessionId.toLowerCase() === q || s.sourceKey === query.trim() || s.filePath === query.trim()
+    );
+    if (exact.length) {
+        return exact;
+    }
     const byId = all.filter((s) => s.sessionId.toLowerCase().startsWith(q));
     if (byId.length > 0) {
         return byId;
     }
 
-    const exact = all.filter(
+    const metadata = all.filter(
         (s) =>
             s.name.toLowerCase().includes(q) ||
             s.branch.toLowerCase().includes(q) ||
             s.project.toLowerCase().includes(q) ||
             s.firstPrompt.toLowerCase().includes(q)
     );
-    if (exact.length > 0) {
-        return exact;
+    if (metadata.length > 0) {
+        return metadata;
     }
 
     // Normalized match: strip non-alphanumeric, retry substring.
@@ -203,83 +168,139 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
     return [];
 }
 
-interface ContentSearchResult {
-    sessions: DisplaySession[];
-    metaHits: number;
-    rgTotalHits: number;
-    rgUniqueHits: number;
-    overlap: number;
-}
-
-async function searchByContent(query: string, spinner: Spinner, project?: string): Promise<ContentSearchResult> {
-    const [metaResults, matchingFiles] = await Promise.all([
-        searchConversations({
-            query,
-            project,
-            sortByRelevance: true,
-            limit: 20,
-            summaryOnly: true,
-        }),
-        rgSearchFiles(query, { project, limit: 30 }),
-    ]);
-
-    const metaSessions = metaResults.map((r) =>
-        toDisplay(r.sessionId, {
-            title: r.customTitle,
-            summary: r.summary,
-            branch: r.gitBranch,
-            project: r.project,
-            timestamp: r.timestamp.toISOString(),
-            source: "search",
-        })
-    );
-
-    const metaSessionIds = new Set(metaSessions.map((s) => s.sessionId));
-
-    const rgOnlyFiles = matchingFiles.filter((filePath) => {
-        const cached = getSessionMetadata(filePath);
-        const sid = cached?.sessionId || basename(filePath, ".jsonl");
-        return !metaSessionIds.has(sid);
-    });
-
-    if (rgOnlyFiles.length > 0) {
-        spinner.message(`Loading ${rgOnlyFiles.length} deep matches...`);
-    }
-
-    const rgSessions: DisplaySession[] = [];
-    const remainingSlots = Math.max(5, 20 - metaSessions.length);
-    for (const filePath of rgOnlyFiles.slice(0, remainingSlots)) {
-        const cached = getSessionMetadata(filePath);
-        const snippet = await rgExtractSnippet(query, filePath);
-
-        rgSessions.push(
-            toDisplay(cached?.sessionId || basename(filePath, ".jsonl"), {
-                title: cached?.customTitle,
-                summary: cached?.summary,
-                firstPrompt: cached?.firstPrompt,
-                branch: cached?.gitBranch,
-                project: cached?.project,
-                timestamp: cached?.firstTimestamp || new Date(0).toISOString(),
-                source: "search",
-                matchSnippet: snippet,
-            })
-        );
-    }
-
-    const overlap = matchingFiles.length - rgOnlyFiles.length;
-
+function displayNativeSession(session: AgentSearchHit): DisplaySession {
     return {
-        sessions: [...metaSessions, ...rgSessions],
-        metaHits: metaSessions.length,
-        rgTotalHits: matchingFiles.length,
-        rgUniqueHits: rgOnlyFiles.length,
-        overlap,
+        ...toDisplay(session.sessionId, {
+            title: session.title,
+            summary: session.summary,
+            firstPrompt: session.prompt,
+            branch: session.gitBranch,
+            project: session.projectDirectory ?? session.project,
+            timestamp: session.mtime.toISOString(),
+            created: session.createdAt?.toISOString(),
+            source: session.matchedText ? "search" : "cache",
+            matchSnippet: session.matchedText,
+        }),
+        projectName: session.project,
+        sourceHome: session.sourceHome,
+        sourceKey: session.sourceKey,
+        filePath: session.filePath,
+        cwd: session.cwd,
     };
 }
 
+export async function loadClaudeResumeCandidates(
+    options: SessionPickOptions & { query?: string }
+): Promise<DisplaySession[]> {
+    const adapter = options.adapter ?? createClaudeAdapter();
+    if (adapter.kind !== "claude") {
+        throw new Error("Claude resume requires a Claude history provider");
+    }
+
+    // A short listing is annoying; a session that resume cannot find is the one that costs an
+    // evening, because the user knows the conversation exists and has no reason to connect its
+    // absence to a migration.
+    await warnUnresolvedIdentities(adapter, "claude");
+    const normalized = options.query?.trim().toLowerCase();
+    const fullNativeId =
+        normalized !== undefined && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized);
+    const allProjects = Boolean(options.allProjects || fullNativeId);
+    const filters = {
+        cwd: allProjects ? undefined : (options.cwd ?? process.cwd()),
+        all: allProjects,
+        excludeAgents: true,
+    };
+    // The limit bounds the REFRESH, which is what a plain list needs; it also bounds the rows that
+    // come back, which is what a search must not accept.
+    const listing = async (limit: number | undefined) =>
+        dedup((await adapter.list({ ...filters, limit, summaryOnly: true })).map(displayNativeSession));
+    const display = options.limit ?? 20;
+    let sessions = await listing(display);
+
+    /**
+     * Every indexed session, for matching by id or name. Bounding this by the DISPLAY limit made
+     * `-n` control recall: `resume handoff` returned 5 of 31 matches at the default 20, and the
+     * sessions actually titled `handoff-v2` and `all-handoffs` were not among them, because one
+     * weak match inside the recent window suppressed the wider pass entirely.
+     *
+     * Reading the cached metadata performs no discovery, sync or write, so completeness is cheap
+     * here; the bounded `listing` above is what pays for freshness. An empty cache means nothing
+     * is indexed yet, and only a full refresh can answer that.
+     */
+    async function everyIndexed(): Promise<DisplaySession[]> {
+        const cached = adapter.listCached
+            ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(displayNativeSession))
+            : [];
+        sessions = dedup([...(cached.length ? cached : await listing(Number.MAX_SAFE_INTEGER)), ...sessions]);
+
+        return sessions;
+    }
+
+    if (fullNativeId) {
+        const byId = (rows: DisplaySession[]) =>
+            rows.filter((session) => session.sessionId.toLowerCase() === normalized);
+        const found = byId(sessions);
+
+        return found.length ? found : byId(await everyIndexed());
+    }
+    if (!options.query || options.list) {
+        return sessions.slice(0, display);
+    }
+    const matches = matchByIdOrName(await everyIndexed(), options.query);
+    if (matches.length) {
+        return matches.sort((a, b) => scoreContentMatch(b, options.query!) - scoreContentMatch(a, options.query!));
+    }
+    return dedup(
+        (
+            await adapter.search({
+                ...filters,
+                query: options.query,
+                limit: options.limit ?? 20,
+                sortByRelevance: true,
+            })
+        ).map(displayNativeSession)
+    );
+}
 // --- UI ---
 
-async function selectSession(candidates: DisplaySession[], query?: string): Promise<DisplaySession> {
+/** Outside a TTY there is no picker, so the candidates have to be readable enough to choose from. */
+function printAmbiguousCandidates(candidates: DisplaySession[], shown = 20): void {
+    const table = createBoxTable(["#", "SESSION ID", "NAME", "CREATED", "AGE", "LAST PROMPT", "PROJECT"]);
+
+    for (const [index, candidate] of candidates.slice(0, shown).entries()) {
+        const created = candidate.created ? new Date(candidate.created) : undefined;
+        const modified = candidate.modified ? new Date(candidate.modified) : undefined;
+        table.push([
+            String(index + 1),
+            candidate.sessionId,
+            truncateDisplay(candidate.name, 40),
+            created ? formatClock(created, { date: "short" }) : "—",
+            created ? formatRelativeTime(created) : "—",
+            modified ? formatRelativeTime(modified) : "—",
+            truncateDisplay(candidate.projectName || candidate.project, 24),
+        ]);
+    }
+
+    out.println(table.toString());
+
+    if (candidates.length > shown) {
+        out.println(pc.dim(`… and ${candidates.length - shown} more; narrow the query to see them.`));
+    }
+}
+
+export async function selectClaudeResumeSession({
+    candidates,
+    query,
+    interactive = isInteractive(),
+}: {
+    candidates: DisplaySession[];
+    query?: string;
+    interactive?: boolean;
+}): Promise<DisplaySession> {
+    if (candidates.length === 0) {
+        throw new Error(`No Claude sessions match${query ? ` "${query}"` : " this selection"}.`);
+    }
+
     if (candidates.length === 1) {
         const s = candidates[0];
         p.log.info(
@@ -288,10 +309,11 @@ async function selectSession(candidates: DisplaySession[], query?: string): Prom
         return s;
     }
 
-    if (!isInteractive()) {
-        const s = candidates[0];
-        p.log.info(`Auto-selected: ${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))}`);
-        return s;
+    if (!interactive) {
+        printAmbiguousCandidates(candidates);
+        throw new Error(
+            `Ambiguous Claude resume (${candidates.length} matches). Pass a session id from the table above, or use an interactive terminal.`
+        );
     }
 
     const opts = buildSessionTableOpts(candidates, {
@@ -299,6 +321,14 @@ async function selectSession(candidates: DisplaySession[], query?: string): Prom
         query,
     });
 
+    for (const row of opts.rows) {
+        const source = row.value as DisplaySession;
+        row.detail = [
+            ...(row.detail ?? []),
+            ...(source.sourceHome ? [`Source home: ${source.sourceHome}`] : []),
+            ...(source.filePath ? [`Source file: ${source.filePath}`] : []),
+        ];
+    }
     const result = await tableSelect(opts);
 
     if (!result) {
@@ -309,17 +339,41 @@ async function selectSession(candidates: DisplaySession[], query?: string): Prom
     return result;
 }
 
+/**
+ * A recorded cwd is a historical fact, not a live path. On this machine 629 of 1,617 indexed
+ * sessions (39%) name a removed worktree or a cleared scratch root, and `Bun.spawn` rejects a
+ * missing cwd with an ENOENT that names the SHELL binary, not the directory:
+ * `ENOENT: no such file or directory, posix_spawn '/bin/zsh'`. Resume then looked like a broken
+ * shell for more than a third of all sessions.
+ */
+export function resumeDirectory(session: DisplaySession): { cwd: string; missing?: string } {
+    const recorded = session.cwd;
+
+    if (recorded && existsSync(recorded)) {
+        return { cwd: recorded };
+    }
+
+    return { cwd: process.cwd(), ...(recorded ? { missing: recorded } : {}) };
+}
+
 async function resumeSession(session: DisplaySession): Promise<never> {
     if (!/^[\w-]+$/.test(session.sessionId)) {
         throw new Error(`Invalid session ID: ${session.sessionId}`);
     }
 
     const cmd = await findClaudeCommand();
+    const directory = resumeDirectory(session);
+
+    if (directory.missing) {
+        out.log.warn(`Recorded directory is gone: ${directory.missing}. Starting in ${directory.cwd} instead.`);
+    }
+
     p.outro(`${pc.green("Resuming:")} ${cmd} --resume ${session.sessionId}`);
 
     const shell = env.paths.getShell("/bin/sh");
     const proc = Bun.spawn({
         cmd: [shell, "-ic", `exec ${cmd} --resume '${session.sessionId}'`],
+        cwd: directory.cwd,
         stdio: ["inherit", "inherit", "inherit"],
     });
 
@@ -333,6 +387,9 @@ export interface SessionPickOptions {
     list?: boolean;
     allProjects?: boolean;
     limit?: number;
+    cwd?: string;
+    adapter?: AgentSessionAdapter;
+    interactive?: boolean;
 }
 
 /**
@@ -343,84 +400,19 @@ export async function pickSessionForResume(
     query: string | undefined,
     opts: SessionPickOptions = {}
 ): Promise<DisplaySession> {
-    const limit = opts.limit ?? 20;
-
     const spinner = p.spinner();
-    spinner.start("Loading sessions...");
-    const loadResult = await loadSessions(opts.allProjects ?? false, spinner);
-    const { sessions, subagents, project, indexed, staleRemoved, reindexed, projectCount, scope } = loadResult;
-
-    const statsParts = [
-        `${sessions.length} sessions`,
-        subagents > 0 ? `${subagents} subagents` : "",
-        `${projectCount} projects`,
-        pc.dim(`[${scope}]`),
-    ].filter(Boolean);
-
-    const indexParts = [
-        reindexed ? pc.yellow("reindexed") : "",
-        indexed > 0 ? `${indexed} new` : "",
-        staleRemoved > 0 ? `${staleRemoved} stale removed` : "",
-    ].filter(Boolean);
-
-    const statsLine =
-        indexParts.length > 0
-            ? `${statsParts.join(", ")} ${pc.dim("(")}${indexParts.join(", ")}${pc.dim(")")}`
-            : statsParts.join(", ");
-    spinner.stop(statsLine);
-
-    if (sessions.length === 0) {
-        p.log.error("No sessions found");
-        process.exit(1);
-    }
-
+    spinner.start("Synchronizing Claude history...");
     let candidates: DisplaySession[];
-
-    if (!query || opts.list) {
-        candidates = sessions.slice(0, limit);
-    } else {
-        candidates = matchByIdOrName(sessions, query);
-
-        if (candidates.length > 0) {
-            candidates.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
-            p.log.info(
-                pc.dim(`index: ${candidates.length} match${candidates.length !== 1 ? "es" : ""} `) +
-                    pc.dim(`(name/branch/project/prompt)`)
-            );
-        } else {
-            p.log.info(pc.dim(`index: 0 matches for "${query}", searching content...`));
-            const searchSpinner = p.spinner();
-            searchSpinner.start("Searching...");
-            const result = await searchByContent(query, searchSpinner, project);
-
-            const searchStatsParts = [
-                `${pc.cyan(`${result.metaHits}`)} meta`,
-                `${pc.cyan(`${result.rgTotalHits}`)} rg`,
-                result.overlap > 0 ? `${result.overlap} overlap` : "",
-                result.rgUniqueHits > 0 ? `${pc.yellow(`${result.rgUniqueHits}`)} rg-only` : "",
-            ].filter(Boolean);
-            searchSpinner.stop(`${result.sessions.length} matches ${pc.dim(`(${searchStatsParts.join(", ")})`)}`);
-
-            if (result.sessions.length > 0) {
-                candidates = dedup(
-                    result.sessions.map((h) => {
-                        const cached = sessions.find((s) => s.sessionId === h.sessionId);
-                        return cached ? { ...cached, source: "search" as const, matchSnippet: h.matchSnippet } : h;
-                    })
-                );
-                // Rank by metadata relevance so sessions whose name/prompt matches
-                // sort above sessions where the query only appears in tool output
-                candidates.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
-            }
-        }
-
-        if (candidates.length === 0) {
-            p.log.warn("No matches. Showing recent:");
-            candidates = sessions.slice(0, limit);
-        }
+    try {
+        candidates = await loadClaudeResumeCandidates({ ...opts, query });
+        spinner.stop(`${candidates.length} matching sessions`);
+    } catch (error) {
+        spinner.stop("History search failed");
+        throw error;
     }
-
-    return selectSession(candidates, query);
+    const selected = await selectClaudeResumeSession({ candidates, query, interactive: opts.interactive });
+    assertClaudeResumeHome({ session: selected });
+    return selected;
 }
 
 async function main(query: string | undefined, opts: ResumeOptions) {
@@ -454,4 +446,34 @@ export function registerResumeCommand(program: Command): void {
                 throw error;
             }
         });
+}
+
+export function assertClaudeResumeHome({
+    session,
+    effectiveHome = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude"),
+}: {
+    session: Pick<DisplaySession, "sourceHome" | "filePath" | "sessionId">;
+    effectiveHome?: string;
+}): void {
+    if (!session.sourceHome) {
+        return;
+    }
+    const canonical = (path: string) => {
+        const expanded = expandPath(path);
+        try {
+            return realpathSync(expanded);
+        } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                return expanded;
+            }
+            throw error;
+        }
+    };
+    if (canonical(session.sourceHome) === canonical(effectiveHome)) {
+        return;
+    }
+    const command = `CLAUDE_CONFIG_DIR=${escapeShellArg(session.sourceHome)} tools claude resume ${escapeShellArg(session.filePath ?? session.sessionId)} --all-projects`;
+    throw new Error(
+        `This session belongs to ${session.sourceHome}, not the selected Claude home. No migration was performed. Resume explicitly with:\n${command}`
+    );
 }

@@ -192,8 +192,10 @@ function normalizeNullableSeverity(severity: string | null): string | null {
  */
 export class UsageLimitsDb {
     private claudeDb: ClaudeDatabase;
+    private readonly ownsConnection: boolean;
 
     constructor(dbPath?: string) {
+        this.ownsConnection = Boolean(dbPath);
         this.claudeDb = dbPath ? new ClaudeDatabase(dbPath) : ClaudeDatabase.getInstance();
         this.ensureSchema();
     }
@@ -580,7 +582,9 @@ export class UsageLimitsDb {
     }
 
     close(): void {
-        this.claudeDb.close();
+        if (this.ownsConnection) {
+            this.claudeDb.close();
+        }
     }
 
     private mapRow(row: SnapshotRow): UsageSnapshot {
