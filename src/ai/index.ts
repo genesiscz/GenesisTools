@@ -22,6 +22,7 @@ import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { registerAccountsCommands } from "./commands/accounts";
+import { registerAiProviderLoginCommands } from "./commands/accounts/login";
 import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
@@ -574,6 +575,7 @@ modelsCmd
     });
 
 registerAccountsCommands(program);
+registerAiProviderLoginCommands(program);
 registerConfigCommands(program);
 registerSessionsCommands(program);
 

@@ -1,5 +1,4 @@
 import * as p from "@clack/prompts";
-import { Browser } from "@genesiscz/utils/browser";
 import { determineAccountLabel } from "@genesiscz/utils/claude/account-label";
 import {
     claudeOAuth,
@@ -7,9 +6,9 @@ import {
     type OAuthProfileResponse,
     type OAuthTokens,
 } from "@genesiscz/utils/claude/auth";
-import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
+import { presentAuthorizationUrl, readAuthorizationCode } from "../../../oauth/login-ui";
 import type { AccountFlowContext, AccountIdentity, LoginOutcome } from "../../account-features";
 import { accountFieldsFrom } from "../../account-fields";
 
@@ -28,109 +27,10 @@ export async function generateAuthUrl(scopes?: string): Promise<string> {
     return authUrl;
 }
 
-/**
- * `Browser.open`, not a hard-coded `open`: that binary exists on macOS only, so
- * a Linux or Windows login aborted before the code prompt with a spawn error.
- * The shared opener also honours the configured preferred browser and reports a
- * failure instead of throwing, so the URL on screen stays usable (review t13).
- */
-async function openInDefaultBrowser(url: string): Promise<void> {
-    const result = await Browser.open(url);
+export { normalizeAuthorizationCode } from "../../../oauth/login-ui";
 
-    if (!result.success) {
-        logger.warn({ url, error: result.error }, "could not open the authorization URL in a browser");
-        p.log.warn(`Could not open a browser (${result.error ?? "unknown error"}). Open the URL above by hand.`);
-    }
-}
-
-/**
- * THROWS `Cancelled` when the user aborts the browser-choice prompt.
- *
- * It returned a boolean before, and a caller that forgot to check it fell
- * straight through to the code prompt — which happened twice while this PR was
- * in review. `claude/index.ts` already maps a `Cancelled` message to a clean
- * exit 0, so throwing makes the abort impossible to ignore instead of relying
- * on every present and future caller remembering to test a return value.
- *
- * The signature IS the regression test: with `Promise<void>` there is no value
- * left to drop. A behavioural test was written and then removed — `mock.module`
- * is process-global in Bun, so stubbing `@clack/prompts` here broke
- * `src/utils/logger/out.test.ts`, which asserts on the REAL clack sentinel.
- */
 export async function presentAuthUrl(authUrl: string, openUrl?: (url: string) => Promise<void>): Promise<void> {
-    p.note(
-        [
-            "1. Open the URL below in your browser",
-            "2. Log in with your Claude account (if needed)",
-            "3. Click 'Authorize' to grant access",
-            "4. Copy the code shown on the callback page",
-            "   (format: code#state or just the code part)",
-        ].join("\n"),
-        "OAuth Login"
-    );
-
-    out.println();
-    out.println(`  ${pc.cyan(authUrl)}`);
-    out.println();
-
-    // Never copy the URL unasked: whoever already opened it by hand is holding the
-    // CODE in their clipboard, and clobbering that costs them the whole round-trip.
-    const action = await p.select({
-        message: "How do you want to open it?",
-        options: [
-            { value: "open", label: "Open in browser now" },
-            { value: "copy", label: "Copy the URL to my clipboard", hint: "overwrites whatever is in it" },
-            { value: "none", label: "Neither — I already have the code", hint: "clipboard untouched" },
-        ],
-    });
-
-    if (p.isCancel(action)) {
-        throw new Error("Cancelled");
-    }
-
-    if (action === "open") {
-        await (openUrl ?? openInDefaultBrowser)(authUrl);
-    } else if (action === "copy") {
-        await copyToClipboard(authUrl, { silent: true });
-        p.log.info("URL copied. After authorizing, copy the CODE from the callback page — that is what to paste next.");
-    }
-}
-
-/**
- * Accept what the user actually has in the clipboard: the bare `code#state`, or
- * the whole callback URL (its `code`/`state` params are pulled out). Declining
- * the browser-open puts the AUTHORIZE url on the clipboard, so that exact
- * mis-paste is caught here instead of failing as "Invalid request format".
- */
-export function normalizeAuthorizationCode(input: string): { code: string } | { error: string } {
-    const trimmed = input.trim();
-
-    if (!trimmed.startsWith("http")) {
-        return { code: trimmed };
-    }
-
-    let url: URL;
-    try {
-        url = new URL(trimmed);
-    } catch (error) {
-        logger.debug({ error }, "[oauth] pasted value starts with http but is not a parseable URL");
-        return { error: "That looks like a URL but could not be parsed. Paste the code shown after authorizing." };
-    }
-
-    if (url.pathname.includes("/oauth/authorize")) {
-        return {
-            error: "That is the authorization URL (what we copied to your clipboard), not the code. Open it, click Authorize, then paste the code from the callback page.",
-        };
-    }
-
-    const code = url.searchParams.get("code");
-
-    if (!code) {
-        return { error: "No `code` parameter in that URL. Paste the code shown after authorizing." };
-    }
-
-    const state = url.searchParams.get("state");
-    return { code: state ? `${code}#${state}` : code };
+    await presentAuthorizationUrl({ authUrl, provider: "Claude", openUrl });
 }
 
 /**
@@ -163,26 +63,11 @@ export function errorForExchange(exchange: Exclude<CodeExchange, { status: "ok" 
 }
 
 export async function promptAndExchangeCode(opts: { expiresIn?: number } = {}): Promise<CodeExchange> {
-    const code = await p.text({
-        message: "Paste the authorization code:",
-        placeholder: "code#state",
-        validate: (val) => {
-            if (!val?.trim()) {
-                return "Code is required";
-            }
+    const normalized = await readAuthorizationCode();
 
-            const normalized = normalizeAuthorizationCode(val);
-            if ("error" in normalized) {
-                return normalized.error;
-            }
-        },
-    });
-
-    if (p.isCancel(code)) {
+    if (normalized === null) {
         return { status: "cancelled" };
     }
-
-    const normalized = normalizeAuthorizationCode(code as string);
 
     // A value the prompt's own validator already rejects cannot reach here, so
     // this is a bad paste rather than an abort either way.

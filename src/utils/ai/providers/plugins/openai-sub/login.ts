@@ -1,8 +1,8 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
-import { Browser } from "@genesiscz/utils/browser";
 import { logger, out } from "@genesiscz/utils/logger";
+import { presentAuthorizationUrl, readAuthorizationCode } from "../../../oauth/login-ui";
 import {
     CODEX_AUTH_PATH,
     type CodexTokens,
@@ -15,26 +15,7 @@ import {
 import type { AccountFlowContext, LoginOutcome } from "../../account-features";
 import { accountFieldsFrom } from "../../account-fields";
 
-/**
- * Browser PKCE login for the ChatGPT/Codex subscription, moved out of
- * `src/ai-proxy/commands/accounts-login.ts` so the proxy command, `tools codex
- * login` and `tools ai accounts login --provider codex` all run it.
- *
- * Decision D3: the result is written as the codex home's `auth.json`, in the
- * shape the official CLI writes, and the account stores that PATH. One token per
- * profile, shared with the CLI and the ChatGPT app, instead of a second copy in
- * the vault that rotates independently.
- */
-/**
- * Where this login's `auth.json` goes.
- *
- * An explicit `--auth-file` or `--home` wins, but a re-login of a NAMED account
- * has to land on the file that account already reads. Falling through to the
- * default home retargeted the account at `~/.codex/auth.json`, and when another
- * account owned that home both accounts then served one grant: the identity
- * guard only compares the account being written, so it accepted the swap
- * (PR #360 review t1).
- */
+/** Native-file compatibility destination; ordinary named login never calls this resolver. */
 export function resolveCodexAuthDestination(ctx: AccountFlowContext): string {
     if (ctx.authFile) {
         return ctx.authFile;
@@ -48,47 +29,38 @@ export function resolveCodexAuthDestination(ctx: AccountFlowContext): string {
 }
 
 export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome> {
+    if (ctx.codexBroker && (ctx.home || ctx.authFile)) {
+        throw new Error("--broker cannot be combined with --home or --auth-file");
+    }
+
     if (!ctx.interactive) {
         throw new Error("Codex login needs a TTY (browser OAuth + code paste).");
     }
 
     const authUrl = await codexOAuth.startLogin();
 
-    p.note(
-        [
-            "1. Open the URL below in your browser",
-            "2. Sign in with your ChatGPT account",
-            "3. Authorize Codex",
-            "4. Copy the code from the callback page/URL",
-        ].join("\n"),
-        "OpenAI OAuth Login"
-    );
-
-    out.println();
-    out.println(`  ${authUrl}`);
-    out.println();
-
-    const openBrowser = await p.confirm({ message: "Open URL in browser?", initialValue: true });
-
-    if (p.isCancel(openBrowser)) {
-        throw new Error("Cancelled");
-    }
-
-    if (openBrowser) {
-        await (ctx.openUrl ?? ((url: string) => Browser.open(url).then(() => undefined)))(authUrl);
-    }
-
-    const code = await p.text({
-        message: "Paste the authorization code:",
-        validate: (val) => {
-            if (!val?.trim()) {
-                return "Code is required";
-            }
-        },
+    await presentAuthorizationUrl({
+        authUrl,
+        provider: "ChatGPT",
+        openUrl: ctx.openUrl,
+        interaction: ctx.authorizationInteraction,
     });
+    const normalized = await readAuthorizationCode(ctx.authorizationInteraction);
 
-    if (p.isCancel(code)) {
+    if (normalized === null) {
         throw new Error("Cancelled");
+    }
+
+    if ("error" in normalized) {
+        throw new Error(normalized.error);
+    }
+
+    const [code, state] = normalized.code.split("#");
+
+    if (state !== undefined && state !== new URL(authUrl).searchParams.get("state")) {
+        throw new Error(
+            "OAuth callback state does not match this login. Paste the callback from the current authorization."
+        );
     }
 
     const spinner = p.spinner();
@@ -96,11 +68,15 @@ export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome>
 
     let tokens: Awaited<ReturnType<typeof codexOAuth.exchangeCode>>;
     try {
-        tokens = await codexOAuth.exchangeCode((code as string).trim());
+        tokens = await codexOAuth.exchangeCode(code);
         spinner.stop("Tokens received.");
     } catch (err) {
         spinner.stop(`Token exchange failed: ${err instanceof Error ? err.message : String(err)}`);
         throw err;
+    }
+
+    if (ctx.home === undefined && ctx.authFile === undefined) {
+        return codexLoginOutcome({ tokens });
     }
 
     const authFile = resolveCodexAuthDestination(ctx);
@@ -144,7 +120,9 @@ export async function restoreCodexAuthFile(authFile: string, previous: ArrayBuff
  * no prompt and no disk. Split out so the identity it proves is testable from
  * invented claims instead of a real OAuth round trip.
  */
-export function codexLoginOutcome(input: { tokens: CodexTokens; authFile: string }): LoginOutcome {
+export function codexLoginOutcome(
+    input: { tokens: CodexTokens } & ({ authFile: string; broker?: false } | { authFile?: never; broker?: true })
+): LoginOutcome {
     // The id token carries email and plan; the access token often does not.
     const claims = input.tokens.idToken ?? input.tokens.accessToken;
     const email = extractEmail(claims);
@@ -157,7 +135,16 @@ export function codexLoginOutcome(input: { tokens: CodexTokens; authFile: string
 
     return {
         provider: "openai-sub",
-        credentials: { authFile: input.authFile },
+        credentials:
+            input.authFile === undefined
+                ? {
+                      // An explicit empty reference clears the old path through applyLoginOutcome.
+                      authFile: "",
+                      accessToken: input.tokens.accessToken,
+                      refreshToken: input.tokens.refreshToken,
+                      expiresAt: input.tokens.expiresAt,
+                  }
+                : { authFile: input.authFile },
         identity,
         suggestedName: email?.split("@")[0]?.toLowerCase() || "codex",
         suggestedLabel: planType ?? "codex",

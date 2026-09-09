@@ -4,12 +4,12 @@ import type { Command } from "commander";
 import { type LogoutFlags, logoutTargetsFromFlags } from "../../lib/accounts/logout-flags";
 import { runDiscover } from "../../lib/accounts/run-discover";
 import { runList } from "../../lib/accounts/run-list";
-import { runLogin } from "../../lib/accounts/run-login";
 import { runLoginLong } from "../../lib/accounts/run-login-long";
 import { runLoginSecondary } from "../../lib/accounts/run-login-secondary";
 import { runLogout } from "../../lib/accounts/run-logout";
 import { runShow } from "../../lib/accounts/run-show";
 import { runWho } from "../../lib/accounts/run-who";
+import { registerAccountLoginCommand } from "./login";
 
 const TOOL = "tools ai accounts";
 const PROVIDER_HELP = `Provider: ${ACCOUNT_PROVIDER_ALIASES.join(", ")} (plugin ids also accepted)`;
@@ -46,17 +46,7 @@ export function registerAccountsCommands(program: Command): void {
             await runShow({ name, json: opts.json, tool: `${TOOL} show` });
         });
 
-    accounts
-        .command("login [name]")
-        .description("Browser login for a subscription provider")
-        .option("--provider [value]", PROVIDER_HELP)
-        .option("--home <dir>", "Vendor home to log into (a codex profile dir, a grok GROK_HOME)")
-        .option("--auth-file <file>", "Bind an existing credential file instead of running a flow")
-        .action(
-            async (name: string | undefined, opts: { provider?: string | true; home?: string; authFile?: string }) => {
-                await runLogin({ ...opts, name, tool: `${TOOL} login`, subcommand: ["accounts", "login"] });
-            }
-        );
+    registerAccountLoginCommand(accounts, { tool: `${TOOL} login`, subcommand: ["accounts", "login"] });
 
     accounts
         .command("login-long [name]")

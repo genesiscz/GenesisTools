@@ -58,6 +58,9 @@ const defaultExternalRunner: ExternalLoginRunner = {
 };
 
 export interface RunLoginOptions {
+    codexBroker?: boolean;
+    /** Bind the provider's current native credential file without starting OAuth. */
+    importNative?: boolean;
     /** Pinned by `tools claude login`; resolved from `--provider` otherwise. */
     provider?: string | true;
     name?: string;
@@ -73,12 +76,15 @@ export interface RunLoginOptions {
      * commands derive the name silently and leave this unset.
      */
     promptName?: boolean;
+    /** UI boundary for callers providing their own OAuth interaction. */
+    authorizationInteraction?: AccountFlowContext["authorizationInteraction"];
     /** Injected by tests only; production leaves it unset. */
     externalRunner?: ExternalLoginRunner;
 }
 
 export interface RunLoginResult {
     ok: boolean;
+    cancelled?: boolean;
     account?: AccountEntry;
 }
 
@@ -118,6 +124,54 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
         return { ok: false };
     }
 
+    const fileOptions = [
+        opts.authFile !== undefined ? "--auth-file" : undefined,
+        opts.home !== undefined ? "--home" : undefined,
+    ].filter((option) => option !== undefined);
+
+    if (fileOptions.length > 0 && !plugin.credential.fields.includes("authFile")) {
+        out.error(
+            pc.red(
+                `${providerAliasOf(plugin.id)} does not support ${fileOptions.join(" or ")}: this provider cannot bind credential files.`
+            )
+        );
+        process.exitCode = 1;
+        return { ok: false };
+    }
+
+    if (
+        (opts.importNative && (fileOptions.length > 0 || opts.codexBroker)) ||
+        (opts.codexBroker && fileOptions.length > 0)
+    ) {
+        out.error(
+            pc.red(
+                "Choose one login mode: default vault login (--broker), --import-native, or explicit --home/--auth-file."
+            )
+        );
+        process.exitCode = 1;
+        return { ok: false };
+    }
+
+    let importedAuthFile: string | undefined;
+
+    if (opts.importNative) {
+        if (!features.nativeAuthFile) {
+            out.error(pc.red(`${providerAliasOf(plugin.id)} does not support --import-native.`));
+            process.exitCode = 1;
+            return { ok: false };
+        }
+
+        importedAuthFile = expandPath(features.nativeAuthFile());
+
+        if (!(await Bun.file(importedAuthFile).exists())) {
+            out.error(
+                pc.red(`No native credential at ${importedAuthFile}. Log in with the native CLI before importing.`)
+            );
+            process.exitCode = 1;
+            return { ok: false };
+        }
+    }
+
     const store = await AiConfigStore.load();
     // Absolute BEFORE anything reads them. The path a flow settles on is written
     // to the account and resolved again later from whatever directory the tool
@@ -127,13 +181,25 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     // consumer below reads `ctx`, so this is the one place that has to normalize.
     const ctx: AccountFlowContext = {
         requestedName: opts.name,
+        authorizationInteraction: opts.authorizationInteraction,
+        codexBroker: opts.codexBroker,
         home: opts.home === undefined ? undefined : expandPath(opts.home),
-        authFile: opts.authFile === undefined ? undefined : expandPath(opts.authFile),
+        authFile: importedAuthFile ?? (opts.authFile === undefined ? undefined : expandPath(opts.authFile)),
         interactive,
         ...(opts.name ? { account: store.account(opts.name) } : {}),
     };
 
-    const outcome = await resolveLoginOutcome(plugin, features, ctx, opts);
+    let outcome: LoginOutcome | undefined;
+    try {
+        outcome = await resolveLoginOutcome(plugin, features, ctx, opts);
+    } catch (error) {
+        if (error instanceof Error && (error.message === "Cancelled" || error.name === "ExitPromptError")) {
+            p.cancel("Login cancelled — nothing written.");
+            return { ok: false, cancelled: true };
+        }
+
+        throw error;
+    }
 
     if (!outcome) {
         process.exitCode = 1;
@@ -283,7 +349,7 @@ async function promptAccountName(store: AiConfigStore, suggested: string): Promi
  * then overwrote the very file it had been asked to import, so the scripted form
  * failed and the interactive form destroyed its own input (PR #360 review t2).
  *
- * A file already on disk is bound as it is, for every provider. A missing one
+ * A file already on disk is bound as it is for providers supporting authFile. A missing one
  * still falls through to the provider's flow, which is how `tools grok login
  * --auth-file <new path>` creates one.
  */
@@ -295,6 +361,11 @@ async function resolveLoginOutcome(
 ): Promise<LoginOutcome | undefined> {
     if (ctx.authFile !== undefined && (await Bun.file(ctx.authFile).exists())) {
         return bindAuthFile(plugin, features, ctx, ctx.authFile);
+    }
+
+    if (opts.importNative) {
+        out.error(pc.red("The native credential file disappeared before it could be bound. Retry the import."));
+        return undefined;
     }
 
     return features.login ? await features.login(ctx) : await bindExternalLogin(plugin, features, ctx, opts);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
@@ -333,9 +333,161 @@ describe("the built-in Codex provider", () => {
         expect(readFileSync(codexFile, "utf8")).toBe(contents);
     });
 
+    test("a cancelled Codex login exits cleanly without changing accounts", async () => {
+        setTty(true);
+        const before = readFileSync(configPath(), "utf8");
+        const result = await runLogin({
+            provider: "codex",
+            name: "work",
+            tool: "tools codex login",
+            authorizationInteraction: {
+                chooseUrlAction: async () => null,
+                readCode: async () => {
+                    throw new Error("code input must not follow cancellation");
+                },
+            },
+        });
+        expect(result).toEqual({ ok: false, cancelled: true });
+        expect(process.exitCode).toBe(0);
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+    });
+
+    test("--import-native binds the current CLI home as a reference", async () => {
+        const nativeHome = join(home, "native");
+        const nativeFile = join(nativeHome, "auth.json");
+        const contents = writeCodexAuthFile(nativeFile, "alice@example.com", "account-native-invented");
+        env.testing.set("CODEX_HOME", nativeHome);
+        try {
+            const result = await runLogin({
+                provider: "codex",
+                name: "work",
+                importNative: true,
+                tool: "tools codex login",
+            });
+            expect(result.ok).toBe(true);
+            expect(result.account?.credentials.authFile).toBe(nativeFile);
+            expect(result.account?.credentials.accessToken).toBeUndefined();
+            expect(result.account?.accountUuid).toBe("account-native-invented");
+            expect(readFileSync(nativeFile, "utf8")).toBe(contents);
+        } finally {
+            env.testing.unset("CODEX_HOME");
+        }
+    });
+
+    test("missing --import-native fails without starting OAuth or creating a home", async () => {
+        const nativeHome = join(home, "absent-native");
+        env.testing.set("CODEX_HOME", nativeHome);
+        const before = readFileSync(configPath(), "utf8");
+        try {
+            const result = await runLogin({
+                provider: "codex",
+                name: "work",
+                importNative: true,
+                tool: "tools codex login",
+            });
+            expect(result.ok).toBe(false);
+            expect(process.exitCode).toBe(1);
+            expect(existsSync(nativeHome)).toBe(false);
+            expect(readFileSync(configPath(), "utf8")).toBe(before);
+        } finally {
+            env.testing.unset("CODEX_HOME");
+        }
+    });
+
     test("NEGATIVE CONTROL: without --auth-file the real flow does refuse a pipe", async () => {
         // Proves the tripwire above is armed — the built-in flow is reachable and
         // rejects non-TTY, so the passing test above cannot be a false green.
         await expect(login({ name: "work" })).rejects.toThrow(/needs a TTY/);
+    });
+});
+
+describe("built-in provider credential contracts", () => {
+    beforeEach(() => {
+        _resetPluginsForTest();
+        _resetBuiltInPluginsForTest();
+        registerBuiltInPlugins();
+    });
+
+    test.each(["authFile", "home"] as const)("allows built-in Grok %s binding", async (option) => {
+        const claims = Buffer.from(SafeJSON.stringify({ sub: "grok-user-invented", tier: 1 })).toString("base64url");
+        const contents = SafeJSON.stringify({ default: { key: `eyJhbGciOiJIUzI1NiJ9.${claims}.not-a-signature` } });
+        mkdirSync(dirname(authFile), { recursive: true });
+        writeFileSync(authFile, contents);
+
+        const result = await runLogin({
+            provider: "grok",
+            name: "work",
+            tool: "tools grok login",
+            ...(option === "authFile" ? { authFile } : { home: dirname(authFile) }),
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.account?.credentials.authFile).toBe(authFile);
+        expect(result.account?.accountUuid).toBe("grok-user-invented");
+        expect(readFileSync(authFile, "utf8")).toBe(contents);
+    });
+
+    // Regression test: h_dly4ln58 — reject unsupported options even before loading or migrating the account store.
+    test.each(["authFile", "home"] as const)("rejects Claude %s before accessing config", async (option) => {
+        const invalidConfig = "not valid config";
+        writeFileSync(configPath(), invalidConfig);
+        AiConfigStore.invalidate();
+        const missing = join(home, "not-created-yet");
+
+        const result = await runLogin({
+            provider: "claude",
+            name: "work",
+            tool: "tools ai accounts",
+            ...(option === "authFile" ? { authFile: join(missing, "auth.json") } : { home: missing }),
+        });
+
+        expect(result.ok).toBe(false);
+        expect(process.exitCode).toBe(1);
+        expect(readFileSync(configPath(), "utf8")).toBe(invalidConfig);
+        expect(existsSync(missing)).toBe(false);
+    });
+
+    // Regression test: h_dly4ln58 — unsupported file options must not create or falsely refresh Claude accounts.
+    test.each([
+        ["new", "authFile"],
+        ["existing", "authFile"],
+        ["new", "home"],
+        ["existing", "home"],
+    ] as const)("refuses Claude %s account %s binding without writes", async (state, option) => {
+        if (state === "existing") {
+            await seed({
+                version: CONFIG_VERSION,
+                accounts: [
+                    {
+                        id: "acc_work",
+                        name: "work",
+                        provider: "anthropic-sub",
+                        enabled: true,
+                        billing: { mode: "subscription" },
+                        useEnvApiKey: false,
+                        credentials: { accessToken: "access-invented", refreshToken: "refresh-invented" },
+                    },
+                ],
+                defaults: {},
+            });
+        }
+
+        writeImportedFile();
+        const vaultFile = join(home, ".genesis-tools", "security", "vault.json");
+        const configBefore = readFileSync(configPath(), "utf8");
+        const vaultBefore = existsSync(vaultFile) ? readFileSync(vaultFile, "utf8") : undefined;
+
+        const result = await runLogin({
+            provider: "claude",
+            name: "work",
+            tool: "tools ai accounts",
+            ...(option === "authFile" ? { authFile } : { home: dirname(authFile) }),
+        });
+
+        expect(result.ok).toBe(false);
+        expect(process.exitCode).toBe(1);
+        expect(readFileSync(configPath(), "utf8")).toBe(configBefore);
+        expect(existsSync(vaultFile) ? readFileSync(vaultFile, "utf8") : undefined).toBe(vaultBefore);
+        expect(readFileSync(authFile, "utf8")).toBe(IMPORTED);
     });
 });

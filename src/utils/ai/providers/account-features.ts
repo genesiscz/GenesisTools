@@ -23,6 +23,8 @@ export interface AccountFlowContext {
     account?: AccountEntry;
     /** Requested account name for a first login; the flow may derive one from the identity. */
     requestedName?: string;
+    /** Codex compatibility alias for the default separate vault grant. */
+    codexBroker?: boolean;
     /** Vendor home to log into or bind (`--home`): a codex profile dir, a grok GROK_HOME. */
     home?: string;
     /** An existing credential file to bind without running a flow (`--auth-file`). */
@@ -31,6 +33,8 @@ export interface AccountFlowContext {
     interactive: boolean;
     /** Diagnosis only: read, never rotate or spend a single-use credential. */
     probe?: boolean;
+    /** Terminal interaction boundary for browser OAuth login. */
+    authorizationInteraction?: import("../oauth/login-ui").AuthorizationInteraction;
     /** Open a URL in the browser; injected so tests never spawn `open`. */
     openUrl?: (url: string) => Promise<void>;
     fetch?: typeof fetch;
@@ -319,6 +323,8 @@ export interface AccountFeatures {
     /** Instructions when the flow is external (grok): command to run and the file it writes. */
     externalLogin?(ctx: AccountFlowContext): ExternalLoginInstruction;
 
+    /** Resolve the current native credential path without reading or refreshing it. */
+    nativeAuthFile?(): string;
     /** Enumerate homes on disk not yet bound to an account. Absent for Anthropic (no home). */
     discoverHomes?(): Promise<DiscoveredHome[]>;
     /** Decode identity from stored credentials without network (JWT claims). */

@@ -305,3 +305,36 @@ describe("a named re-login leaves the other account's home alone", () => {
         expect(destination).toBe(join(moved, "auth.json"));
     });
 });
+
+test("broker login produces vault credentials without retaining the old auth-file reference", async () => {
+    const tokens = fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1" });
+    const outcome = codexLoginOutcome({ tokens, broker: true });
+    expect(outcome.credentials.accessToken).toBe("codex-access-invented");
+    expect(outcome.credentials.refreshToken).toBe("codex-refresh-invented");
+    expect(outcome.credentials.authFile).toBe("");
+    expect(outcome.credentials.expiresAt).toBe(tokens.expiresAt);
+    expect(outcome.rollback).toBeUndefined();
+});
+
+test("default login stores a new vault grant without changing the native file", async () => {
+    const authFile = join(home, "codex", "auth.json");
+    await writeCodexAuthJson(authFile, fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1" }));
+    await applyLoginOutcome({
+        name: "work",
+        outcome: codexLoginOutcome({
+            tokens: fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1" }),
+            authFile,
+        }),
+    });
+    const original = readFileSync(authFile, "utf8");
+    const outcome = codexLoginOutcome({
+        tokens: fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1" }),
+    });
+
+    expect(outcome.credentials.accessToken).toBe("codex-access-invented");
+    expect(outcome.credentials.refreshToken).toBe("codex-refresh-invented");
+    await applyLoginOutcome({ name: "work", outcome });
+    expect(storedAccount("work")?.credentials.authFile).toBe("");
+    expect(storedAccount("work")?.credentials.accessToken).toEqual({ type: "secure", path: "ai/acc_work/accessToken" });
+    expect(readFileSync(authFile, "utf8")).toBe(original);
+});
