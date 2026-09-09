@@ -1,3 +1,4 @@
+import type { NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import type { EmbeddingModel, ImageModel, LanguageModel, SpeechModel, TranscriptionModel } from "ai";
 import type { AccountEntry } from "../config/schema";
 import type { AccountFeatures } from "./account-features";
@@ -96,4 +97,6 @@ export interface ProviderPlugin {
      * exclude it. A nested member has no blast radius.
      */
     readonly accounts?: AccountFeatures;
+    /** Native transcript discovery/reading/import, independent of account authentication. */
+    readonly codingAgent?: NativeSessionReader<string>;
 }

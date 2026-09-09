@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { grokHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { decodeJwtClaims, getActiveAuthEntry, readAuthFileAsync } from "../../../grok/auth";
 import { grokAuthPath, resolveGrokHome } from "../../../grok/paths";
@@ -30,6 +31,7 @@ const presentation: AccountFeatures["presentation"] = {
 
 export const grokSubPlugin: ProviderPlugin = {
     id: "grok-sub",
+    codingAgent: grokHistoryReader,
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {

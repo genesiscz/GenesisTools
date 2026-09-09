@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -100,4 +101,37 @@ export function nativeTranscriptMaxDepth(kind: NativeSessionProvider): number {
         return 3;
     }
     return 4;
+}
+
+export function codexHomesIn(root: string): string[] {
+    if (!existsSync(root)) {
+        return [];
+    }
+
+    const homes: string[] = [];
+
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) {
+            continue;
+        }
+
+        // The dot in a backup name is load-bearing. `.codex-` is the separator Codex itself uses
+        // for a profile home, so `~/.codex-bak-2026-09-04` would be discovered as a real home and
+        // its rollouts indexed as sessions distinct from the identical ones in `~/.codex`.
+        // `~/.codex.bak-2026-09-04` is skipped only because a dot is not a hyphen.
+        if (entry.name === ".codex" || entry.name.startsWith(".codex-")) {
+            homes.push(join(root, entry.name));
+        }
+    }
+
+    return homes.sort();
+}
+
+/** History discovery includes legacy Codex profile homes without reading their credentials. */
+export function nativeSessionRootsWithLegacyHomes(kind: NativeSessionProvider, root = homedir()): string[] {
+    const roots = nativeSessionRoots(kind, root);
+    if (kind !== "codex") {
+        return roots;
+    }
+    return [...new Set([...roots, ...codexHomesIn(root).flatMap((home) => nativeSessionRootsForHome("codex", home))])];
 }

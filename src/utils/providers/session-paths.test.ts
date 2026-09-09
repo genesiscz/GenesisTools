@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import {
+    codexHomesIn,
     isNativeTranscript,
     nativeSessionRoots,
     nativeSessionRootsForHome,
@@ -128,5 +132,30 @@ describe("nativeTranscriptMaxDepth", () => {
         expect(nativeTranscriptMaxDepth("claude")).toBe(6);
         expect(nativeTranscriptMaxDepth("grok")).toBe(3);
         expect(nativeTranscriptMaxDepth("codex")).toBe(4);
+    });
+});
+describe("codexHomesIn", () => {
+    test("takes the real home and hyphenated profile homes, and a dotted backup of a codex home is not a home", () => {
+        const root = mkdtempSync(join(tmpdir(), "codex-homes-"));
+        for (const name of [
+            ".codex",
+            ".codex-personal",
+            ".codex-shop",
+            ".codex.bak-2026-01-01",
+            ".codexbar",
+            ".claude",
+        ]) {
+            mkdirSync(join(root, name));
+        }
+
+        expect(codexHomesIn(root)).toEqual([
+            join(root, ".codex"),
+            join(root, ".codex-personal"),
+            join(root, ".codex-shop"),
+        ]);
+    });
+
+    test("an absent root has no homes", () => {
+        expect(codexHomesIn(join(tmpdir(), "codex-homes-absent-does-not-exist"))).toEqual([]);
     });
 });

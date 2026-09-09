@@ -1,3 +1,4 @@
+import { claudeHistoryReader } from "@genesiscz/utils/agent-sessions/compact-readers";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import { AnthropicSubResolver } from "../../../resolvers/AnthropicSubResolver";
 import type { AccountFeatures } from "../../account-features";
@@ -33,6 +34,7 @@ const presentation: AccountFeatures["presentation"] = {
 
 export const anthropicSubPlugin: ProviderPlugin = {
     id: "anthropic-sub",
+    codingAgent: claudeHistoryReader,
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {
