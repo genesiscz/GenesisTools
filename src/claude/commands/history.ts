@@ -358,17 +358,14 @@ export function registerHistoryCommand(program: Command): void {
 
                 const p = profiler.scope("claude-history");
                 const results = options.listSummaries
-                    ? await p.measureAsync("history.list-summaries", async () => {
-                          // "Conversation topics" means the ones that have a topic: the previous
-                          // engine skipped every session with neither a summary nor a custom
-                          // title, and applied --limit only to what survived that filter.
-                          const listed = await searchIndexedClaudeHistory({
-                              filters: { ...filters, query: undefined, summaryOnly: true, limit: undefined },
-                          });
-                          const titled = listed.filter((result) => result.summary || result.customTitle);
-
-                          return filters.limit === undefined ? titled : titled.slice(0, filters.limit);
-                      })
+                    ? await p.measureAsync("history.list-summaries", () =>
+                          // "Conversation topics" means the ones that have a topic. `titledOnly`
+                          // is the shared engine's own predicate, applied before the limit, so
+                          // every provider door answers this the same way.
+                          searchIndexedClaudeHistory({
+                              filters: { ...filters, query: undefined, summaryOnly: true, titledOnly: true },
+                          })
+                      )
                     : await p.measureAsync("history.search", () => searchIndexedClaudeHistory({ filters }));
                 // No p.summary() here: both callees already summarise the same
                 // cached `claude-history` scope at each return, so a second call

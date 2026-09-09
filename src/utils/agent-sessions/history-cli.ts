@@ -77,6 +77,10 @@ export function filtersFromHistoryOptions(
         files: [...(options.file ?? []), ...(options.files ?? [])],
         tool: options.tool,
         summaryOnly: Boolean(options.summaryOnly || options.listSummaries),
+        // A topic listing keeps only the sessions that have a topic, and the ceiling applies to
+        // what survives that. Without it every door but Claude's filled its 20 rows with
+        // first-prompt fallbacks and dropped titled conversations off the end.
+        titledOnly: Boolean(options.listSummaries),
         agentsOnly: options.agentsOnly,
         excludeAgents: options.excludeAgents,
         excludeThinking: options.excludeThinking,

@@ -393,6 +393,10 @@ export class HistoryService {
                 continue;
             }
 
+            if (filters.titledOnly && !metadata.summary && !metadata.customTitle) {
+                continue;
+            }
+
             const result = resultFromMetadata(metadata, this.options.reader.kind);
             const hasDate = !filters.summaryOnly || metadata.firstTimestamp !== null;
 

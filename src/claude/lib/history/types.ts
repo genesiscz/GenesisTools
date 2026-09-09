@@ -31,6 +31,8 @@ export interface SearchFilters {
     limit?: number;
     context?: number;
     summaryOnly?: boolean;
+    /** Topic listings keep only sessions with a summary or custom title, before the limit. */
+    titledOnly?: boolean;
     excludeCurrentSession?: string;
     conversationDate?: Date;
     conversationDateUntil?: Date;

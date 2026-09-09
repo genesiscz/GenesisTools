@@ -47,6 +47,12 @@ export interface AgentSearchFilters {
     tool?: string;
     context?: number;
     summaryOnly?: boolean;
+    /**
+     * "Conversation topics" means the sessions that have one: keep only rows with a summary or a
+     * custom title, BEFORE the limit is applied, so a topic listing is not filled with
+     * first-prompt fallbacks while titled conversations fall off the end.
+     */
+    titledOnly?: boolean;
     agentsOnly?: boolean;
     excludeAgents?: boolean;
     excludeThinking?: boolean;

@@ -259,6 +259,33 @@ test("summary-only results apply limit after global metadata-mtime ordering", as
     }
 });
 
+test("a topic listing keeps only titled sessions, and the limit applies after that filter", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-service-titled-only-"));
+    const newest = fixtureSource({ root, name: "newest", nativeId: "newest-native" });
+    const middle = fixtureSource({ root, name: "middle", nativeId: "middle-native" });
+    const titled = fixtureSource({ root, name: "titled", nativeId: "titled-native" });
+    titled.metadata.customTitle = "Quarterly invoice repair";
+    // Summary listings order by metadata mtime, so the two untitled sessions are exactly the
+    // first-prompt fallbacks that used to spend the whole limit before any topic was reached.
+    newest.metadata.mtime = Date.parse("2026-09-06T00:00:00.000Z");
+    middle.metadata.mtime = Date.parse("2026-09-05T00:00:00.000Z");
+    titled.metadata.mtime = Date.parse("2026-09-01T00:00:00.000Z");
+    const reader = fixtureReader({ fixtures: [newest, middle, titled] });
+    const current = service({ providerId: "fixture-provider", reader, roots: [root] });
+    try {
+        const topics = await current.history.search({ summaryOnly: true, titledOnly: true, limit: 2 });
+        const everything = await current.history.search({ summaryOnly: true, limit: 2 });
+
+        expect(topics.results.map((result) => result.metadata.nativeId)).toEqual(["titled-native"]);
+        expect(everything.results.map((result) => result.metadata.nativeId)).toEqual([
+            "newest-native",
+            "middle-native",
+        ]);
+    } finally {
+        current.database.close();
+    }
+});
+
 test("Codex sidecar titles match on cold and warm content searches without fabricated record locators", async () => {
     const home = mkdtempSync(join(tmpdir(), "gt-service-codex-title-"));
     const root = join(home, "sessions");

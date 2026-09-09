@@ -85,6 +85,21 @@ test("rich history filters preserve tool, files, context, commit and exclusion i
     expect(filters.conversationDate?.toISOString()).toBe("2026-09-01T00:00:00.000Z");
 });
 
+test("--list-summaries asks for titled topics, --summary-only keeps searching first prompts", () => {
+    const topics = filtersFromHistoryOptions("ignored", { listSummaries: true, limit: "20" }, "/projects/shop");
+
+    expect(topics.query).toBeUndefined();
+    expect(topics.summaryOnly).toBe(true);
+    expect(topics.titledOnly).toBe(true);
+
+    // A summary-only SEARCH still has to match a first prompt, so it must not inherit the
+    // topic-listing predicate.
+    const search = filtersFromHistoryOptions("refund", { summaryOnly: true }, "/projects/shop");
+
+    expect(search.summaryOnly).toBe(true);
+    expect(search.titledOnly).toBe(false);
+});
+
 test("invalid history limits and dates fail instead of changing search scope silently", () => {
     expect(() => filtersFromHistoryOptions(undefined, { limit: "nonsense" }, "/projects/shop")).toThrow();
     expect(() => filtersFromHistoryOptions(undefined, { since: "not-a-date" }, "/projects/shop")).toThrow();
