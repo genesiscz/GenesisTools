@@ -17,6 +17,12 @@ function pidAlive(pid: number): boolean {
     }
 }
 
+/** The watchdog is a `/bin/sh` whose script embeds the guarded pid, so pgrep finds it by that. */
+function watchdogRunning(selfPid: number): boolean {
+    const found = Bun.spawnSync(["pgrep", "-f", `self=${selfPid}`]);
+    return found.stdout.toString().trim().length > 0;
+}
+
 async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
 
@@ -134,5 +140,47 @@ describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
 
         const died = await waitUntil(() => !pidAlive(childPid), 4_000);
         expect(died).toBe(true);
+    });
+
+    // The preload installs the guard in every test process, so a watchdog that only
+    // watched the parent would outlive each finished worker for the whole run.
+    test("the watchdog ends with a worker that exits normally under a live parent", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "orphan-worker-exit-"));
+        const readyFile = join(dir, "ready");
+        const goFile = join(dir, "go");
+        const childFile = join(dir, "exits.ts");
+        writeFileSync(
+            childFile,
+            `import { existsSync, writeFileSync } from "node:fs";
+import { installOrphanWorkerGuard } from ${SafeJSON.stringify(guardPath)};
+installOrphanWorkerGuard();
+writeFileSync(${SafeJSON.stringify(readyFile)}, "1");
+while (!existsSync(${SafeJSON.stringify(goFile)})) {
+    await Bun.sleep(20);
+}
+`
+        );
+
+        const child = Bun.spawn({
+            cmd: [process.execPath, childFile],
+            env: process.env,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+        leftovers.push(child.pid);
+
+        const armed = await waitUntil(() => Bun.file(readyFile).size > 0, 5_000);
+        expect(armed).toBe(true);
+        expect(watchdogRunning(child.pid)).toBe(true);
+
+        writeFileSync(goFile, "1");
+        await child.exited;
+        expect(pidAlive(child.pid)).toBe(false);
+
+        // This test process is the guarded worker's parent and is still alive, so
+        // only the worker's own exit can end the watchdog.
+        const stopped = await waitUntil(() => !watchdogRunning(child.pid), 6_000);
+        expect(stopped).toBe(true);
     });
 });
