@@ -237,7 +237,6 @@ Four hook registrations in `plugins/genesis-tools/hooks/hooks.json`:
 | Event | Script | Purpose |
 |-------|--------|---------|
 | `SessionStart` | `track-session-files.ts` | Start the per-session record of modified files. |
-| `SessionStart` | `agents-talk-hint.ts` | Remind the agent to invoke `agents-talk` before spawning subagents that need to communicate. |
 | `SessionStart` | `record-session-account.ts` | Record which Claude account the session is billing. |
 | `PostToolUse` (`Edit\|Write\|MultiEdit`) | `track-session-files.ts` | Append each edited file to that session's record. |
 

@@ -1,9 +1,20 @@
 ---
 name: agents-talk
-description: Coordinate communicating agents without blocking their work. For Codex subagents, use native peer messages and task wakeups. Use the tools agents bus across local hosts, with a real monitor for asynchronous delivery; --once is an explicit blocking fallback, never a substitute for nonblocking communication.
+description: "CLAUDE ONLY, and only inside a handoff-to run. Picks the channel for a multi-agent swarm that must talk while it works: tools agents bus across hosts, with a real monitor for async delivery. NOT for spawning ordinary subagents, and NOT for a single worker. Codex must never invoke this skill: it has no monitor, so the protocol here cannot work, and tools codex passes what a codex worker needs into its brief instead."
 ---
 
 # `/agents-talk` — cross-agent communication protocol
+
+> **🛑 Codex must never invoke this skill.** These plugin hooks and skills are portable, so a
+> Codex CLI or Codex Desktop session can see this file. It still does not apply. Codex has no
+> `Monitor` tool, so the receive-and-wake strategies below have no implementation there, and a
+> Codex worker that loads this reaches for a bus it cannot subscribe to. A Codex worker that is
+> part of a swarm gets what it needs from the brief that `tools codex` and `gt:handoff-to` build
+> for it. Use the native Codex collaboration tools instead.
+>
+> **🛑 Claude: this is not a "spawning subagents" skill.** Invoke it only when `gt:handoff-to` has
+> established a run whose agents must talk to each other WHILE they work. Ordinary subagents that
+> report back when finished need nothing from this file.
 
 Choose the communication channel before starting receivers. **Codex subagents communicating while they work must use the nonblocking native path below when available.** Do not start a CLI inbox for this path. Use `tools agents` when agents on different hosts or CLI workers need a shared bus. If the user explicitly requires the bus, use a real monitor for asynchronous delivery; without one, explain the capability gap rather than quietly substituting blocking `--once`. No MCP server is required.
 

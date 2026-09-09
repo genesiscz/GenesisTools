@@ -38,14 +38,8 @@ export function registerSpawnCommand(program: Command): void {
         .option("--prompt <text>", "Start the first turn with this prompt")
         .option("--prompt-file <path>", "Read the first prompt from a file")
         .option("--no-agents", "Disable tools agents integration")
-        .option(
-            "--no-skills",
-            "accepted for parity with grok/claude; codex has no isolation control (see references/codex.md)"
-        )
-        .option(
-            "--no-rules",
-            "accepted for parity with grok/claude; codex has no isolation control (see references/codex.md)"
-        )
+        .option("--no-skills", "REFUSED: codex has no skills isolation control (see references/codex.md)")
+        .option("--no-rules", "REFUSED: codex has no rules isolation control (see references/codex.md)")
         .option("--session <id>", "Parent tools agents session id")
         .option("--writable-root <path...>", "Additional writable roots")
         .action(async (options: SpawnCliOptions) => {
@@ -57,9 +51,18 @@ export function registerSpawnCommand(program: Command): void {
                 throw new Error("--mode must be review or task");
             }
 
+            // A silent no-op here reads as isolation that was applied. It never was, so this
+            // refuses instead of pretending: a caller who asked for isolation and did not get it
+            // must find out now, not from a worker that turned out to load every skill.
             if (options.skills === false || options.rules === false) {
-                out.log.warn(
-                    "codex has no skills/rules isolation control: --no-skills/--no-rules are accepted for parity and do nothing. Use a lean --home instead (references/codex.md)."
+                const asked = [
+                    options.skills === false ? "--no-skills" : "",
+                    options.rules === false ? "--no-rules" : "",
+                ]
+                    .filter(Boolean)
+                    .join(" and ");
+                throw new Error(
+                    `${asked} cannot be honoured: codex has no skills/rules isolation control, so the flag would silently do nothing. Pass a lean --home <dir> instead, which is the only mechanism that actually limits what a codex worker loads (references/codex.md).`
                 );
             }
 
