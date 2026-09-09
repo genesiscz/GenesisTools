@@ -60,6 +60,15 @@ The existing `runMigrations()` framework handles versioned DDL — pass `migrati
 
 For greenfield tables, the `bootstrap` option (`CREATE TABLE IF NOT EXISTS …`) is enough — no migration needed because there's nothing to migrate from.
 
+### Shared provider history database
+
+`~/.genesis-tools/claude-history/index.db` is one physical database with independently scoped owners:
+
+- `provider_history` migrations own provider metadata, source freshness, discovery generations, and aggregate history statistics.
+- `usage_limits` migrations own `usage_snapshots` and `spend_snapshots`.
+
+History metadata and statistics use the shared `HistoryDatabase` connection, but opening a read-only status/title lookup must not initialize either schema. Rebuild/reset operations may clear only their provider-scoped derived rows. They must preserve usage/spend observations and tables owned by other migration scopes. Transcript bodies remain in native source files or provider projections; this database stores no message mirror or FTS transcript index.
+
 ## Future swap to Drizzle / Prisma
 
 Each tool owns its own `db-types.ts` + `db.ts`. To swap, rewrite those two files for that tool only. The thin contract makes it local — no codebase-wide refactor.
