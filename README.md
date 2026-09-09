@@ -201,7 +201,7 @@ is large, and as skills they would load into sessions that never needed them.
 | `agents-talk` | Cross-agent messaging protocol via `tools agents`. Invoke before spawning subagents that must talk to each other. |
 | `analyze-har` | Token-efficient HAR analysis. The rule it enforces: never `cat` or `jq` a HAR file. |
 | `azure-devops` | Work items, queries, sprints, dashboards. Defers time logging to `/gt:timelog`. |
-| `claude-history` | Find a past Claude Code conversation by topic, file, or date. |
+| `claude-history` | Find native Claude, Codex or Grok conversations by topic, file or date. |
 | `debugging-master` | Hypothesis-driven runtime debugging with temporary, auto-cleanable instrumentation (Node/TS, PHP, browser). |
 | `git` | Branch mechanics with proof: is it merged (by content), rebase one branch or a fleet, the oracle merge, cascade a parent and its children, clean up after a merge, recommit, split a branch, merge a PR. Drives `tools git merged`, `rebase-cascade`, `base`, `config`. |
 | `github` | Read or search GitHub, and analyze GitHub Actions runs, failures, and billing. |
@@ -311,7 +311,8 @@ that tool's own `README.md`, which you can also print in the terminal with
 |------|--------------|-----------------|
 | [`claude`](src/claude/README.md) | Everything around Claude Code: history, resume, accounts and OAuth, desktop sync, usage, MCP server, cmux restore. | `history` `resume` `tail` `summarize` `usage` `config` `login` `start` `mcp` `code` `cmux` `teams` `doctor` |
 | [`cc`](src/cc/README.md) | Resume a Claude Code session by short ID, name, or content search. | (single command) |
-| [`codex`](src/codex/README.md) | Spawn, monitor, and steer Codex app-server sessions. | `spawn` `steer` `read` `review` `approve` `deny` `tail` `sessions` |
+| [`codex`](src/codex/README.md) | Run the native Codex terminal on a named account with shared configuration, search indexed history, and manage app-server workers. | `login` `run` `history` `usage` `spawn` `steer` `read` `review` `approve` `deny` `tail` `sessions` |
+| [`grok`](src/grok/README.md) | Run isolated Grok workers, resume native sessions, and search indexed conversation history. | `login` `run` `resume` `history` `usage` `steer` `read` `tail` `sessions` |
 | [`cursor`](src/cursor/README.md) | Ask Cursor Agent a question about the codebase and stream the answer, tool calls on stderr and answer on stdout. | flags only (`--mode`, `--model`, `--raw`) |
 | [`cursor-context`](src/cursor-context/README.md) | Strip tool-use parameters and results from Cursor SpecStory exports to save tokens. | flags only |
 | [`agents`](src/agents/README.md) | Cross-agent communication: register, message, request, discover, listen across a swarm. | `login` `message` `request` `discover` `listen` |
@@ -591,6 +592,58 @@ tools claude mcp                            # the MCP server described above
 environment, so `claude -p` inside a hook or CI job never depends on whatever the keychain
 happens to hold.
 
+### Codex accounts and native conversation history
+
+Named Codex login uses the shared account store and encrypted vault. Each native
+terminal gets the selected account through its own app-server while configuration,
+plugins and conversations stay in one `~/.codex` home.
+
+```bash
+tools codex login work
+tools ai codex login personal                 # same login flow and account store
+tools ai accounts login work --provider codex # generic provider entry point
+
+tools codex run work --model astra
+tools codex run work --model terra --resume
+tools codex run work --model luna --resume "invoice parser"
+tools codex run work --resume "invoice parser" --model sol
+
+tools codex history "invoice parser" --all --sort-relevance
+tools codex history --file package.json --since "7 days ago"
+tools grok history "callback" --tool read_file --context 2
+tools claude history index status
+tools codex history index sync
+tools grok history index rebuild
+```
+
+Bare `--resume` follows the native CLI: Codex and Claude show their native picker;
+Grok resumes its most recent session. A query searches the selected provider's
+indexed transcripts, including assistant messages and tool results. Searches use
+the current project by default; `--all` includes other projects of that provider.
+Claude, Codex and Grok share the existing `~/.genesis-tools/claude-history/index.db`.
+Normal searches discover and refresh changed sources automatically. The database keeps
+bounded metadata and aggregate statistics; matching text and context come from the
+original native records. Explicit `history index sync` and `rebuild` are optional.
+
+The same database also contains historical usage and spending observations. Rebuilding
+history preserves those observations and native conversations. Do not delete the database
+as a cache reset. A metadata-only status can report an unknown message count until a
+separate statistics refresh has established it.
+
+Claude/Codex/Grok history searches and listings auto-build their derived index and synchronize changes. No manual indexing step is required. Explicit sync/rebuild are optional maintenance; status is read-only. Indexing does not import credentials or migrate native conversations.
+
+Installed native Computer Use is configured automatically for `tools codex run`.
+The launcher preserves browser services in `node_repl` and adds official Sky
+support through process-local overrides. `--computer-use` requires an installed
+runtime; `--no-computer-use` skips the overrides. macOS permissions and browser
+connections still come from the installed desktop plugins.
+
+Selecting an older Codex profile session offers **Copy and resume** or **Cancel**.
+Supported legacy histories, including archived ones, get a new native session ID;
+the original stays in place. Paginated cross-home imports are rejected because
+the tested native fork operation cannot load their separate history store. See
+[Codex account, history and import details](src/codex/README.md).
+
 ### 🤖 AI subsystem
 
 The `ai` tool is the user-facing face of a layered subsystem under `src/utils/ai/`:
@@ -847,6 +900,8 @@ Type messages, save and exit to send them. Send `OK` on its own to release the A
 | `~/.genesis-tools/<tool>/` | Per-tool config and cache, for example `say/config.json`, `mcp-manager/config.json`, `scripts/`. |
 | `~/.genesis-tools/ai/config.json` | AI accounts, defaults, and aliases (version 4 schema). |
 | `~/.genesis-tools/security/vault.json` | AES-256-GCM credential vault. Config stores references into it, never plaintext. |
+| `~/.genesis-tools/claude-history/index.db` | Shared provider-scoped history metadata/statistics and historical usage/spending observations. Original transcripts stay in their native homes. |
+| `~/.codex/.genesis-tools/session-imports/` | Provenance and recovery records for copies imported into the shared Codex home. |
 | `~/.genesis-tools/claude-code/sessions/<id>.json` | Files modified per Claude Code session, written by the plugin hooks. |
 | `.claude/azure/` | Per-project Azure DevOps config and downloaded work items. |
 

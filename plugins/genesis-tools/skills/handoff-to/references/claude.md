@@ -146,3 +146,11 @@ Never trust the self-report. Run the verification command yourself, read `git di
 ## Driver mode
 
 For a long multi-turn Claude handoff, spawn a `genesis-tools:agent-driver` subagent with `BACKEND: claude` and an `ACCOUNT:` line so the run's output stays out of this session. The driver runs the `tools claude worker spawn/steer/read/status` loop — the session id and account pinning are the worker layer's job now, not a shell recipe's. Confirm the account each turn (`worker status` prints it) rather than assuming it stuck.
+
+## Human interactive history and resume
+
+`tools claude history "query"` and `tools claude run <account> --resume "query"` use the provider-native index, building it and synchronizing changes automatically, including exact-ID/metadata selection. No manual index step is needed. Bare resume remains native; non-TTY ambiguity is refused. A foreign source home produces an explicit CLAUDE_CONFIG_DIR command rather than a silent home switch or migration.
+
+This does not replace the headless worker contract or its long-lived credentials. Claude login does not accept Codex-style --auth-file/--home binding. History lookup never grants permission to import credentials or migrate sources. See `../../claude-history/SKILL.md` for filters and optional maintenance.
+
+History extends `~/.genesis-tools/claude-history/index.db` with shared provider metadata/statistics. Original records supply search and context. Preserve its historical usage/spending observations during rebuild; never delete the whole database as a cache reset.

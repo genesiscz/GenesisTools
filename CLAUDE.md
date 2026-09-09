@@ -82,6 +82,12 @@ source ~/.zshrc  # or ~/.bashrc
 # The install script adds GenesisTools to PATH by modifying shell config files
 ```
 
+## Provider history storage
+
+Claude, Codex and Grok history share `~/.genesis-tools/claude-history/index.db` through `src/utils/agent-sessions/` and `ProviderPlugin.codingAgent`. Reuse the shared service/repositories; keep provider parsing behind readers. Source text stays in native files/projections, with bounded metadata and aggregate contributions in SQLite.
+
+This database also contains historical `usage_snapshots` and `spend_snapshots`. Never remove it as a disposable cache, clear observation tables during history rebuild, or run unscoped history SQL across providers. Cached runtime/title/status lookup must not initialize schemas or discover sources. Ordinary searches refresh metadata automatically; full statistics refresh is separate.
+
 ## Architecture Overview
 
 GenesisTools is a TypeScript-based CLI toolkit that runs on Bun. The architecture follows a plugin pattern where each tool is self-contained:
@@ -343,6 +349,10 @@ Everything AI lives under `src/utils/ai/` + `src/utils/security/`, in layers tha
 - **L4 `src/utils/ai/core/`**: `resolveModel` / `resolveModelTarget` is the ONE resolution ladder (explicit ref, then app default, then task default, then global), and `coreChat` / `callLLM` the one transport. `ModelRef` grammar: `"grok-4-fast"`, `"xai/grok-4-fast"`, `"@account/<id>:<model>"`, `"@proxy/<slug>/<model>"`.
 - **L5 `src/utils/ai/tasks/`**: the `ai.*` facade (`chat`, `embed`, `transcribe`, `speak`, `synthesize`, `summarize`, `translate`, `image`; `realtime` throws a documented `NotImplementedError`). It owns binding lifetime, so a facade verb disposes the binding it resolved. That matters because local runtimes hold native handles.
 - **L6 `src/utils/ai/session/`** and **L7 `src/utils/ai/usage/`**: shared session store plus mini-agent, and `recordUsage` / `queryUsage`. `recordUsage` NEVER throws (it sits in the hot path of every call) and records `costSource` so a derived price is never mistaken for a booked one.
+
+**Codex account ownership:** `src/utils/ai/openai/account-binding.ts` is the shared subscription binding for native terminals, workers, usage and SDK requests. Keep immutable account/workspace identity across refresh and renames. Vault grants have one refresh owner; native auth-file references are read-only. Diagnostics use `AiConfigStore.readOnly()` for metadata too, because ordinary `load()` may run migrations. Native app-server authentication uses external tokens with ephemeral credential storage; never swap the shared home's auth file.
+
+**Native CLI history:** extend `ProviderPlugin.codingAgent` and the readers/index under `src/utils/agent-sessions/`; do not add another provider registry. This derived history index is separate from app-owned `src/utils/ai/session/` conversations. Session identity includes provider, native ID and canonical source home. Import through the provider's native API with source-preserving provenance; never manufacture native SQLite rows or infer historical account ownership from today's login.
 
 **Cost math is `src/utils/ai/llm-cost.ts` only**: `calculateCallCostUsd` (prices cache reads and writes at their own rates) and `estimateLlmCallCostUsd`. No rate table belongs there, or anywhere new.
 

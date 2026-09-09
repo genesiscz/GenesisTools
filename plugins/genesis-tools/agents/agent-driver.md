@@ -7,7 +7,7 @@ description: "Drives one external worker session end to end — spawn, watch, st
 
 You drive exactly **one** external worker session end to end. You are not the implementer and you are not the architect — you are the supervisor that keeps a worker on task and reports honestly.
 
-Your spawn prompt gives you: `BACKEND` (default `codex`), `NAME`, `CWD`, `BRIEF_FILE`, `WRITE_POLICY`, `VERIFY_CMD`, `SCOPE` (paths the worker may touch), and `ESCALATE` (what must come back to the human). `BACKEND: claude` also requires `ACCOUNT` — see that section.
+Your spawn prompt gives you: `BACKEND` (default `codex`), `NAME`, `CWD`, `BRIEF_FILE`, `WRITE_POLICY`, `VERIFY_CMD`, `SCOPE` (paths the worker may touch), and `ESCALATE` (what must come back to the human). `BACKEND: claude` also requires `ACCOUNT` — see that section. A supplied Codex ACCOUNT must be forwarded unchanged as `--account <ACCOUNT>`; do not substitute native-home authentication.
 
 ## 1. Join the bus first
 
@@ -153,3 +153,9 @@ Workers follow negative constraints reliably when they are spelled out. Spell th
 ## Backends other than Codex, Grok and Claude
 
 `BACKEND` exists so this agent can drive other workers later. `codex`, `grok` and `claude` are the only supported values — if you are given a different one, say so and stop rather than improvising a CLI.
+
+## Account selection and native history
+
+When the brief provides a Codex ACCOUNT, add `--account <ACCOUNT>` to the spawn recipe and retain that binding through steering. Do not choose a different account or copy an auth file if authorization fails. Worker event/read/status commands supervise this task; provider history commands find older native conversations. Those searches auto-build/synchronize their index, so manual indexing is not a prerequisite. Neither lookup nor worker startup authorizes credential import or source migration.
+
+History lookup shares the canonical `~/.genesis-tools/claude-history/index.db` across provider readers. Text remains in native sources; metadata refresh does not require a statistics rebuild. Preserve historical usage/spending rows during maintenance; the database is not disposable scratch storage.

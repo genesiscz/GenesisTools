@@ -1,11 +1,11 @@
 ---
 name: gt:claude-history
-description: Find or reference a past Claude Code conversation — fixes, decisions, or discussions from earlier sessions ("you helped me fix", "we debugged", "I remember asking"). Locate sessions by topic, file, or date. Not for codebase/git/Slack history.
+description: Find native Claude Code, Codex, or Grok conversations by topic, file, date, or session ID. Explain automatic indexing and provider-scoped resume. Not for codebase/git/Slack history.
 ---
 
-# Claude History Search
+# Native Conversation History
 
-Search through Claude Code conversation history to find past interactions.
+Use the matching `tools claude history`, `tools codex history`, or `tools grok history` command. The existing skill identifier remains for compatibility. Searches/listings build the index on first use and synchronize changed sources automatically; no manual indexing step is required.
 
 ## 🛑 Do NOT pipe to `head` / `tail`
 
@@ -26,8 +26,8 @@ tools claude history "query" --all > /tmp/hist.md         # big result set → f
 Rules of thumb:
 
 - Cap with `--limit`, never with `head`. Default is 20; drop to `5`-`10` for a scoped question.
-- A quoted query on `--all` is `rg` then a parallel parse of the hits (main sessions first, then subagents). It should return in about a second, not tens of seconds. If it is still walking every JSONL, the rg prefilter failed and you will see `fastPath: "rg-fallback"` in the debug log.
-- `--summary-only` reads the metadata cache: titles, summaries, and the first 5000 characters of USER text. It never sees assistant replies or tool output, so a path that only appeared in a tool result, or late in a long session, will miss. Use a normal query, or `--file`.
+- Normal queries search the synchronized native index, including assistant replies and supported tool results. Warm searches reuse unchanged transcripts; metadata and parser-version changes are detected automatically.
+- `--summary-only` searches titles, summaries and the first real user prompt, not assistant replies or tool output. Use a normal query or `--file` for those.
 - Need only a machine answer? `--format json | tools json` is fine — that is a converter, not a truncator.
 - Redirecting to a file with `>` and then `Read`ing costs less than a re-run after a bad truncation. There is no `-o` flag on this command.
 
@@ -91,32 +91,40 @@ tools claude history "timer" --context 10  # 10 messages before/after
 | `--since <date>` | Since date (e.g., "7 days ago", "yesterday") |
 | `--until <date>` | Until date |
 | `-l, --limit <n>` | Limit results (default: 20) |
-| `-c, --context <n>` | Show N messages before/after match |
+| `-c, --context <n>` | Show N original records before/after a match, preserving metadata/progress records too |
 | `--exact` | Exact match instead of fuzzy |
 | `--regex` | Use regex for query |
 | `--agents-only` | Only search subagent conversations |
 | `--exclude-agents` | Exclude subagent conversations |
 | `--exclude-thinking` | Exclude thinking blocks |
-| `--reindex` | Rebuild search index (use when index seems stale or after manual edits) |
+| `history index status` | Read-only status; does not create an index |
+| `history index sync` | Optional explicit sync; normal searches do this automatically |
+| `history index rebuild` | Optional forced reparse; native sources remain unchanged |
 | `--format <type>` | Output: ai (default), json |
 
 ## Output Formats
 
-**Default (ai):** Perfect markdown with summaries and file paths
+**Default (ai):** Markdown in a pipe, or a table in an interactive terminal
 **With --context:** Shows surrounding messages in markdown
 **JSON:** Raw JSON for programmatic use
 
-## Performance
+## Automatic indexing and provider scope
 
-Content search no longer parses every JSONL under `~/.claude/projects`.
+Claude, Codex and Grok share `~/.genesis-tools/claude-history/index.db`, extending the existing Claude database. Normal search/list refreshes bounded metadata automatically; full text and original-record context are read from native sources. No login, manual sync or source migration is a prerequisite. Status stays read-only; explicit sync/rebuild are optional metadata maintenance.
 
-1. `rg -l` the longest query word (or the `--file` token) across `*.jsonl`.
-2. Parse those hits in parallel (16 at a time).
-3. Main sessions first, then subagents, then `--limit`.
+The database also holds historical `usage_snapshots` and `spend_snapshots`. Never delete it as a cache reset or recreate those observation tables during history maintenance. Statistics refresh is separate from metadata refresh; an unavailable message/token count is unknown, not zero. Do not recreate the discarded `native-history` message mirrors or full-text store.
 
-`--exclude-agents` skips the second wave. `--agents-only` is only wave two. A query-less `--all` uses the SQLite session listing (and **does** refresh that index). A content query does **not** write the index; it only reads rg + JSONL hits.
+`--all` expands project scope within the selected provider, never across providers. Identity includes native ID and canonical source home. Historical account ownership stays unknown unless the source proves it.
 
-`--summary-only` reads the metadata cache (titles, summaries, first 5000 chars of user text). Good for names, unreliable for paths.
+```bash
+tools codex history "invoice parser" --all --sort-relevance
+tools grok history "rounding" --file '*.ts' --context 2
+tools codex run work --model astra --resume "invoice parser"
+tools claude run work --resume "invoice parser"
+tools grok run --resume "invoice parser"
+```
+
+Bare `--resume` follows the native CLI: Claude/Codex picker, Grok most recent. A query uses indexed search; non-interactive ambiguity is an error. Claude keeps source homes distinct and refuses a foreign home with an explicit `CLAUDE_CONFIG_DIR` command. Codex copy prompts are separate from indexing. Never infer permission to migrate sources or import credentials from a history request.
 
 ## Summarize Sessions
 
@@ -126,16 +134,16 @@ Summarize Claude Code sessions using LLM-powered templates. Extracts key informa
 
 ```bash
 # Interactive mode — guided session & mode selection
-tools claude history summarize -i
+tools claude summarize -i
 
 # Summarize a specific session
-tools claude history summarize <session-id> --mode documentation
+tools claude summarize <session-id> --mode documentation
 
 # Summarize current session (inside Claude Code)
-tools claude history summarize --current --mode short-memory
+tools claude summarize --current --mode short-memory
 
 # Output prompt only (no LLM call)
-tools claude history summarize <session-id> --prompt-only --mode changelog
+tools claude summarize <session-id> --prompt-only --mode changelog
 ```
 
 ### Summarization Modes
@@ -177,22 +185,22 @@ tools claude history summarize <session-id> --prompt-only --mode changelog
 
 ```bash
 # Generate onboarding docs from a session
-tools claude history summarize abc123 --mode onboarding -o docs/onboarding.md
+tools claude summarize abc123 --mode onboarding -o docs/onboarding.md
 
 # Extract debug learnings
-tools claude history summarize abc123 --mode debug-postmortem --clipboard
+tools claude summarize abc123 --mode debug-postmortem --clipboard
 
 # Memorization with topic files
-tools claude history summarize abc123 --mode memorization --memory-dir ./memory/
+tools claude summarize abc123 --mode memorization --memory-dir ./memory/
 
 # Large session with chunked processing
-tools claude history summarize abc123 --mode documentation --thorough
+tools claude summarize abc123 --mode documentation --thorough
 
 # Custom analysis
-tools claude history summarize abc123 --mode custom --custom-prompt "List all API endpoints discussed"
+tools claude summarize abc123 --mode custom --custom-prompt "List all API endpoints discussed"
 
 # Use specific model
-tools claude history summarize abc123 --mode short-memory --provider anthropic --model claude-sonnet-4-5-20250929
+tools claude summarize abc123 --mode short-memory --provider anthropic --model claude-sonnet-4-5-20250929
 ```
 
 ## Extract shell quirks (zsh/bash NOMATCH)
@@ -225,3 +233,5 @@ tools claude history extract-shell-quirks -p GenesisTools -o /tmp/zsh.md
 ## Dashboard
 
 For visual exploration, `tools claude history dashboard` launches a web-based React/Vite interface for browsing and analyzing conversation history.
+
+For Codex and Grok's shared query selector, a full native UUID is an exact lookup across projects, never a fallback search for text mentioning the ID. Ordinary text queries remain scoped. Codex prefers an existing target-home copy when old homes retain the same ID and natively unarchives a canonical archived thread before resuming; an alternate-home migration still needs its own authorization.

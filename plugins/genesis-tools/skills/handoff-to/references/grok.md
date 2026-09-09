@@ -118,3 +118,11 @@ The `tools agents` bus is optional here: the transcript already lands in the tur
 - Its **sends are unreliable**: in both observed turns the *second* `tools agents` command of the turn was cancelled by grok's own permission layer ("User cancelled the execution for tool `run_terminal_command`"), while the first succeeded. The cause was not isolated — treat it as an observation, not a rule. What matters: the worker **reported the cancelled send as successful anyway**. Budget ONE bus send per turn, split extra reports across steered turns, and confirm every hop by reading the feed from the lead side — never from the worker's claim. A steered retry of a cancelled send succeeded unchanged.
 - **The worker's bus identity is not yours to choose.** A codex worker auto-registers as `codex_<name from --spawn>`; a grok worker has no auto-registration and uses whatever `--agent-name` its brief tells it to log in with. Naming a different identity in `--from` fails with "not registered". Write the brief's identity to match the spawn name exactly.
 - The lead's own listener must be started durably, or it dies at the Bash call boundary — see `references/codex.md` § Start the lead's bus listener.
+
+## Human TUI resume and native history
+
+The headless worker loop is distinct from `tools grok run --resume [query]`. Bare resume follows native Grok's most recent session; a query searches native history in the current project unless --all is supplied. --list prints matches without launching a TUI. Grok run does not accept a positional account name.
+
+`tools grok history` searches/listings automatically refresh shared provider metadata in `~/.genesis-tools/claude-history/index.db`, including known worker roots. Search reads native chat records; `updates.jsonl` stays separate statistics telemetry. No manual indexing or login is required. Explicit index sync/rebuild preserve historical usage/spending observations; status is read-only. Preserve worker-home isolation and auth-file reference rules. Searching does not authorize login, account import or migration.
+
+A full native UUID uses the shared selector's exact cross-project lookup. It does not fall back to a conversation that only mentions the ID. Free-text queries retain the project scope above.

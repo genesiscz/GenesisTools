@@ -43,6 +43,31 @@ tools claude start work --tmux --resume "auth callback"
 
 ---
 
+## Shared native history index
+
+Searches/listings automatically build the index on first use and synchronize changed sources. No manual indexing command is required. Explicit sync/rebuild are optional maintenance; status is read-only. Indexing never imports credentials or migrates source conversations.
+
+Claude history and query-based resume use the provider-native history index shared
+with Codex and Grok. Existing Claude filters, result rendering and picker behavior
+remain available; the legacy web and spending/statistics APIs keep their interfaces.
+Searches stay scoped to Claude and the current project unless `--all` is supplied.
+
+```bash
+tools claude history "callback" --file src/auth.ts --context 2
+tools claude history "callback" --all --sort-relevance --exclude-thinking
+tools claude history index status
+tools claude history index sync
+tools claude history index rebuild
+```
+
+History extends the existing `~/.genesis-tools/claude-history/index.db` with provider
+identity and bounded metadata. Searches read matching text and context from native
+records; full statistics refresh replaces aggregate contributions independently.
+History rebuild preserves native sources, credentials and the database's historical
+usage/spending observations. Never delete the whole database as a cache reset.
+A non-interactive resume query with several matches fails instead of silently
+choosing the first session.
+
 ## `proxy` — Claude Code on a proxied model
 
 Launches Claude Code against a model served by `tools ai-proxy` (Grok, GitHub Copilot,

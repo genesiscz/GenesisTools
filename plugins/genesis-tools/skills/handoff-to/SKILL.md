@@ -9,7 +9,7 @@ This file answers two questions: **who does it**, and **is it ready to leave**. 
 
 | Worker | Dispatch via |
 |---|---|
-| Codex / GPT-6 Astra / GPT-5.6 | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
+| Codex / GPT-6 Astra / GPT-5.6 Sol, Terra, Luna | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
 | Grok / grok-4.x | Read `references/grok.md` — never hand-roll a bare `grok -p` (isolation and safety flags are non-obvious) |
 | sonnet / opus / fable, in this session | `Agent` tool with `model:`, or `Workflow` for fan-out — **the default for Claude work** |
 | Claude on a **different account**, or a headless `claude -p` run | Read `references/claude.md` — `tools claude exec -a <account>`, never interactive `tools claude run` |
@@ -47,7 +47,7 @@ How to apply:
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
 - Claude plan/implementation reviews: fable-5-1 (fable-5 is the same tier) or opus-5. Codex code-review workers use gpt-5.6-sol unless the user requests another model.
 - Never Haiku for work that ships (thin wrapper/relay agents are fine).
-- GPT-6 Astra and GPT-5.6 Sol/Terra/Luna use native subagent tools when exposed by the host, or the Codex CLI otherwise. Grok-4.6 uses the `grok` CLI (metered `XAI_API_KEY`). Claude models use `Agent`/`Workflow`, or `tools claude exec` for another account (`references/claude.md`).
+- GPT-6 Astra and GPT-5.6 Sol/Terra/Luna use native subagent tools when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol, Terra and Luna; see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use `Agent`/`Workflow`, or `tools claude exec` for another account (`references/claude.md`).
 - **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.
 - Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals, so route work needing supervised writes in a live checkout to Codex instead.
 
@@ -125,3 +125,9 @@ The driver is the Claude subagent that owns the worker session (`genesis-tools:a
 ## Never trust the self-report
 
 Whatever the worker says it did, re-run the verification command yourself and read the diff before integrating.
+
+## Account and history boundaries
+
+Forward an account explicitly supplied by the orchestrator; do not substitute desktop login or duplicate a native auth file. Codex workers accept --account; human-driven `tools codex run <account>` uses the account-bound server. Native Claude/Codex/Grok history searches auto-index on use. Manual index maintenance is optional and separate from credential import or source migration, which requires authorization. See the provider references and `../claude-history/SKILL.md`.
+
+Provider history uses the existing `~/.genesis-tools/claude-history/index.db`: bounded metadata and statistics, with source-backed text/context. That database also holds historical usage/spending observations. Optional history rebuild must preserve those rows; do not delete the database or recreate a parallel transcript mirror.

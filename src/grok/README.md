@@ -6,7 +6,8 @@ Drive xAI's `grok` CLI as an isolated headless worker. This is the grok counterp
 
 ```bash
 tools grok run --name fix-auth --cwd /abs/project --prompt-file /tmp/brief.md [--readonly] [--model grok-4.6] [--auth api-key] [--no-skills] [--no-rules]
-tools grok run --resume [query]          # TUI: grok -r <id>; query matches id, title, or transcript
+tools grok run --resume                  # native Grok resumes its most recent session
+tools grok run --resume "auth callback"  # indexed search by id, title, or transcript
 tools grok resume [query]                # alias of TUI resume
 tools grok history [query] [--all] [--format json] [-i]
 tools grok steer --name fix-auth --prompt "Now fix the second bug; still do not touch tests" [--no-skills] [--skills]
@@ -24,11 +25,38 @@ tools grok usage [--json] [--range 24h]      # the shared usage dashboard pinned
 
 When a turn ends the harness prints one status line (backend, name, turn, completed or DIED, tool calls counted by name, the worker's `RESULT:` line), the worker's report on stdout, the first 600 characters of stderr, the worktree delta, and the command that renders the transcript. It never lists tool calls one per line. The transcript itself is one door for every backend: `tools grok read --format <fmt>` here, or `tools ai sessions tail <name> --provider grok [--follow]`; `compact` renders a 950-line turn log in about 80 lines, one numbered block per model call with tool results folded in; `jsonl` is one JSON turn per line for a pipe; `events` is the shared worker-event vocabulary; `raw` is the CLI's own NDJSON.
 
+## Indexed native history
+
+`history` uses the same provider-scoped index and search service as Claude and Codex.
+It searches user and assistant text, tool calls/results, paths, and available session
+metadata. The current project is the default scope; `--all` expands to other Grok
+projects. It never resumes a session from another provider.
+
+```bash
+tools grok history "callback" --all --sort-relevance
+tools grok history --file src/auth.ts --tool read_file --context 2
+tools grok history --since "7 days ago" --exclude-thinking --format json
+tools grok history index status
+tools grok history index sync
+tools grok history index rebuild
+```
+
+History searches/listings build the derived index on first use and synchronize changes automatically. No manual indexing step is required. Explicit sync/rebuild are optional; status is read-only. Indexing does not import credentials or migrate native conversations.
+
+History metadata and statistics share `~/.genesis-tools/claude-history/index.db`
+with Claude and Codex. Chat text stays in native files; `updates.jsonl` is separate
+usage telemetry. Missing telemetry produces unknown token counts, not zero.
+History rebuild preserves native transcripts, credentials and historical observations
+in the shared database; never delete the whole database as a cache reset. Query-based TUI resume
+uses this search and opens the selected session's native home. Bare resume follows
+Grok's native most-recent-session behavior in the caller's environment. Headless
+worker isolation remains controlled by the worker launcher below.
+
 ## What the harness bakes in
 
 - **Isolation is per surface, and the surfaces are ON by default.** Workers get `GROK_HOME=~/.genesis-tools/grok/worker-home`, with hooks, MCP servers and session pickup from `~/.claude` switched off unconditionally (side effects and credentials). Your personal skills (`~/.agents/skills`, `~/.claude/skills`) and rules (`~/.claude` rules and `CLAUDE.md`) load unless you pass `--no-skills` / `--no-rules`; the choice is stored in the session meta and a steer without the flags keeps it. `~/.agents/skills` has no environment toggle in grok, so `--no-skills` is a property of the worker HOME: a session started with it runs in `~/.genesis-tools/grok/worker-home-noskills`, whose `config.toml` carries a marked `[skills] ignore` block, while the default home never does. Two shared homes with one fixed policy each means parallel sessions with opposite choices never rewrite the file under each other; a `steer --skills` on such a session flips only the `~/.claude` tier (the home cannot change mid-session, grok keys sessions by cwd inside it). A caller-chosen `--worker-home` follows the session's own choice. Every turn also carries the shared worker contract as `--rules` (`src/utils/worker/contract.ts`: checkpoints, the `RESULT/AT/CHANGED/VERIFY/OPEN` report shape, and a note that interactive rituals such as `tools say` do not apply to a worker). `--worker-home` overrides the home for parallel or test runs. It does **not** move the session records: those stay under `~/.genesis-tools/grok/sessions/` so `tools grok sessions` can list every worker, so two runs sharing a `--name` share one record whatever their home. Project-local config in the target repo (`CLAUDE.md`, a `.grok/` directory) still loads — `GROK_HOME` redirects user state only.
 - **Two session stores.** `tools grok history` / `run --resume` list TUI dirs under `~/.grok/sessions` (and the worker-home copy of that layout). `tools grok sessions` lists headless workers under `~/.genesis-tools/grok/sessions/<name>.meta.json`. Those are not the same inventory.
-- **TUI resume is not the worker.** `--resume` on `run` launches `grok -r <id>` with your normal env. It never sets `GROK_HOME` and never calls `runSession`. Worker mode still needs `--name` and `--cwd` with `--resume` absent.
+- **TUI resume is not the worker.** Bare `--resume` on `run` launches native `grok --resume` in your normal environment. A query selects an indexed session and launches `grok -r <id>` with that session's `GROK_HOME`, so a worker-home result is not looked up in a different personal home. Neither calls `runSession` or mutates the parent environment. Worker mode still needs `--name` and `--cwd` with `--resume` absent.
 - **Session bookkeeping.** The worker uuid and cwd are stored in `~/.genesis-tools/grok/sessions/<name>.meta.json`; `steer` resumes with the identical `--cwd` automatically (grok keys sessions by cwd).
 - **Sticky read-only.** The grok CLI forgets `--tools` on every `--resume`; the harness re-arms the read-only allowlist on each steer of a `--readonly` session. `steer --writable` switches the session back to the project jail deliberately.
 - **Honest exit codes.** The grok CLI exits 0 even when a turn dies. `tools grok` parses the stream and exits 1 when no terminal `end` event is present.

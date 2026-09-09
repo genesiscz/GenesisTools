@@ -79,7 +79,7 @@ Now let me ask about a few things:
 Construct the full command, display it, and run it:
 
 ```bash
-tools claude history summarize --current \
+tools claude summarize --current \
   --mode learnings \
   --priority balanced \
   --provider anthropic \
@@ -238,29 +238,35 @@ Outputs the fully constructed prompt (system + user) without making any LLM call
 
 ```bash
 # Quick summary of current session
-tools claude history summarize --current --mode short-memory
+tools claude summarize --current --mode short-memory
 
 # Full documentation of a specific session
-tools claude history summarize abc123 --mode documentation -o docs/session-summary.md
+tools claude summarize abc123 --mode documentation -o docs/session-summary.md
 
 # Extract learnings with benchmarks table
-tools claude history summarize --current --mode learnings --clipboard
+tools claude summarize --current --mode learnings --clipboard
 
 # Debug postmortem after a long debugging session
-tools claude history summarize abc123 --mode debug-postmortem -o postmortem.md
+tools claude summarize abc123 --mode debug-postmortem -o postmortem.md
 
 # Build knowledge base from recent sessions
-tools claude history summarize --since "7 days ago" --mode memorization --memory-dir ./memory/
+tools claude summarize --since "7 days ago" --mode memorization --memory-dir ./memory/
 
 # Large session — process everything
-tools claude history summarize abc123 --mode documentation --thorough
+tools claude summarize abc123 --mode documentation --thorough
 
 # Custom extraction
-tools claude history summarize abc123 --mode custom --custom-prompt "List all API endpoints discussed with their HTTP methods"
+tools claude summarize abc123 --mode custom --custom-prompt "List all API endpoints discussed with their HTTP methods"
 
 # Preview what would be sent to the LLM
-tools claude history summarize abc123 --prompt-only --thorough --model claude-sonnet-4-20250514
+tools claude summarize abc123 --prompt-only --thorough --model claude-sonnet-4-20250514
 
 # Interactive guided flow
-tools claude history summarize -i
+tools claude summarize -i
 ```
+
+## Finding the source session
+
+History lookup auto-builds and synchronizes its derived index; no manual sync/rebuild is required to find a session ID. Use the matching Claude/Codex/Grok history command and preserve provider/source-home identity. `tools claude summarize` remains Claude-specific and may call a model; offline native indexing does not. Do not pass another provider's ID into Claude summarization or treat lookup as permission to migrate sources or import credentials. See `../claude-history/SKILL.md`.
+
+History metadata and statistics use `~/.genesis-tools/claude-history/index.db`; original conversation records remain in native files/projections and supply summarization input. The shared database also contains historical usage/spending observations, so never delete it to repair an index or substitute stored text mirrors for native records.

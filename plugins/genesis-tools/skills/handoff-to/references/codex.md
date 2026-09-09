@@ -24,22 +24,14 @@ Code-review workers should explicitly select Sol; `review_model` does not route 
 
 **Default to the driver subagent.** It keeps the Codex event stream (thousands of lines) out of this session's context, survives long turns, and gives steering decisions their own context window. Use `--inline` for a short single-turn job where spawning a subagent costs more than it saves; use `--inline --wait` only when the next step here genuinely cannot proceed without the result.
 
-## 1. Start the lead's bus listener — durably
+## 1. Start the lead's bus listener
 
-The driver steers through the bus, so `lead` must be listening before you spawn it. A plain `&  disown` inside a Bash call does **not** survive: observed 2026-08-27, `tools agents login --agent-main --agent-name lead > log 2>&1 & disown` printed its `{"type":"ready"…}` line and the process was then gone, with `pgrep -fl 'tools agents login --agent-main'` returning nothing. Use `nohup` with stdin detached, which was confirmed alive afterwards via `ps`:
-
-```bash
-nohup tools agents login --agent-main --agent-name lead --kinds message,error,approval_request \
-  </dev/null >/tmp/lead-bus.log 2>&1 & disown
-```
-
-Then prove it took, rather than assuming:
+Follow `genesis-tools:agents-talk`: run the login command under the harness monitor and consume its stdout stream. Do not redirect the inbox to a file and poll it. Reuse an already active login rather than registering a duplicate.
 
 ```bash
-pgrep -fl 'tools agents login --agent-main'
+tools agents login --agent-main --agent-name lead \
+  --session <swarm-id> --kinds message,error,approval_request
 ```
-
-⚠️ The reason the first form died was never isolated. Treat the `nohup` recipe as the verified fix and the cause as unknown.
 
 ## 2. Spawn
 
@@ -96,21 +88,22 @@ tools codex spawn --name <task> --cwd <abs path> \
 
 ### Keeping the worker lean
 
-`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`; `--no-skills` and `--no-rules` were added 2026-09-04 for parity with grok and claude; since 2026-09-09 they **refuse with the reason instead of warning**, because a silent no-op read as isolation that had been applied. Pass a lean `--home` when a worker must load less. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
+`tools codex spawn` has **no config-isolation flag**. `--no-skills` and `--no-rules` are accepted for parity with grok and claude and, since 2026-09-09, **refuse with the reason instead of warning**, because a silent no-op read as isolation that had been applied; pass a lean `--home` when a worker must load less. The worker CLI also exposes `--account` and explicit `--computer-use`. Check `tools codex spawn --help` for the current complete option surface. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
 
 Observed cost of not isolating: a code-review worker spent its startup attaching about 20 MCP servers it had no use for (expo, higgsfield, apify, vitrinka, playwright, firecrawl, jina, brave-search and more), four of which failed noisily — three "not logged in" errors and a vitrinka HTTP connect failure.
 
-Workaround until the flag exists: point `--home` at a minimal `CODEX_HOME` that contains only the auth file. `--home` is real and lands where you need it — `spawnAppServer()` sets `childEnv.CODEX_HOME` from it before launching `codex app-server` (`src/codex/lib/app-server-client.ts:295-297`), reached via `spawn.ts:124` → `daemon.ts:47`.
+Named workers accept `--account <name-or-id>`, using the shared account binding and immutable account/workspace identity. Explicit `--home` selects configuration/state; never create a lean home by copying a rotating auth grant. Keep one refresh owner per grant.
 
 ```bash
-mkdir -p ~/.genesis-tools/codex/lean-home
-cp ~/.codex/auth.json ~/.genesis-tools/codex/lean-home/ 2>/tmp/lean-home.err; cat /tmp/lean-home.err
-tools codex spawn --name <task> --home ~/.genesis-tools/codex/lean-home --cwd <abs path> ...
+tools codex spawn --name <task> --account work \
+  --cwd <abs path> --write ask --prompt-file <brief file>
 ```
+
+Named login defaults to a new vault-owned grant. `tools codex login work`, `tools ai codex login work`, and `tools ai accounts login work --provider codex` use one core. `--broker` is a compatibility alias. Explicit `--auth-file`/`--home` and `--import-native` are native-file opt-ins, not worker-startup repairs. Do not run login, import or migration without authorization; stop and report auth failures.
 
 Other flags: `--model` / `--effort`, `--mode review|task`, `--session <id>` when no parent session can be discovered (resolution order: the explicit flag, then `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION`, and only then the host session id of whoever runs the spawn — Claude Code, Codex or grok. An assigned swarm always outranks an inherited host id, so a nested worker cannot re-parent its children), `--no-agents` to disable the bus (do not — the bus is the point).
 
-Sessions land in `~/.genesis-tools/codex/sessions/<name>.*` (`.jsonl` event log, `.meta.json`, `.daemon.log`). Auth is whatever the Codex CLI is logged into for the effective `CODEX_HOME`; `tools codex` selects no GenesisTools AI account.
+Worker records live in `~/.genesis-tools/codex/sessions/<name>.*` (event log, metadata and daemon log). With `--account`, the worker stays bound to that GenesisTools account; without it, native authentication follows the effective home. Worker event logs are separate from native conversation history.
 
 The session auto-registers on the bus as `codex_<name>`. **Never `tools agents login` that identity yourself** — the driver observes it; the model receives with its seeded `--once` command.
 
@@ -229,3 +222,17 @@ rg -q '"type":"turn.completed"|"type":"turn.failed"' /tmp/codex-<task>.log || { 
 The re-check after the loop is not optional: the loop also exits on the deadline, and a timed-out run still leaves a stale `-o` file on disk. Reading that file without confirming a terminal event reports a half-finished turn as a result. On timeout, stop and report — do not resume blindly.
 
 Resume: `command codex exec resume <thread_id> --json --ignore-user-config --skip-git-repo-check -c sandbox_mode="workspace-write" -o /tmp/codex-<task>-steer.md "<correction>"`. Nothing is inherited from the original invocation — `--ignore-user-config` and `--skip-git-repo-check` must both be repeated, and `--sandbox`/`--cd` are **not** re-applied on resume, so pass sandbox as `-c sandbox_mode=`. Dropping `--ignore-user-config` on resume silently reloads `~/.codex` config and skills mid-thread.
+
+## Human-driven native sessions and history
+
+`tools codex run <account>` is for a human driving the native terminal, not a replacement for the worker/driver contract. Run-model aliases are `astra`, `sol`, `terra`, and `luna`; full native IDs remain supported. Resume recipes preserve the account wrapper rather than an expired temporary socket.
+
+```bash
+tools codex run work --model terra --resume
+tools codex run work --model astra --resume "invoice parser"
+tools codex history "invoice parser" --all --format json | tools json
+```
+
+History queries/listings auto-initialize and refresh metadata in the shared `~/.genesis-tools/claude-history/index.db`. Original rollouts and native projections supply searchable text and context; no transcript mirror is required. No manual indexing is required; --all stays within Codex. Status only inspects and explicit sync/rebuild preserve historical usage/spending rows. Missing history is not permission to copy profiles, import credentials or migrate sessions. See `../../claude-history/SKILL.md` for source/copy limitations.
+
+A full native UUID on `tools codex run <account> --resume <uuid>` selects that exact thread across projects and never falls back to a textual mention. Free-text queries stay in the current project unless --all is given. When retained copies share an ID, the target shared home is preferred. Canonical archived threads are unarchived through the native API before TUI resume. These behaviors do not authorize copying or migrating an alternate-home source; that remains a separate user decision.
