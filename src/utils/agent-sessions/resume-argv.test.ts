@@ -36,3 +36,28 @@ describe("resumeCommandLine", () => {
         expect(resumeCommandLine("grok", GROK_ID)).toBe(`grok -r ${GROK_ID}`);
     });
 });
+
+test("Codex resume recipes retain the named account and explicit environment", () => {
+    expect(
+        resumeArgv("codex", CODEX_ID, { account: "work", home: "/shared", cwd: "/project", model: "gpt-6-astra" })
+    ).toEqual([
+        "tools",
+        "codex",
+        "run",
+        "work",
+        "--home",
+        "/shared",
+        "--cwd",
+        "/project",
+        "--model",
+        "gpt-6-astra",
+        "--",
+        "resume",
+        CODEX_ID,
+    ]);
+    expect(resumeArgv("codex", CODEX_ID, "work")).toEqual(["tools", "codex", "run", "work", "--", "resume", CODEX_ID]);
+});
+
+test("resume commands quote shell metacharacters even without spaces", () => {
+    expect(resumeCommandLine("codex", CODEX_ID, "work;echo")).toContain("'work;echo'");
+});
