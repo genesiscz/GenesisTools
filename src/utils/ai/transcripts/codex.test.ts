@@ -190,13 +190,16 @@ describe("codexNativeLinesToTurns on a current rollout", () => {
         expect(turns[0]?.text).toBe("list the homes");
         expect(turns[1]?.text).toBe("Two homes.\nBoth clear.");
         expect(turns[1]?.reasoning).toBe("Thinking about homes");
+        // `input_tokens` 120 INCLUDES the 100 cached: the record's own `total_tokens` 150 is
+        // `input + output`, never `input + cached + output`. The compact footer prints
+        // `in X (cache Y)` as two disjoint figures, so the fresh input is 20.
         expect(turns[1]?.usage).toEqual({
-            inputTokens: 120,
+            inputTokens: 20,
             cacheReadTokens: 100,
             outputTokens: 30,
             reasoningTokens: 12,
         });
-        expect(totalsOf(turns)).toMatchObject({ modelCalls: 1, inputTokens: 120, outputTokens: 30 });
+        expect(totalsOf(turns)).toMatchObject({ modelCalls: 1, inputTokens: 20, outputTokens: 30 });
     });
 
     test("developer instructions and injected context blocks never become a turn", () => {
@@ -214,4 +217,51 @@ describe("codexNativeLinesToTurns on a current rollout", () => {
         ]);
         expect(turns.map((turn) => turn.text)).toEqual(["old style"]);
     });
+});
+
+test("the cached part is subtracted from input, so the footer's two figures do not overlap", () => {
+    // Verified against real rollouts on 2026-09-10: for every `token_usage_record` with a
+    // non-zero cache, `input_tokens + output_tokens === total_tokens` holds and
+    // `input + cached + output` never does. Reporting the raw `input_tokens` beside the cache
+    // showed a 273.1K/267.6K call as if it had sent 273K fresh tokens; it sent 5.5K.
+    const rows = [
+        {
+            type: "token_usage_record",
+            timestamp: "2026-09-10T10:00:00.000Z",
+            payload: {
+                turn_id: "t1",
+                usage: {
+                    input_tokens: 53_945,
+                    cached_input_tokens: 46_848,
+                    output_tokens: 478,
+                    reasoning_output_tokens: 0,
+                    total_tokens: 54_423,
+                },
+            },
+        },
+    ].map((row) => SafeJSON.stringify(row));
+
+    const usage = codexNativeLinesToTurns(rows)[0]?.usage;
+
+    expect(usage?.inputTokens).toBe(53_945 - 46_848);
+    expect(usage?.cacheReadTokens).toBe(46_848);
+    // The record's own arithmetic, restated so a future reader can check the premise.
+    expect(53_945 + 478).toBe(54_423);
+});
+
+test("a usage record with no cache is unchanged", () => {
+    const rows = [
+        {
+            type: "token_usage_record",
+            timestamp: "2026-09-10T10:00:00.000Z",
+            payload: {
+                usage: { input_tokens: 43_023, cached_input_tokens: 0, output_tokens: 154, total_tokens: 43_177 },
+            },
+        },
+    ].map((row) => SafeJSON.stringify(row));
+
+    const usage = codexNativeLinesToTurns(rows)[0]?.usage;
+
+    expect(usage?.inputTokens).toBe(43_023);
+    expect(usage?.cacheReadTokens).toBe(0);
 });

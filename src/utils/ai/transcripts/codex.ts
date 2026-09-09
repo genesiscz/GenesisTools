@@ -174,10 +174,18 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
         if (type === "token_usage_record") {
             const usage = isRecord(payload.usage) ? payload.usage : {};
             const count = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
+            const input = count(usage.input_tokens);
+            const cached = count(usage.cached_input_tokens);
             assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
             assistant.usage = {
-                inputTokens: count(usage.input_tokens),
-                cacheReadTokens: count(usage.cached_input_tokens),
+                // `cached_input_tokens` is a SUBSET of `input_tokens`. Verified against real
+                // rollouts: `input + output === total` holds for every record with a non-zero
+                // cache, while `input + cached + output` never does. The compact footer prints
+                // `in X (cache Y)` as two disjoint figures, the way claude (already net of cache)
+                // and grok (disjoint fields) feed it, so the cached part is taken out of `in`
+                // rather than counted in both — a 273.1K/267.6K call is 5.5K of fresh input.
+                inputTokens: input === undefined ? undefined : Math.max(0, input - (cached ?? 0)),
+                cacheReadTokens: cached,
                 outputTokens: count(usage.output_tokens),
                 reasoningTokens: count(usage.reasoning_output_tokens),
             };
