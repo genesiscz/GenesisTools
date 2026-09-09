@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
@@ -142,6 +142,40 @@ test("a full Claude UUID resolves across projects while ordinary text remains sc
         expect(
             await loadClaudeResumeCandidates({ query: "Invoice callback", cwd: "/projects/other", adapter })
         ).toEqual([]);
+    } finally {
+        db.close();
+    }
+});
+
+test("a name match older than the display limit is not hidden by a recent one", async () => {
+    // Regression test: PR #370 review thread 8 — the identity pass must see the whole indexed
+    // catalog, not the most recent `--limit` rows, or one weak recent hit suppresses an older
+    // exact one and the single survivor is auto-selected without a TTY.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "gt-claude-resume-window-")));
+    const root = join(home, "projects");
+    const project = join(root, "-projects-shop");
+    mkdirSync(project, { recursive: true });
+    const start = Date.UTC(2026, 8, 1) / 1000;
+    const titles = ["handoff-v2", ...Array.from({ length: 22 }, (_, index) => `routine work ${index}`), "handoff note"];
+    const ids = titles.map((_, index) => `${String(index + 10).padStart(8, "1")}-2222-4333-8444-555555555555`);
+
+    titles.forEach((title, index) => {
+        const file = join(project, `${ids[index]}.jsonl`);
+        writeFileSync(
+            file,
+            `${SafeJSON.stringify({ type: "user", sessionId: ids[index], cwd: "/projects/shop", message: { content: `entry ${index}` } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: title, sessionId: ids[index] })}\n`
+        );
+        // Oldest first, so `handoff-v2` sits four sessions beyond the default display limit of 20.
+        const stamp = new Date((start + index * 3600) * 1000);
+        utimesSync(file, stamp, stamp);
+    });
+
+    const db = new Database(":memory:");
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [root], database: db });
+        const hits = await loadClaudeResumeCandidates({ query: "handoff", cwd: "/projects/shop", adapter });
+
+        expect(hits.map((hit) => hit.name).sort()).toEqual(["handoff note", "handoff-v2"]);
     } finally {
         db.close();
     }
