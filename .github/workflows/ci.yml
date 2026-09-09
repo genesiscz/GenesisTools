@@ -140,17 +140,22 @@ jobs:
       # runner (it does not locally), so the log already holds per-test timings.
       # Summing them per file header is a ranking, not a wall clock (imports and
       # setup are outside the brackets); `bun run test --profile` gives wall time.
+      # A summary must never fail the job: continue-on-error, no `set -e`, and no
+      # `head` after `sort` (with pipefail, head closing the pipe early kills sort
+      # with SIGPIPE and the step went red on its first real run, 34373807424).
       - name: Slowest test files
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
+          set +e +o pipefail
           log="test-${{ runner.os }}.log"
           [ -f "$log" ] || exit 0
           {
             echo '<details><summary>Slowest 25 test files — sum of per-test ms under each file header</summary>'
             echo ''
             echo '```'
-            awk '/^src\/.*\.test\.tsx?:$/ { f = $0 } /\[[0-9.]+ms\]$/ { if (f != "") { n = split($0, a, "["); v = a[n]; sub(/ms\]$/, "", v); t[f] += v; c[f]++ } } END { for (k in t) printf "%9.1fs %5d  %s\n", t[k] / 1000, c[k], k }' "$log" | sort -rn | head -25
+            awk '/^src\/.*\.test\.tsx?:$/ { f = $0 } /\[[0-9.]+ms\]$/ { if (f != "") { n = split($0, a, "["); v = a[n]; sub(/ms\]$/, "", v); t[f] += v; c[f]++ } } END { for (k in t) printf "%9.1fs %5d  %s\n", t[k] / 1000, c[k], k }' "$log" | sort -rn | awk 'NR <= 25'
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
