@@ -17,6 +17,9 @@ export function isShellPromptReady(text: string): boolean {
         /^➜\s+\S+(?:\s+git:\([^)]*\))?(?:\s+✗)?\s*$/u.test(last) ||
         /^\[[^\]]+\]\s*[$#%]\s*$/u.test(last) ||
         /^[\w.-]+@[\w.-]+:\S*[$#%]\s*$/u.test(last) ||
+        // macOS ships `PS1="%n@%m %1~ %# "`, so an untouched default shell prints
+        // `user@host ~ %` — space separated, no colon. It matched no other branch.
+        /^[\w.-]+@[\w.-]+(?:\s+\S+)+\s+[%#$]\s*$/u.test(last) ||
         /^[a-zA-Z_][\w.-]*[%#$]\s*$/u.test(last) ||
         /^\s*[$#%❯]\s*$/u.test(last)
     );

@@ -90,6 +90,23 @@ test("ordinary default and two-line shell prompts are recognized", () => {
     }
 });
 
+// Regression: the untouched macOS zsh default (`PS1="%n@%m %1~ %# "`) matched no
+// branch, so every restore waited out the full 30s timeout on a stock shell.
+test("the stock macOS zsh prompt is ready, and its running commands are not", () => {
+    for (const prompt of [
+        "alice@Alices-MacBook-Pro ~ % ",
+        "alice@Alices-MacBook-Pro GenesisTools % ",
+        "alice@Alices-MacBook-Pro Google Drive % ",
+        "root@Alices-MacBook-Pro ~ # ",
+    ]) {
+        expect(isShellPromptReady(prompt)).toBe(true);
+    }
+
+    expect(isShellPromptReady("alice@Alices-MacBook-Pro ~ % bun run test")).toBe(false);
+    expect(isShellPromptReady("alice@Alices-MacBook-Pro ~ % echo 100%")).toBe(false);
+    expect(isShellPromptReady("Claude Code\nalice@Alices-MacBook-Pro ~ % ")).toBe(false);
+});
+
 test("a failed optional focus RPC does not abort readiness polling", async () => {
     spyOn(cli, "runCmux")
         .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "Failed to read terminal text" })

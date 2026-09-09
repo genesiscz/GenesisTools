@@ -140,6 +140,26 @@ test("legacy migration removes only our exact source line and backs up the origi
     );
 });
 
+// Without this, uninstalling a pre-managed-block installation left the source line
+// in place and every later interactive shell kept capturing commands.
+test("uninstall removes a recognized legacy source line, alone or beside the managed block", async () => {
+    const legacyOnly = mkdtempSync(join(tmpdir(), "cmux-uninstall-legacy-"));
+    const legacyRc = join(legacyOnly, ".zshrc");
+    writeFileSync(legacyRc, "export KEEP=1\nsource ~/.genesis-tools/cmux/capture.zsh\nsource ~/other/capture.zsh\n");
+    expect(captureInstallationStatus({ home: legacyOnly }).legacySource).toBe(true);
+    expect(uninstallCapture({ home: legacyOnly }).changed).toBe(true);
+    expect(readFileSync(legacyRc, "utf8")).toBe("export KEEP=1\nsource ~/other/capture.zsh\n");
+    expect(captureInstallationStatus({ home: legacyOnly }).legacySource).toBe(false);
+
+    const mixed = mkdtempSync(join(tmpdir(), "cmux-uninstall-mixed-"));
+    const mixedRc = join(mixed, ".zshrc");
+    writeFileSync(mixedRc, "export KEEP=1\n");
+    await installCapture({ home: mixed, screens: false });
+    writeFileSync(mixedRc, `${readFileSync(mixedRc, "utf8")}source ~/.genesis-tools/cmux/capture.zsh\n`);
+    uninstallCapture({ home: mixed });
+    expect(readFileSync(mixedRc, "utf8")).toBe("export KEEP=1\n");
+});
+
 test("malformed managed markers fail before changing shell configuration", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-install-malformed-"));
     const rcPath = join(home, ".zshrc");

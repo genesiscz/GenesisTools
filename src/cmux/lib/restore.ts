@@ -360,6 +360,7 @@ async function populatePane(
     // cmux leaves the last-created tab selected, so the saved selection must be
     // restored explicitly even when it is the first tab.
     const selectedIndex = savedPane.selected_surface_index;
+    const notReplayed: string[] = [];
 
     try {
         for (let i = 0; i < expectedCount; i += 1) {
@@ -378,13 +379,23 @@ async function populatePane(
                 });
             }
             if (savedSurface.type === "terminal") {
-                await replayTerminal(savedSurface, workspaceRef, surfaceRef, opts);
+                const skipped = await replayTerminal(savedSurface, workspaceRef, surfaceRef, opts);
+                if (skipped) {
+                    notReplayed.push(skipped);
+                }
             }
         }
     } finally {
         if (selectedIndex >= 0 && selectedIndex < surfaceRefs.length) {
             await reorder(surfaceRefs[selectedIndex], selectedIndex, true);
         }
+    }
+
+    // A refused pretype leaves the pane short of what was saved, so the outcome has
+    // to say so instead of printing Done. Raised after the loop, not inside it, so
+    // the pane's remaining tabs are still restored.
+    if (notReplayed.length > 0) {
+        throw new Error(notReplayed.join("; "));
     }
 }
 
@@ -550,12 +561,13 @@ function internalRestoreCommand(parts: string[]): string {
     return `function _genesis_cmux_restore_internal { ${parts.join(" && ")}; }; _genesis_cmux_restore_internal; unset -f _genesis_cmux_restore_internal\n`;
 }
 
+/** Resolves to a reason string when the surface was restored but its saved command was NOT replayed. */
 async function replayTerminal(
     surface: Surface & { type: "terminal" },
     workspaceRef: string,
     surfaceRef: string,
     opts: RestoreOptions
-): Promise<void> {
+): Promise<string | undefined> {
     await waitForTerminalText({
         workspaceRef,
         surfaceRef,
@@ -612,7 +624,9 @@ async function replayTerminal(
         }
 
         if (surface.command && surface.command_source && surface.command_source !== "none") {
-            await queueReplayCommand({ surfaceRef, command: surface.command, enter: opts.enter });
+            if (!(await queueReplayCommand({ surfaceRef, command: surface.command, enter: opts.enter }))) {
+                return `${surfaceRef}: saved command not replayed (multiline/control input needs --enter)`;
+            }
         }
     } catch (error) {
         if (screenDir) {

@@ -246,7 +246,10 @@ export function planCaptureRcChange(options: CaptureInstallOptions & { action: "
         /(^|\n)# >>> GenesisTools cmux capture >>>\r?\n[\s\S]*?\r?\n# <<< GenesisTools cmux capture <<<(?=\r?\n|$)/;
     const after =
         options.action === "uninstall"
-            ? base
+            ? // A legacy `source ~/.genesis-tools/cmux/capture.zsh` keeps every future
+              // shell capturing, so uninstall has to take it out too — the managed
+              // block is not the only way capture gets loaded.
+              stripLegacySource(base, location.hookPath)
             : base !== before
               ? before.replace(installedBlock, (matched, prefix: string) => {
                     const newline = matched.includes("\r\n") ? "\r\n" : "\n";
