@@ -17,7 +17,7 @@ const SQLITE_SIDECARS = ["", "-wal", "-shm"] as const;
 export const GLOBAL_STATE_FILE = ".codex-global-state.json";
 export const REINDEX_COMMAND = "tools codex history index sync";
 export const PROVENANCE_NOTE =
-    "GenesisBrain/GenesisTools/AILaunchers/Verify-CodexAccountProvenance.md holds the per-rollout home mapping; " +
+    "AILaunchers/Verify-CodexAccountProvenance.md in the notes vault holds the per-rollout home mapping; " +
     "after the move `session_metadata.source_home` is re-keyed to the destination and that attribution is gone.";
 
 const ROLLOUT_ID = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;

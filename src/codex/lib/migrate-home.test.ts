@@ -314,8 +314,8 @@ describe("mergeDesktopState", () => {
                 "local-projects": {
                     [destinationProjectId]: {
                         id: destinationProjectId,
-                        name: "GenesisBrain",
-                        rootPaths: ["/Users/example/GenesisBrain"],
+                        name: "notebook",
+                        rootPaths: ["/Users/example/notebook"],
                     },
                 },
                 "project-order": [destinationProjectId],
@@ -326,8 +326,8 @@ describe("mergeDesktopState", () => {
                 "local-projects": {
                     [sourceProjectId]: {
                         id: sourceProjectId,
-                        name: "GenesisBrain",
-                        rootPaths: ["/Users/example/GenesisBrain/"],
+                        name: "notebook",
+                        rootPaths: ["/Users/example/notebook/"],
                     },
                 },
                 "project-order": [sourceProjectId],
@@ -348,7 +348,7 @@ describe("mergeDesktopState", () => {
         expect(Object.keys(merged["local-projects"] ?? {})).toEqual([destinationProjectId]);
         expect(report.projectsAdded).toEqual([]);
         expect(report.duplicatesAvoided).toEqual([
-            { rootPath: "/Users/example/GenesisBrain", sourceId: sourceProjectId, destinationId: destinationProjectId },
+            { rootPath: "/Users/example/notebook", sourceId: sourceProjectId, destinationId: destinationProjectId },
         ]);
         expect(merged["project-order"]).toEqual([destinationProjectId]);
         expect(merged["thread-project-assignments"]?.[threadId]?.projectId).toBe(destinationProjectId);

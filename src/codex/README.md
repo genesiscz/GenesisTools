@@ -118,8 +118,8 @@ moves and never unlinks.
 
 ```bash
 tools codex migrate-home                                   # dry run over every ~/.codex-* sibling
-tools codex migrate-home --from ~/.codex-foltyn --to ~/.codex
-tools codex migrate-home --from ~/.codex-foltyn,~/.codex-work --desktop --apply
+tools codex migrate-home --from ~/.codex-personal --to ~/.codex
+tools codex migrate-home --from ~/.codex-personal,~/.codex-work --desktop --apply
 tools codex migrate-home --json                            # machine-readable report
 ```
 
@@ -158,8 +158,8 @@ What it does **not** carry: `auth.json`, `history.jsonl` (the up-arrow recall bu
 per-home SQLite databases. After a run, re-index with `tools codex history index sync`. Note
 that the index keys a session on `[provider, source home, native id]`, so a moved rollout is a
 new key and `session_metadata.source_home` no longer names the home it came from. The
-per-rollout mapping was captured out of band in
-`GenesisBrain/GenesisTools/AILaunchers/Verify-CodexAccountProvenance.md`.
+per-rollout mapping was captured out of band in the notes vault, under
+`GenesisTools/AILaunchers/Verify-CodexAccountProvenance.md`.
 
 ## Computer Use and JavaScript
 
