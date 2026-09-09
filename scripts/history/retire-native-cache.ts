@@ -148,6 +148,8 @@ export function retireNativeCache(options: {
     confirmDelete: boolean;
     manifestDirectory?: string;
     processInspector?: (paths: string[]) => NativeCacheRetirementReport["openProcesses"];
+    /** The irreversible primitive, injectable so tests can spy on it and make it throw. */
+    remove?: (path: string) => void;
 }): { report: NativeCacheRetirementReport; manifest?: string; deleted: boolean } {
     const report = inspectNativeCache(options.toolsHome, options.processInspector);
 
@@ -207,7 +209,7 @@ export function retireNativeCache(options: {
         throw new Error("Cache became active during quarantine; deletion refused");
     }
 
-    rmSync(quarantine, { recursive: true });
+    (options.remove ?? ((path: string) => rmSync(path, { recursive: true })))(quarantine);
     return { report, manifest, deleted: true };
 }
 
