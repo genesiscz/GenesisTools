@@ -578,3 +578,54 @@ describe("migrateHome with an unusable --from entry", () => {
         expect(report.skippedSources).toHaveLength(1);
     });
 });
+
+describe("mergeDesktopState with a colliding project id", () => {
+    test("a source project that reuses a destination id gets its own entry, not the destination's", async () => {
+        // `cp -R ~/.codex ~/.codex-work` duplicates every project id, and the two homes then
+        // diverge as project roots are renamed. Writing the source project under the shared id
+        // replaced the destination's project and left every destination thread assigned to that
+        // id pointing at the source's directory, reported as `projectsAdded` with no warning.
+        const destination: DesktopState = {
+            "local-projects": { shared: { id: "shared", name: "dest-project", rootPaths: ["/work/dest"] } },
+            "project-order": ["shared"],
+            "thread-project-assignments": { "thread-d": { projectKind: "local", projectId: "shared" } },
+        };
+        const source: DesktopState = {
+            "local-projects": { shared: { id: "shared", name: "source-project", rootPaths: ["/work/source"] } },
+            "project-order": ["shared"],
+            "thread-project-assignments": { "thread-s": { projectKind: "local", projectId: "shared" } },
+        };
+
+        const { merged, report } = mergeDesktopState(destination, source, (value) => value);
+        const projects = merged["local-projects"] ?? {};
+
+        expect(projects.shared).toMatchObject({ name: "dest-project", rootPaths: ["/work/dest"] });
+        expect(report.projectsAdded).toHaveLength(1);
+
+        const mintedId = report.projectsAdded[0].id;
+        expect(mintedId).not.toBe("shared");
+        expect(projects[mintedId]).toMatchObject({ id: mintedId, name: "source-project", rootPaths: ["/work/source"] });
+        expect(merged["project-order"]).toEqual(["shared", mintedId]);
+        // The destination's own thread keeps its project; the source's follows the new id.
+        expect(merged["thread-project-assignments"]?.["thread-d"]?.projectId).toBe("shared");
+        expect(merged["thread-project-assignments"]?.["thread-s"]?.projectId).toBe(mintedId);
+    });
+
+    test("negative control: the same id for the same root path still merges as one project", async () => {
+        const destination: DesktopState = {
+            "local-projects": { shared: { id: "shared", name: "dest-project", rootPaths: ["/work/same"] } },
+            "project-order": ["shared"],
+        };
+        const source: DesktopState = {
+            "local-projects": { shared: { id: "shared", name: "source-project", rootPaths: ["/work/same"] } },
+            "thread-project-assignments": { "thread-s": { projectKind: "local", projectId: "shared" } },
+        };
+
+        const { merged, report } = mergeDesktopState(destination, source, (value) => value);
+
+        expect(report.projectsAdded).toEqual([]);
+        expect(report.duplicatesAvoided).toHaveLength(1);
+        expect(Object.keys(merged["local-projects"] ?? {})).toEqual(["shared"]);
+        expect(merged["thread-project-assignments"]?.["thread-s"]?.projectId).toBe("shared");
+    });
+});

@@ -359,6 +359,25 @@ function describeHolders(holders: ProcessHolder[]): string {
     return [...new Set(holders.map((holder) => `${holder.command}(${holder.pid})`))].join(", ");
 }
 
+/**
+ * A project id the destination does not already use, derived from the project's own root path
+ * the way the Desktop's own `local-<md5>` ids are, so re-running the merge mints the same id
+ * rather than a second copy.
+ */
+function freshProjectId(rootPaths: string[], taken: Record<string, LocalProject>): string {
+    const base = `local-${createHash("md5")
+        .update(rootPaths[0] ?? "")
+        .digest("hex")}`;
+    let candidate = base;
+    let suffix = 2;
+
+    while (candidate in taken) {
+        candidate = `${base}-${suffix++}`;
+    }
+
+    return candidate;
+}
+
 export function mergeDesktopState(
     destination: DesktopState,
     source: DesktopState,
@@ -405,11 +424,22 @@ export function mergeDesktopState(
             continue;
         }
 
-        destinationProjects[sourceId] = project;
-        report.projectsAdded.push({ id: sourceId, name: project.name, rootPaths });
+        // The id is free unless the destination already uses it for a DIFFERENT directory —
+        // which is the ordinary case for a home created by copying another, since that
+        // duplicates every id and the two then diverge. Writing over it replaced the
+        // destination's own project and silently re-pointed every destination thread assigned
+        // to that id, while the report called it `projectsAdded`.
+        const id = sourceId in destinationProjects ? freshProjectId(rootPaths, destinationProjects) : sourceId;
+
+        if (id !== sourceId) {
+            remapped.set(sourceId, id);
+        }
+
+        destinationProjects[id] = { ...project, id };
+        report.projectsAdded.push({ id, name: project.name, rootPaths });
 
         for (const rootPath of rootPaths) {
-            byRootPath.set(normaliseRootPath(rootPath, realpath), sourceId);
+            byRootPath.set(normaliseRootPath(rootPath, realpath), id);
         }
     }
 
