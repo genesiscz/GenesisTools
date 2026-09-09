@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Browser } from "@genesiscz/utils/browser";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     type CallbackListener,
@@ -12,6 +13,23 @@ import {
 import { CODEX_REDIRECT_URI, codexOAuth } from "../../../openai/codex-auth";
 import type { AccountFlowContext } from "../../account-features";
 import { codexLogin } from "./login";
+
+/**
+ * The outward-facing call this file must never make. `presentAuthorizationUrl`
+ * reaches `Browser.open` whenever `openUrl` is not injected, which on 2026-09-09
+ * put real `auth.openai.com` tabs in front of the user on every suite run. The
+ * spy THROWS as well as records, so a forgotten injection is a red test rather
+ * than a browser window nobody asked for.
+ */
+let browserGuard: ReturnType<typeof spyOn<typeof Browser, "open">> | undefined;
+beforeAll(() => {
+    browserGuard = spyOn(Browser, "open").mockImplementation(async (url: string) => {
+        throw new Error(`a test reached the real browser with ${url}`);
+    });
+});
+afterAll(() => {
+    browserGuard?.mockRestore();
+});
 
 let restoreFetch: (() => void) | undefined;
 afterEach(() => {
@@ -54,9 +72,17 @@ function setup(options: { status?: number } = {}) {
     );
     const network = spyOn(globalThis, "fetch").mockImplementation(response);
     restoreFetch = () => network.mockRestore();
+    // 🛑 No test in this file may reach a real browser. `presentAuthorizationUrl`
+    // falls through to `Browser.open` whenever `openUrl` is absent, so a test that
+    // picks "open" and forgets to inject one opens `auth.openai.com` for real. This
+    // is set here, not per test, so forgetting is not possible.
+    const opened: string[] = [];
     const ctx: AccountFlowContext = {
         interactive: true,
         requestedName: "work",
+        openUrl: async (url) => {
+            opened.push(url);
+        },
         account: {
             id: "acc_work",
             name: "work",
@@ -68,7 +94,13 @@ function setup(options: { status?: number } = {}) {
         },
         authorizationInteraction: { chooseUrlAction: async () => "none", readCode: async () => "grant-invented" },
     };
-    return { ctx, home, authFile, requests };
+    return { ctx, home, authFile, requests, opened };
+}
+
+/** Every authorization URL a flow would have opened must be the one we generated. */
+function expectAuthorizeUrl(opened: string[]): void {
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toStartWith("https://auth.openai.com/oauth/authorize?");
 }
 
 /** Port 1455 already taken: exactly what every caller saw before the listener existed. */
@@ -107,7 +139,13 @@ function browserLogin(ctx: AccountFlowContext, overrides: Partial<CallbackListen
     const authUrl = new Promise<string>((resolve) => {
         opened = resolve;
     });
-    ctx.openUrl = async (url) => opened(url);
+    // Wrap rather than replace, so the recorder `setup` installed stays in place
+    // and no path can fall through to the real browser.
+    const recorder = ctx.openUrl;
+    ctx.openUrl = async (url) => {
+        await recorder?.(url);
+        opened(url);
+    };
     ctx.authorizationInteraction = {
         chooseUrlAction: async () => "open",
         readCode: async () => {
@@ -182,19 +220,19 @@ describe("Codex browser login", () => {
         expect(readFileSync(authFile, "utf8")).toBe("native credential sentinel");
     });
 
-    test.each([
-        "home",
-        "authFile",
-    ] as const)("an explicit %s opts into a rollback-capable native file grant", async (option) => {
-        const { ctx, home, authFile } = setup();
-        const outcome = await codexLogin({ ...ctx, ...(option === "home" ? { home } : { authFile }) }, noListener);
-        expect(outcome.credentials.authFile).toBe(authFile);
-        expect(outcome.credentials.accessToken).toBeUndefined();
-        expect(readFileSync(authFile, "utf8")).toContain("access-invented");
-        expect(outcome.rollback).toBeDefined();
-        await outcome.rollback?.();
-        expect(readFileSync(authFile, "utf8")).toBe("native credential sentinel");
-    });
+    test.each(["home", "authFile"] as const)(
+        "an explicit %s opts into a rollback-capable native file grant",
+        async (option) => {
+            const { ctx, home, authFile } = setup();
+            const outcome = await codexLogin({ ...ctx, ...(option === "home" ? { home } : { authFile }) }, noListener);
+            expect(outcome.credentials.authFile).toBe(authFile);
+            expect(outcome.credentials.accessToken).toBeUndefined();
+            expect(readFileSync(authFile, "utf8")).toContain("access-invented");
+            expect(outcome.rollback).toBeDefined();
+            await outcome.rollback?.();
+            expect(readFileSync(authFile, "utf8")).toBe("native credential sentinel");
+        }
+    );
 
     test("a missing explicit auth file still runs the native creation flow", async () => {
         const { ctx, home } = setup();
@@ -256,7 +294,7 @@ describe("Codex loopback callback listener", () => {
     });
 
     test("an abandoned browser falls back to the paste prompt", async () => {
-        const { ctx, requests } = setup();
+        const { ctx, requests, opened } = setup();
         let listener: CallbackListener | undefined;
         ctx.authorizationInteraction = {
             chooseUrlAction: async () => "open",
@@ -273,6 +311,7 @@ describe("Codex loopback callback listener", () => {
         );
         expect(outcome.credentials.accessToken).toBe("access-invented");
         expect(requests).toEqual(["pasted-grant"]);
+        expectAuthorizeUrl(opened);
 
         if (!listener) {
             throw new Error("the listener must have started");
@@ -282,7 +321,7 @@ describe("Codex loopback callback listener", () => {
     });
 
     test("a taken port falls back to the paste prompt and still completes the login", async () => {
-        const { ctx, requests } = setup();
+        const { ctx, requests, opened } = setup();
         const held = await startCallbackListener({ redirectUri: CODEX_REDIRECT_URI, port: 0 });
 
         if (!held) {
@@ -293,6 +332,7 @@ describe("Codex loopback callback listener", () => {
         const outcome = await codexLogin(ctx, (options) => startCallbackListener({ ...options, port: held.port }));
         expect(outcome.credentials.accessToken).toBe("access-invented");
         expect(requests).toEqual(["pasted-grant"]);
+        expectAuthorizeUrl(opened);
         await held.close();
     });
 
