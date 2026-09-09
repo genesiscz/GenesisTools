@@ -1,4 +1,5 @@
 import type { LimitKind, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import { percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
 
 export type UsageColor = "red" | "yellow" | "green";
 
@@ -122,5 +123,5 @@ export function colorForWindow(
         return "green";
     }
 
-    return colorForPercent(window.percentUsed);
+    return colorForPercent(percentOf(window));
 }

@@ -1,6 +1,6 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
-import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
+import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
 import { UsageBar } from "../components/usage-bar";
@@ -94,9 +94,9 @@ export function GenericAccountSection({
                 return (
                     <Box key={window.key}>
                         <Text color={colorForWindowKey(window.key)}>{window.label.padEnd(LABEL_WIDTH)}</Text>
-                        <UsageBar utilization={window.percentUsed} width={barWidth} color={color} />
+                        <UsageBar utilization={percentOf(window)} width={barWidth} color={color} />
                         <Text bold color={color}>
-                            {` ${window.percentUsed.toFixed(1)}%`}
+                            {` ${percentOf(window).toFixed(1)}%`}
                         </Text>
                         {money ? <Text dimColor>{`  ${money}`}</Text> : null}
                     </Box>

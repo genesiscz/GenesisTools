@@ -6,12 +6,22 @@ interface LimitBarProps {
     nowMs: number;
 }
 
+/**
+ * `percentUsed` as a number this card can print. The browser bundle cannot import
+ * `percentOf` from `@genesiscz/utils/ai/usage-poll/format-money`, so the rule is mirrored
+ * here for the same reason `formatMoney` below is: a snapshot row written by an older build
+ * reaches this page over HTTP without the field, and `.toFixed` on it blanks the whole page.
+ */
+export function percentOf(window: LimitWindow): number {
+    return typeof window.percentUsed === "number" && Number.isFinite(window.percentUsed) ? window.percentUsed : 0;
+}
+
 export function limitColor(window: LimitWindow): string {
-    if (window.severity === "critical" || window.percentUsed > 85) {
+    if (window.severity === "critical" || percentOf(window) > 85) {
         return "var(--dd-danger)";
     }
 
-    if (window.severity === "warn" || window.percentUsed >= 60) {
+    if (window.severity === "warn" || percentOf(window) >= 60) {
         return "var(--dd-warning)";
     }
 
@@ -62,15 +72,15 @@ export function formatMoney(money: NonNullable<LimitWindow["money"]>): string {
 
 /** One provider-neutral limit row: label, value, bar, reset hint. */
 export function LimitBar({ window, nowMs }: LimitBarProps) {
-    const pct = Math.max(0, Math.min(100, window.percentUsed));
+    const pct = Math.max(0, Math.min(100, percentOf(window)));
     const color = limitColor(window);
     const resetsIn = formatResetsIn(window.resetsAt, nowMs);
-    const untouched = !window.resetsAt && window.percentUsed === 0 && !window.money;
+    const untouched = !window.resetsAt && percentOf(window) === 0 && !window.money;
     const label =
         window.scopeModel && !window.label.includes(window.scopeModel)
             ? `${window.label} ${window.scopeModel}`
             : window.label;
-    const value = window.money ? formatMoney(window.money) : `${window.percentUsed.toFixed(0)}%`;
+    const value = window.money ? formatMoney(window.money) : `${percentOf(window).toFixed(0)}%`;
 
     return (
         <div className="flex flex-col gap-1">

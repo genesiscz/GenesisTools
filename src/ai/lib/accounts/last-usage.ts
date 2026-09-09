@@ -1,6 +1,6 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
-import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
+import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
 import type { SnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 
 /**
@@ -38,7 +38,7 @@ export function lastSnapshotFor(cache: SnapshotsCache | null, account: AccountEn
  * window and the reset time when the provider gave one.
  */
 export function formatLimitLine(window: LimitWindow, now: number = Date.now()): string {
-    const parts = [`${window.percentUsed.toFixed(1)}%`];
+    const parts = [`${percentOf(window).toFixed(1)}%`];
 
     const money = formatMoney(window);
 

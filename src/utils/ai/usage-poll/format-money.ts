@@ -22,3 +22,17 @@ export function formatMoney(window: LimitWindow): string | null {
 
     return `${used} / ${(limitMinor / divisor).toFixed(exponent)} ${currency}`;
 }
+
+/**
+ * `percentUsed` as a number a renderer can print.
+ *
+ * The field is declared `number`, and every WRITER guards it (`record.ts`, `use-poller.ts`,
+ * `poll-daemon.ts` all skip a window whose value is not finite). No renderer did, and they are
+ * the ones that call `.toFixed`. The gap is not theoretical: `snapshots.json` is cast back with
+ * no validation and holds rows for a year, so a row a pre-fix build wrote without the field
+ * (grok's untouched product window, issue 5ee4db79d) still crashes `tools ai accounts show`,
+ * which reads that file and never polls.
+ */
+export function percentOf(window: { percentUsed?: number }): number {
+    return typeof window.percentUsed === "number" && Number.isFinite(window.percentUsed) ? window.percentUsed : 0;
+}

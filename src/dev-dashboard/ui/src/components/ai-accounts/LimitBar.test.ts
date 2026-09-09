@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { formatMoney } from "./LimitBar";
+import type { LimitWindow } from "@app/dev-dashboard/contract/ai-accounts";
+import { formatMoney, limitColor, percentOf } from "./LimitBar";
 
 /**
  * `anthropic-sub` forwards the API's own exponent into `LimitMoney`, so a
@@ -25,5 +26,23 @@ describe("formatMoney", () => {
 
     test("a window with no limit prints the used amount alone, at its own precision", () => {
         expect(formatMoney({ usedMinor: 9123, currency: "KWD", exponent: 3 })).toBe("KWD 9.123");
+    });
+});
+
+describe("percentOf", () => {
+    test("a real percentage passes through", () => {
+        expect(percentOf({ percentUsed: 42 } as LimitWindow)).toBe(42);
+    });
+
+    test("a row off an older snapshot reads as 0 rather than blanking the page", () => {
+        const fromDisk = {
+            key: "product:grokimagine",
+            label: "Grok Imagine",
+            kind: "scoped",
+        } as unknown as LimitWindow;
+
+        expect(percentOf(fromDisk)).toBe(0);
+        expect(() => percentOf(fromDisk).toFixed(0)).not.toThrow();
+        expect(limitColor(fromDisk)).toBe("var(--dd-accent-from)");
     });
 });

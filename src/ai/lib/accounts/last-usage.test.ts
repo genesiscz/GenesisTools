@@ -153,3 +153,18 @@ describe("formatLimitLine", () => {
         expect(line).not.toContain("/");
     });
 });
+
+describe("a window off an older cache", () => {
+    test("formatLimitLine prints it instead of throwing", () => {
+        // The exact shape `SafeJSON.stringify` leaves on disk for a window whose
+        // `percentUsed` was `undefined` (grok's untouched product, fixed in 5ee4db79d).
+        const fromDisk = {
+            key: "product:grokimagine",
+            label: "Grok Imagine",
+            kind: "scoped",
+            resetsAt: "2026-09-16T00:00:00.000Z",
+        } as unknown as LimitWindow;
+
+        expect(formatLimitLine(fromDisk, Date.parse("2026-09-15T00:00:00.000Z"))).toBe("0.0%  ·  resets in 24h");
+    });
+});
