@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
 
@@ -259,6 +260,135 @@ async function runBunTest(testArgs: string[]): Promise<number> {
 function finish(code: number): never {
     process.stderr.write(`[test] suite complete (exit ${code})\n`);
     process.exit(code);
+}
+
+// ---------------------------------------------------------------------------
+// --profile: one isolated `bun test <file>` per worker, exact wall time per file.
+//
+// bun's own --parallel run is opaque about time: its junit reporter writes
+// time="0" for every suite (bun 1.3.13, serial and parallel alike), and its
+// console reporter prints passing files only on GitHub Actions. So when the
+// question is "which files are slow", the wrapper answers it itself: a pool of
+// isolated processes, wall clock per file, sorted, plus a JSON copy under
+// .claude/work/ for anything that wants to diff two runs. Isolation costs a
+// module cache per file, so totals here run above a bun-native run; the
+// ranking is what this mode is for, not the sum.
+// ---------------------------------------------------------------------------
+
+interface ProfileRow {
+    file: string;
+    ms: number;
+    pass: number;
+    fail: number;
+    exitCode: number;
+    loadSensitive: boolean;
+}
+
+function matchesAny(file: string, patterns: string[]): boolean {
+    return patterns.some((pattern) => new Bun.Glob(pattern).match(file));
+}
+
+async function discoverTestFiles(roots: string[]): Promise<string[]> {
+    const glob = new Bun.Glob("**/*.test.{ts,tsx}");
+    const found = new Set<string>();
+
+    for (const root of roots) {
+        if (/\.test\.tsx?$/.test(root)) {
+            found.add(root);
+            continue;
+        }
+
+        for await (const file of glob.scan({ cwd: join(ROOT, root), dot: false })) {
+            const relative = root === "." ? file : join(root, file);
+
+            if (relative.includes("node_modules/") || matchesAny(relative, DEFAULT_EXCLUDES)) {
+                continue;
+            }
+
+            found.add(relative);
+        }
+    }
+
+    return [...found].sort();
+}
+
+function countsIn(output: string): { pass: number; fail: number } {
+    return {
+        pass: Number(/^\s*(\d+) pass$/m.exec(output)?.[1] ?? 0),
+        fail: Number(/^\s*(\d+) fail$/m.exec(output)?.[1] ?? 0),
+    };
+}
+
+async function profileFile(file: string): Promise<ProfileRow> {
+    const started = performance.now();
+    const proc = Bun.spawn(["bun", "test", file], { cwd: ROOT, stdout: "pipe", stderr: "pipe", env: testEnv });
+    const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+    const { pass, fail } = countsIn(`${stdout}\n${stderr}`);
+
+    return {
+        file,
+        ms: Math.round(performance.now() - started),
+        pass,
+        fail,
+        exitCode,
+        loadSensitive: LOAD_SENSITIVE_FILES.includes(file),
+    };
+}
+
+async function runProfile(jobs: number, roots: string[]): Promise<number> {
+    const files = await discoverTestFiles(roots.length > 0 ? roots : ["."]);
+    const rows: ProfileRow[] = [];
+    const started = performance.now();
+    let next = 0;
+    process.stderr.write(`\x1b[90m[test] profile: ${files.length} file(s), ${jobs} worker(s)\x1b[0m\n`);
+
+    await Promise.all(
+        Array.from({ length: Math.min(jobs, files.length) }, async () => {
+            while (next < files.length) {
+                const file = files[next++];
+                rows.push(await profileFile(file));
+            }
+        })
+    );
+
+    rows.sort((a, b) => b.ms - a.ms);
+    const wall = Math.round(performance.now() - started);
+    const summed = rows.reduce((sum, row) => sum + row.ms, 0);
+    const failed = rows.filter((row) => row.exitCode !== 0);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const report = join(ROOT, ".claude", "work", `test-profile-${stamp}.json`);
+    // biome-ignore lint/style/noRestrictedGlobals: this runner executes before node_modules exist, so it cannot import SafeJSON
+    await Bun.write(report, JSON.stringify({ wallMs: wall, summedMs: summed, jobs, files: rows }, null, 2));
+
+    const shown = rows.slice(0, 30);
+    process.stderr.write(`\n     wall   pass  fail  file  (LS = load-sensitive, runs serially in a normal run)\n`);
+
+    for (const row of shown) {
+        const flag = row.loadSensitive ? " LS" : "";
+        const status = row.exitCode === 0 ? "" : `  EXIT ${row.exitCode}`;
+        process.stderr.write(
+            `${String((row.ms / 1000).toFixed(1)).padStart(8)}s ${String(row.pass).padStart(5)} ${String(row.fail).padStart(5)}  ${row.file}${flag}${status}\n`
+        );
+    }
+
+    process.stderr.write(
+        `\n[test] profile: ${rows.length} files, wall ${(wall / 1000).toFixed(0)}s on ${jobs} workers, summed ${(summed / 1000).toFixed(0)}s, ${failed.length} file(s) failed; full table: ${report}\n`
+    );
+
+    return failed.length > 0 ? 1 : 0;
+}
+
+const profileIndex = args.indexOf("--profile");
+
+if (profileIndex !== -1) {
+    const jobsIndex = args.indexOf("--jobs");
+    const jobs = jobsIndex !== -1 ? Number(args[jobsIndex + 1]) : Math.min(8, cpus().length);
+    const roots = args.filter((arg, index) => !arg.startsWith("-") && index !== jobsIndex + 1);
+    finish(await runProfile(jobs, roots));
 }
 
 if (hasExplicitPaths) {

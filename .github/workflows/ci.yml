@@ -127,6 +127,24 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # bun prints `(pass) name [N ms]` under a `path.test.ts:` header on the
+      # runner (it does not locally), so the log already holds per-test timings.
+      # Summing them per file header is a ranking, not a wall clock (imports and
+      # setup are outside the brackets); `bun run test --profile` gives wall time.
+      - name: Slowest test files
+        if: always()
+        shell: bash
+        run: |
+          log="test-${{ runner.os }}.log"
+          [ -f "$log" ] || exit 0
+          {
+            echo '<details><summary>Slowest 25 test files — sum of per-test ms under each file header</summary>'
+            echo ''
+            echo '```'
+            awk '/^src\/.*\.test\.tsx?:$/ { f = $0 } /\[[0-9.]+ms\]$/ { if (f != "") { n = split($0, a, "["); v = a[n]; sub(/ms\]$/, "", v); t[f] += v; c[f]++ } } END { for (k in t) printf "%9.1fs %5d  %s\n", t[k] / 1000, c[k], k }' "$log" | sort -rn | head -25
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
