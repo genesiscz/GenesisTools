@@ -155,3 +155,61 @@ describe("NotificationManager tracker state", () => {
         expect(dispatched).toHaveLength(1);
     });
 });
+
+/**
+ * `resetsAt` is a raw provider string: grok forwards `credits.currentPeriod.end` and
+ * anthropic forwards `limit.resets_at`, neither validated. `new Date(bad).getTime()` is NaN,
+ * and `NaN !== null`, so ONE bad poll overwrote the last known reset time with NaN, and every
+ * later `Math.abs(valid - NaN) > …` was false — the window-rollover detector was dead for the
+ * life of that bucket. The state is persisted, so it survived restarts too.
+ */
+describe("NotificationManager rollover with a bad reset time", () => {
+    const OLD = "2026-09-01T00:00:00.000Z";
+    const NEW = "2026-09-08T00:00:00.000Z";
+
+    /** One `processUsage` per round, exactly as `poll-daemon.ts` drives it. */
+    async function rounds(resets: Array<[number, string | null]>): Promise<number> {
+        dispatched.length = 0;
+        const manager = new NotificationManager(config());
+
+        for (const [utilization, resetsAt] of resets) {
+            await manager.processUsage({ ...WINDOW, utilization, resetsAt });
+            manager.markFirstPollDone();
+        }
+
+        return dispatched.length;
+    }
+
+    test("a bad reset time between two good ones still lets the next window notify", async () => {
+        const alerts = await rounds([
+            [95, OLD],
+            [95, "not a date"],
+            [5, NEW],
+            [95, NEW],
+        ]);
+
+        expect(alerts).toBe(2);
+    });
+
+    test("negative control: the same rounds with every reset time valid", async () => {
+        const alerts = await rounds([
+            [95, OLD],
+            [95, OLD],
+            [5, NEW],
+            [95, NEW],
+        ]);
+
+        expect(alerts).toBe(2);
+    });
+
+    test("negative control: without a rollover there is no second alert", async () => {
+        const alerts = await rounds([
+            [95, OLD],
+            [95, "not a date"],
+            [5, OLD],
+            [95, OLD],
+        ]);
+
+        expect(alerts).toBe(1);
+    });
+});

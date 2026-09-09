@@ -99,7 +99,13 @@ class BucketTracker {
     }
 
     shouldNotify(currentPct: number, resetAt: string | null, thresholds: number[], isFirstPoll: boolean): boolean {
-        const resetEpoch = resetAt ? new Date(resetAt).getTime() : null;
+        // `resetsAt` is a raw provider string, forwarded unvalidated by both grok and
+        // anthropic. `new Date(bad).getTime()` is NaN, and `NaN !== null`, so one bad poll
+        // used to replace the last known reset time with NaN; every later comparison against
+        // it was `NaN > 600000`, which is false, and the rollover detector never fired again
+        // for that bucket. The state is persisted, so the damage outlived the process.
+        const parsed = resetAt ? Date.parse(resetAt) : null;
+        const resetEpoch = parsed !== null && Number.isFinite(parsed) ? parsed : null;
 
         if (
             this.lastResetEpoch !== null &&
@@ -109,7 +115,12 @@ class BucketTracker {
             this.lastNotifiedThreshold = null;
         }
 
-        this.lastResetEpoch = resetEpoch;
+        // Only a reading we could actually make replaces the stored one. A poll that carried
+        // nothing usable leaves the last good reset time in place, so the NEXT good one is
+        // still compared against a real instant.
+        if (resetEpoch !== null || resetAt === null) {
+            this.lastResetEpoch = resetEpoch;
+        }
 
         const crossed = thresholds.filter((t) => currentPct >= t);
         if (crossed.length === 0) {
