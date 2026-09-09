@@ -82,6 +82,34 @@ describe("AiConfigStore lookup", () => {
         expect(store.account("acc_b")?.id).toBe("acc_b");
     });
 
+    test("accountMatching finds an enabled account of the provider by substring, the way tools claude run matches", async () => {
+        writeConfig(home, {
+            ...SEED,
+            accounts: [
+                ...SEED.accounts,
+                account("acc_cdx_work", "cdx-work", { provider: "openai-sub" }),
+                account("acc_cdx_shop", "cdx-shop", { provider: "openai-sub" }),
+                account("acc_cdx_side", "cdx-side", { provider: "openai-sub", enabled: false }),
+                account("acc_cdx_max", "cdx-martin-max", { provider: "openai-sub" }),
+            ],
+        });
+        AiConfigStore.invalidate();
+        const store = await AiConfigStore.load();
+
+        expect(store.accountMatching("work", "openai-sub")?.id).toBe("acc_cdx_work");
+        expect(store.accountMatching("SHOP", "openai-sub")?.id).toBe("acc_cdx_shop");
+        expect(store.accountMatching("cdx-work", "openai-sub")?.id).toBe("acc_cdx_work");
+        expect(store.accountMatching("acc_cdx_shop", "openai-sub")?.id).toBe("acc_cdx_shop");
+        // Disabled accounts and other providers never match by substring; "max" is an anthropic name.
+        expect(store.accountMatching("side", "openai-sub")).toBeUndefined();
+        expect(store.accountMatching("nope", "openai-sub")).toBeUndefined();
+        // The exact name of an account under ANOTHER provider must not win: "martin-max" is the
+        // anthropic account, and the codex launcher asked for the openai one that contains it.
+        expect(store.accountMatching("martin-max", "openai-sub")?.id).toBe("acc_cdx_max");
+        expect(store.accountMatching("martin-max", "anthropic-sub")?.id).toBe("acc_max");
+        expect(() => store.accountMatching("cdx", "openai-sub")).toThrow("matches 3 openai-sub accounts");
+    });
+
     test("filters compose across provider, billing, enabled and tag", async () => {
         const store = await AiConfigStore.load();
 

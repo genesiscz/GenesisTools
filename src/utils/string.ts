@@ -241,3 +241,17 @@ export function probeCooccurrence({
 
     return { matched: windows.length > 0, windows };
 }
+
+/**
+ * Launcher-style matching: every whitespace-separated token of `spec` must appear in `haystack`,
+ * case-insensitively, so "grok 4.6" matches "grok-4.6" and "work" matches "cdx-work".
+ */
+export function matchesSpec(haystack: string, spec: string): boolean {
+    const target = haystack.toLowerCase();
+
+    return spec
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((token) => token.length > 0)
+        .every((token) => target.includes(token));
+}

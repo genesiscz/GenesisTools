@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { matchesSpec } from "@genesiscz/utils/string";
 import { writeDefaultsSnapshot } from "./defaults-snapshot";
 import { _resetMigrationStateForTest, ensureAiConfigMigrated } from "./migrate";
 import { assertSafeToWriteRealConfig } from "./migration-guard";
@@ -221,6 +222,34 @@ export class AiConfigStore {
         }
 
         return byName[0];
+    }
+
+    /**
+     * `account()` plus the match `tools claude run` gives its target: an exact id or name of a
+     * `provider` account first, then every whitespace- or slash-separated token of the selector
+     * as a case-insensitive substring of an enabled account name under `provider` ("work"
+     * finds "cdx-work" even while a Claude account is called exactly "work"). One hit is the
+     * answer, several are an error that names them, none is `undefined`.
+     */
+    accountMatching(selector: string, provider: AccountEntry["provider"]): AccountEntry | undefined {
+        const exact = this.account(selector);
+        if (exact?.provider === provider) {
+            return exact;
+        }
+
+        const spec = selector.replace(/\//g, " ");
+        const hits = this.config.accounts.filter(
+            (entry) => entry.provider === provider && entry.enabled && matchesSpec(entry.name, spec)
+        );
+        if (hits.length > 1) {
+            throw new Error(
+                `"${selector}" matches ${hits.length} ${provider} accounts: ${hits
+                    .map((entry) => entry.name)
+                    .join(", ")}. Give more of the name.`
+            );
+        }
+
+        return hits[0];
     }
 
     accounts(filter?: AccountFilter): AccountEntry[] {

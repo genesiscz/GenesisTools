@@ -9,6 +9,7 @@ import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import { matchesSpec } from "@genesiscz/utils/string";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { shellSingleQuote } from "../lib/shell-quote";
@@ -42,17 +43,6 @@ export function effortError(effort: string | undefined): string | undefined {
  * Code session. The proxy answers /v1/messages natively — see
  * src/ai-proxy/lib/anthropic-messages.ts for the translation.
  */
-
-/** Every whitespace-separated token must appear, so "grok 4.6" matches grok-4.6. */
-function matchesSpec(haystack: string, spec: string): boolean {
-    const target = haystack.toLowerCase();
-
-    return spec
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((token) => token.length > 0)
-        .every((token) => target.includes(token));
-}
 
 /**
  * Narrow the proxy catalog to what the user asked for.

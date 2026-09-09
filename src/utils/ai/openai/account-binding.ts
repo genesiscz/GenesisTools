@@ -51,7 +51,16 @@ export class CodexAccountBinding {
      */
     static async create(selector: string, options: { allowRefresh: boolean }): Promise<CodexAccountBinding> {
         const store = await (options.allowRefresh ? AiConfigStore.load() : AiConfigStore.readOnly());
-        const account = requireAccount(store.account(selector));
+        const matched = store.accountMatching(selector, "openai-sub");
+
+        if (!matched) {
+            const names = store.accounts({ provider: "openai-sub", enabled: true }).map((entry) => entry.name);
+            throw new Error(
+                `No Codex account matches "${selector}". Enabled OpenAI subscription accounts: ${names.join(", ") || "none"} (tools ai accounts list).`
+            );
+        }
+
+        const account = requireAccount(matched);
         return new CodexAccountBinding(account.id, account.name, account.accountUuid, options.allowRefresh);
     }
 
