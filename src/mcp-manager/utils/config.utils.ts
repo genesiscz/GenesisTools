@@ -3,6 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import chalk from "chalk";
 import { BackupManager } from "./backup.js";
+import { ensureHarnessDefaults } from "./harnesses.js";
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "./providers/types.js";
 import type { EnabledMcpServers } from "./types.js";
 
@@ -133,6 +134,8 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     const storage = mcpStorage();
     const configPath = storage.getConfigPath();
 
+    config = ensureHarnessDefaults(config).config;
+
     // Ensure enabledMcpServers is in sync with _meta.enabled before writing
     config = syncEnabledMcpServers(config);
 
@@ -163,4 +166,18 @@ export async function writeUnifiedConfig(config: UnifiedMCPConfig): Promise<bool
     await storage.setConfig(config);
     logger.info(chalk.green(`✓ Configuration written to ${configPath}`));
     return true;
+}
+
+/**
+ * Fill missing harness homes and persist them on the next sync/save.
+ */
+export async function persistHarnessDefaults(): Promise<UnifiedMCPConfig> {
+    const config = await readUnifiedConfig();
+    const { config: withDefaults, changed } = ensureHarnessDefaults(config);
+
+    if (changed) {
+        await writeUnifiedConfig(withDefaults);
+    }
+
+    return withDefaults;
 }

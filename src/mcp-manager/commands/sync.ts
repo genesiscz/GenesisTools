@@ -1,4 +1,4 @@
-import { readUnifiedConfig, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import { persistHarnessDefaults, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -15,7 +15,11 @@ export interface SyncOptions {
  * Ensures servers are installed and properly enabled/disabled in each provider.
  */
 export async function syncServers(providers: MCPProvider[], options: SyncOptions = {}): Promise<void> {
-    const config = await readUnifiedConfig();
+    const config = await persistHarnessDefaults();
+
+    for (const provider of providers) {
+        provider.applyHarnessConfig(config);
+    }
 
     if (Object.keys(config.mcpServers).length === 0) {
         logger.warn("No servers found in unified config. Run 'tools mcp-manager config' to add servers.");

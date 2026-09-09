@@ -183,6 +183,24 @@ export class MockMCPProvider extends MCPProvider {
  */
 export function createMockUnifiedConfig(): UnifiedMCPConfig {
     return {
+        harnesses: {
+            claude: {
+                syncTo: { homes: ["~/.claude.json"] },
+                syncFrom: { homes: ["~/.claude.json"] },
+            },
+            gemini: {
+                syncTo: { homes: ["~/.gemini/settings.json"] },
+                syncFrom: { homes: ["~/.gemini/settings.json"] },
+            },
+            cursor: {
+                syncTo: { homes: ["~/.cursor/mcp.json"] },
+                syncFrom: { homes: ["~/.cursor/mcp.json"] },
+            },
+            codex: {
+                syncTo: { homes: ["~/.codex"] },
+                syncFrom: { homes: ["~/.codex"] },
+            },
+        },
         mcpServers: {
             "test-server": {
                 command: "test-command",

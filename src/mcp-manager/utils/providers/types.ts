@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import type { EnabledMcpServers, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
+import type { EnabledMcpServers, HarnessSyncMap, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
 
 /**
  * Result of a write operation to a provider config.
@@ -54,6 +54,11 @@ export interface UnifiedMCPConfig {
      * Maps server name to enabled state per provider.
      */
     enabledMcpServers?: EnabledMcpServers;
+    /**
+     * Per-harness homes for sync-to and sync-from.
+     * Missing harnesses are filled with defaults on the next sync or save.
+     */
+    harnesses?: HarnessSyncMap;
     [key: string]: unknown;
 }
 
@@ -274,4 +279,10 @@ export abstract class MCPProvider {
      * Convert unified config to provider-specific format
      */
     abstract fromUnifiedConfig(servers: Record<string, UnifiedMCPServerConfig>): unknown;
+
+    /**
+     * Apply harness home lists from the unified config.
+     * Providers with a single config path ignore this.
+     */
+    applyHarnessConfig(_config: UnifiedMCPConfig): void {}
 }

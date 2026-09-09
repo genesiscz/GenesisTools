@@ -238,8 +238,24 @@ diff + confirmation and goes through the backup path; `-y` auto-confirms.
 ### Codex (`~/.codex/config.toml`)
 
 -   TOML-based configuration
--   Only supports stdio transport
+-   HTTP servers use `[mcp_servers.<name>.http_headers]`, not `headers`
 -   Servers are enabled if they exist in config
+-   Extra Codex homes (for example `~/.codex-shop`) are listed under `harnesses.codex.syncTo.homes` in the unified config. The first `sync` or save writes default homes when that block is missing. Extra homes keep dest-only servers and home-bound env (such as `node_repl` `CODEX_HOME`). A dest HTTP server that still uses `headers` is replaced with `http_headers`.
+
+### Harness homes
+
+The unified config (`~/.genesis-tools/mcp-manager/config.json`) may contain:
+
+```json
+"harnesses": {
+  "codex": {
+    "syncTo": { "homes": ["~/.codex", "~/.codex-shop", "~/.codex-work"] },
+    "syncFrom": { "homes": ["~/.codex"] }
+  }
+}
+```
+
+Missing harnesses get defaults on the next `sync` or save: Claude `~/.claude.json`, Gemini `~/.gemini/settings.json`, Cursor `~/.cursor/mcp.json`, Codex `~/.codex`.
 
 ### Cursor (`~/.cursor/mcp.json`)
 

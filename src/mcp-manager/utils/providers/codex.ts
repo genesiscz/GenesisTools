@@ -2,23 +2,50 @@ import { existsSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import {
+    codexConfigPathForHome,
+    codexHomeDir,
+    mergeCodexServersForHome,
+    resolveHarnessHomes,
+} from "@app/mcp-manager/utils/harnesses.js";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import * as TOML from "@iarna/toml";
 import chalk from "chalk";
 import type { CodexGenericConfig, CodexMCPServerConfig } from "./codex.types.js";
-import type { MCPServerInfo, UnifiedMCPServerConfig } from "./types.js";
+import type { MCPServerInfo, UnifiedMCPConfig, UnifiedMCPServerConfig } from "./types.js";
 import { MCPProvider, WriteResult } from "./types.js";
+
+export interface CodexProviderOptions {
+    syncToHomes?: string[];
+    syncFromHomes?: string[];
+}
 
 /**
  * Codex MCP provider.
- * Manages MCP servers in ~/.codex/config.toml
+ * Manages MCP servers in each configured Codex home's config.toml
  */
 
 export class CodexProvider extends MCPProvider {
-    constructor() {
-        const homeDir = env.paths.getHome() || env.paths.getUserProfile() || "~";
-        super(path.join(homeDir, ".codex", "config.toml"), "codex");
+    private syncToHomes: string[];
+    private syncFromHomes: string[];
+
+    constructor(options: CodexProviderOptions = {}) {
+        const defaultHome = path.join(env.paths.getHome() || env.paths.getUserProfile() || "~", ".codex");
+        const syncToHomes = options.syncToHomes?.length ? options.syncToHomes : [defaultHome];
+        super(codexConfigPathForHome(syncToHomes[0] ?? defaultHome), "codex");
+        this.syncToHomes = syncToHomes;
+        this.syncFromHomes = options.syncFromHomes?.length ? options.syncFromHomes : [...syncToHomes];
+    }
+
+    applyHarnessConfig(config: UnifiedMCPConfig): void {
+        this.syncToHomes = resolveHarnessHomes(config, "codex", "syncTo");
+        this.syncFromHomes = resolveHarnessHomes(config, "codex", "syncFrom");
+        const primary = this.syncToHomes[0];
+
+        if (primary) {
+            this.configPath = codexConfigPathForHome(primary);
+        }
     }
 
     async configExists(): Promise<boolean> {
@@ -188,22 +215,89 @@ export class CodexProvider extends MCPProvider {
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
+        let applied = false;
+        const homes = this.syncToHomes.length > 0 ? this.syncToHomes : [codexHomeDir(this.configPath)];
+
+        for (let i = 0; i < homes.length; i++) {
+            const home = homes[i];
+            if (!home) {
+                continue;
+            }
+
+            const configPath = codexConfigPathForHome(home);
+            const isPrimary = i === 0;
+
+            if (!isPrimary && !existsSync(configPath)) {
+                logger.warn(`Skipping Codex home ${home}: ${configPath} does not exist`);
+                continue;
+            }
+
+            const result = await this.withConfigPath(configPath, () =>
+                this.syncServersAtCurrentPath(servers, {
+                    destHome: codexHomeDir(home),
+                    allHomes: homes.map(codexHomeDir),
+                    deleteDisabled: isPrimary,
+                    protectHomeBound: !isPrimary,
+                })
+            );
+
+            if (result === WriteResult.Rejected) {
+                return result;
+            }
+
+            if (result === WriteResult.Applied) {
+                applied = true;
+            }
+        }
+
+        return applied ? WriteResult.Applied : WriteResult.NoChanges;
+    }
+
+    private async withConfigPath<T>(configPath: string, fn: () => Promise<T>): Promise<T> {
+        const previous = this.configPath;
+        this.configPath = configPath;
+
+        try {
+            return await fn();
+        } finally {
+            this.configPath = previous;
+        }
+    }
+
+    private async syncServersAtCurrentPath(
+        servers: Record<string, UnifiedMCPServerConfig>,
+        opts: {
+            destHome: string;
+            allHomes: string[];
+            deleteDisabled: boolean;
+            protectHomeBound: boolean;
+        }
+    ): Promise<WriteResult> {
         const config = await this.readConfig();
 
         if (!config.mcp_servers) {
             config.mcp_servers = {};
         }
 
+        const incoming: Record<string, CodexMCPServerConfig> = {};
+
         for (const [name, serverConfig] of Object.entries(servers)) {
             const isEnabled = this.isServerEnabledInMeta(serverConfig);
 
             if (isEnabled) {
-                const cleanConfig = stripMeta(serverConfig);
-                config.mcp_servers[name] = this.unifiedToCodex(cleanConfig);
-            } else {
+                incoming[name] = this.unifiedToCodex(stripMeta(serverConfig));
+            } else if (opts.deleteDisabled) {
                 delete config.mcp_servers[name];
             }
         }
+
+        config.mcp_servers = mergeCodexServersForHome({
+            dest: config.mcp_servers,
+            incoming,
+            destHome: opts.destHome,
+            allHomes: opts.allHomes,
+            protectHomeBound: opts.protectHomeBound,
+        });
 
         return this.writeConfig(config);
     }

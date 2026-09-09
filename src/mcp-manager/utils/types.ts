@@ -42,3 +42,19 @@ export interface MCPServerMeta {
  * This is a duplicate of the _meta.enabled information for easier access.
  */
 export type EnabledMcpServers = Record<string, Partial<EnabledState>>;
+
+/**
+ * A Codex home directory (`~/.codex`) or another harness config path (`~/.claude.json`).
+ */
+export type HarnessSyncToHome = string;
+
+export interface HarnessSyncDirection {
+    homes: HarnessSyncToHome[];
+}
+
+export interface HarnessSyncConfig {
+    syncTo?: HarnessSyncDirection;
+    syncFrom?: HarnessSyncDirection;
+}
+
+export type HarnessSyncMap = Partial<Record<MCPProviderName, HarnessSyncConfig>>;

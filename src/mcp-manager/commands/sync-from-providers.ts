@@ -1,4 +1,4 @@
-import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import { persistHarnessDefaults, readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState, ProviderEnabledState } from "@app/mcp-manager/utils/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
@@ -16,6 +16,12 @@ export interface SyncFromOptions {
  * Sync servers FROM providers TO unified config
  */
 export async function syncFromProviders(providers: MCPProvider[], options: SyncFromOptions = {}): Promise<void> {
+    const harnessConfig = await persistHarnessDefaults();
+
+    for (const provider of providers) {
+        provider.applyHarnessConfig(harnessConfig);
+    }
+
     const availableProviders: MCPProvider[] = [];
 
     // Check which providers have configs
