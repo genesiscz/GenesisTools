@@ -72,7 +72,7 @@ export class AudioProcessor {
                 }
             );
 
-            const _stdout = await new Response(proc.stdout).text();
+            await new Response(proc.stdout).text();
             const stderr = await new Response(proc.stderr).text();
             const exitCode = await proc.exited;
 
@@ -105,7 +105,7 @@ export class AudioProcessor {
     isFFmpegAvailable(): boolean {
         try {
             // Try to run ffmpeg to check if it's available
-            const _proc = spawn(["ffmpeg", "-version"], {
+            spawn(["ffmpeg", "-version"], {
                 stdio: ["ignore", "ignore", "ignore"],
             });
 

@@ -29,12 +29,14 @@ jobs:
           # referenced as ${{ matrix.testTimeout }} (a plain matrix int IS
           # valid in step-level timeout-minutes; only non-matrix contexts /
           # raw ternaries are rejected there).
-          # testTimeout from real last-20-runs data: ubuntu test discovery
-          # med 66s / max 146s -> 4m. The task/tests integration lane is gated
+          # Linux discovery was still actively passing tests at the former 4m limit
+          # (run 34145881728, over 9,600 results). Allow the full suite and its serial
+          # phase to finish; the completion-marker guard still rejects real hangs.
+          # The task/tests integration lane is gated
           # out of the default suite (see package.json `test`) and run on demand
           # via `bun run test:task`, so it is not part of this step's budget.
           # windows med 136s / healthy ~150s -> 7m.
-          inc='{"os":"ubuntu-latest","testTimeout":4}'
+          inc='{"os":"ubuntu-latest","testTimeout":8}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
@@ -55,12 +57,35 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — must exceed the per-OS testTimeout (4m/7m) + cold
+    # Backstop only — must exceed the per-OS testTimeout (8m/7m) + cold
     # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
     # logs fire first. Real worst case ~12m (windows cold); 15m has margin.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      # The frozen history parity oracle archives a pinned commit out of this clone, and
+      # actions/checkout fetches depth 1, so without this every oracle suite skips and the
+      # Claude search / statistics parity signal silently disappears from CI. One commit at
+      # depth 1 is cheap. Never fails the job: the suites fall back to skipping.
+      - name: Fetch the frozen history baseline commit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          rev=$(sed -n 's/^export const BASELINE_REVISION = "\([0-9a-f]\{40\}\)";$/\1/p' \
+            src/utils/agent-sessions/testing/baseline-oracle.ts)
+          if [ -z "$rev" ]; then
+            echo "BASELINE_REVISION not found in baseline-oracle.ts" >&2
+            exit 1
+          fi
+          if git cat-file -e "$rev^{commit}"; then
+            echo "baseline $rev already present"
+            exit 0
+          fi
+          git fetch --depth=1 origin "$rev"
+          git cat-file -e "$rev^{commit}"
+          echo "fetched baseline $rev"
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -96,7 +121,7 @@ jobs:
       # Run the WHOLE suite. Discovery only — never fail the job here; the
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
-      # Tripwire: per-OS matrix.testTimeout (ubuntu 2m, windows 7m). A plain
+      # Tripwire: per-OS matrix.testTimeout (ubuntu 8m, windows 7m). A plain
       # matrix int IS valid in step-level timeout-minutes (matrix resolves at
       # job-expansion); only raw ternaries / non-matrix contexts are rejected.
       # On timeout the partial tee'd log still uploads (continue-on-error).
