@@ -17,6 +17,7 @@ import type { BindContext, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
 import { AiConfigStore } from "./AiConfigStore";
 import {
+    AccountChangedError,
     AccountInUseError,
     addAccount,
     applyLoginOutcome,
@@ -44,6 +45,21 @@ function writeConfig(data: AiConfigData): void {
 
 function readRawConfig(): AiConfigData {
     return SafeJSON.parse(readFileSync(configPath(), "utf8"), { strict: true });
+}
+
+/**
+ * The entry a caller's guards would have been decided against. `applyLoginOutcome`
+ * re-checks it inside the config lock, so every call has to state which account it
+ * believed it was writing — `null` for "there is none yet".
+ */
+function guarded(idOrName: string): AiConfigData["accounts"][number] {
+    const found = readRawConfig().accounts.find((entry) => entry.id === idOrName || entry.name === idOrName);
+
+    if (!found) {
+        throw new Error(`test setup: no account "${idOrName}" to guard against`);
+    }
+
+    return found;
 }
 
 function fakePlugin(overrides: Partial<ProviderPlugin> = {}): ProviderPlugin {
@@ -213,7 +229,7 @@ describe("applyLoginOutcome", () => {
     }
 
     test("a first login mints the account, vaults the secrets and writes no plaintext", async () => {
-        const result = await applyLoginOutcome({ name: "work", outcome: outcome() });
+        const result = await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
 
         expect(result.created).toBe(true);
         expect(result.account.id).toBe("acc_work");
@@ -232,6 +248,7 @@ describe("applyLoginOutcome", () => {
     test("a re-login preserves the long-lived token, the secondary grant, the label and the apps", async () => {
         await applyLoginOutcome({
             name: "work",
+            guardedAgainst: null,
             apps: ["claude", "ask"],
             outcome: outcome({
                 credentials: {
@@ -243,7 +260,7 @@ describe("applyLoginOutcome", () => {
             }),
         });
 
-        const result = await applyLoginOutcome({ name: "work", outcome: outcome() });
+        const result = await applyLoginOutcome({ name: "work", guardedAgainst: guarded("work"), outcome: outcome() });
 
         expect(result.created).toBe(false);
         expect(await resolveSecret(result.account.credentials.longLivedToken)).toBe("sk-ant-oat01-keepme");
@@ -260,11 +277,13 @@ describe("applyLoginOutcome", () => {
 
         await applyLoginOutcome({
             name: "work",
+            guardedAgainst: null,
             outcome: outcome({ credentials: { accessToken: "sk-old", longLivedToken: "sk-ant-oat01-stale" } }),
         });
 
         const result = await applyLoginOutcome({
             name: "work",
+            guardedAgainst: guarded("work"),
             outcome: { provider: "other", credentials: { authFile: "/tmp/other/auth.json" } },
         });
 
@@ -287,7 +306,7 @@ describe("applyLoginOutcome", () => {
     // provider switch would have deleted.
     test("an id targets THAT account when two share a name, and the namesake keeps its secrets", async () => {
         registerPlugin(fakePlugin({ id: "other", kind: "subscription", credential: { fields: [], envKeys: [] } }));
-        await applyLoginOutcome({ name: "work", outcome: outcome() });
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
 
         const raw = readRawConfig();
         raw.accounts.push({
@@ -304,6 +323,7 @@ describe("applyLoginOutcome", () => {
         const result = await applyLoginOutcome({
             id: "acc_work_other",
             name: "work",
+            guardedAgainst: guarded("acc_work_other"),
             outcome: {
                 provider: "other",
                 credentials: { secondary: { accessToken: "sk-secondary", accountUuid: "acct-2" } },
@@ -321,15 +341,31 @@ describe("applyLoginOutcome", () => {
     });
 
     test("an id that no longer exists writes nothing rather than minting a namesake", async () => {
-        await expect(applyLoginOutcome({ id: "acc_gone", name: "work", outcome: outcome() })).rejects.toThrow(
-            /no longer exists/
-        );
+        // The caller resolved an entry that is gone by the time the lock is taken,
+        // which is the shape `guardedAgainst` describes; the id check answers first.
+        await expect(
+            applyLoginOutcome({
+                id: "acc_gone",
+                name: "work",
+                guardedAgainst: {
+                    id: "acc_gone",
+                    name: "work",
+                    provider: "fake",
+                    enabled: true,
+                    billing: { mode: "subscription" },
+                    credentials: {},
+                    useEnvApiKey: false,
+                },
+                outcome: outcome(),
+            })
+        ).rejects.toThrow(/no longer exists/);
         expect(readRawConfig().accounts).toEqual([]);
     });
 
     test("an empty app default is filled once and never overwritten", async () => {
         const first = await applyLoginOutcome({
             name: "work",
+            guardedAgainst: null,
             outcome: outcome(),
             defaultForApps: ["claude", "ask"],
         });
@@ -342,6 +378,7 @@ describe("applyLoginOutcome", () => {
 
         const second = await applyLoginOutcome({
             name: "personal",
+            guardedAgainst: null,
             outcome: outcome(),
             defaultForApps: ["claude", "ask"],
         });
@@ -352,10 +389,72 @@ describe("applyLoginOutcome", () => {
         );
     });
 
+    /**
+     * PR #368 review t2. Every guard in `write-outcome.ts` runs before this lock is
+     * taken, because a guard may prompt. A first login therefore decides "no such
+     * account" minutes before the write, and the merge below switches providers and
+     * DELETES the vault entries of whatever it lands on — so an entry created in
+     * that window must never reach it.
+     */
+    test("a name another login claimed while the guards ran is refused, secrets intact", async () => {
+        registerPlugin(fakePlugin({ id: "other", kind: "subscription", credential: { fields: [], envKeys: [] } }));
+        // The stranger: created after the caller below concluded there was none.
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
+        const before = readFileSync(configPath(), "utf8");
+
+        await expect(
+            applyLoginOutcome({
+                name: "work",
+                guardedAgainst: null,
+                outcome: { provider: "other", credentials: { authFile: "/tmp/other/auth.json" } },
+            })
+        ).rejects.toThrow(AccountChangedError);
+
+        expect(readFileSync(configPath(), "utf8")).toBe(before);
+        expect(readRawConfig().accounts[0]?.provider).toBe("fake");
+        expect(await (await secrets()).get("ai/acc_work/accessToken")).toBe("sk-access");
+    });
+
+    test("an entry rewritten under a caller that DID inspect it is refused", async () => {
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
+        const inspected = guarded("work");
+
+        // Another login lands in between and rewrites the identity this caller read.
+        const raw = readRawConfig();
+        const live = raw.accounts.find((entry) => entry.id === "acc_work");
+
+        if (live) {
+            live.accountUuid = "acct-someone-else";
+        }
+
+        writeConfig(raw);
+
+        await expect(
+            applyLoginOutcome({ id: "acc_work", name: "work", guardedAgainst: inspected, outcome: outcome() })
+        ).rejects.toThrow(AccountChangedError);
+
+        expect(readRawConfig().accounts[0]?.accountUuid).toBe("acct-someone-else");
+    });
+
+    test("NEGATIVE CONTROL: an entry nobody touched still merges", async () => {
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
+        const inspected = guarded("work");
+
+        const result = await applyLoginOutcome({
+            id: "acc_work",
+            name: "work",
+            guardedAgainst: inspected,
+            outcome: outcome({ credentials: { accessToken: "sk-second" } }),
+        });
+
+        expect(result.created).toBe(false);
+        expect(await resolveSecret(result.account.credentials.accessToken)).toBe("sk-second");
+    });
+
     test("refuses an unknown provider before writing anything", async () => {
-        await expect(applyLoginOutcome({ name: "work", outcome: outcome({ provider: "nope" }) })).rejects.toThrow(
-            'Unknown AI provider "nope"'
-        );
+        await expect(
+            applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome({ provider: "nope" }) })
+        ).rejects.toThrow('Unknown AI provider "nope"');
         expect(readRawConfig().accounts).toHaveLength(0);
     });
 });

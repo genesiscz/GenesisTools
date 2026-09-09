@@ -289,10 +289,16 @@ export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<
     // By id whenever the caller resolved one: the secondary flow and a re-login
     // both start from an existing entry, and a name alone picks the first
     // namesake across every provider (PR #360 review t4).
+    //
+    // `guardedAgainst` carries the entry all three policies above were decided
+    // against — or null, meaning they concluded there was none. The write
+    // re-checks it inside the config lock and refuses when it no longer holds,
+    // because none of these policies can run there: they prompt (PR #368 t2).
     try {
         return await applyLoginOutcome({
             name: input.name,
             id: input.account?.id,
+            guardedAgainst: input.account ?? null,
             outcome: input.outcome,
             apps: input.apps,
             defaultForApps: input.defaultForApps,
