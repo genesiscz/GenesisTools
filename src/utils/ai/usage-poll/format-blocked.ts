@@ -48,6 +48,7 @@ export function formatBlockedNotice(snapshot: BlockedSnapshot, now: number = Dat
 
     return `blocked until ${formatClock(until)} (${failures})${reason}`;
 }
+
 /**
  * "needs login: tools grok login work", or null when the account holds a credential.
  *

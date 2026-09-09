@@ -141,6 +141,15 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
                             show fewer
                         </button>
                     ) : null}
+                    {/* The pill alone says "needs login" without saying what to run, and the
+                        command is the whole point. A needs-login row keeps its last-good
+                        limits (the shared cache backfills it), so this branch is the one the
+                        card actually takes for it. */}
+                    {needsLoginNotice ? (
+                        <p className="text-sm font-medium" style={{ color: "var(--dd-danger)" }}>
+                            {needsLoginNotice}
+                        </p>
+                    ) : null}
                     {snapshot.error ? <ErrorDetails error={snapshot.error} /> : null}
                 </div>
             ) : snapshot.error ? (

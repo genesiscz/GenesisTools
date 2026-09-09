@@ -1,7 +1,7 @@
 import { colorForPctWithReset } from "@app/claude/lib/usage/constants";
 import type { AccountUsageSnapshot, UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
-import { formatBlockedNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
+import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
 import { AccountSection, estimateAccountHeight, MIN_ACCOUNT_COLUMN_WIDTH } from "./components/overview/account-section";
 import { applySort } from "./components/overview/overview-sort";
 
@@ -23,12 +23,15 @@ export const anthropicPresenters: UsagePresenters = {
         const account = snapshotToAccountUsage(snapshot);
         // Same line, better sentence: while the gate holds the account back nothing was
         // requested this round, so the bare reason reads as a failure happening right now.
-        // Substituting the error keeps the rendered height identical.
-        const blocked = formatBlockedNotice(snapshot);
+        // Substituting the error keeps the rendered height identical. Same precedence as
+        // the generic section, so the third renderer of this snapshot cannot drift: an
+        // account with no credential at all would otherwise show the raw refusal here,
+        // with the login command at its truncated tail (issue #378).
+        const notice = formatBlockedNotice(snapshot) ?? formatNeedsLoginNotice(snapshot);
 
         return (
             <AccountSection
-                account={blocked ? { ...account, error: blocked } : account}
+                account={notice ? { ...account, error: notice } : account}
                 prominentBuckets={prominent}
                 width={width}
             />
