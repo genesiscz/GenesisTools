@@ -90,8 +90,12 @@ describe("AIAccount", () => {
 
     describe("provider() error cases", () => {
         it("throws when account not found for openai-sub provider", async () => {
+            // `d9a5007a2` made the selector match by substring and rewrote the refusal to name
+            // both the selector and the accounts it could have matched. Assert on what the user
+            // must be able to act on, not on the old wording.
             const account = AIAccount.chooseCodex("test-codex");
-            await expect(account.provider()).rejects.toThrow("not found");
+            await expect(account.provider()).rejects.toThrow(/No Codex account matches "test-codex"/);
+            await expect(account.provider()).rejects.toThrow(/tools ai accounts list/);
         });
 
         it("throws when API key is missing for openai provider", async () => {
