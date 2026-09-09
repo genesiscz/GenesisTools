@@ -80,6 +80,13 @@ function parseJSONL(input: string): unknown[] | null {
         }
     }
 
+    // Every line of JSONL is JSON, so text left over after the last complete object means the
+    // input was never JSONL. Without this the root TOON array `[3]: 1,2,3` matched on its own
+    // `[3]` header and the trailing `: 1,2,3` was thrown away.
+    if (currentObject.trim()) {
+        return null;
+    }
+
     // If we found at least one object, it's JSONL
     return objects.length > 0 ? objects : null;
 }
@@ -118,7 +125,44 @@ function extractEmbeddedJson(input: string): string | null {
     return null;
 }
 
-function detectFormat(input: string): Format {
+/** The decoded value, or `undefined` when the input is not a TOON document at all. */
+function tryDecodeToon(input: string): unknown {
+    try {
+        return decode(input);
+    } catch {
+        return undefined;
+    }
+}
+
+/** True when any string anywhere in `value` is exactly `text`. */
+function holdsStringValue(value: unknown, text: string): boolean {
+    if (typeof value === "string") {
+        return value === text;
+    }
+
+    if (Array.isArray(value)) {
+        return value.some((item) => holdsStringValue(item, text));
+    }
+
+    if (value !== null && typeof value === "object") {
+        return Object.values(value).some((item) => holdsStringValue(item, text));
+    }
+
+    return false;
+}
+
+/**
+ * True when the TOON read is the false positive the embedded-JSON path exists for.
+ *
+ * TOON's `key: value` syntax swallows a line like `API 400: {"success": false}` whole, so the
+ * decode SUCCEEDS and hands back one key whose VALUE is the raw JSON text. The embedded island
+ * surviving verbatim as a string is the tell; a genuine TOON document structures it instead.
+ */
+function toonSwallowedEmbeddedJson(decoded: unknown, candidate: string): boolean {
+    return holdsStringValue(decoded, candidate.trim());
+}
+
+export function detectFormat(input: string): Format {
     // Try JSON first
     try {
         SafeJSON.parse(input, { strict: true });
@@ -129,20 +173,23 @@ function detectFormat(input: string): Format {
         if (jsonlData && jsonlData.length > 0) {
             return "jsonl";
         }
-        // Try extracting embedded JSON from mixed text
-        // (before TOON, since TOON's colon syntax produces false positives
-        // on text like "API 400: {"success": false}")
-        if (extractEmbeddedJson(input)) {
+
+        // TOON before embedded JSON, because `extractEmbeddedJson` matches the `[3]` inside a
+        // TOON array header (`users[3]{id,name,role}:`) and answered a whole document with the
+        // three-byte fragment `[3]`, which is every TOON round trip losing all its data. The
+        // embedded path still wins the case it was written for, named by the check below.
+        const decoded = tryDecodeToon(input);
+        const embedded = extractEmbeddedJson(input);
+
+        if (decoded !== undefined && !(embedded !== null && toonSwallowedEmbeddedJson(decoded, embedded))) {
+            return "toon";
+        }
+
+        if (embedded) {
             return "embedded-json";
         }
 
-        // Not JSON or JSONL or embedded JSON, try TOON
-        try {
-            decode(input);
-            return "toon";
-        } catch {
-            return "unknown";
-        }
+        return "unknown";
     }
 }
 
