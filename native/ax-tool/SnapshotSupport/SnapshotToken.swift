@@ -1,5 +1,16 @@
 import Foundation
 
+/// A token that ties an element index to one snapshot of one window of one process instance.
+///
+/// `validate` refuses the index when the process was replaced (pid or launch time differ), the
+/// tree changed (digest differs), the snapshot expired, or the index is outside the snapshot's
+/// element count. Each refusal has a test in `Tests/SnapshotSupportTests.swift`.
+///
+/// GROUNDWORK, not yet on the shipped path: as of this target's introduction no command in
+/// `Sources/main.swift` constructs or validates a token. The executable's `snapshot` command
+/// captures mouse position and focus, not a UI tree, so nothing yet produces the `digest`,
+/// `depth` and element `count` a token needs. The producer is the planned tree-snapshot command;
+/// until it exists, declaring the dependency in `Package.swift` adds no protection to any action.
 public struct SnapshotToken: Codable {
     public let version: Int
     public let pid: Int32
