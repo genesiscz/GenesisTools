@@ -62,6 +62,10 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
         }
     });
 
+    // 4100 roots because a fixed 4096 cap used to drop every root past it. The
+    // count is the whole point; the file SIZES are not, so each root holds one
+    // byte over a one-byte floor rather than one megabyte over a megabyte one —
+    // the same "every root was walked" assertion, without writing 4.1 GB.
     it("reports the roots it accepted and no read errors", async () => {
         const outer = mkdtempSync(join(tmpdir(), "gt-bigfiles-roots-"));
         try {
@@ -69,11 +73,11 @@ describe.skipIf(skip.onWindows || process.platform !== "darwin")("listBigFiles (
             for (let i = 0; i < 4_100; i++) {
                 const dir = join(outer, `r${i}`);
                 mkdirSync(dir, { recursive: true });
-                writeFileSync(join(dir, "f.bin"), Buffer.alloc(MB, 7));
+                writeFileSync(join(dir, "f.bin"), Buffer.alloc(1, 7));
                 roots.push(dir);
             }
 
-            const r = await listBigFiles({ roots, minBytes: MB });
+            const r = await listBigFiles({ roots, minBytes: 1 });
             expect(r.roots).toBe(4_100);
             expect(r.files.length).toBe(4_100);
             expect(r.readErrors).toBe(0);

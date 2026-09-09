@@ -1013,3 +1013,27 @@ exit code non-zero.
 No measured number moves. This is error accounting only: the walk enters the same directories,
 lists the same files, and emits the same `files_listed` / `dirs` / `files[]` on every tree that
 scanned cleanly before. No bench matrix was run.
+(lines)
+
+---
+
+## 2026-09-09 17:11 — Test suite speed: the 4100-root fixture stops writing 4.1 GB
+
+**No benchmark matrix was run, and none was needed.** `clonesize.c` is byte-identical;
+the only change is `src/du/lib/bigfiles.test.ts`.
+
+The "reports the roots it accepted and no read errors" case exists for the 4096-root cap
+that used to drop every root past it, so the ROOT COUNT is what it pins. It also gave every
+one of those 4100 roots a one-megabyte file against a one-megabyte floor, which wrote
+**4.1 GB** to the temp volume per run and then deleted it. The floor and the file now sit at
+one byte each, so the same three assertions hold — `roots === 4100`, `files.length === 4100`,
+`readErrors === 0` — on 4.1 KB of writes.
+
+| | before | after |
+|---|---|---|
+| file wall time (`bun run test --profile --jobs 1`) | 29.7 s | 1.3 s |
+| bytes written by the fixture | 4.1 GB | 4.1 KB |
+| tests / assertions | 6 / unchanged | 6 / unchanged |
+
+Nothing about the scan semantics moved: `min_bytes` is a filter the caller passes, and every
+file in that fixture is above the floor in both arms, so `files_listed` is 4100 either way.
