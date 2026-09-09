@@ -557,8 +557,19 @@ export function formatWaitingPanes(waiting: WaitingPane[], actor: "Rescue" | "Re
     return lines;
 }
 
-function internalRestoreCommand(parts: string[]): string {
-    return `function _genesis_cmux_restore_internal { ${parts.join(" && ")}; }; _genesis_cmux_restore_internal; unset -f _genesis_cmux_restore_internal\n`;
+/**
+ * The setup steps chain with `&&` — a `cat` of the saved screen must not run if the `printf`
+ * that cleared it failed. `always` is different: it runs whatever the chain did, because it
+ * carries the readiness marker, and a marker that never prints is not a smaller failure.
+ *
+ * `cd` into a saved directory that no longer exists (a removed worktree, a renamed project) is
+ * the ordinary case, and gating the marker on it made `waitForTerminalText` burn its 30 s and
+ * throw, which aborted every LATER tab of the same pane before it was renamed or replayed.
+ */
+export function internalRestoreCommand(parts: string[], always: string[] = []): string {
+    const body = [parts.join(" && "), ...always].filter((part) => part.length > 0).join("; ");
+
+    return `function _genesis_cmux_restore_internal { ${body}; }; _genesis_cmux_restore_internal; unset -f _genesis_cmux_restore_internal\n`;
 }
 
 /** Resolves to a reason string when the surface was restored but its saved command was NOT replayed. */
@@ -607,8 +618,8 @@ async function replayTerminal(
         if (parts.length > 0) {
             const marker = `cmux-ready-${crypto.randomUUID()}`;
             // Split the marker across printf arguments so input echo cannot acknowledge setup.
-            parts.push(`printf '\\n%s%s\\n' 'cmux-ready-' '${marker.slice("cmux-ready-".length)}'`);
-            await sendSurfaceText({ surfaceRef, text: internalRestoreCommand(parts) });
+            const ready = `printf '\\n%s%s\\n' 'cmux-ready-' '${marker.slice("cmux-ready-".length)}'`;
+            await sendSurfaceText({ surfaceRef, text: internalRestoreCommand(parts, [ready]) });
             await waitForTerminalText({
                 workspaceRef,
                 surfaceRef,
