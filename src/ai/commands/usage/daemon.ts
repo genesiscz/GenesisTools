@@ -3,6 +3,7 @@ import { parseInterval } from "@app/daemon/lib/interval";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import * as p from "@clack/prompts";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -86,7 +87,12 @@ export async function registerUsagePollTask(args: RegisterUsagePollArgs): Promis
 
     await registry.registerTask({
         name: USAGE_TASK_NAME,
-        command: `${bunPath()} run ${args.script ?? POLL_SCRIPT}`,
+        // Quoted: the daemon runs a registered command as `sh -c <command>`
+        // (`src/daemon/lib/runner.ts`), so a checkout or a Bun install under a
+        // directory containing a space registered fine and then failed on every
+        // poll, and a shell metacharacter in either path was interpreted
+        // (PR #368 review t5).
+        command: shellCommandLine([bunPath(), "run", args.script ?? POLL_SCRIPT]),
         every: args.interval,
         retries: 1,
         timeoutMs: 60_000,

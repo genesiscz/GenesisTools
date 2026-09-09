@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 
 const UTF8_PATTERN = /utf-?8/i;
 
@@ -113,8 +114,4 @@ export function localeExportPrefix(): string {
     const locale = resolveUtf8Locale();
 
     return `export LANG=${shellQuote(locale)} LC_ALL=${shellQuote(locale)} LC_CTYPE=${shellQuote(locale)}; `;
-}
-
-function shellQuote(value: string): string {
-    return `'${value.replace(/'/g, "'\\''")}'`;
 }
