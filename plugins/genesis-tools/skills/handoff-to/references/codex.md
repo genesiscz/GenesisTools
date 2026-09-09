@@ -96,7 +96,7 @@ tools codex spawn --name <task> --cwd <abs path> \
 
 ### Keeping the worker lean
 
-`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`; `--no-skills` and `--no-rules` were added 2026-09-04 for parity with grok and claude, and they only print a warning that codex cannot honour them. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
+`tools codex spawn` has **no config-isolation flag**. Verified 2026-08-27: its options are exactly `--name --cwd --home --model --effort --write --mode --prompt --prompt-file --no-agents --session --writable-root`; `--no-skills` and `--no-rules` were added 2026-09-04 for parity with grok and claude; since 2026-09-09 they **refuse with the reason instead of warning**, because a silent no-op read as isolation that had been applied. Pass a lean `--home` when a worker must load less. This is a real asymmetry with the `codex exec` fallback below, which passes `--ignore-user-config` because loading `~/.codex` fires the user's notification hooks (and adds a few thousand input tokens).
 
 Observed cost of not isolating: a code-review worker spent its startup attaching about 20 MCP servers it had no use for (expo, higgsfield, apify, vitrinka, playwright, firecrawl, jina, brave-search and more), four of which failed noisily — three "not logged in" errors and a vitrinka HTTP connect failure.
 
