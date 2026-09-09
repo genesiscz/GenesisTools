@@ -18,7 +18,7 @@ import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
 import pc from "picocolors";
 import { resolveAccountsProvider } from "./select-provider";
-import { writeLoginOutcome } from "./write-outcome";
+import { rollbackLoginOutcome, writeLoginOutcome } from "./write-outcome";
 
 /**
  * The two side effects of the external flow, behind one seam so a test can drive
@@ -207,21 +207,30 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     const alias = providerAliasOf(plugin.id);
-    const suggested = opts.name ?? outcome.suggestedName ?? alias;
-    // Re-read: the browser round-trip takes minutes, and another terminal may
-    // have added an account under the name this one is about to claim.
-    const fresh = await AiConfigStore.load();
-    const name =
-        opts.name === undefined && opts.promptName === true && interactive
-            ? await promptAccountName(fresh, suggested)
-            : suggested;
+    // The flow has already replaced the vendor's credential file by the time it
+    // returns (`codexLogin` writes `auth.json` before this line). Everything
+    // between here and `writeLoginOutcome` can still fail — an ambiguous name
+    // makes `account()` throw, a config read can fail, a name prompt can be
+    // cancelled — and leaving the new credential on disk while writing no config
+    // lets the existing account go on serving an identity nobody committed
+    // (PR #368 review t1). `writeLoginOutcome` owns the rollback from the moment
+    // it is called; this window is owned here.
+    let target: LoginTarget | null;
 
-    if (name === null) {
+    try {
+        target = await resolveLoginTarget(opts, outcome, alias, interactive);
+    } catch (err) {
+        await rollbackLoginOutcome(outcome);
+        throw err;
+    }
+
+    if (target === null) {
+        await rollbackLoginOutcome(outcome);
         p.cancel("Cancelled — nothing written.");
         return { ok: false };
     }
 
-    const existing = fresh.account(name);
+    const { name, existing } = target;
 
     if (existing) {
         out.println(pc.yellow(`Updating existing account "${name}"...`));
@@ -275,6 +284,40 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     return { ok: true, account: written.account };
+}
+
+interface LoginTarget {
+    name: string;
+    /** The account this login is about to overwrite, when there is one. */
+    existing: AccountEntry | undefined;
+}
+
+/**
+ * Which account this login is about to write, decided against a FRESH read of
+ * the config. Null when the user cancelled the name prompt.
+ *
+ * Re-read: the browser round-trip takes minutes, and another terminal may have
+ * added an account under the name this one is about to claim. That re-read is
+ * also why this can throw: `account()` refuses an ambiguous name.
+ */
+async function resolveLoginTarget(
+    opts: RunLoginOptions,
+    outcome: LoginOutcome,
+    alias: string,
+    interactive: boolean
+): Promise<LoginTarget | null> {
+    const suggested = opts.name ?? outcome.suggestedName ?? alias;
+    const fresh = await AiConfigStore.load();
+    const name =
+        opts.name === undefined && opts.promptName === true && interactive
+            ? await promptAccountName(fresh, suggested)
+            : suggested;
+
+    if (name === null) {
+        return null;
+    }
+
+    return { name, existing: fresh.account(name) };
 }
 
 /**
