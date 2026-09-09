@@ -44,6 +44,14 @@ output above 272K, with Fast doubling both bands. This is the promotion OpenAI
 says is available at least through 2026-11-21; no unannounced post-promotion price
 is invented.
 
+`gpt-5.6-terra` and `gpt-5.6-luna` carry their own published rates too, verified
+2026-09-08 against `developers.openai.com`. Terra is $2/$0.20/$2.50/$12 for
+ordinary input/cache-read/cache-write/output; Luna is $0.20/$0.02/$0.25/$1.20.
+Both follow the same two-axis shape as Sol: doubled input and cache with 1.5x
+output above 272K, and Fast doubling whichever band applies. They are separate
+catalog entries rather than aliases of `gpt-5.6`, which is why the suffix ladder
+below no longer peels them.
+
 Tier changes are read from `thread_settings_applied.thread_settings` and explicit
 `turn_context` fields, and survive incremental parser resumes.
 Recorded `service_tier: priority` and `fast` select Fast rates. Missing tiers use
@@ -155,7 +163,7 @@ Line shapes and token arithmetic mirror ccusage's Rust adapters, so the numbers 
 - **Grok.** `cachedReadTokens` and `cacheCreationTokens` are subsets of `inputTokens`, so the three parts sum back to `inputTokens`. `reasoningTokens` sits inside `outputTokens`. The recorded `costUsdTicks` is authoritative: Grok prices each API request separately and a `turn_completed` row carries only the per-turn sum, so recomputing from those totals cannot reproduce the figure Grok actually billed.
 - **Claude.** Anthropic reports `input_tokens` already net of cache, so its four token fields are disjoint and nothing is subtracted.
 
-**Unpriced models cost $0.** The catalog carries rates for `anthropic` and `openai` only. Codex's plan and task variants are peeled down to a catalog id one suffix at a time (`gpt-5.3-codex-spark` → `gpt-5.3-codex` → `gpt-5.3`, `gpt-5.6-sol` → `gpt-5.6`), and `grok-4.6-build` peels to `grok-4.6`. An id that still matches nothing — `codex-auto-review`, every `xai` id — contributes $0 rather than a guessed family rate. Grok is unaffected in practice because it reports its own cost.
+**Unpriced models cost $0.** The catalog carries rates for `anthropic` and `openai` only. Codex's TASK variants are peeled down to a catalog id one suffix at a time (`gpt-5.3-codex-spark` → `gpt-5.3-codex` → `gpt-5.3`), and `grok-4.6-build` peels to `grok-4.6`. The plan variants `-sol`, `-terra` and `-luna` are **not** peeled: each carries its own rates in the catalog, and folding them onto `gpt-5.6` ($5/$30) would bill Luna ($0.20/$1.20) at twenty-five times its price. An id that still matches nothing — `codex-auto-review`, every `xai` id — contributes $0 rather than a guessed family rate. Grok is unaffected in practice because it reports its own cost.
 
 `--json` gains an `agents` object and keeps the existing top level, which is the sum across agents:
 
