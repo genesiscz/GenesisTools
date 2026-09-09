@@ -114,6 +114,12 @@ Defaults are unchanged, but every disruptive behaviour can now be opted out of:
 Use all three when the tool runs unattended while someone is working. Leave
 them off for interactive use, where raising the app is what you asked for.
 
+## Tests
+
+`bun run test:native` runs the SwiftPM test targets (`swift test` in `native/ax-tool`). CI runs
+on ubuntu, which has no Swift toolchain, so these tests are a local gate: run them before pushing
+a change under `native/ax-tool`.
+
 ## SnapshotSupport (groundwork)
 
 `SnapshotSupport/SnapshotToken.swift` is a separate SwiftPM target whose `validate` refuses an
