@@ -450,6 +450,77 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
             vision: true,
         },
         {
+            id: "gpt-5.6-terra",
+            displayName: "GPT-5.6 Terra",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-09-08: https://developers.openai.com/api/docs/models/gpt-5.6-terra
+            // Whole-request rates above 272K input, including cached input.
+            pricing: {
+                inputPer1M: 2,
+                outputPer1M: 12,
+                cachedReadPer1M: 0.2,
+                cachedCreatePer1M: 2.5,
+                rules: [
+                    { ctxFrom: 272_001, inputPer1M: 4, outputPer1M: 18, cachedReadPer1M: 0.4, cachedCreatePer1M: 5 },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 4,
+                        outputPer1M: 24,
+                        cachedReadPer1M: 0.4,
+                        cachedCreatePer1M: 5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 8,
+                        outputPer1M: 36,
+                        cachedReadPer1M: 0.8,
+                        cachedCreatePer1M: 10,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
+            id: "gpt-5.6-luna",
+            displayName: "GPT-5.6 Luna",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-09-08: https://developers.openai.com/api/docs/models/gpt-5.6-luna
+            pricing: {
+                inputPer1M: 0.2,
+                outputPer1M: 1.2,
+                cachedReadPer1M: 0.02,
+                cachedCreatePer1M: 0.25,
+                rules: [
+                    {
+                        ctxFrom: 272_001,
+                        inputPer1M: 0.4,
+                        outputPer1M: 1.8,
+                        cachedReadPer1M: 0.04,
+                        cachedCreatePer1M: 0.5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 0.4,
+                        outputPer1M: 2.4,
+                        cachedReadPer1M: 0.04,
+                        cachedCreatePer1M: 0.5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 0.8,
+                        outputPer1M: 3.6,
+                        cachedReadPer1M: 0.08,
+                        cachedCreatePer1M: 1,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
             id: "gpt-5.6",
             displayName: "GPT-5.6",
             contextWindow: 1_050_000,

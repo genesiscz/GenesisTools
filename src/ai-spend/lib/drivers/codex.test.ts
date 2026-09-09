@@ -138,14 +138,16 @@ describe("codex driver", () => {
         expect(events[0].model).toBe("gpt-5.6-sol");
     });
 
-    test("price candidates peel codex and plan suffixes down to a catalog id", () => {
+    test("price candidates retain distinct named models while supporting legacy codex suffixes", () => {
         expect(codexDriver.priceCandidates("gpt-5.3-codex-spark")).toEqual([
             "gpt-5.3-codex-spark",
             "gpt-5.3-codex",
             "gpt-5.3",
         ]);
         expect(codexDriver.priceCandidates("gpt-5-codex")).toEqual(["gpt-5-codex", "gpt-5"]);
-        expect(codexDriver.priceCandidates("gpt-5.6-sol")).toEqual(["gpt-5.6-sol", "gpt-5.6"]);
+        expect(codexDriver.priceCandidates("gpt-5.6-sol")).toEqual(["gpt-5.6-sol"]);
+        expect(codexDriver.priceCandidates("gpt-5.6-terra")).toEqual(["gpt-5.6-terra"]);
+        expect(codexDriver.priceCandidates("gpt-5.6-luna")).toEqual(["gpt-5.6-luna"]);
         // Nothing to peel and nothing in the catalog: unpriced, so $0.
         expect(codexDriver.priceCandidates("codex-auto-review")).toEqual(["codex-auto-review"]);
         expect(DEFAULT_PRICING["codex-auto-review"]).toBeUndefined();

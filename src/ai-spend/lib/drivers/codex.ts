@@ -36,12 +36,11 @@ import type { DriverRoot, MonitorDriver } from "./types";
  */
 
 /**
- * Codex ships plan-specific and task-specific variants of the base OpenAI
- * models (`gpt-5.6-sol`, `gpt-5-codex`, `gpt-5.3-codex-spark`). The catalog
- * only carries the base ids with rates, so peel one known suffix at a time and
- * retry. `codex-auto-review` peels to nothing and stays unpriced.
+ * Preserve distinct Sol, Terra and Luna model IDs: they have different prices.
+ * Only legacy codex/spark spellings use the historical candidate ladder.
+ * `codex-auto-review` has no verified catalog rate and stays unpriced.
  */
-const CODEX_MODEL_SUFFIXES = ["-spark", "-codex", "-sol", "-terra", "-luna"];
+const CODEX_MODEL_SUFFIXES = ["-spark", "-codex"];
 
 function codexPriceCandidates(model: string): string[] {
     const candidates: string[] = [];
