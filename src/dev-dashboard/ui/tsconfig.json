@@ -14,7 +14,14 @@
         "skipLibCheck": true,
         "strict": true,
         "noUnusedLocals": true,
-        "noUnusedParameters": true,
+        // Off on purpose. Two dependencies ship raw TypeScript as their `types`
+        // entry (marked-katex-extension/src/index.ts, @reduxjs/toolkit/dist/
+        // uncheckedindexed.ts), and `skipLibCheck` only covers `.d.ts`, so this
+        // flag reports THEIR unused parameters as errors in this project — it
+        // did from marked-katex-extension 5.1.11, which moved `types` off a
+        // `.d.ts`. Our own code is covered by biome's
+        // `correctness/noUnusedFunctionParameters`.
+        "noUnusedParameters": false,
         "noFallthroughCasesInSwitch": true,
         "noUncheckedSideEffectImports": true,
         "paths": {
