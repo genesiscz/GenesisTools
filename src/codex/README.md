@@ -152,6 +152,16 @@ Safety rules, all of them load-bearing:
 - `--archive-source` renames each source `sessions/` to `sessions.migrated-<stamp>` after the
   copy verifies. It is off by default and it still deletes nothing.
 
+🛑 **A copy leaves the same conversation in two homes, and the history index counts both.**
+`session_metadata` is keyed `(provider, native_id, source_home)` and `file_daily_stats` by the
+per-home source key, so after `tools codex history index sync` a copied rollout contributes its
+conversation, its messages and its tokens TWICE to `tools codex history statistics` — once per
+home. Verified on the live index: one codex thread present in two homes reported 2 conversations
+and 100 messages for a single day. Nothing is lost and nothing crashes; the totals are simply
+inflated by the number of rollouts that now exist twice. Prevent it by taking the source home out
+of circulation after the copy verifies — `--archive-source` renames its `sessions/`, which is what
+stops discovery finding it — or accept the inflation until you do.
+
 `--desktop` also merges `.codex-global-state.json`, which is what makes the sessions appear
 under the right projects in the Codex Desktop app. Projects are merged **by normalised root
 path, never by id**: the destination already holds one project under a raw UUID beside nine
