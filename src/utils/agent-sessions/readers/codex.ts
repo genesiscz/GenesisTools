@@ -698,8 +698,18 @@ export async function* scanCodexRecords(
         return;
     }
     if (header.historyMode === "paginated") {
-        yield* scanProjectionRecords(source, header, options);
-        return;
+        let projected = 0;
+        for await (const record of scanProjectionRecords(source, header, options)) {
+            projected++;
+            yield record;
+        }
+        // Nothing at all came back, which `scanProjectionRecords` has already reported: the
+        // per-home projection database was left behind by a `migrate-home` copy, or the home
+        // was rebuilt around the rollout. The rollout still holds every response item, so
+        // reading it is strictly more than the empty session this used to return.
+        if (projected > 0) {
+            return;
+        }
     }
     const tools: ToolContext = { names: new Map(), paths: new Map() };
     for await (const parsed of iterateLegacyRows(source, options)) {
@@ -924,6 +934,15 @@ export async function readCodexMetadata(
     }
 
     if (header.historyMode === "paginated") {
+        // Kept, not thrown away: the projection wins because a forked rollout replays its
+        // parent's items, but a thread with NO projection row has only the rollout, and
+        // blanking it unconditionally is what made a migrated session read as empty.
+        const fromRollout = {
+            firstPrompt,
+            parts: [...userTextParts],
+            characters: userTextCharacters,
+            bounded: userTextBounded,
+        };
         firstPrompt = null;
         userTextParts.length = 0;
         userTextCharacters = 0;
@@ -982,6 +1001,10 @@ export async function readCodexMetadata(
         }
         if (!projectionFound) {
             reportIssue(source, options, issues, "Paginated projection unavailable for native thread");
+            firstPrompt = fromRollout.firstPrompt;
+            userTextParts.push(...fromRollout.parts);
+            userTextCharacters = fromRollout.characters;
+            userTextBounded = fromRollout.bounded;
         }
     }
 

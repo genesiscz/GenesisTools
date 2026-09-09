@@ -833,3 +833,115 @@ test("an ordinary record carrying an id is not mistaken for a legacy header", as
 
     expect(result.metadata).toBeNull();
 });
+test("a paginated rollout with no projection falls back to its own records", async () => {
+    // A rollout copied between homes (`tools codex migrate-home`) leaves the per-home
+    // projection database behind, so the thread is nowhere in the destination's
+    // `thread_history*.sqlite`. The rollout itself still carries every response item, and
+    // reading nothing at all turned 81 migrated sessions into blank rows.
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-orphan-projection-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+    writeFileSync(
+        path,
+        line({
+            type: "session_meta",
+            timestamp: "2026-09-01T10:00:00.000Z",
+            payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "paginated" },
+        }) +
+            line({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:05.000Z",
+                payload: { type: "message", role: "user", content: [{ type: "input_text", text: "rollout prompt" }] },
+            }) +
+            line({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:09.000Z",
+                payload: {
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "rollout reply" }],
+                },
+            })
+    );
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [],
+    };
+
+    const metadata = await readCodexMetadata(source);
+
+    expect(metadata.metadata?.firstPrompt).toBe("rollout prompt");
+    expect(metadata.metadata?.allUserText).toBe("rollout prompt");
+    // The degrade is still reported: the projection is what names THIS thread's own share
+    // of a forked rollout, so a fallback read is incomplete by definition.
+    expect(metadata.issues.map((issue) => issue.message)).toContain(
+        "Paginated projection unavailable for native thread"
+    );
+    expect(metadata.complete).toBe(false);
+
+    const locators: string[] = [];
+    for await (const record of scanCodexRecords(source)) {
+        locators.push(record.locator);
+    }
+
+    expect(locators).toEqual(["jsonl:1", "jsonl:2", "jsonl:3"]);
+});
+
+test("a paginated rollout with a projection ignores its own replayed records", async () => {
+    // The negative control for the fallback above: with the projection present nothing
+    // changes, and the parent's replayed text must not leak into the child's metadata.
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-projection-wins-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+    writeFileSync(
+        path,
+        line({
+            type: "session_meta",
+            timestamp: "2026-09-01T10:00:00.000Z",
+            payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "paginated" },
+        }) +
+            line({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:05.000Z",
+                payload: { type: "message", role: "user", content: [{ type: "input_text", text: "REPLAYED PARENT" }] },
+            })
+    );
+    const projectionPath = join(home, "thread_history_1.sqlite");
+    const projection = new Database(projectionPath);
+    projection.run(
+        "CREATE TABLE thread_items (thread_id TEXT, rollout_ordinal INTEGER, created_at_ms INTEGER, item_json TEXT)"
+    );
+    projection.run("INSERT INTO thread_items VALUES (?, 1, ?, ?)", [
+        CHILD_ID,
+        Date.parse("2026-09-01T10:01:00.000Z"),
+        SafeJSON.stringify({ type: "userMessage", content: "projected prompt" }, { strict: true }),
+    ]);
+    projection.close();
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [projectionPath],
+    };
+
+    const metadata = await readCodexMetadata(source);
+
+    expect(metadata.complete).toBe(true);
+    expect(metadata.metadata?.firstPrompt).toBe("projected prompt");
+    expect(metadata.metadata?.allUserText).not.toContain("REPLAYED PARENT");
+
+    const locators: string[] = [];
+    for await (const record of scanCodexRecords(source)) {
+        locators.push(record.locator);
+    }
+
+    expect(locators).toEqual(["projection:0:1:0"]);
+});
