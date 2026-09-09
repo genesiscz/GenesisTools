@@ -3,19 +3,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { skip } from "@genesiscz/utils/test/skip";
 
 const guardPath = join(import.meta.dir, "orphan-worker-guard.ts");
 const leftovers: number[] = [];
-
-function pidAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-}
 
 /** The watchdog is a `/bin/sh` whose script embeds the guarded pid, so pgrep finds it by that. */
 function watchdogRunning(selfPid: number): boolean {
@@ -123,22 +115,22 @@ describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
     test("a busy-loop child survives SIGKILL of its parent (the 2026-09-08 class)", async () => {
         const { middlePid, childPid } = await spawnBusyChild({ guard: false });
 
-        expect(pidAlive(childPid)).toBe(true);
+        expect(isProcessAlive(childPid)).toBe(true);
         process.kill(middlePid, "SIGKILL");
 
-        const stillAlive = await waitUntil(() => !pidAlive(middlePid), 2_000);
+        const stillAlive = await waitUntil(() => !isProcessAlive(middlePid), 2_000);
         expect(stillAlive).toBe(true);
         await Bun.sleep(1_500);
-        expect(pidAlive(childPid)).toBe(true);
+        expect(isProcessAlive(childPid)).toBe(true);
     });
 
     test("the guard SIGKILLs the child once the parent is gone", async () => {
         const { middlePid, childPid } = await spawnBusyChild({ guard: true });
 
-        expect(pidAlive(childPid)).toBe(true);
+        expect(isProcessAlive(childPid)).toBe(true);
         process.kill(middlePid, "SIGKILL");
 
-        const died = await waitUntil(() => !pidAlive(childPid), 4_000);
+        const died = await waitUntil(() => !isProcessAlive(childPid), 4_000);
         expect(died).toBe(true);
     });
 
@@ -176,7 +168,7 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
 
         writeFileSync(goFile, "1");
         await child.exited;
-        expect(pidAlive(child.pid)).toBe(false);
+        expect(isProcessAlive(child.pid)).toBe(false);
 
         // This test process is the guarded worker's parent and is still alive, so
         // only the worker's own exit can end the watchdog.
