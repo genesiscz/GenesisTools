@@ -163,6 +163,11 @@ export interface AccountUsageSnapshot {
         /** Consecutive failures behind it, transport and account alike. */
         failures: number;
     };
+    /**
+     * Set when the account holds no credential at all: nothing was requested, nothing was
+     * counted toward a backoff, and waiting cannot repair it. `remedy` is the command to run.
+     */
+    needsLogin?: { remedy: string };
     /** Provider-native payload for provider presenters and for the legacy cache projection. Stripped on every wire. */
     native?: unknown;
 }
@@ -257,6 +262,12 @@ export interface UsageFailureClass {
     orgBlocked?: boolean;
 }
 
+/** Why an account cannot be polled at all, and the command that fixes it. */
+export interface MissingCredential {
+    message: string;
+    remedy: string;
+}
+
 export interface AccountUsageFeature {
     poll(account: AccountEntry, opts: UsagePollOptions): Promise<AccountUsageSnapshot>;
     presenters?: UsagePresenters;
@@ -280,6 +291,17 @@ export interface AccountUsageFeature {
      * Must be cheap: it runs once per account per round.
      */
     credentialStamp?(account: AccountEntry): Promise<number | undefined>;
+    /**
+     * Why this account cannot be polled at all, or undefined when it can.
+     *
+     * A permanent configuration error is not a failure: nothing is sent, so the gate has
+     * nothing to protect, and no amount of waiting repairs it. Without this the grok
+     * account that `logout --auth-file` left behind was retried, counted to five failures
+     * and blocked for hours, with the one line that mattered (the login command) hidden
+     * behind the backoff notice (issue #378). Keep it in step with the resolver's own
+     * refusal, so the round and the resolver never disagree about what "no credential" is.
+     */
+    missingCredential?(account: AccountEntry): MissingCredential | undefined;
 }
 
 export interface AccountFeatures {

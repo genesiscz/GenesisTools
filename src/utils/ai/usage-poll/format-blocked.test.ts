@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatBlockedNotice } from "./format-blocked";
+import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 
 /**
  * The sentence a suppressed account shows in the TUI and on the dashboard card. Both
@@ -83,5 +83,17 @@ describe("formatBlockedNotice", () => {
         );
 
         expect(notice).toMatch(/^blocked until \d{2}:\d{2} \(2 failures\)$/);
+    });
+});
+
+describe("formatNeedsLoginNotice", () => {
+    test("names the command that fixes an account with no credential", () => {
+        expect(formatNeedsLoginNotice({ needsLogin: { remedy: "tools grok login grok" } })).toBe(
+            "needs login: tools grok login grok"
+        );
+    });
+
+    test("says nothing for an account that holds a credential", () => {
+        expect(formatNeedsLoginNotice({})).toBeNull();
     });
 });

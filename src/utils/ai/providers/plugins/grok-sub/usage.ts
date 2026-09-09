@@ -1,7 +1,7 @@
 import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
-import { resolveGrokSubToken } from "../../../grok/account";
+import { grokCredentialRefusal, resolveGrokSubToken } from "../../../grok/account";
 import { GrokSubscriptionClient } from "../../../grok/client";
 import { grokAuthPath } from "../../../grok/paths";
 import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
@@ -11,6 +11,7 @@ import type {
     AccountUsageSnapshot,
     LimitKind,
     LimitWindow,
+    MissingCredential,
     UsagePollOptions,
 } from "../../account-features";
 
@@ -207,8 +208,22 @@ export function grokCredentialStamp(account: AccountEntry): Promise<number | und
     return fileMtimeMs(account.credentials.authFile ?? grokAuthPath());
 }
 
+/**
+ * The state `logout --auth-file` leaves behind: the entry survives, its file reference is
+ * gone. Polling it can only reproduce the resolver's refusal, so the round is told before
+ * it starts, and the account is neither retried nor backed off (issue #378).
+ */
+export function grokMissingCredential(account: AccountEntry): MissingCredential | undefined {
+    if (account.credentials.authFile || account.credentials.accessToken) {
+        return undefined;
+    }
+
+    return grokCredentialRefusal(account.name);
+}
+
 export const grokUsage: AccountUsageFeature = {
     poll: pollGrokAccount,
     minIntervalMs: MIN_INTERVAL_MS,
     credentialStamp: grokCredentialStamp,
+    missingCredential: grokMissingCredential,
 };

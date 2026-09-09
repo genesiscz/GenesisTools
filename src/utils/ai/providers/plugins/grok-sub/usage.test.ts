@@ -2,7 +2,14 @@ import { describe, expect, it } from "bun:test";
 import type { AccountEntry } from "../../../config/schema";
 import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
 import type { GrokUsageClient } from "./usage";
-import { pollGrokAccount, toCreditWindow, toGrokLimits, toProductWindows, toSubscriptionWindow } from "./usage";
+import {
+    grokMissingCredential,
+    pollGrokAccount,
+    toCreditWindow,
+    toGrokLimits,
+    toProductWindows,
+    toSubscriptionWindow,
+} from "./usage";
 
 /**
  * `noRefresh` is the guard at the line that spends the credential: the OIDC refresh rotates
@@ -204,5 +211,23 @@ describe("grok-sub usage.poll", () => {
         );
 
         expect(calls).toEqual([{ name: "personal", authFile: "/tmp/.grok/auth.json", noRefresh: false }]);
+    });
+});
+
+// The preflight the poll round runs before the gate (issue #378). Its wording is the
+// resolver's own, so a refused poll and a refused bind say the same thing.
+describe("grokMissingCredential", () => {
+    it("names the login for an account that holds neither a file nor a token", () => {
+        expect(grokMissingCredential(entry("grok"))).toEqual({
+            message: 'Account "grok" holds no grok credential (no authFile, no accessToken).',
+            remedy: "tools grok login grok",
+        });
+    });
+
+    it.each([
+        ["an auth file", { authFile: "/tmp/.grok/auth.json" }],
+        ["a stored token", { accessToken: "token-invented" }],
+    ] as const)("says nothing for an account holding %s", (_label, credentials) => {
+        expect(grokMissingCredential(entry("grok", credentials))).toBeUndefined();
     });
 });

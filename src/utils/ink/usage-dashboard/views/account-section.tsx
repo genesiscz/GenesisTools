@@ -1,5 +1,5 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
-import { formatBlockedNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
+import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
 import { formatMoney } from "@genesiscz/utils/ai/usage-poll/format-money";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
@@ -60,6 +60,7 @@ export function GenericAccountSection({
     // While the gate holds the account back nothing was requested this round, so the raw
     // error alone would read as a failure happening right now.
     const blockedNotice = formatBlockedNotice(snapshot, now);
+    const needsLoginNotice = formatNeedsLoginNotice(snapshot);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
@@ -76,6 +77,10 @@ export function GenericAccountSection({
             {blockedNotice ? (
                 <Box>
                     <Text color="yellow">{`  ⏸ ${blockedNotice}`}</Text>
+                </Box>
+            ) : needsLoginNotice ? (
+                <Box>
+                    <Text color="red">{`  ⚠ ${needsLoginNotice}`}</Text>
                 </Box>
             ) : snapshot.error ? (
                 <Box>

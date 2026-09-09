@@ -4,6 +4,7 @@ import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
 import type {
     AccountFeatures,
     AccountUsageFeature,
+    MissingCredential,
     UsageFailureClass,
 } from "@genesiscz/utils/ai/providers/account-features";
 import { resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
@@ -215,6 +216,8 @@ export function failureSnapshot(args: {
     now: number;
     failure?: UsageFailureClass | undefined;
     holding?: GateEntry | undefined;
+    /** The command that would fix an account no request was made for. */
+    needsLogin?: string | undefined;
 }): AccountUsageSnapshot {
     return {
         provider: args.provider,
@@ -233,6 +236,7 @@ export function failureSnapshot(args: {
                   },
               }
             : {}),
+        ...(args.needsLogin === undefined ? {} : { needsLogin: { remedy: args.needsLogin } }),
     };
 }
 
@@ -289,9 +293,27 @@ export async function __fetchProviderSnapshots(
     // The entry that suppressed each account, so the snapshot can say how long the pause
     // lasts and how many failures bought it. A plan-level suppression has no entry here.
     const blockedBy = new Map<string, GateEntry>();
+    // Accounts that hold no credential at all. Not polled, not counted, not blocked: the
+    // fix is a login, and the snapshot names it.
+    const needsLogin = new Map<string, MissingCredential>();
 
     const settled = await Promise.allSettled(
         accounts.map((account) => {
+            const missing = entry.usage.missingCredential?.(account);
+
+            if (missing) {
+                needsLogin.set(account.name, missing);
+
+                // Whatever the gate holds for it was earned by polling an account that could
+                // never answer. Letting it go is what makes the fix visible right away.
+                if (gate[account.name]) {
+                    released.push(account.name);
+                    gateDirty = true;
+                }
+
+                return Promise.reject(new PollSuppressed(`${missing.message} Run: ${missing.remedy}`));
+            }
+
             const stamp = stamps.get(account.name);
 
             if (credentialMovedSince(gate[account.name], stamp)) {
@@ -364,6 +386,7 @@ export async function __fetchProviderSnapshots(
             now,
             ...(suppressed ? {} : { failure: entry.usage.classifyFailure?.(result.reason) }),
             holding: blockedBy.get(account.name),
+            needsLogin: needsLogin.get(account.name)?.remedy,
         });
     });
 

@@ -1,4 +1,5 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import type { MissingCredential } from "@genesiscz/utils/ai/providers/account-features";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
@@ -38,6 +39,18 @@ export interface ResolveGrokSubTokenOptions {
      * actually determined by the context it was given.
      */
     authFile?: string;
+}
+
+/**
+ * The one wording for "this account holds nothing to poll or bind". The usage plugin's
+ * `missingCredential` preflight returns the same object, so the poll round and this
+ * resolver refuse the same account for the same reason and name the same fix.
+ */
+export function grokCredentialRefusal(accountName: string): MissingCredential {
+    return {
+        message: `Account "${accountName}" holds no grok credential (no authFile, no accessToken).`,
+        remedy: `tools grok login ${accountName}`,
+    };
 }
 
 /** The live token in a Grok CLI auth file, refreshed via OIDC when expired. */
@@ -91,10 +104,8 @@ export async function resolveGrokSubToken(
     // would silently serve (and refresh) another user's credential (PR #360
     // review t1).
     if (!account.tokens.authFile && !account.tokens.accessToken) {
-        throw new Error(
-            `Account "${account.name}" holds no grok credential (no authFile, no accessToken). ` +
-                `Run: tools grok login ${account.name}`
-        );
+        const refusal = grokCredentialRefusal(account.name);
+        throw new Error(`${refusal.message} Run: ${refusal.remedy}`);
     }
 
     const authPath = account.tokens.authFile ?? grokAuthPath();

@@ -1,5 +1,5 @@
 import type { AccountUsageSnapshot } from "@app/dev-dashboard/contract/ai-accounts";
-import { formatBlockedNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
+import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useState } from "react";
 import { providerMeta } from "@/lib/provider-meta";
@@ -83,6 +83,7 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
     // raw error alone read as a live failure and left the card looking broken for hours
     // after the cause had cleared.
     const blockedNotice = formatBlockedNotice(snapshot, nowMs);
+    const needsLoginNotice = formatNeedsLoginNotice(snapshot);
 
     return (
         <div
@@ -105,6 +106,7 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
                 <div className="flex flex-col items-end gap-1">
                     {staleAgo ? <HealthPill text={`stale · ${staleAgo}`} tone="warn" /> : null}
                     {blockedNotice ? <HealthPill text="polling paused" tone="warn" /> : null}
+                    {needsLoginNotice ? <HealthPill text="needs login" tone="danger" /> : null}
                     {snapshot.auth?.orgBlocked ? <HealthPill text="org blocked" tone="danger" /> : null}
                     {planDead ? <HealthPill text={`plan ${snapshot.plan?.status}`} tone="danger" /> : null}
                     {loginDays !== null && loginDays <= 7 ? (
@@ -147,7 +149,7 @@ export function AccountCard({ snapshot, color, nowMs, prominentKeys, index = 0 }
                         className="font-medium"
                         style={{ color: blockedNotice ? "var(--dd-warning)" : "var(--dd-danger)" }}
                     >
-                        {blockedNotice ?? "Usage unavailable"}
+                        {blockedNotice ?? needsLoginNotice ?? "Usage unavailable"}
                     </p>
                     <ErrorDetails error={snapshot.error} />
                 </div>

@@ -7,7 +7,7 @@ import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/p
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
-import { formatBlockedNotice } from "./format-blocked";
+import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
 import { __fetchProviderSnapshots, latestFetchedAt, type UsagePlugin, usagePlugins } from "./poll";
 import { blockedEntry, loadPollGate, type PollGate, recordFailure, savePollGate } from "./poll-gate";
@@ -406,6 +406,30 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
         expect(snapshot.blocked?.failures).toBe(2);
         expect(Date.parse(snapshot.blocked?.until ?? "")).toBe(failedAt + 5 * 60_000);
         expect(formatBlockedNotice(snapshot, failedAt)).toContain("(2 failures): session expired");
+    });
+
+    // Issue #378: an account that holds no credential cannot be polled, so it is neither a
+    // failure nor a block. The row names the command to run, and any backoff an earlier
+    // round earned by polling it anyway is let go, so the fix shows at once.
+    test("an account with no credential is not polled, not counted, and names the login to run", async () => {
+        useTempHome();
+        const failedAt = Date.now();
+        await blockAccount(failedAt);
+        const polled: string[] = [];
+        const built = plugin({ polled, stamp: undefined });
+        built.usage.missingCredential = (target) => ({
+            message: `Account "${target.name}" holds nothing.`,
+            remedy: `tools fake login ${target.name}`,
+        });
+
+        const [snapshot] = await __fetchProviderSnapshots(built, [work], {}, new Set());
+
+        expect(polled).toEqual([]);
+        expect(snapshot.needsLogin).toEqual({ remedy: "tools fake login work" });
+        expect(snapshot.error).toBe('Account "work" holds nothing. Run: tools fake login work');
+        expect(snapshot.blocked).toBeUndefined();
+        expect(formatNeedsLoginNotice(snapshot)).toBe("needs login: tools fake login work");
+        expect(await loadPollGate(PROVIDER)).toEqual({});
     });
 
     // Negative control: a row that failed for real this round must NOT be dressed up as a

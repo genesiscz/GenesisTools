@@ -68,6 +68,8 @@ export interface AccountUsageSnapshot {
     error?: string;
     /** Set while the poll gate is holding this account back; no request was made this round. */
     blocked?: { until: string; failures: number };
+    /** The account holds no credential at all; `remedy` is the command that fixes it. */
+    needsLogin?: { remedy: string };
 }
 
 export interface AiAccountListItem {

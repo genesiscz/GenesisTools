@@ -48,3 +48,12 @@ export function formatBlockedNotice(snapshot: BlockedSnapshot, now: number = Dat
 
     return `blocked until ${formatClock(until)} (${failures})${reason}`;
 }
+/**
+ * "needs login: tools grok login work", or null when the account holds a credential.
+ *
+ * The other half of the same problem: an account with nothing to poll used to sit behind
+ * a backoff notice whose truncated tail was the login command the user actually needed.
+ */
+export function formatNeedsLoginNotice(snapshot: { needsLogin?: { remedy: string } }): string | null {
+    return snapshot.needsLogin ? `needs login: ${snapshot.needsLogin.remedy}` : null;
+}
