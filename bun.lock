@@ -316,8 +316,8 @@
         "zustand": "^5.0.15",
       },
       "peerDependencies": {
-        "@ai-sdk/assemblyai": "latest",
-        "@ai-sdk/gladia": "latest",
+        "@ai-sdk/assemblyai": "*",
+        "@ai-sdk/gladia": "*",
         "ink": "^7.1.1",
         "react": "19.2.8",
         "react-dom": "19.2.8",
