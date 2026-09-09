@@ -2,9 +2,20 @@ import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { logger, out } from "@genesiscz/utils/logger";
-import { presentAuthorizationUrl, readAuthorizationCode } from "../../../oauth/login-ui";
+import {
+    type CallbackListener,
+    type StartCallbackListener,
+    startCallbackListener,
+} from "../../../oauth/callback-server";
+import {
+    type AuthorizationInteraction,
+    type AuthorizationUrlAction,
+    presentAuthorizationUrl,
+    readAuthorizationCode,
+} from "../../../oauth/login-ui";
 import {
     CODEX_AUTH_PATH,
+    CODEX_REDIRECT_URI,
     type CodexTokens,
     codexOAuth,
     extractAccountId,
@@ -28,24 +39,55 @@ export function resolveCodexAuthDestination(ctx: AccountFlowContext): string {
     return ctx.account?.credentials.authFile ?? CODEX_AUTH_PATH;
 }
 
-export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome> {
-    if (ctx.codexBroker && (ctx.home || ctx.authFile)) {
-        throw new Error("--broker cannot be combined with --home or --auth-file");
+/**
+ * The one `state` comparison this flow makes, from both halves: the loopback
+ * listener refuses a foreign callback before the browser is told it worked, and
+ * the paste prompt refuses one before the exchange. A callback that carries no
+ * `state` at all leaves nothing to compare, which is why it passes — that was
+ * the behaviour before the listener existed, and it does not change here.
+ */
+export function callbackStateError(state: string | undefined, expected: string | null): string | undefined {
+    if (state === undefined || state === expected) {
+        return undefined;
     }
 
-    if (!ctx.interactive) {
-        throw new Error("Codex login needs a TTY (browser OAuth + code paste).");
+    return "OAuth callback state does not match this login. Paste the callback from the current authorization.";
+}
+
+/**
+ * The authorization code, from whichever half of the flow produced it.
+ *
+ * The listener wins when it is up and the user actually sent a browser at the
+ * URL. `none` means they already hold a code from an earlier authorization, and
+ * an empty-handed listener (its deadline passed, or the browser finished against
+ * the official CLI's own listener) hands the terminal back to the paste prompt
+ * that was the entire flow before this existed.
+ */
+async function readCallbackCode(input: {
+    listener: CallbackListener | null;
+    action: AuthorizationUrlAction;
+    interaction: AuthorizationInteraction | undefined;
+    expectedState: string | null;
+}): Promise<string> {
+    if (input.listener && input.action !== "none") {
+        const waiting = p.spinner();
+        waiting.start("Waiting for the browser to finish authorizing...");
+        const callback = await input.listener.callback;
+
+        if (callback !== null && "error" in callback) {
+            waiting.stop("The browser callback was refused.");
+            throw new Error(callback.error);
+        }
+
+        if (callback !== null) {
+            waiting.stop("Authorized in the browser.");
+            return callback.code;
+        }
+
+        waiting.stop("No callback arrived. Paste the code from the browser instead.");
     }
 
-    const authUrl = await codexOAuth.startLogin();
-
-    await presentAuthorizationUrl({
-        authUrl,
-        provider: "ChatGPT",
-        openUrl: ctx.openUrl,
-        interaction: ctx.authorizationInteraction,
-    });
-    const normalized = await readAuthorizationCode(ctx.authorizationInteraction);
+    const normalized = await readAuthorizationCode(input.interaction);
 
     if (normalized === null) {
         throw new Error("Cancelled");
@@ -56,17 +98,62 @@ export async function codexLogin(ctx: AccountFlowContext): Promise<LoginOutcome>
     }
 
     const [code, state] = normalized.code.split("#");
+    const mismatch = callbackStateError(state, input.expectedState);
 
-    if (state !== undefined && state !== new URL(authUrl).searchParams.get("state")) {
-        throw new Error(
-            "OAuth callback state does not match this login. Paste the callback from the current authorization."
-        );
+    if (mismatch) {
+        throw new Error(mismatch);
+    }
+
+    return code;
+}
+
+export async function codexLogin(
+    ctx: AccountFlowContext,
+    startListener: StartCallbackListener = startCallbackListener
+): Promise<LoginOutcome> {
+    if (ctx.codexBroker && (ctx.home || ctx.authFile)) {
+        throw new Error("--broker cannot be combined with --home or --auth-file");
+    }
+
+    if (!ctx.interactive) {
+        throw new Error("Codex login needs a TTY (browser OAuth + code paste).");
+    }
+
+    const authUrl = await codexOAuth.startLogin();
+    const expectedState = new URL(authUrl).searchParams.get("state");
+    // Up before the browser is sent anywhere, so the redirect cannot beat it.
+    // A `null` here means the port is taken and the paste prompt is the flow.
+    const listener = await startListener({
+        redirectUri: CODEX_REDIRECT_URI,
+        verify: ({ state }) => callbackStateError(state, expectedState),
+    });
+
+    let code: string;
+    try {
+        const action = await presentAuthorizationUrl({
+            authUrl,
+            provider: "ChatGPT",
+            openUrl: ctx.openUrl,
+            interaction: ctx.authorizationInteraction,
+            callbackHandled: listener !== null,
+        });
+        code = await readCallbackCode({
+            listener,
+            action,
+            interaction: ctx.authorizationInteraction,
+            expectedState,
+        });
+    } finally {
+        // Every exit runs this: a served callback, a refusal, a cancelled prompt,
+        // the deadline. The browser is finished with the socket either way, and
+        // `close()` never throws, so it cannot mask why the login is unwinding.
+        await listener?.close();
     }
 
     const spinner = p.spinner();
     spinner.start("Exchanging code for tokens...");
 
-    let tokens: Awaited<ReturnType<typeof codexOAuth.exchangeCode>>;
+    let tokens: CodexTokens;
     try {
         tokens = await codexOAuth.exchangeCode(code);
         spinner.stop("Tokens received.");

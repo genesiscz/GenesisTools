@@ -1,0 +1,163 @@
+import { describe, expect, test } from "bun:test";
+import { connect } from "node:net";
+import { type CallbackListener, startCallbackListener } from "./callback-server";
+
+const REDIRECT_URI = "http://localhost:1455/auth/callback";
+
+/** The only honest "the listener is gone" assertion: the port takes a fresh bind. */
+async function portIsFree(port: number): Promise<boolean> {
+    try {
+        const probe = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response("probe") });
+        await probe.stop();
+        return true;
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EADDRINUSE") {
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+async function listening(): Promise<CallbackListener> {
+    const listener = await startCallbackListener({ redirectUri: REDIRECT_URI, port: 0 });
+
+    if (listener === null) {
+        throw new Error("An ephemeral port must always bind");
+    }
+
+    return listener;
+}
+
+function callbackUrl(listener: CallbackListener, query: string): string {
+    return `http://127.0.0.1:${listener.port}/auth/callback${query}`;
+}
+
+/** Raw request so the `Host` header can lie; `fetch` always sends the real authority. */
+async function requestWithHost(port: number, host: string): Promise<string> {
+    const socket = connect(port, "127.0.0.1");
+    await new Promise<void>((resolve, reject) => {
+        socket.once("connect", () => resolve());
+        socket.once("error", reject);
+    });
+    socket.write(`GET /auth/callback?code=grant&state=session HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    const status = await new Promise<string>((resolve) => {
+        socket.once("data", (chunk) => resolve(String(chunk).split("\r\n")[0]));
+    });
+    socket.destroy();
+    return status;
+}
+
+describe("loopback OAuth callback listener", () => {
+    test("hands the flow the callback parameters and frees the port", async () => {
+        const listener = await listening();
+        const port = listener.port;
+        expect(listener.hostname).toBe("127.0.0.1");
+        const response = await fetch(callbackUrl(listener, "?code=grant&state=session"));
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain("You can close this tab");
+        expect(await listener.callback).toEqual({ code: "grant", state: "session" });
+        await listener.close();
+        expect(await portIsFree(port)).toBe(true);
+    });
+
+    test("a refused state never reaches the flow as a usable code", async () => {
+        const seen: Array<string | undefined> = [];
+        const listener = await startCallbackListener({
+            redirectUri: REDIRECT_URI,
+            port: 0,
+            verify: ({ state }) => {
+                seen.push(state);
+                return "state does not match";
+            },
+        });
+
+        if (listener === null) {
+            throw new Error("An ephemeral port must always bind");
+        }
+
+        const response = await fetch(callbackUrl(listener, "?code=grant&state=wrong"));
+        expect(response.status).toBe(400);
+        expect(await listener.callback).toEqual({ error: "state does not match" });
+        expect(seen).toEqual(["wrong"]);
+        await listener.close();
+        expect(await portIsFree(listener.port)).toBe(true);
+    });
+
+    test.each([
+        ["?error=access_denied&error_description=nope", /access_denied/],
+        ["?state=session", /no .*code/i],
+    ] as const)("reports an unusable callback %s as an error", async (query, expected) => {
+        const listener = await listening();
+        const response = await fetch(callbackUrl(listener, query));
+        expect(response.status).toBe(400);
+        const result = await listener.callback;
+        expect(result).toHaveProperty("error");
+        expect((result as { error: string }).error).toMatch(expected);
+        await listener.close();
+    });
+
+    test("ignores paths the browser asks for on its own", async () => {
+        const listener = await listening();
+        expect((await fetch(`http://127.0.0.1:${listener.port}/favicon.ico`)).status).toBe(404);
+        await fetch(callbackUrl(listener, "?code=grant&state=session"));
+        expect(await listener.callback).toEqual({ code: "grant", state: "session" });
+        await listener.close();
+    });
+
+    test("refuses a request that reached the socket under a foreign host name", async () => {
+        const listener = await listening();
+        expect(await requestWithHost(listener.port, "attacker.example")).toContain("403");
+        expect(await requestWithHost(listener.port, `localhost:${listener.port}`)).toContain("200");
+        expect(await listener.callback).toEqual({ code: "grant", state: "session" });
+        await listener.close();
+    });
+
+    test("serves exactly one callback", async () => {
+        const listener = await listening();
+        await fetch(callbackUrl(listener, "?code=first&state=session"));
+        const second = await fetch(callbackUrl(listener, "?code=second&state=session"));
+        expect(second.status).toBe(410);
+        expect(await listener.callback).toEqual({ code: "first", state: "session" });
+        await listener.close();
+    });
+
+    test("an abandoned browser times out, resolves null and releases the port", async () => {
+        const listener = await startCallbackListener({ redirectUri: REDIRECT_URI, port: 0, timeoutMs: 25 });
+
+        if (listener === null) {
+            throw new Error("An ephemeral port must always bind");
+        }
+
+        expect(await listener.callback).toBeNull();
+        expect(await portIsFree(listener.port)).toBe(true);
+        await listener.close();
+    });
+
+    test("close settles a pending callback as null and is idempotent", async () => {
+        const listener = await listening();
+        await listener.close();
+        await listener.close();
+        expect(await listener.callback).toBeNull();
+        expect(await portIsFree(listener.port)).toBe(true);
+    });
+
+    test("a busy port yields no listener instead of failing the login", async () => {
+        const held = await listening();
+        expect(await startCallbackListener({ redirectUri: REDIRECT_URI, port: held.port })).toBeNull();
+        await held.close();
+    });
+
+    test("takes the port and path from the registered redirect URI", async () => {
+        const listener = await startCallbackListener({ redirectUri: "http://localhost:1455/oauth/done", port: 0 });
+
+        if (listener === null) {
+            throw new Error("An ephemeral port must always bind");
+        }
+
+        expect((await fetch(`http://127.0.0.1:${listener.port}/auth/callback?code=grant`)).status).toBe(404);
+        expect((await fetch(`http://127.0.0.1:${listener.port}/oauth/done?code=grant`)).status).toBe(200);
+        expect(await listener.callback).toEqual({ code: "grant", state: undefined });
+        await listener.close();
+    });
+});

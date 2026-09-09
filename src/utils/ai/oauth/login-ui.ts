@@ -4,6 +4,9 @@ import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
+/** What the user asked us to do with the authorization URL. */
+export type AuthorizationUrlAction = "open" | "copy" | "none";
+
 export interface AuthorizationInteraction {
     chooseUrlAction(): Promise<"open" | "copy" | "none" | null>;
     readCode(options: { validate(value: string): string | undefined }): Promise<string | null>;
@@ -46,13 +49,22 @@ export async function presentAuthorizationUrl(opts: {
     openUrl?: (url: string) => Promise<void>;
     copyUrl?: (url: string) => Promise<void>;
     interaction?: AuthorizationInteraction;
-}): Promise<void> {
+    /**
+     * A loopback listener is serving the redirect URI, so the browser finishes on
+     * its own and there is nothing to copy. Opt-in: a caller that omits it keeps
+     * the copy-the-code wording, which is still the entire flow for a provider
+     * whose redirect URI nobody local can serve.
+     */
+    callbackHandled?: boolean;
+}): Promise<AuthorizationUrlAction> {
     p.note(
         [
             "1. Open the URL below in your browser",
             `2. Log in with your ${opts.provider} account`,
             "3. Authorize access",
-            "4. Copy the code or full URL from the callback page",
+            opts.callbackHandled
+                ? "4. The browser comes back to this terminal on its own"
+                : "4. Copy the code or full URL from the callback page",
         ].join("\n"),
         "OAuth Login"
     );
@@ -71,6 +83,8 @@ export async function presentAuthorizationUrl(opts: {
         await (opts.copyUrl ?? ((url) => copyToClipboard(url, { silent: true })))(opts.authUrl);
         p.log.info("URL copied. After authorizing, copy the CODE from the callback page — that is what to paste next.");
     }
+
+    return action;
 }
 
 export function normalizeAuthorizationCode(input: string): { code: string } | { error: string } {

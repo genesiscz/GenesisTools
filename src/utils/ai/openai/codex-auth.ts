@@ -10,7 +10,12 @@ const AUTH_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 export const WHAM_BASE_URL = "https://chatgpt.com/backend-api/wham";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const REDIRECT_URI = "http://localhost:1455/auth/callback";
+/**
+ * Registered with OpenAI for this client, so the port is not ours to choose.
+ * Exported because the login flow serves it on loopback for the length of one
+ * sign-in instead of leaving the browser on ERR_CONNECTION_REFUSED (issue #380).
+ */
+export const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
 
 /**
@@ -213,7 +218,7 @@ export class CodexOAuthClient {
         const params = new URLSearchParams({
             client_id: CLIENT_ID,
             response_type: "code",
-            redirect_uri: REDIRECT_URI,
+            redirect_uri: CODEX_REDIRECT_URI,
             scope: SCOPE,
             code_challenge: challenge,
             code_challenge_method: "S256",
@@ -245,7 +250,7 @@ export class CodexOAuthClient {
                 grant_type: "authorization_code",
                 client_id: CLIENT_ID,
                 code,
-                redirect_uri: REDIRECT_URI,
+                redirect_uri: CODEX_REDIRECT_URI,
                 code_verifier: verifier,
             }),
         });
