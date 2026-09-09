@@ -130,10 +130,16 @@ asks; without a TTY it needs `--apply`.
 
 Safety rules, all of them load-bearing:
 
-- **It refuses while either home is in use.** Any process holding `logs_2.sqlite`,
-  `queue_1.sqlite`, `goals_1.sqlite`, a `thread-writer-locks/*.lock` or anything under
-  `sessions/` blocks the run, and the report names the pids. If `lsof` cannot answer, the
-  answer is `unknown` and the run refuses too — a home that might be live is treated as live.
+- **A home in use does not block the copy, but a rollout being written does.** The copy only
+  adds files no holder touches, so a live `codex` on either home is fine; a rollout a process
+  still has open is left for a later run and listed as `LIVE, SKIPPED` with the pids. If `lsof`
+  cannot answer, the answer is `unknown` and the run refuses — a home that might be live is
+  treated as live. Two operations still refuse outright against a live process, because both
+  pull something out from under it: `--archive-source` against a busy source, and `--desktop`
+  when the destination's `.codex-global-state.json` is open (close the Desktop first).
+- **A `--from` entry it cannot use is skipped, not fatal.** Naming the destination, or a home
+  with no `sessions/` directory, is listed under "Skipped sources" and the other sources still
+  migrate. The run only refuses when no source is usable at all.
 - **It refuses on any native-id collision** rather than picking a winner. A rollout already at
   the same relative path with identical bytes is this command's own earlier run, which is what
   makes a repeat a no-op.
@@ -154,8 +160,17 @@ every run. Unseen ids are appended to `project-order`, thread assignments are ta
 source only for threads the destination lacks and are remapped onto the destination's project
 id, and `selected-project` is left alone. The merged file is written atomically.
 
-What it does **not** carry: `auth.json`, `history.jsonl` (the up-arrow recall buffer), and the
-per-home SQLite databases. After a run, re-index with `tools codex history index sync`. Note
+What it does **not** carry: `auth.json`, `history.jsonl` (the up-arrow recall buffer), the
+per-home SQLite databases, and `archived_sessions/` — only `sessions/` is enumerated, so a
+source home's archived threads stay where they are. ⚠️ `--archive-source` renames `sessions/`
+only, and a home without one is no longer discovered, so an un-migrated `archived_sessions/`
+becomes invisible to later runs; copy it by hand, or leave that source unarchived.
+
+⚠️ Two per-home SQLite databases matter more than the rest: `thread_history*.sqlite` holds the
+body of every `history_mode: paginated` thread. A copied rollout finds no projection in the
+destination, and history then reads the rollout itself and reports
+`Paginated projection unavailable for native thread`. For a forked thread the rollout replays
+its parent's turns, so the first prompt of such a session can read as the parent's. After a run, re-index with `tools codex history index sync`. Note
 that the index keys a session on `[provider, source home, native id]`, so a moved rollout is a
 new key and `session_metadata.source_home` no longer names the home it came from. The
 per-rollout mapping was captured out of band in the notes vault, under
