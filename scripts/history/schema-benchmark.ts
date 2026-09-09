@@ -44,9 +44,10 @@ interface StorageSnapshot {
     pageSize: number;
     pageCount: number;
     freePages: number;
-    metadataBytes: number;
+    metadataBytes: number | "unavailable";
     totalDerivedBytes: number;
     objects: SqliteStorageObject[] | "unavailable";
+    unavailableReason?: string;
 }
 
 interface StoreResult<Metadata> {
@@ -95,7 +96,7 @@ export interface SchemaBenchmarkReport {
         >;
     };
     ratios: {
-        metadataOnlyCompactToLegacy: number;
+        metadataOnlyCompactToLegacy: number | "unavailable";
         totalDerivedCompactToLegacy: number;
     };
     parity: {
@@ -210,9 +211,10 @@ function distribution(sessions: number): { main: number; subagent: number } {
 function storageSnapshot(path: string, database: Database): StorageSnapshot {
     const footprint: SqliteStorageFootprint = inspectSqliteStorage(path, database);
     const objects = footprint.objects;
+    // Bun's Linux SQLite build has no dbstat virtual table: the report says so instead of inventing 0 bytes.
     const metadataBytes =
         objects === "unavailable"
-            ? 0
+            ? "unavailable"
             : objects
                   .filter((object) => object.name === "session_metadata" || object.name.includes("session_metadata"))
                   .reduce((total, object) => total + object.bytes, 0);
@@ -224,6 +226,7 @@ function storageSnapshot(path: string, database: Database): StorageSnapshot {
         metadataBytes,
         totalDerivedBytes: footprint.files.main + footprint.files.wal + footprint.files.shm,
         objects,
+        unavailableReason: footprint.unavailableReason,
     };
 }
 
@@ -635,10 +638,11 @@ export async function runSchemaBenchmark(config: SchemaBenchmarkConfig): Promise
                 },
             },
             ratios: {
-                metadataOnlyCompactToLegacy: ratio(
-                    compact.afterCheckpoint.metadataBytes,
-                    legacy.afterCheckpoint.metadataBytes
-                ),
+                metadataOnlyCompactToLegacy:
+                    compact.afterCheckpoint.metadataBytes === "unavailable" ||
+                    legacy.afterCheckpoint.metadataBytes === "unavailable"
+                        ? "unavailable"
+                        : ratio(compact.afterCheckpoint.metadataBytes, legacy.afterCheckpoint.metadataBytes),
                 totalDerivedCompactToLegacy: ratio(
                     compact.afterCheckpoint.totalDerivedBytes,
                     legacy.afterCheckpoint.totalDerivedBytes

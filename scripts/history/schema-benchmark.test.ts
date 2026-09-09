@@ -75,12 +75,18 @@ withBaseline(
             expect(report.parity.nativePublicIdDifferenceHash).toMatch(/^[0-9a-f]{64}$/);
             expect(report.storage.legacy.afterCheckpoint.files.wal).toBe(0);
             expect(report.storage.compact.afterCheckpoint.files.wal).toBe(0);
-            expect(report.storage.legacy.afterCheckpoint.metadataBytes).toBeGreaterThan(0);
-            expect(report.storage.compact.afterCheckpoint.metadataBytes).toBeGreaterThan(0);
-            expect(report.storage.compact.afterCheckpoint.totalDerivedBytes).toBeGreaterThan(
-                report.storage.compact.afterCheckpoint.metadataBytes
-            );
-            expect(report.ratios.metadataOnlyCompactToLegacy).toBeGreaterThan(0);
+            const legacyMetadataBytes = report.storage.legacy.afterCheckpoint.metadataBytes;
+            const compactMetadataBytes = report.storage.compact.afterCheckpoint.metadataBytes;
+            if (legacyMetadataBytes === "unavailable" || compactMetadataBytes === "unavailable") {
+                // Bun's Linux SQLite build has no dbstat virtual table: the report says so instead of inventing 0 bytes.
+                expect(report.storage.legacy.afterCheckpoint.unavailableReason).toContain("dbstat");
+                expect(report.ratios.metadataOnlyCompactToLegacy).toBe("unavailable");
+            } else {
+                expect(legacyMetadataBytes).toBeGreaterThan(0);
+                expect(compactMetadataBytes).toBeGreaterThan(0);
+                expect(report.storage.compact.afterCheckpoint.totalDerivedBytes).toBeGreaterThan(compactMetadataBytes);
+                expect(report.ratios.metadataOnlyCompactToLegacy).toBeGreaterThan(0);
+            }
             expect(report.ratios.totalDerivedCompactToLegacy).toBeGreaterThan(0);
             expect(report.mutation).toMatchObject({
                 bodyScale: 100,
