@@ -23,8 +23,9 @@ import {
 import { type ExternalLoginRunner, runLogin } from "./run-login";
 
 /**
- * The error paths of `bindExternalLogin` — the flow grok uses, where the vendor
- * CLI writes the credential and we only bind the file it left behind.
+ * The error paths of `bindExternalLogin` — the flow for a vendor whose CLI writes
+ * the credential and where we only bind the file it left behind. Grok used it until
+ * it grew its own OIDC flow (issue #377), so the plugin here is synthetic.
  *
  * Every refusal is asserted against the CONFIG FILE ON DISK as well as the
  * spies: byte equality proves nothing was written by ANY route, while the spies

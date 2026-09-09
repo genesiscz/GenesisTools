@@ -285,8 +285,31 @@ describe("resolveGrokSubToken: a grant stored by tools grok login", () => {
         expect(storedGrantCalls[1]).toEqual({ name: "grok", options: { force: true } });
     });
 
-    // Negative control: a plain stored token with no refresh token is the older shape and
-    // keeps the identity-proof path (the describe above), not the vault path.
+    // The issuer may answer a grant without a new refresh token. Routing that on the
+    // refresh token alone sent it to `~/.grok/auth.json`, whoever the Grok CLI is logged
+    // in as, which is the cross-account read the branch exists to prevent. The expiry the
+    // login stored beside the token is what still names the shape.
+    it("routes a grant the issuer gave no refresh token for, on its stored expiry", async () => {
+        account = {
+            name: "grok",
+            provider: "grok-sub",
+            tokens: { accessToken: FRESH, expiresAt: Date.now() + 3_600_000 },
+        };
+        storedGrantCalls.length = 0;
+        const calls: string[] = [];
+        stubFetch({ calls });
+
+        const resolved = await resolveGrokSubToken("grok");
+
+        expect(resolved.token).toBe("stored-token");
+        expect(resolved.authPath).toBeUndefined();
+        expect(storedGrantCalls).toEqual([{ name: "grok", options: {} }]);
+        // Nothing reached the Grok CLI's own auth file or its issuer.
+        expect(calls).toEqual([]);
+    });
+
+    // Negative control: a plain stored token with no refresh token and no expiry is the
+    // older pasted shape and keeps the identity-proof path (the describe above).
     it("a stored token without a refresh token still resolves as before", async () => {
         account = { name: "grok", provider: "grok-sub", tokens: { accessToken: FRESH } };
         storedGrantCalls.length = 0;

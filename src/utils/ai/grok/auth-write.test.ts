@@ -83,4 +83,63 @@ describe("writeGrokAuthEntry", () => {
             create_time: "2026-01-01T00:00:00Z",
         });
     });
+
+    /**
+     * `holdsSameIdentity` (grok/account.ts) accepts `user_id` as proof that an auth file
+     * belongs to an account, so an identity kept from the entry we just replaced would
+     * vouch for a token that is now somebody else's.
+     */
+    test("does not keep the replaced entry's owner beside a token that cannot name one", async () => {
+        const authFile = join(mkdtempSync(join(tmpdir(), "grok-auth-write-")), "auth.json");
+        writeFileSync(
+            authFile,
+            SafeJSON.stringify(
+                {
+                    [ENTRY_ID]: {
+                        key: "old-key",
+                        email: "bob@example.com",
+                        user_id: "user-9999",
+                        team_id: "team-9999",
+                        first_name: "Bob",
+                    },
+                },
+                { strict: true },
+                2
+            )
+        );
+
+        await writeGrokAuthEntry(authFile, { accessToken: "opaque-token-invented", expiresAt: 4_102_444_800_000 });
+
+        const entry = (SafeJSON.parse(readFileSync(authFile, "utf-8"), { strict: true }) as Record<string, unknown>)[
+            ENTRY_ID
+        ];
+        expect(entry).toEqual({
+            key: "opaque-token-invented",
+            expires_at: "2100-01-01T00:00:00.000Z",
+            oidc_client_id: GROK_OIDC_CLIENT_ID,
+            oidc_issuer: GROK_OIDC_ISSUER,
+            auth_mode: "oidc",
+            // Kept: the CLI's own decoration says nothing about who owns the token.
+            first_name: "Bob",
+        });
+    });
+
+    test("the new tokens' own owner replaces the previous one", async () => {
+        const authFile = join(mkdtempSync(join(tmpdir(), "grok-auth-write-")), "auth.json");
+        writeFileSync(
+            authFile,
+            SafeJSON.stringify(
+                { [ENTRY_ID]: { key: "old-key", email: "bob@example.com", user_id: "user-9999" } },
+                { strict: true },
+                2
+            )
+        );
+
+        await writeGrokAuthEntry(authFile, { accessToken: ACCESS, idToken: ID_TOKEN, expiresAt: 4_102_444_800_000 });
+
+        const entry = (
+            SafeJSON.parse(readFileSync(authFile, "utf-8"), { strict: true }) as Record<string, Record<string, unknown>>
+        )[ENTRY_ID];
+        expect(entry).toMatchObject({ email: "alice@example.com", user_id: "user-1111", team_id: "team-2222" });
+    });
 });

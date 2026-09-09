@@ -17,10 +17,11 @@ tools grok sessions
 
 tools grok login [name]                      # browser OIDC login (PKCE) stored in the vault, no Grok CLI needed
 tools grok login [name] --home ~/.grok       # the same login written into that GROK_HOME's auth.json instead
+tools grok login [name] --auth-file <path>   # bind a credential file that already exists; the only headless door
 tools grok usage [--json] [--range 24h]      # the shared usage dashboard pinned to this provider
 ```
 
-`login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider grok` and `tools ai usage --provider grok`. xAI has no in-process OAuth flow, so `login` prints the vendor command with `GROK_HOME` set, offers to run it, and binds the `auth.json` it wrote. `usage` reports the monthly billing credit rather than percentage windows.
+`login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider grok` and `tools ai usage --provider grok`. `login` drives xAI's own OIDC provider in the browser, so every form of it except `--auth-file` on an existing file needs a TTY. `usage` reports the subscription allowance as percentage windows over the rolling period, plus pay-as-you-go money when the account has any.
 
 `run` and `steer` block until the turn ends (minutes). From an agent, run them in background Bash and wait for the completion notification.
 

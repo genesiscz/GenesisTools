@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -314,5 +314,29 @@ describe("a grok-sub account with a stored grant", () => {
 
     it("has no credential file to stamp", async () => {
         expect(await grokCredentialStamp(entry("work", { accessToken: "stored-invented" }))).toBeUndefined();
+    });
+
+    /**
+     * The shape the login actually writes: `applyLoginOutcome` stores the outcome's
+     * explicit empty `authFile`, so the account carries `""` rather than nothing. A guard
+     * that tested for `undefined` never fired on it, and only `stat("")` throwing kept the
+     * Grok CLI's own file out of the answer.
+     */
+    it("does not fall back to the Grok CLI's file for an emptied authFile", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-stamp-"));
+        const cliFile = join(home, "auth.json");
+        writeFileSync(cliFile, "{}");
+        const snapshot = env.testing.snapshot();
+        env.testing.set("GROK_HOME", home);
+
+        try {
+            const vaultAccount = entry("work", { authFile: "", accessToken: "stored-invented" });
+            expect(await grokCredentialStamp(vaultAccount)).toBeUndefined();
+            // Positive control: the same reader DOES answer for a real reference, so the
+            // undefined above is the guard and not a broken instrument.
+            expect(await grokCredentialStamp(entry("work", { authFile: cliFile }))).toBeGreaterThan(0);
+        } finally {
+            env.testing.restore(snapshot);
+        }
     });
 });

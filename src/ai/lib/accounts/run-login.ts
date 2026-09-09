@@ -406,9 +406,14 @@ async function bindAuthFile(
 }
 
 /**
- * Providers with no in-process flow (grok): print the vendor command, offer to
- * run it on a TTY, then bind the file it wrote. A file that is already there is
- * bound without running anything, which is what makes the non-TTY path usable.
+ * Providers with no in-process flow: print the vendor command, offer to run it on
+ * a TTY, then bind the file it wrote. A file that is already there is bound
+ * without running anything, which is what makes the non-TTY path usable.
+ *
+ * No shipped plugin declares `externalLogin` any more — grok was the last one, and
+ * it grew its own OIDC flow (issue #377). The branch stays because it is the only
+ * shape a CLI-only vendor can take, and its refusals are covered by
+ * `run-login.external.test.ts` against a synthetic plugin.
  */
 async function bindExternalLogin(
     plugin: ProviderPlugin,

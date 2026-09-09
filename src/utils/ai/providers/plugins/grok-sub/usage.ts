@@ -211,13 +211,18 @@ export async function pollGrokAccount(
  * auth file, and that rewrite is the only signal we get. A grant stored by `tools grok
  * login` has no file to stat, and the login itself clears the gate; the CLI's default
  * file says nothing about that account.
+ *
+ * Tested for emptiness, never for `undefined`: the vault login stores `authFile: ""`, the
+ * explicit empty reference that clears an older path through `applyLoginOutcome`. An
+ * `=== undefined` guard therefore never fired, and the stat fell through to the empty
+ * string, which only happened to answer `undefined` because `stat("")` throws.
  */
 export function grokCredentialStamp(account: AccountEntry): Promise<number | undefined> {
-    if (account.credentials.authFile === undefined && account.credentials.accessToken !== undefined) {
+    if (!account.credentials.authFile && account.credentials.accessToken !== undefined) {
         return Promise.resolve(undefined);
     }
 
-    return fileMtimeMs(account.credentials.authFile ?? grokAuthPath());
+    return fileMtimeMs(account.credentials.authFile || grokAuthPath());
 }
 
 /**

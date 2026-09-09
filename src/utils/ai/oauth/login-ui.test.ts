@@ -60,4 +60,17 @@ describe("authorization code input", () => {
         });
         expect(invalid).toHaveProperty("error");
     });
+
+    // xAI's authorize endpoint is `/oauth2/authorize`, OpenAI's is `/oauth/authorize`.
+    test.each(["/oauth/authorize", "/oauth2/authorize"])(
+        "a pasted %s URL is named as the authorization URL, not as a missing code",
+        async (path) => {
+            const result = await readAuthorizationCode({
+                ...interaction("none"),
+                readCode: async () => `https://example.com${path}?client_id=abc&state=session`,
+            });
+
+            expect(result).toEqual({ error: expect.stringContaining("authorization URL") });
+        }
+    );
 });

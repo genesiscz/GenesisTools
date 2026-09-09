@@ -312,7 +312,7 @@ export interface AccountFeatures {
     /** Vocabulary the generic TUI and dashboard need without knowing the provider. */
     readonly presentation: AccountPresentation;
 
-    /** Interactive first login or re-login. Absent means "run the vendor CLI" (grok today). */
+    /** Interactive first login or re-login. Absent means "run the vendor CLI"; no plugin is absent today. */
     login?(ctx: AccountFlowContext): Promise<LoginOutcome>;
     /** Long-lived token attach (Anthropic only today). */
     loginLong?(ctx: AccountFlowContext & { pastedToken?: string }): Promise<LoginOutcome>;
@@ -320,7 +320,11 @@ export interface AccountFeatures {
     loginSecondary?(ctx: AccountFlowContext): Promise<LoginOutcome>;
     /** Which credential fields logout may clear, in the order the CLI offers them. */
     readonly logoutTargets: readonly LogoutTarget[];
-    /** Instructions when the flow is external (grok): command to run and the file it writes. */
+    /**
+     * Instructions when the flow is external: command to run and the file it writes. Grok
+     * was the last implementer and now has its own OIDC flow (issue #377), so nothing
+     * declares this today; `bindExternalLogin` in run-login.ts is what still consumes it.
+     */
     externalLogin?(ctx: AccountFlowContext): ExternalLoginInstruction;
 
     /** Resolve the current native credential path without reading or refreshing it. */

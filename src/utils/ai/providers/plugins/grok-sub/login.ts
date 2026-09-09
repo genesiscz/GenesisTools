@@ -37,7 +37,13 @@ export async function grokLogin(
     startListener: StartCallbackListener = startCallbackListener
 ): Promise<LoginOutcome> {
     if (!ctx.interactive) {
-        throw new Error("Grok login needs a TTY (browser OAuth + code paste).");
+        // `--home` used to bind whatever `grok login` had left in that home, which worked
+        // headless. It now WRITES the login it performs, so the headless door is
+        // `--auth-file <path>`, which binds an existing file without a browser.
+        throw new Error(
+            "Grok login needs a TTY (browser OAuth + code paste). " +
+                "To bind a credential file that already exists, pass --auth-file <path>."
+        );
     }
 
     const authUrl = await grokOAuth.startLogin();

@@ -408,22 +408,42 @@ describe("built-in provider credential contracts", () => {
         registerBuiltInPlugins();
     });
 
-    test.each(["authFile", "home"] as const)("allows built-in Grok %s binding", async (option) => {
+    function writeGrokAuthFile(): string {
         const claims = Buffer.from(SafeJSON.stringify({ sub: "grok-user-invented", tier: 1 })).toString("base64url");
         const contents = SafeJSON.stringify({ default: { key: `eyJhbGciOiJIUzI1NiJ9.${claims}.not-a-signature` } });
         mkdirSync(dirname(authFile), { recursive: true });
         writeFileSync(authFile, contents);
 
-        const result = await runLogin({
-            provider: "grok",
-            name: "work",
-            tool: "tools grok login",
-            ...(option === "authFile" ? { authFile } : { home: dirname(authFile) }),
-        });
+        return contents;
+    }
+
+    test("allows built-in Grok authFile binding", async () => {
+        const contents = writeGrokAuthFile();
+
+        const result = await runLogin({ provider: "grok", name: "work", tool: "tools grok login", authFile });
 
         expect(result.ok).toBe(true);
         expect(result.account?.credentials.authFile).toBe(authFile);
         expect(result.account?.accountUuid).toBe("grok-user-invented");
+        expect(readFileSync(authFile, "utf8")).toBe(contents);
+    });
+
+    /**
+     * `--home` changed meaning when grok grew its own OIDC flow (issue #377): it used to
+     * bind the file `grok login` had written, and now it WRITES the login it performs into
+     * that home. So it needs a browser, and a pipe gets a refusal instead of a silent
+     * re-login. `--auth-file` above is the binding door and still works headless.
+     *
+     * The byte comparison is the point: a refusal that had already replaced the file would
+     * be worse than the old behaviour, not better.
+     */
+    test("built-in Grok --home performs a login, so a pipe is refused with the file untouched", async () => {
+        const contents = writeGrokAuthFile();
+
+        await expect(
+            runLogin({ provider: "grok", name: "work", tool: "tools grok login", home: dirname(authFile) })
+        ).rejects.toThrow(/needs a TTY/);
+
         expect(readFileSync(authFile, "utf8")).toBe(contents);
     });
 

@@ -102,7 +102,10 @@ export function normalizeAuthorizationCode(input: string): { code: string } | { 
         return { error: "That looks like a URL but could not be parsed. Paste the code shown after authorizing." };
     }
 
-    if (url.pathname.includes("/oauth/authorize")) {
+    // `/oauth/authorize` is OpenAI's spelling, `/oauth2/authorize` is xAI's. Matching only
+    // the first left a Grok user who pasted the authorization URL back with the generic
+    // "no code parameter" message instead of the one that says what they pasted.
+    if (/\/oauth2?\/authorize/.test(url.pathname)) {
         return {
             error: "That is the authorization URL (what we copied to your clipboard), not the code. Open it, click Authorize, then paste the code from the callback page.",
         };

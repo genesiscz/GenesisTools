@@ -2,7 +2,6 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { MissingCredential } from "@genesiscz/utils/ai/providers/account-features";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { isSecureRef } from "@genesiscz/utils/security";
 import { decodeJwtClaims, getActiveAuthEntry, isTokenExpired, readAuthFileAsync } from "./auth";
 import { GrokAuthExpiredError } from "./auth-errors";
 import type { StoredGrantSource } from "./client";
@@ -116,7 +115,15 @@ export async function resolveGrokSubToken(
     // A grant our own `tools grok login` stored in the vault. It carries its own refresh
     // token, so expiry is answered by the OIDC refresh grant against THAT grant, and the
     // Grok CLI's file is never read for it: nothing in that file is this account's.
-    if (!account.tokens.authFile && (isSecureRef(account.tokens.accessToken) || account.tokens.refreshToken)) {
+    //
+    // `expiresAt` is what tells this shape apart from a pasted JWT, and it has to be:
+    // `AIConfig` serves the v3 PROJECTION of the store (`v3-adapter.ts`), which resolves
+    // every vault ref to a plaintext string, so a `SecureRef` test here can never fire.
+    // Only a grant we performed writes an expiry beside the token, and `clearCredentials`
+    // removes the two together. Keying on `refreshToken` alone would send a grant the
+    // issuer returned WITHOUT one to the Grok CLI's default file, which is exactly the
+    // cross-account read this branch exists to prevent.
+    if (!account.tokens.authFile && (account.tokens.expiresAt !== undefined || account.tokens.refreshToken)) {
         const name = account.name;
 
         return {
