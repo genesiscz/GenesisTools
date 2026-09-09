@@ -73,17 +73,16 @@ describe("resolveCalendarReadAccess", () => {
         expect(auth.requests).toBe(1);
     });
 
-    it.each([
-        "denied",
-        "restricted",
-        "notDetermined",
-    ] as const)("fails on %s without an upgrade attempt", async (status) => {
-        const auth = fakeAuth(status);
-        const error = await rejection(resolveCalendarReadAccess(auth, { requestUpgrade: true }));
-        expect(error).toBeInstanceOf(CalendarPermissionError);
-        expect((error as CalendarPermissionError).status).toBe(status);
-        expect(auth.requests).toBe(0);
-    });
+    it.each(["denied", "restricted", "notDetermined"] as const)(
+        "fails on %s without an upgrade attempt",
+        async (status) => {
+            const auth = fakeAuth(status);
+            const error = await rejection(resolveCalendarReadAccess(auth, { requestUpgrade: true }));
+            expect(error).toBeInstanceOf(CalendarPermissionError);
+            expect((error as CalendarPermissionError).status).toBe(status);
+            expect(auth.requests).toBe(0);
+        }
+    );
 });
 
 describe("resolveCalendarWriteAccess", () => {

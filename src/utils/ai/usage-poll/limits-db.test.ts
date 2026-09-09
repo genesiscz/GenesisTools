@@ -384,8 +384,8 @@ describe("UsageLimitsDb", () => {
      * the move cannot change what a store ends up with.
      */
     test("a fresh store still ends up with the legacy severity and scope_model columns", () => {
-        // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
         const cols = new Set(
+            // biome-ignore lint/complexity/useLiteralKeys: bracket access deliberately bypasses the private-field check
             (db["claudeDb"].getDb().prepare("PRAGMA table_info(usage_snapshots)").all() as Array<{ name: string }>).map(
                 (c) => c.name
             )

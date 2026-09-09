@@ -1,5 +1,5 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.5.11/schema.json",
     "vcs": {
         "enabled": true,
         "clientKind": "git",
@@ -70,10 +70,28 @@
             "!**/routeTree.gen.ts",
             "!scripts/codemod/__fixtures__",
             "!scripts/benchmarks/clones/microbenches",
-            "!apps/eve"
+            "!apps/eve",
+            "!!**/node_modules",
+            "!!.worktrees",
+            "!!.claude/worktrees"
         ]
     },
     "overrides": [
+        {
+            "includes": [
+                "**/*.test.ts",
+                "**/*.test.tsx",
+                "**/__tests__/**",
+                "plugins/genesis-tools/skills/fable-replace/scripts/selftest.ts"
+            ],
+            "linter": {
+                "rules": {
+                    "correctness": {
+                        "noUnsafeOptionalChaining": "warn"
+                    }
+                }
+            }
+        },
         {
             "includes": [
                 "src/clarity/ui/**",

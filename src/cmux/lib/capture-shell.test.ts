@@ -179,7 +179,7 @@ test("the lightweight shell spool rotates within two bounded generations", async
         stderr: "pipe",
         env: { PATH: "/bin:/usr/bin", HOME: directory, CMUX_SURFACE_ID: "11111111-1111-4111-8111-111111111111" },
     });
-    proc.stdin.write(`source '${hook}'\n` + `: '${"x".repeat(30000)}'\n`.repeat(40));
+    proc.stdin.write(`source '${hook}'\n${`: '${"x".repeat(30000)}'\n`.repeat(40)}`);
     proc.stdin.end();
     const [code] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     expect(code).toBe(0);

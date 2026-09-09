@@ -158,7 +158,7 @@ program
             const openUrl = resolved.entry ? url.replace(/\/$/, "") + entryRoute(resolved.entry) : url;
             out.log.success(`Serving ${pc.bold(resolved.entry ? join(resolved.dir, resolved.entry) : resolved.dir)}`);
             out.log.info(
-                `${pc.cyan(openUrl)} ${pc.dim("(catalog at /__catalog; Ctrl-C stops, or: tools artifact stop " + actualPort + ")")}`
+                `${pc.cyan(openUrl)} ${pc.dim(`(catalog at /__catalog; Ctrl-C stops, or: tools artifact stop ${actualPort})`)}`
             );
 
             const cleanUrls = readdirSync(resolved.dir)

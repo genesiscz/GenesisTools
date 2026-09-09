@@ -351,20 +351,14 @@ describe("the report route serves real data", () => {
         return { status: res.status, body: (await res.json()) as Record<string, unknown> };
     };
 
-    test.each([
-        "summary",
-        "top",
-        "dna",
-        "streaks",
-        "clock",
-        "timeline",
-        "behavior",
-        "seasons",
-    ])("%s answers 200 with a head", async (name) => {
-        const { status, body } = await call(name);
-        expect(status).toBe(200);
-        expect(body.head).toBeDefined();
-    });
+    test.each(["summary", "top", "dna", "streaks", "clock", "timeline", "behavior", "seasons"])(
+        "%s answers 200 with a head",
+        async (name) => {
+            const { status, body } = await call(name);
+            expect(status).toBe(200);
+            expect(body.head).toBeDefined();
+        }
+    );
 
     // `axes()` was resplit into three play sets this session; a mismatched call site would
     // throw here and show as a broken dashboard page rather than a red test.

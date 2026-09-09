@@ -32,16 +32,12 @@ describe("csvCell — RFC 4180 quoting", () => {
 });
 
 describe("csvCell — formula neutralisation", () => {
-    test.each([
-        '=HYPERLINK("http://evil","click")',
-        "+1+1",
-        "-1+1",
-        "@SUM(A1)",
-        "\t=cmd",
-        "  =cmd",
-    ])("neutralises the string %p", (input) => {
-        expect(csvCell(input).replace(/^"/, "")).toStartWith("'");
-    });
+    test.each(['=HYPERLINK("http://evil","click")', "+1+1", "-1+1", "@SUM(A1)", "\t=cmd", "  =cmd"])(
+        "neutralises the string %p",
+        (input) => {
+            expect(csvCell(input).replace(/^"/, "")).toStartWith("'");
+        }
+    );
 
     test("a formula that also needs quoting gets both", () => {
         expect(csvCell('=A1,"x"')).toBe(`"'=A1,""x"""`);
@@ -76,19 +72,15 @@ describe("names that occur in real libraries", () => {
     // Not hypothetical: exporting a real 29,498-song library neutralised six cells —
     // "-Prey", "-Interlude-", "- Numb (Dubstep Remix)", "@ (trailer)", "-10 000 AURA" and
     // "@U". Leading dashes and @ are ordinary in track and artist names.
-    test.each([
-        "-Prey",
-        "-Interlude-",
-        "- Numb (Dubstep Remix)",
-        "@ (trailer)",
-        "-10 000 AURA",
-        "@U",
-    ])("%p is neutralised but still readable", (name) => {
-        const cell = csvCell(name);
-        expect(cell.replace(/^"/, "")).toStartWith("'");
-        // The name survives intact after the apostrophe; nothing is dropped or escaped away.
-        expect(cell).toContain(name);
-    });
+    test.each(["-Prey", "-Interlude-", "- Numb (Dubstep Remix)", "@ (trailer)", "-10 000 AURA", "@U"])(
+        "%p is neutralised but still readable",
+        (name) => {
+            const cell = csvCell(name);
+            expect(cell.replace(/^"/, "")).toStartWith("'");
+            // The name survives intact after the apostrophe; nothing is dropped or escaped away.
+            expect(cell).toContain(name);
+        }
+    );
 
     test("a whole row round-trips through an RFC 4180 reader", () => {
         const csv = toCsv(["rank", "track", "artist"], [[1, "-Interlude-", "NF"]]);

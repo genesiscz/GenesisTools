@@ -38,41 +38,45 @@ async function invoke(input: { tool: "cmux" | "zsh"; action: string; home: strin
     return SafeJSON.parse(output, { strict: true }) as { installed: boolean; hookPath: string; runtimePath: string };
 }
 
-test.each([
-    "cmux",
-    "zsh",
-] as const)("%s installs the same capture feature that the other alias inspects and uninstalls", async (tool) => {
-    const home = mkdtempSync(join(tmpdir(), "cmux-install-alias-"));
-    const rc = join(home, ".zshrc");
-    writeFileSync(rc, "export FICTIONAL_SETTING=keep\n");
-    const other = tool === "cmux" ? "zsh" : "cmux";
-    const installed = await invoke({ tool, action: "install", home });
-    expect(installed.installed).toBe(true);
-    const status = await invoke({ tool: other, action: "status", home });
-    expect(status).toMatchObject({ installed: true, hookPath: installed.hookPath, runtimePath: installed.runtimePath });
-    expect((await invoke({ tool: other, action: "uninstall", home })).installed).toBe(false);
-    expect(readFileSync(rc, "utf8")).toBe("export FICTIONAL_SETTING=keep\n");
-});
+test.each(["cmux", "zsh"] as const)(
+    "%s installs the same capture feature that the other alias inspects and uninstalls",
+    async (tool) => {
+        const home = mkdtempSync(join(tmpdir(), "cmux-install-alias-"));
+        const rc = join(home, ".zshrc");
+        writeFileSync(rc, "export FICTIONAL_SETTING=keep\n");
+        const other = tool === "cmux" ? "zsh" : "cmux";
+        const installed = await invoke({ tool, action: "install", home });
+        expect(installed.installed).toBe(true);
+        const status = await invoke({ tool: other, action: "status", home });
+        expect(status).toMatchObject({
+            installed: true,
+            hookPath: installed.hookPath,
+            runtimePath: installed.runtimePath,
+        });
+        expect((await invoke({ tool: other, action: "uninstall", home })).installed).toBe(false);
+        expect(readFileSync(rc, "utf8")).toBe("export FICTIONAL_SETTING=keep\n");
+    }
+);
 
-test.each([
-    "cmux",
-    "zsh",
-] as const)("%s refuses an unconfirmed rc edit and offers a read-only preview", async (tool) => {
-    const home = mkdtempSync(join(tmpdir(), "cmux-confirm-install-"));
-    const rc = join(home, ".zshrc");
-    const before = "export EXAMPLE_SETTING=preserve\n";
-    writeFileSync(rc, before);
-    const result = await rawInvoke({ tool, action: "install", home });
-    expect(result.exitCode).not.toBe(0);
-    expect(result.error).toContain("--yes");
-    expect(SafeJSON.parse(result.output, { strict: true })).toMatchObject({ confirmationRequired: true });
-    expect(readFileSync(rc, "utf8")).toBe(before);
-    expect(existsSync(join(home, ".genesis-tools/cmux/runtime"))).toBe(false);
-    const preview = await rawInvoke({ tool, action: "install", home, flags: ["--dry-run"] });
-    expect(preview.exitCode).toBe(0);
-    expect(readFileSync(rc, "utf8")).toBe(before);
-    expect(existsSync(join(home, ".genesis-tools/cmux/runtime"))).toBe(false);
-});
+test.each(["cmux", "zsh"] as const)(
+    "%s refuses an unconfirmed rc edit and offers a read-only preview",
+    async (tool) => {
+        const home = mkdtempSync(join(tmpdir(), "cmux-confirm-install-"));
+        const rc = join(home, ".zshrc");
+        const before = "export EXAMPLE_SETTING=preserve\n";
+        writeFileSync(rc, before);
+        const result = await rawInvoke({ tool, action: "install", home });
+        expect(result.exitCode).not.toBe(0);
+        expect(result.error).toContain("--yes");
+        expect(SafeJSON.parse(result.output, { strict: true })).toMatchObject({ confirmationRequired: true });
+        expect(readFileSync(rc, "utf8")).toBe(before);
+        expect(existsSync(join(home, ".genesis-tools/cmux/runtime"))).toBe(false);
+        const preview = await rawInvoke({ tool, action: "install", home, flags: ["--dry-run"] });
+        expect(preview.exitCode).toBe(0);
+        expect(readFileSync(rc, "utf8")).toBe(before);
+        expect(existsSync(join(home, ".genesis-tools/cmux/runtime"))).toBe(false);
+    }
+);
 
 test("reinstall warns already installed and does not rewrite the rc", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-already-installed-"));

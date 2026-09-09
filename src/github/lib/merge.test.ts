@@ -706,43 +706,44 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         ["rebase", false],
         ["rebase", true],
         ["ff-only", false],
-    ] as Array<
-        [MergeMethod, boolean]
-    >)("dry run with method=%s noRestack=%s reaches no irreversible primitive", async (method, noRestack) => {
-        const { client, calls } = makeMock({
-            pr: basePr(),
-            commits: [{ sha: "1111111", subject: "one" }],
-            dependents: [dep({ number: 2 })],
-        });
-        // Every write throws: a dry run that reaches one fails loudly instead of passing quietly.
-        const armed = (op: string) => async () => {
-            throw new Error(`dry run reached ${op}`);
-        };
-        client.mergePull = armed("mergePull");
-        client.fastForwardBase = armed("fastForwardBase");
-        client.updatePullBase = armed("updatePullBase");
-        client.unstack = armed("unstack");
-        client.deleteBranch = armed("deleteBranch");
-        const restack: StackRestackOps = { restackBranch: armed("restackBranch") };
+    ] as Array<[MergeMethod, boolean]>)(
+        "dry run with method=%s noRestack=%s reaches no irreversible primitive",
+        async (method, noRestack) => {
+            const { client, calls } = makeMock({
+                pr: basePr(),
+                commits: [{ sha: "1111111", subject: "one" }],
+                dependents: [dep({ number: 2 })],
+            });
+            // Every write throws: a dry run that reaches one fails loudly instead of passing quietly.
+            const armed = (op: string) => async () => {
+                throw new Error(`dry run reached ${op}`);
+            };
+            client.mergePull = armed("mergePull");
+            client.fastForwardBase = armed("fastForwardBase");
+            client.updatePullBase = armed("updatePullBase");
+            client.unstack = armed("unstack");
+            client.deleteBranch = armed("deleteBranch");
+            const restack: StackRestackOps = { restackBranch: armed("restackBranch") };
 
-        const result = await safeMergePull({
-            owner: "o",
-            repo: "r",
-            number: 1,
-            method,
-            noRestack,
-            deleteBranch: true,
-            dryRun: true,
-            client,
-            restack,
-        });
+            const result = await safeMergePull({
+                owner: "o",
+                repo: "r",
+                number: 1,
+                method,
+                noRestack,
+                deleteBranch: true,
+                dryRun: true,
+                client,
+                restack,
+            });
 
-        expect(result.dryRun).toBe(true);
-        expect(result.mergeSha).toBe("");
-        expect(result.dependentsFound.map((d) => d.number)).toEqual([2]);
-        const reads = new Set(["getPull", "listOpenPullsByBase", "listPullCommits"]);
-        expect(calls.every((c) => reads.has(c.op))).toBe(true);
-    });
+            expect(result.dryRun).toBe(true);
+            expect(result.mergeSha).toBe("");
+            expect(result.dependentsFound.map((d) => d.number)).toEqual([2]);
+            const reads = new Set(["getPull", "listOpenPullsByBase", "listPullCommits"]);
+            expect(calls.every((c) => reads.has(c.op))).toBe(true);
+        }
+    );
 
     test("the same armed spies fire on a real rebase, so the dry-run control is not vacuous", async () => {
         const { client } = makeMock({ pr: basePr() });
