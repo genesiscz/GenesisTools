@@ -3,12 +3,14 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerApprovalCommands } from "./commands/approve";
+import { registerCodexHistoryCommand } from "./commands/history";
 import { registerInterruptCommand } from "./commands/interrupt";
 import { registerCodexLoginCommand } from "./commands/login";
 import { registerLogsCommand } from "./commands/logs";
 import { registerReadCommand } from "./commands/read";
 import { registerReviewCommand } from "./commands/review";
 import { registerRollbackCommand } from "./commands/rollback";
+import { registerRunCommand } from "./commands/run";
 import { registerSessionsCommand } from "./commands/sessions";
 import { registerSpawnCommand } from "./commands/spawn";
 import { registerStatusCommand } from "./commands/status";
@@ -22,6 +24,8 @@ const program = new Command();
 program.name("codex").description("Spawn, monitor, and steer Codex app-server sessions");
 
 registerCodexLoginCommand(program);
+registerCodexHistoryCommand(program);
+registerRunCommand(program);
 registerSpawnCommand(program);
 registerSteerCommand(program);
 registerInterruptCommand(program);

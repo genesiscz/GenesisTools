@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { CodexAccountBinding } from "./account";
 import type { RpcClient } from "./session";
 import { CodexSessionRuntime } from "./session";
 import { type CodexSessionMeta, CodexSessionStore } from "./store";
@@ -18,6 +22,10 @@ class FakeRpcClient implements RpcClient {
 
         if (method === "initialize") {
             return {} as T;
+        }
+
+        if (method === "account/login/start") {
+            return { type: "chatgptAuthTokens" } as T;
         }
 
         if (method === "thread/start") {
@@ -346,5 +354,68 @@ describe("CodexSessionRuntime", () => {
             await expect(pending).resolves.toEqual({ decision: "decline" });
             expect((await store.readMeta("reviewer"))?.pendingApprovals).toEqual({});
         });
+    });
+});
+
+test("account-bound workers authenticate before thread start and route refresh outside approval handling", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-account-worker-"));
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+        const token = `e30.${Buffer.from(SafeJSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, "https://api.openai.com/auth": { chatgpt_account_id: "workspace-a" } })).toString("base64url")}.test`;
+        const authFile = join(home, "auth.json");
+        writeFileSync(
+            authFile,
+            SafeJSON.stringify({
+                tokens: { access_token: token, refresh_token: "never-refresh", account_id: "workspace-a" },
+            })
+        );
+        mkdirSync(join(home, ".genesis-tools/ai"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools/ai/config.json"),
+            SafeJSON.stringify({
+                version: CONFIG_VERSION,
+                accounts: [
+                    {
+                        id: "acc_a",
+                        name: "work",
+                        provider: "openai-sub",
+                        enabled: true,
+                        billing: { mode: "subscription" },
+                        credentials: { authFile },
+                        accountUuid: "workspace-a",
+                        useEnvApiKey: false,
+                    },
+                ],
+                defaults: {},
+            })
+        );
+        AiConfigStore.invalidate();
+        try {
+            const store = new CodexSessionStore();
+            const meta = makeMeta(home);
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            const runtime = new CodexSessionRuntime({
+                client,
+                store,
+                meta,
+                account: await CodexAccountBinding.create("work", { allowRefresh: true }),
+            });
+            await runtime.start({});
+            expect(client.requests.slice(0, 3).map((request) => request.method)).toEqual([
+                "initialize",
+                "account/login/start",
+                "thread/start",
+            ]);
+            await expect(
+                runtime.handleServerRequest({
+                    id: 1,
+                    method: "account/chatgptAuthTokens/refresh",
+                    params: { previousAccountId: "workspace-b" },
+                })
+            ).rejects.toThrow("different account");
+            await runtime.close();
+        } finally {
+            AiConfigStore.invalidate();
+        }
     });
 });

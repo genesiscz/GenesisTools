@@ -87,19 +87,35 @@ describe("AppServerClient", () => {
     test("notifications reach the handler in arrival order", async () => {
         const harness = createProcessHarness();
         const seen: string[] = [];
+        let finish!: () => void;
+        const completed = new Promise<void>((resolve) => {
+            finish = resolve;
+        });
         const client = new AppServerClient(harness.process, {
             onNotification: async (notification) => {
                 await Bun.sleep(notification.method === "first" ? 5 : 0);
                 seen.push(notification.method);
+                if (notification.method === "second") {
+                    finish();
+                }
             },
         });
 
         harness.push({ method: "first", params: {} });
         harness.push({ method: "second", params: {} });
-        await Bun.sleep(30);
-
-        expect(seen).toEqual(["first", "second"]);
-        await client.close();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await Promise.race([
+                completed,
+                new Promise<never>((_resolve, reject) => {
+                    timer = setTimeout(() => reject(new Error("Notification callbacks did not finish")), 2000);
+                }),
+            ]);
+            expect(seen).toEqual(["first", "second"]);
+        } finally {
+            clearTimeout(timer);
+            await client.close();
+        }
     });
 
     test("correlates request responses by id", async () => {

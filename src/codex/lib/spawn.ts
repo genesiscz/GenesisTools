@@ -1,4 +1,5 @@
 import { closeSync, openSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
@@ -7,11 +8,15 @@ import { logger } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
+import { CodexAccountBinding } from "./account";
+import { computerUseOverrides } from "./computer-use";
 import { sessionDaemonLogPath, sessionLaunchPath } from "./paths";
 import { type CodexSessionMeta, CodexSessionStore, type CodexWritePolicy } from "./store";
 import { detectCodexVersion } from "./version";
 
 export interface SpawnOptions {
+    computerUse?: boolean;
+    account?: string;
     name: string;
     cwd?: string;
     home?: string;
@@ -26,6 +31,8 @@ export interface SpawnOptions {
 }
 
 export interface LaunchConfig {
+    computerUse?: boolean;
+    accountId?: string;
     name: string;
     prompt?: string;
     mode: "review" | "task";
@@ -78,6 +85,10 @@ function isCodexDaemonPid(pid: number, name: string): boolean {
 }
 
 export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSessionMeta> {
+    const account = options.account
+        ? await CodexAccountBinding.create(options.account, { allowRefresh: true })
+        : undefined;
+    await account?.tokens();
     const store = new CodexSessionStore();
     const existing = await store.readMeta(options.name);
     if (
@@ -114,21 +125,36 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         writableRoots.push(join(env.tools.getHome(), ".genesis-tools"));
     }
 
+    // Always record the home this session will actually run in. Leaving it unset let the daemon
+    // configure Computer Use against ~/.codex while the app-server inherited an ambient
+    // CODEX_HOME, so the MCP runtime and the server it serves pointed at different directories.
+    const home = resolve(options.home ?? env.codex.getHomeOverride() ?? join(homedir(), ".codex"));
+
     const launch: LaunchConfig = {
+        ...(options.computerUse ? { computerUse: true } : {}),
+        ...(account ? { accountId: account.accountId } : {}),
         name: options.name,
         mode: options.mode ?? "task",
         writableRoots: [...new Set(writableRoots.map((path) => resolve(path)))],
         ...(options.prompt ? { prompt: options.prompt } : {}),
     };
+    if (options.computerUse) {
+        // Validate here, in the process the user is watching. The daemon is already detached by
+        // the time it reads this, so a missing runtime used to report a started session that was
+        // in fact dead, with the reason only in the daemon log.
+        computerUseOverrides({ home });
+    }
+
     atomicWriteFileSync(sessionLaunchPath(options.name), SafeJSON.stringify(launch, null, 2));
 
     const daemonEntry = resolve(import.meta.dir, "../daemon.ts");
     const logFd = openSync(sessionDaemonLogPath(options.name), "a");
     const meta: CodexSessionMeta = {
+        ...(account ? { accountId: account.accountId, accountName: account.name } : {}),
         name: options.name,
         daemonPid: 0,
         cwd,
-        ...(options.home ? { home: resolve(options.home) } : {}),
+        home,
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         ...policy,

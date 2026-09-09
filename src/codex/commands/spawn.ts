@@ -8,6 +8,8 @@ import type { CodexWritePolicy } from "../lib/store";
 const log = logger.child({ component: "codex:spawn" });
 
 interface SpawnCliOptions {
+    computerUse?: boolean;
+    account?: string;
     name: string;
     cwd?: string;
     home?: string;
@@ -29,6 +31,8 @@ export function registerSpawnCommand(program: Command): void {
         .command("spawn")
         .description("Spawn a long-lived Codex app-server session")
         .requiredOption("--name <name>", "Unique session name")
+        .option("--account <name-or-id>", "Bind the worker to this subscription account using shared ~/.codex")
+        .option("--computer-use", "Configure installed official Mac Computer Use for this worker")
         .option("--cwd <path>", "Working directory")
         .option("--home <path>", "CODEX_HOME override")
         .option("--model <model>", "Codex model")

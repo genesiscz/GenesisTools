@@ -1,7 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import type {
-    InitializeParams,
     ReviewStartParams,
     ReviewTarget,
     ThreadReadParams,
@@ -11,6 +10,7 @@ import type {
     TurnInterruptParams,
     TurnStartParams,
 } from "./_generated/protocol";
+import type { CodexAccountBinding } from "./account";
 import type { RpcNotification, RpcServerRequest } from "./app-server-client";
 import type { CodexControl } from "./control";
 import { buildAgentInstructions } from "./seed-instructions";
@@ -25,6 +25,7 @@ export interface RpcClient {
 }
 
 interface RuntimeOptions {
+    account?: CodexAccountBinding;
     client: RpcClient;
     store: CodexSessionStore;
     meta: CodexSessionMeta;
@@ -85,6 +86,7 @@ function usageFromParams(params: unknown): Record<string, number> | undefined {
 }
 
 export class CodexSessionRuntime {
+    private readonly account?: CodexAccountBinding;
     private readonly client: RpcClient;
     private readonly store: CodexSessionStore;
     private meta: CodexSessionMeta;
@@ -92,6 +94,7 @@ export class CodexSessionRuntime {
     private readonly pendingApprovalDecisions = new Map<string, PendingApprovalDecision>();
 
     constructor(options: RuntimeOptions) {
+        this.account = options.account;
         this.client = options.client;
         this.store = options.store;
         this.meta = options.meta;
@@ -101,16 +104,17 @@ export class CodexSessionRuntime {
     async start(options: { prompt?: string }): Promise<void> {
         this.store.appendEvent(this.meta.name, { source: "daemon", method: "daemon/started" });
 
-        const initialize: InitializeParams = {
+        const initialize = {
             clientInfo: {
                 name: "genesis-tools-codex",
                 title: "GenesisTools Codex",
                 version: "0.1.0",
             },
-            capabilities: null,
+            capabilities: this.account ? { experimentalApi: true } : null,
         };
         await this.client.request("initialize", initialize);
         await this.client.notify("initialized");
+        await this.account?.authenticate(this.client);
 
         const threadParams: ThreadStartParams = {
             cwd: this.meta.cwd,
@@ -213,6 +217,13 @@ export class CodexSessionRuntime {
     }
 
     async handleServerRequest(request: RpcServerRequest): Promise<unknown> {
+        if (this.account && request.method === "account/chatgptAuthTokens/refresh") {
+            const params = request.params;
+            const previous =
+                isRecord(params) && typeof params.previousAccountId === "string" ? params.previousAccountId : null;
+            return this.account.refresh(previous);
+        }
+
         if (!isApprovalMethod(request.method)) {
             throw new Error(`Unsupported Codex server request: ${request.method}`);
         }

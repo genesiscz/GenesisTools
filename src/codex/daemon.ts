@@ -1,11 +1,16 @@
 #!/usr/bin/env bun
 
 import { appendFileSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { CodexAccountBinding } from "./lib/account";
 import { AgentsBridge } from "./lib/agents-bridge";
 import { AppServerClient, type RpcNotification, spawnAppServer } from "./lib/app-server-client";
+import { computerUseOverrides } from "./lib/computer-use";
 import { readControlRequests, respondToControl } from "./lib/control-channel";
+import { buildAccountLaunchOptions } from "./lib/launch-options";
 import { sessionDaemonLogPath, sessionLaunchPath } from "./lib/paths";
 import { CodexSessionRuntime } from "./lib/session";
 import type { LaunchConfig } from "./lib/spawn";
@@ -33,6 +38,9 @@ async function run(): Promise<void> {
 
     const launch = SafeJSON.parse(readFileSync(sessionLaunchPath(name), "utf8"), { strict: true }) as LaunchConfig;
     const config = [`sandbox_mode=${meta.sandbox}`];
+    if (launch.computerUse) {
+        config.push(...computerUseOverrides({ home: meta.home ?? join(homedir(), ".codex") }));
+    }
     if (launch.writableRoots.length > 0) {
         config.push(
             `sandbox_workspace_write.writable_roots=${SafeJSON.stringify(launch.writableRoots, { strict: true })}`
@@ -42,11 +50,18 @@ async function run(): Promise<void> {
     let runtime: CodexSessionRuntime | null = null;
     let bridge: AgentsBridge | null = null;
     let exiting = false;
+    const account = launch.accountId
+        ? await CodexAccountBinding.create(launch.accountId, { allowRefresh: true })
+        : undefined;
+    const accountOptions = account
+        ? buildAccountLaunchOptions({ sharedHome: meta.home!, accountName: account.name, cwd: meta.cwd })
+        : undefined;
     const child = spawnAppServer({
+        ...accountOptions,
         cwd: meta.cwd,
         home: meta.home,
-        config,
-        envOverrides: { GT_RENDEZVOUS_SESSION: meta.rendezvousSession },
+        config: [...(accountOptions?.config ?? []), ...config],
+        envOverrides: { ...accountOptions?.envOverrides, GT_RENDEZVOUS_SESSION: meta.rendezvousSession },
     });
     await store.updateMeta(name, { appServerPid: child.pid, daemonPid: process.pid });
 
@@ -91,6 +106,7 @@ async function run(): Promise<void> {
         },
     });
     runtime = new CodexSessionRuntime({
+        account,
         client,
         store,
         meta: (await store.readMeta(name)) ?? meta,

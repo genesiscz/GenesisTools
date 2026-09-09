@@ -13,11 +13,13 @@ export interface WhamModelRecord {
 
 /**
  * Codex/ChatGPT (WHAM backend) models, newest first. Verified live against
- * GET wham/models (2026-07-12, plan "plus"); refresh via fetchWhamModels().
+ * GET wham/models (2026-07-12, plan "plus"); Astra's default context window
+ * verified from the native Codex model catalogue on 2026-09-07. Refresh via fetchWhamModels().
  * `gpt-5-codex` is not served on Plus but higher plans do serve it —
  * unsupported ids surface WHAM's own 400 to the caller.
  */
 export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
+    { slug: "gpt-6-astra", displayName: "GPT-6-Astra", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", contextWindow: 372_000, visibility: "list" },
     { slug: "gpt-5.6-terra", displayName: "GPT-5.6-Terra", contextWindow: 372_000, visibility: "list" },
     { slug: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", contextWindow: 372_000, visibility: "list" },
@@ -32,9 +34,13 @@ export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
  * match). Config aliases (per proxy account) win over built-ins; unknown ids
  * pass through unchanged so WHAM's own 400 surfaces for bad slugs.
  */
-export const OPENAI_SUB_BUILTIN_ALIAS_NAMES = ["latest", "codex", "mini"] as const;
+export const OPENAI_SUB_BUILTIN_ALIAS_NAMES = ["latest", "codex", "mini", "astra", "terra", "luna", "sol"] as const;
 
 const OPENAI_SUB_BUILTIN_ALIASES: Record<string, (catalog: WhamModelRecord[]) => string | undefined> = {
+    astra: () => "gpt-6-astra",
+    terra: () => "gpt-5.6-terra",
+    luna: () => "gpt-5.6-luna",
+    sol: () => "gpt-5.6-sol",
     latest: (catalog) => catalog.find((record) => record.visibility === "list")?.slug,
     codex: (catalog) =>
         catalog.find((record) => record.visibility === "list" && record.slug.includes("codex"))?.slug ??

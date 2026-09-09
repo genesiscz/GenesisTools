@@ -1,3 +1,4 @@
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -119,6 +120,21 @@ export class AppServerClient {
             this.process.kill("SIGTERM");
         } catch (err) {
             log.debug({ err, pid: this.process.pid }, "terminating app-server failed");
+            return;
+        }
+
+        // Reap it: an app-server that ignores SIGTERM outlives its launcher while still holding
+        // a live ChatGPT token, and nothing else in the process tree will ever wait on it.
+        try {
+            await withTimeout(this.process.exited, 2000, new Error("codex app-server shutdown"));
+        } catch (err) {
+            log.debug({ err, pid: this.process.pid }, "app-server ignored SIGTERM; sending SIGKILL");
+            try {
+                this.process.kill("SIGKILL");
+                await withTimeout(this.process.exited, 2000, new Error("codex app-server forced shutdown"));
+            } catch (killErr) {
+                log.warn({ err: killErr, pid: this.process.pid }, "Could not reap the Codex app-server");
+            }
         }
     }
 
@@ -301,6 +317,8 @@ export function spawnAppServer(options: {
     cwd: string;
     home?: string;
     envOverrides?: Record<string, string>;
+    /** Drop inherited credentials when a caller binds this process to an explicit account. */
+    unsetEnv?: readonly string[];
     config?: string[];
 }): AppServerProcess {
     const cmd = ["codex", "app-server"];
@@ -310,6 +328,9 @@ export function spawnAppServer(options: {
     }
 
     const childEnv = { ...env.getProcessEnv(), ...options.envOverrides };
+    for (const key of options.unsetEnv ?? []) {
+        delete childEnv[key];
+    }
     if (options.home) {
         childEnv.CODEX_HOME = options.home;
     }

@@ -22,6 +22,8 @@ export interface PendingApproval {
 }
 
 export interface CodexSessionMeta {
+    accountId?: string;
+    accountName?: string;
     name: string;
     daemonPid: number;
     appServerPid?: number;
