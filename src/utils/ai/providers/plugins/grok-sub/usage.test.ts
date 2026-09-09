@@ -4,7 +4,8 @@ import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
 import type { GrokUsageClient, GrokUsageDeps } from "./usage";
 import {
     grokCredentialStamp,
-    grokMissingCredential,    pollGrokAccount,
+    grokMissingCredential,
+    pollGrokAccount,
     toCreditWindow,
     toGrokLimits,
     toProductWindows,

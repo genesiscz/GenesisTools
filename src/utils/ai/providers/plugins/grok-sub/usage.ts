@@ -2,7 +2,8 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
 import { grokCredentialRefusal, resolveGrokSubToken } from "../../../grok/account";
-import { GrokSubscriptionClient, type GrokSubscriptionClientOptions } from "../../../grok/client";import { grokAuthPath } from "../../../grok/paths";
+import { GrokSubscriptionClient, type GrokSubscriptionClientOptions } from "../../../grok/client";
+import { grokAuthPath } from "../../../grok/paths";
 import type { GrokCreditsConfig, GrokSettings } from "../../../grok/types";
 import { fileMtimeMs } from "../../../usage-poll/credential-stamp";
 import type {
