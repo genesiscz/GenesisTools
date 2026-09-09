@@ -5,6 +5,15 @@
 
 set -e
 
+# git exports GIT_DIR into hooks. From a linked worktree that is `.git/worktrees/<name>`, and
+# with only that set, `bunx biome --staged` no longer finds the project root and formats staged
+# blobs under biome's defaults: 2026-09-09 a nine-file commit came out with 1,242 tab-indented
+# lines and the working tree untouched (measured: GIT_DIR alone reproduces it, GIT_WORK_TREE
+# alone or both together do not). Every git command below finds the repo from the cwd git
+# already set to the worktree root, so the variable is not needed. GIT_INDEX_FILE stays: a
+# partial `git commit <paths>` runs the hook against a temporary index and must keep doing so.
+unset GIT_DIR
+
 # Biome's --staged flag only SELECTS staged files; --write fixes them in the
 # working tree and leaves the index alone. Until 2026-09-02 this hook believed
 # biome re-staged its fixes, so a commit carried the unfixed copy and CI's
