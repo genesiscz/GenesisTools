@@ -142,6 +142,14 @@ function renderReport(report: MigrateHomeReport): void {
         }
     }
 
+    if (report.skippedSources.length > 0) {
+        renderCliSection("Skipped sources");
+
+        for (const skipped of report.skippedSources) {
+            out.println(`  ${pc.yellow("–")} ${skipped.home}: ${skipped.reason}`);
+        }
+    }
+
     if (report.refusals.length > 0) {
         renderCliSection("Refused");
 

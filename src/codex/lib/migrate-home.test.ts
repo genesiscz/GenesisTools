@@ -531,3 +531,50 @@ describe("desktop merge through migrateHome", () => {
         expect(applied.backups.globalState).toBe(join(root, "backups", "s2", ".codex-global-state.json"));
     });
 });
+
+describe("migrateHome with an unusable --from entry", () => {
+    test("a named home with no sessions/ is skipped, and the usable one still migrates", async () => {
+        // `--from a,b` where `b` was never a Codex home (a typo, a home already archived by an
+        // earlier `--archive-source` run) used to push a refusal, and any refusal blocks the
+        // whole run — so every rollout in `a` was planned and none was copied.
+        const root = scratch();
+        const destination = makeHome(root, ".codex", []);
+        const alpha = makeHome(root, ".codex-alpha", [{ date: "2026-09-07", uuid: uuid("0011") }]);
+        const bare = join(root, ".codex-bare");
+        mkdirSync(bare, { recursive: true });
+
+        const report = await migrateHome({
+            from: [alpha, bare, destination],
+            to: destination,
+            apply: true,
+            backupRoot: join(root, "backups"),
+            stamp: "20260910-000000",
+            inspectOpenFiles: clear,
+        });
+
+        expect(report.refusals).toEqual([]);
+        expect(report.applied).toBe(true);
+        expect(report.totals).toMatchObject({ toCopy: 1, copied: 1 });
+        expect(report.skippedSources.map((entry) => entry.home).sort()).toEqual([bare, destination].sort());
+        expect(enumerateRollouts(join(destination, "sessions"))).toHaveLength(1);
+    });
+
+    test("negative control: with no usable source at all the run still refuses", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", []);
+        const bare = join(root, ".codex-bare");
+        mkdirSync(bare, { recursive: true });
+
+        const report = await migrateHome({
+            from: [bare],
+            to: destination,
+            apply: true,
+            backupRoot: join(root, "backups"),
+            inspectOpenFiles: clear,
+        });
+
+        expect(report.applied).toBe(false);
+        expect(report.refusals.map((refusal) => refusal.reason)).toEqual(["no-sources"]);
+        expect(report.skippedSources).toHaveLength(1);
+    });
+});

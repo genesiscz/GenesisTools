@@ -122,6 +122,19 @@ export interface Refusal {
     detail: string;
 }
 
+/**
+ * A `--from` entry this run has nothing to do with: it names the destination, or it holds no
+ * `sessions/` directory (a typo, or a home an earlier `--archive-source` run already renamed).
+ *
+ * NOT a refusal. Every refusal blocks the whole run, so one mistyped entry beside three good
+ * ones planned every rollout and copied none, and the interactive path returned before it ever
+ * offered the copy.
+ */
+export interface SkippedSource {
+    home: string;
+    reason: string;
+}
+
 export interface MigrateHomeReport {
     destination: string;
     stamp: string;
@@ -130,6 +143,8 @@ export interface MigrateHomeReport {
     archiveSourceRequested: boolean;
     busy: BusyReport[];
     sources: SourceReport[];
+    /** `--from` entries this run has nothing to do with. Informational; never blocks. */
+    skippedSources: SkippedSource[];
     totals: {
         rollouts: number;
         toCopy: number;
@@ -510,6 +525,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         archiveSourceRequested: options.archiveSource === true,
         busy: [],
         sources: [],
+        skippedSources: [],
         totals: { rollouts: 0, toCopy: 0, alreadyPresent: 0, collisions: 0, copied: 0, skippedLive: 0 },
         backups: {},
         desktop: [],
@@ -530,12 +546,12 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
 
     for (const home of sourceHomes) {
         if (normaliseRootPath(home, realpath) === destinationKey) {
-            report.refusals.push({ reason: "no-sources", detail: `${home} is the destination home` });
+            report.skippedSources.push({ home, reason: "it is the destination home" });
             continue;
         }
 
         if (!existsSync(sessionsDirOf(home))) {
-            report.refusals.push({ reason: "no-sources", detail: `${home} holds no sessions/ directory` });
+            report.skippedSources.push({ home, reason: "it holds no sessions/ directory" });
             continue;
         }
 
