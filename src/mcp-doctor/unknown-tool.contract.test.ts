@@ -84,7 +84,10 @@ async function callUnknownTool(server: ServerUnderTest): Promise<{ code?: number
 // The one omission is mcp-tsc, whose MCP command builds a TypeScript LSP server
 // bound to a cwd and tsconfig, so spawning it means starting a full LSP over the
 // repo to assert a single throw.
-describe("MCP servers reject unknown tools with MethodNotFound", () => {
+// `concurrent`: each case boots its OWN server process and talks to it over its
+// own transport, so nothing is shared between them and the file is six process
+// startups deep. Overlapping them turns a sum into a maximum.
+describe.concurrent("MCP servers reject unknown tools with MethodNotFound", () => {
     for (const server of SERVERS) {
         const label = server.catchWrapped ? `${server.name} (catch-wrapped)` : server.name;
 
