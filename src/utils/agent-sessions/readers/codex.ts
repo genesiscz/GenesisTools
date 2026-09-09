@@ -615,6 +615,21 @@ export async function readCodexProjectionFingerprint(
     return parts.length > 0 ? SafeJSON.stringify(parts, { strict: true }) : undefined;
 }
 
+/**
+ * The one ADVISORY issue this reader raises: the thread is in no `thread_history*.sqlite`, so
+ * the rollout was read instead. It is still reported — `history index status` should name it, and
+ * for a forked rollout the first prompt it yields may be the parent's — but it must not make the
+ * READ incomplete, because `sync.ts` DISCARDS the metadata of an incomplete read (`!read.complete
+ * -> return null`). On this machine that was 144 issues and 88 codex sessions indexed with no
+ * first prompt at all. Same reasoning as the unsupported-item-kind note above.
+ */
+const PROJECTION_UNAVAILABLE = "Paginated projection unavailable for native thread";
+
+/** Issues that fail a read. The advisory one above is reported and then forgiven. */
+function fatalIssueCount(issues: readonly NativeSourceIssue[]): number {
+    return issues.filter((issue) => issue.message !== PROJECTION_UNAVAILABLE).length;
+}
+
 async function* scanProjectionRecords(
     source: NativeSessionSource<"codex">,
     header: CodexHeader,
@@ -684,7 +699,7 @@ async function* scanProjectionRecords(
         }
     }
     if (!found) {
-        reportIssue(source, options, undefined, "Paginated projection unavailable for native thread");
+        reportIssue(source, options, undefined, PROJECTION_UNAVAILABLE);
     }
 }
 
@@ -749,7 +764,7 @@ export async function readCodexRecords(
         const family = locator.split(":", 1)[0] || "unknown";
         reportIssue(source, options, issues, `Record locator not found: ${family}`);
     }
-    return { records, issues, complete: issues.length === 0 };
+    return { records, issues, complete: fatalIssueCount(issues) === 0 };
 }
 
 async function* iterateLegacyRows(
@@ -1000,7 +1015,7 @@ export async function readCodexMetadata(
             }
         }
         if (!projectionFound) {
-            reportIssue(source, options, issues, "Paginated projection unavailable for native thread");
+            reportIssue(source, options, issues, PROJECTION_UNAVAILABLE);
             firstPrompt = fromRollout.firstPrompt;
             userTextParts.push(...fromRollout.parts);
             userTextCharacters = fromRollout.characters;
@@ -1061,7 +1076,7 @@ export async function readCodexMetadata(
             storageTruncatedFields,
         },
         issues,
-        complete: issues.length === 0,
+        complete: fatalIssueCount(issues) === 0,
     };
 }
 

@@ -877,12 +877,13 @@ test("a paginated rollout with no projection falls back to its own records", asy
 
     expect(metadata.metadata?.firstPrompt).toBe("rollout prompt");
     expect(metadata.metadata?.allUserText).toBe("rollout prompt");
-    // The degrade is still reported: the projection is what names THIS thread's own share
-    // of a forked rollout, so a fallback read is incomplete by definition.
+    // The degrade is still REPORTED — the projection is what names this thread's own share of a
+    // forked rollout — but it no longer fails the read, because `sync.ts` discards the metadata
+    // of a read it is told is incomplete. See the dedicated test at the end of this file.
     expect(metadata.issues.map((issue) => issue.message)).toContain(
         "Paginated projection unavailable for native thread"
     );
-    expect(metadata.complete).toBe(false);
+    expect(metadata.complete).toBe(true);
 
     const locators: string[] = [];
     for await (const record of scanCodexRecords(source)) {
@@ -944,4 +945,77 @@ test("a paginated rollout with a projection ignores its own replayed records", a
     }
 
     expect(locators).toEqual(["projection:0:1:0"]);
+});
+
+test("a paginated rollout with no projection is a COMPLETE read, so sync keeps its metadata", async () => {
+    // `sync.ts` does `if (!read.complete || !read.metadata) return null`, which DISCARDS the
+    // metadata of an incomplete read. Reporting the missing projection as a fatal issue therefore
+    // threw away everything the rollout fallback had just recovered: on the live index that was
+    // 144 issues and 88 codex sessions carrying no first prompt at all.
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-advisory-issue-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+    writeFileSync(
+        path,
+        line({
+            type: "session_meta",
+            timestamp: "2026-09-01T10:00:00.000Z",
+            payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "paginated" },
+        }) +
+            line({
+                type: "response_item",
+                timestamp: "2026-09-01T10:00:05.000Z",
+                payload: { type: "message", role: "user", content: [{ type: "input_text", text: "recovered prompt" }] },
+            })
+    );
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [],
+    };
+
+    const result = await readCodexMetadata(source);
+
+    expect(result.complete).toBe(true);
+    expect(result.metadata?.firstPrompt).toBe("recovered prompt");
+    // Still REPORTED: `history index status` has to name it, and for a forked rollout the prompt
+    // above can be the parent's rather than this thread's.
+    expect(result.issues.map((issue) => issue.message)).toEqual(["Paginated projection unavailable for native thread"]);
+    expect(result.metadata?.boundedFields).toContain("firstPrompt");
+});
+
+test("negative control: any other issue still fails the read", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-fatal-issue-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+    writeFileSync(
+        path,
+        line({
+            type: "session_meta",
+            payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "paginated" },
+        })
+    );
+    const projectionPath = join(home, "thread_history_1.sqlite");
+    const projection = new Database(projectionPath);
+    // A schema this build cannot read is a real problem, not a degrade.
+    projection.run("CREATE TABLE thread_items (thread_id TEXT, unexpected TEXT)");
+    projection.close();
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [projectionPath],
+    };
+
+    const result = await readCodexMetadata(source);
+
+    expect(result.issues.map((issue) => issue.message)).toContain("Paginated projection schema unsupported");
+    expect(result.complete).toBe(false);
 });
