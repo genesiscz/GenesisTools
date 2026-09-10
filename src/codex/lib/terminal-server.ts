@@ -86,6 +86,7 @@ export async function openTerminalServer(options: {
             aborted,
         ]);
     } catch (error) {
+        logger.warn({ error }, "Codex account initialization failed");
         await client.close();
         throw error;
     } finally {
@@ -161,8 +162,12 @@ export async function openTerminalServer(options: {
                     let message: unknown;
                     try {
                         message = SafeJSON.parse(String(data), { strict: true });
-                    } catch {
-                        logger.debug("Rejected malformed Codex terminal JSON");
+                    } catch (error) {
+                        const raw = String(data);
+                        logger.debug(
+                            { error, bytes: raw.length, preview: raw.slice(0, 200) },
+                            "Rejected malformed Codex terminal JSON"
+                        );
                         ws.close(1007, "Invalid JSON");
                         return;
                     }
@@ -251,7 +256,7 @@ export async function openTerminalServer(options: {
                     await unlink(socketPath);
                 } catch (error) {
                     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-                        logger.warn({ socketPath }, "Could not remove Codex terminal socket");
+                        logger.warn({ error, socketPath }, "Could not remove Codex terminal socket");
                     }
                 }
 
@@ -261,6 +266,9 @@ export async function openTerminalServer(options: {
             },
         };
     } catch (error) {
+        // The caller may or may not reach a logger before this ends the process, and this is the
+        // only place that knows which stage failed.
+        logger.warn({ error, setupDir }, "Codex terminal setup failed");
         await client.close();
         socket?.terminate();
         setupSockets?.close();
@@ -270,7 +278,7 @@ export async function openTerminalServer(options: {
             try {
                 await unlink(join(setupDir, "tui.sock"));
             } catch (cleanupError) {
-                logger.debug({ failed: cleanupError instanceof Error }, "Cleaning failed Codex socket setup");
+                logger.debug({ cleanupError }, "Cleaning failed Codex socket setup");
             }
             // Never let a cleanup failure replace the reason the terminal could not start.
             await rmdir(setupDir).catch((cleanupError: unknown) => {

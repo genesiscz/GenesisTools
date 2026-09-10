@@ -70,7 +70,10 @@ export async function runAccountTerminal(input: {
     const native = providerPlugin("openai-sub").codingAgent;
     if (typeof options.resume === "string") {
         const roots = [...new Set([...nativeSessionRootsForHome("codex", home), ...(native?.roots() ?? [])])];
-        const targetHome = await realpath(home).catch(() => home);
+        const targetHome = await realpath(home).catch((error: unknown) => {
+            logger.debug({ error, home }, "the shared home has no realpath; comparing it as written");
+            return home;
+        });
         const session = await selectResumeSession({
             preferredHome: targetHome,
             adapter: createCodexAdapter(roots),
@@ -83,7 +86,13 @@ export async function runAccountTerminal(input: {
         // A home the user has since deleted is still in the index until the next prune, and an
         // unguarded realpath turned that into a raw ENOENT out of the launcher.
         const sourceHome = session.sourceHome
-            ? await realpath(session.sourceHome).catch(() => session.sourceHome)
+            ? await realpath(session.sourceHome).catch((error: unknown) => {
+                  logger.debug(
+                      { error, home: session.sourceHome },
+                      "a recorded source home is gone; comparing it as written"
+                  );
+                  return session.sourceHome;
+              })
             : undefined;
         if (sourceHome !== targetHome) {
             if (!native?.importSession) {
@@ -132,8 +141,18 @@ export async function runAccountTerminal(input: {
             initialization.abort(new Error("Codex terminal interrupted during initialization"));
         }
     };
+    // `uncaughtExceptionMonitor` observes without swallowing, so the process still ends the way it
+    // would have. The rejection handler DOES take ownership, and routes to the same shutdown, so a
+    // lost promise ends as a clean close instead of a hang that keeps the thread's writer lock.
+    const onCrash = (error: unknown) => logger.error({ error }, "Uncaught exception during the Codex terminal");
+    const onRejection = (reason: unknown) => {
+        logger.error({ error: reason }, "Unhandled rejection during the Codex terminal");
+        terminate();
+    };
     process.on("SIGTERM", terminate);
     process.on("SIGINT", interrupt);
+    process.on("uncaughtExceptionMonitor", onCrash);
+    process.on("unhandledRejection", onRejection);
     try {
         child = spawnAppServer(launch);
         const appServer = child;
@@ -185,9 +204,14 @@ export async function runAccountTerminal(input: {
                 throw new Error("Account-bound Codex app-server exited");
             }),
         ]);
+    } catch (error) {
+        logger.error({ error, account: account.name, home, cwd, resumedId }, "Codex terminal failed");
+        throw error;
     } finally {
         process.off("SIGTERM", terminate);
         process.off("SIGINT", interrupt);
+        process.off("uncaughtExceptionMonitor", onCrash);
+        process.off("unhandledRejection", onRejection);
         tui?.kill("SIGTERM");
         if (shutdown) {
             // A shutdown that hangs leaves the app-server alive holding the thread's writer lock,

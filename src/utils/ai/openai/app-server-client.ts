@@ -92,6 +92,7 @@ export class AppServerClient {
         try {
             await this.writeMessage({ id, method, ...(params === undefined ? {} : { params }) });
         } catch (err) {
+            log.warn({ err, method, id }, "writing an app-server request failed");
             this.pending.delete(id);
             throw err;
         }
@@ -296,6 +297,9 @@ export class AppServerClient {
             const result = await this.options.onServerRequest(request);
             await this.writeMessage({ id: request.id, result });
         } catch (err) {
+            // The peer is told, and until now nothing else was: the text went out over the wire
+            // and left no record of which handler threw.
+            log.warn({ err, method: request.method }, "app-server request handler failed");
             const message = err instanceof Error ? err.message : String(err);
             await this.writeMessage({ id: request.id, error: { code: -32_000, message } });
         }

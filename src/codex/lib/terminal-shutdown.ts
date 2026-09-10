@@ -8,7 +8,7 @@ export function createTerminalShutdown(
     let closing: Promise<void> | undefined;
     const close = () => (closing ??= server.close());
     const stopBeforeTui = () => {
-        void close().catch(() => logger.debug("Codex transport shutdown failed"));
+        void close().catch((error: unknown) => logger.debug({ error }, "Codex transport shutdown failed"));
     };
     return {
         close,
