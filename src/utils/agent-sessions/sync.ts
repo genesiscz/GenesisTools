@@ -415,10 +415,24 @@ export async function synchronizeHistory(options: {
 
         if (displacedPaths.size > 0) {
             for (const source of repository.sources(providerId)) {
-                if (displacedPaths.has(source.filePath) && !currentPaths.has(source.filePath)) {
-                    repository.remove(source);
-                    removed++;
+                if (!displacedPaths.has(source.filePath) || currentPaths.has(source.filePath)) {
+                    continue;
                 }
+
+                // The same guards as the deletion pass above: a newer sync may already own
+                // this row, and an older one must not take it back out (PR #383 review).
+                const root =
+                    source.root ?? completeRoots.find((candidate) => historyPathUnderRoot(source.filePath, candidate));
+
+                if (
+                    source.generation > generation ||
+                    (root && !repository.ownsRoot({ providerId, root, generation }))
+                ) {
+                    continue;
+                }
+
+                repository.remove(source);
+                removed++;
             }
         }
     });

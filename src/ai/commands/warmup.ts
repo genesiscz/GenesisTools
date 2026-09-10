@@ -63,7 +63,9 @@ export function registerWarmupCommand(program: Command, opts: { provider?: strin
             const picked = await p.multiselect({
                 message: "Select accounts to warm up",
                 options: candidates.map((a) => ({
-                    value: a.name,
+                    // The id, not the name: two accounts may share a name, and the store
+                    // refuses an ambiguous name where it resolves an id (PR #383 review).
+                    value: a.id,
                     label: `${a.name} ${pc.dim(`(${providerAliasOf(a.provider)}${a.label ? `, ${a.label}` : ""})`)}`,
                 })),
                 required: true,

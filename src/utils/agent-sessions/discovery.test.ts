@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { discoverClaudeHistorySources, readBounded } from "./readers/claude-discovery";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { discoverGrokHistorySources } from "./readers/grok-discovery";
 import { walkSourceRoots } from "./source-discovery";
@@ -185,6 +185,20 @@ test("Claude discovery displaces a sidecar stub of a moved session without repor
     expect(result.issues).toEqual([]);
     expect(result.displaced).toEqual([realpathSync(stub)]);
     expect(result.completeRoots).toEqual([realpathSync(root)]);
+});
+
+// The stub check stats first and reads second; a turn appended in between must stop the
+// read at the bound instead of loading a whole transcript to answer "is this a stub".
+test("readBounded answers null past the bound instead of reading the rest", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-discovery-bounded-"));
+    const small = join(home, "small.jsonl");
+    const grown = join(home, "grown.jsonl");
+    writeFileSync(small, "abc");
+    writeFileSync(grown, "x".repeat(9));
+
+    expect(await readBounded(small, 8)).toBe("abc");
+    expect(await readBounded(grown, 9)).toBe("x".repeat(9));
+    expect(await readBounded(grown, 8)).toBeNull();
 });
 
 test("Codex discovery keys sidecars and projections by the first header id", async () => {

@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { bytesEqualStreaming } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -20,14 +20,20 @@ const STUB_MAX_BYTES = 64 * 1024;
 
 /**
  * True when the file holds only sidecar records (titles, agent name, modes) and no turn. Bounded
- * by size so a real transcript is never read whole to answer this.
+ * by size so a real transcript is never read whole to answer this. The read itself is capped
+ * too: a turn appended between the stat and the read grows the file past the stub limit, and
+ * one byte over it is answered from the bound, not from a whole transcript (PR #383 review).
  */
 async function isMetadataStub(path: string, size: number): Promise<boolean> {
     if (size > STUB_MAX_BYTES) {
         return false;
     }
 
-    const content = await readFile(path, "utf8");
+    const content = await readBounded(path, STUB_MAX_BYTES);
+
+    if (content === null) {
+        return false;
+    }
 
     for (const line of content.split("\n")) {
         if (!line.trim()) {
@@ -49,6 +55,20 @@ async function isMetadataStub(path: string, size: number): Promise<boolean> {
     }
 
     return true;
+}
+
+/** The first `maxBytes` of a file, or null when it holds more than that. */
+export async function readBounded(path: string, maxBytes: number): Promise<string | null> {
+    const handle = await open(path, "r");
+
+    try {
+        const buffer = Buffer.alloc(maxBytes + 1);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+
+        return bytesRead > maxBytes ? null : buffer.toString("utf8", 0, bytesRead);
+    } finally {
+        await handle.close();
+    }
 }
 
 function indexMetadata(entry: JsonRecord): Partial<AgentSession<"claude">> {

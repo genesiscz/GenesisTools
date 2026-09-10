@@ -250,6 +250,63 @@ test("sync removes the row of a displaced copy even though its file still exists
     }
 });
 
+// The displaced cleanup runs the same generation guard as the deletion pass: an older sync
+// that learns of a displacement must not remove a row a newer sync has since re-indexed.
+test("an older sync's displaced cleanup leaves a row a newer generation re-indexed", async () => {
+    const fixture = createFixture();
+    let releaseOlder: (() => void) | undefined;
+    let olderDiscoverStarted: (() => void) | undefined;
+    const olderDiscover = new Promise<void>((resolve) => {
+        olderDiscoverStarted = resolve;
+    });
+    const olderRelease = new Promise<void>((resolve) => {
+        releaseOlder = resolve;
+    });
+    const originalDiscover = fixture.reader.discover;
+    let discoveries = 0;
+
+    try {
+        await sync(fixture);
+        expect(metadataTitle(fixture.repository)).toBe("First fixture title");
+
+        // One sync discovers twice: an observation pass, then the real pass after its
+        // generation is reserved. The older sync owns the first two calls; it pauses in
+        // the second, so its generation is already taken when the newer sync starts.
+        fixture.reader.discover = async (roots, options) => {
+            discoveries++;
+            if (discoveries > 2) {
+                return originalDiscover(roots, options);
+            }
+
+            if (discoveries === 2) {
+                olderDiscoverStarted?.();
+                await olderRelease;
+            }
+
+            return {
+                sources: [],
+                issues: [],
+                completeRoots: fixture.state.completeRoots,
+                displaced: [fixture.filePath],
+            };
+        };
+
+        const older = sync(fixture);
+        await olderDiscover;
+        fixture.state.title = "Newer fixture title";
+        writeFileSync(fixture.filePath, "second fixture source\n");
+        const newer = await sync(fixture);
+        releaseOlder?.();
+        const olderResult = await older;
+
+        expect(newer.report.parsed).toBe(1);
+        expect(olderResult.report.removed).toBe(0);
+        expect(metadataTitle(fixture.repository)).toBe("Newer fixture title");
+    } finally {
+        fixture.db.close();
+    }
+});
+
 test("sync leaves existing metadata when discovery reports a source issue", async () => {
     const fixture = createFixture();
     try {

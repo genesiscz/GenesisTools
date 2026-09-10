@@ -16,28 +16,36 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * The ai-proxy carries the full rewrite for arbitrary clients (`buildWhamResponsesBody`);
  * this is the subset a first-party caller needs, applied inside the provider's fetch so
  * every `ai.chat` on a codex subscription goes out well-formed.
+ *
+ * A `Request` input carries its own headers and body; `init` overrides them field by
+ * field, the way `fetch` itself reads the pair. The SDK sends a URL string plus `init`,
+ * but a caller that hands over a built `Request` must not lose its Content-Type and
+ * body on the way (PR #383 review).
  */
-export function toWhamRequest(input: RequestInfo | URL, init?: RequestInit): RequestInit {
+export async function toWhamRequest(input: RequestInfo | URL, init?: RequestInit): Promise<RequestInit> {
+    const request = input instanceof Request ? input : null;
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const headers = new Headers(init?.headers);
+    const headers = new Headers(init?.headers ?? request?.headers);
     headers.set("OpenAI-Beta", "responses=experimental");
     headers.set("originator", "codex_cli_rs");
     headers.set("session_id", randomUUID());
     headers.set("Accept", "text/event-stream");
+    const rawBody = init?.body === undefined && request?.body ? await request.clone().text() : init?.body;
+    const passthrough: RequestInit = { ...init, headers, ...(rawBody === undefined ? {} : { body: rawBody }) };
 
-    if (!url.endsWith("/responses") || typeof init?.body !== "string") {
-        return { ...init, headers };
+    if (!url.endsWith("/responses") || typeof rawBody !== "string") {
+        return passthrough;
     }
 
     let parsed: unknown;
     try {
-        parsed = SafeJSON.parse(init.body, { strict: true });
+        parsed = SafeJSON.parse(rawBody, { strict: true });
     } catch {
-        return { ...init, headers };
+        return passthrough;
     }
 
     if (!isObject(parsed)) {
-        return { ...init, headers };
+        return passthrough;
     }
 
     const body: Record<string, unknown> = { ...parsed, stream: true, store: false };
@@ -51,5 +59,5 @@ export function toWhamRequest(input: RequestInfo | URL, init?: RequestInit): Req
         ? include
         : [...include, "reasoning.encrypted_content"];
 
-    return { ...init, headers, body: SafeJSON.stringify(body, { strict: true }) };
+    return { ...passthrough, body: SafeJSON.stringify(body, { strict: true }) };
 }

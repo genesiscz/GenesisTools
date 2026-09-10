@@ -25,7 +25,7 @@ export class OpenAISubResolver implements AccountResolver {
         // streams, so callers stream too (`streaming: true`).
         const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             const fresh = await binding.tokens();
-            const wham = toWhamRequest(input, init);
+            const wham = await toWhamRequest(input, init);
             const headers = new Headers(wham.headers);
             headers.set("Authorization", `Bearer ${fresh.accessToken}`);
             headers.set("ChatGPT-Account-Id", fresh.chatgptAccountId);
