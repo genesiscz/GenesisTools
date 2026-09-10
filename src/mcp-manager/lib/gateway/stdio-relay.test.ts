@@ -1,25 +1,39 @@
 import { describe, expect, test } from "bun:test";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
-import { encodeStdioFrame, jsonRpcBodyFromHttp, parseStdioFrames, runStdioHttpRelay } from "./stdio-relay.ts";
+import { encodeStdioMessage, jsonRpcBodiesFromHttp, parseStdioMessages, runStdioHttpRelay } from "./stdio-relay.ts";
 
-describe("stdio frames", () => {
+describe("stdio newline JSON-RPC", () => {
     test("round-trips a JSON-RPC initialize", () => {
         const json = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}';
-        const framed = encodeStdioFrame(json);
-        const parsed = parseStdioFrames(framed);
+        const framed = encodeStdioMessage(json);
+        const parsed = parseStdioMessages(framed);
 
+        expect(framed.toString("utf8")).toBe(`${json}\n`);
         expect(parsed.messages).toEqual([json]);
         expect(parsed.rest.length).toBe(0);
     });
+
+    test("keeps a partial line in rest until newline", () => {
+        const parsed = parseStdioMessages(Buffer.from('{"jsonrpc":"2.0","id":1', "utf8"));
+
+        expect(parsed.messages).toEqual([]);
+        expect(parsed.rest.toString("utf8")).toBe('{"jsonrpc":"2.0","id":1');
+    });
 });
 
-describe("jsonRpcBodyFromHttp", () => {
-    test("unwraps the last SSE data line", async () => {
-        const response = new Response('event: message\ndata: {"id":1,"result":{"ok":true}}\n\n', {
-            headers: { "Content-Type": "text/event-stream" },
-        });
+describe("jsonRpcBodiesFromHttp", () => {
+    test("unwraps every SSE data line", async () => {
+        const response = new Response(
+            'event: message\ndata: {"id":1,"result":{"ok":true}}\n\nevent: message\ndata: {"method":"notifications/progress"}\n\n',
+            {
+                headers: { "Content-Type": "text/event-stream" },
+            }
+        );
 
-        expect(await jsonRpcBodyFromHttp(response)).toBe('{"id":1,"result":{"ok":true}}');
+        expect(await jsonRpcBodiesFromHttp(response)).toEqual([
+            '{"id":1,"result":{"ok":true}}',
+            '{"method":"notifications/progress"}',
+        ]);
     });
 });
 
@@ -41,7 +55,7 @@ describe("runStdioHttpRelay", () => {
         });
         const chunks: Buffer[] = [];
         const stdin = (async function* () {
-            yield encodeStdioFrame(init);
+            yield Buffer.from(`${init}\n`, "utf8");
         })();
 
         await runStdioHttpRelay({
@@ -56,7 +70,7 @@ describe("runStdioHttpRelay", () => {
         });
         http.stop(true);
 
-        const out = parseStdioFrames(Buffer.concat(chunks));
+        const out = parseStdioMessages(Buffer.concat(chunks));
         expect(out.messages).toEqual([reply]);
     });
 });

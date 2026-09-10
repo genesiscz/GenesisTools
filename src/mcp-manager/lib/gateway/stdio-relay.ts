@@ -1,59 +1,52 @@
 import { Buffer } from "node:buffer";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
 
-export function encodeStdioFrame(json: string): Buffer {
-    const length = Buffer.byteLength(json, "utf8");
-
-    return Buffer.from(`Content-Length: ${length}\r\n\r\n${json}`, "utf8");
+export function encodeStdioMessage(json: string): Buffer {
+    return Buffer.from(`${compactJsonRpc(json)}\n`, "utf8");
 }
 
-export function parseStdioFrames(buffer: Buffer): { messages: string[]; rest: Buffer } {
-    const messages: string[] = [];
-    let rest = buffer;
+export function parseStdioMessages(buffer: Buffer): { messages: string[]; rest: Buffer } {
+    const text = buffer.toString("utf8");
+    const lastNl = text.lastIndexOf("\n");
 
-    while (true) {
-        const headerEnd = rest.indexOf("\r\n\r\n");
-
-        if (headerEnd < 0) {
-            break;
-        }
-
-        const header = rest.subarray(0, headerEnd).toString("utf8");
-        const match = header.match(/Content-Length:\s*(\d+)/i);
-
-        if (!match) {
-            break;
-        }
-
-        const length = Number(match[1]);
-        const start = headerEnd + 4;
-
-        if (rest.length < start + length) {
-            break;
-        }
-
-        messages.push(rest.subarray(start, start + length).toString("utf8"));
-        rest = rest.subarray(start + length);
+    if (lastNl < 0) {
+        return { messages: [], rest: buffer };
     }
 
-    return { messages, rest };
+    const complete = text.slice(0, lastNl);
+    const restText = text.slice(lastNl + 1);
+    const messages = complete
+        .split("\n")
+        .map((line) => line.replace(/\r$/, "").trim())
+        .filter((line) => line.length > 0);
+
+    return { messages, rest: Buffer.from(restText, "utf8") };
 }
 
-export async function jsonRpcBodyFromHttp(response: Response): Promise<string> {
+export function compactJsonRpc(text: string): string {
+    try {
+        return SafeJSON.stringify(SafeJSON.parse(text, { strict: true }));
+    } catch {
+        return text.trim();
+    }
+}
+
+export async function jsonRpcBodiesFromHttp(response: Response): Promise<string[]> {
     const type = response.headers.get("content-type") ?? "";
     const text = await response.text();
 
     if (!type.includes("text/event-stream")) {
-        return text;
+        const trimmed = text.trim();
+
+        return trimmed.length > 0 ? [compactJsonRpc(trimmed)] : [];
     }
 
-    const data = text
+    return text
         .split("\n")
         .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trim())
+        .map((line) => compactJsonRpc(line.slice(5).trim()))
         .filter((line) => line.length > 0);
-
-    return data.at(-1) ?? text;
 }
 
 export async function runStdioHttpRelay(opts: {
@@ -64,11 +57,11 @@ export async function runStdioHttpRelay(opts: {
     fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }): Promise<void> {
     const fetchImpl = opts.fetchImpl ?? fetch;
-    let pending = Buffer.alloc(0);
+    let pending: Buffer = Buffer.alloc(0);
 
     for await (const chunk of opts.stdin) {
-        pending = Buffer.concat([pending, Buffer.from(chunk)]);
-        const parsed = parseStdioFrames(pending);
+        pending = Buffer.from(Buffer.concat([pending, Buffer.from(chunk)]));
+        const parsed = parseStdioMessages(pending);
         pending = Buffer.from(parsed.rest);
 
         for (const message of parsed.messages) {
@@ -82,8 +75,11 @@ export async function runStdioHttpRelay(opts: {
                 },
                 body: message,
             });
-            const body = await jsonRpcBodyFromHttp(response);
-            opts.stdout.write(encodeStdioFrame(body));
+            const bodies = await jsonRpcBodiesFromHttp(response);
+
+            for (const body of bodies) {
+                opts.stdout.write(encodeStdioMessage(body));
+            }
         }
     }
 }
