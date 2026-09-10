@@ -21,13 +21,24 @@ export interface MergeIngressResult {
     removedLegacyRules: number;
 }
 
+/**
+ * cloudflared matches `path:` as an UNANCHORED regex, so a bare `/ai` also captured
+ * `/api/ai/usage` and sent the dev-dashboard's AI routes to the proxy, which 404s them
+ * (seen 2026-09-10 once the dashboard grew `/api/ai/*`). Anchor it to the prefix
+ * followed by a slash or the end of the path.
+ */
+export function ingressPathPattern(basePath: string): string {
+    const escaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return `^${escaped}(/|$)`;
+}
+
 export function buildAiProxyIngressBlock(rule: AiProxyIngressRule): string {
     const basePath = normalizeBasePath(rule.basePath) || "/ai";
 
     return [
         `  ${AI_PROXY_INGRESS_MARKER}`,
         `  - hostname: ${rule.hostname}`,
-        `    path: ${basePath}`,
+        `    path: ${ingressPathPattern(basePath)}`,
         `    service: http://127.0.0.1:${rule.port}`,
     ].join("\n");
 }
@@ -84,7 +95,7 @@ function isAiProxyIngressEntry(lines: string[], index: number, rule: AiProxyIngr
 
     return (
         entry.includes(`hostname: ${rule.hostname}`) &&
-        entry.includes(`path: ${basePath}`) &&
+        (entry.includes(`path: ${basePath}\n`) || entry.includes(`path: ${ingressPathPattern(basePath)}`)) &&
         entry.includes(`127.0.0.1:${rule.port}`)
     );
 }
