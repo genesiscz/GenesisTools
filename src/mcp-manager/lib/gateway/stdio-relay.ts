@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
 
 export function encodeStdioMessage(json: string): Buffer {
@@ -7,26 +8,37 @@ export function encodeStdioMessage(json: string): Buffer {
 }
 
 export function parseStdioMessages(buffer: Buffer): { messages: string[]; rest: Buffer } {
-    const text = buffer.toString("utf8");
-    const lastNl = text.lastIndexOf("\n");
+    const messages: string[] = [];
+    let offset = 0;
 
-    if (lastNl < 0) {
-        return { messages: [], rest: buffer };
+    while (true) {
+        const nl = buffer.indexOf(0x0a, offset);
+
+        if (nl < 0) {
+            break;
+        }
+
+        let line = buffer.subarray(offset, nl);
+
+        if (line.length > 0 && line[line.length - 1] === 0x0d) {
+            line = line.subarray(0, line.length - 1);
+        }
+
+        const text = line.toString("utf8").trim();
+
+        if (text.length > 0) {
+            messages.push(text);
+        }
+
+        offset = nl + 1;
     }
 
-    const complete = text.slice(0, lastNl);
-    const restText = text.slice(lastNl + 1);
-    const messages = complete
-        .split("\n")
-        .map((line) => line.replace(/\r$/, "").trim())
-        .filter((line) => line.length > 0);
-
-    return { messages, rest: Buffer.from(restText, "utf8") };
+    return { messages, rest: Buffer.from(buffer.subarray(offset)) };
 }
 
 export function compactJsonRpc(text: string): string {
     try {
-        return SafeJSON.stringify(SafeJSON.parse(text, { strict: true }));
+        return SafeJSON.stringify(SafeJSON.parse(text, { strict: true }), { strict: true });
     } catch {
         return text.trim();
     }
@@ -47,6 +59,34 @@ export async function jsonRpcBodiesFromHttp(response: Response): Promise<string[
         .filter((line) => line.startsWith("data:"))
         .map((line) => compactJsonRpc(line.slice(5).trim()))
         .filter((line) => line.length > 0);
+}
+
+function requestIdFromMessage(message: string): unknown {
+    try {
+        const parsed = SafeJSON.parse(message, { strict: true });
+
+        if (parsed && typeof parsed === "object" && "id" in parsed) {
+            return (parsed as { id: unknown }).id;
+        }
+    } catch (error) {
+        logger.debug({ error }, "stdio relay could not read jsonrpc id");
+    }
+
+    return null;
+}
+
+function jsonRpcErrorLine(id: unknown, message: string): string {
+    return SafeJSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } }, { strict: true });
+}
+
+function looksLikeJsonRpc(text: string): boolean {
+    try {
+        const parsed = SafeJSON.parse(text, { strict: true });
+
+        return Boolean(parsed && typeof parsed === "object" && "jsonrpc" in parsed);
+    } catch {
+        return false;
+    }
 }
 
 export async function runStdioHttpRelay(opts: {
@@ -75,6 +115,28 @@ export async function runStdioHttpRelay(opts: {
                 },
                 body: message,
             });
+
+            if (response.status === 202 || response.status === 204) {
+                await response.arrayBuffer();
+                continue;
+            }
+
+            if (!response.ok) {
+                const status = response.status;
+                const text = await response.text();
+                logger.warn({ status, url: opts.url }, "stdio relay upstream HTTP error");
+
+                if (looksLikeJsonRpc(text)) {
+                    opts.stdout.write(encodeStdioMessage(text));
+                    continue;
+                }
+
+                opts.stdout.write(
+                    encodeStdioMessage(jsonRpcErrorLine(requestIdFromMessage(message), `gateway HTTP ${status}`))
+                );
+                continue;
+            }
+
             const bodies = await jsonRpcBodiesFromHttp(response);
 
             for (const body of bodies) {

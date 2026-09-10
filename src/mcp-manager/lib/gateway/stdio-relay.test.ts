@@ -19,6 +19,22 @@ describe("stdio newline JSON-RPC", () => {
         expect(parsed.messages).toEqual([]);
         expect(parsed.rest.toString("utf8")).toBe('{"jsonrpc":"2.0","id":1');
     });
+
+    test("does not corrupt a multi-byte UTF-8 character split across the buffer", () => {
+        const json = '{"jsonrpc":"2.0","id":1,"params":{"q":"café"}}';
+        const full = Buffer.from(`${json}\n`, "utf8");
+        const splitAt = full.indexOf(0xc3);
+
+        expect(splitAt).toBeGreaterThan(0);
+
+        const first = parseStdioMessages(full.subarray(0, splitAt + 1));
+        expect(first.messages).toEqual([]);
+        expect(first.rest.equals(full.subarray(0, splitAt + 1))).toBe(true);
+
+        const second = parseStdioMessages(Buffer.concat([first.rest, full.subarray(splitAt + 1)]));
+        expect(second.messages).toEqual([json]);
+        expect(second.rest.length).toBe(0);
+    });
 });
 
 describe("jsonRpcBodiesFromHttp", () => {
@@ -72,5 +88,100 @@ describe("runStdioHttpRelay", () => {
 
         const out = parseStdioMessages(Buffer.concat(chunks));
         expect(out.messages).toEqual([reply]);
+    });
+
+    test("relays two newline messages from one chunk", async () => {
+        const seen: string[] = [];
+        const http = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: async (request) => {
+                seen.push(await request.text());
+
+                return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                    headers: { "Content-Type": "application/json" },
+                });
+            },
+        });
+        const a = '{"jsonrpc":"2.0","id":1,"method":"a"}';
+        const b = '{"jsonrpc":"2.0","id":2,"method":"b"}';
+        const stdin = (async function* () {
+            yield Buffer.from(`${a}\n${b}\n`, "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: `http://127.0.0.1:${http.port}/mcp/rohlik`,
+            headers: { [GATEWAY_HEADER]: "local" },
+            stdin,
+            stdout: { write() {} },
+        });
+        http.stop(true);
+
+        expect(seen).toEqual([a, b]);
+    });
+
+    test("relays a message whose UTF-8 bytes split across two stdin chunks", async () => {
+        const json = '{"jsonrpc":"2.0","id":1,"params":{"q":"café"}}';
+        const full = Buffer.from(`${json}\n`, "utf8");
+        const splitAt = full.indexOf(0xc3);
+        const seen: string[] = [];
+        const http = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: async (request) => {
+                seen.push(await request.text());
+
+                return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                    headers: { "Content-Type": "application/json" },
+                });
+            },
+        });
+        const stdin = (async function* () {
+            yield full.subarray(0, splitAt + 1);
+            yield full.subarray(splitAt + 1);
+        })();
+
+        await runStdioHttpRelay({
+            url: `http://127.0.0.1:${http.port}/mcp/rohlik`,
+            headers: { [GATEWAY_HEADER]: "local" },
+            stdin,
+            stdout: { write() {} },
+        });
+        http.stop(true);
+
+        expect(seen).toEqual([json]);
+    });
+
+    test("turns a non-JSON HTTP 500 into a JSON-RPC error line", async () => {
+        const init = '{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}';
+        const http = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch() {
+                return new Response("<html>nope</html>", { status: 500 });
+            },
+        });
+        const chunks: Buffer[] = [];
+        const stdin = (async function* () {
+            yield Buffer.from(`${init}\n`, "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: `http://127.0.0.1:${http.port}/mcp/rohlik`,
+            headers: { [GATEWAY_HEADER]: "local" },
+            stdin,
+            stdout: {
+                write(chunk) {
+                    chunks.push(Buffer.from(chunk));
+                },
+            },
+        });
+        http.stop(true);
+
+        const out = parseStdioMessages(Buffer.concat(chunks));
+        expect(out.messages).toHaveLength(1);
+        expect(out.messages[0]).toContain('"id":7');
+        expect(out.messages[0]).toContain("gateway HTTP 500");
+        expect(out.messages[0]).not.toContain("<html>");
     });
 });
