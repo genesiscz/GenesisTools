@@ -12,6 +12,7 @@ import {
     mergeDesktopState,
     migrateHome,
     normaliseRootPath,
+    SESSION_INDEX_FILE,
 } from "./migrate-home";
 
 const roots: string[] = [];
@@ -66,6 +67,11 @@ function makeHome(root: string, name: string, rollouts: RolloutSpec[], state?: D
 
 function uuid(suffix: string): string {
     return `01a07dd8-4417-7be3-b922-74db43df${suffix}`;
+}
+
+/** One `session_index.jsonl` record, the shape Codex writes when a thread is named. */
+function nameRecord(id: string, threadName: string): string {
+    return SafeJSON.stringify({ id, thread_name: threadName, updated_at: "2026-09-09T11:24:45.138882Z" });
 }
 
 /** Path + size + content digest of every file below `root`, so "nothing was written" is checkable. */
@@ -627,5 +633,101 @@ describe("mergeDesktopState with a colliding project id", () => {
         expect(report.duplicatesAvoided).toHaveLength(1);
         expect(Object.keys(merged["local-projects"] ?? {})).toEqual(["shared"]);
         expect(merged["thread-project-assignments"]?.["thread-s"]?.projectId).toBe("shared");
+    });
+});
+
+describe("thread names through migrateHome", () => {
+    test("a dry run names nothing; applying carries every name whose rollout the destination holds", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", [{ date: "2026-09-01", uuid: uuid("0031") }]);
+        const source = makeHome(root, ".codex-named", [
+            { date: "2026-09-01", uuid: uuid("0031") },
+            { date: "2026-09-02", uuid: uuid("0032") },
+        ]);
+        const index = join(destination, SESSION_INDEX_FILE);
+        writeFileSync(
+            join(source, SESSION_INDEX_FILE),
+            `${[
+                nameRecord(uuid("0031"), "astra-pricing"),
+                nameRecord(uuid("0032"), "invoice-sweep"),
+                nameRecord(uuid("0033"), "never-copied"),
+            ].join("\n")}\n`
+        );
+
+        const options = {
+            from: [source],
+            to: destination,
+            backupRoot: join(root, "backups"),
+            stamp: "20260910-193000",
+            inspectOpenFiles: clear,
+        };
+
+        // 0031's rollout is already in the destination, 0032 arrives with this run, 0033 has none.
+        const planned = await migrateHome(options);
+
+        expect(planned.sessionNames).toEqual([
+            {
+                home: source,
+                sourcePath: join(source, SESSION_INDEX_FILE),
+                destinationPath: index,
+                added: 2,
+                alreadyNamed: 0,
+                skippedUnknown: 1,
+                written: false,
+            },
+        ]);
+        expect(existsSync(index)).toBe(false);
+
+        const applied = await migrateHome({ ...options, apply: true });
+
+        expect(applied.refusals).toEqual([]);
+        expect(applied.sessionNames[0]).toMatchObject({ added: 2, skippedUnknown: 1, written: true });
+
+        const names = readFileSync(index, "utf8")
+            .split("\n")
+            .filter((line) => line.trim())
+            .map((line) => SafeJSON.parse(line) as { id: string; thread_name: string });
+
+        expect(names.map((entry) => [entry.id, entry.thread_name])).toEqual([
+            [uuid("0031"), "astra-pricing"],
+            [uuid("0032"), "invoice-sweep"],
+        ]);
+    });
+
+    test("the destination's own name wins, and a rerun adds nothing", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", [{ date: "2026-09-01", uuid: uuid("0034") }]);
+        const source = makeHome(root, ".codex-named", [
+            { date: "2026-09-01", uuid: uuid("0034") },
+            { date: "2026-09-02", uuid: uuid("0035") },
+        ]);
+        const index = join(destination, SESSION_INDEX_FILE);
+        writeFileSync(index, `${nameRecord(uuid("0034"), "destination-name")}\n`);
+        writeFileSync(
+            join(source, SESSION_INDEX_FILE),
+            `${[nameRecord(uuid("0034"), "source-name"), nameRecord(uuid("0035"), "carried")].join("\n")}\n`
+        );
+
+        const options = {
+            from: [source],
+            to: destination,
+            apply: true,
+            backupRoot: join(root, "backups"),
+            inspectOpenFiles: clear,
+        };
+
+        const first = await migrateHome({ ...options, stamp: "20260910-193100" });
+
+        expect(first.sessionNames[0]).toMatchObject({ added: 1, alreadyNamed: 1, skippedUnknown: 0, written: true });
+
+        const written = readFileSync(index, "utf8");
+        const second = await migrateHome({ ...options, stamp: "20260910-193200" });
+
+        expect(second.sessionNames[0]).toMatchObject({ added: 0, alreadyNamed: 2, written: false });
+        expect(readFileSync(index, "utf8")).toBe(written);
+        expect(written.split("\n").filter((line) => line.trim())).toEqual([
+            nameRecord(uuid("0034"), "destination-name"),
+            nameRecord(uuid("0035"), "carried"),
+        ]);
     });
 });

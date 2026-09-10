@@ -2,6 +2,21 @@ import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import type { AgentSearchFilters, AgentSession, AgentSessionAdapter } from "./types";
 
+/**
+ * One native session copied into several homes is indexed once per home. The launch home's copy
+ * is the one to resume; the others are the retained originals, and resuming one of those offers
+ * to import a session the launch home already holds.
+ */
+function preferHomeCopies(matches: AgentSession[], preferredHome?: string): AgentSession[] {
+    if (!preferredHome) {
+        return matches;
+    }
+    const local = new Set(
+        matches.filter((session) => session.sourceHome === preferredHome).map((session) => session.sessionId)
+    );
+    return matches.filter((session) => session.sourceHome === preferredHome || !local.has(session.sessionId));
+}
+
 /** Resolve within one provider; native ID, metadata, then transcript content. */
 export async function selectResumeSession(options: {
     adapter: AgentSessionAdapter;
@@ -26,14 +41,8 @@ export async function selectResumeSession(options: {
     };
     const sessions = (await adapter.list(scope)).filter((session) => session.kind === adapter.kind);
     let matches = sessions.filter((session) => session.sessionId.toLowerCase() === normalized);
-    if (fullNativeId) {
-        if (!matches.length) {
-            throw new Error(`No ${adapter.kind} session has native ID "${query}"`);
-        }
-        const preferred = matches.filter((session) => session.sourceHome === options.preferredHome);
-        if (options.preferredHome && preferred.length === 1) {
-            matches = preferred;
-        }
+    if (fullNativeId && !matches.length) {
+        throw new Error(`No ${adapter.kind} session has native ID "${query}"`);
     }
     if (!matches.length) {
         matches = sessions.filter((session) => session.sessionId.toLowerCase().startsWith(normalized));
@@ -53,6 +62,7 @@ export async function selectResumeSession(options: {
     if (!matches.length) {
         throw new Error(`No ${adapter.kind} session matches "${query}" in this project scope`);
     }
+    matches = preferHomeCopies(matches, options.preferredHome);
     if (matches.length === 1) {
         return matches[0];
     }

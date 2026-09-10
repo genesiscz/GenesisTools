@@ -85,3 +85,26 @@ test("a canonical copy wins for an explicit UUID while a missing UUID never resu
         selectResumeSession({ adapter: adapter([], [session("unrelated", id)]), query: id, interactive: false })
     ).rejects.toThrow("No codex");
 });
+
+test("a title match resolves to the launch home's copy, but two different sessions stay ambiguous", async () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    const local = { ...session(id, "astra-pricing"), sourceHome: "/home" };
+    const retained = { ...session(id, "astra-pricing"), sourceHome: "/old-home" };
+    expect(
+        await selectResumeSession({
+            adapter: adapter([retained, local]),
+            query: "astra-pricing",
+            preferredHome: "/home",
+            interactive: false,
+        })
+    ).toBe(local);
+    const other = { ...session("44444444-4444-4444-8444-444444444444", "astra-pricing"), sourceHome: "/old-home" };
+    await expect(
+        selectResumeSession({
+            adapter: adapter([other, local]),
+            query: "astra-pricing",
+            preferredHome: "/home",
+            interactive: false,
+        })
+    ).rejects.toThrow("Multiple");
+});

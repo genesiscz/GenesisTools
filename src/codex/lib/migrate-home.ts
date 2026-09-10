@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync } from "node:fs";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -15,6 +15,7 @@ const { log } = logger.scoped("codex-migrate-home");
 export const HOME_LOCK_FILES = ["logs_2.sqlite", "queue_1.sqlite", "goals_1.sqlite"] as const;
 const SQLITE_SIDECARS = ["", "-wal", "-shm"] as const;
 export const GLOBAL_STATE_FILE = ".codex-global-state.json";
+export const SESSION_INDEX_FILE = "session_index.jsonl";
 export const REINDEX_COMMAND = "tools codex history index sync";
 export const PROVENANCE_NOTE =
     "AILaunchers/Verify-CodexAccountProvenance.md in the notes vault holds the per-rollout home mapping; " +
@@ -115,6 +116,20 @@ export interface DesktopReport extends DesktopMergeReport {
     written: boolean;
 }
 
+/** What one source home's `session_index.jsonl` contributed to the destination's. */
+export interface SessionNameReport {
+    home: string;
+    sourcePath: string;
+    destinationPath: string;
+    /** Names carried over, one per rollout the destination holds. */
+    added: number;
+    /** Ids the destination already names; its own name always wins. */
+    alreadyNamed: number;
+    /** Ids no rollout in the destination claims, so naming them would point at nothing. */
+    skippedUnknown: number;
+    written: boolean;
+}
+
 export type RefusalReason = "busy" | "collision" | "no-sources" | "missing-destination";
 
 export interface Refusal {
@@ -155,6 +170,8 @@ export interface MigrateHomeReport {
     };
     backups: { sessions?: string; globalState?: string };
     desktop: DesktopReport[];
+    /** Thread names carried from each source's `session_index.jsonl`. */
+    sessionNames: SessionNameReport[];
     refusals: Refusal[];
     reindexCommand: string;
     provenanceNote: string;
@@ -500,6 +517,102 @@ async function writeDesktopState(path: string, state: DesktopState, stamp: strin
     await rename(temporary, path);
 }
 
+function sessionIndexOf(home: string): string {
+    return join(home, SESSION_INDEX_FILE);
+}
+
+/** `id` → that record's own line, kept verbatim so a name never loses a field we do not model. */
+async function readSessionNames(path: string): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+
+    if (!existsSync(path)) {
+        return names;
+    }
+
+    for (const line of (await Bun.file(path).text()).split("\n")) {
+        if (!line.trim()) {
+            continue;
+        }
+
+        try {
+            const record = SafeJSON.parse(line) as { id?: string; session_id?: string };
+            const id = (record.id ?? record.session_id)?.toLowerCase();
+
+            if (id) {
+                names.set(id, line);
+            }
+        } catch (err) {
+            log.debug({ path, error: err }, "skipping an unreadable session index record");
+        }
+    }
+
+    return names;
+}
+
+/** Whole lines only: Codex writes to this file itself, and a rewrite would race its own writes. */
+async function appendSessionNames(path: string, lines: string[]): Promise<void> {
+    const existing = existsSync(path) ? await Bun.file(path).text() : "";
+    const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    await appendFile(path, `${separator}${lines.join("\n")}\n`);
+}
+
+/**
+ * A thread's name lives in its home's `session_index.jsonl`, never in the rollout, so a copied
+ * transcript lands unnamed: `--resume <name>` then keeps matching the source home's copy and
+ * offering to import a session the destination already holds. Every name whose rollout the
+ * destination now holds is carried over, an earlier run's copies included.
+ */
+async function carrySessionNames(input: {
+    destination: string;
+    sources: string[];
+    nativeIds: Set<string>;
+    apply: boolean;
+}): Promise<SessionNameReport[]> {
+    const destinationPath = sessionIndexOf(input.destination);
+    const named = await readSessionNames(destinationPath);
+    const reports: SessionNameReport[] = [];
+
+    for (const home of input.sources) {
+        const sourcePath = sessionIndexOf(home);
+        const report: SessionNameReport = {
+            home,
+            sourcePath,
+            destinationPath,
+            added: 0,
+            alreadyNamed: 0,
+            skippedUnknown: 0,
+            written: false,
+        };
+        const sourceNames = await readSessionNames(sourcePath);
+        const lines: string[] = [];
+
+        for (const [id, line] of sourceNames) {
+            if (named.has(id)) {
+                report.alreadyNamed += 1;
+                continue;
+            }
+
+            if (!input.nativeIds.has(id)) {
+                report.skippedUnknown += 1;
+                continue;
+            }
+
+            named.set(id, line);
+            lines.push(line);
+            report.added += 1;
+        }
+
+        if (input.apply && lines.length > 0) {
+            await appendSessionNames(destinationPath, lines);
+            report.written = true;
+        }
+
+        reports.push(report);
+    }
+
+    return reports;
+}
+
 async function clonePath(source: string, destination: string, recursive: boolean): Promise<void> {
     const args = recursive ? ["cp", "-c", "-R", source, destination] : ["cp", "-c", source, destination];
     const child = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
@@ -559,6 +672,7 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         totals: { rollouts: 0, toCopy: 0, alreadyPresent: 0, collisions: 0, copied: 0, skippedLive: 0 },
         backups: {},
         desktop: [],
+        sessionNames: [],
         refusals: [],
         reindexCommand: REINDEX_COMMAND,
         provenanceNote: PROVENANCE_NOTE,
@@ -723,7 +837,17 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         "migrate-home plan"
     );
 
+    // Every id the destination holds once this run finishes, which is what a name may point at.
+    const nativeIds = new Set([...destinationRollouts.keys(), ...planned.map((item) => item.file.nativeId)]);
+
     if (!options.apply || report.refusals.length > 0) {
+        report.sessionNames = await carrySessionNames({
+            destination,
+            sources: usableSources,
+            nativeIds,
+            apply: false,
+        });
+
         return report;
     }
 
@@ -757,6 +881,12 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
     }
 
     report.applied = true;
+    report.sessionNames = await carrySessionNames({
+        destination,
+        sources: usableSources,
+        nativeIds,
+        apply: true,
+    });
 
     if (options.desktop) {
         const state = await readDesktopState(destinationState);
