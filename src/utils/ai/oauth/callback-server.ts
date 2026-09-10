@@ -57,6 +57,13 @@ export interface CallbackListenerOptions {
     /** Overrides the redirect URI's port. Tests pass 0 to take an ephemeral one. */
     port?: number;
     timeoutMs?: number;
+    /** Shown on the success/error HTML. Callers that own the page (mcp-manager) pass this. */
+    brand?: CallbackBrand;
+}
+
+export interface CallbackBrand {
+    app: string;
+    product: string;
 }
 
 export type StartCallbackListener = (options: CallbackListenerOptions) => Promise<CallbackListener | null>;
@@ -66,21 +73,41 @@ export type StartCallbackListener = (options: CallbackListenerOptions) => Promis
  * reaches the page, so an authorization code or a provider-supplied error string
  * can never be reflected into the browser and there is nothing to escape.
  */
-function page(title: string, detail: string): string {
+function markSvg(): string {
+    // Same family as GenesisTools AppIcon: dark rounded square, amber ring, sparkles.
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72" aria-hidden="true">
+<defs>
+  <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffbd33"/>
+    <stop offset="1" stop-color="#ff751a"/>
+  </linearGradient>
+</defs>
+<rect x="6" y="6" width="60" height="60" rx="16" fill="#0f1219" stroke="rgba(255,255,255,0.08)"/>
+<circle cx="36" cy="36" r="22" fill="none" stroke="url(#ring)" stroke-width="3"/>
+<g fill="#ffc44a">
+  <path d="M36 18l2.2 8.4L46 28.6l-7.8 4.2L36 42l-2.2-9.2L26 28.6l7.8-2.2z"/>
+  <path d="M50 34l1.1 4.1L55 39.3l-3.9 2.1L50 46l-1.1-4.6L45 39.3l3.9-1.2z" opacity="0.85"/>
+  <path d="M22 30l0.9 3.2L26 34.1l-3.1 1.6L22 39l-0.9-3.3L18 34.1l3.1-0.9z" opacity="0.75"/>
+</g>
+</svg>`;
+}
+
+function page(title: string, detail: string, brand?: CallbackBrand): string {
+    const header = brand ? `<div class="mark">${markSvg()}</div><p class="app">${brand.app}</p>` : "";
+    const footer = brand ? `<footer>${brand.app} · ${brand.product}</footer>` : "";
+
     return `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>${title}</title><style>
 body{font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b0d10;color:#e6e9ef;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 main{max-width:26rem;text-align:center;padding:0 1.5rem}
+.mark{margin:0 auto 1rem}.app{margin:0 0 1.25rem;color:#ffc44a;font-size:.8rem;letter-spacing:.12em;text-transform:uppercase}
 h1{font-size:1.25rem;margin:0 0 .5rem;font-weight:600}p{margin:0;color:#9aa4b2}
+footer{margin-top:2rem;color:#6b7380;font-size:.75rem}
 </style></head>
-<body><main><h1>${title}</h1><p>${detail}</p></main></body>
+<body><main>${header}<h1>${title}</h1><p>${detail}</p>${footer}</main></body>
 </html>`;
-}
-
-function respond(status: number, title: string, detail: string): Response {
-    return new Response(page(title, detail), { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
 /**
@@ -146,6 +173,13 @@ export async function startCallbackListener(options: CallbackListenerOptions): P
         // The response has not been written yet; a microtask lets Bun flush it,
         // and `stop()` without force never cuts a request already in flight.
         queueMicrotask(() => void close());
+    }
+
+    function respond(status: number, title: string, detail: string): Response {
+        return new Response(page(title, detail, options.brand), {
+            status,
+            headers: { "content-type": "text/html; charset=utf-8" },
+        });
     }
 
     function handle(request: Request): Response {

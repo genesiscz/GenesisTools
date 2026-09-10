@@ -101,11 +101,11 @@ async function exchangeCode(opts: {
 export async function loginMcpServer(options: LoginOptions): Promise<LoginResult> {
     const auth = serverAuth(options.config);
 
-    if (!auth || auth.kind === "none") {
-        throw new Error(`${options.server} has no OAuth auth.kind`);
+    if (auth?.kind === "none") {
+        throw new Error(`${options.server} has auth.kind none. OAuth login does not apply.`);
     }
 
-    if (auth.kind === "bearer") {
+    if (auth?.kind === "bearer") {
         throw new Error(`${options.server} is bearer auth. Paste a token with a later --token path, not OAuth login.`);
     }
 
@@ -129,7 +129,9 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
     const listener = await startCallbackListener({
         redirectUri: "http://127.0.0.1:0/callback",
         port: 0,
+        timeoutMs: 10 * 60 * 1000,
         verifyState: (state) => (state === pkce.state ? undefined : "state mismatch"),
+        brand: { app: "GenesisTools", product: "mcp-manager" },
     });
 
     if (!listener) {
@@ -207,7 +209,15 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             authorize.searchParams.set("scope", discovered.prm.scopes_supported.join(" "));
         }
 
-        await presentAuthorizationUrl({ authUrl: authorize.toString(), provider: options.server });
+        await presentAuthorizationUrl({
+            authUrl: authorize.toString(),
+            provider: options.server,
+            callbackHandled: true,
+            interaction: {
+                chooseUrlAction: async () => "open",
+                readCode: async () => null,
+            },
+        });
         const callback = await listener.callback;
 
         if (!callback || "error" in callback) {
