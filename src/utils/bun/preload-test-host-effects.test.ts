@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Browser } from "@genesiscz/utils/browser";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard";
+import { fullDiskAccessSubject, requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import { escapeJxa, runJxa } from "@genesiscz/utils/macos/jxa";
 import { NotificationBackend, sendNotification } from "@genesiscz/utils/macos/notifications";
+import { settings } from "@genesiscz/utils/macos/system-settings";
 import {
     dispatchNotification,
     dispatchSay,
@@ -11,6 +13,13 @@ import {
     dispatchWebhook,
     notificationsConfig,
 } from "@genesiscz/utils/notifications";
+import {
+    buildEmptyScript,
+    buildMoveScript,
+    emptyTrash,
+    stageAndConfirm,
+    stageItems,
+} from "@genesiscz/utils/prompts/clack/trash-staging";
 import { skip } from "@genesiscz/utils/test/skip";
 
 /**
@@ -30,17 +39,22 @@ import { skip } from "@genesiscz/utils/test/skip";
  */
 describe("host-effect preload", () => {
     describe("browser", () => {
-        test("Browser.open throws instead of opening a tab", () => {
-            expect(() => Browser.open("https://example.com")).toThrow(/Browser\.open is blocked under bun test/);
+        // `.rejects`, not `.toThrow`: the real `Browser.open` is async, and a
+        // guard that threw synchronously would change the shape of every
+        // fire-and-forget call site it stands in for.
+        test("Browser.open rejects instead of opening a tab", async () => {
+            await expect(Browser.open("https://example.com")).rejects.toThrow(
+                /Browser\.open is blocked under bun test/
+            );
         });
 
-        test("Browser.openAll throws instead of opening tabs", () => {
-            expect(() => Browser.openAll(["https://example.com"])).toThrow(/Browser\.openAll is blocked/);
+        test("Browser.openAll rejects instead of opening tabs", async () => {
+            await expect(Browser.openAll(["https://example.com"])).rejects.toThrow(/Browser\.openAll is blocked/);
         });
 
-        test("the message names the surface, the remedy and the opt-out", () => {
-            expect(() => Browser.open("https://example.com")).toThrow(/Inject the opener/);
-            expect(() => Browser.open("https://example.com")).toThrow(/RUN_HOST_EFFECTS=1/);
+        test("the message names the surface, the remedy and the opt-out", async () => {
+            await expect(Browser.open("https://example.com")).rejects.toThrow(/Inject the opener/);
+            await expect(Browser.open("https://example.com")).rejects.toThrow(/RUN_HOST_EFFECTS=1/);
         });
 
         test("NEGATIVE CONTROL: the rest of the browser module survives", () => {
@@ -82,33 +96,89 @@ describe("host-effect preload", () => {
             expect(escapeJxa('a "quoted" value')).toContain('\\"');
         });
 
-        test("sendNotification throws instead of raising a banner", () => {
-            expect(() => sendNotification({ message: "hi" })).toThrow(/sendNotification is blocked/);
+        test("sendNotification rejects instead of raising a banner", async () => {
+            await expect(sendNotification({ message: "hi" })).rejects.toThrow(/sendNotification is blocked/);
         });
 
         test("NEGATIVE CONTROL: the notification backends are still exported", () => {
             expect(String(NotificationBackend.Osascript)).toBe("osascript");
+        });
+
+        test("every System Settings pane throws instead of raising a window", () => {
+            for (const pane of Object.keys(settings)) {
+                const open = Reflect.get(settings, pane);
+                expect(open).toBeInstanceOf(Function);
+                expect(() => (open as () => void)()).toThrow(/MacOS\.settings\..+ is blocked/);
+            }
+        });
+
+        test("requestFullDiskAccess throws instead of hanging on a modal dialog", () => {
+            expect(() => requestFullDiskAccess({ reason: "read a fixture" })).toThrow(
+                /requestFullDiskAccess is blocked/
+            );
+        });
+
+        test("NEGATIVE CONTROL: the full-disk-access message builders still work", () => {
+            expect(fullDiskAccessSubject()).toBeTruthy();
+        });
+    });
+
+    describe("the Trash", () => {
+        test("emptyTrash rejects instead of emptying the user's Trash", async () => {
+            await expect(emptyTrash()).rejects.toThrow(/emptyTrash is blocked/);
+        });
+
+        test("stageItems rejects instead of moving real files", async () => {
+            await expect(stageItems([{ id: "one", path: "/tmp/nope", bytes: 1 }])).rejects.toThrow(
+                /stageItems is blocked/
+            );
+        });
+
+        test("stageAndConfirm rejects instead of moving and prompting", async () => {
+            await expect(stageAndConfirm({ items: [{ id: "one", path: "/tmp/nope", bytes: 1 }] })).rejects.toThrow(
+                /stageAndConfirm is blocked/
+            );
+        });
+
+        test("NEGATIVE CONTROL: the pure script builders are untouched", () => {
+            expect(buildEmptyScript()).toBe('tell application "Finder" to empty trash');
+            expect(buildMoveScript("/tmp/x.dmg")).toContain("/tmp/x.dmg");
         });
     });
 
     describe("notification channels", () => {
         const event = { app: "test", message: "hi" };
 
-        test("dispatchNotification throws instead of delivering", () => {
-            expect(() => dispatchNotification(event)).toThrow(/dispatchNotification is blocked/);
+        test("dispatchNotification rejects instead of delivering", async () => {
+            await expect(dispatchNotification(event)).rejects.toThrow(/dispatchNotification is blocked/);
         });
 
-        test("dispatchSay throws instead of speaking", () => {
-            expect(() => dispatchSay("hi", { enabled: true })).toThrow(/dispatchSay is blocked/);
+        test("dispatchSay rejects instead of speaking", async () => {
+            await expect(dispatchSay("hi", { enabled: true })).rejects.toThrow(/dispatchSay is blocked/);
         });
 
-        test("dispatchTelegram throws instead of posting to a real chat", () => {
-            expect(() => dispatchTelegram(event, { enabled: true })).toThrow(/dispatchTelegram is blocked/);
+        test("dispatchTelegram rejects instead of posting to a real chat", async () => {
+            await expect(dispatchTelegram(event, { enabled: true })).rejects.toThrow(/dispatchTelegram is blocked/);
         });
 
-        test("dispatchWebhook throws instead of posting to a real endpoint", () => {
-            expect(() => dispatchWebhook(event, { enabled: true, url: "https://a.dev/h" })).toThrow(
+        test("dispatchWebhook rejects instead of posting to a real endpoint", async () => {
+            await expect(dispatchWebhook(event, { enabled: true, url: "https://a.dev/h" })).rejects.toThrow(
                 /dispatchWebhook is blocked/
+            );
+        });
+
+        test("NEGATIVE CONTROL: both loopback spellings pass through to the real dispatcher", async () => {
+            // Nothing listens on port 9 of an assigned loopback address, so the
+            // real dispatcher answers false immediately. That it answered at
+            // all is the point: it was not refused, and no packet left the
+            // machine either way. `127.0.0.1` goes through the 127.0.0.0/8
+            // pattern and `localhost` through the name branch, so one test
+            // covers both halves of the check.
+            await expect(dispatchWebhook(event, { enabled: true, url: "http://127.0.0.1:9/hook" })).resolves.toBe(
+                false
+            );
+            await expect(dispatchWebhook(event, { enabled: true, url: "http://localhost:9/hook" })).resolves.toBe(
+                false
             );
         });
 
@@ -136,8 +206,8 @@ describe("host-effect preload", () => {
             await expect(dispatchWebhook(event, { enabled: false, url: "https://a.dev/h" })).resolves.toBe(true);
         });
 
-        test("dispatchSystem throws instead of raising a real notification", () => {
-            expect(() => dispatchSystem(event, { enabled: true })).toThrow(/dispatchSystem is blocked/);
+        test("dispatchSystem rejects instead of raising a real notification", async () => {
+            await expect(dispatchSystem(event, { enabled: true })).rejects.toThrow(/dispatchSystem is blocked/);
         });
 
         test("NEGATIVE CONTROL: the notifications config is still exported", () => {

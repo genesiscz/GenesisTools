@@ -1,9 +1,12 @@
 import { mock } from "bun:test";
 import { Browser } from "@genesiscz/utils/browser";
+import * as fullDiskAccess from "@genesiscz/utils/macos/full-disk-access";
 import * as jxa from "@genesiscz/utils/macos/jxa";
 import * as macosNotifications from "@genesiscz/utils/macos/notifications";
+import { settings as macosSettings } from "@genesiscz/utils/macos/system-settings";
 import type { NotificationEvent, WebhookChannelConfig } from "@genesiscz/utils/notifications";
 import * as notifications from "@genesiscz/utils/notifications";
+import * as trashStaging from "@genesiscz/utils/prompts/clack/trash-staging";
 
 /**
  * Put the user's own machine out of reach of `bun test`.
@@ -60,6 +63,18 @@ function blocked(surface: string, remedy: string): (...args: never[]) => never {
 }
 
 /**
+ * The async half of the same guard, and not interchangeable with it.
+ * `dispatchNotification` is called without `await` in `src/claude/lib/usage/watch.ts`
+ * and `src/telegram/lib/actions/notify.ts`, so a synchronous throw would escape
+ * into a caller that never expects one and fail somewhere unrelated to the
+ * mistake. A rejected promise keeps the guarded function's real shape; the side
+ * effect is prevented either way, which is the guarantee that matters.
+ */
+function blockedAsync(surface: string, remedy: string): (...args: never[]) => Promise<never> {
+    return () => Promise.reject(refusal(surface, remedy));
+}
+
+/**
  * A webhook aimed at a server the test itself started is not a host effect, so
  * that one keeps working. Everything else leaves the machine, including the
  * plausible-looking placeholder domains already sitting in fixtures, which
@@ -72,7 +87,10 @@ function isLoopbackUrl(url: string | undefined): boolean {
 
     try {
         const { hostname } = new URL(url);
-        return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+        // `new URL("http://[::1]:3000").hostname` keeps the brackets, so the
+        // bare "::1" form never appears here. The whole 127.0.0.0/8 range is
+        // loopback, not just .1, and a test is free to bind anywhere in it.
+        return hostname === "localhost" || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
     } catch {
         // An unparseable URL reaches no server, so the real dispatcher's own
         // error path is the honest thing to let it hit.
@@ -90,13 +108,18 @@ function installHostEffectGuards(): void {
     const realJxa = { ...jxa };
     const realMacosNotifications = { ...macosNotifications };
     const realNotifications = { ...notifications };
+    const realFullDiskAccess = { ...fullDiskAccess };
+    const realTrashStaging = { ...trashStaging };
 
     // A class static is a writable property on one shared object, so assigning
     // it reaches every importer. `mock.module` would have to re-export the rest
     // of the module by hand, and `getPreferred`/`setPreferred` are legitimately
     // under test in browser.preferred.test.ts.
-    Browser.open = blocked("Browser.open", "Inject the opener and assert the URL that would have been opened.");
-    Browser.openAll = blocked("Browser.openAll", "Inject the opener and assert the URLs that would have been opened.");
+    Browser.open = blockedAsync("Browser.open", "Inject the opener and assert the URL that would have been opened.");
+    Browser.openAll = blockedAsync(
+        "Browser.openAll",
+        "Inject the opener and assert the URLs that would have been opened."
+    );
 
     // The clipboard is the one surface here with a meaningful in-memory
     // equivalent: it holds a string and gives it back. Faking it rather than
@@ -129,7 +152,42 @@ function installHostEffectGuards(): void {
 
     mock.module("@genesiscz/utils/macos/notifications", () => ({
         ...realMacosNotifications,
-        sendNotification: blocked("sendNotification", "Assert the notification payload instead of delivering it."),
+        sendNotification: blockedAsync("sendNotification", "Assert the notification payload instead of delivering it."),
+    }));
+
+    // A plain object, so the same assignment trick as the Browser class works
+    // and reaches `MacOS.settings` too, which is the same object. Every member
+    // shells out to `open x-apple.systempreferences:…` and raises a window over
+    // whatever the user is doing.
+    for (const pane of Object.keys(macosSettings)) {
+        Reflect.set(macosSettings, pane, blocked(`MacOS.settings.${pane}`, "Assert that the pane would be opened."));
+    }
+
+    mock.module("@genesiscz/utils/macos/full-disk-access", () => ({
+        ...realFullDiskAccess,
+        // Shows a MODAL `display dialog` through osascript and waits for a
+        // click. Under `bun test` there is nobody to click it, so a test that
+        // reaches this does not fail — it hangs until the timeout, and takes a
+        // window over the user's screen with it.
+        requestFullDiskAccess: blocked(
+            "requestFullDiskAccess",
+            "Assert the decision instead of raising a modal dialog nobody is there to answer."
+        ),
+    }));
+
+    // The most destructive surface in the repo that a test can reach: these
+    // shell out to `tell application "Finder" to move …` and, worse,
+    // `empty trash`. Emptying the user's Trash cannot be undone by anything in
+    // this process. The two script BUILDERS stay real — they are pure string
+    // functions with their own tests, and faking them would only hide bugs.
+    mock.module("@genesiscz/utils/prompts/clack/trash-staging", () => ({
+        ...realTrashStaging,
+        stageItems: blockedAsync("stageItems", "Assert the paths instead of moving real files to the Trash."),
+        emptyTrash: blockedAsync(
+            "emptyTrash",
+            "Never empty the user's Trash from a test; assert the decision instead."
+        ),
+        stageAndConfirm: blockedAsync("stageAndConfirm", "Assert the staged items instead of moving and prompting."),
     }));
 
     // The barrel, not `./dispatch`, because every consumer in the repo imports
@@ -138,16 +196,16 @@ function installHostEffectGuards(): void {
     // that calls them, so importing one directly is guarded too.
     mock.module("@genesiscz/utils/notifications", () => ({
         ...realNotifications,
-        dispatchNotification: blocked(
+        dispatchNotification: blockedAsync(
             "dispatchNotification",
             "Assert the event instead of delivering it to Telegram, a webhook or the system."
         ),
-        dispatchSay: blocked("dispatchSay", "Assert the message instead of speaking it out loud."),
+        dispatchSay: blockedAsync("dispatchSay", "Assert the message instead of speaking it out loud."),
         // The highest-stakes pair of the set. A stray browser tab can be closed
         // and a stray clipboard write can be replaced; a message delivered to a
         // real chat or a real endpoint cannot be taken back.
-        dispatchTelegram: blocked("dispatchTelegram", "Assert the event instead of posting it to a real chat."),
-        dispatchSystem: blocked("dispatchSystem", "Assert the event instead of raising a real notification."),
+        dispatchTelegram: blockedAsync("dispatchTelegram", "Assert the event instead of posting it to a real chat."),
+        dispatchSystem: blockedAsync("dispatchSystem", "Assert the event instead of raising a real notification."),
         // The one exception in the file, and it earns it: src/monitor spins up
         // its own `Bun.serve` on 127.0.0.1 and asserts a real redelivery
         // against it. A loopback POST reaches nobody, so blocking it would
@@ -162,9 +220,11 @@ function installHostEffectGuards(): void {
                 return realNotifications.dispatchWebhook(event, config);
             }
 
-            throw refusal(
-                "dispatchWebhook",
-                "Point it at a loopback server the test starts, or assert the event instead of posting it."
+            return Promise.reject(
+                refusal(
+                    "dispatchWebhook",
+                    "Point it at a loopback server the test starts, or assert the event instead of posting it."
+                )
             );
         },
     }));
