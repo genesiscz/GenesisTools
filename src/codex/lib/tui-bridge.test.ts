@@ -48,8 +48,13 @@ function wire() {
     };
     const messages: Array<Record<string, unknown>> = [];
     const client = new AppServerClient(child);
-    const bridge = new CodexTuiBridge({ client, send: (message) => messages.push(message) });
-    return { client, bridge, messages, requests, push, killCount: () => killed };
+    const failures: Array<{ method: string; error: Error }> = [];
+    const bridge = new CodexTuiBridge({
+        client,
+        send: (message) => messages.push(message),
+        onRequestFailed: (failure) => failures.push(failure),
+    });
+    return { client, bridge, messages, requests, push, failures, killCount: () => killed };
 }
 
 test("closing the client signals the app-server and waits for it to go away", async () => {
@@ -213,16 +218,16 @@ test("an identity override wrapped in a list is still refused", async () => {
 test("relay diagnostics retain the native RPC failure", async () => {
     // Regression test: PR #370 review thread 14 — request failures were logged without their cause.
     const w = wire();
+    // A console warn here lands inside the native TUI's screen. The failure goes to the file log
+    // and to the launcher, which reports it after the TUI exits.
     const warning = spyOn(logger, "warn").mockImplementation(() => undefined);
     try {
         w.bridge.ready({ userAgent: "fixture" });
         await w.client.close();
         await w.bridge.receive({ id: 5, method: "thread/list", params: {} });
 
-        expect(warning).toHaveBeenCalledWith(
-            expect.objectContaining({ method: "thread/list", error: expect.any(Error) }),
-            "Codex terminal request failed"
-        );
+        expect(warning).not.toHaveBeenCalled();
+        expect(w.failures).toEqual([{ method: "thread/list", error: expect.any(Error) }]);
         expect(w.messages[0]).toMatchObject({ id: 5, error: { code: -32000 } });
     } finally {
         warning.mockRestore();

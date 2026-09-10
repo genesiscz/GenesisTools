@@ -10,10 +10,12 @@ import { resolveCodexBinary } from "@genesiscz/utils/ai/openai/codex-binary";
 import { resolveNativeCodexModel } from "@genesiscz/utils/ai/openai/resolve-native-model";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
+import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
 import { CodexAccountBinding } from "./account";
+import { formatActiveWriter, inspectActiveWriter, isActiveWriterError } from "./active-writer";
 import { type AppServerProcess, spawnAppServer } from "./app-server-client";
 import { computerUseLaunchOverrides } from "./computer-use";
 import { ACCOUNT_ENV_UNSET, buildAccountLaunchOptions, validateTuiArgs } from "./launch-options";
@@ -55,6 +57,7 @@ export async function runAccountTerminal(input: {
     const cwd = resolve(options.cwd ?? process.cwd());
     const model = options.model ? await resolveNativeCodexModel(account.accountId, options.model) : undefined;
     let resumedId: string | undefined;
+    let resumedPath: string | undefined;
     let copySession: AgentSession | undefined;
     let unarchiveId: string | undefined;
     registerBuiltInPlugins();
@@ -95,6 +98,7 @@ export async function runAccountTerminal(input: {
             unarchiveId = session.sessionId;
         }
         resumedId = session.sessionId;
+        resumedPath = session.filePath;
     }
     let nativeArgs = buildNativeRunArgs({ args, options: { ...options, model }, sessionId: resumedId });
     await account.tokens();
@@ -171,10 +175,25 @@ export async function runAccountTerminal(input: {
         process.off("SIGINT", interrupt);
         tui?.kill("SIGTERM");
         if (shutdown) {
-            await shutdown.close();
+            // A shutdown that hangs leaves the app-server alive holding the thread's writer lock,
+            // and the next `--resume` of that thread is refused for as long as this process lives.
+            await withTimeout(shutdown.close(), 5000, new Error("Codex terminal shutdown")).catch((err) => {
+                logger.warn({ err, pid: child?.pid }, "Codex terminal shutdown timed out; killing the app-server");
+                child?.kill("SIGKILL");
+            });
         } else {
             child?.kill("SIGTERM");
         }
+        const refused = server?.failures.find((failure) => isActiveWriterError(failure.error));
+
+        if (refused && resumedId) {
+            const report = inspectActiveWriter({ home, threadId: resumedId, rolloutPath: resumedPath });
+
+            for (const line of formatActiveWriter(report, `tools codex run ${account.name}`)) {
+                out.println(line);
+            }
+        }
+
         if (server?.threadId) {
             out.println(
                 `Resume with this account: ${resumeCommandLine("codex", server.threadId, {

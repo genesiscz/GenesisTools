@@ -87,6 +87,8 @@ export async function openTerminalServer(options: {
         removeAbortListener?.();
     }
 
+    /** Requests the TUI made that the app-server refused; reported after the TUI releases the screen. */
+    const failures: Array<{ method: string; error: Error }> = [];
     let setupDir: string | undefined;
     let setupServer: ReturnType<typeof createServer> | undefined;
     let setupSockets: WebSocketServer | undefined;
@@ -104,6 +106,7 @@ export async function openTerminalServer(options: {
             send: (message) => {
                 socket?.send(SafeJSON.stringify(message, { strict: true }));
             },
+            onRequestFailed: (failure) => failures.push(failure),
         });
         bridge.ready(initialized);
         const activeBridge = bridge;
@@ -203,6 +206,7 @@ export async function openTerminalServer(options: {
             socketPath,
             address: `unix://${socketPath}`,
             client,
+            failures,
             get threadId() {
                 return threadId;
             },

@@ -112,7 +112,14 @@ export class AppServerClient {
         this.rejectPending(new Error("Codex app-server client closed"));
 
         try {
-            await this.process.stdin.end();
+            // A sink whose reader is wedged never settles, and `close()` then never reaches the
+            // kill below: the app-server outlives its launcher still holding that thread's writer
+            // lock, so every later resume of it fails with "already has an active writer".
+            await withTimeout(
+                Promise.resolve(this.process.stdin.end()),
+                1000,
+                new Error("codex app-server stdin close")
+            );
         } catch (err) {
             log.debug({ err }, "closing app-server stdin failed");
         }

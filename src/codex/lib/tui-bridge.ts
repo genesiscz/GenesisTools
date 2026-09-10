@@ -45,6 +45,8 @@ export class CodexTuiBridge {
         private readonly options: {
             client: AppServerClient;
             send: (message: Record<string, unknown>) => void;
+            /** A request the app-server refused. Reported by the launcher, not printed over the TUI. */
+            onRequestFailed?: (failure: { method: string; error: Error }) => void;
         }
     ) {}
 
@@ -144,7 +146,13 @@ export class CodexTuiBridge {
                 method === "initialize" ? this.initialized : await this.options.client.request(method, params);
             this.options.send({ id, result });
         } catch (error) {
-            logger.warn({ method, error }, "Codex terminal request failed");
+            // The native TUI owns the screen here, so a console warn lands in the middle of it and
+            // shreds the layout. The file log keeps it; the launcher reports it once the TUI exits.
+            logger.debug({ method, error }, "Codex terminal request failed");
+            this.options.onRequestFailed?.({
+                method,
+                error: error instanceof Error ? error : new Error(String(error)),
+            });
             this.options.send({ id, error: { code: -32000, message: `Codex request failed: ${method}` } });
         }
     }
