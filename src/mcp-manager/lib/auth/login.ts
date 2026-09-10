@@ -8,9 +8,19 @@ import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
 import { discoverMcp } from "./discovery.ts";
 import { mcpFetch, readJsonRecord } from "./fetch.ts";
 import { clientNameFor, policyFor, serverAuth } from "./policy.ts";
-import { oauthClientPresetFor, suggestedLoginCommand } from "./presets.ts";
+import { type DcrFailureView, describeDcrFailure } from "./presets.ts";
 import { writeServerTokens } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
+
+export class DynamicClientRegistrationError extends Error {
+    readonly view: DcrFailureView;
+
+    constructor(view: DcrFailureView) {
+        super([view.title, ...view.detail, view.issue, ...view.retry].filter(Boolean).join("\n"));
+        this.name = "DynamicClientRegistrationError";
+        this.view = view;
+    }
+}
 
 export interface LoginOptions {
     server: string;
@@ -69,23 +79,15 @@ async function registerClient(
         }
     }
 
-    throw new Error(
-        `Dynamic client registration failed (HTTP ${lastStatus}): ${lastBody}${dcrRefusalHint(hint.server, hint.mcpUrl, lastStatus)}`
+    throw new DynamicClientRegistrationError(
+        describeDcrFailure({
+            server: hint.server,
+            mcpUrl: hint.mcpUrl,
+            status: lastStatus,
+            body: lastBody,
+            clientName,
+        })
     );
-}
-
-function dcrRefusalHint(server: string, mcpUrl: string, status: number): string {
-    if (status !== 403) {
-        return "";
-    }
-
-    const preset = oauthClientPresetFor(mcpUrl);
-
-    if (preset) {
-        return ` ${preset.issue} ${suggestedLoginCommand(server, preset.clientNames[0]?.value ?? "Claude Code")}`;
-    }
-
-    return ' This authorization server refused dynamic client registration. Try --client-name "Claude Code".';
 }
 
 async function exchangeCode(opts: {
