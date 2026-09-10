@@ -48,6 +48,17 @@ export function orderWindows(limits: readonly LimitWindow[], prominent?: string[
  * The default per-account block: a title line and one bar per limit window. A provider
  * that wants more (the anthropic Overview) supplies `presenters.AccountSection` instead.
  */
+/**
+ * The title line as plain strings: the account NAME, the provider, then the plan once.
+ * Codex and grok store the plan as the account label too, so a title of
+ * `label ?? accountName` drew "pro  openai-sub  pro" and hid which account the block
+ * was (2026-09-10); the anthropic presenter always led with the name.
+ */
+export function accountHeaderParts(snapshot: AccountUsageSnapshot): string[] {
+    const plan = snapshot.plan?.name ?? snapshot.label;
+    return plan ? [snapshot.accountName, snapshot.provider, plan] : [snapshot.accountName, snapshot.provider];
+}
+
 export function GenericAccountSection({
     snapshot,
     width = 60,
@@ -56,6 +67,7 @@ export function GenericAccountSection({
     now = Date.now(),
 }: GenericAccountSectionProps) {
     const windows = orderWindows(snapshot.limits, prominent);
+    const header = accountHeaderParts(snapshot);
     const barWidth = Math.max(10, Math.min(30, width - LABEL_WIDTH - 12));
     // While the gate holds the account back nothing was requested this round, so the raw
     // error alone would read as a failure happening right now.
@@ -66,10 +78,9 @@ export function GenericAccountSection({
         <Box flexDirection="column" marginBottom={1}>
             <Box>
                 <Text bold color="cyan">
-                    {snapshot.label ?? snapshot.accountName}
+                    {header[0]}
                 </Text>
-                <Text dimColor>{`  ${snapshot.provider}`}</Text>
-                {snapshot.plan?.name ? <Text dimColor>{`  ${snapshot.plan.name}`}</Text> : null}
+                <Text dimColor>{`  ${header.slice(1).join("  ")}`}</Text>
                 {snapshot.stale ? (
                     <Text color="yellow">{`  ! stale ${formatRelativeTime(new Date(snapshot.stale.lastSuccessAt))}`}</Text>
                 ) : null}
