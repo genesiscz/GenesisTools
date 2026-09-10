@@ -34,6 +34,13 @@ function record(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Where a relayed message goes. A response belongs to the peer that asked for it; a server-initiated
+ * request goes to the primary TUI, because two peers answering one request is a protocol error; a
+ * notification goes to every peer, so a second window is not left blind.
+ */
+export type PeerTarget = { kind: "peer"; peer: unknown } | { kind: "primary" } | { kind: "broadcast" };
+
 /** Adapt the native TUI's connection to the already initialized, account-bound client. */
 export class CodexTuiBridge {
     private initialized?: Record<string, unknown>;
@@ -44,7 +51,7 @@ export class CodexTuiBridge {
     constructor(
         private readonly options: {
             client: AppServerClient;
-            send: (message: Record<string, unknown>) => void;
+            send: (message: Record<string, unknown>, target: PeerTarget) => void;
             /** A request the app-server refused. Reported by the launcher, not printed over the TUI. */
             onRequestFailed?: (failure: { method: string; error: Error }) => void;
         }
@@ -65,7 +72,7 @@ export class CodexTuiBridge {
 
     notification(notification: RpcNotification): void {
         if (this.connected && this.initialized) {
-            this.options.send({ method: notification.method, params: notification.params });
+            this.options.send({ method: notification.method, params: notification.params }, { kind: "broadcast" });
         }
     }
 
@@ -77,7 +84,7 @@ export class CodexTuiBridge {
         const id = `gt-server-${this.nextRequest++}`;
         return new Promise((resolve, reject) => {
             this.pending.set(id, { resolve, reject });
-            this.options.send({ id, method: request.method, params: request.params });
+            this.options.send({ id, method: request.method, params: request.params }, { kind: "primary" });
         });
     }
 
@@ -89,7 +96,7 @@ export class CodexTuiBridge {
         this.pending.clear();
     }
 
-    async receive(message: unknown): Promise<void> {
+    async receive(message: unknown, peer?: unknown): Promise<void> {
         if (!record(message)) {
             throw new Error("Invalid Codex client message");
         }
@@ -120,14 +127,17 @@ export class CodexTuiBridge {
             changesIdentity(params)
         ) {
             if (id !== undefined) {
-                this.options.send({
-                    id,
-                    error: {
-                        code: -32600,
-                        message:
-                            "This Codex server is bound to its selected account; login and configuration writes are unavailable",
+                this.options.send(
+                    {
+                        id,
+                        error: {
+                            code: -32600,
+                            message:
+                                "This Codex server is bound to its selected account; login and configuration writes are unavailable",
+                        },
                     },
-                });
+                    { kind: "peer", peer }
+                );
             }
 
             return;
@@ -144,7 +154,7 @@ export class CodexTuiBridge {
         try {
             const result =
                 method === "initialize" ? this.initialized : await this.options.client.request(method, params);
-            this.options.send({ id, result });
+            this.options.send({ id, result }, { kind: "peer", peer });
         } catch (error) {
             // The native TUI owns the screen here, so a console warn lands in the middle of it and
             // shreds the layout. The file log keeps it; the launcher reports it once the TUI exits.
@@ -153,7 +163,13 @@ export class CodexTuiBridge {
                 method,
                 error: error instanceof Error ? error : new Error(String(error)),
             });
-            this.options.send({ id, error: { code: -32000, message: `Codex request failed: ${method}` } });
+            this.options.send(
+                { id, error: { code: -32000, message: `Codex request failed: ${method}` } },
+                {
+                    kind: "peer",
+                    peer,
+                }
+            );
         }
     }
 }

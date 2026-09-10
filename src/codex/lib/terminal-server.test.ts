@@ -100,8 +100,10 @@ test.each(modes)(
             const socket = new WebSocket(`ws+unix://${server.socketPath}:/`);
             expect(readFileSync(join(shared, "auth.json"), "utf8")).toBe(desktopAuth);
             const messages: Array<Record<string, unknown>> = [];
+            const firstPeerIds: unknown[] = [];
             socket.onmessage = (event) => {
                 const message: Record<string, unknown> = SafeJSON.parse(String(event.data), { strict: true });
+                firstPeerIds.push(message.id);
                 // Account/plugin notifications may interleave with the two RPC responses.
                 if (message.id === 1 || message.id === 2) {
                     messages.push(message);
@@ -125,6 +127,43 @@ test.each(modes)(
                 id: 2,
                 result: { account: { type: "chatgpt", email: "selected@example.test" } },
             });
+            // The native TUI opens a SECOND connection for its own session picker. A single-peer
+            // relay destroyed that upgrade and the TUI reported "failed to connect to remote app
+            // server"; the answer must also reach only the peer that asked.
+            const picker = new WebSocket(`ws+unix://${server.socketPath}:/`);
+            const pickerMessages: Array<Record<string, unknown>> = [];
+            picker.onmessage = (event) => {
+                const message: Record<string, unknown> = SafeJSON.parse(String(event.data), { strict: true });
+
+                if (message.id === 3) {
+                    pickerMessages.push(message);
+                }
+            };
+            const admitted = await new Promise<boolean>((resolve) => {
+                picker.onopen = () => resolve(true);
+                picker.onerror = () => resolve(false);
+            });
+
+            expect(admitted).toBe(true);
+            picker.send(SafeJSON.stringify({ id: 3, method: "initialize", params: {} }));
+            const pickerDeadline = Date.now() + 2000;
+            while (pickerMessages.length === 0 && Date.now() < pickerDeadline) {
+                await Bun.sleep(5);
+            }
+
+            expect(pickerMessages).toHaveLength(1);
+            expect(firstPeerIds).not.toContain(3);
+
+            // Closing the picker must not tear down the TUI that opened it.
+            picker.close();
+            await Bun.sleep(100);
+            socket.send(SafeJSON.stringify({ id: 4, method: "initialize", params: {} }));
+            const stillAlive = Date.now() + 2000;
+            while (!firstPeerIds.includes(4) && Date.now() < stillAlive) {
+                await Bun.sleep(5);
+            }
+
+            expect(firstPeerIds).toContain(4);
             socket.close();
 
             // Regression test: the admission latch was set once and never released, so after any

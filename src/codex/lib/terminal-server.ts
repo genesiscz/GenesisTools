@@ -4,7 +4,6 @@ import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Duplex } from "node:stream";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -27,13 +26,20 @@ export async function initializeAccountClient(
     return initialized;
 }
 
+/**
+ * A cap, not a design limit: the socket is 0600 inside a 0700 directory, so only this user can
+ * reach it, and this only stops a runaway from opening connections without bound.
+ */
+const MAX_PEERS = 8;
+
 export async function openTerminalServer(options: {
     account: TerminalAccount;
     child: AppServerProcess;
     signal?: AbortSignal;
     socketRoot?: string;
 }) {
-    let socket: WebSocket | undefined;
+    const peers = new Set<WebSocket>();
+    let primary: WebSocket | undefined;
     let bridge: CodexTuiBridge | undefined;
     let threadId: string | undefined;
     const client = new AppServerClient(options.child, {
@@ -110,18 +116,32 @@ export async function openTerminalServer(options: {
         const socketPath = join(dir, "tui.sock");
         bridge = new CodexTuiBridge({
             client,
-            send: (message) => {
-                socket?.send(SafeJSON.stringify(message, { strict: true }));
+            send: (message, target) => {
+                const frame = SafeJSON.stringify(message, { strict: true });
+
+                if (target.kind === "peer") {
+                    (target.peer as WebSocket | undefined)?.send(frame);
+                    return;
+                }
+
+                if (target.kind === "primary") {
+                    primary?.send(frame);
+                    return;
+                }
+
+                for (const peer of peers) {
+                    peer.send(frame);
+                }
             },
             onRequestFailed: (failure) => failures.push(failure),
         });
         bridge.ready(initialized);
         const activeBridge = bridge;
-        // One peer at a time, held for exactly as long as the admitted connection lives. A plain
-        // boolean latch was never released: after any websocket drop the next upgrade was
-        // destroyed and the native TUI could never re-attach, and a handshake that failed before
-        // `handleUpgrade` called back wedged the server with no connection at all.
-        let admitted: Duplex | undefined;
+        /**
+         * Several peers at once: the native TUI opens a SECOND connection for its own session
+         * picker, and a single-peer relay refused it with "failed to connect to remote app server".
+         * The first peer stays the primary, which is where a server-initiated request goes.
+         */
         const server = createServer((_request, response) => {
             response.writeHead(400).end();
         });
@@ -134,27 +154,23 @@ export async function openTerminalServer(options: {
         setupServer = server;
         setupSockets = sockets;
         server.on("upgrade", (request, connection, head) => {
-            if (admitted || request.headers.origin) {
-                // The native TUI opens a SECOND connection for some features (its own session
-                // picker among them), and this relay carries one peer, so that attempt is dropped
-                // and the TUI reports "failed to connect to remote app server" with no cause
-                // recorded anywhere. Name the reason so the next report is one grep, not a guess.
+            if (request.headers.origin || peers.size >= MAX_PEERS) {
                 logger.debug(
-                    { reason: admitted ? "another peer is already admitted" : "cross-origin upgrade", socketPath },
+                    {
+                        reason: request.headers.origin
+                            ? "cross-origin upgrade"
+                            : `already relaying ${peers.size} peers`,
+                        socketPath,
+                    },
                     "Refused a Codex terminal upgrade"
                 );
                 connection.destroy();
                 return;
             }
-
-            admitted = connection;
-            connection.once("close", () => {
-                if (admitted === connection) {
-                    admitted = undefined;
-                }
-            });
             sockets.handleUpgrade(request, connection, head, (ws) => {
-                socket = ws;
+                peers.add(ws);
+                primary ??= ws;
+                logger.debug({ peers: peers.size, primary: primary === ws }, "Admitted a Codex terminal peer");
                 // The bridge outlives each peer, and the previous peer's close disconnected it,
                 // so a replacement has to be re-attached or it is admitted into a dead relay.
                 activeBridge.connect();
@@ -172,7 +188,7 @@ export async function openTerminalServer(options: {
                         return;
                     }
 
-                    void activeBridge.receive(message).catch((error) => {
+                    void activeBridge.receive(message, ws).catch((error) => {
                         logger.debug({ error }, "Codex terminal relay rejected a message");
                         ws.close(1011, "Codex relay failed");
                     });
@@ -180,22 +196,25 @@ export async function openTerminalServer(options: {
                 // A superseded peer still emits `close` and `error`, and the raw connection's own
                 // close already released the latch, so an unguarded handler would tear down the
                 // relay belonging to the peer that replaced it.
-                ws.on("close", () => {
-                    if (socket !== ws) {
+                const forget = () => {
+                    if (!peers.delete(ws)) {
                         return;
                     }
 
-                    socket = undefined;
-                    activeBridge.disconnect();
-                });
+                    if (primary === ws) {
+                        primary = peers.values().next().value;
+                    }
+
+                    // Only the LAST peer leaving tears the relay down; a picker closing must not
+                    // disconnect the TUI that opened it.
+                    if (peers.size === 0) {
+                        activeBridge.disconnect();
+                    }
+                };
+                ws.on("close", forget);
                 ws.on("error", (error) => {
-                    logger.debug({ error }, "Codex terminal socket failed");
-
-                    if (socket !== ws) {
-                        return;
-                    }
-
-                    activeBridge.disconnect();
+                    logger.debug({ error, peers: peers.size }, "Codex terminal socket failed");
+                    forget();
                 });
             });
         });
@@ -236,7 +255,12 @@ export async function openTerminalServer(options: {
 
                 closed = true;
                 activeBridge.disconnect();
-                socket?.terminate();
+
+                for (const peer of peers) {
+                    peer.terminate();
+                }
+
+                peers.clear();
                 for (const connection of connections) {
                     connection.destroy();
                 }
@@ -270,7 +294,10 @@ export async function openTerminalServer(options: {
         // only place that knows which stage failed.
         logger.warn({ error, setupDir }, "Codex terminal setup failed");
         await client.close();
-        socket?.terminate();
+
+        for (const peer of peers) {
+            peer.terminate();
+        }
         setupSockets?.close();
         setupServer?.closeAllConnections();
         setupServer?.close();

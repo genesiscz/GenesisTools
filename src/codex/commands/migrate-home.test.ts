@@ -81,20 +81,19 @@ describe("runMigrateHome question order", () => {
 describe("the registered command", () => {
     test("runs, because commander's second argument never lands on the interaction", async () => {
         const root = mkdtempSync(join(tmpdir(), "codex-migrate-cli-register-"));
-        const destination = home(root, ".codex", false);
-        home(root, ".codex-alpha", true);
         const program = new Command();
         registerMigrateHomeCommand(program);
-        // The 20 s budget is deliberate: this is the one test that goes through the REAL `lsof`
-        // probe to prove the wiring, and `lsof` takes seconds when the suite runs in parallel.
+        const previous = process.exitCode;
 
         // A bare `.action(runMigrateHome)` handed the Command object to the injected interaction,
-        // and every invocation threw `interaction.interactive is not a function`.
+        // and every invocation threw `interaction.interactive is not a function` on the FIRST line
+        // of the command. A destination that does not exist is refused before the run inspects
+        // anything, so this proves the wiring and never reaches a probe or the filesystem walk.
         await expect(
-            program.parseAsync(["migrate-home", "--json", "--to", destination, "--from", join(root, ".codex-alpha")], {
-                from: "user",
-            })
+            program.parseAsync(["migrate-home", "--json", "--to", join(root, "absent-home")], { from: "user" })
         ).resolves.toBeDefined();
-        expect(process.exitCode ?? 0).toBe(0);
-    }, 20_000);
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = previous;
+    });
 });
