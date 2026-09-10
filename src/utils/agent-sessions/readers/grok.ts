@@ -3,7 +3,7 @@ import { basename, dirname } from "node:path";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "@genesiscz/utils/agent-sessions/metadata";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
-import { asRecord, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
+import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type {
@@ -616,7 +616,7 @@ export async function readGrokMetadata(
             storageTruncatedFields,
         },
         issues,
-        complete: issues.length === 0,
+        complete: !issues.some(blocksMetadata),
     };
 }
 

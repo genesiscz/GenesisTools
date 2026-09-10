@@ -18,6 +18,7 @@ type ReaderState = {
     issues: Array<{ path: string; message: string }>;
     title: string;
     sources: NativeSessionSource<string>[];
+    displaced?: string[];
 };
 
 function createFixture(): {
@@ -57,7 +58,12 @@ function createFixture(): {
         kind: "fixture",
         parserVersion: "fixture-v1",
         roots: () => [root],
-        discover: async () => ({ sources: state.sources, issues: state.issues, completeRoots: state.completeRoots }),
+        discover: async () => ({
+            sources: state.sources,
+            issues: state.issues,
+            completeRoots: state.completeRoots,
+            ...(state.displaced === undefined ? {} : { displaced: state.displaced }),
+        }),
         readMetadata: async (current): Promise<HistoryMetadataRead> => {
             reads++;
             return {
@@ -220,6 +226,24 @@ test("sync removes a missing source only after an unfiltered complete root scan"
 
         const removed = await sync(fixture);
         expect(removed.report).toMatchObject({ sessions: 0, sources: 0, removed: 1 });
+        expect(metadataTitle(fixture.repository)).toBeNull();
+    } finally {
+        fixture.db.close();
+    }
+});
+
+test("sync removes the row of a displaced copy even though its file still exists", async () => {
+    const fixture = createFixture();
+    try {
+        await sync(fixture);
+        expect(metadataTitle(fixture.repository)).toBe("First fixture title");
+
+        // The file stays on disk (a sidecar stub of a moved session); discovery dropped it for
+        // another copy, so the existence check alone would keep this row forever.
+        fixture.state.sources = [];
+        fixture.state.displaced = [fixture.filePath];
+        const removed = await sync(fixture);
+        expect(removed.report).toMatchObject({ sources: 0, removed: 1 });
         expect(metadataTitle(fixture.repository)).toBeNull();
     } finally {
         fixture.db.close();

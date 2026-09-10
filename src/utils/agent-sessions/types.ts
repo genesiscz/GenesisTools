@@ -245,7 +245,17 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
     discover(
         roots: string[],
         options?: HistoryDiscoveryOptions
-    ): Promise<{ sources: NativeSessionSource<Kind>[]; issues: NativeSourceIssue[]; completeRoots: string[] }>;
+    ): Promise<{
+        sources: NativeSessionSource<Kind>[];
+        issues: NativeSourceIssue[];
+        completeRoots: string[];
+        /**
+         * Files that exist on disk but were deliberately dropped in favour of another copy of the
+         * same session (Claude's per-project duplicates). The sync removes their index rows: a
+         * row nobody re-reads keeps its pre-index identity forever and counts as unresolved.
+         */
+        displaced?: string[];
+    }>;
     read(source: NativeSessionSource<Kind>, signal?: AbortSignal): Promise<NativeTranscript<Kind>>;
 }
 export interface NativeIndexStatus {

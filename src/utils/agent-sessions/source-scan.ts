@@ -38,6 +38,17 @@ export interface ScanJsonlOptions {
     onIssue?: (issue: NativeSourceIssue) => void;
 }
 
+/**
+ * Whether an issue means the file's metadata cannot be stored. Every issue does, except a
+ * malformed record in the MIDDLE of the file: that is permanent (Claude Code wrote bad JSON
+ * months ago), so a read that treated it as incomplete stored nothing, re-read the whole
+ * file on every search and re-warned about the same line forever (2 files, 5.4 MB, on the
+ * live index 2026-09-10). A partial final record is a file mid-write and still blocks.
+ */
+export function blocksMetadata(issue: { message: string }): boolean {
+    return !/^Malformed record at line \d+$/.test(issue.message);
+}
+
 function report(options: ScanJsonlOptions, message: string): void {
     options.onIssue?.({ path: options.path, message });
 }

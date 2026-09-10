@@ -407,6 +407,20 @@ export async function synchronizeHistory(options: {
                 });
             }
         }
+
+        // A copy discovery dropped in favour of another file of the same session still exists on
+        // disk, so the existence check above never reaches it, and a row nobody re-reads keeps the
+        // pre-index identity forever (7 "unresolved" rows on the live index were exactly these).
+        const displacedPaths = new Set(discovery.displaced ?? []);
+
+        if (displacedPaths.size > 0) {
+            for (const source of repository.sources(providerId)) {
+                if (displacedPaths.has(source.filePath) && !currentPaths.has(source.filePath)) {
+                    repository.remove(source);
+                    removed++;
+                }
+            }
+        }
     });
     repository.finish({ providerId, roots: completeRoots, generation, issues });
     return {

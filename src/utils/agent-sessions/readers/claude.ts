@@ -4,7 +4,7 @@ import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
-import { asRecord, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
+import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
@@ -576,7 +576,7 @@ export async function readClaudeMetadata(
             storageTruncatedFields,
         },
         issues,
-        complete: issues.length === 0,
+        complete: !issues.some(blocksMetadata),
     };
 }
 
