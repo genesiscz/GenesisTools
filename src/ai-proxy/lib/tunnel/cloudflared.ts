@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
+import { AI_PROXY_PUBLIC_SEGMENTS, normalizeBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { resolveCloudflaredConfigPath } from "@app/ai-proxy/lib/public-url";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { detectCloudflared, installCloudflared } from "@app/dev-dashboard/lib/tunnel/cloudflared";
@@ -24,12 +24,14 @@ export interface MergeIngressResult {
 /**
  * cloudflared matches `path:` as an UNANCHORED regex, so a bare `/ai` also captured
  * `/api/ai/usage` and sent the dev-dashboard's AI routes to the proxy, which 404s them
- * (seen 2026-09-10 once the dashboard grew `/api/ai/*`). Anchor it to the prefix
- * followed by a slash or the end of the path.
+ * (seen 2026-09-10 once the dashboard grew `/api/ai/*`). Anchoring to `^/ai(/|$)` was
+ * not enough either: the dashboard's own pages live at `/ai/accounts`, on the same
+ * hostname. The rule therefore names the proxy's real surface, `/ai/v1/...` and
+ * `/ai/health`, and everything else under `/ai` falls through to the dashboard.
  */
 export function ingressPathPattern(basePath: string): string {
     const escaped = basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return `^${escaped}(/|$)`;
+    return `^${escaped}/(${AI_PROXY_PUBLIC_SEGMENTS.join("|")})(/|$)`;
 }
 
 export function buildAiProxyIngressBlock(rule: AiProxyIngressRule): string {
