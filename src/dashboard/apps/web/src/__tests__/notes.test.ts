@@ -4,7 +4,7 @@
  * and cleaned up in afterAll.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, describe, expect, test } from "vitest";
 import { db, notes } from "@/drizzle";
 
@@ -168,7 +168,17 @@ describe("notes table", () => {
             ])
             .run();
 
-        const results = db.select().from(notes).where(eq(notes.userId, testUserId)).all();
+        // Scoped to the two rows this test just inserted, not `eq(notes.userId, testUserId)`:
+        // the whole file shares one testUserId, and an earlier test in this file ("pinned
+        // integer-bool round-trip") also inserts a pinned note under it. That note's
+        // updatedAt can tie this test's own pinned note to the millisecond, and a tied
+        // sort falls back to insertion order, so the assertion below picked the wrong id
+        // about once every few dozen runs.
+        const results = db
+            .select()
+            .from(notes)
+            .where(inArray(notes.id, [pinId, normId]))
+            .all();
 
         const pinnedFirst = [...results].sort((a, b) => b.pinned - a.pinned || b.updatedAt.localeCompare(a.updatedAt));
 
