@@ -151,7 +151,7 @@ One tiny request per account (the smallest model the provider offers, five outpu
 ```bash
 tools ai warmup                       # pick accounts (TTY)
 tools ai warmup --all [--provider codex] [--json]
-tools ai warmup foltyn cdx-work       # by name or id, any provider
+tools ai warmup personal cdx-work     # by name or id, any provider
 ```
 
 Anthropic falls back to a long-lived (`tools claude login-long`) token when the OAuth grant is dead and reports `used login-long token`. Codex goes through the ChatGPT backend, which only streams and accepts only the account's own model list, so the codex warmup always uses the account's default model. Exit code 1 when any account failed; the failing line carries the vendor's message and the re-login command.
