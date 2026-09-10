@@ -169,20 +169,19 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
 }
 
 /**
- * An id, a source key, a path, or the session's NAME. Each of those names ONE session, so a hit
- * on one is the answer. A query that only turned up in a branch, a project or a first prompt
- * matched by coincidence.
+ * The query IS this session's identifier: an id prefix, a source key, a path, or its whole name.
+ * Only those end the search. A SUBSTRING of a name is not identity — one session captured as
+ * `/resume reports-02` is named after the query and would otherwise bury every real match.
  */
 function identifiesSession(session: DisplaySession, query: string): boolean {
     const q = query.trim().toLowerCase();
-    const qNorm = normalizeAlphanumeric(q);
 
     return (
         session.sessionId.toLowerCase().startsWith(q) ||
         session.sourceKey === query.trim() ||
         session.filePath === query.trim() ||
-        session.name.toLowerCase().includes(q) ||
-        (qNorm.length >= 3 && normalizeAlphanumeric(session.name).includes(qNorm))
+        session.name.trim().toLowerCase() === q ||
+        normalizeAlphanumeric(session.name) === normalizeAlphanumeric(q)
     );
 }
 
@@ -273,10 +272,10 @@ export async function loadClaudeResumeCandidates(
         return rank(matches);
     }
 
-    // Weak metadata hits do NOT stand in for the content pass. `--resume reports` matched one
-    // session whose opening prompt says the word once, and that single hit suppressed the search
-    // that finds the session whose transcript says it 207 times, so the wanted session was never
-    // offered at all.
+    // A partial metadata hit does NOT stand in for the content pass. `--resume reports` matched
+    // one session whose opening prompt says the word once, and that single hit suppressed the
+    // search that finds the session whose transcript says it 207 times, so the session the user
+    // wanted was never offered at all.
     const found = await adapter.search({
         ...filters,
         query,

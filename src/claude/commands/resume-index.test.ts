@@ -211,6 +211,7 @@ test("a first-prompt hit does not suppress the content pass that finds the sessi
     mkdirSync(project, { recursive: true });
     const prompted = "11111111-2222-4333-8444-555555555551";
     const deep = "11111111-2222-4333-8444-555555555552";
+    const namesake = "11111111-2222-4333-8444-555555555553";
 
     writeFileSync(
         join(project, `${prompted}.jsonl`),
@@ -221,12 +222,19 @@ test("a first-prompt hit does not suppress the content pass that finds the sessi
         `${SafeJSON.stringify({ type: "user", sessionId: deep, cwd: "/projects/shop", message: { content: "start here" } })}\n${SafeJSON.stringify({ type: "assistant", sessionId: deep, cwd: "/projects/shop", message: { content: [{ type: "text", text: "generated three reports for the client" }] } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "report-2026-09", sessionId: deep })}\n`
     );
 
+    // A session NAMED after the query is not the same thing as a session identified by it: one
+    // captured `/resume reports-02` used to be treated as identity and buried every real match.
+    writeFileSync(
+        join(project, `${namesake}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: namesake, cwd: "/projects/shop", message: { content: "unrelated" } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "reports-02 rerun", sessionId: namesake })}\n`
+    );
+
     const db = new Database(":memory:");
     try {
         const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [root], database: db });
         const hits = await loadClaudeResumeCandidates({ query: "reports", cwd: "/projects/shop", adapter });
 
-        expect(hits.map((hit) => hit.name).sort()).toEqual(["report-2026-09", "weekly rollup"]);
+        expect(hits.map((hit) => hit.name).sort()).toEqual(["report-2026-09", "reports-02 rerun", "weekly rollup"]);
 
         // A name still answers on its own: no content pass, no second session dragged in.
         const named = await loadClaudeResumeCandidates({ query: "weekly rollup", cwd: "/projects/shop", adapter });
