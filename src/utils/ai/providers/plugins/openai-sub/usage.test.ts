@@ -92,6 +92,24 @@ describe("mapRateLimits", () => {
         expect(mapRateLimits(SNAKE)).toEqual(mapRateLimits(CAMEL));
     });
 
+    it("drops the placeholder resetsAt of an untouched (0%) window", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: {
+                primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1_757_000_000 },
+                secondary: { usedPercent: 12, windowDurationMins: 10_080, resetsAt: 1_757_400_000 },
+            },
+        });
+
+        expect(limits[0]).toEqual({
+            key: "primary",
+            label: "Session",
+            kind: "session",
+            percentUsed: 0,
+            periodMs: 300 * 60_000,
+        });
+        expect(limits[1]?.resetsAt).toBe(new Date(1_757_400_000 * 1000).toISOString());
+    });
+
     it("returns nothing when the payload carries no rate limits", () => {
         expect(mapRateLimits({}).limits).toEqual([]);
         expect(mapRateLimits(null).limits).toEqual([]);

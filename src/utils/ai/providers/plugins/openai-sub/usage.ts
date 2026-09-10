@@ -102,7 +102,12 @@ function toWindow(key: WindowKey, raw: CodexRateLimitWindow | null | undefined):
     }
 
     const durationMins = pickNumber(raw.windowDurationMins, raw.window_duration_mins);
-    const resetsAtSeconds = pickNumber(raw.resetsAt, raw.resets_at);
+    // An untouched window carries `resetsAt = now + window`, re-stamped on every read: a
+    // placeholder, not a running clock (observed 2026-09-10: 19:20:22, 19:22:36, 19:24:55
+    // for the same 0% window). Dropping it lets every consumer treat the window as idle,
+    // the way anthropic's missing `resets_at` already does, instead of counting down a
+    // reset that never comes.
+    const resetsAtSeconds = percentUsed === 0 ? undefined : pickNumber(raw.resetsAt, raw.resets_at);
 
     return {
         key,
