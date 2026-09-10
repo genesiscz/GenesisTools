@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { secrets } from "@genesiscz/utils/security";
 import type { LoginOutcome } from "../providers/account-features";
@@ -257,15 +258,24 @@ export interface ApplyLoginOutcomeResult {
     defaultsSet: string[];
 }
 
-/** The identity fingerprint an entry carries, secondary grant included. */
+/**
+ * The identity fingerprint an entry carries: primary and secondary grant as four separate
+ * slots. A `primary ?? secondary` fallback hid a secondary identity behind a present primary
+ * one, so a concurrent change to the secondary grant passed the guard (PR #383 review t2).
+ */
 function fingerprintOf(entry: AccountEntry): string {
     const secondary = entry.credentials.secondary;
 
-    return [
-        entry.provider,
-        entry.accountUuid ?? secondary?.accountUuid ?? "",
-        entry.organizationUuid ?? secondary?.organizationUuid ?? "",
-    ].join("|");
+    return SafeJSON.stringify(
+        [
+            entry.provider,
+            entry.accountUuid ?? null,
+            entry.organizationUuid ?? null,
+            secondary?.accountUuid ?? null,
+            secondary?.organizationUuid ?? null,
+        ],
+        { strict: true }
+    );
 }
 
 /**

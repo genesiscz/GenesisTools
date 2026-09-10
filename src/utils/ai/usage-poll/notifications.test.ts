@@ -210,8 +210,6 @@ describe("NotificationManager keys trackers by the immutable account id", () => 
 
 /**
  * `resetsAt` is a raw provider string: grok forwards `credits.currentPeriod.end` and
-/**
- * `resetsAt` is a raw provider string: grok forwards `credits.currentPeriod.end` and
  * anthropic forwards `limit.resets_at`, neither validated. `new Date(bad).getTime()` is NaN,
  * and `NaN !== null`, so ONE bad poll overwrote the last known reset time with NaN, and every
  * later `Math.abs(valid - NaN) > …` was false — the window-rollover detector was dead for the

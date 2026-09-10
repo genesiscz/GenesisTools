@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { shellSingleQuote } from "./shell-quote";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import {
     buildTeammateWrapperScript,
     installTeammateWrapper,
@@ -176,7 +176,7 @@ describe("buildTeammateWrapperScript", () => {
             env: { ...AUTH, oauthToken: "tok'; rm -rf /; echo '" },
         });
 
-        expect(script).toContain(`export CLAUDE_CODE_OAUTH_TOKEN=${shellSingleQuote("tok'; rm -rf /; echo '")}`);
+        expect(script).toContain(`export CLAUDE_CODE_OAUTH_TOKEN=${shellQuote("tok'; rm -rf /; echo '")}`);
         expect(script).not.toContain("rm -rf /; echo ''\n");
     });
 

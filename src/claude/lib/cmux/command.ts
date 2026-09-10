@@ -1,5 +1,5 @@
 import type { PlannedSession } from "@app/claude/lib/cmux/types";
-import { shellSingleQuote } from "@app/claude/lib/shell-quote";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 
 export interface LaunchCommandOptions {
     /** Add `-a` so a pane with no recorded account picks the best one instead of asking. */
@@ -62,7 +62,7 @@ export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandO
     const parts = keychain ? ["claude"] : ["tools", "claude", "start"];
 
     if (session.account) {
-        parts.push(shellSingleQuote(session.account));
+        parts.push(shellQuote(session.account));
 
         // Same account, same auth mode: `--keychain` injects the account's secondary
         // login instead of exporting its token, which is how the session ran.
@@ -75,7 +75,7 @@ export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandO
 
     if (session.model) {
         // `-m` is the wrapper's flag; claude itself spells it `--model`.
-        parts.push(keychain ? "--model" : "-m", shellSingleQuote(session.model));
+        parts.push(keychain ? "--model" : "-m", shellQuote(session.model));
     }
 
     // A bare `claude` takes `--resume` directly; only the wrapper needs the separator.
@@ -83,9 +83,9 @@ export function buildLaunchCommand(session: PlannedSession, opts: LaunchCommandO
         parts.push("--");
     }
 
-    parts.push("--resume", shellSingleQuote(session.candidate.sessionId));
+    parts.push("--resume", shellQuote(session.candidate.sessionId));
 
-    return `cd -- ${shellSingleQuote(session.candidate.cwd)} && ${parts.join(" ")}`;
+    return `cd -- ${shellQuote(session.candidate.cwd)} && ${parts.join(" ")}`;
 }
 
 /** Tab title for a restored pane: short and identifying, since panes get narrow. */

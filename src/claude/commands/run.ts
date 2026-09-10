@@ -9,10 +9,10 @@ import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { matchesSpec } from "@genesiscz/utils/string";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { shellSingleQuote } from "../lib/shell-quote";
 
 interface RunOptions {
     model?: string;
@@ -319,7 +319,7 @@ export async function runProxySession(
 
     const shell = env.paths.getShell("/bin/sh");
     const cmd = await findClaudeCommand();
-    const suffix = passthrough.length > 0 ? ` ${passthrough.map(shellSingleQuote).join(" ")}` : "";
+    const suffix = passthrough.length > 0 ? ` ${passthrough.map(shellQuote).join(" ")}` : "";
 
     // A session silently running at the model's default effort looks identical to
     // one running at the effort you asked for, so say which it is.

@@ -436,6 +436,35 @@ describe("applyLoginOutcome", () => {
         expect(readRawConfig().accounts[0]?.accountUuid).toBe("acct-someone-else");
     });
 
+    test("a rewritten SECONDARY identity is refused even when the primary one is unchanged", async () => {
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
+        const seeded = readRawConfig();
+        const entry = seeded.accounts.find((candidate) => candidate.id === "acc_work");
+
+        if (entry) {
+            entry.accountUuid = "acct-primary";
+            entry.organizationUuid = "org-primary";
+            entry.credentials.secondary = { accountUuid: "acct-secondary", organizationUuid: "org-secondary" };
+        }
+
+        writeConfig(seeded);
+        const inspected = guarded("work");
+
+        // The primary identity stays; only the secondary grant is re-identified in between.
+        const raw = readRawConfig();
+        const live = raw.accounts.find((candidate) => candidate.id === "acc_work");
+
+        if (live?.credentials.secondary) {
+            live.credentials.secondary.accountUuid = "acct-someone-else";
+        }
+
+        writeConfig(raw);
+
+        await expect(
+            applyLoginOutcome({ id: "acc_work", name: "work", guardedAgainst: inspected, outcome: outcome() })
+        ).rejects.toThrow(AccountChangedError);
+    });
+
     test("NEGATIVE CONTROL: an entry nobody touched still merges", async () => {
         await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: outcome() });
         const inspected = guarded("work");

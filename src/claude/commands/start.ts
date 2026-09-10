@@ -30,10 +30,10 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { finishKeychainSession, injectSecondaryLogin, inspectKeychainBeforeInject } from "../lib/keychain-session";
-import { shellSingleQuote } from "../lib/shell-quote";
 import {
     installTeammateWrapper,
     removeTeammateWrapper,
@@ -99,7 +99,7 @@ async function findCmuxTeamsCommand(shell: string): Promise<string> {
     }
 
     logger.debug({ path, shell }, "[start] resolved cmux for claude-teams launch");
-    return `${shellSingleQuote(path)} claude-teams`;
+    return `${shellQuote(path)} claude-teams`;
 }
 
 /**
@@ -935,7 +935,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
 
     const extraArgs = buildLaunchArgs({ modelId, resumeArgs, passthrough, cmux: opts.cmux === true });
 
-    const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellSingleQuote).join(" ")}` : "";
+    const suffix = extraArgs.length > 0 ? ` ${extraArgs.map(shellQuote).join(" ")}` : "";
     const detail = [
         account.label ? `(${account.label})` : "",
         modelId ? `model ${pc.magenta(modelId)}` : "",

@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { AccountChangedError } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type {
     AccountFeatures,
@@ -240,17 +241,33 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     // the other providers there would silently retarget every `tools ask` call.
     const anthropic = plugin.id === "anthropic-sub";
 
-    const written = await writeLoginOutcome({
-        name,
-        outcome,
-        interactive,
-        account: existing,
-        // A name nobody typed or confirmed: `--name` is explicit, and the prompt
-        // above already asked before reusing an existing one.
-        autoNamed: opts.name === undefined && !(opts.promptName === true && interactive),
-        apps: anthropic ? ["claude", "ask"] : undefined,
-        defaultForApps: anthropic ? ["claude", "ask"] : undefined,
-    });
+    let written: Awaited<ReturnType<typeof writeLoginOutcome>>;
+
+    try {
+        written = await writeLoginOutcome({
+            name,
+            outcome,
+            interactive,
+            account: existing,
+            // A name nobody typed or confirmed: `--name` is explicit, and the prompt
+            // above already asked before reusing an existing one.
+            autoNamed: opts.name === undefined && !(opts.promptName === true && interactive),
+            apps: anthropic ? ["claude", "ask"] : undefined,
+            defaultForApps: anthropic ? ["claude", "ask"] : undefined,
+        });
+    } catch (error) {
+        // The write refused inside the lock because the account changed under this flow
+        // (removed, renamed, or re-identified by another login). `writeLoginOutcome` has
+        // already rolled the vendor credential back, so this is a normal failed login for
+        // the caller, not a crash: `ask config`'s wizard keeps running (PR #383 review t1).
+        if (!(error instanceof AccountChangedError)) {
+            throw error;
+        }
+
+        out.error(error.message);
+        process.exitCode = 1;
+        return { ok: false };
+    }
 
     if (!written) {
         process.exitCode = 1;
