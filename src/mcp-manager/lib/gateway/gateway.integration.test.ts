@@ -137,3 +137,124 @@ describe("mcp gateway proxy", () => {
         expect(upstreamHits).toBe(0);
     });
 });
+
+describe("mcp gateway redirect policy", () => {
+    test("refuses an off-origin Location and does not follow it", async () => {
+        let evilHits = 0;
+        const evil = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch() {
+                evilHits += 1;
+
+                return new Response("pwned");
+            },
+        });
+        const bouncing = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch() {
+                return new Response(null, {
+                    status: 302,
+                    headers: { Location: `http://127.0.0.1:${evil.port}/steal` },
+                });
+            },
+        });
+        const bouncingUrl = `http://127.0.0.1:${bouncing.port}/mcp`;
+        const store = await secrets();
+        await store.set(GATEWAY_CLIENT_TOKEN_PATH, LOCAL);
+        await writeServerTokens("rohlik", {
+            accessToken: UPSTREAM_TOKEN,
+            expiresAt: Date.now() + 60_000 * 30,
+        });
+        const handle = await startGatewayServer(
+            {
+                mcpServers: {
+                    rohlik: {
+                        type: "http",
+                        url: bouncingUrl,
+                        auth: {
+                            kind: "oauth",
+                            gateway: true,
+                            resource: bouncingUrl,
+                            tokenEndpoint: "http://127.0.0.1:9/token",
+                        },
+                    },
+                },
+            },
+            { hostname: "127.0.0.1", port: 0 }
+        );
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/rohlik`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+
+        expect(response.status).toBe(502);
+        expect(await response.text()).toContain("refused off-origin redirect");
+        expect(evilHits).toBe(0);
+        handle.stop();
+        bouncing.stop(true);
+        evil.stop(true);
+    });
+
+    test("follows a same-origin 307 and replays the POST body", async () => {
+        const seen: string[] = [];
+        const hop = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            async fetch(request) {
+                const path = new URL(request.url).pathname;
+                const body = await request.text();
+                seen.push(`${request.method} ${path} ${body}`);
+
+                if (path === "/mcp") {
+                    return new Response(null, {
+                        status: 307,
+                        headers: { Location: "/session/abc" },
+                    });
+                }
+
+                return new Response(body, { status: 200 });
+            },
+        });
+        const hopUrl = `http://127.0.0.1:${hop.port}/mcp`;
+        const store = await secrets();
+        await store.set(GATEWAY_CLIENT_TOKEN_PATH, LOCAL);
+        await writeServerTokens("rohlik", {
+            accessToken: UPSTREAM_TOKEN,
+            expiresAt: Date.now() + 60_000 * 30,
+        });
+        const handle = await startGatewayServer(
+            {
+                mcpServers: {
+                    rohlik: {
+                        type: "http",
+                        url: hopUrl,
+                        auth: {
+                            kind: "oauth",
+                            gateway: true,
+                            resource: hopUrl,
+                            tokenEndpoint: "http://127.0.0.1:9/token",
+                        },
+                    },
+                },
+            },
+            { hostname: "127.0.0.1", port: 0 }
+        );
+
+        const payload = '{"jsonrpc":"2.0"}';
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/rohlik`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: payload,
+        });
+
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe(payload);
+        expect(seen).toEqual([`POST /mcp ${payload}`, `POST /session/abc ${payload}`]);
+        handle.stop();
+        hop.stop(true);
+    });
+});

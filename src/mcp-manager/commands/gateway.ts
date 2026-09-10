@@ -82,24 +82,11 @@ export async function gatewayStdio(serverName: string | undefined): Promise<void
 
     logger.info({ target }, "stdio trampoline to mcp gateway");
 
-    const { createRuntime } = await import("mcporter");
-    const runtime = await createRuntime({
-        servers: [
-            {
-                name: serverName,
-                command: {
-                    kind: "http",
-                    url: new URL(target),
-                    headers: { [GATEWAY_HEADER]: token },
-                },
-            },
-        ],
-        clientInfo: { name: "genesis-tools-mcp-gateway-stdio", version: "0.1.0" },
-    });
-
-    process.stdin.resume();
-    process.on("SIGINT", () => {
-        void runtime.close();
-        process.exit(0);
+    const { runStdioHttpRelay } = await import("../lib/gateway/stdio-relay.ts");
+    await runStdioHttpRelay({
+        url: target,
+        headers: { [GATEWAY_HEADER]: token },
+        stdin: Bun.stdin.stream(),
+        stdout: Bun.stdout,
     });
 }

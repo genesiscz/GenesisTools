@@ -122,23 +122,29 @@ export async function startGatewayServer(
             const init: RequestInit = {
                 method: request.method,
                 headers,
+                redirect: "manual",
             };
 
             if (request.method !== "GET" && request.method !== "HEAD") {
-                init.body = request.body;
-                // @ts-expect-error Bun duplex streaming
-                init.duplex = "half";
+                init.body = await request.arrayBuffer();
             }
 
-            const response = await fetch(target, init);
-            const location = response.headers.get("location");
+            let response = await fetch(target, init);
 
-            if (location) {
+            if (response.status >= 300 && response.status < 400) {
+                const location = response.headers.get("location");
+
+                if (!location) {
+                    return jsonRpcError("redirect without location", 502);
+                }
+
                 const next = new URL(location, target);
 
                 if (next.origin !== upstream.origin) {
                     return jsonRpcError("refused off-origin redirect", 502);
                 }
+
+                response = await fetch(next, { ...init, redirect: "manual" });
             }
 
             return new Response(response.body, {

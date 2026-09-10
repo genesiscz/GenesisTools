@@ -30,10 +30,17 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         return;
     }
 
-    // Filter providers that have config files
+    const requested = new Set(
+        (options.provider ?? "")
+            .split(",")
+            .map((name) => name.trim().toLowerCase())
+            .filter((name) => name.length > 0 && name !== "all")
+    );
+
+    // Existing configs always sync. An explicit `-p grok` (not `all`) may create a missing file.
     const availableProviders: MCPProvider[] = [];
     for (const provider of providers) {
-        if (await provider.configExists()) {
+        if ((await provider.configExists()) || requested.has(provider.getName().toLowerCase())) {
             availableProviders.push(provider);
         }
     }
