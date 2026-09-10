@@ -54,7 +54,13 @@ export async function openTerminalServer(options: {
 
             return bridge?.serverRequest(request) ?? Promise.reject(new Error("Codex terminal is not connected"));
         },
-        onStderr: (text) => logger.debug({ bytes: text.length }, "Codex app-server stderr received"),
+        // The byte count alone said nothing: when the app-server explains a failure on stderr,
+        // that text is the only account of it anywhere, so keep it (bounded, file-only).
+        onStderr: (text) =>
+            logger.debug(
+                { bytes: text.length, stderr: text.length > 2000 ? `${text.slice(0, 2000)}…` : text },
+                "Codex app-server stderr received"
+            ),
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     let removeAbortListener: (() => void) | undefined;
@@ -128,6 +134,14 @@ export async function openTerminalServer(options: {
         setupSockets = sockets;
         server.on("upgrade", (request, connection, head) => {
             if (admitted || request.headers.origin) {
+                // The native TUI opens a SECOND connection for some features (its own session
+                // picker among them), and this relay carries one peer, so that attempt is dropped
+                // and the TUI reports "failed to connect to remote app server" with no cause
+                // recorded anywhere. Name the reason so the next report is one grep, not a guess.
+                logger.debug(
+                    { reason: admitted ? "another peer is already admitted" : "cross-origin upgrade", socketPath },
+                    "Refused a Codex terminal upgrade"
+                );
                 connection.destroy();
                 return;
             }
