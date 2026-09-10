@@ -145,7 +145,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
         port: 0,
         timeoutMs: 10 * 60 * 1000,
         verifyState: (state) => (state === pkce.state ? undefined : "state mismatch"),
-        brand: { app: "Genesis' Tools", product: "mcp-manager" },
+        brand: { app: "Genesis Tools", product: "mcp-manager" },
     });
 
     if (!listener) {
