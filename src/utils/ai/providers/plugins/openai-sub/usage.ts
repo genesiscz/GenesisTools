@@ -26,15 +26,36 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** Anything longer than a day is the weekly window; the 5h one is the session window. */
 const WEEKLY_THRESHOLD_MINS = 24 * 60;
 
-/** The two windows the app-server names, in display order. */
+/** The two window slots the app-server names, in display order. */
 const WINDOW_KEYS = ["primary", "secondary"] as const;
 
 type WindowKey = (typeof WINDOW_KEYS)[number];
 
-const WINDOW_LABELS: Record<WindowKey, string> = {
-    primary: "Session",
-    secondary: "Weekly",
+/**
+ * The slot is not the window: a Pro plan without a 5h window reports its WEEKLY limit
+ * as `primary` and no `secondary` at all (cdx account observed 2026-09-10: primary =
+ * 10080 min, secondary = null), so labelling by slot drew "Session 48%" over a weekly
+ * limit. Duration decides; the slot is only the fallback for a window that carries none.
+ */
+const SLOT_FALLBACK_KIND: Record<WindowKey, "session" | "weekly"> = {
+    primary: "session",
+    secondary: "weekly",
 };
+
+const KIND_LABELS = { session: "5h", weekly: "Weekly" } as const;
+
+function windowKind(key: WindowKey, durationMins: number | undefined): "session" | "weekly" {
+    if (durationMins === undefined) {
+        return SLOT_FALLBACK_KIND[key];
+    }
+
+    return durationMins > WEEKLY_THRESHOLD_MINS ? "weekly" : "session";
+}
+
+/** `GPT-5.3-Codex-Spark` fits a 16-cell label column as `Spark`; the full name stays in `scopeModel`. */
+function shortScopeName(limitName: string): string {
+    return limitName.split("-").at(-1) || limitName;
+}
 
 /**
  * One window as the app-server sends it. Field names captured from a live
@@ -53,16 +74,29 @@ export interface CodexRateLimitWindow {
 }
 
 export interface CodexRateLimits {
+    /** `codex` for the plan-wide limit; a per-model limit names its model (`codex_bengalfox`). */
+    limitId?: string | null;
+    /** Display name of a per-model limit (`GPT-5.3-Codex-Spark`); null on the plan-wide one. */
+    limitName?: string | null;
     primary?: CodexRateLimitWindow | null;
     secondary?: CodexRateLimitWindow | null;
     planType?: string;
     plan_type?: string;
 }
 
+/** The plan-wide limit id, the one `rateLimits` repeats, when a payload does not name it. */
+const DEFAULT_LIMIT_ID = "codex";
+
 /** The whole `account/rateLimits/read` result. Other keys are ignored, never rejected. */
 export interface CodexRateLimitsResult {
     rateLimits?: CodexRateLimits | null;
     rate_limits?: CodexRateLimits | null;
+    /**
+     * Every limit the account has, keyed by limit id, the plan-wide one included. Models
+     * with their own pool (Spark, 2026-09-10) appear only here, so reading `rateLimits`
+     * alone silently drops them.
+     */
+    rateLimitsByLimitId?: Record<string, CodexRateLimits | null> | null;
     accountId?: string;
 }
 
@@ -90,7 +124,16 @@ function pickNumber(...values: Array<number | undefined>): number | undefined {
     return undefined;
 }
 
-function toWindow(key: WindowKey, raw: CodexRateLimitWindow | null | undefined): LimitWindow | null {
+interface WindowScope {
+    limitId: string;
+    limitName: string;
+}
+
+function toWindow(
+    key: WindowKey,
+    raw: CodexRateLimitWindow | null | undefined,
+    scope?: WindowScope
+): LimitWindow | null {
     if (!raw) {
         return null;
     }
@@ -108,11 +151,17 @@ function toWindow(key: WindowKey, raw: CodexRateLimitWindow | null | undefined):
     // the way anthropic's missing `resets_at` already does, instead of counting down a
     // reset that never comes.
     const resetsAtSeconds = percentUsed === 0 ? undefined : pickNumber(raw.resetsAt, raw.resets_at);
+    const kind = windowKind(key, durationMins);
 
     return {
-        key,
-        label: WINDOW_LABELS[key],
-        kind: durationMins !== undefined && durationMins > WEEKLY_THRESHOLD_MINS ? "weekly" : "session",
+        ...(scope
+            ? {
+                  key: `${key}:${scope.limitId}`,
+                  label: `${KIND_LABELS[kind]} ${shortScopeName(scope.limitName)}`,
+                  kind: "scoped" as const,
+                  scopeModel: scope.limitName,
+              }
+            : { key, label: KIND_LABELS[kind], kind }),
         percentUsed,
         ...(durationMins === undefined ? {} : { periodMs: durationMins * 60_000 }),
         ...(resetsAtSeconds === undefined ? {} : { resetsAt: new Date(resetsAtSeconds * 1000).toISOString() }),
@@ -137,6 +186,24 @@ export function mapRateLimits(result: CodexRateLimitsResult | null | undefined):
 
         if (window) {
             limits.push(window);
+        }
+    }
+
+    const defaultLimitId = rateLimits.limitId ?? DEFAULT_LIMIT_ID;
+
+    for (const [limitId, scoped] of Object.entries(result?.rateLimitsByLimitId ?? {})) {
+        if (limitId === defaultLimitId || !scoped) {
+            continue;
+        }
+
+        const scope: WindowScope = { limitId, limitName: scoped.limitName ?? limitId };
+
+        for (const key of WINDOW_KEYS) {
+            const window = toWindow(key, scoped[key], scope);
+
+            if (window) {
+                limits.push(window);
+            }
         }
     }
 

@@ -4,7 +4,8 @@ import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-mo
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
 import { UsageBar } from "../components/usage-bar";
-import { colorForWindow, colorForWindowKey, type UsageColor } from "../lib/colors";
+import { colorForWindow, colorForWindowKey, isResetImminent, type UsageColor } from "../lib/colors";
+import { windowTail } from "../lib/reset-countdown";
 
 export interface GenericAccountSectionProps {
     snapshot: AccountUsageSnapshot;
@@ -20,9 +21,12 @@ export interface GenericAccountSectionProps {
 const LABEL_WIDTH = 16;
 
 /**
- * Windows to render. A `prominent` list both selects and orders them: the compact views
- * show that subset only, which is what `prominentBuckets` means in the dashboard config.
- * An empty or omitted list shows everything the provider returned.
+ * Windows to render. A `prominent` list orders them and is what the compact views show
+ * while nothing else is spent, which is what `prominentBuckets` means in the dashboard
+ * config. A window that is not prominent but carries usage follows anyway, the rule the
+ * anthropic presenter always had: a per-model pool at 40% hidden behind a config default
+ * is the one row the reader needed (codex Spark, 2026-09-10). An empty or omitted list
+ * shows everything the provider returned.
  */
 export function orderWindows(limits: readonly LimitWindow[], prominent?: string[]): LimitWindow[] {
     if (!prominent || prominent.length === 0) {
@@ -38,6 +42,12 @@ export function orderWindows(limits: readonly LimitWindow[], prominent?: string[
         if (window) {
             out.push(window);
             byKey.delete(key);
+        }
+    }
+
+    for (const window of byKey.values()) {
+        if (window.percentUsed > 0) {
+            out.push(window);
         }
     }
 
@@ -101,6 +111,11 @@ export function GenericAccountSection({
             {windows.map((window) => {
                 const money = formatMoney(window);
                 const color = colorFor(window, now);
+                // The reset is the one number a spent window is really about, and this
+                // block drew none of it (2026-09-10): codex and grok accounts showed a
+                // percent and nothing else while the anthropic presenter counted down.
+                const tail = windowTail(window, now);
+                const imminent = isResetImminent(window, now);
 
                 return (
                     <Box key={window.key}>
@@ -110,6 +125,9 @@ export function GenericAccountSection({
                             {` ${percentOf(window).toFixed(1)}%`}
                         </Text>
                         {money ? <Text dimColor>{`  ${money}`}</Text> : null}
+                        {tail ? (
+                            <Text dimColor={!imminent} color={imminent ? "green" : undefined}>{`  ${tail}`}</Text>
+                        ) : null}
                     </Box>
                 );
             })}

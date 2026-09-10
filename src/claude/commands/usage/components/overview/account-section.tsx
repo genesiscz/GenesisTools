@@ -7,6 +7,7 @@ import { formatCoarseSpan, formatRenewsAt, planAllowsClaudeCode } from "@app/cla
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { UsageBar } from "@genesiscz/utils/ink/usage-dashboard/components/usage-bar";
+import { formatResetCountdown } from "@genesiscz/utils/ink/usage-dashboard/lib/reset-countdown";
 import { Box, Text } from "ink";
 
 function shortStaleReason(reason: string): string {
@@ -50,41 +51,6 @@ function isPlanDead(account: AccountUsage): boolean {
 function planStateText(account: AccountUsage): string {
     const status = account.subscriptionStatus ? `(${account.subscriptionStatus})` : null;
     return [account.subscriptionPlan, status].filter(Boolean).join(" ") || "plan expired";
-}
-
-function formatResetCountdown(resetsAt: string | null): string | null {
-    if (!resetsAt) {
-        return null;
-    }
-
-    const resetTime = new Date(resetsAt).getTime();
-    const remainingMs = resetTime - Date.now();
-
-    if (remainingMs <= 0) {
-        // Must fit the fixed countdown slot: " ⟳ " + text <= COUNTDOWN_WIDTH.
-        return "resets now";
-    }
-
-    const totalMinutes = Math.floor(remainingMs / 60000);
-    const days = Math.floor(totalMinutes / 1440);
-    const hours = Math.floor((totalMinutes % 1440) / 60);
-    const minutes = totalMinutes % 60;
-
-    const parts: string[] = [];
-
-    if (days > 0) {
-        parts.push(`${days}d`);
-    }
-
-    if (hours > 0) {
-        parts.push(`${hours}h`);
-    }
-
-    if (minutes > 0 || parts.length === 0) {
-        parts.push(`${minutes}m`);
-    }
-
-    return parts.join(" ");
 }
 
 function calcProjection(utilization: number, resetsAt: string | null, bucketKey: string): number | null {

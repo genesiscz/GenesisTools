@@ -70,7 +70,7 @@ describe("mapRateLimits", () => {
         expect(limits).toEqual([
             {
                 key: "primary",
-                label: "Session",
+                label: "5h",
                 kind: "session",
                 percentUsed: 41.5,
                 periodMs: 300 * 60_000,
@@ -102,12 +102,87 @@ describe("mapRateLimits", () => {
 
         expect(limits[0]).toEqual({
             key: "primary",
-            label: "Session",
+            label: "5h",
             kind: "session",
             percentUsed: 0,
             periodMs: 300 * 60_000,
         });
         expect(limits[1]?.resetsAt).toBe(new Date(1_757_400_000 * 1000).toISOString());
+    });
+
+    // A Pro plan with no 5h window reports its weekly limit in the `primary` slot and no
+    // `secondary` at all (observed 2026-09-10). Labelled by slot it read "Session 48%".
+    it("names a window by its duration, not by the slot it arrives in", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: {
+                limitId: "codex",
+                primary: { usedPercent: 48, windowDurationMins: 10_080, resetsAt: 1_789_435_346 },
+                secondary: null,
+                planType: "pro",
+            },
+        });
+
+        expect(limits).toEqual([
+            {
+                key: "primary",
+                label: "Weekly",
+                kind: "weekly",
+                percentUsed: 48,
+                periodMs: 10_080 * 60_000,
+                resetsAt: "2026-09-15T01:22:26.000Z",
+            },
+        ]);
+    });
+
+    it("falls back to the slot's meaning when a window carries no duration", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: { primary: { usedPercent: 10 }, secondary: { usedPercent: 20 } },
+        });
+
+        expect(limits.map((w) => [w.key, w.label, w.kind])).toEqual([
+            ["primary", "5h", "session"],
+            ["secondary", "Weekly", "weekly"],
+        ]);
+    });
+
+    // Models with their own pool appear only under `rateLimitsByLimitId`; reading the
+    // top-level `rateLimits` alone dropped the Spark limit entirely (2026-09-10).
+    it("emits scoped windows for every per-model limit beside the plan-wide one", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: { limitId: "codex", primary: { usedPercent: 48, windowDurationMins: 10_080 } },
+            rateLimitsByLimitId: {
+                codex: { limitId: "codex", primary: { usedPercent: 48, windowDurationMins: 10_080 } },
+                codex_bengalfox: {
+                    limitId: "codex_bengalfox",
+                    limitName: "GPT-5.3-Codex-Spark",
+                    primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_789_073_660 },
+                    secondary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: 1_789_660_460 },
+                },
+                codex_empty: null,
+            },
+        });
+
+        expect(limits.map((w) => w.key)).toEqual(["primary", "primary:codex_bengalfox", "secondary:codex_bengalfox"]);
+        expect(limits[1]).toEqual({
+            key: "primary:codex_bengalfox",
+            label: "5h Spark",
+            kind: "scoped",
+            scopeModel: "GPT-5.3-Codex-Spark",
+            percentUsed: 7,
+            periodMs: 300 * 60_000,
+            resetsAt: new Date(1_789_073_660 * 1000).toISOString(),
+        });
+        expect(limits[2]).toMatchObject({ label: "Weekly Spark", kind: "scoped", percentUsed: 0 });
+        expect(limits[2]?.resetsAt).toBeUndefined();
+    });
+
+    it("keys a per-model limit without a display name by its id", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: { primary: { usedPercent: 1, windowDurationMins: 300 } },
+            rateLimitsByLimitId: { codex_x: { primary: { usedPercent: 2, windowDurationMins: 300 } } },
+        });
+
+        expect(limits[1]).toMatchObject({ key: "primary:codex_x", label: "5h codex_x", scopeModel: "codex_x" });
     });
 
     it("returns nothing when the payload carries no rate limits", () => {
