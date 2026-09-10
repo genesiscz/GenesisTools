@@ -30,7 +30,7 @@ ${launchdProgramArgumentsXml([bunPath, "run", daemonScript])}
   <key>StandardOutPath</key><string>${logDir}/daemon-stderr.log</string>
   <key>StandardErrorPath</key><string>${logDir}/daemon-stderr.log</string>
   <key>EnvironmentVariables</key>
-  <dict><key>HOME</key><string>${home}</string><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:${dirname(bunPath)}</string></dict>
+  <dict><key>HOME</key><string>${home}</string><key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${dirname(bunPath)}</string></dict>
   <key>WorkingDirectory</key><string>${home}</string>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>ProcessType</key><string>Background</string>

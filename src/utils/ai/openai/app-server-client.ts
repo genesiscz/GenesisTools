@@ -2,6 +2,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveCodexBinary } from "./codex-binary";
 
 const log = logger.child({ component: "openai:app-server-client" });
 
@@ -321,7 +322,7 @@ export function spawnAppServer(options: {
     unsetEnv?: readonly string[];
     config?: string[];
 }): AppServerProcess {
-    const cmd = ["codex", "app-server"];
+    const cmd = [resolveCodexBinary(), "app-server"];
 
     for (const config of options.config ?? []) {
         cmd.push("-c", config);

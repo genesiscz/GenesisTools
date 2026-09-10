@@ -6,6 +6,7 @@ import { createCodexAdapter } from "@genesiscz/utils/agent-sessions/codex-sessio
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
 import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
+import { resolveCodexBinary } from "@genesiscz/utils/ai/openai/codex-binary";
 import { resolveNativeCodexModel } from "@genesiscz/utils/ai/openai/resolve-native-model";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
@@ -152,7 +153,7 @@ export async function runAccountTerminal(input: {
                 `Resuming copied session ${imported.sessionId}; original ${imported.sourceSessionId} retained.`
             );
         }
-        tui = Bun.spawn(["codex", "--remote", server.address, ...nativeArgs], {
+        tui = Bun.spawn([resolveCodexBinary(), "--remote", server.address, ...nativeArgs], {
             cwd,
             env: childEnv,
             stdin: "inherit",
