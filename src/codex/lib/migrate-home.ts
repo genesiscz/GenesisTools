@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync } from "node:fs";
 import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
@@ -16,6 +17,8 @@ export const HOME_LOCK_FILES = ["logs_2.sqlite", "queue_1.sqlite", "goals_1.sqli
 const SQLITE_SIDECARS = ["", "-wal", "-shm"] as const;
 export const GLOBAL_STATE_FILE = ".codex-global-state.json";
 export const SESSION_INDEX_FILE = "session_index.jsonl";
+/** Codex keeps the name the TUI shows in `threads.name` here; `session_index.jsonl` mirrors it. */
+export const STATE_DB_PATTERN = /^state(?:_\d+)?\.sqlite$/;
 export const REINDEX_COMMAND = "tools codex history index sync";
 export const PROVENANCE_NOTE =
     "AILaunchers/Verify-CodexAccountProvenance.md in the notes vault holds the per-rollout home mapping; " +
@@ -127,6 +130,12 @@ export interface SessionNameReport {
     alreadyNamed: number;
     /** Ids no rollout in the destination claims, so naming them would point at nothing. */
     skippedUnknown: number;
+    /** Names written into the destination's `threads.name`, which is what the Codex TUI reads. */
+    stateAdded: number;
+    /** Threads the destination's state database already names. */
+    stateAlreadyNamed: number;
+    /** Named threads the destination's state database does not know about at all. */
+    stateMissing: number;
     written: boolean;
 }
 
@@ -168,7 +177,7 @@ export interface MigrateHomeReport {
         copied: number;
         skippedLive: number;
     };
-    backups: { sessions?: string; globalState?: string };
+    backups: { sessions?: string; globalState?: string; state?: string[] };
     desktop: DesktopReport[];
     /** Thread names carried from each source's `session_index.jsonl`. */
     sessionNames: SessionNameReport[];
@@ -521,6 +530,147 @@ function sessionIndexOf(home: string): string {
     return join(home, SESSION_INDEX_FILE);
 }
 
+export function stateDatabases(home: string): string[] {
+    try {
+        return readdirSync(home)
+            .filter((name) => STATE_DB_PATTERN.test(name))
+            .map((name) => join(home, name))
+            .sort();
+    } catch (err) {
+        log.debug({ home, error: err }, "could not list the home for a Codex state database");
+        return [];
+    }
+}
+
+function hasThreadNames(database: Database): boolean {
+    const columns = new Set(
+        (database.query("pragma table_info(threads)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+
+    return columns.has("id") && columns.has("name");
+}
+
+/** `id` → the name Codex shows, for every thread this home has actually named. */
+function readThreadNames(path: string): Map<string, string> {
+    const names = new Map<string, string>();
+    let database: Database | undefined;
+
+    try {
+        database = new Database(path, { readonly: true });
+
+        if (!hasThreadNames(database)) {
+            return names;
+        }
+
+        const rows = database
+            .query("select id, name from threads where name is not null and trim(name) <> ''")
+            .all() as Array<{ id: string; name: string }>;
+
+        for (const row of rows) {
+            names.set(row.id.toLowerCase(), row.name);
+        }
+    } catch (err) {
+        log.debug({ path, error: err }, "could not read thread names from a Codex state database");
+    } finally {
+        database?.close();
+    }
+
+    return names;
+}
+
+/**
+ * Names threads the destination holds but has never named. A name the destination already has is
+ * left alone, so a rerun is a no-op and Codex's own rename always wins.
+ */
+function writeThreadNames(
+    path: string,
+    pending: Map<string, string>
+): { added: number; alreadyNamed: number; apply: boolean } {
+    let database: Database | undefined;
+    let added = 0;
+    let alreadyNamed = 0;
+
+    try {
+        database = new Database(path);
+        database.exec("pragma busy_timeout = 5000");
+
+        if (!hasThreadNames(database)) {
+            return { added, alreadyNamed, apply: false };
+        }
+
+        const select = database.query("select name from threads where id = ?");
+        const update = database.query("update threads set name = ? where id = ?");
+
+        for (const [id, name] of [...pending]) {
+            const row = select.get(id) as { name: string | null } | null;
+
+            if (!row) {
+                continue;
+            }
+
+            pending.delete(id);
+
+            if (row.name && row.name.trim().length > 0) {
+                alreadyNamed++;
+                continue;
+            }
+
+            update.run(name, id);
+            added++;
+        }
+
+        return { added, alreadyNamed, apply: true };
+    } catch (err) {
+        log.warn({ path, error: err }, "could not write thread names into the Codex state database");
+        return { added, alreadyNamed, apply: false };
+    } finally {
+        database?.close();
+    }
+}
+
+/** What the destination's state databases WOULD accept, without writing anything. */
+function planThreadNames(
+    path: string,
+    pending: Map<string, string>
+): { added: number; alreadyNamed: number; apply: boolean } {
+    let database: Database | undefined;
+    let added = 0;
+    let alreadyNamed = 0;
+
+    try {
+        database = new Database(path, { readonly: true });
+
+        if (!hasThreadNames(database)) {
+            return { added, alreadyNamed, apply: false };
+        }
+
+        const select = database.query("select name from threads where id = ?");
+
+        for (const [id] of [...pending]) {
+            const row = select.get(id) as { name: string | null } | null;
+
+            if (!row) {
+                continue;
+            }
+
+            pending.delete(id);
+
+            if (row.name && row.name.trim().length > 0) {
+                alreadyNamed++;
+            } else {
+                added++;
+            }
+        }
+
+        return { added, alreadyNamed, apply: true };
+    } catch (err) {
+        log.debug({ path, error: err }, "could not plan thread names against a Codex state database");
+        return { added, alreadyNamed, apply: false };
+    } finally {
+        database?.close();
+    }
+}
+
 /** `id` → that record's own line, kept verbatim so a name never loses a field we do not model. */
 async function readSessionNames(path: string): Promise<Map<string, string>> {
     const names = new Map<string, string>();
@@ -581,6 +731,9 @@ async function carrySessionNames(input: {
             added: 0,
             alreadyNamed: 0,
             skippedUnknown: 0,
+            stateAdded: 0,
+            stateAlreadyNamed: 0,
+            stateMissing: 0,
             written: false,
         };
         const sourceNames = await readSessionNames(sourcePath);
@@ -604,8 +757,33 @@ async function carrySessionNames(input: {
 
         if (input.apply && lines.length > 0) {
             await appendSessionNames(destinationPath, lines);
-            report.written = true;
         }
+
+        // `session_index.jsonl` is only a projection. The name the Codex TUI shows comes from
+        // `threads.name` in the home's state database, so a copy carrying just the JSONL still
+        // opens unnamed, and the first thing typed into it becomes the thread's new name.
+        const pending = new Map<string, string>();
+
+        for (const path of stateDatabases(home)) {
+            for (const [id, name] of readThreadNames(path)) {
+                if (input.nativeIds.has(id) && !pending.has(id)) {
+                    pending.set(id, name);
+                }
+            }
+        }
+
+        for (const path of stateDatabases(input.destination)) {
+            if (pending.size === 0) {
+                break;
+            }
+
+            const outcome = input.apply ? writeThreadNames(path, pending) : planThreadNames(path, pending);
+            report.stateAdded += outcome.added;
+            report.stateAlreadyNamed += outcome.alreadyNamed;
+        }
+
+        report.stateMissing = pending.size;
+        report.written = input.apply && (lines.length > 0 || report.stateAdded > 0);
 
         reports.push(report);
     }
@@ -864,6 +1042,13 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         const backup = join(backupRoot, GLOBAL_STATE_FILE);
         await clonePath(destinationState, backup, false);
         report.backups.globalState = backup;
+    }
+
+    // The name merge below writes `threads.name` into these, so they are backed up like the rest.
+    for (const path of stateDatabases(destination)) {
+        const backup = join(backupRoot, basename(path));
+        await clonePath(path, backup, false);
+        report.backups.state = [...(report.backups.state ?? []), backup];
     }
 
     for (const item of planned) {

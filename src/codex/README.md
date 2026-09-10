@@ -156,12 +156,14 @@ Safety rules, all of them load-bearing:
 - **Every copy is verified** by size and SHA-256 before the run counts it.
 - **The date tree is preserved verbatim.** Paths are never re-derived from the rollout header
   timestamp, which differs from the filename timestamp.
-- **Thread names come with the transcripts.** A name lives in the home's own
-  `session_index.jsonl`, never in the rollout, so a copy used to arrive unnamed: `--resume <name>`
-  kept matching the source home's copy and offering to import a session the destination already
-  held. Every name whose rollout the destination now holds is appended to the destination's index,
-  an earlier run's copies included. Names for rollouts that are not there are left behind, and a
-  name the destination already has is never overwritten.
+- **Thread names come with the transcripts, through both of the places Codex keeps them.** A name
+  never lives in the rollout. `session_index.jsonl` is what this repo's history index reads, and
+  `threads.name` in the home's `state_*.sqlite` is what the Codex TUI shows — carrying only the
+  first still opens the thread unnamed, and then the first thing you type into it becomes the
+  thread's new name. Both are carried, for every thread whose rollout the destination now holds,
+  an earlier run's copies included. A name the destination already has is never overwritten, so a
+  rerun is a no-op and Codex's own rename always wins. Names for rollouts that are not there are
+  left behind, and the state databases are backed up beside `sessions/` before anything is written.
 - `--archive-source` renames each source `sessions/` to `sessions.migrated-<stamp>` after the
   copy verifies. It is off by default and it still deletes nothing.
 

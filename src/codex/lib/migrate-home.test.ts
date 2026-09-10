@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -72,6 +73,28 @@ function uuid(suffix: string): string {
 /** One `session_index.jsonl` record, the shape Codex writes when a thread is named. */
 function nameRecord(id: string, threadName: string): string {
     return SafeJSON.stringify({ id, thread_name: threadName, updated_at: "2026-09-09T11:24:45.138882Z" });
+}
+
+/** The home's Codex state database, cut down to the one table the name merge touches. */
+function stateDatabase(home: string, rows: Array<{ id: string; name?: string }>): void {
+    const database = new Database(join(home, "state_5.sqlite"));
+    database.exec("create table threads (id text primary key, name text)");
+
+    for (const row of rows) {
+        database.query("insert into threads (id, name) values (?, ?)").run(row.id, row.name ?? null);
+    }
+
+    database.close();
+}
+
+function threadName(home: string, id: string): string | null {
+    const database = new Database(join(home, "state_5.sqlite"), { readonly: true });
+
+    try {
+        return (database.query("select name from threads where id = ?").get(id) as { name: string | null }).name;
+    } finally {
+        database.close();
+    }
 }
 
 /** Path + size + content digest of every file below `root`, so "nothing was written" is checkable. */
@@ -673,6 +696,9 @@ describe("thread names through migrateHome", () => {
                 added: 2,
                 alreadyNamed: 0,
                 skippedUnknown: 1,
+                stateAdded: 0,
+                stateAlreadyNamed: 0,
+                stateMissing: 0,
                 written: false,
             },
         ]);
@@ -729,5 +755,51 @@ describe("thread names through migrateHome", () => {
             nameRecord(uuid("0034"), "destination-name"),
             nameRecord(uuid("0035"), "carried"),
         ]);
+    });
+});
+
+describe("thread names in the Codex state database", () => {
+    test("names a thread the destination holds but never named, and never overwrites one it has", async () => {
+        const root = scratch();
+        const rollouts = [
+            { date: "2026-09-01", uuid: uuid("0041") },
+            { date: "2026-09-02", uuid: uuid("0042") },
+            { date: "2026-09-03", uuid: uuid("0044") },
+        ];
+        const destination = makeHome(root, ".codex", rollouts);
+        const source = makeHome(root, ".codex-named", rollouts);
+        // 0041 is unnamed here and named there; 0042 is named on both; 0043 has no rollout at all;
+        // 0044 has one, but the destination's state database has never heard of the thread.
+        stateDatabase(destination, [{ id: uuid("0041") }, { id: uuid("0042"), name: "destination-name" }]);
+        stateDatabase(source, [
+            { id: uuid("0041"), name: "astra-pricing" },
+            { id: uuid("0042"), name: "source-name" },
+            { id: uuid("0043"), name: "never-copied" },
+            { id: uuid("0044"), name: "no-destination-row" },
+        ]);
+
+        const options = {
+            from: [source],
+            to: destination,
+            backupRoot: join(root, "backups"),
+            inspectOpenFiles: clear,
+        };
+
+        const planned = await migrateHome({ ...options, stamp: "20260910-210000" });
+
+        expect(planned.sessionNames[0]).toMatchObject({ stateAdded: 1, stateAlreadyNamed: 1, stateMissing: 1 });
+        expect(threadName(destination, uuid("0041"))).toBeNull();
+
+        const applied = await migrateHome({ ...options, apply: true, stamp: "20260910-210100" });
+
+        expect(applied.sessionNames[0]).toMatchObject({ stateAdded: 1, stateAlreadyNamed: 1, written: true });
+        expect(threadName(destination, uuid("0041"))).toBe("astra-pricing");
+        expect(threadName(destination, uuid("0042"))).toBe("destination-name");
+        expect(applied.backups.state?.length).toBe(1);
+
+        const rerun = await migrateHome({ ...options, apply: true, stamp: "20260910-210200" });
+
+        expect(rerun.sessionNames[0]).toMatchObject({ stateAdded: 0, stateAlreadyNamed: 2 });
+        expect(threadName(destination, uuid("0041"))).toBe("astra-pricing");
     });
 });

@@ -37,6 +37,8 @@ function scripted(answers: boolean[]): MigrateHomeInteraction & { asked: string[
     return {
         asked,
         interactive: () => true,
+        // Never the real probe: it shells out to `lsof`, which starves under a parallel suite.
+        inspectOpenFiles: () => [],
         confirm(options) {
             asked.push(options.message);
             return Promise.resolve(answers[index++] ?? false);
@@ -83,6 +85,8 @@ describe("the registered command", () => {
         home(root, ".codex-alpha", true);
         const program = new Command();
         registerMigrateHomeCommand(program);
+        // The 20 s budget is deliberate: this is the one test that goes through the REAL `lsof`
+        // probe to prove the wiring, and `lsof` takes seconds when the suite runs in parallel.
 
         // A bare `.action(runMigrateHome)` handed the Command object to the injected interaction,
         // and every invocation threw `interaction.interactive is not a function`.
@@ -92,5 +96,5 @@ describe("the registered command", () => {
             })
         ).resolves.toBeDefined();
         expect(process.exitCode ?? 0).toBe(0);
-    });
+    }, 20_000);
 });

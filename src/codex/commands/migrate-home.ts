@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { expandTilde } from "@genesiscz/utils/paths";
+import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
 import * as p from "@genesiscz/utils/prompts/p";
 import {
     createBoxTable,
@@ -129,14 +130,16 @@ function renderReport(report: MigrateHomeReport): void {
         }
     }
 
-    const carried = report.sessionNames.filter((names) => names.added > 0);
+    const carried = report.sessionNames.filter((names) => names.added > 0 || names.stateAdded > 0);
 
     if (carried.length > 0) {
         renderCliSection("Thread names");
 
         for (const names of carried) {
             const dry = names.written ? "" : pc.dim(" (dry run)");
-            renderCliKeyRow("carried over", `${names.added} from ${names.sourcePath}${dry}`, 18);
+            renderCliKeyRow("source", names.home, 18);
+            renderCliKeyRow("session index", `${names.added} name(s)${dry}`, 18);
+            renderCliKeyRow("codex state", `${names.stateAdded} thread(s) named${dry}`, 18);
         }
     }
 
@@ -174,10 +177,15 @@ function renderReport(report: MigrateHomeReport): void {
     renderCliKeyRow("provenance", report.provenanceNote, 12);
 }
 
-/** The prompts this command asks. Injected so the order of the questions is testable. */
+/** The prompts this command asks, and the one probe a test must not run for real. */
 export interface MigrateHomeInteraction {
     interactive(): boolean;
     confirm(options: { message: string; initialValue: boolean; danger?: boolean }): Promise<boolean>;
+    /**
+     * Injected by tests. The real probe spawns `lsof`, which takes seconds under a parallel suite
+     * and timed the question-order test out at exactly its 5 s budget while passing on its own.
+     */
+    inspectOpenFiles?: (query: OpenFilesQuery) => OpenFilesResult;
 }
 
 const terminalInteraction: MigrateHomeInteraction = {
@@ -192,7 +200,11 @@ export async function runMigrateHome(
     const destination = expandTilde(options.to ?? join(homedir(), ".codex"));
     const from = homeList(options.from);
     const interactive = interaction.interactive();
-    const base: MigrateHomeOptions = { from: from.length > 0 ? from : undefined, to: destination };
+    const base: MigrateHomeOptions = {
+        from: from.length > 0 ? from : undefined,
+        to: destination,
+        inspectOpenFiles: interaction.inspectOpenFiles,
+    };
 
     let desktop = options.desktop === true;
     let archiveSource = options.archiveSource === true;
