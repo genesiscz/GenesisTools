@@ -1,6 +1,7 @@
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -174,9 +175,14 @@ export function registerAgentHistoryCommand(
                 return;
             }
 
-            const hits = await adapter.search(filters);
+            // The only CLI entry for `tools codex history` and `tools grok history`, so the label
+            // carries the provider: one scope, separable numbers.
+            const prof = profiler.scope("agent-history");
+            const hits = await prof.measureAsync(`history.search.${adapter.kind}`, () => adapter.search(filters));
 
-            await warnUnresolvedIdentities(adapter, toolName);
+            await prof.measureAsync("history.warn-unresolved-identities", () =>
+                warnUnresolvedIdentities(adapter, toolName)
+            );
 
             if (hits.length === 0) {
                 if (options.json || options.format === "json") {

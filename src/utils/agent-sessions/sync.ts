@@ -1,6 +1,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { profiler } from "@genesiscz/utils/profile";
 import { sourceFingerprint } from "./fingerprint";
 import { historySourceKey } from "./identity";
 import { historyPathUnderRoot } from "./project-scope";
@@ -80,7 +81,12 @@ export async function synchronizeHistory(options: {
     signal?.throwIfAborted();
     const roots = [...new Set(options.roots.map(canonicalRoot))];
     const filtered = Boolean(options.scope?.excludeAgents || options.scope?.agentsOnly || options.scope?.project);
-    const observed = options.discovery ?? (await reader.discover(roots, { ...options.scope, signal }));
+    const prof = profiler.scope("agent-sessions");
+    // Split from the full pass below: one answers "how cheap is the unchanged check", the other
+    // "how expensive is a real re-scan", and a single number for both hides which one is slow.
+    const observed =
+        options.discovery ??
+        (await prof.measureAsync("sync.discover-observed", () => reader.discover(roots, { ...options.scope, signal })));
     const cached = repository.sources(providerId);
     const observedRoots = repository.observedRoots(providerId);
     const observedPaths = new Set(observed.sources.map((source) => source.filePath));
@@ -155,7 +161,9 @@ export async function synchronizeHistory(options: {
     // A writer reserves its generation BEFORE a fresh discovery so an older optimistic
     // observation cannot overwrite metadata committed by a concurrent newer discovery.
     const generation = repository.begin({ providerId, roots });
-    const discovery = await reader.discover(roots, { ...options.scope, signal });
+    const discovery = await prof.measureAsync("sync.discover-full", () =>
+        reader.discover(roots, { ...options.scope, signal })
+    );
     const previousSources = repository.sources(providerId);
     const issues: NativeSourceIssue[] = discovery.issues.filter(
         (issue) =>
@@ -269,17 +277,24 @@ export async function synchronizeHistory(options: {
         return null;
     }
 
-    const prepared = await concurrentMap({
-        items: options.metadataSources
-            ? discovery.sources.filter((source) => options.metadataSources!.has(source.filePath))
-            : discovery.sources,
-        concurrency: 8,
-        fn: (source) => prepareMetadata({ source }),
-        onError(source) {
-            signal?.throwIfAborted();
-            issues.push({ path: source.filePath, message: "Source metadata unavailable; previous metadata retained" });
-        },
-    });
+    // Against the sum of the per-source numbers this says whether concurrency 8 overlaps the I/O
+    // or serialises on the SQLite handles each reader opens.
+    const prepared = await prof.measureAsync("sync.prepare-metadata-batch", () =>
+        concurrentMap({
+            items: options.metadataSources
+                ? discovery.sources.filter((source) => options.metadataSources!.has(source.filePath))
+                : discovery.sources,
+            concurrency: 8,
+            fn: (source) => prepareMetadata({ source }),
+            onError(source) {
+                signal?.throwIfAborted();
+                issues.push({
+                    path: source.filePath,
+                    message: "Source metadata unavailable; previous metadata retained",
+                });
+            },
+        })
+    );
     const proposals = [...prepared.values()].filter((value): value is PreparedMetadata => value !== null);
     proposals.sort(
         (a, b) =>
@@ -295,6 +310,9 @@ export async function synchronizeHistory(options: {
             const current = proposal;
 
             try {
+                // One IMMEDIATE transaction per changed source. The aggregate answers whether a
+                // rebuild is dominated by commit overhead or by reading the sources.
+                const stopCommit = profiler.detail === "all" ? prof.start("sync.commit") : undefined;
                 const committed = repository.transaction(() => {
                     signal?.throwIfAborted();
                     if (
@@ -331,6 +349,7 @@ export async function synchronizeHistory(options: {
                         expected: previous,
                     });
                 });
+                stopCommit?.();
 
                 if (committed) {
                     parsed++;

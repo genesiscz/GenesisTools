@@ -2,6 +2,7 @@ import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { bytesEqualStreaming } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import { historyProjectMatches } from "../project-scope";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, date, type JsonRecord, type JsonValue, text } from "../source-scan";
@@ -188,12 +189,19 @@ export async function discoverClaudeHistorySources(
             continue;
         }
 
-        const ranked = await Promise.all(
-            group.map(async (file) => {
-                const stats = await stat(file.path);
-                return { file, stats, stub: await isMetadataStub(file.path, stats.size) };
-            })
-        );
+        // Each candidate is stat'ed and read up to the stub bound, and a size tie below costs a
+        // full byte-for-byte compare. Gated: it fires per duplicate group, not per corpus.
+        const rank = () =>
+            Promise.all(
+                group.map(async (file) => {
+                    const stats = await stat(file.path);
+                    return { file, stats, stub: await isMetadataStub(file.path, stats.size) };
+                })
+            );
+        const ranked =
+            profiler.detail === "all"
+                ? await profiler.scope("agent-sessions").measureAsync("discover.claude-dedup-group", rank)
+                : await rank();
         // A copy that holds conversation outranks a sidecar stub whatever their sizes: a stub
         // with a long title used to beat a short real transcript on bytes alone.
         ranked.sort(

@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { profiler } from "@genesiscz/utils/profile";
 import type { AgentSearchFilters, AgentSession, AgentSessionAdapter } from "./types";
 
 /**
@@ -39,7 +40,11 @@ export async function selectResumeSession(options: {
         limit: Number.MAX_SAFE_INTEGER,
         query: undefined,
     };
-    const sessions = (await adapter.list(scope)).filter((session) => session.kind === adapter.kind);
+    // The resume path for BOTH the codex and grok launchers, and the metadata refresh it triggers
+    // can cost more than the SQLite scan it looks like.
+    const prof = profiler.scope("agent-sessions");
+    const listed = await prof.measureAsync(`resume.list.${adapter.kind}`, () => adapter.list(scope));
+    const sessions = listed.filter((session) => session.kind === adapter.kind);
     let matches = sessions.filter((session) => session.sessionId.toLowerCase() === normalized);
     if (fullNativeId && !matches.length) {
         throw new Error(`No ${adapter.kind} session has native ID "${query}"`);
@@ -55,9 +60,10 @@ export async function selectResumeSession(options: {
     if (!matches.length) {
         // `scope` lifts the limit so exact identity resolution can enumerate everything; the
         // full-text fallback must not inherit that, or it hydrates the whole corpus.
-        matches = (await adapter.search({ ...scope, query, limit: filters.limit ?? DEFAULT_RESUME_MATCHES })).filter(
-            (session) => session.kind === adapter.kind
+        const hits = await prof.measureAsync(`resume.search.${adapter.kind}`, () =>
+            adapter.search({ ...scope, query, limit: filters.limit ?? DEFAULT_RESUME_MATCHES })
         );
+        matches = hits.filter((session) => session.kind === adapter.kind);
     }
     if (!matches.length) {
         throw new Error(`No ${adapter.kind} session matches "${query}" in this project scope`);

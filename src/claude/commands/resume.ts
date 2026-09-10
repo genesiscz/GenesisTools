@@ -13,6 +13,7 @@ import { env } from "@genesiscz/utils/env";
 import { formatClock, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
+import { profiler } from "@genesiscz/utils/profile";
 import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
@@ -239,7 +240,8 @@ export async function loadClaudeResumeCandidates(
     const listing = async (limit: number | undefined) =>
         dedup((await adapter.list({ ...filters, limit, summaryOnly: true })).map(displayNativeSession));
     const display = options.limit ?? 20;
-    let sessions = await listing(display);
+    const prof = profiler.scope("claude-history");
+    let sessions = await prof.measureAsync("resume.listing", () => listing(display));
 
     /**
      * Every indexed session, for matching by id or name. Bounding this by the DISPLAY limit made
@@ -252,12 +254,14 @@ export async function loadClaudeResumeCandidates(
      * is indexed yet, and only a full refresh can answer that.
      */
     async function everyIndexed(): Promise<DisplaySession[]> {
-        const cached = adapter.listCached
-            ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(displayNativeSession))
-            : [];
-        sessions = dedup([...(cached.length ? cached : await listing(Number.MAX_SAFE_INTEGER)), ...sessions]);
+        return prof.measureAsync("resume.every-indexed", async () => {
+            const cached = adapter.listCached
+                ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(displayNativeSession))
+                : [];
+            sessions = dedup([...(cached.length ? cached : await listing(Number.MAX_SAFE_INTEGER)), ...sessions]);
 
-        return sessions;
+            return sessions;
+        });
     }
 
     if (fullNativeId) {
@@ -273,7 +277,8 @@ export async function loadClaudeResumeCandidates(
     const query = options.query;
     const rank = (rows: DisplaySession[]) =>
         rows.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
-    const matches = matchByIdOrName(await everyIndexed(), query);
+    const indexed = await everyIndexed();
+    const matches = prof.measure("resume.match-score", () => matchByIdOrName(indexed, query));
 
     if (matches.some((session) => identifiesSession(session, query))) {
         return rank(matches);
@@ -283,12 +288,14 @@ export async function loadClaudeResumeCandidates(
     // one session whose opening prompt says the word once, and that single hit suppressed the
     // search that finds the session whose transcript says it 207 times, so the session the user
     // wanted was never offered at all.
-    const found = await adapter.search({
-        ...filters,
-        query,
-        limit: options.limit ?? 20,
-        sortByRelevance: true,
-    });
+    const found = await prof.measureAsync("resume.content-search", () =>
+        adapter.search({
+            ...filters,
+            query,
+            limit: options.limit ?? 20,
+            sortByRelevance: true,
+        })
+    );
 
     return rank(dedup([...matches, ...found.map(displayNativeSession)]));
 }

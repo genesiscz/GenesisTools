@@ -13,6 +13,7 @@ import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
 import { CodexAccountBinding } from "./account";
 import { formatActiveWriter, inspectActiveWriter, isActiveWriterError } from "./active-writer";
@@ -39,7 +40,11 @@ export async function runAccountTerminal(input: {
         throw new Error("tools codex run needs an interactive terminal; use tools codex spawn --account for workers");
     }
 
+    // Startup latency here is user-visible, and the phases hide behind one wait: a version spawn,
+    // an account bind that may go to the network, an app-server boot, a handshake, then the TUI.
+    const prof = profiler.scope("codex-run");
     const version = await detectCodexVersion();
+    prof.mark("version-detected");
     const [major, minor, patch] = version.split(".").map(Number);
     if (
         !Number.isFinite(major) ||
@@ -53,6 +58,7 @@ export async function runAccountTerminal(input: {
     }
 
     const account = await CodexAccountBinding.create(selector, { allowRefresh: true });
+    prof.mark("account-bound");
     const home = resolve(options.home ?? join(homedir(), ".codex"));
     const cwd = resolve(options.cwd ?? process.cwd());
     const model = options.model ? await resolveNativeCodexModel(account.accountId, options.model) : undefined;
@@ -99,6 +105,7 @@ export async function runAccountTerminal(input: {
         }
         resumedId = session.sessionId;
         resumedPath = session.filePath;
+        prof.mark("resume-resolved");
     }
     let nativeArgs = buildNativeRunArgs({ args, options: { ...options, model }, sessionId: resumedId });
     await account.tokens();
@@ -129,7 +136,12 @@ export async function runAccountTerminal(input: {
     process.on("SIGINT", interrupt);
     try {
         child = spawnAppServer(launch);
-        server = await openTerminalServer({ account, child, signal: initialization.signal });
+        const appServer = child;
+        // Process boot, the JSON-RPC initialize and the login handshake, in one number: today a
+        // slow start cannot be attributed to any of the three.
+        server = await prof.measureAsync("app-server-ready", () =>
+            openTerminalServer({ account, child: appServer, signal: initialization.signal })
+        );
         shutdown = createTerminalShutdown(server, () => tui);
         const childEnv: Record<string, string | undefined> = {
             ...env.getProcessEnv(),
@@ -144,10 +156,12 @@ export async function runAccountTerminal(input: {
             await server.client.request("thread/unarchive", { threadId: unarchiveId });
         }
         if (copySession && native?.importSession) {
-            const imported = await native.importSession(copySession, {
-                targetHome: home,
-                nativeClient: server.client,
-            });
+            const bound = server;
+            const importSession = native.importSession;
+            const source = copySession;
+            const imported = await prof.measureAsync("import-session", () =>
+                importSession(source, { targetHome: home, nativeClient: bound.client })
+            );
             nativeArgs = buildNativeRunArgs({
                 args,
                 options: { ...options, model },
@@ -157,6 +171,7 @@ export async function runAccountTerminal(input: {
                 `Resuming copied session ${imported.sessionId}; original ${imported.sourceSessionId} retained.`
             );
         }
+        prof.mark("tui-spawning");
         tui = Bun.spawn([resolveCodexBinary(), "--remote", server.address, ...nativeArgs], {
             cwd,
             env: childEnv,
