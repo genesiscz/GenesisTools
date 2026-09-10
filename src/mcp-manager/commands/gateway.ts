@@ -27,7 +27,11 @@ export async function gatewayStart(opts: { port?: string; detach?: boolean } = {
         return;
     }
 
-    const handle = await startGatewayServer(config, { hostname: listen.host, port });
+    const handle = await startGatewayServer(config, {
+        hostname: listen.host,
+        port,
+        readConfig: readUnifiedConfig,
+    });
     ui.ok(`mcp gateway on http://${handle.hostname}:${handle.port}`);
 
     if (opts.detach) {

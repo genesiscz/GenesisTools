@@ -41,7 +41,7 @@ function serverNameFromPath(pathname: string): string | undefined {
 
 export async function startGatewayServer(
     config: UnifiedMCPConfig,
-    opts: { port?: number; hostname?: string } = {}
+    opts: { port?: number; hostname?: string; readConfig?: () => Promise<UnifiedMCPConfig> } = {}
 ): Promise<GatewayHandle> {
     const listen = gatewayListen(config);
     const hostname = opts.hostname ?? listen.host;
@@ -76,7 +76,8 @@ export async function startGatewayServer(
                 return jsonRpcError(`missing ${GATEWAY_HEADER}. Run tools mcp-manager auth login ${name}`);
             }
 
-            const unified = config.mcpServers[name];
+            const live = opts.readConfig ? await opts.readConfig() : config;
+            const unified = live.mcpServers[name];
 
             if (!unified || !isGatewayOauth(unified)) {
                 return jsonRpcError(`${name} is not an oauth gateway server`, 404);

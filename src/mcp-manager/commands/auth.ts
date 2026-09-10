@@ -2,6 +2,7 @@ import { readUnifiedConfig, setGlobalOptions, writeUnifiedConfig } from "@app/mc
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
+import * as p from "@genesiscz/utils/prompts/p";
 import { loginMcpServer } from "../lib/auth/login.ts";
 import { secretPath } from "../lib/auth/paths.ts";
 import { isGatewayOauth, serverAuth } from "../lib/auth/policy.ts";
@@ -15,7 +16,7 @@ export async function authLogin(serverName: string | undefined, opts: { device?:
     let name = serverName;
 
     if (!name) {
-        const oauth = Object.entries(config.mcpServers).filter(([, c]) => serverAuth(c)?.kind === "oauth");
+        const remotes = Object.entries(config.mcpServers).filter(([, c]) => Boolean(c.url ?? c.httpUrl));
 
         if (!isInteractive()) {
             logger.error("server name required in non-interactive mode.");
@@ -25,7 +26,26 @@ export async function authLogin(serverName: string | undefined, opts: { device?:
             return;
         }
 
-        name = oauth[0]?.[0];
+        if (remotes.length === 0) {
+            logger.error("No HTTP MCP servers in unified config. Add one with tools mcp-manager install first.");
+            process.exitCode = 1;
+
+            return;
+        }
+
+        const picked = await p.select({
+            message: "Server to log in",
+            options: remotes.map(([n, c]) => ({
+                value: n,
+                label: `${n} (${c.url ?? c.httpUrl})`,
+            })),
+        });
+
+        if (p.isCancel(picked) || typeof picked !== "string") {
+            return;
+        }
+
+        name = picked;
     }
 
     if (!name || !config.mcpServers[name]) {
@@ -41,8 +61,6 @@ export async function authLogin(serverName: string | undefined, opts: { device?:
     current.auth = {
         kind: "oauth",
         gateway: true,
-        policy: serverAuth(current)?.policy,
-        clientName: serverAuth(current)?.clientName,
         resource: result.resource,
         authorizationServer: result.issuer,
         tokenEndpoint: result.tokenEndpoint,
