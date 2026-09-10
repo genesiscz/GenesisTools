@@ -76,6 +76,7 @@ export async function accessTokenForRequest(
         }
 
         const clientId = await readSecret(secretPath(server, "client-id"));
+        const clientSecret = await readSecret(secretPath(server, "client-secret"));
         const body = new URLSearchParams({
             grant_type: "refresh_token",
             refresh_token: refreshToken,
@@ -84,6 +85,10 @@ export async function accessTokenForRequest(
 
         if (clientId) {
             body.set("client_id", clientId);
+        }
+
+        if (clientSecret) {
+            body.set("client_secret", clientSecret);
         }
 
         const response = await mcpFetch(opts.tokenEndpoint, {

@@ -38,28 +38,35 @@ async function registerClient(
     client_id: string;
     client_secret?: string;
 }> {
-    const response = await mcpFetch(registrationEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: SafeJSON.stringify({
-            client_name: clientName,
-            redirect_uris: [redirectUri],
-            grant_types: ["authorization_code", "refresh_token"],
-            response_types: ["code"],
-            token_endpoint_auth_method: "none",
-        }),
-    });
-    const json = (await response.json()) as Record<string, unknown>;
+    const methods = ["client_secret_post", "none"] as const;
+    let lastBody = "";
+    let lastStatus = 0;
 
-    if (!response.ok || typeof json.client_id !== "string") {
-        const body = SafeJSON.stringify(json).slice(0, 400);
-        throw new Error(`Dynamic client registration failed (HTTP ${response.status}): ${body}`);
+    for (const method of methods) {
+        const response = await mcpFetch(registrationEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: SafeJSON.stringify({
+                client_name: clientName,
+                redirect_uris: [redirectUri],
+                grant_types: ["authorization_code", "refresh_token"],
+                response_types: ["code"],
+                token_endpoint_auth_method: method,
+            }),
+        });
+        const json = (await response.json()) as Record<string, unknown>;
+        lastStatus = response.status;
+        lastBody = SafeJSON.stringify(json).slice(0, 400);
+
+        if (response.ok && typeof json.client_id === "string") {
+            return {
+                client_id: json.client_id,
+                client_secret: typeof json.client_secret === "string" ? json.client_secret : undefined,
+            };
+        }
     }
 
-    return {
-        client_id: json.client_id,
-        client_secret: typeof json.client_secret === "string" ? json.client_secret : undefined,
-    };
+    throw new Error(`Dynamic client registration failed (HTTP ${lastStatus}): ${lastBody}`);
 }
 
 async function exchangeCode(opts: {
@@ -67,23 +74,30 @@ async function exchangeCode(opts: {
     code: string;
     redirectUri: string;
     clientId: string;
+    clientSecret?: string;
     verifier: string;
     resource: string;
 }): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
+    const body: Record<string, string> = {
+        grant_type: "authorization_code",
+        code: opts.code,
+        redirect_uri: opts.redirectUri,
+        client_id: opts.clientId,
+        code_verifier: opts.verifier,
+        resource: opts.resource,
+    };
+
+    if (opts.clientSecret) {
+        body.client_secret = opts.clientSecret;
+    }
+
     const response = await mcpFetch(opts.tokenEndpoint, {
         method: "POST",
         headers: {
             Accept: "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: form({
-            grant_type: "authorization_code",
-            code: opts.code,
-            redirect_uri: opts.redirectUri,
-            client_id: opts.clientId,
-            code_verifier: opts.verifier,
-            resource: opts.resource,
-        }),
+        body: form(body),
     });
     const json = (await response.json()) as Record<string, unknown>;
 
@@ -139,7 +153,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
     }
 
     const redirectUri = `http://127.0.0.1:${listener.port}/callback`;
-    const clientId = await (async () => {
+    const registered = await (async () => {
         if (policy === "static-client") {
             throw new Error(`${options.server} policy is static-client; store a client-id first`);
         }
@@ -148,10 +162,9 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             throw new Error(`${as.issuer} has no registration_endpoint`);
         }
 
-        const registered = await registerClient(as.registration_endpoint, redirectUri, clientName);
-
-        return registered.client_id;
+        return await registerClient(as.registration_endpoint, redirectUri, clientName);
     })();
+    const clientId = registered.client_id;
 
     try {
         if (options.device || policy === "device-code") {
@@ -177,6 +190,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
                 accessToken,
                 expiresAt,
                 clientId,
+                clientSecret: registered.client_secret,
             });
             await writeAuthStatus({
                 server: options.server,
@@ -229,6 +243,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             code: callback.code,
             redirectUri,
             clientId,
+            clientSecret: registered.client_secret,
             verifier: pkce.verifier,
             resource,
         });
@@ -238,6 +253,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             refreshToken: tokens.refresh_token,
             expiresAt,
             clientId,
+            clientSecret: registered.client_secret,
         });
         await writeAuthStatus({
             server: options.server,

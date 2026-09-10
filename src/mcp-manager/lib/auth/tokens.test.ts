@@ -27,6 +27,7 @@ function fakeKeyring() {
 
 let home: string;
 let tokenPosts = 0;
+let lastTokenBody = "";
 
 beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "gt-mcp-auth-"));
@@ -34,11 +35,13 @@ beforeEach(() => {
     _setMasterKeyProvidersForTest(fakeKeyring());
     _resetSecretsForTest();
     tokenPosts = 0;
+    lastTokenBody = "";
     _setMcpFetchForTest(async (input, init) => {
         const url = String(input);
 
         if (url.includes("/token") && init?.method === "POST") {
             tokenPosts += 1;
+            lastTokenBody = String(init.body ?? "");
 
             return Response.json({
                 access_token: "refreshed-access",
@@ -153,5 +156,25 @@ describe("accessTokenForRequest", () => {
 
         await expect(accessTokenForRequest("rohlik", opts)).rejects.toThrow(/No refresh token/);
         expect(tokenPosts).toBe(1);
+    });
+
+    test("refresh posts a stored client secret", async () => {
+        await writeServerTokens("figma", {
+            accessToken: "stale",
+            refreshToken: "r1",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+            clientId: "figma-client",
+            clientSecret: "figma-secret",
+        });
+
+        const token = await accessTokenForRequest("figma", {
+            tokenEndpoint: "https://identity.example/token",
+            resource: "https://mcp.example/mcp",
+            allowRefresh: true,
+        });
+
+        expect(token).toBe("refreshed-access");
+        expect(lastTokenBody).toContain("client_id=figma-client");
+        expect(lastTokenBody).toContain("client_secret=figma-secret");
     });
 });
