@@ -122,4 +122,36 @@ describe("accessTokenForRequest", () => {
         expect(tokenPosts).toBe(1);
         expect((await peekAccessToken("rohlik")).accessToken).toBe("refreshed-access");
     });
+
+    test("invalid_grant deletes the refresh token so the next call does not POST again", async () => {
+        await writeServerTokens("rohlik", {
+            accessToken: "stale",
+            refreshToken: "dead-refresh",
+            expiresAt: Date.now() - ACCESS_SKEW_MS,
+        });
+        _setMcpFetchForTest(async (input, init) => {
+            const url = String(input);
+
+            if (url.includes("/token") && init?.method === "POST") {
+                tokenPosts += 1;
+
+                return Response.json({ error: "invalid_grant" }, { status: 400 });
+            }
+
+            return new Response("no", { status: 404 });
+        });
+
+        const opts = {
+            tokenEndpoint: "https://identity.example/token",
+            resource: "https://mcp.example/mcp",
+            allowRefresh: true as const,
+        };
+
+        await expect(accessTokenForRequest("rohlik", opts)).rejects.toThrow(/auth login rohlik/);
+        expect(tokenPosts).toBe(1);
+        expect((await peekAccessToken("rohlik")).hasRefresh).toBe(false);
+
+        await expect(accessTokenForRequest("rohlik", opts)).rejects.toThrow(/No refresh token/);
+        expect(tokenPosts).toBe(1);
+    });
 });

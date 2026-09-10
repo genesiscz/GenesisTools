@@ -2,7 +2,14 @@ import { ACCESS_SKEW_MS } from "./constants.ts";
 import { mcpFetch } from "./fetch.ts";
 import { withRefreshLock } from "./lock.ts";
 import { secretPath } from "./paths.ts";
-import { readAccessToken, readExpiresAt, readRefreshToken, readSecret, writeServerTokens } from "./secrets.ts";
+import {
+    deleteSecret,
+    readAccessToken,
+    readExpiresAt,
+    readRefreshToken,
+    readSecret,
+    writeServerTokens,
+} from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
 
 export class DiagnosticRefreshError extends Error {
@@ -93,10 +100,9 @@ export async function accessTokenForRequest(
             const err = typeof json.error === "string" ? json.error : `HTTP ${response.status}`;
 
             if (err === "invalid_grant") {
-                await writeServerTokens(server, {
-                    accessToken: again.accessToken ?? "",
-                    expiresAt: again.expiresAt,
-                });
+                await deleteSecret(secretPath(server, "refresh-token"));
+                await deleteSecret(secretPath(server, "access-token"));
+                await deleteSecret(secretPath(server, "token-expires-at"));
             }
 
             await writeAuthStatus({
