@@ -284,8 +284,9 @@ const auth = program.command("auth").description("OAuth login for remote MCP ser
 auth.command("login [server]")
     .description("Discover, register, and store tokens for a remote MCP server")
     .option("--device", "Use the device-code grant instead of a loopback browser")
+    .option("--client-name [value]", "OAuth client_name for dynamic registration")
     .action(async (server, cmdOptions) => {
-        await authLogin(server, { device: cmdOptions.device });
+        await authLogin(server, { device: cmdOptions.device, clientName: cmdOptions.clientName });
     });
 
 auth.command("logout [server]").action(async (server) => {

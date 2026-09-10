@@ -3,15 +3,20 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { CLIENT_NAME_DEFAULT } from "../lib/auth/constants.ts";
 import { loginMcpServer } from "../lib/auth/login.ts";
 import { secretPath } from "../lib/auth/paths.ts";
 import { isGatewayOauth, serverAuth } from "../lib/auth/policy.ts";
+import { oauthClientPresetFor, suggestedLoginCommand } from "../lib/auth/presets.ts";
 import { deleteServerTokens, hasSecret, readExpiresAt } from "../lib/auth/secrets.ts";
 import { deleteAuthStatus, readAuthStatus } from "../lib/auth/status.ts";
 import { peekAccessToken } from "../lib/auth/tokens.ts";
 import { ensureGatewayUp } from "../lib/gateway/ensure.ts";
 
-export async function authLogin(serverName: string | undefined, opts: { device?: boolean } = {}): Promise<void> {
+export async function authLogin(
+    serverName: string | undefined,
+    opts: { device?: boolean; clientName?: string } = {}
+): Promise<void> {
     const config = await readUnifiedConfig();
     let name = serverName;
 
@@ -55,7 +60,19 @@ export async function authLogin(serverName: string | undefined, opts: { device?:
         return;
     }
 
-    const result = await loginMcpServer({ server: name, config: config.mcpServers[name], device: opts.device });
+    const server = config.mcpServers[name];
+    const clientName = await resolveClientName(name, server.url ?? server.httpUrl, opts.clientName);
+
+    if (clientName === undefined) {
+        return;
+    }
+
+    const result = await loginMcpServer({
+        server: name,
+        config: server,
+        device: opts.device,
+        clientName,
+    });
     const current = config.mcpServers[name];
     setGlobalOptions({ yes: true });
     current.auth = {
@@ -69,6 +86,66 @@ export async function authLogin(serverName: string | undefined, opts: { device?:
     await ensureGatewayUp(config);
     ui.ok(`logged in ${name}`);
     ui.dim(`issuer ${result.issuer}`);
+}
+
+async function resolveClientName(
+    server: string,
+    url: string | undefined,
+    explicit?: string
+): Promise<string | undefined> {
+    const trimmed = explicit?.trim();
+
+    if (trimmed) {
+        return trimmed;
+    }
+
+    const preset = oauthClientPresetFor(url);
+
+    if (!preset) {
+        return CLIENT_NAME_DEFAULT;
+    }
+
+    if (!isInteractive()) {
+        logger.error(preset.issue);
+
+        for (const choice of preset.clientNames) {
+            logger.info(`${choice.value}: ${choice.why}`);
+            logger.info(suggestedLoginCommand(server, choice.value));
+        }
+
+        process.exitCode = 1;
+
+        return undefined;
+    }
+
+    ui.warn(preset.issue);
+
+    for (const choice of preset.clientNames) {
+        ui.dim(suggestedLoginCommand(server, choice.value));
+    }
+
+    const picked = await p.select({
+        message: "OAuth client_name",
+        options: [
+            ...preset.clientNames.map((choice) => ({
+                value: choice.value,
+                label: `"${choice.value}"`,
+                hint: choice.why,
+            })),
+            { value: "__default__", label: `"${CLIENT_NAME_DEFAULT}"`, hint: "likely refused" },
+            { value: "__abort__", label: "Cancel" },
+        ],
+    });
+
+    if (p.isCancel(picked) || picked === "__abort__" || typeof picked !== "string") {
+        return undefined;
+    }
+
+    if (picked === "__default__") {
+        return CLIENT_NAME_DEFAULT;
+    }
+
+    return picked;
 }
 
 export async function authLogout(serverName: string | undefined): Promise<void> {

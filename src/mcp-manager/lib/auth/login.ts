@@ -6,8 +6,9 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { pollDeviceToken, startDeviceFlow } from "@genesiscz/utils/oauth/device-flow";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
 import { discoverMcp } from "./discovery.ts";
-import { mcpFetch } from "./fetch.ts";
+import { mcpFetch, readJsonRecord } from "./fetch.ts";
 import { clientNameFor, policyFor, serverAuth } from "./policy.ts";
+import { oauthClientPresetFor, suggestedLoginCommand } from "./presets.ts";
 import { writeServerTokens } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
 
@@ -16,6 +17,7 @@ export interface LoginOptions {
     config: UnifiedMCPServerConfig;
     device?: boolean;
     yes?: boolean;
+    clientName?: string;
 }
 
 export interface LoginResult {
@@ -33,7 +35,8 @@ function form(body: Record<string, string>): URLSearchParams {
 async function registerClient(
     registrationEndpoint: string,
     redirectUri: string,
-    clientName: string
+    clientName: string,
+    hint: { server: string; mcpUrl: string }
 ): Promise<{
     client_id: string;
     client_secret?: string;
@@ -54,11 +57,11 @@ async function registerClient(
                 token_endpoint_auth_method: method,
             }),
         });
-        const json = (await response.json()) as Record<string, unknown>;
+        const { json, text } = await readJsonRecord(response);
         lastStatus = response.status;
-        lastBody = SafeJSON.stringify(json).slice(0, 400);
+        lastBody = json ? SafeJSON.stringify(json).slice(0, 400) : text.slice(0, 400);
 
-        if (response.ok && typeof json.client_id === "string") {
+        if (response.ok && typeof json?.client_id === "string") {
             return {
                 client_id: json.client_id,
                 client_secret: typeof json.client_secret === "string" ? json.client_secret : undefined,
@@ -66,7 +69,23 @@ async function registerClient(
         }
     }
 
-    throw new Error(`Dynamic client registration failed (HTTP ${lastStatus}): ${lastBody}`);
+    throw new Error(
+        `Dynamic client registration failed (HTTP ${lastStatus}): ${lastBody}${dcrRefusalHint(hint.server, hint.mcpUrl, lastStatus)}`
+    );
+}
+
+function dcrRefusalHint(server: string, mcpUrl: string, status: number): string {
+    if (status !== 403) {
+        return "";
+    }
+
+    const preset = oauthClientPresetFor(mcpUrl);
+
+    if (preset) {
+        return ` ${preset.issue} ${suggestedLoginCommand(server, preset.clientNames[0]?.value ?? "Claude Code")}`;
+    }
+
+    return ' This authorization server refused dynamic client registration. Try --client-name "Claude Code".';
 }
 
 async function exchangeCode(opts: {
@@ -99,16 +118,19 @@ async function exchangeCode(opts: {
         },
         body: form(body),
     });
-    const json = (await response.json()) as Record<string, unknown>;
+    const { json, text } = await readJsonRecord(response);
+    const accessToken = json?.access_token;
 
-    if (!response.ok || typeof json.access_token !== "string") {
-        throw new Error(`Token exchange failed (HTTP ${response.status}): ${SafeJSON.stringify(json).slice(0, 400)}`);
+    if (!response.ok || typeof accessToken !== "string") {
+        throw new Error(
+            `Token exchange failed (HTTP ${response.status}): ${(json ? SafeJSON.stringify(json) : text).slice(0, 400)}`
+        );
     }
 
     return {
-        access_token: json.access_token,
-        refresh_token: typeof json.refresh_token === "string" ? json.refresh_token : undefined,
-        expires_in: typeof json.expires_in === "number" ? json.expires_in : undefined,
+        access_token: accessToken,
+        refresh_token: typeof json?.refresh_token === "string" ? json.refresh_token : undefined,
+        expires_in: typeof json?.expires_in === "number" ? json.expires_in : undefined,
     };
 }
 
@@ -138,7 +160,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
     }
 
     const policy = policyFor(options.config);
-    const clientName = clientNameFor(options.config);
+    const clientName = options.clientName?.trim() || clientNameFor(options.config);
     const pkce = await generatePkcePair();
     const listener = await startCallbackListener({
         redirectUri: "http://127.0.0.1:0/callback",
@@ -162,7 +184,10 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             throw new Error(`${as.issuer} has no registration_endpoint`);
         }
 
-        return await registerClient(as.registration_endpoint, redirectUri, clientName);
+        return await registerClient(as.registration_endpoint, redirectUri, clientName, {
+            server: options.server,
+            mcpUrl,
+        });
     })();
     const clientId = registered.client_id;
 

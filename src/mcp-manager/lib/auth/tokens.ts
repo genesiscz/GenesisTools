@@ -1,5 +1,5 @@
 import { ACCESS_SKEW_MS } from "./constants.ts";
-import { mcpFetch } from "./fetch.ts";
+import { mcpFetch, readJsonRecord } from "./fetch.ts";
 import { withRefreshLock } from "./lock.ts";
 import { secretPath } from "./paths.ts";
 import {
@@ -99,10 +99,11 @@ export async function accessTokenForRequest(
             },
             body,
         });
-        const json = (await response.json()) as Record<string, unknown>;
+        const { json, text } = await readJsonRecord(response);
+        const accessToken = json?.access_token;
 
-        if (!response.ok || typeof json.access_token !== "string") {
-            const err = typeof json.error === "string" ? json.error : `HTTP ${response.status}`;
+        if (!response.ok || typeof accessToken !== "string") {
+            const err = typeof json?.error === "string" ? json.error : text.slice(0, 80) || `HTTP ${response.status}`;
 
             if (err === "invalid_grant") {
                 await deleteSecret(secretPath(server, "refresh-token"));
@@ -120,12 +121,12 @@ export async function accessTokenForRequest(
             throw new Error(`Refresh failed for ${server} (${err}). Run tools mcp-manager auth login ${server}`);
         }
 
-        const expiresIn = typeof json.expires_in === "number" ? json.expires_in : 3600;
+        const expiresIn = typeof json?.expires_in === "number" ? json.expires_in : 3600;
         const expiresAt = Date.now() + expiresIn * 1000;
-        const nextRefresh = typeof json.refresh_token === "string" ? json.refresh_token : refreshToken;
+        const nextRefresh = typeof json?.refresh_token === "string" ? json.refresh_token : refreshToken;
 
         await writeServerTokens(server, {
-            accessToken: json.access_token,
+            accessToken,
             refreshToken: nextRefresh,
             expiresAt,
             clientId: clientId,
@@ -138,6 +139,6 @@ export async function accessTokenForRequest(
             clientId,
         });
 
-        return json.access_token;
+        return accessToken;
     });
 }

@@ -1,5 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { mcpFetch } from "./fetch.ts";
+import { mcpFetch, readJsonRecord } from "./fetch.ts";
 
 export interface ProtectedResourceMetadata {
     resource: string;
@@ -43,7 +43,9 @@ async function getJson(url: string): Promise<unknown | undefined> {
         return undefined;
     }
 
-    return response.json();
+    const { json } = await readJsonRecord(response);
+
+    return json;
 }
 
 function asPrm(value: unknown): ProtectedResourceMetadata | undefined {
