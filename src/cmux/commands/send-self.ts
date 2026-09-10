@@ -1,4 +1,4 @@
-import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { resolveCmuxPath, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -65,7 +65,19 @@ function enterOnSignal(where: readonly string[]): () => void {
             { pid: process.pid, signal },
             "[cmux send-self] signalled between text and Enter; sending Enter now"
         );
-        Bun.spawnSync(["cmux", "send-key", ...where, "enter"], { stdio: ["ignore", "ignore", "ignore"] });
+        // The resolved binary, not a bare `cmux`: the detached `nohup zsh -c` this rescue
+        // exists for runs with a minimal PATH, where a bare name is exactly what fails.
+        const rescue = Bun.spawnSync([resolveCmuxPath(), "send-key", ...where, "enter"], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+
+        if (rescue.exitCode !== 0) {
+            logger.error(
+                { pid: process.pid, exitCode: rescue.exitCode, stderr: rescue.stderr.toString().trim() },
+                "[cmux send-self] rescue Enter failed"
+            );
+        }
+
         process.exit(1);
     };
 

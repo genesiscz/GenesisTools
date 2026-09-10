@@ -4,6 +4,11 @@ import type { WorkItemFull } from "@app/azure-devops/types";
 import { formatBytes } from "@genesiscz/utils/format";
 import { htmlToMarkdown } from "@genesiscz/utils/markdown/html-to-md";
 
+/** One table cell: a `|` would open a column and a line break would open a row. */
+export function tableCell(value: string): string {
+    return value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+}
+
 /**
  * Markdown body for a work item: saved `.md` file and `tools azure-devops wi -f md` stdout.
  * Converts ADO HTML description and comments (headings, lists, images) rather than dumping tags.
@@ -17,15 +22,15 @@ export function formatWorkItemMarkdown(item: WorkItemFull, imageMap?: Map<string
     lines.push("");
     lines.push(`| Field | Value |`);
     lines.push(`|-------|-------|`);
-    lines.push(`| State | ${item.state} |`);
-    lines.push(`| Severity | ${item.severity || "N/A"} |`);
-    lines.push(`| Assignee | ${item.assignee || "Unassigned"} |`);
-    lines.push(`| Tags | ${item.tags || "None"} |`);
+    lines.push(`| State | ${tableCell(item.state)} |`);
+    lines.push(`| Severity | ${tableCell(item.severity || "N/A")} |`);
+    lines.push(`| Assignee | ${tableCell(item.assignee || "Unassigned")} |`);
+    lines.push(`| Tags | ${tableCell(item.tags || "None")} |`);
     lines.push(
-        `| Created | ${item.created ? new Date(item.created).toLocaleString() : "N/A"} by ${item.createdBy || "Unknown"} |`
+        `| Created | ${item.created ? new Date(item.created).toLocaleString() : "N/A"} by ${tableCell(item.createdBy || "Unknown")} |`
     );
     lines.push(`| Last Changed | ${item.changed ? new Date(item.changed).toLocaleString() : "N/A"} |`);
-    lines.push(`| URL | ${item.url} |`);
+    lines.push(`| URL | ${tableCell(item.url)} |`);
 
     if (item.description) {
         lines.push("");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatWorkItemMarkdown } from "@app/azure-devops/lib/work-item-markdown";
+import { formatWorkItemMarkdown, tableCell } from "@app/azure-devops/lib/work-item-markdown";
 import type { WorkItemFull } from "@app/azure-devops/types";
 
 // Regression test: tools azure-devops wi -f md — stdout dumped raw ADO HTML instead of markdown
@@ -57,5 +57,21 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).toContain("**repro** confirmed");
         expect(md).not.toContain("<p>");
         expect(md).not.toContain("<b>");
+    });
+});
+
+describe("tableCell", () => {
+    test("a pipe or a line break in a field value cannot open a column or a row", () => {
+        expect(tableCell("Backend | Frontend")).toBe("Backend \\| Frontend");
+        expect(tableCell("line one\r\nline two\nline three")).toBe("line one line two line three");
+    });
+
+    test("the details table keeps one row per field for a tagged, multi-line assignee", () => {
+        const md = formatWorkItemMarkdown(item({ assignee: "Jo | QA\nTeam", tags: "a; b|c" }));
+        const rows = md.split("\n").filter((line) => line.startsWith("| "));
+
+        expect(rows).toContain("| Assignee | Jo \\| QA Team |");
+        expect(rows).toContain("| Tags | a; b\\|c |");
+        expect(rows.every((row) => row.split(/(?<!\\)\|/).length === 4)).toBe(true);
     });
 });

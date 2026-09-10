@@ -165,7 +165,7 @@ tools cmux send-self 'text' --dry-run
 
 | Flag | Description |
 |------|-------------|
-| `--enter-delay <ms>` | Wait this long between the text and Enter (default: 500) |
+| `--enter-delay <ms>` | Wait this long between the text and Enter (default: 0, back-to-back; cmux and tmux both accept it) |
 | `--no-enter` | Send the text only, leave it unsubmitted at the prompt |
 | `--target <auto\|tmux\|cmux>` | Force a transport instead of auto-detecting (default: `auto`) |
 | `--dry-run` | Print the resolved target and exit without sending |

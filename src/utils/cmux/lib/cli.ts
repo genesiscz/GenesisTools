@@ -18,7 +18,7 @@ const CMUX_SYSTEM_DIRS = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
 
 let cachedCmuxPath: string | null = null;
 
-function resolveCmuxPath(): string {
+export function resolveCmuxPath(): string {
     if (cachedCmuxPath) {
         return cachedCmuxPath;
     }
