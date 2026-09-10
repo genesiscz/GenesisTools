@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
+import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { runTool } from "@genesiscz/utils/cli";
@@ -300,6 +301,7 @@ for (const [verb, reason] of Object.entries(WORKER_CAPABILITIES.grok.absentVerbs
 
 registerGrokHistoryCommand(program);
 registerGrokLoginCommand(program);
+registerWarmupCommand(program, { provider: "grok-sub", tool: "tools grok warmup" });
 registerGrokResumeCommand(program);
 registerUsageCommand(program);
 

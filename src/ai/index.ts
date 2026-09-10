@@ -29,6 +29,7 @@ import { runConfigTui } from "./commands/config/tui";
 import { registerSessionsCommands } from "./commands/sessions";
 import { registerUsageDaemonCommands } from "./commands/usage/daemon";
 import { registerAiUsageCommand } from "./commands/usage/index";
+import { registerWarmupCommand } from "./commands/warmup";
 
 // Without this, `referrersOf` in this process cannot see the accounts the
 // ai-proxy config bills, so `account rm` would delete an account (and its vault
@@ -584,6 +585,7 @@ registerSessionsCommands(program);
 const usageCmd = program.command("usage").description("Usage limits for every AI provider");
 registerAiUsageCommand(usageCmd);
 registerUsageDaemonCommands(usageCmd);
+registerWarmupCommand(program, { tool: "tools ai warmup" });
 
 async function main(): Promise<void> {
     try {

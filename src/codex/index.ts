@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerApprovalCommands } from "./commands/approve";
@@ -25,6 +26,7 @@ const program = new Command();
 program.name("codex").description("Spawn, monitor, and steer Codex app-server sessions");
 
 registerCodexLoginCommand(program);
+registerWarmupCommand(program, { provider: "openai-sub", tool: "tools codex warmup" });
 registerCodexHistoryCommand(program);
 registerMigrateHomeCommand(program);
 registerRunCommand(program);

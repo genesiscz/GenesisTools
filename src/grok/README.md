@@ -19,6 +19,7 @@ tools grok login [name]                      # browser OIDC login (PKCE) stored 
 tools grok login [name] --home ~/.grok       # the same login written into that GROK_HOME's auth.json instead
 tools grok login [name] --auth-file <path>   # bind a credential file that already exists; the only headless door
 tools grok usage [--json] [--range 24h]      # the shared usage dashboard pinned to this provider
+tools grok warmup [name...] [--all] [--json] # one tiny request per account to start its session timer (shared with tools ai warmup)
 ```
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider grok` and `tools ai usage --provider grok`. `login` drives xAI's own OIDC provider in the browser, so every form of it except `--auth-file` on an existing file needs a TTY. `usage` reports the subscription allowance as percentage windows over the rolling period, plus pay-as-you-go money when the account has any.

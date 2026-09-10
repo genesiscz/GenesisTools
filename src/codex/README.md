@@ -238,6 +238,8 @@ tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
 tools codex stop --name reviewer
 
+tools codex warmup [name...] [--all] [--json]   # one tiny request per account to start its session timer (shared with tools ai warmup)
+
 tools codex login [name]                       # browser login into the shared account vault
 tools codex usage [--json] [--range 24h]          # the shared usage dashboard pinned to this provider
 ```

@@ -16,15 +16,21 @@ export class OpenAISubResolver implements AccountResolver {
         const entry = config.account(binding.accountId);
 
         const { createOpenAI } = await import("@ai-sdk/openai");
+        const { toWhamRequest } = await import("../openai/wham-request");
         // Per-request token resolve so a long-running process follows CLI /
         // account refreshes instead of serving the token from detection time.
+        // The body is rewritten for WHAM on the way out: the SDK's plain Responses
+        // request got 400 "Stream must be set to true" (2026-09-10), so no `ai.chat`
+        // on a codex subscription ever reached the model before this. WHAM only
+        // streams, so callers stream too (`streaming: true`).
         const freshTokenFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
             const fresh = await binding.tokens();
-            const headers = new Headers(init?.headers);
+            const wham = toWhamRequest(input, init);
+            const headers = new Headers(wham.headers);
             headers.set("Authorization", `Bearer ${fresh.accessToken}`);
             headers.set("ChatGPT-Account-Id", fresh.chatgptAccountId);
 
-            return fetch(input, { ...init, headers });
+            return fetch(input, { ...wham, headers });
         };
         const provider = createOpenAI({
             apiKey: "codex-sub-placeholder",

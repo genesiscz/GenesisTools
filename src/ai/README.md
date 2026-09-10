@@ -144,6 +144,18 @@ tools ai usage daemon register|unregister|status
 
 `daemon register` owns the single `ai-usage-poll` task and removes the old claude-only `claude-usage-poll` on the way through. Running it once is the whole migration. `tools claude daemon` is an alias for the same three subcommands.
 
+## `ai warmup`: start a session timer on every account
+
+One tiny request per account (the smallest model the provider offers, five output tokens), so a rolling window starts now instead of on the first real call. The selection, the send and the report live in `@genesiscz/utils/ai/warmup`; `tools claude warmup`, `tools codex warmup` and `tools grok warmup` are the same command pinned to one provider, and the usage daemon's scheduled warmups call the same function.
+
+```bash
+tools ai warmup                       # pick accounts (TTY)
+tools ai warmup --all [--provider codex] [--json]
+tools ai warmup foltyn cdx-work       # by name or id, any provider
+```
+
+Anthropic falls back to a long-lived (`tools claude login-long`) token when the OAuth grant is dead and reports `used login-long token`. Codex goes through the ChatGPT backend, which only streams and accepts only the account's own model list, so the codex warmup always uses the account's default model. Exit code 1 when any account failed; the failing line carries the vendor's message and the re-login command.
+
 ## 🛑 Diagnostics do not mutate
 
 `doctor`, `account test`, `accounts list`, `accounts show`, `accounts discover` (without `--bind`) and `accounts who` are read-only by contract. They resolve and report, and they refuse to spend a single-use credential.
