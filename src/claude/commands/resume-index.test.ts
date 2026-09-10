@@ -201,3 +201,38 @@ test("content fallback keeps its own bounded result limit", async () => {
     expect(seen.list?.limit).toBe(Number.MAX_SAFE_INTEGER);
     expect(seen.search?.limit).toBe(7);
 });
+
+test("a first-prompt hit does not suppress the content pass that finds the session by name", async () => {
+    // Regression test: `--resume reports` offered only the session whose opening prompt says the
+    // word once, because that weak hit returned early and the content search never ran.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "gt-claude-resume-weak-")));
+    const root = join(home, "projects");
+    const project = join(root, "-projects-shop");
+    mkdirSync(project, { recursive: true });
+    const prompted = "11111111-2222-4333-8444-555555555551";
+    const deep = "11111111-2222-4333-8444-555555555552";
+
+    writeFileSync(
+        join(project, `${prompted}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: prompted, cwd: "/projects/shop", message: { content: "please attach the reports folder" } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "weekly rollup", sessionId: prompted })}\n`
+    );
+    writeFileSync(
+        join(project, `${deep}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: deep, cwd: "/projects/shop", message: { content: "start here" } })}\n${SafeJSON.stringify({ type: "assistant", sessionId: deep, cwd: "/projects/shop", message: { content: [{ type: "text", text: "generated three reports for the client" }] } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "report-2026-09", sessionId: deep })}\n`
+    );
+
+    const db = new Database(":memory:");
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [root], database: db });
+        const hits = await loadClaudeResumeCandidates({ query: "reports", cwd: "/projects/shop", adapter });
+
+        expect(hits.map((hit) => hit.name).sort()).toEqual(["report-2026-09", "weekly rollup"]);
+
+        // A name still answers on its own: no content pass, no second session dragged in.
+        const named = await loadClaudeResumeCandidates({ query: "weekly rollup", cwd: "/projects/shop", adapter });
+
+        expect(named.map((hit) => hit.name)).toEqual(["weekly rollup"]);
+    } finally {
+        db.close();
+    }
+});

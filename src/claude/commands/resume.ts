@@ -168,6 +168,24 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
     return [];
 }
 
+/**
+ * An id, a source key, a path, or the session's NAME. Each of those names ONE session, so a hit
+ * on one is the answer. A query that only turned up in a branch, a project or a first prompt
+ * matched by coincidence.
+ */
+function identifiesSession(session: DisplaySession, query: string): boolean {
+    const q = query.trim().toLowerCase();
+    const qNorm = normalizeAlphanumeric(q);
+
+    return (
+        session.sessionId.toLowerCase().startsWith(q) ||
+        session.sourceKey === query.trim() ||
+        session.filePath === query.trim() ||
+        session.name.toLowerCase().includes(q) ||
+        (qNorm.length >= 3 && normalizeAlphanumeric(session.name).includes(qNorm))
+    );
+}
+
 function displayNativeSession(session: AgentSearchHit): DisplaySession {
     return {
         ...toDisplay(session.sessionId, {
@@ -246,20 +264,27 @@ export async function loadClaudeResumeCandidates(
     if (!options.query || options.list) {
         return sessions.slice(0, display);
     }
-    const matches = matchByIdOrName(await everyIndexed(), options.query);
-    if (matches.length) {
-        return matches.sort((a, b) => scoreContentMatch(b, options.query!) - scoreContentMatch(a, options.query!));
+    const query = options.query;
+    const rank = (rows: DisplaySession[]) =>
+        rows.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
+    const matches = matchByIdOrName(await everyIndexed(), query);
+
+    if (matches.some((session) => identifiesSession(session, query))) {
+        return rank(matches);
     }
-    return dedup(
-        (
-            await adapter.search({
-                ...filters,
-                query: options.query,
-                limit: options.limit ?? 20,
-                sortByRelevance: true,
-            })
-        ).map(displayNativeSession)
-    );
+
+    // Weak metadata hits do NOT stand in for the content pass. `--resume reports` matched one
+    // session whose opening prompt says the word once, and that single hit suppressed the search
+    // that finds the session whose transcript says it 207 times, so the wanted session was never
+    // offered at all.
+    const found = await adapter.search({
+        ...filters,
+        query,
+        limit: options.limit ?? 20,
+        sortByRelevance: true,
+    });
+
+    return rank(dedup([...matches, ...found.map(displayNativeSession)]));
 }
 // --- UI ---
 
