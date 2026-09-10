@@ -129,21 +129,30 @@ export async function startGatewayServer(
                 init.body = await request.arrayBuffer();
             }
 
-            let response = await fetch(target, init);
+            let current = target;
+            let response = await fetch(current, init);
+            let hops = 0;
 
-            if (response.status >= 300 && response.status < 400) {
+            while (response.status >= 300 && response.status < 400) {
+                hops += 1;
+
+                if (hops > 5) {
+                    return jsonRpcError("too many redirects", 502);
+                }
+
                 const location = response.headers.get("location");
 
                 if (!location) {
                     return jsonRpcError("redirect without location", 502);
                 }
 
-                const next = new URL(location, target);
+                const next = new URL(location, current);
 
                 if (next.origin !== upstream.origin) {
                     return jsonRpcError("refused off-origin redirect", 502);
                 }
 
+                current = next;
                 response = await fetch(next, { ...init, redirect: "manual" });
             }
 

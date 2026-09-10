@@ -184,4 +184,72 @@ describe("runStdioHttpRelay", () => {
         expect(out.messages[0]).toContain("gateway HTTP 500");
         expect(out.messages[0]).not.toContain("<html>");
     });
+
+    test("writes nothing when the upstream returns 202", async () => {
+        const note = '{"jsonrpc":"2.0","method":"notifications/initialized"}';
+        const http = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch() {
+                return new Response(null, { status: 202 });
+            },
+        });
+        const chunks: Buffer[] = [];
+        const stdin = (async function* () {
+            yield Buffer.from(`${note}\n`, "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: `http://127.0.0.1:${http.port}/mcp/rohlik`,
+            headers: { [GATEWAY_HEADER]: "local" },
+            stdin,
+            stdout: {
+                write(chunk) {
+                    chunks.push(Buffer.from(chunk));
+                },
+            },
+        });
+        http.stop(true);
+
+        expect(Buffer.concat(chunks).length).toBe(0);
+    });
+
+    test("stores mcp-session-id from initialize and sends it on the next request", async () => {
+        const seen: Array<string | null> = [];
+        const http = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: async (request) => {
+                seen.push(request.headers.get("mcp-session-id"));
+                await request.text();
+
+                if (seen.length === 1) {
+                    return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+                        headers: {
+                            "Content-Type": "application/json",
+                            "mcp-session-id": "sess-1",
+                        },
+                    });
+                }
+
+                return new Response('{"jsonrpc":"2.0","id":2,"result":{}}', {
+                    headers: { "Content-Type": "application/json" },
+                });
+            },
+        });
+        const stdin = (async function* () {
+            yield Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n', "utf8");
+            yield Buffer.from('{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n', "utf8");
+        })();
+
+        await runStdioHttpRelay({
+            url: `http://127.0.0.1:${http.port}/mcp/rohlik`,
+            headers: { [GATEWAY_HEADER]: "local" },
+            stdin,
+            stdout: { write() {} },
+        });
+        http.stop(true);
+
+        expect(seen).toEqual([null, "sess-1"]);
+    });
 });

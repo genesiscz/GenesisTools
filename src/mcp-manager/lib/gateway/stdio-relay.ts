@@ -98,6 +98,7 @@ export async function runStdioHttpRelay(opts: {
 }): Promise<void> {
     const fetchImpl = opts.fetchImpl ?? fetch;
     let pending: Buffer = Buffer.alloc(0);
+    let sessionId: string | undefined;
 
     for await (const chunk of opts.stdin) {
         pending = Buffer.from(Buffer.concat([pending, Buffer.from(chunk)]));
@@ -105,16 +106,31 @@ export async function runStdioHttpRelay(opts: {
         pending = Buffer.from(parsed.rest);
 
         for (const message of parsed.messages) {
+            const headers: Record<string, string> = {
+                Accept: "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                [GATEWAY_HEADER]: opts.headers[GATEWAY_HEADER] ?? "",
+                ...opts.headers,
+            };
+
+            if (sessionId) {
+                headers["mcp-session-id"] = sessionId;
+            }
+
             const response = await fetchImpl(opts.url, {
                 method: "POST",
-                headers: {
-                    Accept: "application/json, text/event-stream",
-                    "Content-Type": "application/json",
-                    [GATEWAY_HEADER]: opts.headers[GATEWAY_HEADER] ?? "",
-                    ...opts.headers,
-                },
+                headers,
                 body: message,
             });
+            const returnedSession = response.headers.get("mcp-session-id");
+
+            if (returnedSession) {
+                sessionId = returnedSession;
+            }
+
+            if (response.status === 404) {
+                sessionId = undefined;
+            }
 
             if (response.status === 202 || response.status === 204) {
                 await response.arrayBuffer();

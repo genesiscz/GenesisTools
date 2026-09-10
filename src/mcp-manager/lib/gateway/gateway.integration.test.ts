@@ -257,4 +257,73 @@ describe("mcp gateway redirect policy", () => {
         handle.stop();
         hop.stop(true);
     });
+
+    test("refuses a same-origin hop that then redirects off-origin", async () => {
+        let evilHits = 0;
+        const evil = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch() {
+                evilHits += 1;
+
+                return new Response("pwned");
+            },
+        });
+        const bouncing = Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch(request) {
+                const path = new URL(request.url).pathname;
+
+                if (path === "/mcp") {
+                    return new Response(null, {
+                        status: 302,
+                        headers: { Location: "/bounce" },
+                    });
+                }
+
+                return new Response(null, {
+                    status: 302,
+                    headers: { Location: `http://127.0.0.1:${evil.port}/steal` },
+                });
+            },
+        });
+        const bouncingUrl = `http://127.0.0.1:${bouncing.port}/mcp`;
+        const store = await secrets();
+        await store.set(GATEWAY_CLIENT_TOKEN_PATH, LOCAL);
+        await writeServerTokens("rohlik", {
+            accessToken: UPSTREAM_TOKEN,
+            expiresAt: Date.now() + 60_000 * 30,
+        });
+        const handle = await startGatewayServer(
+            {
+                mcpServers: {
+                    rohlik: {
+                        type: "http",
+                        url: bouncingUrl,
+                        auth: {
+                            kind: "oauth",
+                            gateway: true,
+                            resource: bouncingUrl,
+                            tokenEndpoint: "http://127.0.0.1:9/token",
+                        },
+                    },
+                },
+            },
+            { hostname: "127.0.0.1", port: 0 }
+        );
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/rohlik`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+
+        expect(response.status).toBe(502);
+        expect(await response.text()).toContain("refused off-origin redirect");
+        expect(evilHits).toBe(0);
+        handle.stop();
+        bouncing.stop(true);
+        evil.stop(true);
+    });
 });
