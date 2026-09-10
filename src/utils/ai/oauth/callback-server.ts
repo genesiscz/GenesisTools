@@ -16,7 +16,7 @@ export const CALLBACK_TIMEOUT_MS = 3 * 60 * 1000;
  * The socket binds `127.0.0.1`, so this only refuses a page that pointed its own
  * domain at the loopback address to reach the port (DNS rebinding).
  */
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 export interface CallbackParams {
     code: string;

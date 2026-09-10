@@ -173,9 +173,45 @@ export function registerDoctor(program: Command): void {
 
             findings.push({
                 level: expired.length > 0 ? "warn" : "ok",
-                what: `Claude Code holds ${tokens.length} MCP OAuth token(s)${expired.length > 0 ? `; expired: ${expired.map((t) => t.serverName).join(", ")}` : ""}`,
-                ...(expired.length > 0 ? { fix: "re-authorise in Claude Code with /mcp" } : {}),
+                what: `Claude Code holds ${tokens.length} leftover MCP OAuth token(s)${expired.length > 0 ? `; expired: ${expired.map((t) => t.serverName).join(", ")}` : ""} (not used for gateway servers)`,
             });
+
+            const { readUnifiedConfig } = await import("@app/mcp-manager/utils/config.utils.js");
+            const { isGatewayOauth } = await import("@app/mcp-manager/lib/auth/policy.ts");
+            const { peekAccessToken } = await import("@app/mcp-manager/lib/auth/tokens.ts");
+            const { gatewayListen } = await import("@app/mcp-manager/lib/auth/project.ts");
+            const { gatewayHealth } = await import("@app/mcp-manager/lib/gateway/ensure.ts");
+            const unified = await readUnifiedConfig();
+            const listen = gatewayListen(unified);
+            const gateway = await gatewayHealth(listen.host, listen.port);
+
+            findings.push({
+                level: gateway === "ok" ? "ok" : gateway === "stranger" ? "err" : "warn",
+                what: `mcp gateway ${listen.host}:${listen.port} is ${gateway}`,
+                ...(gateway !== "ok"
+                    ? { fix: suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "start"] }) }
+                    : {}),
+            });
+
+            for (const [name, server] of Object.entries(unified.mcpServers)) {
+                if (!isGatewayOauth(server)) {
+                    continue;
+                }
+
+                const peek = await peekAccessToken(name);
+                const missing = !peek.accessToken || peek.expired;
+                findings.push({
+                    level: missing ? "warn" : "ok",
+                    what: `GenesisTools vault for ${name}: ${missing ? "missing or expired" : "live"}`,
+                    ...(missing
+                        ? {
+                              fix: suggestCommand("tools mcp-manager", {
+                                  replaceCommand: ["auth", "login", name],
+                              }),
+                          }
+                        : {}),
+                });
+            }
 
             if (opts.json) {
                 out.result({ findings, scripts: journal.scripts.length, servers: registry.servers.length });

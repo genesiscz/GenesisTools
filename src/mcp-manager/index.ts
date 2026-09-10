@@ -17,10 +17,19 @@ handleReadmeFlag(import.meta.url);
 
 import { runTool } from "@genesiscz/utils/cli";
 import {
+    authLogin,
+    authLogout,
+    authRefresh,
+    authStatus,
     backupAllConfigs,
     configJson,
     disableServer,
     enableServer,
+    gatewayRotateClient,
+    gatewayStart,
+    gatewayStatus,
+    gatewayStdio,
+    gatewayStop,
     installServer,
     listServers,
     openConfig,
@@ -105,7 +114,7 @@ const program = new Command()
         "-y, --yes",
         "Auto-confirm changes without prompting (only after you do the command without --yes and check the diff)"
     )
-    .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, or 'all')")
+    .option("-p, --provider <name>", "Provider name(s) for operations (claude, cursor, gemini, codex, grok, or 'all')")
     .option("-?, --help-full", "Show detailed help message")
     .helpCommand(true)
     .hook("preAction", () => {
@@ -270,6 +279,55 @@ program
         await renameServer(oldName, newName, providers);
     });
 
+const auth = program.command("auth").description("OAuth login for remote MCP servers (GenesisTools owns the tokens)");
+
+auth.command("login [server]")
+    .description("Discover, register, and store tokens for a remote MCP server")
+    .option("--device", "Use the device-code grant instead of a loopback browser")
+    .action(async (server, cmdOptions) => {
+        await authLogin(server, { device: cmdOptions.device });
+    });
+
+auth.command("logout [server]").action(async (server) => {
+    await authLogout(server);
+});
+
+auth.command("refresh [server]").action(async (server) => {
+    await authRefresh(server);
+});
+
+auth.command("status [server]").action(async (server) => {
+    await authStatus(server);
+});
+
+const gateway = program.command("gateway").description("Local MCP auth gateway");
+
+gateway
+    .command("start")
+    .option("--port [value]", "Listen port")
+    .action(async (cmdOptions) => {
+        await gatewayStart({ port: cmdOptions.port });
+    });
+
+gateway.command("stop").action(async () => {
+    await gatewayStop();
+});
+
+gateway.command("status").action(async () => {
+    await gatewayStatus();
+});
+
+gateway.command("rotate-client").action(async () => {
+    await gatewayRotateClient();
+});
+
+gateway
+    .command("stdio")
+    .option("--server <name>", "Server name")
+    .action(async (cmdOptions) => {
+        await gatewayStdio(cmdOptions.server);
+    });
+
 // config-json command
 program
     .command("config-json")
@@ -304,6 +362,8 @@ program.action(async () => {
         message: "What would you like to do?",
         options: [
             { value: "config", label: "Open/edit unified configuration" },
+            { value: "authLogin", label: "OAuth login for a remote MCP server" },
+            { value: "gatewayStart", label: "Start the local MCP auth gateway" },
             { value: "sync", label: "Sync servers to providers" },
             { value: "syncFromProviders", label: "Sync servers from providers" },
             { value: "list", label: "List all servers" },
@@ -320,6 +380,12 @@ program.action(async () => {
     switch (action) {
         case "config":
             await openConfig();
+            break;
+        case "authLogin":
+            await authLogin(undefined);
+            break;
+        case "gatewayStart":
+            await gatewayStart();
             break;
         case "sync":
             await syncServers(providers);

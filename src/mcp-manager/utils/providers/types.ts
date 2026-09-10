@@ -14,6 +14,29 @@ export enum WriteResult {
     Rejected = "rejected",
 }
 
+export type McpAuthKind = "oauth" | "bearer" | "none";
+
+export type McpAuthPolicy = "open-dcr" | "static-client" | "device-code" | "figma-client-name" | "borrow-forbidden";
+
+export interface McpServerAuth {
+    kind: McpAuthKind;
+    gateway?: boolean;
+    policy?: McpAuthPolicy;
+    resource?: string;
+    authorizationServer?: string;
+    tokenEndpoint?: string;
+    clientName?: string;
+}
+
+export interface McpGatewayListen {
+    host?: string;
+    port?: number;
+}
+
+export interface McpGatewayConfig {
+    listen?: McpGatewayListen;
+}
+
 /**
  * Unified MCP server configuration interface.
  * Represents a server configuration that can be synced across providers.
@@ -33,6 +56,12 @@ export interface UnifiedMCPServerConfig {
     headers?: Record<string, string>;
 
     /**
+     * GenesisTools-owned auth. Stays in the unified config.
+     * Provider projections get a loopback URL plus a local header, never these fields.
+     */
+    auth?: McpServerAuth;
+
+    /**
      * Meta information for this server.
      * This field is NOT synchronized to/from providers.
      * Contains enabled state per provider.
@@ -48,6 +77,7 @@ export interface UnifiedMCPServerConfig {
  */
 export interface UnifiedMCPConfig {
     mcpServers: Record<string, UnifiedMCPServerConfig>;
+    gateway?: McpGatewayConfig;
     /**
      * Enabled state for MCP servers per provider.
      * This is a duplicate of _meta.enabled information for easier access.

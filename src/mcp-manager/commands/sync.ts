@@ -1,9 +1,13 @@
 import { persistHarnessDefaults, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { isGatewayOauth } from "../lib/auth/policy.ts";
+import { gatewayListen, projectAllForHarness } from "../lib/auth/project.ts";
+import { ensureGatewayClientToken } from "../lib/auth/secrets.ts";
 
 export interface SyncOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode
@@ -74,16 +78,23 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
 
         try {
             logger.info(`Syncing to ${providerName}...`);
+            const needsGateway = Object.values(config.mcpServers).some(isGatewayOauth);
+            const localToken = needsGateway ? await ensureGatewayClientToken() : "";
+            const projected = projectAllForHarness(config.mcpServers, {
+                provider: providerName as MCPProviderName,
+                localToken,
+                listen: gatewayListen(config),
+            });
 
             // First, install servers that need to be in this provider's config
-            for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
+            for (const [serverName, serverConfig] of Object.entries(projected)) {
                 const existingServerConfig = await provider.getServerConfig(serverName);
                 if (!existingServerConfig) {
                     // Skip servers that must stay absent from this provider's
                     // config: Cursor/Codex have no disabled state (presence =
                     // enabled), and Claude's only TRUE global disable is
                     // absence from ~/.claude.json mcpServers.
-                    if (!provider.shouldBeInstalled(serverConfig)) {
+                    if (!provider.shouldBeInstalled(config.mcpServers[serverName] ?? serverConfig)) {
                         continue; // Skip - will be handled (deleted) by syncServers
                     }
                     logger.info(`  Installing '${serverName}' in ${providerName}...`);
@@ -93,7 +104,7 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
             }
 
             // Sync all servers (with enabled/disabled state from _meta.enabled[providerName])
-            const syncResult = await provider.syncServers(config.mcpServers);
+            const syncResult = await provider.syncServers(projected);
             if (syncResult === WriteResult.Applied) {
                 logger.info(`✓ Synced to ${providerName}`);
             } else if (syncResult === WriteResult.Rejected) {

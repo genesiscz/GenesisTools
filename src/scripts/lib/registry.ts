@@ -20,6 +20,8 @@ import {
     type ServerConnection,
     type ServerJsonEntry,
 } from "@app/mcp-manager/commands/list";
+import { isGatewayOauth } from "@app/mcp-manager/lib/auth/policy.ts";
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { defaultProviders } from "@app/mcp-manager/utils/providers/index.js";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -198,9 +200,10 @@ export interface AuthProblem {
 }
 
 /**
- * Build mcporter definitions, attaching Claude Code's Bearer token to every
- * remote server it holds one for. Scripts are headless, so a remote server
- * without a header cannot authenticate at all.
+ * Build mcporter definitions.
+ *
+ * Gateway OAuth servers already carry the local header and loopback URL.
+ * Other remote servers may still attach a Claude Bearer as a last-resort.
  */
 export async function toServerDefinitions(
     registry: Registry,
@@ -211,11 +214,15 @@ export async function toServerDefinitions(
     const selected = enabledServers(registry).filter((s) => !wanted || wanted.has(s.name));
     const definitions: ServerDefinition[] = [];
     const authProblems: AuthProblem[] = [];
+    const unified = await readUnifiedConfig();
 
     for (const server of selected) {
         let headers: Record<string, string> | undefined;
+        const gateway = isGatewayOauth(unified.mcpServers[server.name]) || Boolean(server.auth?.gateway);
 
-        if (server.connection.url) {
+        if (gateway) {
+            headers = server.connection.headers;
+        } else if (server.connection.url) {
             const auth = await authFor(server.connection.url, { refresh: options.refreshAuth });
             headers = auth.headers;
 
