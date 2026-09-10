@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type MigrateHomeInteraction, runMigrateHome } from "./migrate-home";
+import { Command } from "commander";
+import { type MigrateHomeInteraction, registerMigrateHomeCommand, runMigrateHome } from "./migrate-home";
 
 /**
  * The order of the two questions is load-bearing. `--archive-source` refuses against a source
@@ -72,5 +73,24 @@ describe("runMigrateHome question order", () => {
         );
 
         expect(interaction.asked).toEqual([expect.stringContaining("Copy 1 rollout(s)")]);
+    });
+});
+
+describe("the registered command", () => {
+    test("runs, because commander's second argument never lands on the interaction", async () => {
+        const root = mkdtempSync(join(tmpdir(), "codex-migrate-cli-register-"));
+        const destination = home(root, ".codex", false);
+        home(root, ".codex-alpha", true);
+        const program = new Command();
+        registerMigrateHomeCommand(program);
+
+        // A bare `.action(runMigrateHome)` handed the Command object to the injected interaction,
+        // and every invocation threw `interaction.interactive is not a function`.
+        await expect(
+            program.parseAsync(["migrate-home", "--json", "--to", destination, "--from", join(root, ".codex-alpha")], {
+                from: "user",
+            })
+        ).resolves.toBeDefined();
+        expect(process.exitCode ?? 0).toBe(0);
     });
 });

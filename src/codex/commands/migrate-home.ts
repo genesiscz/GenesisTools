@@ -129,6 +129,17 @@ function renderReport(report: MigrateHomeReport): void {
         }
     }
 
+    const carried = report.sessionNames.filter((names) => names.added > 0);
+
+    if (carried.length > 0) {
+        renderCliSection("Thread names");
+
+        for (const names of carried) {
+            const dry = names.written ? "" : pc.dim(" (dry run)");
+            renderCliKeyRow("carried over", `${names.added} from ${names.sourcePath}${dry}`, 18);
+        }
+    }
+
     if (report.backups.sessions || report.backups.globalState) {
         renderCliSection("Backups");
         renderCliKeyRow("sessions", report.backups.sessions ?? "—", 14);
@@ -273,5 +284,7 @@ export function registerMigrateHomeCommand(program: Command): void {
         .option("--desktop", "Also merge .codex-global-state.json projects and thread assignments")
         .option("--archive-source", "Rename each source sessions/ to sessions.migrated-<stamp> after a verified copy")
         .option("--json", "Emit the machine-readable report")
-        .action(runMigrateHome);
+        // Commander calls the handler with (options, command), and a bare `runMigrateHome` took
+        // that Command as its `interaction`, so every CLI run died on `interaction.interactive`.
+        .action((options: MigrateHomeCliOptions) => runMigrateHome(options));
 }
