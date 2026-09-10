@@ -53,6 +53,13 @@ tools codex run work -- resume <thread-id>
 Each launch has the selected account's authentication in memory and defaults to the
 same real `~/.codex` for configuration, plugins and conversations. An inherited
 `CODEX_HOME` does not select another target home; use `--home` explicitly if needed.
+
+The account argument is matched by substring within `openai-sub` accounts, the same
+rule `tools claude run` uses for its target: an exact id or account name wins first,
+otherwise every whitespace/slash-separated token of what you typed must appear in an
+enabled account's name (`work` matches `cdx-work`). A name that is also the exact name
+of an account on a different provider never wins by accident — the match is scoped to
+`openai-sub`. Several accounts matching is an error naming the candidates.
 Requires Codex CLI 0.153.4 or newer and macOS or Linux. The external-token and native
 remote-terminal interfaces are experimental upstream.
 
