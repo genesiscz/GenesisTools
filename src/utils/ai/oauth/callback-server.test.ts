@@ -131,7 +131,7 @@ describe("loopback OAuth callback listener", () => {
             redirectUri: REDIRECT_URI,
             port: 0,
             verifyState: acceptSession,
-            brand: { app: "GenesisTools", product: "mcp-manager" },
+            brand: { app: "Genesis' Tools", product: "mcp-manager" },
         });
 
         if (listener === null) {
@@ -140,7 +140,7 @@ describe("loopback OAuth callback listener", () => {
 
         const html = await (await fetch(callbackUrl(listener, "?code=grant&state=session"))).text();
         expect(html).toContain("Signed in");
-        expect(html).toContain("GenesisTools");
+        expect(html).toContain("Genesis' Tools");
         expect(html).toContain("mcp-manager");
         expect(html).toContain("<svg");
         await listener.close();
