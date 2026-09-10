@@ -13,6 +13,21 @@ import viteTsConfigPaths from "vite-tsconfig-paths";
 // this isolated workspace — the bare import kept the dev server from booting.
 import { env } from "../../../utils/env.client";
 
+// vite's own `UserConfig` has no `test` key. The obvious fix — importing `defineConfig` from
+// `vitest/config` — is worse: vitest@3 bundles vite@7 types while this app is on vite@8, so the
+// `plugins` array's `Plugin` type collides (see tsconfig.build.json, which excludes this file from
+// the build gate for the same reason). A structural type for exactly the fields set below avoids
+// both problems: no import from vitest, so no risk of pulling its nested vite@7 copy.
+declare module "vite" {
+    interface UserConfig {
+        test?: {
+            include?: string[];
+            exclude?: string[];
+            fileParallelism?: boolean;
+        };
+    }
+}
+
 const nitroConfig: NitroConfig = {
     experimental: {
         websocket: false,
