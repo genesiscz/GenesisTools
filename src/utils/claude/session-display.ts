@@ -15,7 +15,7 @@ export interface SessionDisplayItem {
     matchSnippet?: string;
 }
 
-const NAME_COL_WIDTH = 42;
+const NAME_COL_WIDTH = 56;
 const DETAIL_LINE_WIDTH = 72;
 const DETAIL_PROMPT_LINES = 6;
 
@@ -63,12 +63,18 @@ export function formatSessionBadge(source: "cache" | "search", isActive = false)
     return pc.dim("●");
 }
 
+/**
+ * A name may carry newlines (a pasted prompt, a harness block). Flattened first: a row that
+ * stays one line is what keeps every column below it aligned.
+ */
 function truncateSession(text: string, max: number): string {
-    if (text.length <= max) {
-        return text;
+    const flat = text.replace(/\s+/g, " ").trim();
+
+    if (flat.length <= max) {
+        return flat;
     }
 
-    return `${text.slice(0, max - 1)}…`;
+    return `${flat.slice(0, max - 1)}…`;
 }
 
 function sessionSnippet(s: SessionDisplayItem): string {

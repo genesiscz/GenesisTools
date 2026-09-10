@@ -244,3 +244,31 @@ test("a first-prompt hit does not suppress the content pass that finds the sessi
         db.close();
     }
 });
+
+test("a harness-block title becomes a readable one-line name", async () => {
+    // The picker printed `<command-name>/resume</command-name>` across two lines, which shifted
+    // every column of every row under it.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "gt-claude-resume-title-")));
+    const root = join(home, "projects");
+    const project = join(root, "-projects-shop");
+    mkdirSync(project, { recursive: true });
+    const id = "11111111-2222-4333-8444-555555555554";
+    const title = "<command-name>/resume</command-name>\n<command-args>reports-02</command-args>";
+
+    writeFileSync(
+        join(project, `${id}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: id, cwd: "/projects/shop", message: { content: "unrelated body" } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: title, sessionId: id })}\n`
+    );
+
+    const db = new Database(":memory:");
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [root], database: db });
+        const hits = await loadClaudeResumeCandidates({ query: id, cwd: "/projects/shop", adapter });
+
+        expect(hits).toHaveLength(1);
+        expect(hits[0]?.name).toBe("/resume");
+        expect(hits[0]?.name).not.toContain("\n");
+    } finally {
+        db.close();
+    }
+});

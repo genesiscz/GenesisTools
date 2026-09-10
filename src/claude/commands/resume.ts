@@ -5,6 +5,7 @@ import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
 import type { AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { cleanPromptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { buildSessionTableOpts } from "@genesiscz/utils/claude/session-display";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -67,7 +68,13 @@ function toDisplay(
 ): DisplaySession {
     return {
         sessionId,
-        name: opts.title || opts.summary || opts.firstPrompt?.slice(0, PROMPT_PREVIEW_LEN) || "(unnamed)",
+        // A raw title can BE a harness block: `<command-name>/resume</command-name>` over several
+        // lines, which reads as garbage in the picker and breaks the row it is printed in.
+        name:
+            cleanPromptText(opts.title) ??
+            cleanPromptText(opts.summary) ??
+            cleanPromptText(opts.firstPrompt)?.slice(0, PROMPT_PREVIEW_LEN) ??
+            "(unnamed)",
         summary: opts.summary || "",
         branch: opts.branch || "",
         project: opts.project || "",
@@ -425,7 +432,9 @@ export async function pickSessionForResume(
     opts: SessionPickOptions = {}
 ): Promise<DisplaySession> {
     const spinner = p.spinner();
-    spinner.start("Synchronizing Claude history...");
+    // Named phases, because the transcript pass costs seconds on a large corpus and a spinner that
+    // only says "synchronizing" for four of them reads as a hang.
+    spinner.start("Searching Claude history: index, then transcripts...");
     let candidates: DisplaySession[];
     try {
         candidates = await loadClaudeResumeCandidates({ ...opts, query });
