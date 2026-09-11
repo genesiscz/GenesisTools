@@ -136,6 +136,34 @@ function metadataInScope(metadata: CachedHistoryMetadata, filters: AgentSearchFi
     );
 }
 
+/**
+ * A row with nothing to call itself still needs a name a human can read.
+ *
+ * The native id is the honest last resort, and for most providers it is a short id. A Claude
+ * SUBAGENT's native id is its whole project-relative path, so an untitled subagent rendered as
+ * 120 characters of directory in every table, picker and menu-bar row. Its last segment is the
+ * agent's own name, which is the part that identifies it; the whole path stays in `sessionId`,
+ * which is what identity is actually for.
+ */
+export function fallbackTitle(metadata: {
+    customTitle?: string | null;
+    summary?: string | null;
+    firstPrompt?: string | null;
+    nativeId?: string | null;
+}): string {
+    const named = metadata.customTitle ?? metadata.summary ?? metadata.firstPrompt;
+
+    if (named) {
+        return named;
+    }
+
+    if (!metadata.nativeId) {
+        return "";
+    }
+
+    return metadata.nativeId.split("/").filter(Boolean).pop() ?? metadata.nativeId;
+}
+
 function resultFromMetadata(metadata: CachedHistoryMetadata, kind: string): HistorySearchResult {
     const timestamp = metadata.firstTimestamp ? new Date(metadata.firstTimestamp) : new Date(metadata.mtime);
     return {
@@ -143,7 +171,7 @@ function resultFromMetadata(metadata: CachedHistoryMetadata, kind: string): Hist
             kind,
             sessionId: metadata.nativeId ?? metadata.sessionId ?? metadata.filePath,
             cwd: metadata.cwd ?? "",
-            title: metadata.customTitle ?? metadata.summary ?? metadata.firstPrompt ?? metadata.nativeId ?? "",
+            title: fallbackTitle(metadata),
             summary: metadata.summary ?? undefined,
             prompt: metadata.firstPrompt ?? undefined,
             mtime: new Date(metadata.mtime),

@@ -1,8 +1,25 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { formatHistoryJson, formatHistoryMarkdown } from "./format-history";
+import { out } from "@genesiscz/utils/logger";
+import { formatHistoryJson, formatHistoryMarkdown, renderHistoryTable } from "./format-history";
 import type { AgentSearchHit } from "./types";
+
+const realPrintln = out.println;
+
+afterEach(() => {
+    out.println = realPrintln;
+});
+
+function renderedTable(hits: AgentSearchHit[], query?: string): string {
+    const lines: string[] = [];
+    out.println = (raw?: unknown, ...rest: unknown[]) => {
+        lines.push([raw, ...rest].map(String).join(" "));
+    };
+    renderHistoryTable(hits, query);
+
+    return lines.join("\n");
+}
 
 const hit: AgentSearchHit = {
     kind: "grok",
@@ -170,4 +187,49 @@ describe("the shared renderer carries what the Claude door always showed", () =>
         expect(md).not.toContain("#### Context");
         expect(SafeJSON.parse(formatHistoryJson([hit]))[0].commitHashes).toBeUndefined();
     });
+});
+
+/**
+ * Ported from `claude/lib/history/format-table.test.ts` when the Claude door stopped rendering
+ * its own table. The regression it guards is the reason the PROJECT column exists at all.
+ */
+test("the table prints each session's project and its whole id, so two repos stay distinct", () => {
+    // `tools claude history` once hid the project, so a GenesisPlayground session id read as
+    // though it belonged to the current GenesisTools checkout.
+    const row = (sessionId: string, project: string, title: string): AgentSearchHit => ({
+        ...hit,
+        sessionId,
+        project,
+        title,
+        cwd: `/Users/me/Projects/${project}`,
+    });
+    const table = renderedTable([
+        row("cb09c025-0657-4f49-bae6-b5aa23b8e37b", "GenesisPlayground", "tooltip"),
+        row("e68d8436-3fa0-44b3-8526-1d8435af7e3b", "GenesisTools", "resume miss"),
+    ]);
+
+    for (const column of ["ID", "PROJECT", "TITLE", "BRANCH", "AGE", "STATUS"]) {
+        expect(table).toContain(column);
+    }
+
+    // The WHOLE id: a 12-character slice is not something you can paste into `resume`.
+    expect(table).toContain("cb09c025-0657-4f49-bae6-b5aa23b8e37b");
+    expect(table).toContain("e68d8436-3fa0-44b3-8526-1d8435af7e3b");
+    expect(table).toContain("GenesisPlayground");
+    expect(table).toContain("GenesisTools");
+});
+
+test("a subagent row is marked, and the source column appears only when the homes differ", () => {
+    const plain = renderedTable([{ ...hit, isSubagent: true }]);
+
+    expect(plain).toContain("agent");
+    expect(plain).not.toContain("SOURCE");
+
+    const split = renderedTable([
+        { ...hit, sessionId: "one", sourceHome: "/homes/a" },
+        { ...hit, sessionId: "two", sourceHome: "/homes/b" },
+    ]);
+
+    expect(split).toContain("SOURCE");
+    expect(split).toContain("/homes/b");
 });
