@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { moreNavPage } from "@e2e/pages/MoreNav.page";
 import { networkStatusPage } from "@e2e/pages/NetworkStatusPage.page";
@@ -15,7 +16,7 @@ import { networkStatusPage } from "@e2e/pages/NetworkStatusPage.page";
  * gate is actually shown, then lands on the More tab.
  */
 describe("More tab", () => {
-    const bundleId = process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard";
+    const bundleId = getDevDashboardBundleId();
 
     before(async () => {
         if (await connectPage.isShown().catch(() => false)) {

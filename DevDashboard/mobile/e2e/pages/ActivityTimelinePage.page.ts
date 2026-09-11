@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 
 /**
@@ -17,7 +18,7 @@ class ActivityTimelinePage extends BasePage {
     async openViaDeepLink(): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: "devdashboard://activity-timeline",
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
         await this.waitForExist(this.ids.screen);
         // Either the list or the empty card resolves once the query settles.

@@ -92,7 +92,7 @@ DD_APP_PATH="$(pwd)/android/app/build/outputs/apk/debug/app-debug.apk" \
 | `DD_SIM_OS`     | `18.2`                             | iOS platform version.                              |
 | `DD_AVD`        | `Pixel_7_API_34`                   | Android AVD / device name.                         |
 | `DD_EMU_OS`     | `14`                               | Android platform version.                          |
-| `DD_BUNDLE_ID`  | `dev.foltyn.dev-dashboard`         | Bundle id used by the deep-link pairing helper.    |
+| `DD_BUNDLE_ID`  | `app.json` bundleIdentifier        | Overrides `getDevDashboardBundleId()` (e2e/bundle-id.ts). |
 
 ## The connect gate (every feature spec needs this)
 

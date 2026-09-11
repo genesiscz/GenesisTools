@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 
 type TabName = "Pulse" | "Terminals" | "QA" | "Obsidian" | "More";
@@ -31,7 +32,7 @@ const TAB_ROUTE: Record<TabName, string> = {
  * still expose `screen-*` testIDs, which we wait on to confirm the tab actually rendered.
  */
 class AppPage extends BasePage {
-    private readonly bundleId = process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard";
+    private readonly bundleId = getDevDashboardBundleId();
 
     async tabsVisible(): Promise<boolean> {
         // "Tabs are up" = the Pulse screen (the index tab) renders after a deep link to it.

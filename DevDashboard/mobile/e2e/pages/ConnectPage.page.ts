@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 import { TEST_AGENT_BASE_URL } from "@e2e/pages/testAgent";
 
@@ -85,7 +86,7 @@ class ConnectPage extends BasePage {
     async injectPairing(uri: string): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: uri,
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
     }
 

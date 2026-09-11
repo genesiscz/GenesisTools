@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectionsPage } from "@e2e/pages/ConnectionsPage.page";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 
@@ -25,7 +26,7 @@ import { connectPage } from "@e2e/pages/ConnectPage.page";
  * delete affordances.
  */
 describe("ConnectionsPage", () => {
-    const bundleId = process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard";
+    const bundleId = getDevDashboardBundleId();
 
     /**
      * `expect(...).not.toBeNull()` does not narrow the type, so each test needs a real guard before

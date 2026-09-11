@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 
 /** The `(more)` route hrefs (expo-router), each rendered under the dark-themed `(more)` Stack. */
@@ -65,7 +66,7 @@ class MoreNavPage extends BasePage {
     async openTab(): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: "devdashboard:///more",
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
         await this.waitForVisible(this.screen);
     }
@@ -95,7 +96,7 @@ class MoreNavPage extends BasePage {
     async open(route: MoreRoute): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: `devdashboard://${route}`,
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
         await this.waitForVisible(ROUTE_SCREEN[route]);
     }

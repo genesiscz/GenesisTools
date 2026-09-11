@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 
 // ── App under test ───────────────────────────────────────────────────────────
 // Two modes:
@@ -9,7 +10,7 @@ import path from "node:path";
 //      dev-client by bundle id with noReset, so the running Metro binding + dev JS are preserved.
 //      This is the fast inner-loop path: rebuild JS via Metro, just relaunch to pick it up.
 const APP_PATH = process.env.DD_APP_PATH ?? "";
-const BUNDLE_ID = process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard";
+const BUNDLE_ID = getDevDashboardBundleId();
 
 // ── iOS Simulator capabilities (default) ─────────────────────────────────────
 const IOS_DEVICE = process.env.DD_SIM_DEVICE ?? "iPhone 17 Pro Max";

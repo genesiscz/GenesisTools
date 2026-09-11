@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 
 /**
@@ -24,7 +25,7 @@ class NeedsInputInboxPage extends BasePage {
     async openViaDeepLink(): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: "devdashboard://needs-input-inbox",
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
         await this.waitForExist(this.ids.screen);
         await this.waitForVisible(this.ids.count);

@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 
 /**
@@ -26,7 +27,7 @@ class TmuxPresetsPage extends BasePage {
     async openViaDeepLink(): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: "devdashboard://tmux-presets",
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
         await this.waitForVisible(this.ids.screen);
     }

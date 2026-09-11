@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { connectPage } from "@e2e/pages/ConnectPage.page";
 import { needsInputInboxPage } from "@e2e/pages/NeedsInputInboxPage.page";
 
@@ -17,7 +18,7 @@ import { needsInputInboxPage } from "@e2e/pages/NeedsInputInboxPage.page";
 // the Terminals screen and the session actually opens (the store deep-link handoff), and tapping an
 // agent-question item RESOLVES it (mark-read mutation → list invalidates → the count drops).
 describe("NeedsInputInboxPage", () => {
-    const bundleId = process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard";
+    const bundleId = getDevDashboardBundleId();
 
     before(async () => {
         if (await connectPage.isShown().catch(() => false)) {

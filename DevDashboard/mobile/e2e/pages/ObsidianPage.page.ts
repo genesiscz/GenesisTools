@@ -1,3 +1,4 @@
+import { getDevDashboardBundleId } from "@e2e/bundle-id";
 import { BasePage } from "@e2e/pages/base.page";
 
 /**
@@ -45,7 +46,7 @@ class ObsidianPage extends BasePage {
     async open(): Promise<void> {
         await browser.execute("mobile: deepLink", {
             url: "devdashboard:///obsidian",
-            bundleId: process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard",
+            bundleId: getDevDashboardBundleId(),
         });
         await this.waitForVisible(this.ids.screen);
     }
