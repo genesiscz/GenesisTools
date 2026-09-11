@@ -94,8 +94,8 @@ jobs:
       # The hosted images ship no ripgrep (actions/runner-images#12179, closed
       # NOT_PLANNED) and the history search, the shell-quirks extractor and the
       # fable enumerator shell out to it. A prebuilt release binary lands on
-      # PATH in a few seconds; no apt, no sudo. Same version the vendored
-      # fallback in src/utils/ripgrep.ts carries, so both paths behave alike.
+      # PATH in a few seconds; no apt, no sudo. PATH is now the only source
+      # (src/utils/ripgrep.ts), so dropping this step turns ripgrep.test.ts red.
       - name: Install ripgrep
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
