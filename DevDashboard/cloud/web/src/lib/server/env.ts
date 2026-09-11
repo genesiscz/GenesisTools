@@ -97,9 +97,20 @@ export function getStripeEnv(): StripeEnv | null {
         return null;
     }
 
+    const webhookSecret = optional("STRIPE_WEBHOOK_SECRET");
+
+    if (!webhookSecret && withDefault("NODE_ENV", "development") === "production") {
+        // Half-configured billing is worse than none: checkout succeeds and charges the customer
+        // while every webhook is discarded, so the account never leaves the free tier.
+        throw new Error(
+            "STRIPE_WEBHOOK_SECRET must be set in production whenever STRIPE_SECRET_KEY is set, or " +
+                "every webhook is acknowledged without being applied."
+        );
+    }
+
     return {
         secretKey,
-        webhookSecret: optional("STRIPE_WEBHOOK_SECRET"),
+        webhookSecret,
         priceProMonthly: optional("STRIPE_PRICE_PRO_MONTHLY"),
         priceProYearly: optional("STRIPE_PRICE_PRO_YEARLY"),
         priceTeamMonthly: optional("STRIPE_PRICE_TEAM_MONTHLY"),

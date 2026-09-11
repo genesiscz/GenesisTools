@@ -29,7 +29,12 @@ export async function handleEvent(event: Stripe.Event): Promise<void> {
         case "customer.subscription.updated":
         case "customer.subscription.deleted": {
             const subscription = event.data.object;
-            const accountId = subscription.metadata?.accountId;
+            // Metadata first, then the stored Stripe id. The fallback matters for subscriptions this
+            // code did not create (the Stripe dashboard, the billing portal, an import) and for every
+            // subscription created before `subscription_data.metadata` was set on checkout.
+            const accountId =
+                subscription.metadata?.accountId ??
+                (await cloudStore.getSubscriptionByStripeId(subscription.id))?.accountId;
 
             if (accountId) {
                 const status =
@@ -38,6 +43,13 @@ export async function handleEvent(event: Stripe.Event): Promise<void> {
                     status,
                     tier: event.type === "customer.subscription.deleted" ? "free" : undefined,
                 });
+            } else {
+                // Silence here is how a cancellation goes unnoticed: the route still answers 200, so
+                // Stripe records a successful delivery and never retries.
+                console.warn(
+                    `[stripe] ${event.type} for subscription ${subscription.id} matched no account; metadata=`,
+                    subscription.metadata
+                );
             }
 
             break;

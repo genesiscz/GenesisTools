@@ -35,6 +35,21 @@ export const cloudStore = {
         return rows[0] ?? null;
     },
 
+    /**
+     * Locate the account behind a Stripe subscription id. The metadata-independent path: it also
+     * resolves subscriptions created outside this code (the Stripe dashboard, the billing portal,
+     * an import), which carry no metadata of ours at all.
+     */
+    async getSubscriptionByStripeId(stripeSubscriptionId: string) {
+        ensureMigrated();
+        const rows = await db
+            .select()
+            .from(subscriptions)
+            .where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId))
+            .limit(1);
+        return rows[0] ?? null;
+    },
+
     async ensureSubscription(accountId: string, tier: "free" | "pro" | "team" = "free") {
         ensureMigrated();
         const row = assertNoKeyMaterial("subscriptions", {
@@ -159,9 +174,16 @@ export const cloudStore = {
         const existing = await this.getSettings(accountId);
 
         if (existing) {
+            // The patch only carries allow-listed settings fields; assert defensively anyway, so the
+            // boundary sits on the write rather than on the callers that happen to exist today.
+            const row = assertNoKeyMaterial("account_settings", {
+                accountId,
+                ...patch,
+                updatedAt: new Date().toISOString(),
+            });
             await db
                 .update(accountSettings)
-                .set({ ...patch, updatedAt: new Date().toISOString() })
+                .set({ pushAlertsEnabled: row.pushAlertsEnabled, updatedAt: row.updatedAt })
                 .where(eq(accountSettings.accountId, accountId));
             return;
         }

@@ -88,6 +88,10 @@ export async function createCheckoutSession(opts: {
         customer_email: opts.existingCustomerId ? undefined : opts.email,
         client_reference_id: opts.accountId,
         metadata: { accountId: opts.accountId, tier: opts.tier },
+        // Stripe does NOT copy the session's own metadata onto the Subscription it creates. Without
+        // this the subscription is born with empty metadata and every later
+        // `customer.subscription.updated`/`.deleted` webhook has no account to apply itself to.
+        subscription_data: { metadata: { accountId: opts.accountId, tier: opts.tier } },
         success_url: `${opts.appBaseUrl}/dashboard/billing?status=success`,
         cancel_url: `${opts.appBaseUrl}/dashboard/billing?status=cancelled`,
     });
@@ -125,7 +129,17 @@ export function constructWebhookEvent(payload: string, signature: string | null)
     const stripe = getStripe();
     const env = getStripeEnv();
 
-    if (!stripe || !env?.webhookSecret || !signature) {
+    if (!stripe || !env) {
+        return null;
+    }
+
+    if (!env.webhookSecret) {
+        // Billing IS configured, so this is a misconfiguration, not the inert path. Throwing lets the
+        // route answer 400 and Stripe retry; returning null would 200-ack a paid checkout into the void.
+        throw new Error("STRIPE_WEBHOOK_SECRET is not set, so webhook signatures cannot be verified.");
+    }
+
+    if (!signature) {
         return null;
     }
 

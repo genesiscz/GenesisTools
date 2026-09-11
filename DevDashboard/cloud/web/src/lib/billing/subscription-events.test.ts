@@ -8,10 +8,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const updateSubscription = vi.fn();
+const getSubscriptionByStripeId = vi.fn();
 
 vi.mock("@/lib/db/cloud-store", () => ({
     cloudStore: {
         updateSubscription: (...args: unknown[]) => updateSubscription(...args),
+        getSubscriptionByStripeId: (...args: unknown[]) => getSubscriptionByStripeId(...args),
     },
 }));
 
@@ -61,6 +63,8 @@ describe("mapStatus", () => {
 describe("handleEvent", () => {
     beforeEach(() => {
         updateSubscription.mockClear();
+        getSubscriptionByStripeId.mockReset();
+        getSubscriptionByStripeId.mockResolvedValue(null);
     });
 
     it("checkout completion upgrades the tier named in the session metadata", async () => {
@@ -124,9 +128,25 @@ describe("handleEvent", () => {
         expect(updateSubscription).toHaveBeenCalledWith("acct-1", { status: "canceled", tier: "free" });
     });
 
-    it("a subscription event without an accountId in metadata writes nothing", async () => {
-        await handleEvent(subscriptionEvent("customer.subscription.updated", { status: "active" }));
+    it("falls back to the stored Stripe subscription id when metadata carries no account", async () => {
+        getSubscriptionByStripeId.mockResolvedValue({ accountId: "acct-from-db" });
+
+        await handleEvent(
+            subscriptionEvent("customer.subscription.deleted", { id: "sub_123", status: "canceled" })
+        );
+
+        expect(getSubscriptionByStripeId).toHaveBeenCalledWith("sub_123");
+        expect(updateSubscription).toHaveBeenCalledWith("acct-from-db", { status: "canceled", tier: "free" });
+    });
+
+    it("warns instead of silently dropping an event that matches no account", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await handleEvent(subscriptionEvent("customer.subscription.updated", { id: "sub_orphan", status: "active" }));
+
         expect(updateSubscription).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
     });
 
     it("an unrelated event type writes nothing", async () => {
