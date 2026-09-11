@@ -19,6 +19,13 @@ export interface ResolveAccountInput {
     tool: string;
     subcommand?: string[];
     hintOf?: (account: AccountEntry) => string | undefined;
+    /**
+     * After the exact id-then-name pass fails, accept a unique case-insensitive substring of
+     * a name (`tools codex run fol` for `cdx-foltyn`). Several substring hits prompt on a TTY
+     * and are an error otherwise; the exact pass always runs first, so an id or a full name
+     * can never be shadowed by a longer name that contains it.
+     */
+    fuzzy?: boolean;
 }
 
 export async function resolveAccountName(input: ResolveAccountInput): Promise<AccountResolution> {
@@ -45,13 +52,31 @@ export async function resolveAccountName(input: ResolveAccountInput): Promise<Ac
 
         const account = byId ?? byName[0];
 
-        if (!account) {
+        if (account) {
+            return { status: "ok", account };
+        }
+
+        const needle = input.requested.toLowerCase();
+        const partial = input.fuzzy ? input.accounts.filter((entry) => entry.name.toLowerCase().includes(needle)) : [];
+
+        if (partial.length === 1) {
+            return { status: "ok", account: partial[0] };
+        }
+
+        if (partial.length === 0) {
             out.error(pc.red(`Account "${input.requested}" not found.`));
             out.printlnErr(pc.dim(`Known: ${input.accounts.map((entry) => entry.name).join(", ")}`));
             return { status: "error" };
         }
 
-        return { status: "ok", account };
+        if (!isInteractive()) {
+            out.error(pc.red(`Account "${input.requested}" is ambiguous in non-interactive mode.`));
+            out.printlnErr(pc.dim(`Matches: ${partial.map((entry) => entry.name).join(", ")}`));
+            return { status: "error" };
+        }
+
+        // Several substring hits on a TTY: the same picker as a missing name, scoped to them.
+        return promptForAccount({ ...input, accounts: partial });
     }
 
     if (!isInteractive()) {
@@ -65,6 +90,10 @@ export async function resolveAccountName(input: ResolveAccountInput): Promise<Ac
         return { status: "error" };
     }
 
+    return promptForAccount(input);
+}
+
+async function promptForAccount(input: ResolveAccountInput): Promise<AccountResolution> {
     // Keyed by the immutable id, not the name: two accounts sharing a name gave
     // the picker two identical values, so either choice resolved to the first of
     // them and the other was unreachable (PR #359 review t10). The name is still

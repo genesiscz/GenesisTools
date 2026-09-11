@@ -33,13 +33,14 @@ function account(id: string, name: string, provider = "anthropic-sub"): AccountE
     };
 }
 
-function resolve(requested: string | undefined, accounts: AccountEntry[]) {
+function resolve(requested: string | undefined, accounts: AccountEntry[], fuzzy = false) {
     return resolveAccountName({
         requested,
         accounts,
         message: "Which account?",
         tool: "tools ai accounts logout",
         subcommand: ["accounts", "logout"],
+        fuzzy,
     });
 }
 
@@ -122,5 +123,33 @@ describe("nothing matched", () => {
 
         expect(picked.status).toBe("error");
         expect(errorLines.join("\n")).toContain("No accounts configured");
+    });
+});
+describe("fuzzy: a unique substring resolves, an ambiguous one is refused off a TTY", () => {
+    test("a substring of one name resolves it", async () => {
+        const picked = await resolve("folt", [account("acc_cdx", "cdx-foltyn"), account("acc_work", "work")], true);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_cdx");
+    });
+
+    test("a substring shared by two names is an error naming both (non-TTY)", async () => {
+        const picked = await resolve("res", [account("acc_a", "reservine"), account("acc_b", "info.reservine")], true);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("ambiguous");
+        expect(errLines.join("\n")).toContain("info.reservine");
+    });
+
+    test("the exact pass still wins over a longer name that contains it", async () => {
+        const picked = await resolve("work", [account("acc_work2", "work-2"), account("acc_work", "work")], true);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_work");
+    });
+
+    test("NEGATIVE CONTROL: without fuzzy a substring is not found", async () => {
+        const picked = await resolve("folt", [account("acc_cdx", "cdx-foltyn")]);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("not found");
     });
 });
