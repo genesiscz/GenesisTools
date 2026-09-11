@@ -65,11 +65,13 @@
 ## Decision Log (append-only — newest at bottom)
 
 ### 2026-05-29 14:xx — Kickoff
+
 - User: build an Expo SDK 55 RN app cloning the dev-dashboard ("T-Max/CMax/Pulse" = tmux/cmux/Pulse +
   the rest). Plan with superpowers, activate Expo + RN skills, write multiple plan files. Create a
   worktree of the current commit `feat/dev-dashboard-mobile`. → D2, D23, D26.
 
 ### 2026-05-29 — Architecture forks answered
+
 - Connection: "lan + tunnel but support tailscale/vpn too… abstract this… commercial product…
   provide managed impl which sets everything up but support others, make it extensible… maybe create
   dev-dashboard-server… even a landing page… use high design skills." → D1, D4, D5, D6, D7, D9, D24.
@@ -80,11 +82,13 @@
 - Refactor depth: "Extract backend service." → D4.
 
 ### 2026-05-29 — Stack steer
+
 - "use zustand if needed and tanstack query / other tanstack if applicable, ofc expo- libs where
   possible. if choosing libs tell me ask me." → D16, D17, D20.
 - "high end visual design is top!" → D24.
 
 ### 2026-05-29 — Library decisions (AskUserQuestion answers)
+
 - Terminal: "prepare both [WebViews] + add an option to switch driver in-app, both should work …
   research more (termix/terminal#/terminus/open source) … 2 agents min … the researched one can be a
   3rd driver." → D12, D13.
@@ -95,18 +99,21 @@
 - Trust tier: "1 + 2" (Tailscale-trust-max+LAN AND managed-CF-with-E2E). → D7, D9.
 
 ### 2026-05-29 — Storage + cloudflared friction
+
 - "expo-sqlite/kv-store or mmkv? i think expo … use sqlite elsewhere too." → D19 (Expo-SQLite KV +
   relational; drop MMKV).
 - "offer their own cloudflared setup but with guide and maximum effort to be without friction for non
   technical vibecoders." → D8 (guided self-hosted cloudflared wizard).
 
 ### 2026-05-29 — Persistence + managed domain
+
 - "document all decisions to a file you will always read even after compaction." → THIS FILE created;
   memory points here.
 - "offer another option — cloudflared in a way we manage the (sub)domains if they don't have their?
   optional." → D10 (optional managed-(sub)domain cloudflared variant).
 
 ### 2026-05-29 — Design delivery + audience/roadmap
+
 - Design: "make me all 3, i will decide later based on that." → D27 (build all three landing
   directions as real artifacts; choose from the builds).
 - Audience/roadmap: "main target is agent developers, vibecoders, etc … but not only them — think of
@@ -114,6 +121,7 @@
   → D28 (broaden audience + a roadmap → `DevDashboard/PRODUCT-ROADMAP.md`).
 
 ### 2026-05-29 — E2E crypto lib locked
+
 - "e2e crypto — the twitter one is by x? if so use it.. or just make sure you pick the more mature
   more starred more maintained on gh." → D29. Clarified the name is unrelated to Twitter/X (TweetNaCl
   = DJB's NaCl small enough to fit in 100 tweets). GitHub check: `tweetnacl-js` **1,923★** (pure JS,
@@ -122,6 +130,7 @@
   pure-JS (no native build, runs in Expo Go). Unblocks Plan 02 (Transport/Trust).
 
 ### 2026-05-29 — Import aliasing convention
+
 - "important detail all plans should have — do not use relative imports `../` etc, everything aliased!
   dev-dashboard common stuff for mobile can have `@dd/` for example." → D30. No relative imports
   project-wide; mobile uses `@/*` (intra-app) + `@dd/*` (→ `src/dev-dashboard/*`, e.g. `@dd/contract`);
@@ -129,6 +138,7 @@
   notified mid-build to apply + retrofit. Plan 02 Agent-side files already comply.
 
 ### 2026-05-29 — Mobile import convention locked (during plan 04 impl)
+
 - "pls no relative imports all as alias instead of ../../" → then formalized: "NO relative imports
   anywhere (`../`, `./`). Everything must be path-aliased. `@/*` → `DevDashboard/mobile/src/*`;
   `@dd/*` → `src/dev-dashboard/*` (e.g. `@dd/contract`). Wire in BOTH tsconfig paths AND the
@@ -139,6 +149,7 @@
   contract's own internal re-exports.
 
 ### 2026-05-30 — Mobile data-fetching architecture
+
 - "components should never do raw useQuery() right? better a hook which returns useQuery? what is
   standard? research gh_grep of OSS expo/rn apps." → D32. gh_grep confirmed: custom-hook-per-endpoint +
   centralized query-key factory is universal (incl. the kortix-ai/suna Expo mobile app); TanStack v5
@@ -148,6 +159,7 @@
   Pulse reference screen now.
 
 ### 2026-05-30 — Feature fan-out + Cloud product + overnight autonomy
+
 - "do all other screens in parallel… as soon as mock api + hooks complete." → after the data-layer
   foundation + Pulse landed (`10981acc5`), fanned out 4 parallel isolated-worktree agents (Plans 06–09)
   + an Appium-foundation agent. Each consumes the frozen foundation + per-feature folders.
@@ -159,6 +171,7 @@
 - ⚠️ **OPEN: D35 WorkOS-vs-Better-Auth ambiguity — confirm with user.**
 
 ### 2026-05-31 — D37/D38 (mobile design + reachability)
+
 - **D37:** User reviewed the running sim app and flagged the Connect screen as ugly/plain — it ignores the
   Obsidian Terminal design system we authored (`.claude/docs/obsidian-design-system.md`, main repo). All mobile
   screens must adopt it; Connect is the pilot restyle. The `dd-*` NativeWind tokens likely need enriching to
