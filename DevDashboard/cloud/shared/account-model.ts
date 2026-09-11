@@ -77,7 +77,6 @@ export interface AccountSettings {
 
 /** The exhaustive allow-list of fields the cloud is PERMITTED to persist, per table. */
 export const CLOUD_PERSISTABLE_FIELDS = {
-    accounts: ["id", "email", "name", "createdAt"],
     subscriptions: [
         "id",
         "accountId",

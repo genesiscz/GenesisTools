@@ -4,7 +4,7 @@
  *   1. Better-Auth tables (`user`, `session`, `account`, `verification`) — owned by Better-Auth's
  *      schema; credentials/sessions live here. We declare them so drizzle-kit can migrate them and
  *      so the drizzle adapter can map onto them.
- *   2. Domain tables (`accounts`, `subscriptions`, `devices`, `managed_subdomains`, `account_settings`)
+ *   2. Domain tables (`subscriptions`, `devices`, `managed_subdomains`, `account_settings`)
  *      — the product's own data. Every write into these goes through assertNoKeyMaterial (data-boundary).
  *
  * Postgres-ready: the column types here are SQLite; the Postgres port lives in `schema.pg.ts`

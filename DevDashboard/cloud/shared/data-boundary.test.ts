@@ -41,12 +41,20 @@ describe("data-boundary", () => {
 
     it("rejects a field outside the table's allow-list", () => {
         expect(() =>
-            assertNoKeyMaterial("accounts", { id: "a", email: "e", name: null, createdAt: "t", sharedSecretSmuggle: "leak" }),
+            assertNoKeyMaterial("devices", {
+                id: "a",
+                accountId: "b",
+                label: "l",
+                kind: "agent",
+                publicKey: "k",
+                pairedAt: "t",
+                sharedSecretSmuggle: "leak",
+            }),
         ).toThrow(/not permitted/i);
     });
 
     it("returns the record on success so it can be used inline", () => {
-        const row = { id: "a", email: "e", name: null, createdAt: "t" };
-        expect(assertNoKeyMaterial("accounts", row)).toBe(row);
+        const row = { id: "a", accountId: "b", label: "l", kind: "agent", publicKey: "k", pairedAt: "t" };
+        expect(assertNoKeyMaterial("devices", row)).toBe(row);
     });
 });

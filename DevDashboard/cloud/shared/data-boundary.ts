@@ -29,7 +29,7 @@ export type CloudRecord = Record<string, unknown>;
 /**
  * Throws if `record` would persist private key material or any field outside the table's
  * allow-list. Call this on every write into a cloud table. Returns the record (typed back to
- * the caller) on success so it can be used inline: `store.insert(assertNoKeyMaterial("accounts", row))`.
+ * the caller) on success so it can be used inline: `store.insert(assertNoKeyMaterial("devices", row))`.
  */
 export function assertNoKeyMaterial<T extends CloudRecord>(table: CloudTable, record: T): T {
     const allowed = new Set<string>(CLOUD_PERSISTABLE_FIELDS[table]);
