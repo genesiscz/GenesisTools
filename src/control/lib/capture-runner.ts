@@ -56,6 +56,7 @@ import {
     type WindowBounds,
     windowShotArgv,
 } from "./peekaboo";
+import { ensureBinary } from "./runner";
 import { publishVitrinka } from "./vitrinka-publish";
 
 /** Operational failure of a capture-family command; exitCode preserves the legacy script's codes. */
@@ -212,11 +213,30 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         await runCountdown(Math.min(cap.countdownSec, 10));
     }
 
-    const backend = cap.backend ?? (AX_TOOL_AVAILABLE ? "native" : "peekaboo");
+    // Native unless the plan says otherwise. A missing or stale binary is built here, so a
+    // fresh clone records natively too; only a failed build (no Swift toolchain) goes to
+    // Peekaboo, and the warning says why.
+    let backend = cap.backend ?? "native";
+    let axTool = AX_TOOL_PATH;
+    if (backend === "native") {
+        try {
+            axTool = ensureBinary();
+        } catch (error) {
+            const reason = (error instanceof Error ? error.message : String(error)).split("\n")[0];
+
+            if (Bun.which("peekaboo") === null) {
+                throw new CaptureRunError(`native recorder unavailable: ${reason}`);
+            }
+
+            warnings.push(`native recorder unavailable — ${reason} — falling back to peekaboo`);
+            backend = "peekaboo";
+        }
+    }
+
     let attempt: CaptureAttempt;
     if (backend === "native") {
         const outDir = join(captureSessionsRoot(), `native-${Date.now()}`);
-        attempt = await startCapture([AX_TOOL_PATH, ...nativeCaptureArgv(cap, outDir)]);
+        attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)]);
 
         if (!attempt.sessionDir) {
             if (Bun.which("peekaboo") === null) {
