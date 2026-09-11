@@ -145,7 +145,12 @@ export async function buildTransportFor(conn: SavedConnection): Promise<Transpor
     }
 
     if (conn.tier === "managed") {
-        const pairing: PairingPayload = { baseUrl: conn.baseUrl, tier: "managed", username: conn.username };
+        const pairing: PairingPayload = {
+            baseUrl: conn.baseUrl,
+            tier: "managed",
+            username: conn.username,
+            agentPublicKey: conn.agentPublicKey,
+        };
         return createManagedTransport(pairing);
     }
 
@@ -191,6 +196,7 @@ export async function upsertConnection(input: SavedConnectionInput): Promise<str
         host: input.host,
         port: input.port,
         username: input.username,
+        agentPublicKey: input.agentPublicKey ?? existing?.agentPublicKey,
         addedAt: existing?.addedAt ?? now,
         lastUsedAt: now,
     };
@@ -201,6 +207,40 @@ export async function upsertConnection(input: SavedConnectionInput): Promise<str
     await persistConnections(merged);
     await setActiveConnectionId(id);
     return id;
+}
+
+/**
+ * Rebuild `baseUrl` after a host or port edit WITHOUT losing the scheme or the path. The plain
+ * `http://host:port` form is correct only for LAN; a tunnel or relay row holds an https URL that may
+ * carry a path, and rewriting it as cleartext http on port 443 silently breaks the connection.
+ */
+function rebuildBaseUrl(
+    target: SavedConnection,
+    patch: SavedConnectionPatch,
+    host: string,
+    port: number,
+): string {
+    if (patch.host === undefined && patch.port === undefined) {
+        return target.baseUrl;
+    }
+
+    if (target.tier === "lan") {
+        return `http://${host}:${port}`;
+    }
+
+    try {
+        const url = new URL(target.baseUrl);
+        url.hostname = host;
+
+        if (patch.port !== undefined) {
+            url.port = String(port);
+        }
+
+        return url.toString().replace(/\/+$/, "");
+    } catch (err) {
+        console.warn(`[connections] updateConnection: ${target.baseUrl} is not a URL, keeping it as-is`, err);
+        return target.baseUrl;
+    }
 }
 
 export async function updateConnection(id: string, patch: SavedConnectionPatch): Promise<SavedConnection | null> {
@@ -218,14 +258,14 @@ export async function updateConnection(id: string, patch: SavedConnectionPatch):
 
     const host = patch.host ?? target.host;
     const port = patch.port ?? target.port;
-    const baseUrl = patch.baseUrl ?? (patch.host || patch.port ? `http://${host}:${port}` : target.baseUrl);
     const updated: SavedConnection = {
         ...target,
         label: patch.label?.trim() || target.label,
         host,
         port,
         username: patch.username ?? target.username,
-        baseUrl,
+        agentPublicKey: patch.agentPublicKey ?? target.agentPublicKey,
+        baseUrl: patch.baseUrl ?? rebuildBaseUrl(target, patch, host, port),
     };
 
     await persistConnections(list.map((c) => (c.id === id ? updated : c)));

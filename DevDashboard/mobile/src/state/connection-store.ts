@@ -115,6 +115,9 @@ export const useConnectionStore = create<ConnectionStoreState>((set, get) => ({
             host: url.hostname,
             port,
             username: "",
+            // Without this the key is lost at restart and the restored connection cannot rebuild
+            // its transport at all: createManagedTransport refuses a pairing with no agent key.
+            agentPublicKey: pairing.agentPublicKey,
         });
         await get().activateConnection(id);
     },

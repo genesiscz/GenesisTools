@@ -14,6 +14,12 @@ export interface SavedConnection {
     host: string;
     port: number;
     username: string;
+    /**
+     * The agent's base64 X25519 PUBLIC key from the pairing QR. Managed connections cannot rebuild
+     * their transport without it, so it has to survive a restart. Public material only — the private
+     * half never leaves SecureStore.
+     */
+    agentPublicKey?: string;
     addedAt: number;
     lastUsedAt: number;
 }
@@ -26,6 +32,8 @@ export interface SavedConnectionInput {
     host: string;
     port: number;
     username: string;
+    /** The agent's base64 X25519 public key, for managed pairings. */
+    agentPublicKey?: string;
     /** Plaintext password, persisted to SecureStore (never to the kv list). Omit/empty for no auth. */
     password?: string;
 }
@@ -37,5 +45,6 @@ export interface SavedConnectionPatch {
     port?: number;
     username?: string;
     baseUrl?: string;
+    agentPublicKey?: string;
     password?: string;
 }
