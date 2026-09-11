@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type Stripe from "stripe";
 import { constructWebhookEvent } from "@/lib/billing/stripe";
-import { cloudStore } from "@/lib/db/cloud-store";
+import { handleEvent } from "@/lib/billing/subscription-events";
 
 /**
  * Stripe webhook receiver. Verifies the signature against the RAW body, then maps subscription
@@ -40,59 +40,3 @@ export const Route = createFileRoute("/api/stripe/webhook")({
     },
 });
 
-async function handleEvent(event: Stripe.Event): Promise<void> {
-    switch (event.type) {
-        case "checkout.session.completed": {
-            const session = event.data.object;
-            const accountId = session.client_reference_id ?? session.metadata?.accountId;
-            const tier = session.metadata?.tier;
-
-            if (accountId && (tier === "pro" || tier === "team")) {
-                await cloudStore.updateSubscription(accountId, {
-                    tier,
-                    status: "active",
-                    stripeCustomerId: typeof session.customer === "string" ? session.customer : null,
-                    stripeSubscriptionId: typeof session.subscription === "string" ? session.subscription : null,
-                });
-            }
-
-            break;
-        }
-
-        case "customer.subscription.updated":
-        case "customer.subscription.deleted": {
-            const subscription = event.data.object;
-            const accountId = subscription.metadata?.accountId;
-
-            if (accountId) {
-                const status =
-                    event.type === "customer.subscription.deleted" ? "canceled" : mapStatus(subscription.status);
-                await cloudStore.updateSubscription(accountId, {
-                    status,
-                    tier: event.type === "customer.subscription.deleted" ? "free" : undefined,
-                });
-            }
-
-            break;
-        }
-
-        default:
-            // Other events are not relevant to the subscription row; ignore.
-            break;
-    }
-}
-
-function mapStatus(stripeStatus: Stripe.Subscription.Status): "active" | "trialing" | "past_due" | "canceled" {
-    switch (stripeStatus) {
-        case "trialing":
-            return "trialing";
-        case "past_due":
-        case "unpaid":
-            return "past_due";
-        case "canceled":
-        case "incomplete_expired":
-            return "canceled";
-        default:
-            return "active";
-    }
-}
