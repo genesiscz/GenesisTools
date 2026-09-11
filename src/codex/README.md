@@ -246,6 +246,7 @@ tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
 tools codex stop --name reviewer
 tools codex sessions [--json]                   # every session with its derived status
+tools codex who [--json] [--all]                # live codex processes and the account each one bills
 
 tools codex warmup [name...] [--all] [--json]   # one tiny request per account to start its session timer (shared with tools ai warmup)
 

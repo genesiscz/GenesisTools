@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { resolveCodexBinary } from "@genesiscz/utils/ai/openai/codex-binary";
 import { resolveNativeCodexModel } from "@genesiscz/utils/ai/openai/resolve-native-model";
@@ -197,7 +198,7 @@ export async function runAccountTerminal(input: {
         const childEnv: Record<string, string | undefined> = {
             ...env.getProcessEnv(),
             CODEX_HOME: home,
-            TOOLS_CODEX_ACCOUNT: account.name,
+            [accountEnvVar("codex")]: account.name,
         };
         for (const key of ACCOUNT_ENV_UNSET) {
             delete childEnv[key];

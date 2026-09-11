@@ -3,6 +3,14 @@ import { CMUX_REFS_PATH, type SessionCmuxRefs } from "@app/claude/lib/cmux/sessi
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { getActiveSessionIds } from "@app/claude/lib/tail-list";
 import { accountFromEnv, type LiveAccount } from "@genesiscz/utils/ai/account-env";
+import {
+    type ActiveAgentProcess,
+    listActiveAgentProcesses,
+    type PsProcessRow,
+    parseLsofCwd,
+    parsePsLine,
+    runCapture,
+} from "@genesiscz/utils/ai/active-processes";
 import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
@@ -19,14 +27,9 @@ import { logger } from "@genesiscz/utils/logger";
 
 export type ClaudeProcessKind = "tui" | "sdk" | "mcp";
 
-export interface PsProcessRow {
-    pid: number;
-    ppid: number;
-    tty: string;
-    startedAt: number | null;
-    cpuTime: string;
-    args: string;
-}
+// The ps / lsof / account-env scan is the same on every coding agent; only the enrichment
+// below it is Claude's. Re-exported so the tests that pin the parsers keep their import.
+export { type PsProcessRow, parseLsofCwd, parsePsLine };
 
 export interface ActiveClaudeSession {
     pid: number;
@@ -182,35 +185,6 @@ async function readSessionTail(filePath: string): Promise<SessionTail> {
         logger.debug({ error, filePath }, "[who] session tail read failed");
         return { lastUserMessage: null, lastActivityAt: null };
     }
-}
-
-/** `ps -axww -o pid=,ppid=,tty=,lstart=,time=,args=` — lstart is always 5 tokens. */
-export function parsePsLine(line: string): PsProcessRow | null {
-    const tokens = line.trim().split(/\s+/);
-
-    if (tokens.length < 10) {
-        return null;
-    }
-
-    const pid = Number(tokens[0]);
-    const ppid = Number(tokens[1]);
-
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) {
-        return null;
-    }
-
-    // lstart = "Wed Aug 26 18:13:02 2026" (tokens 3..7)
-    const [, , tty, , mon, day, clock, year] = tokens;
-    const parsed = Date.parse(`${mon} ${day}, ${year} ${clock}`);
-
-    return {
-        pid,
-        ppid,
-        tty,
-        startedAt: Number.isFinite(parsed) ? parsed : null,
-        cpuTime: tokens[8],
-        args: tokens.slice(9).join(" "),
-    };
 }
 
 /**
@@ -507,43 +481,6 @@ async function readCmuxContext(runner: (cmd: string[]) => Promise<string>): Prom
     }
 }
 
-/** `claude who` is interactive; a wedged lsof or cmux must not hang it forever. */
-const CAPTURE_TIMEOUT_MS = 5000;
-
-async function runCapture(cmd: string[]): Promise<string> {
-    const proc = Bun.spawn({
-        cmd,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: CAPTURE_TIMEOUT_MS,
-        killSignal: "SIGKILL",
-    });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0 && stdout.trim().length === 0) {
-        logger.debug({ cmd: cmd[0], exitCode, stderr: stderr.slice(0, 400) }, "[who] capture command failed");
-    }
-
-    return stdout;
-}
-
-/** `lsof -a -d cwd -p <pids> -Fpn` → pid → cwd. */
-export function parseLsofCwd(output: string): Map<number, string> {
-    const result = new Map<number, string>();
-    let pid: number | null = null;
-
-    for (const line of output.split("\n")) {
-        if (line.startsWith("p")) {
-            const parsed = Number(line.slice(1));
-            pid = Number.isInteger(parsed) ? parsed : null;
-        } else if (line.startsWith("n") && pid !== null) {
-            result.set(pid, line.slice(1));
-        }
-    }
-
-    return result;
-}
-
 /**
  * A `tools claude mcp` server is never a session, whatever its tty says: Grok and Cursor
  * spawn it with no controlling tty, and it used to read as a dead headless Claude session.
@@ -568,55 +505,17 @@ export function isHelperChild(
 }
 
 export async function listActiveClaudeSessions(): Promise<ActiveClaudeSession[]> {
-    // BSD flag syntax on purpose: the dashless `e` appends the environment,
-    // while `-e` merely means "every process" and shows no env at all.
-    const [argvOut, envOut] = await Promise.all([
-        runCapture(["ps", "axww", "-o", "pid=,ppid=,tty=,lstart=,time=,args="]),
-        runCapture(["ps", "axeww", "-o", "pid=,args="]),
-    ]);
+    const scanned = await listActiveAgentProcesses({ alias: "claude", classify: classifyClaudeArgs });
 
-    const rows: Array<PsProcessRow & { kind: ClaudeProcessKind }> = [];
-
-    for (const line of argvOut.split("\n")) {
-        const row = parsePsLine(line);
-        const kind = row ? classifyClaudeArgs(row.args) : null;
-
-        if (row && kind) {
-            rows.push({ ...row, kind });
-        }
-    }
-
-    if (rows.length === 0) {
+    if (scanned.length === 0) {
         return [];
     }
 
-    const envByPid = new Map<number, string>();
-
-    for (const line of envOut.split("\n")) {
-        const match = line.match(/^\s*(\d+)\s+(.*)$/);
-
-        if (match) {
-            envByPid.set(Number(match[1]), match[2]);
-        }
-    }
-
-    const pids = rows.map((row) => row.pid);
-    const lsofOut = await runCapture(["lsof", "-a", "-d", "cwd", "-p", pids.join(","), "-Fpn"]);
-    const cwdByPid = parseLsofCwd(lsofOut);
-
-    const partial = rows.map((row) => {
-        const { account, proxyTarget } = parseAccountEnv(envByPid.get(row.pid) ?? "");
-        const { resumeId, model } = extractLaunchDetails(row.args);
-
-        return {
-            ...row,
-            account,
-            proxyTarget,
-            model,
-            resumeId,
-            cwd: cwdByPid.get(row.pid) ?? null,
-        };
-    });
+    const partial = scanned.map((row: ActiveAgentProcess) => ({
+        ...row,
+        kind: row.kind as ClaudeProcessKind,
+        ...extractLaunchDetails(row.args),
+    }));
 
     let activeSessions: Array<{ sessionId: string; cwd: string | null }> = [];
     const pathBySessionId = new Map<string, string>();

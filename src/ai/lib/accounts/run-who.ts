@@ -7,12 +7,12 @@ import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/uti
 import pc from "picocolors";
 
 /**
- * Live processes and the account each one bills.
+ * Live Claude processes and the account each one bills.
  *
- * Claude only for this campaign (decision D12): the account comes from
- * `TOOLS_CLAUDE_ACCOUNT` in the process environment, and the codex and grok
- * spawners export no equivalent yet. A DIAGNOSTIC — it reads `ps` and the
- * transcripts, and writes nothing.
+ * The scan under this (`listActiveAgentProcesses`) is shared with `tools codex who` and
+ * `tools grok who`; what stays here is Claude's ENRICHMENT of those rows: session ids from
+ * the history index, cmux surfaces by tty, and the last message off each transcript. A
+ * DIAGNOSTIC — it reads `ps`, `lsof` and the transcripts, and writes nothing.
  */
 export interface RunWhoOptions {
     json?: boolean;

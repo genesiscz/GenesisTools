@@ -16,6 +16,7 @@ tools grok tail --name fix-auth [--format compact]   # follow the running turn; 
 tools grok status --name fix-auth                    # one session; omit --name to list every session
 tools grok stop --name fix-auth                      # kill the running turn (alias: interrupt)
 tools grok sessions [--json]
+tools grok who [--json]                              # live grok processes and the account each one bills
 
 tools grok login [name]                      # browser OIDC login (PKCE) stored in the vault, no Grok CLI needed
 tools grok login [name] --home ~/.grok       # the same login written into that GROK_HOME's auth.json instead
