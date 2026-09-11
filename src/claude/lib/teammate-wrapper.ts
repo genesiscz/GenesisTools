@@ -67,10 +67,10 @@ export function teammateWrappersDir(): string {
  * Where to look for `claude`, in order. Must yield a file path, not a shell
  * function (`ccc`/`claude` wrappers from rc): CC execs TEAMMATE_COMMAND directly.
  *
- * Split out and injectable because the last-resort branch below is otherwise
- * untestable from inside this repo: `Bun.which("claude")` finds our own
- * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so no test
- * could ever force every candidate to miss.
+ * Split out and injectable because the last-resort branch below is otherwise hard to reach: on any
+ * machine that has Claude Code installed, `Bun.which("claude")` finds it and the candidate list is
+ * never empty. (It used to be worse: this repo vendored its own copy, so the lookup hit
+ * `node_modules/.bin` regardless of PATH. That dependency is gone.)
  */
 export function claudeBinaryCandidates(): string[] {
     const home = env.paths.getHome() ?? homedir();

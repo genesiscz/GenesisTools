@@ -109,10 +109,9 @@ describe("resolveClaudeBinaryForTeammates", () => {
     });
 
     /**
-     * The last-resort branch, reachable only through the injected lookup:
-     * `Bun.which("claude")` finds this repo's own
-     * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so the
-     * real candidate list can never come back empty from inside the repo.
+     * The last-resort branch, reached through the injected lookup: on a machine with Claude Code
+     * installed the real candidate list never comes back empty, so the injection is what makes the
+     * empty case testable at all.
      */
     test("falls back to the bare name when every candidate misses", () => {
         expect(resolveClaudeBinaryForTeammates(() => [])).toBe("claude");

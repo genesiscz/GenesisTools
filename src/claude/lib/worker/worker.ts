@@ -135,10 +135,10 @@ async function runTurn(options: RunTurnOptions): Promise<ClaudeTurnResult> {
         );
     }
 
-    // Never bare Bun.which here: under `bun run`, node_modules/.bin is first on
-    // PATH and resolves this repo's vendored @anthropic-ai/claude-code CLI
-    // (2.1.45 — no --safe-mode, refuses to nest). The teammate resolver prefers
-    // the user's real install for exactly this reason.
+    // Never bare Bun.which here. This repo used to depend on @anthropic-ai/claude-code, so
+    // node_modules/.bin put a stale pinned CLI first on PATH under `bun run` and it refused to
+    // nest; that dependency is gone, but a bare lookup still resolves whatever `claude` happens to
+    // be first, wrapper or alias included. The teammate resolver picks the user's real install.
     const binary = resolveClaudeBinaryForTeammates();
 
     const logPath = workerTurnLogPath(meta.name, turn);
