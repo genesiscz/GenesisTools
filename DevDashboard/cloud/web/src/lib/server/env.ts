@@ -39,6 +39,28 @@ export interface CloudflareEnv {
     fallbackOrigin: string;
 }
 
+/**
+ * The dev fallback exists so the app boots credential-less locally. In production it must NOT: the
+ * literal is committed to a public repo, and anyone holding it can sign a session cookie for any
+ * user id. Fail closed instead of booting on a known secret.
+ */
+function resolveAuthSecret(nodeEnv: string): string {
+    const secret = optional("DD_CLOUD_AUTH_SECRET");
+
+    if (secret) {
+        return secret;
+    }
+
+    if (nodeEnv === "production") {
+        throw new Error(
+            "DD_CLOUD_AUTH_SECRET must be set in production. Sessions are signed with it, and the " +
+                "development fallback is a public literal that would let anyone mint a session."
+        );
+    }
+
+    return "dev-only-insecure-secret-change-me";
+}
+
 export interface CloudEnv {
     nodeEnv: string;
     /** Public base URL of the cloud app (used for auth callbacks + emails). */
@@ -47,7 +69,7 @@ export interface CloudEnv {
     databaseUrl: string;
     /** When set to "postgres", the DB driver swaps to the Postgres dialect (Postgres-ready). */
     databaseDriver: "sqlite" | "postgres";
-    /** Better-Auth secret used to sign sessions. A dev fallback is used when unset. */
+    /** Better-Auth secret used to sign sessions. Required in production; dev falls back. */
     authSecret: string;
     /** The apex managed domain offered to managed-tier users, e.g. `devdashboard.app`. */
     managedDomain: string;
@@ -55,13 +77,14 @@ export interface CloudEnv {
 
 export function getCloudEnv(): CloudEnv {
     const driver = optional("DD_CLOUD_DATABASE_DRIVER") === "postgres" ? "postgres" : "sqlite";
+    const nodeEnv = withDefault("NODE_ENV", "development");
 
     return {
-        nodeEnv: withDefault("NODE_ENV", "development"),
+        nodeEnv,
         appBaseUrl: withDefault("DD_CLOUD_APP_URL", "http://localhost:7251"),
         databaseUrl: withDefault("DD_CLOUD_DATABASE_URL", "./data/cloud.db"),
         databaseDriver: driver,
-        authSecret: withDefault("DD_CLOUD_AUTH_SECRET", "dev-only-insecure-secret-change-me"),
+        authSecret: resolveAuthSecret(nodeEnv),
         managedDomain: withDefault("DD_CLOUD_MANAGED_DOMAIN", "devdashboard.app"),
     };
 }
