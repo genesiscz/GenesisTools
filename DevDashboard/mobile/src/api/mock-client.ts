@@ -117,7 +117,7 @@ function mockPulse(): PulseRes {
         batteryState: "discharging",
         diskFreeBytes: 212 * GB,
         diskTotalBytes: DISK_TOTAL,
-        wifiSsid: "Foltyn-5G (mock)",
+        wifiSsid: "Homelab-5G (mock)",
         publicIp: "203.0.113.7",
         topProcesses: MOCK_PROCESSES,
         capturedAt: new Date().toISOString(),
@@ -133,7 +133,7 @@ function mockNetStatus(): NetStatusRes {
         transport: "lan",
         latencyMs,
         quality,
-        ssid: "Foltyn-5G (mock)",
+        ssid: "Homelab-5G (mock)",
         publicIp: "203.0.113.7",
     };
 }

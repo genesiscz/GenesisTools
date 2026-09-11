@@ -10,7 +10,7 @@ import {
     transportLabel,
 } from "@/features/network-status/units";
 
-const PULSE = { wifiSsid: "Foltyn-5G", publicIp: "203.0.113.7" };
+const PULSE = { wifiSsid: "Homelab-5G", publicIp: "203.0.113.7" };
 
 describe("network-status units — deriveNetStatus", () => {
     it("classifies latency bands + null ping + no transport", () => {
@@ -22,7 +22,7 @@ describe("network-status units — deriveNetStatus", () => {
     });
 
     it("passes ssid + publicIp through, tolerates null pulse", () => {
-        expect(deriveNetStatus({ pulse: PULSE, pingMs: 40, activeTransport: "lan" }).ssid).toBe("Foltyn-5G");
+        expect(deriveNetStatus({ pulse: PULSE, pingMs: 40, activeTransport: "lan" }).ssid).toBe("Homelab-5G");
         expect(deriveNetStatus({ pulse: null, pingMs: 40, activeTransport: "lan" }).publicIp).toBeNull();
     });
 });
