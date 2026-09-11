@@ -28,6 +28,25 @@ native/ax-tool/.build/release/ax-tool screens      # index, name, scale, positio
 `--duration` is **seconds** on the native recorder (0.1 to 180, default 3). The runner
 sends Peekaboo `<seconds>s`, because Peekaboo 4 reads a bare number as milliseconds.
 
+A plan that ran on 2026-09-11 (Calculator, three presses). `q` matches title, description and
+identifier, so `"q": "7"` resolves to the button whose AXIdentifier is `Seven`:
+
+```json
+{
+  "capture": { "mode": "window", "app": "Calculator", "duration": 3, "threshold": 0.3 },
+  "focus": { "app": "Calculator" },
+  "actions": [
+    { "atMs": 700,  "do": "ax-press", "q": "7", "app": "Calculator" },
+    { "atMs": 1500, "do": "ax-press", "q": "8", "app": "Calculator" },
+    { "atMs": 2300, "do": "ax-press", "q": "9", "app": "Calculator" }
+  ]
+}
+```
+
+Result: `ok: true`, `capture.data.source: "native"`, four kept frames reading 0, 7, 78 and 789,
+4.5 s wall time. A missing or stale binary is built by the runner itself (`bun run build:native`
+does the same by hand); only a failed build falls back to Peekaboo, and `warnings` says so.
+
 Timing you will see in the result: an action's `actualMs` is when the runner *started* it,
 and the pre-input refocus plus the AX call add several hundred milliseconds before the pixels
 move, so the matching kept frame lands later than `actualMs`. Measured 2026-09-11 with three
@@ -309,16 +328,26 @@ embed a `see` token in a plan as if the recorder revalidated it.
 
 ## Step 4 — read the result
 
-Top-level capture JSON: `{success, data: {contactSheet: {path, …}, frames: [{path,
-timestampMs, changePercent, motionBoxes, …}], stats}, error?}`.
+Two shapes, one object. The recorder itself (`ax-tool capture` or `peekaboo capture live`)
+prints `{success, ok, data: {source, captureEngine, contactSheet: {path, file, rows, columns},
+frames: [{index, file, path, timestampMs, changePercent, reason}], stats: {capturedFrames,
+keptFrames, droppedFrames, durationMs}, sessionDir, metadataFile, videoOut?, window?,
+warnings}}`. `tools control capture plan.json` wraps it: its stdout is `{ok, sessionDir,
+exitCode, warnings, actions: [{action, plannedMs, actualMs, ok, stdout?, error?}], crops,
+strip, stripReview, capture}`, and `capture.data` is that same object. So `capture.data.source`
+in the runner result is `data.source` in the raw recorder output.
 
-1. Read `data.contactSheet.path`. That is the whole motion in one call.
-2. Use `frames[].changePercent` with `timestampMs` to locate the discontinuity. A spike
-   between adjacent frames is where it jumped; `motionBoxes` gives the changed region.
+1. Read `capture.data.contactSheet.path` (runner) or `data.contactSheet.path` (raw). That is
+   the whole motion in one call.
+2. Use `frames[].changePercent` with `timestampMs` to locate the discontinuity. A spike between
+   adjacent frames is where it jumped. Native frames carry `reason` (`first`, `change`,
+   `still`, `cap`); Peekaboo frames carry `motionBoxes` for the changed region instead.
 3. Open individual full-resolution frames only when a visual change needs closer inspection.
 
-Session output lives in a fresh temp directory per run, auto-cleaned by Peekaboo. Do not
-manage that cleanup.
+Session output lives in a fresh directory per run under the capture-sessions root in the
+temp dir (`native-<epoch>` for the native recorder, Peekaboo's own naming otherwise). Peekaboo
+cleans its own; native directories stay until the OS clears the temp dir. Do not manage that
+cleanup.
 
 ⚠️ Review contact-sheet PNGs, never animated GIFs: vision sees only frame 1 of a GIF. Crops
 use frame pixels while window geometry uses screen points, so derive the scale from the
@@ -335,8 +364,9 @@ running. Check `peekaboo permissions status` and `peekaboo bridge status --verbo
 - 🛑 **Never run two captures concurrently.** It wedges the bridge socket, and every later
   capture returns a screen-recording permission error that looks exactly like a lost grant.
   Stop the other capture, back off about 10 s, retry.
-- **Agent-driven plans: set `capture.noRemote: true` and `captureEngine: "cg"` up front.**
-  Local CoreGraphics, no bridge. The runner also self-heals: if recording has not started in
+- **Peekaboo path only: agent-driven plans set `capture.noRemote: true` and
+  `captureEngine: "cg"` up front.** Local CoreGraphics, no bridge. The native recorder ignores
+  both fields. On the Peekaboo path the runner also self-heals: if recording has not started in
   15 s it kills the attempt's process TREE (killing only the shim pid orphans the recorder),
   settles 2 s, and retries once on the opposite transport.
 - **Screen-index numbering is not consistent across Peekaboo surfaces.** Trust

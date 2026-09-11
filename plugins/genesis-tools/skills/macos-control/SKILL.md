@@ -99,6 +99,7 @@ tools control see --app Genesis --since /tmp/s.json          # .changes + only a
 
 # Fill a text field and PROVE the text landed
 tools control set --app Genesis --id auth-email --value "alice@example.com"   # reads back, retries once, fails loud
+tools control find --app Genesis --role AXTextField                          # no id known? list the fields first, then set --id or --q
 
 # Wait for a result instead of guessing with sleep
 tools control wait --app Genesis --q "status" --contains "Saved" --timeout 5000
@@ -193,6 +194,8 @@ Both work as plan steps, which is what turns a plan into a UI test.
 ```bash
 tools control screenshot --app <name> --path /tmp/s.png [--window T] [--crop x,y,w,h]
 tools control screenshot --app <name> --path /tmp/s.png --annotate [--all]   # numbered boxes + legend in --json
+                                                     #   legend entries: n (the drawn number), role, id/title/desc, px box
+                                                     #   n is NOT a see/list index; act on an entry by its id, title or desc
 tools control ocr --app <name> [--window T] [--crop x,y,w,h]                 # Vision OCR: text + pixel boxes
 tools control ocr --image /tmp/s.png
 tools control compare-screenshot a.png b.png [--max-mismatch 0.5] [--diff-out diff.png] [--json]
@@ -207,12 +210,21 @@ check that survives an app lying in its AX tree. Both default to the app's LARGE
 ```bash
 tools control draw shot.png --annotate '[{"kind":"highlight","rect":{"x":748,"y":812,"w":1246,"h":430},"label":{"text":"Build pipeline"}}]'
 tools control draw shot.png --annotate plan.json --out annotated.png [--preset review-red|callout-amber|redact]
+tools control draw shot.png --out boxed.png \
+    --annotate '[{"kind":"box","rect":{"x":748,"y":812,"w":1246,"h":430},"label":{"text":"Build pipeline"},"style":{"stroke":"#ff0000","strokeWidth":6}}]'
 ```
 
 Kinds: `highlight` (rounded-rect outline plus wash, the review register), `box`, `ellipse`,
 `arrow {from,to}`, `label {at,text}`, `blur {rect,strength}` (redact), `crop {rect}` (applied
 LAST), `grid {step,originOffset,labels}` (coordinate finder). Coordinates are NATURAL IMAGE
 PIXELS. Annotations draw in array order. The input is never mutated without `--in-place`.
+Colour comes from the preset, and `review-red` is the default, so `highlight` and `box` are
+already red; `--preset callout-amber` is amber and `redact` is a black fill. `--preset` applies
+to inline JSON and plan files alike. A per-annotation `style` overrides the preset: `stroke`,
+`strokeWidth`, `radius` and `fill` on a shape, `bg`, `fg` and `fontSize` on a label chip.
+`box` is the square-cornered sibling of `highlight` (no wash, radius 0); both take the same
+`rect` and `label`.
+
 MCP twin: `annotate_image` on the genesis-tools server.
 
 Pick the capture source deliberately: **web app** → playwright `browser_take_screenshot`

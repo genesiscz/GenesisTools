@@ -14,14 +14,34 @@ echo 'await import("node:os")' | tools node-repl run
 
 | Tool | What it does |
 |---|---|
-| `js` | Run JS or TS with top-level `await`. `code`, optional `timeout_ms` (default 30000), optional `title`. |
-| `js_add_node_module_dir` | Register an absolute directory whose `node_modules` resolves from `import()` inside the REPL. Survives `js_reset`. |
+| `js` | Run JS or TS with top-level `await`. Arguments `{ "code": "...", "timeout_ms": 30000, "title": "..." }`; only `code` is required. The last expression is the result; a string comes back raw, anything else through `Bun.inspect`. |
+| `js_add_node_module_dir` | Register an absolute directory whose `node_modules` resolves from `import()` inside the REPL. Argument `{ "path": "/abs/project" }`, the directory that CONTAINS `node_modules`. Survives `js_reset`. |
 | `js_reset` | Kill the worker and start a fresh one; every binding is gone. |
 | `turn_ended` | No-op, kept for hosts that send it. |
 
 Inside a turn the global `nodeRepl` offers `write(value)` (append to the turn's text output),
 `await emitImage({ bytes, mimeType })` (an MCP image block plus a file under the temp dir, whose
 path is also returned as text), `cwd`, `homeDir` and `tmpDir`.
+
+## A call sequence
+
+```jsonc
+// 1. keep a binding
+js { "code": "let counter = 41;\ncounter" }                       // -> 41
+// 2. a later, separate call sees it
+js { "code": "counter + 1" }                                       // -> 42
+// 3. make a project's node_modules importable
+js_add_node_module_dir { "path": "/Users/martin/proj" }            // -> "module directory registered: ..."
+js { "code": "const { default: dayjs } = await import('dayjs');\ndayjs().year()" }
+// 4. hand back an image: any PNG bytes, from a file or an encoder
+js { "code": "await nodeRepl.emitImage({ bytes: await Bun.file('/tmp/chart.png').bytes(), mimeType: 'image/png' });\n'sent'" }
+// 5. start over
+js_reset {}
+```
+
+Step 4 returns an MCP `image` content block followed by a text block naming the file the
+bytes were also written to. A turn that overruns `timeout_ms` comes back as an error naming
+the limit, and every binding is gone, exactly as after `js_reset`.
 
 ## How bindings persist
 
@@ -51,10 +71,15 @@ worker starts and never changed by a turn.
 
 ## Registering it
 
-Same shape as every other server this repo owns:
+One command per host, through the repo's MCP manager:
+
+```bash
+tools mcp-manager install node-repl "tools node-repl mcp" -p claude -t stdio   # or -p codex, cursor, gemini, all
+tools mcp-manager list                                                          # confirm it landed
+```
+
+By hand it is the same shape as every other server this repo owns:
 
 ```json
 { "command": "/Users/Martin/Tresors/Projects/GenesisTools/tools", "args": ["node-repl", "mcp"] }
 ```
-
-`tools mcp-manager install` writes that into whichever host configs are enabled.
