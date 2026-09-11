@@ -144,8 +144,6 @@ const pairDeviceInput = z.object({
     kind: z.enum(["phone", "agent"]),
     // The device's base64 X25519 PUBLIC key (the cloud stores public material only — D11).
     publicKey: z.string().min(1),
-    // The device code printed by `tools dev-dashboard pair`. Shape-checked only — see the handler.
-    deviceCode: z.string().min(4),
 });
 
 export const pairDevice = createServerFn({ method: "POST" })
@@ -153,11 +151,12 @@ export const pairDevice = createServerFn({ method: "POST" })
     .handler(async ({ data }) => {
         const accountId = await currentUserId();
 
-        // The device code is NOT verified here and proves nothing on this door: the cloud has no view
-        // of the agent's code store, so any well-formed string passes. The real check is agent-side,
-        // where `verifyAndConsumePairingCode` gates the E2E pairing route
-        // (src/dev-dashboard/server/routes/e2e.ts). The cloud records the device's PUBLIC key only;
-        // the handshake (X25519 ECDH → per-message AEAD) happens phone↔Mac, never through us (plan 02).
+        // The cloud records the device's PUBLIC key and nothing else (D11), and takes no part in
+        // pairing at all. Admission is gated agent-side by `verifyAndConsumePairingCode`
+        // (src/dev-dashboard/server/routes/e2e.ts), and the handshake (X25519 ECDH → per-message
+        // AEAD) happens phone↔Mac, never through us (plan 02). This form used to collect a device
+        // code too; it was removed because the cloud can neither verify one nor forward one to the
+        // agent, so asking for it taught the wrong thing about where trust lives.
         const device = await cloudStore.addDevice({
             accountId,
             label: data.label,

@@ -63,7 +63,6 @@ test.describe("setup wizard", () => {
         await fillHydrated(page.getByTestId("setup-pair-label"), "Studio Mac");
         await selectHydrated(page.getByTestId("setup-pair-kind"), "agent");
         await fillHydrated(page.getByTestId("setup-pair-publickey"), "AAAA1111BBBB2222CCCC3333DDDD4444");
-        await fillHydrated(page.getByTestId("setup-pair-devicecode"), "4821-9930");
         await page.getByTestId("setup-pair-submit").click();
 
         await expect(page.getByTestId("setup-pair-success")).toContainText("Studio Mac");

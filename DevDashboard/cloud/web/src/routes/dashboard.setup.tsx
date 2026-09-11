@@ -190,7 +190,6 @@ function PairStep({ deviceCount }: { deviceCount: number }) {
     const [label, setLabel] = useState("");
     const [kind, setKind] = useState<"phone" | "agent">("phone");
     const [publicKey, setPublicKey] = useState("");
-    const [deviceCode, setDeviceCode] = useState("");
     const [pending, setPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [pairedLabel, setPairedLabel] = useState<string | null>(null);
@@ -202,11 +201,10 @@ function PairStep({ deviceCount }: { deviceCount: number }) {
         setPending(true);
 
         try {
-            const result = await pairDevice({ data: { label: label.trim(), kind, publicKey: publicKey.trim(), deviceCode: deviceCode.trim() } });
+            const result = await pairDevice({ data: { label: label.trim(), kind, publicKey: publicKey.trim() } });
             setPairedLabel(result.device.label);
             setLabel("");
             setPublicKey("");
-            setDeviceCode("");
             await router.invalidate();
         } catch (err) {
             setError(err instanceof Error ? err.message : "Could not pair that device.");
@@ -256,15 +254,6 @@ function PairStep({ deviceCount }: { deviceCount: number }) {
                         onChange={setPublicKey}
                         placeholder="base64 X25519 public key"
                         testId="setup-pair-publickey"
-                        mono
-                        required
-                    />
-                    <Field
-                        label="Device code"
-                        value={deviceCode}
-                        onChange={setDeviceCode}
-                        placeholder="e.g. 4821-9930"
-                        testId="setup-pair-devicecode"
                         mono
                         required
                     />
