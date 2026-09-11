@@ -198,6 +198,42 @@ direct vitrinka publish, a dead-publish guard (motion actions fired but one or f
 kept means publish is refused — fix the plan rather than forcing it), a raw `osascript`
 escape hatch, and per-action `onError: "continue"|"abort"`.
 
+### The `capture{}` plan object
+
+Every panel agent that was asked to write a recording plan named this as the hardest part,
+because the keys were only ever shown as CLI flags. They are camelCase inside the plan, and
+`tools control capture --help` is the authority. The ones you will actually use:
+
+```json
+{
+  "capture": {
+    "mode": "screen",          // screen | window | region | frontmost (avoid frontmost)
+    "screenIndex": 0,          // screen mode
+    "app": "Genesis",          // window mode
+    "windowTitle": "Settings", // window mode narrowing
+    "region": "x,y,w,h",       // region mode
+    "duration": 3,             // ALWAYS set this explicitly
+    "activeFps": 8,            // default 8, max 15
+    "idleFps": 2,              // default 2
+    "threshold": 2.5,          // change % cutoff; ~0.1 for a sub-second blip
+    "videoOut": "/tmp/run.mp4",// keep the MP4 so you can re-sample without re-recording
+    "countdownSec": 3,         // only for USER-driven transitions
+    "noRemote": true,          // RECOMMENDED for agent-driven plans
+    "captureEngine": "cg"      // RECOMMENDED: CoreGraphics, skips the bridge
+  },
+  "focus": { "app": "Genesis", "windowTitle": "Settings" },
+  "actions": [ { "atMs": 500, "do": "ax-press", "q": "Chat", "app": "Genesis" } ]
+}
+```
+
+A blip hunt is the same object with `"activeFps": 15, "threshold": 0.1` and a `videoOut`.
+
+⚠️ You CANNOT request "exactly N frames". Duration, fps and threshold set a budget, and the
+recorder keeps however many frames crossed the threshold. Want fewer tiles? Raise the
+threshold, lower the fps, shorten the crop window, or `recrop` afterwards. Impossible values
+(a duration that is really milliseconds, a threshold above 100, a zero-size region) come back
+as warnings in the result JSON rather than as errors.
+
 ### Action rules learned the hard way
 
 - **URL navigation uses the `url` action.** Default `target` is `new-tab`, which never

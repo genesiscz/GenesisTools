@@ -139,9 +139,12 @@ tools control get --app <name> --id <axId>           # role/title/value/descript
 tools control attrs --app <name> --id <axId>         # ALL attributes, decoded
 tools control actions --app <name> --id <axId>       # available AX actions
 tools control window --app <name>                    # window bounds x,y,width,height + minimized/fullscreen
-tools control dump --app <name>                      # windows + every on-screen element with scroll-clip visibility
-tools control typography --app <name>                # rendered font name/size + sRGB rgba per static text
-tools control hittest --at x,y                       # which element the system delivers a click there to (no --app)
+tools control dump --app <name> [--pretty]           # windows + every on-screen element with scroll-clip visibility
+                                                     #   the instrument for overlap, clipping, off-window controls
+tools control typography --app <name> [--pretty]     # rendered font name/size + sRGB rgba per static text
+                                                     #   legibility and contrast checks with no screenshot
+tools control hittest --at x,y [--pretty]            # which element the system delivers a click there to
+                                                     #   takes NO --app; answers "is this control really reachable"
 ```
 
 ### Interaction
@@ -298,6 +301,42 @@ Default output is one human-readable summary line (`pressed nav-chat`,
 `{"ok": false, "error": "..."}`, compact unless `--pretty`. In `list` and `find` tables the
 label column shows title, else desc, else value — static text usually surfaces in value,
 buttons in desc.
+
+## Contracts that bite
+
+**Focus.** `press`, `get`, `find`, `list`, `tree`, `attrs`, `actions`, `window`, `dump`,
+`typography`, `hittest`, `screenshot` and `ocr` **do NOT activate or raise the app**. `press`
+goes through AXPress, so it works on an obscured or scrolled-away control while the user keeps
+typing elsewhere. The commands that DO take the machine are `set`, `type`, `hotkey` and
+`focus` (without `--no-activate`). This is the answer to "click it without stealing focus":
+use `press`, or `act --action click --background`.
+
+**Exit codes, measured 2026-09-11:**
+
+| Command | Situation | Exit |
+|---|---|---|
+| `wait` | condition met | 0 |
+| `wait` | timeout | **1**, message names the poll count and the unmet condition |
+| `assert` | holds / fails | 0 / **1** |
+| `set` | element not settable | **1** (`element Five (AXButton) is not settable`) |
+| `run` | any step failed | **1**, plus `N/M steps passed` on the last line |
+| `compare-screenshot` | within gate / over / unusable inputs | 0 / 1 / 2 |
+| `find` | **zero matches** | **0** |
+
+🛑 **`find` exits 0 when it matches nothing.** Never branch on its exit code to decide whether
+an element exists; read the match count, or use `assert`. On 0 matches it prints a depth hint,
+because browser page content routinely exceeds the default `--depth 15`.
+
+**Ambiguity.** `--role` / `--title` / `--desc` combinations take the FIRST match, silently and
+in tree order. Only `--q` inside a capture plan's AX actions refuses on ambiguity. When more
+than one element can match, scope with `--window`, add `--exact`, or list first with `find`
+and target the one you meant.
+
+**Crop units.** `screenshot --crop` and `ocr --crop` are `x,y,w,h` in PIXELS of the captured
+image, origin top-left. `draw` annotations are natural image pixels. Capture-runner crop
+markers are frame pixels, which is points times the display scale factor. Window geometry from
+`window` and `see` is in POINTS. Convert deliberately; the retina factor is 2 on the built-in
+display and 1 on external panels.
 
 ## The verified family: `see` → `act` → `see`
 
