@@ -240,8 +240,12 @@ export function SessionsList({ onOpen }: SessionsListProps) {
             return;
         }
 
-        const res = await spawn.mutateAsync({ tmuxSessionName: session.name });
-        onOpen(res.session.id, session.name);
+        try {
+            const res = await spawn.mutateAsync({ tmuxSessionName: session.name });
+            onOpen(res.session.id, session.name);
+        } catch (err) {
+            Alert.alert("Could not open session", err instanceof Error ? err.message : String(err));
+        }
     };
 
     // When the snapshot resolves a pane's tmux-backed terminal to a ttyd session (`ttydSessionId`,

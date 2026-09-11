@@ -8,7 +8,10 @@
 export function parseSseFrame(frame: string): string | null {
     const dataParts: string[] = [];
 
-    for (const line of frame.split("\n")) {
+    for (const rawLine of frame.split("\n")) {
+        // A CRLF-terminated source leaves a trailing `\r` that would survive into the payload.
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
         if (line.startsWith("data:")) {
             // Per the SSE spec a single leading space after the colon is stripped.
             dataParts.push(line.slice(5).replace(/^ /, ""));
