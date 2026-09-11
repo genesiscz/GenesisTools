@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { z } from "zod";
 import { Card, SectionTitle } from "@/components/dashboard/Card";
 import { Check } from "@/components/landing/icons";
 import { getBilling, openBillingPortal, startCheckout } from "@/lib/billing/billing.functions";
@@ -8,12 +9,15 @@ import { PRICING_PLANS } from "@/content/copy";
 type PaidTier = "pro" | "team";
 
 export const Route = createFileRoute("/dashboard/billing")({
+    // `plan` arrives from a pricing-page signup, so the tier the visitor picked can be highlighted.
+    validateSearch: z.object({ plan: z.enum(["pro", "team"]).optional() }),
     loader: () => getBilling(),
     component: BillingPage,
 });
 
 function BillingPage() {
     const billing = Route.useLoaderData();
+    const { plan: preselectedTier } = Route.useSearch();
     const [note, setNote] = useState<string | null>(null);
     const [pendingTier, setPendingTier] = useState<PaidTier | "portal" | null>(null);
 
@@ -111,9 +115,13 @@ function BillingPage() {
                 {PRICING_PLANS.filter((plan) => plan.tier !== "free").map((plan) => {
                     const tier = plan.tier as PaidTier;
                     const isCurrent = billing.tier === tier;
+                    const isPreselected = !isCurrent && preselectedTier === tier;
 
                     return (
-                        <Card key={plan.tier} className="reveal in">
+                        <Card
+                            key={plan.tier}
+                            className={isPreselected ? "reveal in ring-1 ring-emerald-400/30" : "reveal in"}
+                        >
                             <div className="flex items-baseline justify-between" data-testid={`billing-plan-${plan.tier}`}>
                                 <h2 className="font-display text-lg font-semibold text-zinc-100">{plan.name}</h2>
                                 <p className="font-display text-xl font-semibold text-zinc-50">

@@ -42,7 +42,14 @@ export function AuthCard({ mode, plan }: AuthCardProps) {
                 }
             }
 
-            await navigate({ to: "/dashboard" });
+            // The signup heading promises "start your <plan> plan", so a chosen paid tier has to
+            // survive the redirect. It is carried to Billing rather than written onto the account:
+            // the tier column gates entitlements, and nothing has been paid yet.
+            await navigate(
+                isSignup && plan && plan !== "free"
+                    ? { to: "/dashboard/billing", search: { plan } }
+                    : { to: "/dashboard" }
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : "Something went wrong. Please retry.");
         } finally {
