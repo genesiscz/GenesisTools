@@ -566,10 +566,10 @@ When bootstrapping or auditing docs, these GenesisTools utilities help:
 
 ## Parallel Dispatch (subagent_type: living-docs)
 
-⚠️ **Claude Code only.** `context:` in this skill's frontmatter is a Claude plugin key, so only
-Claude Code registers a `living-docs` subagent type. In Codex use its native `spawn_agent` /
-`followup_task` with the same prompt; in Grok, or anywhere without subagents, do the areas one
-at a time — the per-area isolation is what matters, not the parallelism.
+⚠️ **The registered subagent TYPE is Claude-only.** `context:` in this skill's frontmatter is a
+Claude plugin key, so only Claude Code registers a `living-docs` `subagent_type`. Codex and Grok
+both have subagents (`spawn_agent` / `spawn_subagent`, see `references/harness-tools.md`) — pass
+this skill's instructions as the prompt instead of naming a type.
 
 Use this when you need multiple independent living-docs agents working in parallel.
 

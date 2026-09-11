@@ -19,7 +19,7 @@ export const CODEX_REMINDER =
     "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).";
 
 export const GROK_REMINDER =
-    "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Grok does not have. To talk to another agent, use the `tools agents` CLI directly and pass `--session <id>` explicitly on every call — a grok worker's environment may be stripped, so auto-detection of the parent swarm cannot be relied on.";
+    "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: its protocol needs a PUSH subscription to be woken by, and Grok's `get_command_or_subagent_output` is a poll — you get what has accumulated when you ask. Grok does have subagents (`spawn_subagent`) and can read their output that way. To talk to another agent, use the `tools agents` CLI directly and pass `--session <id>` explicitly on every call: a grok worker's environment may be stripped, so auto-detection of the parent swarm cannot be relied on.";
 
 /**
  * Grok used to receive the CLAUDE text, which tells it to invoke a skill that needs the

@@ -56,10 +56,11 @@ State your splits in chat — group memory IDs into time-block buckets per inten
 ### Step 3 — Fill in `events[]` with your file-edit tool
 
 Replace `"events": []` in the plan JSON file with your filled events, using whatever your
-harness calls a targeted edit: `Edit` in Claude Code, `apply_patch` in Codex, `edit_file` in
-Grok. **Don't hand-roll a shell rewrite of the file** (`sed`, a `python` replace, a heredoc
-that rewrites the whole document) — a targeted replace is the right primitive, and a whole-file
-rewrite loses the parts you did not mean to touch.
+harness calls a targeted edit: `Edit` in Claude Code, `search_replace` in Grok, `apply_patch`
+run through `exec` in Codex (see `references/harness-tools.md` in this plugin). **Don't
+hand-roll a shell rewrite of the file** (`sed`, a `python` replace, a heredoc that rewrites the
+whole document) — a targeted replace is the right primitive, and a whole-file rewrite loses the
+parts you did not mean to touch.
 
 Multiple events per day are fine — each gets its own project + note + memory_ids subset. Example:
 

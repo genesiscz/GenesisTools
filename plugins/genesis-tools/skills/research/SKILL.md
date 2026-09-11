@@ -9,12 +9,12 @@ Dispatcher for internet research. Main Claude stays in charge: classifies the qu
 
 The skill is **tolerant of missing MCPs**: if a preferred MCP isn't installed, the agent uses what's available, the gap is recorded in `Confidence & Gaps`, and the user is offered a one-time install path (see "MCP availability" below).
 
-⚠️ **Written for Claude Code, and this plugin is installed verbatim by Codex and Grok too.** The
-dispatch model below (`Agent` / subagent types, `general-purpose`, `gt:explore`, per-agent model
-pins, the concurrency cap) and every `AskUserQuestion` budget are Claude Code tools. In Codex use
-`spawn_agent` / `followup_task` and ask in plain text; in Grok, do the categories yourself in the
-same order and ask in plain text. The RESEARCH contract — source minimums, per-category coverage,
-citations, `Confidence & Gaps` — is what matters and holds on all three.
+⚠️ **Written with Claude Code's tool names; this plugin is installed verbatim by Codex and Grok.**
+All three have subagents and a structured user question — only the names differ
+(`references/harness-tools.md` in this plugin). What does NOT port is the named Claude
+`subagent_type`s (`general-purpose`, `gt:explore`) and the Claude model pins: pass the agent
+brief as a prompt, and read "haiku" as "a cheap model". The RESEARCH contract — source minimums,
+per-category coverage, citations, `Confidence & Gaps` — holds unchanged on all three.
 
 ## When to use
 
@@ -65,7 +65,7 @@ Always record what was missing and what substitution was used in `Confidence & G
 
 ### Offer install (at most once per run)
 
-If a missing MCP would materially improve the run AND the user didn't say "quick"/"temporary"/"just tell me", ask ONCE before dispatch (`AskUserQuestion` in Claude Code, plain text elsewhere):
+If a missing MCP would materially improve the run AND the user didn't say "quick"/"temporary"/"just tell me", ask ONCE before dispatch (`AskUserQuestion`, `request_user_input_async` or `ask_user_question`, whichever your harness has):
 
 - **Question:** "I'd dispatch this with `<MCP-name>` for `<one-line value-add>`, but it's not installed. Want install instructions, or proceed without?"
 - **Options:** `Install now`, `Skip and proceed`, `Don't ask again this run`.

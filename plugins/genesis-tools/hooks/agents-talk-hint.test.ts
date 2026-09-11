@@ -84,4 +84,9 @@ test("grok is told not to invoke the skill either, with the advice grok can act 
     expect(GROK_REMINDER).toMatch(/never invoke/i);
     expect(GROK_REMINDER).toContain("--session");
     expect(GROK_REMINDER).not.toContain("send_message");
+    // 🛑 Grok HAS subagents (`spawn_subagent`) and can read their output
+    // (`get_command_or_subagent_output`). The ban is about the lack of a PUSH subscription, and
+    // saying "Grok has no subagents" or "Grok has no Monitor tool" was simply wrong.
+    expect(GROK_REMINDER).toContain("spawn_subagent");
+    expect(GROK_REMINDER).not.toMatch(/Monitor tool Grok does not have/);
 });

@@ -28,10 +28,9 @@ Fix all TypeScript compilation errors systematically using a 4-phase workflow. Z
 
 For each file with errors, deploy a subagent.
 
-⚠️ **Only Claude Code has the `Agent` tool.** In Codex use its native `spawn_agent` /
-`followup_task`; in Grok, or in any harness without subagents at all, work the files yourself
-one at a time in the same order — the per-file isolation below is what matters, not the
-parallelism. The rest of this phase applies either way:
+⚠️ **All three harnesses have subagents, under different names** — `Agent` (Claude),
+`spawn_agent` (Codex), `spawn_subagent` (Grok). See `references/harness-tools.md` in this
+plugin. What matters below is the per-file isolation, not which tool spawns it:
 
 - **Identifier**: `ts-fix-<filename-without-extension>`
 - **Context to provide**:

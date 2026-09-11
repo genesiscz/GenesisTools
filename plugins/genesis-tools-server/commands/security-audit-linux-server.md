@@ -5,11 +5,12 @@ allowed-tools: Bash, Read, Grep, Glob, Task, WebFetch, WebSearch
 
 # Linux Server Security Audit
 
-⚠️ **The parallel scanner phase below is written for Claude Code** (`Task` with
-`run_in_background`, then `TaskOutput`), and the `allowed-tools` line names `Task`, which this
-harness now exposes as `Agent`. Codex and Grok install this plugin verbatim and have neither:
-there, run the three scanner groups sequentially in the same order. Nothing else in the audit
-changes, and a sequential run produces the same report.
+⚠️ **The parallel scanner phase below uses Claude Code's names** (`Task` with
+`run_in_background`, then `TaskOutput`; this harness now calls that tool `Agent`, so the
+`allowed-tools` line is itself stale). Codex and Grok install this plugin verbatim and DO have
+subagents — `spawn_agent` and `spawn_subagent`, see `references/harness-tools.md` in the
+genesis-tools plugin. Use those, or run the three scanner groups sequentially; either way the
+report is the same.
 
 You are performing a comprehensive security audit on this Linux server. Analyze all security logs, detect attack patterns, identify malicious IPs, check security tool status, and run malware/rootkit scans.
 
