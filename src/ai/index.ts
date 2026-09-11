@@ -29,6 +29,7 @@ import { runConfigTui } from "./commands/config/tui";
 import { registerSessionsCommands } from "./commands/sessions";
 import { registerUsageDaemonCommands } from "./commands/usage/daemon";
 import { registerAiUsageCommand } from "./commands/usage/index";
+import { registerAiUsageSessionsCommand } from "./commands/usage/sessions";
 import { registerWarmupCommand } from "./commands/warmup";
 
 // Without this, `referrersOf` in this process cannot see the accounts the
@@ -584,6 +585,7 @@ registerSessionsCommands(program);
 // `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).
 const usageCmd = program.command("usage").description("Usage limits for every AI provider");
 registerAiUsageCommand(usageCmd);
+registerAiUsageSessionsCommand(usageCmd);
 registerUsageDaemonCommands(usageCmd);
 registerWarmupCommand(program, { tool: "tools ai warmup" });
 
