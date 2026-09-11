@@ -21,12 +21,10 @@ export interface NewDevice {
     publicKey: string;
 }
 
-export interface NewManagedSubdomain {
+export interface ReservedManagedSubdomain {
     accountId: string;
     hostname: string;
     name: string;
-    routingTarget: string;
-    vendorFronted: boolean;
 }
 
 export const cloudStore = {
@@ -39,12 +37,6 @@ export const cloudStore = {
 
     async ensureSubscription(accountId: string, tier: "free" | "pro" | "team" = "free") {
         ensureMigrated();
-        const existing = await this.getSubscription(accountId);
-
-        if (existing) {
-            return existing;
-        }
-
         const row = assertNoKeyMaterial("subscriptions", {
             id: randomUUID(),
             accountId,
@@ -55,8 +47,11 @@ export const cloudStore = {
             currentPeriodEnd: null,
             createdAt: new Date().toISOString(),
         });
-        await db.insert(subscriptions).values(row);
-        return row;
+        // Insert-then-read rather than check-then-insert: the unique index on account_id decides the
+        // race, and the loser simply reads the winner's row instead of writing a duplicate.
+        await db.insert(subscriptions).values(row).onConflictDoNothing();
+        const stored = await this.getSubscription(accountId);
+        return stored ?? row;
     },
 
     async updateSubscription(
@@ -113,20 +108,43 @@ export const cloudStore = {
         return rows[0] ?? null;
     },
 
-    async claimManagedSubdomain(input: NewManagedSubdomain) {
+    /**
+     * Take the name locally BEFORE anything is provisioned upstream. The unique indexes on `name`
+     * and `hostname` are the only thing that can arbitrate two concurrent claims, so losing that
+     * race must happen here rather than after a Cloudflare hostname already exists.
+     */
+    async reserveManagedSubdomain(input: ReservedManagedSubdomain) {
         ensureMigrated();
         const row = assertNoKeyMaterial("managed_subdomains", {
             id: randomUUID(),
             accountId: input.accountId,
             hostname: input.hostname,
             name: input.name,
-            routingTarget: input.routingTarget,
-            vendorFronted: input.vendorFronted,
-            status: "ready",
+            routingTarget: "",
+            vendorFronted: true,
+            status: "provisioning",
             createdAt: new Date().toISOString(),
         });
         await db.insert(managedSubdomains).values(row);
         return row;
+    },
+
+    /** Promote a reservation to `ready` with the routing the provisioner actually returned. */
+    async finalizeManagedSubdomain(id: string, patch: { hostname: string; routingTarget: string; vendorFronted: boolean }) {
+        ensureMigrated();
+        assertNoKeyMaterial("managed_subdomains", { id, ...patch, status: "ready" });
+        const rows = await db
+            .update(managedSubdomains)
+            .set({ ...patch, status: "ready" })
+            .where(eq(managedSubdomains.id, id))
+            .returning();
+        return rows[0] ?? null;
+    },
+
+    /** Release a reservation whose provisioning failed. */
+    async deleteManagedSubdomain(id: string) {
+        ensureMigrated();
+        await db.delete(managedSubdomains).where(eq(managedSubdomains.id, id));
     },
 
     // ── Settings ───────────────────────────────────────────────────────────────

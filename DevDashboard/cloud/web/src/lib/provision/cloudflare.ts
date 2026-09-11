@@ -14,7 +14,7 @@
  * Cloud API the agent codes against is satisfied.
  */
 
-import { getCloudflareEnv } from "@/lib/server/env";
+import { getCloudEnv, getCloudflareEnv } from "@/lib/server/env";
 
 export interface ProvisionResult {
     configured: boolean;
@@ -29,6 +29,14 @@ const NAME_RE = /^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])?$/;
 
 export function isValidSubdomainName(name: string): boolean {
     return NAME_RE.test(name);
+}
+
+/**
+ * The hostname `provisionManagedSubdomain` will register. Computable before the upstream call, so a
+ * caller can reserve the row locally first. Demo mode and the real path agree on the apex.
+ */
+export function managedHostname(name: string): string {
+    return `${name}.${getCloudEnv().managedDomain}`;
 }
 
 interface CloudflareCustomHostnameResponse {
@@ -53,14 +61,14 @@ export async function provisionManagedSubdomain(name: string): Promise<Provision
         // without a Cloudflare account. The hostname is real-shaped; nothing is provisioned upstream.
         return {
             configured: false,
-            hostname: `${name}.devdashboard.app`,
+            hostname: managedHostname(name),
             routing: { target: `${name}.cfargotunnel.com` },
             vendorFronted: true,
             note: "Cloudflare for SaaS is not configured (CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID unset). This subdomain is reserved in your account but not yet live on the edge.",
         };
     }
 
-    const hostname = `${name}.${env.managedZone}`;
+    const hostname = managedHostname(name);
     const res = await fetch(`https://api.cloudflare.com/client/v4/zones/${env.zoneId}/custom_hostnames`, {
         method: "POST",
         headers: {

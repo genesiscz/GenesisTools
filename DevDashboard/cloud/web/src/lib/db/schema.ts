@@ -71,8 +71,12 @@ export const verification = sqliteTable("verification", {
 
 export const subscriptions = sqliteTable("subscriptions", {
     id: text("id").primaryKey(),
+    // Unique: one subscription row per account. `ensureSubscription` is a check-then-insert, so the
+    // index is what stops two concurrent first requests writing a duplicate that `updateSubscription`
+    // would then patch twice and `getSubscription` would read arbitrarily.
     accountId: text("account_id")
         .notNull()
+        .unique()
         .references(() => user.id, { onDelete: "cascade" }),
     tier: text("tier").notNull().default("free"),
     status: text("status").notNull().default("active"),

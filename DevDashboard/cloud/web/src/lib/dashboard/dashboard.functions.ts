@@ -9,7 +9,8 @@ import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { authService } from "@/lib/auth/auth-service";
 import { cloudStore } from "@/lib/db/cloud-store";
-import { isValidSubdomainName, provisionManagedSubdomain } from "@/lib/provision/cloudflare";
+import { isValidSubdomainName, managedHostname, provisionManagedSubdomain } from "@/lib/provision/cloudflare";
+import { getCloudEnv } from "@/lib/server/env";
 
 async function currentUserId(): Promise<string> {
     const request = getRequest();
@@ -77,6 +78,11 @@ export const getSubdomain = createServerFn({ method: "GET" }).handler(async () =
     return cloudStore.getManagedSubdomain(accountId);
 });
 
+/** The apex managed subdomains land under, so the wizard copy never hardcodes an operator's domain. */
+export const getManagedDomain = createServerFn({ method: "GET" }).handler(async () => {
+    return getCloudEnv().managedDomain;
+});
+
 const claimSubdomainInput = z.object({
     name: z.string().min(3).max(32).refine(isValidSubdomainName, "Use 3–32 lowercase letters, digits, or hyphens."),
 });
@@ -92,19 +98,30 @@ export const claimSubdomain = createServerFn({ method: "POST" })
             throw new Error(`You already have a managed subdomain: ${existing.hostname}`);
         }
 
-        // Real, env-gated Cloudflare-for-SaaS provisioning (inert without creds — returns a
-        // reserved-but-not-live result the wizard surfaces as "demo mode").
-        const result = await provisionManagedSubdomain(data.name);
-
-        const row = await cloudStore.claimManagedSubdomain({
+        // Reserve the name locally first. Provisioning before the unique insert lets two concurrent
+        // claims both register a Cloudflare custom hostname, one of which would then have no owning
+        // row — an orphan upstream nobody can clean up from the app.
+        const reserved = await cloudStore.reserveManagedSubdomain({
             accountId,
-            hostname: result.hostname,
+            hostname: managedHostname(data.name),
             name: data.name,
-            routingTarget: result.routing.target,
-            vendorFronted: result.vendorFronted,
         });
 
-        return { subdomain: row, configured: result.configured, note: result.note ?? null };
+        try {
+            // Real, env-gated Cloudflare-for-SaaS provisioning (inert without creds — returns a
+            // reserved-but-not-live result the wizard surfaces as "demo mode").
+            const result = await provisionManagedSubdomain(data.name);
+            const row = await cloudStore.finalizeManagedSubdomain(reserved.id, {
+                hostname: result.hostname,
+                routingTarget: result.routing.target,
+                vendorFronted: result.vendorFronted,
+            });
+
+            return { subdomain: row ?? reserved, configured: result.configured, note: result.note ?? null };
+        } catch (err) {
+            await cloudStore.deleteManagedSubdomain(reserved.id);
+            throw err;
+        }
     });
 
 const pairDeviceInput = z.object({
@@ -112,7 +129,7 @@ const pairDeviceInput = z.object({
     kind: z.enum(["phone", "agent"]),
     // The device's base64 X25519 PUBLIC key (the cloud stores public material only — D11).
     publicKey: z.string().min(1),
-    // The out-of-band device code printed by `tools dev-dashboard pair` (proof the Mac is consenting).
+    // The device code printed by `tools dev-dashboard pair`. Shape-checked only — see the handler.
     deviceCode: z.string().min(4),
 });
 
@@ -121,10 +138,11 @@ export const pairDevice = createServerFn({ method: "POST" })
     .handler(async ({ data }) => {
         const accountId = await currentUserId();
 
-        // The cloud never validates/decrypts the pairing secret itself — the device code is an
-        // out-of-band anchor proving the Mac agent (which printed it via `tools dev-dashboard pair`)
-        // consents. The cloud records the device's PUBLIC key only. The real E2E handshake (X25519
-        // ECDH → per-message AEAD) happens phone↔Mac, never through us (plan 02).
+        // The device code is NOT verified here and proves nothing on this door: the cloud has no view
+        // of the agent's code store, so any well-formed string passes. The real check is agent-side,
+        // where `verifyAndConsumePairingCode` gates the E2E pairing route
+        // (src/dev-dashboard/server/routes/e2e.ts). The cloud records the device's PUBLIC key only;
+        // the handshake (X25519 ECDH → per-message AEAD) happens phone↔Mac, never through us (plan 02).
         const device = await cloudStore.addDevice({
             accountId,
             label: data.label,

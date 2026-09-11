@@ -2,21 +2,31 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { Card, SectionTitle } from "@/components/dashboard/Card";
 import { Check } from "@/components/landing/icons";
-import { claimSubdomain, getSubdomain, listDevices, pairDevice } from "@/lib/dashboard/dashboard.functions";
+import {
+    claimSubdomain,
+    getManagedDomain,
+    getSubdomain,
+    listDevices,
+    pairDevice,
+} from "@/lib/dashboard/dashboard.functions";
 
 /** Client-side mirror of `isValidSubdomainName` (server-only module) so we can validate before the round-trip. */
 const SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])?$/;
 
 export const Route = createFileRoute("/dashboard/setup")({
     loader: async () => {
-        const [subdomain, devices] = await Promise.all([getSubdomain(), listDevices()]);
-        return { subdomain, deviceCount: devices.length };
+        const [subdomain, devices, managedDomain] = await Promise.all([
+            getSubdomain(),
+            listDevices(),
+            getManagedDomain(),
+        ]);
+        return { subdomain, deviceCount: devices.length, managedDomain };
     },
     component: SetupPage,
 });
 
 function SetupPage() {
-    const { subdomain, deviceCount } = Route.useLoaderData();
+    const { subdomain, deviceCount, managedDomain } = Route.useLoaderData();
 
     return (
         <div>
@@ -27,7 +37,7 @@ function SetupPage() {
 
             <div className="space-y-5">
                 <AgentStep />
-                <SubdomainStep claimed={subdomain} />
+                <SubdomainStep claimed={subdomain} managedDomain={managedDomain} />
                 <PairStep deviceCount={deviceCount} />
             </div>
         </div>
@@ -71,7 +81,7 @@ function AgentStep() {
 
 type SubdomainRow = Awaited<ReturnType<typeof getSubdomain>>;
 
-function SubdomainStep({ claimed }: { claimed: SubdomainRow }) {
+function SubdomainStep({ claimed, managedDomain }: { claimed: SubdomainRow; managedDomain: string }) {
     const router = useRouter();
     const [name, setName] = useState("");
     const [pending, setPending] = useState(false);
@@ -121,7 +131,7 @@ function SubdomainStep({ claimed }: { claimed: SubdomainRow }) {
                 ) : (
                     <>
                         <p className="mt-3 text-sm leading-relaxed text-zinc-500">
-                            Pick a name and we'll reserve <span className="font-mono text-zinc-400">&lt;name&gt;.devdashboard.app</span>{" "}
+                            Pick a name and we'll reserve <span className="font-mono text-zinc-400">&lt;name&gt;.{managedDomain}</span>{" "}
                             for your account — no domain of your own required.
                         </p>
                         <form onSubmit={onSubmit} className="mt-4" data-testid="setup-subdomain-form">
@@ -132,12 +142,13 @@ function SubdomainStep({ claimed }: { claimed: SubdomainRow }) {
                                         value={name}
                                         onChange={(ev) => setName(ev.target.value)}
                                         placeholder="my-mac"
+                                        aria-label="Managed subdomain name"
                                         autoComplete="off"
                                         spellCheck={false}
                                         data-testid="setup-subdomain-input"
                                         className="min-w-0 flex-1 bg-transparent px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                                     />
-                                    <span className="shrink-0 font-mono text-[12px] text-zinc-600">.devdashboard.app</span>
+                                    <span className="shrink-0 font-mono text-[12px] text-zinc-600">.{managedDomain}</span>
                                 </div>
                                 <button
                                     type="submit"
