@@ -11,6 +11,21 @@ import Vision
 // same-named instances (two Brave profiles) must be targeted by pid, never
 // silently picked. Regular-activation-policy apps win over background helpers.
 func resolveApp(_ name: String) -> pid_t {
+    let pid = resolveAppPid(name)
+    enableManualAccessibility(pid)
+    return pid
+}
+
+/// Chromium and Electron build no AX tree until an assistive client asks for one. Setting
+/// this attribute is that request. Other apps report it unsupported, which is fine; it is left
+/// on because Chromium tears the tree down again the moment it is cleared, and a CLI has no
+/// session to scope it to. `AXEnhancedUserInterface` is deliberately NOT set: AppKit apps change
+/// layout behaviour under it and that would be visible to the user.
+private func enableManualAccessibility(_ pid: pid_t) {
+    _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
+}
+
+private func resolveAppPid(_ name: String) -> pid_t {
     let apps = NSWorkspace.shared.runningApplications
     if let pidNum = Int32(name) {
         if apps.contains(where: { $0.processIdentifier == pidNum }) { return pidNum }
