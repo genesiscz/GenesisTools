@@ -1,4 +1,4 @@
-import { formatSessionAge } from "@genesiscz/utils/claude/session-display";
+import { formatSessionAge } from "@genesiscz/utils/agent-sessions/session-display";
 import { truncateText } from "@genesiscz/utils/string";
 import type { SearchResult } from "./types";
 

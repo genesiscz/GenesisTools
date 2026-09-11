@@ -1,6 +1,23 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+import { out } from "@genesiscz/utils/logger";
 import { selectResumeSession } from "./select-resume";
 import type { AgentSession, AgentSessionAdapter } from "./types";
+
+const realPrintln = out.println;
+
+/** Capture the candidate table an ambiguous non-interactive resume prints before it fails. */
+function capturePrinted(): string[] {
+    const lines: string[] = [];
+    out.println = (raw?: unknown, ...rest: unknown[]) => {
+        lines.push([raw, ...rest].map(String).join(" "));
+    };
+
+    return lines;
+}
+
+afterEach(() => {
+    out.println = realPrintln;
+});
 
 const session = (sessionId: string, title: string): AgentSession => ({
     kind: "codex",
@@ -38,7 +55,7 @@ test("ambiguous and empty non-interactive results never silently resume a sessio
             query: "invoice",
             interactive: false,
         })
-    ).rejects.toThrow("Multiple");
+    ).rejects.toThrow("Ambiguous");
     await expect(selectResumeSession({ adapter: adapter([]), query: "missing", interactive: false })).rejects.toThrow(
         "No codex"
     );
@@ -106,5 +123,38 @@ test("a title match resolves to the launch home's copy, but two different sessio
             preferredHome: "/home",
             interactive: false,
         })
-    ).rejects.toThrow("Multiple");
+    ).rejects.toThrow("Ambiguous");
+});
+test("an ambiguous non-interactive resume prints the candidates before it refuses", async () => {
+    // Naming only the count tells the user the query was too broad and nothing about which
+    // query would be narrow enough. Claude's resume has always printed the table; the shared
+    // path named the count alone, so codex and grok had no way to pick a session id.
+    const printed = capturePrinted();
+
+    await expect(
+        selectResumeSession({
+            adapter: adapter([session("aaaa1111", "invoice one"), session("bbbb2222", "invoice two")]),
+            query: "invoice",
+            interactive: false,
+        })
+    ).rejects.toThrow("Pass a session id from the table above");
+
+    const table = printed.join("\n");
+    expect(table).toContain("aaaa1111");
+    expect(table).toContain("bbbb2222");
+    expect(table).toContain("invoice one");
+    expect(table).toContain("SESSION ID");
+});
+
+test("NEGATIVE CONTROL: a resolved resume prints no candidate table", async () => {
+    const printed = capturePrinted();
+
+    expect(
+        await selectResumeSession({
+            adapter: adapter([session("aaaa1111", "invoice one")]),
+            query: "invoice",
+            interactive: false,
+        })
+    ).toBeDefined();
+    expect(printed).toEqual([]);
 });

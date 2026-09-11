@@ -153,3 +153,46 @@ describe("fuzzy: a unique substring resolves, an ambiguous one is refused off a 
         expect(errorLines.join("\n")).toContain("not found");
     });
 });
+
+describe("a case difference is a typo, not a different account", () => {
+    test("a differently-cased name resolves without the substring pass", async () => {
+        const picked = await resolve("WORK", [account("acc_work", "work"), account("acc_shop", "shop")]);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_work");
+    });
+
+    test("a differently-cased id resolves too", async () => {
+        const picked = await resolve("ACC_WORK", [account("acc_work", "work")]);
+
+        expect(picked.status === "ok" && picked.account.name).toBe("work");
+    });
+
+    test("the cased-exact name beats a longer name that merely contains it", async () => {
+        // Without the case-folded pass this fell through to the substring pass, which matched
+        // BOTH and then had to ask which one — for a name the user had spelled in full.
+        const picked = await resolve("Shop", [account("acc_shop", "shop"), account("acc_arch", "shop-archive")], true);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_shop");
+    });
+
+    test("the literal spelling still wins when both cases exist as separate accounts", async () => {
+        const picked = await resolve("work", [account("acc_upper", "Work"), account("acc_lower", "work")]);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_lower");
+    });
+
+    test("two accounts differing only in case are refused, never guessed", async () => {
+        const picked = await resolve("WORK", [account("acc_upper", "Work"), account("acc_lower", "work")]);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("ambiguous");
+        expect(errLines.join("\n")).toContain("acc_upper");
+    });
+
+    test("NEGATIVE CONTROL: an unknown name is still not found", async () => {
+        const picked = await resolve("GHOST", [account("acc_work", "work")]);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("not found");
+    });
+});

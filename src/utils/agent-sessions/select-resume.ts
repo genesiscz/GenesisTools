@@ -1,6 +1,7 @@
-import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { profiler } from "@genesiscz/utils/profile";
+import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
+import { buildSessionTableOpts, printAmbiguousSessions, toSessionDisplay } from "./session-display";
 import type { AgentSearchFilters, AgentSession, AgentSessionAdapter } from "./types";
 
 /**
@@ -72,18 +73,23 @@ export async function selectResumeSession(options: {
     if (matches.length === 1) {
         return matches[0];
     }
+    // Claude's resume has always printed the candidates before refusing, and the shared path
+    // named only the count. A count tells the user the query was too broad and nothing about
+    // which query would be narrow enough, so both doors now print the table first.
+    const candidates = matches.map(toSessionDisplay);
+
     if (!(options.interactive ?? isInteractive())) {
+        printAmbiguousSessions(candidates);
         throw new Error(
-            `Multiple ${adapter.kind} sessions match "${query}"; use a full session ID or an interactive terminal`
+            `Ambiguous ${adapter.kind} resume (${matches.length} matches). Pass a session id from the table above, or use an interactive terminal.`
         );
     }
-    const selected = await p.select({
-        message: `Resume which ${adapter.kind} session?`,
-        options: matches.map((session, index) => ({
-            value: index,
-            label: `${session.title} · ${session.sessionId.slice(0, 8)}`,
-            hint: `${session.mtime.toISOString()} · ${session.cwd} · ${session.account ?? "account unknown"} · ${session.filePath}`,
-        })),
-    });
-    return p.isCancel(selected) ? undefined : matches[selected];
+
+    // The same column-aligned picker Claude uses, not a one-line `p.select`: the rows differ by
+    // project, branch and age, and a label plus a hint only shows the hint for the focused row.
+    const picked = await tableSelect(
+        buildSessionTableOpts(candidates, { message: `Resume which ${adapter.kind} session?`, query })
+    );
+
+    return picked ? matches[candidates.indexOf(picked)] : undefined;
 }

@@ -4,46 +4,32 @@ import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
-import type { AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
-import { cleanPromptText } from "@genesiscz/utils/ai/transcripts/clean-text";
+import {
+    buildSessionTableOpts,
+    printAmbiguousSessions,
+    type SessionDisplayItem,
+    toSessionDisplay,
+} from "@genesiscz/utils/agent-sessions/session-display";
+import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
-import { buildSessionTableOpts } from "@genesiscz/utils/claude/session-display";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
-import { formatClock, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import { escapeShellArg } from "@genesiscz/utils/string";
-import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-// --- Constants ---
-
-const PROMPT_PREVIEW_LEN = 60;
-
 // --- Types ---
 
-export interface DisplaySession {
-    sessionId: string;
-    name: string;
-    summary: string;
-    branch: string;
-    project: string;
-    modified: string;
-    created?: string;
-    /** Friendly project name; `project` may hold the encoded transcript directory. */
-    projectName?: string;
-    source: "cache" | "search";
-    firstPrompt: string;
-    matchSnippet?: string;
-    sourceHome?: string;
-    sourceKey?: string;
-    filePath?: string;
-    cwd?: string;
-}
+/**
+ * Claude's resume rows ARE the shared session-display shape; the duplicate mapper this file
+ * carried is now `toSessionDisplay` in `utils/agent-sessions/session-display.ts`, so codex and
+ * grok render the same rows from the same code.
+ */
+export type DisplaySession = SessionDisplayItem;
 
 interface ResumeOptions {
     list?: boolean;
@@ -52,40 +38,6 @@ interface ResumeOptions {
 }
 
 // --- Helpers ---
-
-function toDisplay(
-    sessionId: string,
-    opts: {
-        title?: string | null;
-        summary?: string | null;
-        firstPrompt?: string | null;
-        branch?: string | null;
-        project?: string | null;
-        timestamp?: string | null;
-        created?: string | null;
-        source?: "cache" | "search";
-        matchSnippet?: string;
-    }
-): DisplaySession {
-    return {
-        sessionId,
-        // A raw title can BE a harness block: `<command-name>/resume</command-name>` over several
-        // lines, which reads as garbage in the picker and breaks the row it is printed in.
-        name:
-            cleanPromptText(opts.title) ??
-            cleanPromptText(opts.summary) ??
-            cleanPromptText(opts.firstPrompt)?.slice(0, PROMPT_PREVIEW_LEN) ??
-            "(unnamed)",
-        summary: opts.summary || "",
-        branch: opts.branch || "",
-        project: opts.project || "",
-        modified: opts.timestamp || "",
-        created: opts.created ?? undefined,
-        source: opts.source ?? "cache",
-        firstPrompt: opts.firstPrompt || "",
-        matchSnippet: opts.matchSnippet,
-    };
-}
 
 function dedup(sessions: DisplaySession[]): DisplaySession[] {
     const seen = new Set<string>();
@@ -193,27 +145,6 @@ function identifiesSession(session: DisplaySession, query: string): boolean {
     );
 }
 
-function displayNativeSession(session: AgentSearchHit): DisplaySession {
-    return {
-        ...toDisplay(session.sessionId, {
-            title: session.title,
-            summary: session.summary,
-            firstPrompt: session.prompt,
-            branch: session.gitBranch,
-            project: session.projectDirectory ?? session.project,
-            timestamp: session.mtime.toISOString(),
-            created: session.createdAt?.toISOString(),
-            source: session.matchedText ? "search" : "cache",
-            matchSnippet: session.matchedText,
-        }),
-        projectName: session.project,
-        sourceHome: session.sourceHome,
-        sourceKey: session.sourceKey,
-        filePath: session.filePath,
-        cwd: session.cwd,
-    };
-}
-
 export async function loadClaudeResumeCandidates(
     options: SessionPickOptions & { query?: string }
 ): Promise<DisplaySession[]> {
@@ -238,7 +169,7 @@ export async function loadClaudeResumeCandidates(
     // The limit bounds the REFRESH, which is what a plain list needs; it also bounds the rows that
     // come back, which is what a search must not accept.
     const listing = async (limit: number | undefined) =>
-        dedup((await adapter.list({ ...filters, limit, summaryOnly: true })).map(displayNativeSession));
+        dedup((await adapter.list({ ...filters, limit, summaryOnly: true })).map(toSessionDisplay));
     const display = options.limit ?? 20;
     const prof = profiler.scope("claude-history");
     let sessions = await prof.measureAsync("resume.listing", () => listing(display));
@@ -256,7 +187,7 @@ export async function loadClaudeResumeCandidates(
     async function everyIndexed(): Promise<DisplaySession[]> {
         return prof.measureAsync("resume.every-indexed", async () => {
             const cached = adapter.listCached
-                ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(displayNativeSession))
+                ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(toSessionDisplay))
                 : [];
             sessions = dedup([...(cached.length ? cached : await listing(Number.MAX_SAFE_INTEGER)), ...sessions]);
 
@@ -297,34 +228,9 @@ export async function loadClaudeResumeCandidates(
         })
     );
 
-    return rank(dedup([...matches, ...found.map(displayNativeSession)]));
+    return rank(dedup([...matches, ...found.map(toSessionDisplay)]));
 }
 // --- UI ---
-
-/** Outside a TTY there is no picker, so the candidates have to be readable enough to choose from. */
-function printAmbiguousCandidates(candidates: DisplaySession[], shown = 20): void {
-    const table = createBoxTable(["#", "SESSION ID", "NAME", "CREATED", "AGE", "LAST PROMPT", "PROJECT"]);
-
-    for (const [index, candidate] of candidates.slice(0, shown).entries()) {
-        const created = candidate.created ? new Date(candidate.created) : undefined;
-        const modified = candidate.modified ? new Date(candidate.modified) : undefined;
-        table.push([
-            String(index + 1),
-            candidate.sessionId,
-            truncateDisplay(candidate.name, 40),
-            created ? formatClock(created, { date: "short" }) : "—",
-            created ? formatRelativeTime(created) : "—",
-            modified ? formatRelativeTime(modified) : "—",
-            truncateDisplay(candidate.projectName || candidate.project, 24),
-        ]);
-    }
-
-    out.println(table.toString());
-
-    if (candidates.length > shown) {
-        out.println(pc.dim(`… and ${candidates.length - shown} more; narrow the query to see them.`));
-    }
-}
 
 export async function selectClaudeResumeSession({
     candidates,
@@ -348,26 +254,15 @@ export async function selectClaudeResumeSession({
     }
 
     if (!interactive) {
-        printAmbiguousCandidates(candidates);
+        printAmbiguousSessions(candidates);
         throw new Error(
             `Ambiguous Claude resume (${candidates.length} matches). Pass a session id from the table above, or use an interactive terminal.`
         );
     }
 
-    const opts = buildSessionTableOpts(candidates, {
-        message: "Select session to resume:",
-        query,
-    });
-
-    for (const row of opts.rows) {
-        const source = row.value as DisplaySession;
-        row.detail = [
-            ...(row.detail ?? []),
-            ...(source.sourceHome ? [`Source home: ${source.sourceHome}`] : []),
-            ...(source.filePath ? [`Source file: ${source.filePath}`] : []),
-        ];
-    }
-    const result = await tableSelect(opts);
+    const result = await tableSelect(
+        buildSessionTableOpts(candidates, { message: "Select session to resume:", query })
+    );
 
     if (!result) {
         p.cancel("Cancelled");
