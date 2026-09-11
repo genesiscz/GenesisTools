@@ -11,7 +11,16 @@ interface Prefs {
 export async function getPref<K extends keyof Prefs>(key: K): Promise<Prefs[K] | null> {
     const v = await Storage.getItem(key);
 
-    return v === null ? null : (JSON.parse(v) as Prefs[K]);
+    if (v === null) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(v) as Prefs[K];
+    } catch {
+        // A corrupt or legacy stored value reads as "unset" rather than rejecting every caller.
+        return null;
+    }
 }
 
 export async function setPref<K extends keyof Prefs>(key: K, value: Prefs[K]): Promise<void> {

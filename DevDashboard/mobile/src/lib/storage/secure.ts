@@ -26,9 +26,22 @@ export async function clearBasicCreds(): Promise<void> {
 }
 
 /**
+ * `btoa` is Latin-1 only under Hermes and throws on any character above U+00FF, so the string is
+ * encoded to UTF-8 bytes first and those bytes are what get base64'd.
+ */
+function base64Utf8(value: string): string {
+    let binary = "";
+
+    for (const byte of new TextEncoder().encode(value)) {
+        binary += String.fromCharCode(byte);
+    }
+
+    return btoa(binary);
+}
+
+/**
  * Build the `Authorization: Basic …` header value from stored creds, or null when
- * none are present. base64 is encoded via the global `btoa` (provided by the RN
- * runtime). Used by the connection store + contract client.
+ * none are present. Used by the connection store + contract client.
  */
 export async function loadBasicAuthHeader(): Promise<string | null> {
     const creds = await loadBasicCreds();
@@ -37,7 +50,7 @@ export async function loadBasicAuthHeader(): Promise<string | null> {
         return null;
     }
 
-    return `Basic ${btoa(`${creds.username}:${creds.password}`)}`;
+    return `Basic ${base64Utf8(`${creds.username}:${creds.password}`)}`;
 }
 
 // E2E keypairs (plan 02 managed tier) also live here under separate keys — never in

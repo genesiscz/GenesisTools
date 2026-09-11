@@ -13,15 +13,22 @@ const MIGRATIONS: string[] = [
 ];
 
 export function getDb(): Promise<SQLite.SQLiteDatabase> {
+    // A transient open/migration failure must not pin a rejected promise for the app's lifetime, so
+    // the memo is cleared before the error propagates and the next call retries.
     dbPromise ??= (async () => {
-        const db = await SQLite.openDatabaseAsync("devdashboard.db");
-        await db.execAsync("PRAGMA journal_mode = WAL;");
+        try {
+            const db = await SQLite.openDatabaseAsync("devdashboard.db");
+            await db.execAsync("PRAGMA journal_mode = WAL;");
 
-        for (const stmt of MIGRATIONS) {
-            await db.execAsync(stmt);
+            for (const stmt of MIGRATIONS) {
+                await db.execAsync(stmt);
+            }
+
+            return db;
+        } catch (err) {
+            dbPromise = null;
+            throw err;
         }
-
-        return db;
     })();
 
     return dbPromise;
