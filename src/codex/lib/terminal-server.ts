@@ -237,6 +237,12 @@ export async function openTerminalServer(options: {
 
                     if (primary === ws) {
                         primary = peers.values().next().value;
+                        // Requests already sent to the departing primary can never be answered:
+                        // their ids were issued to that socket and the peer taking over never saw
+                        // them. Reject them here or the caller awaits a response that cannot come.
+                        if (primary) {
+                            activeBridge.failPending("Codex terminal primary disconnected");
+                        }
                     }
 
                     // Only the LAST peer leaving tears the relay down; a picker closing must not

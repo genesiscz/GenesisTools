@@ -234,3 +234,25 @@ test("relay diagnostics retain the native RPC failure", async () => {
         await w.client.close();
     }
 });
+
+test("losing the primary peer settles requests that were addressed to it", async () => {
+    // Regression test: the multi-peer relay (aa8f7b2cd) rejects `pending` only inside
+    // disconnect(), and terminal-server calls disconnect() only when the LAST peer leaves. With
+    // the session picker still open, the primary TUI closing left every in-flight server request
+    // unsettled and the awaiting caller hung forever.
+    const w = wire();
+    try {
+        w.bridge.ready({ userAgent: "fixture" });
+        const orphaned = w.bridge.serverRequest({ id: 40, method: "item/fileChange/requestApproval", params: {} });
+
+        w.bridge.failPending("Codex terminal primary disconnected");
+
+        await expect(orphaned).rejects.toThrow("primary disconnected");
+        // The relay stays up for the peer that took over, unlike disconnect().
+        w.messages.length = 0;
+        await w.bridge.receive({ id: 41, method: "initialize", params: {} });
+        expect(w.messages[0]).not.toMatchObject({ id: 41, error: { code: -32600 } });
+    } finally {
+        await w.client.close();
+    }
+});

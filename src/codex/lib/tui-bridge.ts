@@ -88,12 +88,25 @@ export class CodexTuiBridge {
         });
     }
 
-    disconnect(): void {
-        this.connected = false;
+    /**
+     * Settle every in-flight server request without tearing the relay down.
+     *
+     * A server request is addressed to ONE peer (`{kind: "primary"}`) and its id was issued to
+     * that socket. When the primary drops while another peer is still connected — the TUI closing
+     * while its own session picker stays open — the relay survives, `primary` moves to the picker,
+     * and `disconnect()` never runs. The replacement never saw those requests, so no response can
+     * ever match their ids: without this the awaiting caller hangs forever.
+     */
+    failPending(reason: string): void {
         for (const pending of this.pending.values()) {
-            pending.reject(new Error("Codex terminal disconnected"));
+            pending.reject(new Error(reason));
         }
         this.pending.clear();
+    }
+
+    disconnect(): void {
+        this.connected = false;
+        this.failPending("Codex terminal disconnected");
     }
 
     async receive(message: unknown, peer?: unknown): Promise<void> {
