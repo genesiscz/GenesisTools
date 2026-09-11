@@ -104,12 +104,12 @@ private func workflowSameFrame(_ first: CGRect, _ second: CGRect) -> Bool {
         && abs(first.width - second.width) < 1 && abs(first.height - second.height) < 1
 }
 
-private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
+private func observedWindow(_ ax: AXUIElement, pid: pid_t) throws -> ObservedWindow {
     let frame = axFrame(ax)
     guard frame.origin.x.isFinite, frame.origin.y.isFinite,
           frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0,
           (axAttribute(ax, "AXMinimized") as? Bool) != true else {
-        workflowFailure("selected window is minimized or has no usable geometry; inspect again")
+        throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again")
     }
     let matches = workflowWindows(pid).filter { info in
         guard let raw = info[kCGWindowBounds] as? NSDictionary,
@@ -119,17 +119,25 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
         return workflowSameFrame(bounds, frame)
     }
     guard matches.count == 1, let id = matches[0][kCGWindowNumber] as? CGWindowID else {
-        workflowFailure("selected AX window has \(matches.count) matching on-screen CG windows; refusing an ambiguous or offscreen screenshot")
+        throw ObservedTreeError("selected AX window has \(matches.count) matching on-screen CG windows; refusing an ambiguous or offscreen screenshot")
     }
     // Matching a frame is safe only when exactly one AX window owns it too.
     let sameFrame = axWindows(AXUIElementCreateApplication(pid)).filter { workflowSameFrame(axFrame($0), frame) }
     guard sameFrame.count == 1 else {
-        workflowFailure("multiple AX windows share the selected frame; cannot prove screenshot ownership")
+        throw ObservedTreeError("multiple AX windows share the selected frame; cannot prove screenshot ownership")
     }
     return ObservedWindow(ax: ax, id: id, bounds: frame)
 }
 
-private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
+private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
+    do {
+        return try observedWindow(ax, pid: pid)
+    } catch {
+        workflowFailure(error.localizedDescription)
+    }
+}
+
+private func observedTree(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
     workflowBulkUsed = false
     // The bulk read cannot stop at a web area, so under chrome scope it would fetch the whole
     // page only for the builder to discard it; the walk never descends into it. Measured on
@@ -143,18 +151,113 @@ private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> O
         } catch is BulkHierarchyError {
             // A structural gap in the bulk result (an element it did not return, a truncated
             // children list) is answered by the per-attribute walk, which is the ground truth.
-        } catch let error as ObservedTreeError {
-            workflowFailure(error.message)
-        } catch {
-            workflowFailure(error.localizedDescription)
         }
     }
+    return try buildObservedTree(root: window, source: LiveHierarchySource(), depth: depth, scope: scope)
+}
+
+private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
     do {
-        return try buildObservedTree(root: window, source: LiveHierarchySource(), depth: depth, scope: scope)
-    } catch let error as ObservedTreeError {
-        workflowFailure(error.message)
+        return try observedTree(window, depth: depth, scope: scope)
     } catch {
         workflowFailure(error.localizedDescription)
+    }
+}
+
+private struct SnapshotUnstable: Error {
+    let message = "UI changed during screenshot capture; run see again"
+    let changes: [[String: Any]]
+}
+
+/// One snapshot: the tree, the window's PNG, and a second tree read proving the UI did not move
+/// between the two. `settled` lets a caller that has just watched the tree stop moving reuse
+/// that read as the first one.
+private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, window: ObservedWindow, index: Int,
+                              depth: Int, scope: String, path requestedPath: String?,
+                              settled: ObservedTreeData?) throws -> [String: Any] {
+    let tree = try settled ?? observedTree(window.ax, depth: depth, scope: scope)
+    guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
+        throw ObservedTreeError("screenshot failed for the selected window; no snapshot issued")
+    }
+    let refreshed = try observedWindow(window.ax, pid: pid)
+    let after = try observedTree(window.ax, depth: depth, scope: scope)
+    guard refreshed.id == window.id, workflowLaunch(pid) == launch, after.digest == tree.digest else {
+        var changes: [[String: Any]] = []
+        for index in 0..<max(tree.rows.count, after.rows.count) {
+            let beforeRow = index < tree.rows.count ? tree.rows[index] : [:]
+            let afterRow = index < after.rows.count ? after.rows[index] : [:]
+            let fields = Set(beforeRow.keys).union(afterRow.keys).filter { key in
+                String(describing: beforeRow[key]) != String(describing: afterRow[key])
+            }.sorted()
+            if !fields.isEmpty {
+                changes.append(["index": index, "fields": fields])
+            }
+        }
+        throw SnapshotUnstable(changes: changes)
+    }
+    let path = requestedPath ?? FileManager.default.temporaryDirectory
+        .appendingPathComponent("control-see-\(UUID().uuidString).png").path
+    guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+        throw ObservedTreeError("PNG encoding failed")
+    }
+    do {
+        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+    } catch {
+        throw ObservedTreeError("cannot save snapshot: \(error.localizedDescription)")
+    }
+    let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
+                              digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
+    let encoded: String
+    do {
+        encoded = try JSONEncoder().encode(token).base64EncodedString()
+    } catch {
+        throw ObservedTreeError("cannot encode snapshot token: \(error.localizedDescription)")
+    }
+    let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
+    return ["ok": true, "app": appName, "pid": pid,
+            "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
+                       "x": window.bounds.minX, "y": window.bounds.minY,
+                       "width": window.bounds.width, "height": window.bounds.height],
+            "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
+            "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
+            "elements": publicRows]
+}
+
+/// Wait until two consecutive reads agree, so a post-action snapshot describes a UI that has
+/// finished moving. Sky settles on AXObserver notifications; polling the digest needs no run
+/// loop subscription. Capped at one second.
+private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
+    var previous = try observedTree(window, depth: depth, scope: scope)
+    let deadline = Date().addingTimeInterval(1)
+    while Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.05)
+        let next = try observedTree(window, depth: depth, scope: scope)
+        if next.digest == previous.digest {
+            return next
+        }
+        previous = next
+    }
+    return previous
+}
+
+/// The post-action snapshot for `act --refresh`. A failure here lands inside `after`, never as
+/// the action failing: the action was dispatched, and the caller must not retry it just because
+/// the UI was still moving.
+private func workflowAfterState(appName: String, pid: pid_t, launch: Double, window: ObservedWindow,
+                                token: SnapshotToken) -> [String: Any] {
+    do {
+        let current = try observedWindow(window.ax, pid: pid)
+        let settled = try workflowSettle(current.ax, depth: token.depth, scope: token.effectiveScope)
+        guard let index = axWindows(AXUIElementCreateApplication(pid)).firstIndex(where: { CFEqual($0, current.ax) }) else {
+            return ["ok": false, "error": "window list changed after the action; run see again"]
+        }
+        return try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
+                                    depth: token.depth, scope: token.effectiveScope,
+                                    path: workflowArgument("--path"), settled: settled)
+    } catch let unstable as SnapshotUnstable {
+        return ["ok": false, "error": unstable.message, "changedElements": unstable.changes]
+    } catch {
+        return ["ok": false, "error": error.localizedDescription]
     }
 }
 
@@ -220,47 +323,14 @@ func cmdSee(appName _: String) {
     let depth = workflowInteger("--depth", defaultValue: 20)
     let scope = workflowArgument("--scope") ?? "window"
     guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
-    let tree = workflowTree(window.ax, depth: depth, scope: scope)
-    guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
-        workflowFailure("screenshot failed for the selected window; no snapshot issued")
-    }
-    let refreshed = workflowWindow(window.ax, pid: pid)
-    let after = workflowTree(window.ax, depth: depth, scope: scope)
-    guard refreshed.id == window.id, workflowLaunch(pid) == launch, after.digest == tree.digest else {
-        var changes: [[String: Any]] = []
-        for index in 0..<max(tree.rows.count, after.rows.count) {
-            let beforeRow = index < tree.rows.count ? tree.rows[index] : [:]
-            let afterRow = index < after.rows.count ? after.rows[index] : [:]
-            let fields = Set(beforeRow.keys).union(afterRow.keys).filter { key in
-                String(describing: beforeRow[key]) != String(describing: afterRow[key])
-            }.sorted()
-            if !fields.isEmpty {
-                changes.append(["index": index, "fields": fields])
-            }
-        }
-        jsonOutput(["ok": false, "error": "UI changed during screenshot capture; run see again", "changedElements": changes])
-        exit(1)
-    }
-    let path = workflowArgument("--path") ?? FileManager.default.temporaryDirectory
-        .appendingPathComponent("control-see-\(UUID().uuidString).png").path
     do {
-        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
-            workflowFailure("PNG encoding failed")
-        }
-        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
-        let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
-                                  digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
-        let encoded = try JSONEncoder().encode(token).base64EncodedString()
-        let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
-        jsonOutput(["ok": true, "app": appName, "pid": pid,
-                    "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
-                               "x": window.bounds.minX, "y": window.bounds.minY,
-                               "width": window.bounds.width, "height": window.bounds.height],
-                    "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
-                    "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
-                    "elements": publicRows])
+        jsonOutput(try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: window, index: index,
+                                        depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil))
+    } catch let unstable as SnapshotUnstable {
+        jsonOutput(["ok": false, "error": unstable.message, "changedElements": unstable.changes])
+        exit(1)
     } catch {
-        workflowFailure("cannot save snapshot: \(error.localizedDescription)")
+        workflowFailure(error.localizedDescription)
     }
 }
 
@@ -708,8 +778,15 @@ func cmdAct(appName _: String) {
     default:
         workflowFailure("unsupported action")
     }
-    jsonOutput(["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id,
-                "refreshRequired": true, "note": "action dispatched; use see to verify the resulting UI"])
+    var payload: [String: Any] = ["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id]
+    if workflowFlag("--refresh") {
+        payload["refreshRequired"] = false
+        payload["after"] = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+    } else {
+        payload["refreshRequired"] = true
+        payload["note"] = "action dispatched; use see to verify the resulting UI"
+    }
+    jsonOutput(payload)
     }
     } catch {
         workflowFailure(error.localizedDescription)
