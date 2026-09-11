@@ -546,7 +546,9 @@ async function pickAccount(
 
     if (!opts.autopick && !isInteractive()) {
         out.error(pc.red("Account name required in non-interactive mode (or use --autopick)."));
-        out.printlnErr(suggestCommand("tools claude start", { add: ["--autopick"] }));
+        // "tools claude", not "tools claude start": the verb comes from argv, and `start` is
+        // aliased `run`, so naming it here printed `tools claude start run --resume x`.
+        out.printlnErr(suggestCommand("tools claude", { add: ["--autopick"] }));
         await out.flush();
         process.exit(1);
     }
@@ -644,7 +646,7 @@ async function resolveAccountName(
         if (!isInteractive() && !opts.autopick) {
             out.error(pc.red(`Account "${nameArg}" is ambiguous in non-interactive mode.`));
             out.printlnErr(pc.dim(`Matches: ${matches.map((a) => a.name).join(", ")}`));
-            out.printlnErr(suggestCommand("tools claude start", { add: ["--autopick", nameArg] }));
+            out.printlnErr(suggestCommand("tools claude", { add: ["--autopick", nameArg] }));
             await out.flush();
             process.exit(1);
         }

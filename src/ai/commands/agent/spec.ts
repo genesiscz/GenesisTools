@@ -70,6 +70,22 @@ export interface AgentToolSpec {
     worker?: WorkerDriver;
     /** Where the worker verbs mount. Default bare (`tools kimi spawn`); Claude passes "worker". */
     workerMount?: string;
+    /** One line for the `worker` group itself, when `workerMount` is set. */
+    workerMountDescription?: string;
+    /**
+     * How `who` recognises this agent's processes on the `ps` table. Absent: no `who` verb,
+     * which is the honest answer for an agent whose launcher exports no account.
+     */
+    processScan?: {
+        classify(args: string): string | null;
+        /** Kinds that are machinery rather than billable sessions; hidden unless `--all`. */
+        helperKinds?: readonly string[];
+    };
+    /** Per-tool `--help` wording for the pinned doors; each has a usable default. */
+    help?: {
+        usage?: string;
+        login?: string;
+    };
     /** Verbs the tool implements itself. Declared here so a deviation is visible, never accidental. */
     overrides?: Partial<Record<SharedVerb, (program: Command, spec: AgentToolSpec) => void>>;
 }
