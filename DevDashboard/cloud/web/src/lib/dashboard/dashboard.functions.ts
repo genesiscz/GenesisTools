@@ -10,7 +10,7 @@ import { z } from "zod";
 import { authService } from "@/lib/auth/auth-service";
 import { cloudStore } from "@/lib/db/cloud-store";
 import { isValidSubdomainName, managedHostname, provisionManagedSubdomain } from "@/lib/provision/cloudflare";
-import { getCloudEnv } from "@/lib/server/env";
+import { getCloudEnv, isStripeConfigured } from "@/lib/server/env";
 
 async function currentUserId(): Promise<string> {
     const request = getRequest();
@@ -96,6 +96,21 @@ export const claimSubdomain = createServerFn({ method: "POST" })
 
         if (existing) {
             throw new Error(`You already have a managed subdomain: ${existing.hostname}`);
+        }
+
+        // A managed subdomain is a paid feature (docs/pricing-and-tiers.md), and the namespace is
+        // globally unique, so every free claim burns a name for everyone else. The gate is skipped
+        // when billing is not configured: there is no upgrade path in that deployment, so enforcing
+        // it would lock the feature out entirely rather than sell it.
+        if (isStripeConfigured()) {
+            const subscription = await cloudStore.ensureSubscription(accountId);
+            const paid =
+                (subscription.tier === "pro" || subscription.tier === "team") &&
+                (subscription.status === "active" || subscription.status === "trialing");
+
+            if (!paid) {
+                throw new Error("A managed subdomain is a Pro feature. Upgrade from the Billing page to claim one.");
+            }
         }
 
         // Reserve the name locally first. Provisioning before the unique insert lets two concurrent

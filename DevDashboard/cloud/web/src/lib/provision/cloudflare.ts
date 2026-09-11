@@ -25,7 +25,9 @@ export interface ProvisionResult {
     note?: string;
 }
 
-const NAME_RE = /^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])?$/;
+// 3-32 characters, matching every error string in the flow. The optional-group form this replaced
+// accepted a single character and rejected two, both against what the messages promise.
+const NAME_RE = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 
 export function isValidSubdomainName(name: string): boolean {
     return NAME_RE.test(name);
@@ -81,10 +83,20 @@ export async function provisionManagedSubdomain(name: string): Promise<Provision
         }),
     });
 
-    const body = (await res.json()) as CloudflareCustomHostnameResponse;
+    // Read as text first: a 502 from a proxy in front of the API answers with HTML, and parsing that
+    // straight away would throw a JSON syntax error over the status, which is the one fact that says
+    // whether retrying is worth it.
+    const raw = await res.text();
+    let body: CloudflareCustomHostnameResponse | null = null;
 
-    if (!res.ok || !body.success) {
-        const detail = body.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
+    try {
+        body = JSON.parse(raw) as CloudflareCustomHostnameResponse;
+    } catch {
+        // Non-JSON body (an HTML gateway or login page). The status and snippet below carry it.
+    }
+
+    if (!res.ok || !body?.success) {
+        const detail = body?.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}: ${raw.slice(0, 200)}`;
         throw new Error(`Cloudflare custom-hostname provisioning failed: ${detail}`);
     }
 

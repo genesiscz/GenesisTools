@@ -11,7 +11,7 @@ import {
 } from "@/lib/dashboard/dashboard.functions";
 
 /** Client-side mirror of `isValidSubdomainName` (server-only module) so we can validate before the round-trip. */
-const SUBDOMAIN_RE = /^[a-z0-9]([a-z0-9-]{1,30}[a-z0-9])?$/;
+const SUBDOMAIN_RE = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 
 export const Route = createFileRoute("/dashboard/setup")({
     loader: async () => {
