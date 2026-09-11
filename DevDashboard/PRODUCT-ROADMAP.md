@@ -42,7 +42,7 @@ Each audience gets exactly **one** headline feature. Discipline is the point: on
 
 ### 1.7 Agencies / consultants (multi-client machines)
 - **JTBD:** "I run work for five clients on five machines/VMs. I need them side by side, clearly separated, and I must never cross client data."
-- **Killer feature: Multi-machine fleet view with hard per-machine isolation.** One list of all paired machines, each its own Pulse tile + terminal set + isolated credentials/keys. Switch client context in one tap; nothing bleeds across machines (separate E2E keypairs per pairing).
+- **Killer feature: Multi-machine fleet view with hard per-machine isolation.** One list of all paired machines, each its own Pulse tile + terminal set + isolated credentials/keys. Switch client context in one tap; nothing bleeds across machines (separate E2E key pairs per pairing).
 
 ### 1.8 Content creators / streamers (render/encode monitoring)
 - **JTBD:** "I kick off a long render/encode/export and walk away. I want to be told when it's done — or when it stalls — without watching a progress bar."

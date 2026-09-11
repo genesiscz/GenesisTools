@@ -37,7 +37,7 @@ field outside that table's allow-list.
 
 Forbidden fields — a write containing any of these throws immediately:
 
-```
+```text
 privateKey   secretKey     sessionKey    sharedSecret   derivedSecret
 pairingSecret  symmetricKey  aeadKey      nonceSecret
 ```

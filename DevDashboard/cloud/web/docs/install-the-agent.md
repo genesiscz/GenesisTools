@@ -54,9 +54,11 @@ architecture, not a marketing line. (Full claim semantics:
 
 - **Best for:** remote access on your own infrastructure, no Tailscale.
 - **Setup:** one guided command —
+
   ```bash
   tools dev-dashboard tunnel setup
   ```
+
   It installs `cloudflared`, walks you through the Cloudflare login, and prints a pairing QR. No
   copy-paste.
 - **Trust:** the tunnel runs on **your own** Cloudflare account, not the vendor's — so the vendor
@@ -86,11 +88,14 @@ Pairing links one phone (or another device) to your agent and establishes the en
    **pairing QR**.
 2. To register a device against your cloud account out-of-band, the agent prints a short
    **device code**:
+
    ```bash
    tools dev-dashboard pair
    ```
-   The device code is proof that *your Mac agent consents* — the cloud never validates or decrypts
-   the pairing secret itself.
+
+   The device code is checked by *the agent* when your phone pairs with it. The cloud records it
+   without verifying it — it never sees the agent's codes, and never validates or decrypts the
+   pairing secret itself.
 3. In the mobile app, **scan the QR**. Your phone and Mac each generate an X25519 keypair on-device
    and perform the ECDH handshake → per-message AEAD. Keys live only on the two devices.
 4. When you pair via the dashboard's Setup wizard, you provide the device **label**, **kind**

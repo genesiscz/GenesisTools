@@ -15,7 +15,7 @@
 
 ## Artifact map
 
-```
+```text
 DevDashboard/
   README.md            ← you are here (product hub)
   DECISIONS.md         ← canonical decision log (always read first)
@@ -75,8 +75,17 @@ src/dev-dashboard/     ← the DevDashboard Agent (extracted backend) + contract
 - **SSE** via `expo/fetch`; **WS** via `partysocket`. **E2E** via a `BoxCipher` interface (tweetnacl
   proposed, react-native-libsodium fallback — pending user confirm + Hermes benchmark).
 
-## Status (2026-05-29)
+## Status (2026-09-11 15:58)
 
-Planning + research complete: 13 plans, ADR, DECISIONS, 11 research reports. 3 landing directions +
-the product roadmap in progress. **Next:** user picks the landing direction from the built pages;
-implementation starts with the foundation (01 → 03 → 02 → 04).
+Planning + research complete: 13 plans, ADR, DECISIONS, 11 research reports, 3 landing directions.
+
+Implementation has landed on `feat/dev-dashboard-mobile` (PR #193), not just been planned:
+
+- `cloud/` — drizzle schema + migrations, the CloudStore behind the data boundary, Better-Auth
+  sign-up/sign-in, Stripe billing, Cloudflare-for-SaaS subdomain provisioning, the customer
+  dashboard route set, and a Playwright e2e suite.
+- `mobile/` — the Expo SDK 55 app: connect/pairing, terminals, Pulse, Q&A, Obsidian, daemon and the
+  more-tab feature screens, with unit tests under `bun test` and an Appium e2e suite.
+
+**Remaining scope is tracked on the PR, not here** — this hub is a map, and a second copy of the
+open list would go stale the way the 2026-05-29 block above it did.
