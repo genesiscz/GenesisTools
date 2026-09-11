@@ -59,6 +59,16 @@ export default function TerminalsScreen() {
     const [open, setOpen] = useState<OpenSession | null>(null);
     const [status, setStatus] = useState<TerminalStatus>("idle");
     const rendererRef = useRef<TerminalRenderer | null>(null);
+    // Refs are assigned at commit, so reading `rendererRef.current` during render hands the key bar
+    // the PREVIOUS driver's handle (or null on first open). Mirroring it into state means the prop
+    // updates on the commit that assigns it, instead of waiting for an unrelated re-render that a
+    // no-op `setStatus("connecting")` may bail out of.
+    const [renderer, setRenderer] = useState<TerminalRenderer | null>(null);
+
+    const attachRendererRef = useCallback((instance: TerminalRenderer | null) => {
+        rendererRef.current = instance;
+        setRenderer(instance);
+    }, []);
     const rename = useRenameTtyd();
 
     useEffect(() => {
@@ -98,13 +108,12 @@ export default function TerminalsScreen() {
 
     // Attach whenever the open session OR the active driver changes (driver flip = detach+reattach).
     useEffect(() => {
-        const renderer = rendererRef.current;
         if (!renderer || !open) {
             return;
         }
 
         void renderer.attach({ id: open.id, title: open.title }, callbacks);
-    }, [open, driverId, callbacks]);
+    }, [open, driverId, callbacks, renderer]);
 
     const closeTerminal = useCallback(() => {
         void rendererRef.current?.detach();
@@ -203,10 +212,10 @@ export default function TerminalsScreen() {
                     </View>
 
                     <View testID="terminal-surface" style={{ flex: 1 }}>
-                        <DriverComponent ref={rendererRef} session={{ id: open.id, title: open.title }} callbacks={callbacks} />
+                        <DriverComponent ref={attachRendererRef} session={{ id: open.id, title: open.title }} callbacks={callbacks} />
                     </View>
 
-                    <MobileKeyBar renderer={rendererRef.current} />
+                    <MobileKeyBar renderer={renderer} />
                 </KeyboardAvoidingView>
             ) : (
                 <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: insets.bottom + 24 }}>
