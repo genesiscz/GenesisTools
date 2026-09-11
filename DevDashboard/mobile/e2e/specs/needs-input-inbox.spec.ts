@@ -47,7 +47,6 @@ describe("NeedsInputInboxPage", () => {
         const id = await needsInputInboxPage.firstItemOfKind("agent-session");
         if (!id) {
             this.skip();
-            return;
         }
 
         await needsInputInboxPage.tapItem(id);
@@ -66,7 +65,6 @@ describe("NeedsInputInboxPage", () => {
         const id = await needsInputInboxPage.firstItemOfKind("agent-question");
         if (!id) {
             this.skip();
-            return;
         }
 
         const before = await needsInputInboxPage.count();

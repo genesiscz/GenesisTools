@@ -50,7 +50,6 @@ describe("WeatherPage", () => {
     it("shows a location label when a reading is available", async function () {
         if (!(await weatherPage.hasTemp())) {
             this.skip();
-            return;
         }
 
         expect(await weatherPage.hasLabel()).toBe(true);

@@ -25,6 +25,16 @@ class PortKillerPage extends BasePage {
         return `port-killer-kill-${port}`;
     }
 
+    /** Any port row at all, whatever its number — the list having rendered content. */
+    async hasAnyRow(): Promise<boolean> {
+        return $('//*[starts-with(@name,"port-killer-row-")]').isExisting();
+    }
+
+    /** The explicit "nothing is listening" state, as opposed to the screen merely being visible. */
+    async isEmptyShown(): Promise<boolean> {
+        return this.byId(this.ids.empty).isExisting();
+    }
+
     async rowExists(port: number): Promise<boolean> {
         return this.byId(this.rowId(port)).isExisting();
     }

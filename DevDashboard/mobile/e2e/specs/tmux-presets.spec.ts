@@ -41,7 +41,6 @@ describe("TmuxPresetsPage", () => {
         const name = "morning-dev";
         if (!(await tmuxPresetsPage.rowExists(name))) {
             this.skip();
-            return;
         }
 
         await tmuxPresetsPage.waitForVisible(tmuxPresetsPage.summaryId(name));
@@ -55,7 +54,6 @@ describe("TmuxPresetsPage", () => {
         const name = "morning-dev";
         if (!(await tmuxPresetsPage.rowExists(name))) {
             this.skip();
-            return;
         }
 
         await tmuxPresetsPage.tapRestore(name);

@@ -60,7 +60,6 @@ describe("DaemonPage", () => {
     it("opens a run's log sheet and closes it", async function () {
         if (!runId) {
             this.skip();
-            return;
         }
 
         await daemonPage.openRunLog(runId);

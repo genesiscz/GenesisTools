@@ -27,6 +27,22 @@ import { connectPage } from "@e2e/pages/ConnectPage.page";
 describe("ConnectionsPage", () => {
     const bundleId = process.env.DD_BUNDLE_ID ?? "dev.foltyn.dev-dashboard";
 
+    /**
+     * `expect(...).not.toBeNull()` does not narrow the type, so each test needs a real guard before
+     * passing the id on. Read per test rather than once in `before()`: these tests open and cancel
+     * forms, and a re-activation between them would leave a hoisted id stale.
+     */
+    async function requireActiveId(): Promise<string> {
+        const id = await connectionsPage.activeConnectionId();
+        expect(id).not.toBeNull();
+
+        if (id === null) {
+            throw new Error("no active connection");
+        }
+
+        return id;
+    }
+
     before(async () => {
         if (await connectPage.isShown().catch(() => false)) {
             await connectPage.pairWithTestAgent();
@@ -48,12 +64,7 @@ describe("ConnectionsPage", () => {
         // Boot-restore makes the app connected, so at least one saved row must render.
         expect(await connectionsPage.connectionCount()).toBeGreaterThan(0);
 
-        const activeId = await connectionsPage.activeConnectionId();
-        expect(activeId).not.toBeNull();
-
-        if (activeId === null) {
-            return;
-        }
+        const activeId = await requireActiveId();
 
         expect(await connectionsPage.rowVisible(activeId)).toBe(true);
 
@@ -80,12 +91,7 @@ describe("ConnectionsPage", () => {
     });
 
     it("exposes an edit affordance for the active connection (opens the edit form, then cancels)", async () => {
-        const activeId = await connectionsPage.activeConnectionId();
-        expect(activeId).not.toBeNull();
-
-        if (activeId === null) {
-            return;
-        }
+        const activeId = await requireActiveId();
 
         expect(await connectionsPage.editExists(activeId)).toBe(true);
 
@@ -98,12 +104,7 @@ describe("ConnectionsPage", () => {
     });
 
     it("exposes a delete affordance for the active connection (existence only — never accept the confirm)", async () => {
-        const activeId = await connectionsPage.activeConnectionId();
-        expect(activeId).not.toBeNull();
-
-        if (activeId === null) {
-            return;
-        }
+        const activeId = await requireActiveId();
 
         // Assert the delete button EXISTS only. Deleting the active connection would erase its saved
         // password + reset the connect gate, breaking the boot-restore state other specs rely on, so

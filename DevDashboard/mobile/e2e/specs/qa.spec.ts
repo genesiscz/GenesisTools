@@ -130,7 +130,6 @@ describe("QA — bug-fix verification", () => {
 		const id = await qaPage.findExpandableCardId();
 		if (!id) {
 			this.skip();
-			return;
 		}
 
 		expect(await qaPage.isAnswerShown(id)).toBe(true);

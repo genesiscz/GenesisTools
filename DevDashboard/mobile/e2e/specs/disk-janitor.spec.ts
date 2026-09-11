@@ -53,7 +53,6 @@ describe("DiskJanitorPage", () => {
     it("ranks directories largest-first with proportional bar widths", async function () {
         if (await diskJanitorPage.isEmptyShown()) {
             this.skip();
-            return;
         }
 
         const count = await diskJanitorPage.rowCount();

@@ -40,22 +40,21 @@ describe("PortKillerPage", () => {
             return; // lsof-less host — the screen still rendered, which is the gate.
         }
 
-        // A live Agent typically has a dashboard + metro listening; assert the screen exposed rows
-        // OR the empty state — both prove the list rendered (not a smoke "did it boot").
-        const hasRow = (await portKillerPage.rowExists(3042)) || (await portKillerPage.isShown());
-        expect(hasRow).toBe(true);
+        // Rows OR the empty state — both prove the list rendered. The previous form fell back to
+        // `isShown()`, which the preceding test had already established, so on any host with nothing
+        // on port 3042 it passed without checking either.
+        const resolved = (await portKillerPage.hasAnyRow()) || (await portKillerPage.isEmptyShown());
+        expect(resolved).toBe(true);
     });
 
     it("opens a confirm dialog BEFORE killing (confirm gate)", async function () {
         if (await portKillerPage.isLsofUnavailableShown()) {
             this.skip();
-            return;
         }
 
         // Discover a rendered port row to drive (deterministic 3042 if present, else skip gracefully).
         if (!(await portKillerPage.rowExists(3042))) {
             this.skip();
-            return;
         }
 
         await portKillerPage.openKillConfirm(3042);

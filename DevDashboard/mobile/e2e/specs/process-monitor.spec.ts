@@ -42,7 +42,6 @@ describe("ProcessMonitorPage", () => {
         const pids = await processMonitorPage.rowPids();
         if (pids.length < 2) {
             this.skip();
-            return;
         }
 
         const firstByRss = pids[0];
@@ -61,7 +60,6 @@ describe("ProcessMonitorPage", () => {
         const pids = await processMonitorPage.rowPids();
         if (pids.length < 2) {
             this.skip();
-            return;
         }
 
         await processMonitorPage.sortByRss();
@@ -79,7 +77,6 @@ describe("ProcessMonitorPage", () => {
         const pid = await processMonitorPage.firstRowPid();
         if (pid === null) {
             this.skip();
-            return;
         }
 
         await processMonitorPage.tapKill(pid);

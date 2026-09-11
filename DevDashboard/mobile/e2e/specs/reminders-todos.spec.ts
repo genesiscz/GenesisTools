@@ -46,7 +46,6 @@ describe("RemindersTodosPage", () => {
         const id = "rem-1";
         if (!(await remindersTodosPage.rowExists(id))) {
             this.skip();
-            return;
         }
 
         expect(await remindersTodosPage.rowExists(id)).toBe(true);
@@ -76,7 +75,6 @@ describe("RemindersTodosPage", () => {
     it("renders the permission banner when access is denied", async function () {
         if (!expectDenied) {
             this.skip();
-            return;
         }
 
         expect(await remindersTodosPage.permissionBannerShown()).toBe(true);

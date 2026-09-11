@@ -50,7 +50,6 @@ describe("ContainersPage", () => {
     it("shows the running and/or stopped sections when Docker is available", async function () {
         if (await containersPage.isDockerUnavailableShown()) {
             this.skip();
-            return;
         }
 
         expect(await containersPage.hasRunningOrStopped()).toBe(true);

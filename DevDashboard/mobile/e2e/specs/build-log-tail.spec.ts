@@ -41,7 +41,6 @@ describe("BuildLogTailPage", () => {
     it("streams log lines and highlights + jumps to the first error", async function () {
         if (!runId) {
             this.skip();
-            return;
         }
 
         await buildLogTailPage.selectRun(runId);
@@ -74,7 +73,6 @@ describe("BuildLogTailPage", () => {
     it("the live pill reports a known connection state", async function () {
         if (!runId) {
             this.skip();
-            return;
         }
 
         const label = await buildLogTailPage.livePillLabel();

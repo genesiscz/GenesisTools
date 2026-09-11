@@ -61,7 +61,6 @@ describe("ClaudeUsagePage", () => {
     it("renders the account usage card and its chart container", async function () {
         if (!accountName || !(await claudeUsagePage.hasUsageData())) {
             this.skip();
-            return;
         }
 
         expect(await claudeUsagePage.accountCardVisible(accountName)).toBe(true);
@@ -71,7 +70,6 @@ describe("ClaudeUsagePage", () => {
     it("toggles the history range (1h / 24h / 7d) and keeps the screen mounted", async function () {
         if (!(await claudeUsagePage.hasUsageData())) {
             this.skip();
-            return;
         }
 
         // The range labels come from the screen's RANGES array; tap each only if its segment rendered,

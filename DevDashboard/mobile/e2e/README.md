@@ -92,7 +92,7 @@ DD_APP_PATH="$(pwd)/android/app/build/outputs/apk/debug/app-debug.apk" \
 | `DD_SIM_OS`     | `18.2`                             | iOS platform version.                              |
 | `DD_AVD`        | `Pixel_7_API_34`                   | Android AVD / device name.                         |
 | `DD_EMU_OS`     | `14`                               | Android platform version.                          |
-| `DD_BUNDLE_ID`  | `dev.genesistools.devdashboard`    | Bundle id used by the deep-link pairing helper.    |
+| `DD_BUNDLE_ID`  | `dev.foltyn.dev-dashboard`         | Bundle id used by the deep-link pairing helper.    |
 
 ## The connect gate (every feature spec needs this)
 
@@ -138,6 +138,7 @@ there with auth satisfied (an empty password 401s the probe). See the plan-04 no
 
    export const terminalsPage = new TerminalsPage();
    ```
+
 3. `e2e/specs/<feature>.spec.ts`: clear the connect gate in `before()` (snippet above), open the
    tab, then assert via your page object. Mocha BDD (`describe`/`it`), `expect-webdriverio`.
 4. Import via the `@e2e/*` alias only (e2e tsconfig has no `@/` or `@dd/` paths). No `as any`.

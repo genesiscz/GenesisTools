@@ -98,12 +98,34 @@ class QuickCommandsPage extends BasePage {
             .waitUntil(
                 async () =>
                     (await this.isVisible(this.ids.screen)) &&
-                    (await $(`//*[contains(@label,"${label}")]`).isExisting()),
+                    (await $(`//*[contains(@label,${xpathLiteral(label)})]`).isExisting()),
                 { timeout, timeoutMsg: `card labeled "${label}" did not appear` },
             )
             .then(() => true)
             .catch(() => false);
     }
+}
+
+/**
+ * Quote an arbitrary string for an XPath 1.0 string literal. XPath 1.0 has no escape syntax inside
+ * a literal, so a value containing both quote characters has to be assembled with `concat()`; a
+ * value containing just one is wrapped in the other. Interpolating raw made Appium reject the whole
+ * selector as invalid, which `waitForLabelPresent`'s catch then reported as "the card did not
+ * appear" rather than "your selector is malformed".
+ */
+function xpathLiteral(value: string): string {
+    if (!value.includes('"')) {
+        return `"${value}"`;
+    }
+
+    if (!value.includes("'")) {
+        return `'${value}'`;
+    }
+
+    return `concat(${value
+        .split('"')
+        .map((part) => `"${part}"`)
+        .join(`, '"', `)})`;
 }
 
 export const quickCommandsPage = new QuickCommandsPage();

@@ -12,7 +12,6 @@ describe("ConnectPage", () => {
     it("renders the connect screen with all four tiers", async function () {
         if (!(await connectPage.isShown())) {
             this.skip();
-            return;
         }
 
         for (const tier of ["lan", "tailscale", "cloudflared-self", "managed"] as const) {
@@ -23,7 +22,6 @@ describe("ConnectPage", () => {
     it("LAN tier shows the agent discovery list", async function () {
         if (!(await connectPage.isShown())) {
             this.skip();
-            return;
         }
 
         await connectPage.selectTier("lan");
@@ -33,7 +31,6 @@ describe("ConnectPage", () => {
     it("Tailscale tier probes to needs-vpn (or reachable) when checked", async function () {
         if (!(await connectPage.isShown())) {
             this.skip();
-            return;
         }
 
         await connectPage.selectTier("tailscale");
@@ -47,7 +44,6 @@ describe("ConnectPage", () => {
     it("self-cloudflared / managed tier shows the QR scanner panel", async function () {
         if (!(await connectPage.isShown())) {
             this.skip();
-            return;
         }
 
         await connectPage.selectTier("cloudflared-self");
@@ -57,7 +53,6 @@ describe("ConnectPage", () => {
     it("a deep-linked pairing URI pairs and reaches the agent (against a test agent)", async function () {
         if (!(await connectPage.isShown())) {
             this.skip();
-            return;
         }
 
         await connectPage.selectTier("cloudflared-self");
