@@ -10,6 +10,31 @@ Native CLI over the Accessibility API. `tools macos control` is an alias. The bi
 
 **Read the decision rule below before anything else. It decides which half of this skill you use.**
 
+## 🛑 First, check you are on a build that HAS these commands
+
+`see`, `act` and `cursor` are newer than `master`. `tools` on PATH runs whichever checkout
+owns the `tools` executable, which is usually the main one, so from a worktree or before this
+lands you will be asking an older build.
+
+**`tools control <unknown-subcommand> --help` exits 0 and prints the PARENT help.** It does
+not error. Verified 2026-09-11: `tools control act --help` and `tools control zzznotreal
+--help` both exit 0 with 11,479 bytes of top-level help. A zero exit code therefore proves
+nothing, and an agent that trusts it concludes the subcommand does not exist.
+
+Read the FIRST LINE of the help instead:
+
+```bash
+tools control act --help | head -1
+# "Usage: control act [options]"  -> the build has it
+# "Usage: control [options] [command]"  -> it does NOT; you are on an older checkout
+```
+
+From a worktree, run the local entrypoint rather than the PATH one:
+
+```bash
+bun src/control/index.ts act --help | head -1
+```
+
 ## The decision rule
 
 There are two command families and they are both correct. Pick by what the task needs.
@@ -299,6 +324,48 @@ tools control see --app com.apple.calculator \
 
 `jq` is only reading the token; any client can parse the JSON itself. Quote the token. Check
 each exit code; never hide a failing action behind a pipeline.
+
+**What `see` actually returns.** Field names matter, so here is a real (trimmed) result for
+Calculator. Every element carries an `index`, which is the integer `act --element` wants.
+
+```json
+{
+  "app": "com.apple.calculator",
+  "pid": 71368,
+  "scope": "window",
+  "expiresInSeconds": 120,
+  "snapshot": "eyJwaWQiOjcxMzY4LCJkZXB0aCI6MjAsImxhdW5jaCI6…",
+  "window":     { "id": 24968, "index": 0, "title": "Calculator", "x": 1761, "y": 842, "width": 230, "height": 408 },
+  "screenshot": { "path": "/tmp/calc.png", "width": 460, "height": 816 },
+  "truncated": null,
+  "ok": true,
+  "elements": [
+    { "index": 0,  "role": "AXWindow", "AXTitle": "Calculator", "AXIdentifier": "main",
+      "AXSubrole": "AXStandardWindow", "actions": ["AXRaise"], "depth": 0, "visible": true,
+      "x": 1761, "y": 842, "width": 230, "height": 408, "AXFocused": "0" },
+    { "index": 8,  "role": "AXStaticText", "AXValue": "4", "AXEnabled": "1", "depth": 6,
+      "valueSettable": false, "visible": true, "x": 1962, "y": 931, "width": 19, "height": 36 },
+    { "index": 18, "role": "AXButton", "AXDescription": "5", "AXIdentifier": "Five",
+      "AXEnabled": "1", "actions": ["AXPress"], "depth": 5, "visible": true,
+      "x": 1825, "y": 1029, "width": 48, "height": 48 }
+  ]
+}
+```
+
+Notes that save a round trip:
+
+- Attribute keys keep their raw AX names (`AXTitle`, `AXDescription`, `AXValue`,
+  `AXIdentifier`, `AXSubrole`, `AXEnabled`, `AXFocused`). There is no lowercase `title` or
+  `identifier`. Booleans arrive as the strings `"0"` and `"1"`.
+- `x`/`y`/`width`/`height` are already GLOBAL screen points, so an element centre is directly
+  usable as `--coords`.
+- `actions` is the list `--action perform --ax-action NAME` may name. An element with no
+  `AXPress` in it cannot be pressed.
+- Picking an element is ordinary JSON work:
+  `jq '.elements[] | select(.AXDescription=="5") | .index'`.
+
+⚠️ The screenshot is in RETINA PIXELS (460×816 here) while the window is in POINTS (230×408).
+Convert before using an image pixel as a coordinate; the formula is below.
 
 **Window selection.** With several windows `see` exits 1 and lists `windows` candidates with
 their current zero-based indexes. Re-run with `--window-index N`. It never picks the largest
