@@ -3,6 +3,7 @@ import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { registerAgentHistoryCommand } from "@genesiscz/utils/agent-sessions/history-cli";
 import type { Command } from "commander";
 import { registerProviderUsageCommand } from "../usage/provider-usage";
+import { registerAgentCmuxCommand } from "./cmux";
 import { registerAgentResumeCommand, registerAgentRunCommand } from "./run";
 import { type AgentToolSpec, type SharedVerb, toolName } from "./spec";
 import { registerAgentWhoCommand } from "./who";
@@ -51,6 +52,10 @@ export function registerAgentTool(program: Command, spec: AgentToolSpec): void {
             tool: spec.workerMount ? `${tool} ${spec.workerMount}` : tool,
             subcommand: spec.workerMount ? [spec.workerMount] : [],
         });
+    });
+
+    shared("cmux", () => {
+        registerAgentCmuxCommand(program, spec);
     });
 
     shared("who", () => {

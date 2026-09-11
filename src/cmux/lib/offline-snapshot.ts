@@ -240,13 +240,13 @@ export function buildOfflinePanes(
                 });
                 continue;
             }
-            // Always "claude": the surface-session journal only records Claude
-            // sessions, so typing the kind from the tab title turned a claude
-            // uuid into a `grok -r` argument on any pane whose title ends in
-            // the word "grok".
+            // The kind comes from the journal RECORD, never the tab title: typing it from the
+            // title turned a claude uuid into a `grok -r` argument on any pane whose title
+            // ends in the word "grok". It is not always "claude" either — the SessionStart
+            // hook is shared, so Codex sessions are in this journal too.
             const preferred: ReplayCatalogSession | undefined = session
                 ? {
-                      kind: "claude",
+                      kind: session.provider,
                       sessionId: session.sessionId,
                       cwd: cwd ?? "",
                       title: panel.title ?? "",

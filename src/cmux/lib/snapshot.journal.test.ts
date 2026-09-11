@@ -61,7 +61,7 @@ test("live capture pins a known Claude session without losing the journal's laun
             panelTty: new Map(),
             panelCwd: new Map(),
             replayCatalog: { sessions: [] },
-            surfaceSessions: new Map([[stableId, { sessionId: "known-session" }]]),
+            surfaceSessions: new Map([[stableId, { sessionId: "known-session", provider: "claude" as const }]]),
             surfaceCommands: new Map([[stableId, { ...journal, command: "claude --model custom" }]]),
         },
     });

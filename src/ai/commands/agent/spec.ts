@@ -16,7 +16,7 @@ import type { Command } from "commander";
  */
 
 /** Verbs every coding-agent tool answers the same way. */
-export type SharedVerb = "run" | "resume" | "history" | "login" | "warmup" | "usage" | "who" | "worker";
+export type SharedVerb = "run" | "resume" | "history" | "login" | "warmup" | "usage" | "who" | "worker" | "cmux";
 
 export interface AgentLaunchInput {
     account: AccountEntry;
