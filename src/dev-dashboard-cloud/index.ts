@@ -151,6 +151,9 @@ program
         }
 
         await ensureDeps(opts.install, opts.reinstall);
+        // The spawned `bun run dev` reads DD_CLOUD_PORT; without this the vite server always bound
+        // 7251 while the readiness probe and the browser went to `port`, so any override hung.
+        process.env.DD_CLOUD_PORT = String(port);
         await cloudApp.up({ open: opts.open, port });
     });
 

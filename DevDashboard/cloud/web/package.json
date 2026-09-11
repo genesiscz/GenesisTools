@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 7251 --host ${DD_CLOUD_BIND_HOST:-127.0.0.1}",
+    "dev": "vite dev --port ${DD_CLOUD_PORT:-7251} --host ${DD_CLOUD_BIND_HOST:-127.0.0.1}",
     "build": "vite build",
     "preview": "node .output/server/index.mjs",
     "start": "node .output/server/index.mjs",
