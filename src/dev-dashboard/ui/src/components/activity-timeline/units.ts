@@ -1,5 +1,5 @@
 import type { TimelineEvent } from "@app/dev-dashboard/lib/timeline/types";
-import { type EventKind, eventKind, type EventTone } from "@app/dev-dashboard/lib/timeline/units";
+import { type EventKind, type EventTone, eventKind } from "@app/dev-dashboard/lib/timeline/units";
 
 // The hour bucketing, the row time and the failed-run rule are shared with the mobile app — see
 // `@app/dev-dashboard/lib/timeline/units`. Only the colour mapping below is web-specific.
