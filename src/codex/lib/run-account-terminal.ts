@@ -2,10 +2,9 @@ import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { createCodexAdapter } from "@genesiscz/utils/agent-sessions/codex-sessions";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
-import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
 import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { resolveCodexBinary } from "@genesiscz/utils/ai/openai/codex-binary";
 import { resolveNativeCodexModel } from "@genesiscz/utils/ai/openai/resolve-native-model";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
@@ -14,7 +13,6 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import { nativeSessionRootsForHome } from "@genesiscz/utils/providers/session-paths";
 import { CodexAccountBinding } from "./account";
 import { formatActiveWriter, inspectActiveWriter, isActiveWriterError } from "./active-writer";
 import { type AppServerProcess, spawnAppServer } from "./app-server-client";
@@ -34,12 +32,28 @@ import { detectCodexVersion } from "./version";
  */
 const HOME_BUSY_ATTEMPTS = 3;
 
+/** The shared Codex home a `run` targets: `--home`, else `~/.codex` regardless of an inherited CODEX_HOME. */
+export function sharedCodexHome(home: string | undefined): string {
+    return resolve(home ?? join(homedir(), ".codex"));
+}
+
+/** A recorded home may be gone since the index last saw it; compare it as written then. */
+export async function realHome(home: string): Promise<string> {
+    return realpath(home).catch((error: unknown) => {
+        logger.debug({ error, home }, "the home has no realpath; comparing it as written");
+        return home;
+    });
+}
+
 export async function runAccountTerminal(input: {
-    selector: string;
+    /** Already resolved by the shared picker; bound here by id. */
+    account: AccountEntry;
+    /** Already resolved by the shared selector when `--resume <query>` was given. */
+    session?: AgentSession;
     args: string[];
     options: CodexRunOptions;
 }): Promise<void> {
-    const { selector, args, options } = input;
+    const { args, options } = input;
     validateTuiArgs(args);
     if (process.platform === "win32") {
         throw new Error("Account-bound Codex terminals currently require macOS or Linux Unix sockets");
@@ -66,9 +80,9 @@ export async function runAccountTerminal(input: {
         );
     }
 
-    const account = await CodexAccountBinding.create(selector, { allowRefresh: true });
+    const account = await CodexAccountBinding.create(input.account.id, { allowRefresh: true });
     prof.mark("account-bound");
-    const home = resolve(options.home ?? join(homedir(), ".codex"));
+    const home = sharedCodexHome(options.home);
     const cwd = resolve(options.cwd ?? process.cwd());
     const model = options.model ? await resolveNativeCodexModel(account.accountId, options.model) : undefined;
     let resumedId: string | undefined;
@@ -77,32 +91,12 @@ export async function runAccountTerminal(input: {
     let unarchiveId: string | undefined;
     registerBuiltInPlugins();
     const native = providerPlugin("openai-sub").codingAgent;
-    if (typeof options.resume === "string") {
-        const roots = [...new Set([...nativeSessionRootsForHome("codex", home), ...(native?.roots() ?? [])])];
-        const targetHome = await realpath(home).catch((error: unknown) => {
-            logger.debug({ error, home }, "the shared home has no realpath; comparing it as written");
-            return home;
-        });
-        const session = await selectResumeSession({
-            preferredHome: targetHome,
-            adapter: createCodexAdapter(roots),
-            query: options.resume,
-            filters: { cwd: options.all ? undefined : cwd, all: options.all },
-        });
-        if (!session) {
-            return;
-        }
+    const session = input.session;
+    if (session) {
+        const targetHome = await realHome(home);
         // A home the user has since deleted is still in the index until the next prune, and an
         // unguarded realpath turned that into a raw ENOENT out of the launcher.
-        const sourceHome = session.sourceHome
-            ? await realpath(session.sourceHome).catch((error: unknown) => {
-                  logger.debug(
-                      { error, home: session.sourceHome },
-                      "a recorded source home is gone; comparing it as written"
-                  );
-                  return session.sourceHome;
-              })
-            : undefined;
+        const sourceHome = session.sourceHome ? await realHome(session.sourceHome) : undefined;
         if (sourceHome !== targetHome) {
             if (!native?.importSession) {
                 throw new Error("This provider cannot import a session from another native home");
