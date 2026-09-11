@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -29,16 +30,32 @@ interface ProjectClient {
 /**
  * The project whose root holds `cwd`, deepest root first.
  *
- * Depth matters because `/Users/Martin` is itself one of the projects Desktop keeps, and it
+ * Depth matters because Codex Desktop keeps a project rooted at the home directory, which
  * contains every other root. Without the ordering every thread would land there.
+ *
+ * A root that IS the home directory is skipped entirely rather than used as a last resort.
+ * It matches everything, so it files threads whose real project simply does not exist yet
+ * under a catch-all the user then has to clean up — and `thread/metadata/update` cannot clear
+ * a projectId (a null is read as "no field"), so that clean-up is manual. Observed
+ * 2026-09-11: a backfill put four unrelated threads under `Martin` and they could not be
+ * moved back out from the API.
  */
-export function projectForCwd(projects: readonly CodexProject[], cwd: string): CodexProject | undefined {
+export function projectForCwd(
+    projects: readonly CodexProject[],
+    cwd: string,
+    home: string = homedir()
+): CodexProject | undefined {
     const target = resolve(cwd);
+    const catchAll = resolve(home);
     let best: { project: CodexProject; depth: number } | undefined;
 
     for (const project of projects) {
         for (const root of project.roots ?? []) {
             const path = resolve(root.path);
+
+            if (path === catchAll) {
+                continue;
+            }
 
             if (target !== path && !target.startsWith(`${path}/`)) {
                 continue;
@@ -63,7 +80,7 @@ export function projectForCwd(projects: readonly CodexProject[], cwd: string): C
  */
 export async function assignThreadToProject(
     client: ProjectClient,
-    options: { threadId: string; cwd: string; limit?: number }
+    options: { threadId: string; cwd: string; limit?: number; home?: string }
 ): Promise<CodexProject | undefined> {
     const { threadId, cwd } = options;
     const threads = await client.request<{ data?: Array<{ id?: string; projectId?: string | null }> }>("thread/list", {
@@ -81,7 +98,7 @@ export async function assignThreadToProject(
     }
 
     const projects = await client.request<{ data?: CodexProject[] }>("project/list", {});
-    const project = projectForCwd(projects.data ?? [], cwd);
+    const project = projectForCwd(projects.data ?? [], cwd, options.home);
 
     if (!project) {
         logger.debug({ threadId, cwd }, "[codex] no Desktop project owns this directory");

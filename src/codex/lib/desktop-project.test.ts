@@ -8,18 +8,25 @@ const PROJECTS: CodexProject[] = [
     { id: "p-rootless", name: "Rootless", roots: [] },
 ];
 
-test("the deepest matching root wins, because the home directory is itself a project", () => {
-    // Codex Desktop really does keep a project rooted at the home directory, and it contains
-    // every other root, so a shallowest-first match would file everything under it.
-    expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind")?.id).toBe("p-rewind");
-    expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind/packages/ui")?.id).toBe("p-rewind");
-    expect(projectForCwd(PROJECTS, "/Users/fixture/Downloads")?.id).toBe("p-home");
+const HOME = "/Users/fixture";
+
+test("the deepest matching root wins", () => {
+    expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind", HOME)?.id).toBe("p-rewind");
+    expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind/packages/ui", HOME)?.id).toBe("p-rewind");
+});
+
+test("a project rooted at the home directory is never used, even as a last resort", () => {
+    // It matches every cwd, so it files threads whose real project does not exist yet under a
+    // catch-all — and `thread/metadata/update` cannot clear a projectId, so undoing that is
+    // manual. A backfill put four unrelated threads under `Martin` on 2026-09-11 this way.
+    expect(projectForCwd(PROJECTS, "/Users/fixture/Downloads", HOME)).toBeUndefined();
+    expect(projectForCwd(PROJECTS, "/Users/fixture", HOME)).toBeUndefined();
 });
 
 test("a sibling whose name merely starts the same is not a match", () => {
-    expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind-old")?.id).toBe("p-home");
-    expect(projectForCwd([PROJECTS[2]], "/Users/fixture/Projects/Rewind-old")).toBeUndefined();
-    expect(projectForCwd([], "/Users/fixture")).toBeUndefined();
+    expect(projectForCwd(PROJECTS, "/Users/fixture/Projects/Rewind-old", HOME)).toBeUndefined();
+    expect(projectForCwd([PROJECTS[2]], "/Users/fixture/Projects/Rewind-old", HOME)).toBeUndefined();
+    expect(projectForCwd([], "/Users/fixture", HOME)).toBeUndefined();
 });
 
 function client(threads: Array<{ id: string; projectId?: string | null }>) {
@@ -48,7 +55,11 @@ const updates = (calls: Array<{ method: string; params: unknown }>) =>
 
 test("an unfiled thread is put under the project that owns its directory", async () => {
     const api = client([{ id: "t1", projectId: null }]);
-    const project = await assignThreadToProject(api, { threadId: "t1", cwd: "/Users/fixture/Projects/Rewind" });
+    const project = await assignThreadToProject(api, {
+        threadId: "t1",
+        cwd: "/Users/fixture/Projects/Rewind",
+        home: HOME,
+    });
 
     expect(project?.id).toBe("p-rewind");
     expect(updates(api.calls)).toEqual([
