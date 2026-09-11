@@ -1,5 +1,6 @@
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
+import { releaseCodexUsageHomes } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
 import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
@@ -138,7 +139,37 @@ async function main(): Promise<void> {
     }
 }
 
+const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143 } as const;
+
+/**
+ * The Codex poll runs its account in a throwaway `CODEX_HOME` and removes it in a `finally`.
+ * That `finally` never runs when the round is killed, and killing it is routine: the daemon
+ * runner SIGTERMs this task's whole process tree once a round passes its 60s budget, which a
+ * laptop waking mid-poll reaches every time. Ten homes had collected by 2026-09-11.
+ *
+ * Only homes THIS process owns are released. A `tools ai usage` or `tools codex usage` in
+ * another terminal keeps its own home in the same directory and must not lose it.
+ */
+function releaseTempHomesOnSignal(): void {
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+        process.on(signal, () => {
+            const exit = () => process.exit(SIGNAL_EXIT_CODES[signal]);
+            // Bounded, because installing a handler suppresses the default termination and
+            // the runner follows SIGTERM with SIGKILL: a cleanup that hangs would trade a
+            // leaked directory for a leaked process.
+            const deadline = setTimeout(exit, 2000);
+
+            deadline.unref();
+            void releaseCodexUsageHomes()
+                .catch((err: unknown) => logger.warn({ err, signal }, "[ai-usage] temp home release failed"))
+                .then(exit);
+        });
+    }
+}
+
 if (import.meta.main) {
+    releaseTempHomesOnSignal();
+
     try {
         await main();
         process.exit(0);

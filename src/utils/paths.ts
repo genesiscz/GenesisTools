@@ -7,6 +7,7 @@
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir as osTmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { env } from "./env.client";
 import { SafeJSON } from "./json";
 import { collapsePathForDisplay as collapsePathHeuristic } from "./paths.client";
 
@@ -174,6 +175,17 @@ export interface TmpdirOptions {
  */
 export function tmpdir(options: TmpdirOptions = {}): string {
     const { preferRoot = true } = options;
+
+    // Inside a test run this wins over both branches below. The preload gives each test
+    // process a temp root it removes at exit by pointing TMPDIR at it, but the `/tmp` branch
+    // reads no environment at all, so every fixture built through this helper walked out of
+    // that sandbox and stayed. Measured 2026-09-11: 1,018 `history-*` directories left in
+    // /private/tmp, which macOS removes only once they are EMPTY and three days old.
+    const sandbox = env.test.getTmpRoot();
+
+    if (sandbox) {
+        return sandbox;
+    }
 
     if (preferRoot && process.platform !== "win32") {
         return "/tmp";

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import type { AccountEntry } from "../../../config/schema";
 import type { CodexUsageClient } from "./usage";
@@ -316,4 +319,38 @@ it("vault credential stamps are independent of an old native data directory", as
     const account = entry("vault", { accessToken: "vault-access", expiresAt: 12345, dataDir: "/obsolete-profile" });
     expect(codexHomeFor(account)).toBeNull();
     expect(await codexCredentialStamp(account)).toBe(12345);
+});
+describe("sweepAbandonedHomes", () => {
+    /**
+     * The poll's throwaway `CODEX_HOME` is removed in a `finally` that a killed round never
+     * reaches, so a later round sweeps. The age rule is all that separates an abandoned home
+     * from the live home of a `tools ai usage` or `tools codex usage` in another terminal.
+     */
+    it("removes an abandoned home, keeps a live one, and never touches another tool's", async () => {
+        const { sweepAbandonedHomes } = await import("./usage");
+        const root = mkdtempSync(join(tmpdir(), "codex-usage-sweep-"));
+        const abandoned = join(root, "gt-codex-usage-abandoned");
+        const live = join(root, "gt-codex-usage-live");
+        const foreign = join(root, "gt-test-tmp-someone-else");
+
+        for (const dir of [abandoned, live, foreign]) {
+            mkdirSync(dir);
+        }
+
+        // Two hours back, past the one-hour rule. `live` keeps the mtime it was just created
+        // with, which is what a poll in flight looks like.
+        const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        utimesSync(abandoned, old, old);
+        utimesSync(foreign, old, old);
+
+        expect(await sweepAbandonedHomes(root)).toBe(1);
+        expect(existsSync(abandoned)).toBe(false);
+        expect(existsSync(live)).toBe(true);
+        expect(existsSync(foreign)).toBe(true);
+    });
+
+    it("answers zero for a root that does not exist rather than throwing", async () => {
+        const { sweepAbandonedHomes } = await import("./usage");
+        expect(await sweepAbandonedHomes(join(tmpdir(), "codex-usage-sweep-absent-root"))).toBe(0);
+    });
 });

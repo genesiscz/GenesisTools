@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
@@ -248,6 +248,114 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Pr
     }
 }
 
+const USAGE_HOME_PREFIX = "gt-codex-usage-";
+
+/**
+ * Ephemeral homes THIS process created and has not finished with.
+ *
+ * `cleanup` removes each one on the normal path, but it never runs when the process is
+ * killed, and this one is killed routinely: `src/daemon/lib/runner.ts` SIGTERMs the whole
+ * task tree once a round passes its 60s budget, which a laptop waking mid-poll reaches every
+ * time. Ten abandoned Codex homes, 12 MB of sqlite, had collected by 2026-09-11.
+ */
+const liveHomes = new Set<string>();
+
+/**
+ * Age past which a leftover home belongs to a run that is gone.
+ *
+ * One poll lives for a handshake plus a single `account/rateLimits/read` (10s ceiling), and
+ * the floor between polls is 120s, so an hour is far outside any live run. That margin is the
+ * point: a `tools ai usage` or `tools codex usage` in another terminal keeps its own home in
+ * this same directory, and sweeping it out from under that process would break a poll the
+ * user is watching.
+ */
+const ABANDONED_HOME_MS = 60 * 60 * 1000;
+
+/** Ceiling on one sweep, so a pathological temp directory cannot stall a poll. */
+const MAX_SWEEP = 50;
+
+let sweptThisProcess = false;
+
+/** Once per process: the daemon is a fresh process per round, so that is still every round. */
+async function sweepOnce(root: string): Promise<void> {
+    if (sweptThisProcess) {
+        return;
+    }
+
+    sweptThisProcess = true;
+    await sweepAbandonedHomes(root);
+}
+
+/**
+ * Remove `gt-codex-usage-*` directories older than {@link ABANDONED_HOME_MS} and answer how
+ * many went.
+ *
+ * Exported because the age rule is the only thing standing between this sweep and the live
+ * home of a `tools ai usage` running in another terminal, so both halves of it need a test:
+ * an abandoned home goes, a fresh one stays.
+ */
+export async function sweepAbandonedHomes(root: string): Promise<number> {
+    let names: string[];
+
+    try {
+        names = await readdir(root);
+    } catch (err) {
+        logger.debug({ err, root }, "[usage] could not list the temp root to sweep codex homes");
+        return 0;
+    }
+
+    let removed = 0;
+
+    for (const name of names) {
+        if (removed >= MAX_SWEEP || !name.startsWith(USAGE_HOME_PREFIX)) {
+            continue;
+        }
+
+        const dir = join(root, name);
+
+        if (liveHomes.has(dir)) {
+            continue;
+        }
+
+        try {
+            const age = Date.now() - (await stat(dir)).mtimeMs;
+
+            if (age < ABANDONED_HOME_MS) {
+                continue;
+            }
+
+            await rm(dir, { recursive: true, force: true });
+            removed += 1;
+        } catch (err) {
+            logger.debug({ err, dir }, "[usage] an abandoned codex home could not be removed");
+        }
+    }
+
+    if (removed > 0) {
+        logger.info({ removed, root }, "[usage] removed abandoned codex usage homes");
+    }
+
+    return removed;
+}
+
+/**
+ * Remove every ephemeral home this process still owns, for a signal handler, where `cleanup`
+ * never gets its turn. Only this process's own homes: a concurrent poll in another terminal
+ * owns its own, and both live in the same directory.
+ */
+export async function releaseCodexUsageHomes(): Promise<void> {
+    const homes = [...liveHomes];
+    liveHomes.clear();
+
+    await Promise.all(
+        homes.map((home) =>
+            rm(home, { recursive: true, force: true }).catch((err: unknown) =>
+                logger.debug({ err, home }, "[usage] could not release an ephemeral codex home")
+            )
+        )
+    );
+}
+
 async function spawnClient(
     account: AccountEntry,
     options: UsagePollOptions,
@@ -256,7 +364,13 @@ async function spawnClient(
     const binding = await CodexAccountBinding.create(account.id, { allowRefresh: !options.probe });
     // Resolve first: expired diagnostic credentials must fail before any vendor process starts.
     const tokens = await binding.tokens({ refresh: !options.probe });
-    const home = await mkdtemp(join(tmpdir(), "gt-codex-usage-"));
+    const root = tmpdir();
+
+    await sweepOnce(root);
+
+    const home = await mkdtemp(join(root, USAGE_HOME_PREFIX));
+
+    liveHomes.add(home);
     let client: AppServerClient | undefined;
     const cleanup = async () => {
         await client?.close();
@@ -269,6 +383,7 @@ async function spawnClient(
             }
         }
         // This directory was created exclusively for this poll, never supplied by a user.
+        liveHomes.delete(home);
         await rm(home, { recursive: true, force: true });
     };
 
