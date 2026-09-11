@@ -15,6 +15,21 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const META_SUFFIX = ".meta.json";
 
+/**
+ * The name is already claimed. A distinct type because a caller that is allowed to reclaim a
+ * DEAD session of the same name has to tell this apart from a real I/O failure, and the
+ * message alone cannot be matched on safely.
+ */
+export class WorkerNameTakenError extends Error {
+    constructor(
+        message: string,
+        readonly sessionName: string
+    ) {
+        super(message);
+        this.name = "WorkerNameTakenError";
+    }
+}
+
 export interface WorkerMetaStoreOptions<T extends { name: string }> {
     /** Directory holding the `<name>.meta.json` files. */
     dir: () => string;
@@ -116,7 +131,7 @@ export class WorkerMetaStore<T extends { name: string }> {
             fd = this.options.fileMode ? openSync(path, "wx", this.options.fileMode) : openSync(path, "wx");
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-                throw new Error(this.options.existsMessage(meta.name));
+                throw new WorkerNameTakenError(this.options.existsMessage(meta.name), meta.name);
             }
 
             throw err;

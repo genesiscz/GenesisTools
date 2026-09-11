@@ -55,6 +55,21 @@ export interface WorkerLiveness {
 export interface WorkerDriver<Meta extends WorkerMeta = WorkerMeta> {
     backend: WorkerBackend;
     store: WorkerMetaStore<Meta>;
+    /**
+     * Help-line wording only this backend can supply, because the same verb genuinely does
+     * different things: `spawn` blocks for turn 1 on a per-turn backend and starts a daemon on
+     * codex, and `read` prints a turn report, raw stream-json or a live thread snapshot.
+     */
+    help: {
+        /** Completes "Start a headless <backend> worker: …". */
+        spawn: string;
+        /** The whole `steer` description; a daemon acks it, a per-turn backend blocks on it. */
+        steer: string;
+        /** What `read` prints with no `--format`, as a noun phrase. */
+        read: string;
+        /** The whole `tail` description. */
+        tail: string;
+    };
     /** How the shared `spawn` differs here. Everything else a backend needs goes in `extendSpawn`. */
     spawnFlags?: {
         /** `--cwd` must be given: a claude worker never guesses the directory it will write in. */
@@ -86,8 +101,7 @@ export interface WorkerDriver<Meta extends WorkerMeta = WorkerMeta> {
     turnFile?(meta: Meta, turn: number): string;
     /** What `read` prints with no `--format`: grok the turn report, claude raw stream-json, codex the thread snapshot. */
     readDefault(meta: Meta, turn: number): Promise<void>;
-    /** That default named in a few words, for the `read` help line. */
-    readDefaultLabel: string;
+
     /** What `tail` does with no `--format`, when it is not the transcript door (codex follows its raw event log). */
     tailDefault?(meta: Meta, extras: Record<string, unknown>): Promise<void>;
     /** `sessions` table. */

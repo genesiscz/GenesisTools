@@ -44,6 +44,12 @@ function fakeDriver(options: { backend?: WorkerBackend; daemon?: boolean; prompt
     const driver: WorkerDriver<WorkerMeta> = {
         backend: options.backend ?? "grok",
         store,
+        help: {
+            spawn: "a fixture session",
+            steer: "Steer the fixture",
+            read: "the fixture transcript",
+            tail: "Follow the fixture",
+        },
         ...(options.promptOptional ? { spawnFlags: { promptOptional: true } } : {}),
         legacyPromptFlags: { text: "body", file: "bodyFile" },
         extendSteer(command) {
@@ -73,7 +79,7 @@ function fakeDriver(options: { backend?: WorkerBackend; daemon?: boolean; prompt
         async readDefault() {
             return Promise.resolve();
         },
-        readDefaultLabel: "the fixture transcript",
+
         rowHeaders: ["NAME"],
         row: (meta) => [meta.name],
     };

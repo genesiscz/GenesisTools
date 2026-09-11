@@ -1,25 +1,19 @@
 #!/usr/bin/env bun
 
+import { registerWorkerVerbs } from "@app/ai/commands/agent/worker";
 import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerApprovalCommands } from "./commands/approve";
 import { registerCodexHistoryCommand } from "./commands/history";
-import { registerInterruptCommand } from "./commands/interrupt";
 import { registerCodexLoginCommand } from "./commands/login";
 import { registerLogsCommand } from "./commands/logs";
 import { registerMigrateHomeCommand } from "./commands/migrate-home";
-import { registerReadCommand } from "./commands/read";
 import { registerReviewCommand } from "./commands/review";
 import { registerRollbackCommand } from "./commands/rollback";
 import { registerRunCommand } from "./commands/run";
-import { registerSessionsCommand } from "./commands/sessions";
-import { registerSpawnCommand } from "./commands/spawn";
-import { registerStatusCommand } from "./commands/status";
-import { registerSteerCommand } from "./commands/steer";
-import { registerStopCommand } from "./commands/stop";
-import { registerTailCommand } from "./commands/tail";
 import { registerUsageCommand } from "./commands/usage";
+import { codexDriver } from "./lib/driver";
 
 const program = new Command();
 
@@ -30,18 +24,11 @@ registerWarmupCommand(program, { provider: "openai-sub", tool: "tools codex warm
 registerCodexHistoryCommand(program);
 registerMigrateHomeCommand(program);
 registerRunCommand(program);
-registerSpawnCommand(program);
-registerSteerCommand(program);
-registerInterruptCommand(program);
+registerWorkerVerbs(program, codexDriver, { tool: "tools codex", subcommand: [] });
 registerRollbackCommand(program);
-registerReadCommand(program);
 registerReviewCommand(program);
 registerApprovalCommands(program);
-registerStatusCommand(program);
-registerSessionsCommand(program);
 registerLogsCommand(program);
-registerTailCommand(program);
-registerStopCommand(program);
 registerUsageCommand(program);
 
 await runTool(program, { tool: "codex" });

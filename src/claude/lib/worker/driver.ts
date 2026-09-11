@@ -94,6 +94,12 @@ export const claudeWorkerDriver: WorkerDriver<ClaudeWorkerMeta> = {
     backend: "claude",
     store: new ClaudeWorkerStore(),
     spawnFlags: { cwdRequired: true },
+    help: {
+        spawn: "turn 1 of a new pinned claude -p session (blocking; can take minutes)",
+        steer: "Send the next instruction to an existing worker (blocking; can take minutes)",
+        read: "the raw stream-json transcript",
+        tail: "Follow the running turn's transcript as it is written; stops when the turn ends",
+    },
 
     extendSpawn(command) {
         command.option("--safe-mode", "Launch with claude --safe-mode (skip CLAUDE.md, hooks, skills, MCP)");
@@ -154,7 +160,6 @@ export const claudeWorkerDriver: WorkerDriver<ClaudeWorkerMeta> = {
 
     latestTurn: (meta) => meta.turns,
     turnFile: (meta, turn) => requireTurnLog(meta, turn),
-    readDefaultLabel: "the raw stream-json transcript",
 
     async readDefault(meta, turn) {
         out.print(readFileSync(requireTurnLog(meta, turn), "utf8"));

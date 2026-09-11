@@ -87,7 +87,7 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
 
     const spawn = parent
         .command("spawn")
-        .description(`Start a headless ${driver.backend} worker: turn 1 of a new session (blocking; takes minutes)`)
+        .description(`Start a headless ${driver.backend} worker: ${driver.help.spawn}`)
         .requiredOption("--name <name>", "Session name")
         .option("--prompt <text>", "Inline brief")
         .option("--prompt-file <path>", "Read the brief from a file")
@@ -138,7 +138,7 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
 
     const steer = parent
         .command("steer")
-        .description("Send the next instruction to an existing session (blocking; can take minutes)")
+        .description(driver.help.steer)
         .requiredOption("--name <name>", "Session name")
         .option("--prompt <text>", "Inline instruction")
         .option("--prompt-file <path>", "Read the instruction from a file");
@@ -159,8 +159,8 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         .command("read")
         .description(
             driver.turnFile
-                ? `Re-print a finished turn: ${driver.readDefaultLabel} (default), or the transcript in a chosen --format`
-                : `Read ${driver.readDefaultLabel}`
+                ? `Re-print a finished turn: ${driver.help.read} (default), or the transcript in a chosen --format`
+                : `Read ${driver.help.read}`
         )
         .requiredOption("--name <name>", "Session name");
 
@@ -192,10 +192,7 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         await driver.readDefault(meta, turn);
     });
 
-    const tail = parent
-        .command("tail")
-        .description("Follow the running turn's transcript as it is written; stops when the turn ends")
-        .requiredOption("--name <name>", "Session name");
+    const tail = parent.command("tail").description(driver.help.tail).requiredOption("--name <name>", "Session name");
 
     if (driver.turnFile) {
         tail.option("--format [value]", `transcript shape: ${TRANSCRIPT_FORMATS.join(" | ")} (default compact)`).option(
@@ -259,7 +256,7 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
 
     parent
         .command("status")
-        .description("Show a session's metadata, last turn, and whether a turn is running right now")
+        .description("Show a session's metadata and whether a turn is running; omit --name to list every session")
         .option("--name <name>", "Session name; omit to list every session")
         .option("--json", "Emit machine-readable JSON")
         .action(async (flags: { name?: string; json?: boolean }) => {

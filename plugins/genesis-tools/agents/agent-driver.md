@@ -50,7 +50,7 @@ Read for these and nothing else: the worker drifting outside `SCOPE`, a verify f
 ## 5. Steer
 
 ```bash
-tools codex steer --name <NAME> --body '<correction + the negative constraints again>'
+tools codex steer --name <NAME> --prompt '<correction + the negative constraints again>'
 tools codex interrupt --name <NAME>          # when the current turn is already wrong
 ```
 

@@ -239,18 +239,24 @@ tools codex spawn \
 tools codex status --name reviewer
 tools codex tail --name reviewer --follow
 tools codex logs --name reviewer --format compact   # the transcript door every backend shares (json|jsonl|events|raw)
-tools codex steer --name reviewer --body "Focus on the auth path"
+tools codex steer --name reviewer --prompt "Focus on the auth path"
 tools codex interrupt --name reviewer
 tools codex read --name reviewer
 tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
 tools codex stop --name reviewer
+tools codex sessions [--json]                   # every session with its derived status
 
 tools codex warmup [name...] [--all] [--json]   # one tiny request per account to start its session timer (shared with tools ai warmup)
 
 tools codex login [name]                       # browser login into the shared account vault
 tools codex usage [--json] [--range 24h]          # the shared usage dashboard pinned to this provider
 ```
+
+`spawn`, `steer`, `read`, `tail`, `status`, `sessions`, `stop` and `interrupt` are the shared
+worker verbs (`src/ai/commands/agent/worker.ts`); what makes them codex is `codexDriver`
+(`src/codex/lib/driver.ts`). `steer` still answers to its older `--body` / `--body-file`
+spelling, hidden from help.
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.
 

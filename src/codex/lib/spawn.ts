@@ -8,6 +8,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { WorkerNameTakenError } from "@genesiscz/utils/worker/meta-store";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { computerUseOverrides } from "./computer-use";
@@ -68,7 +69,7 @@ export function resolveWritePolicy(
  * block respawn forever with "already active" — verify the command line
  * matches the `bun daemon.ts --name <name>` shape before trusting it.
  */
-function isCodexDaemonPid(pid: number, name: string): boolean {
+export function isCodexDaemonPid(pid: number, name: string): boolean {
     const identity = classifyPid(
         pid,
         (command) => command.includes(`--name ${name}`) && (command.includes("daemon") || command.includes("codex"))
@@ -85,6 +86,39 @@ function isCodexDaemonPid(pid: number, name: string): boolean {
     return identity.status === "live" || identity.status === "unverified";
 }
 
+/** A record whose daemon is still the live owner of the name. */
+function isActiveCodexSession(meta: CodexSessionMeta, name: string): boolean {
+    return meta.status !== "closed" && meta.status !== "failed" && isCodexDaemonPid(meta.daemonPid, name);
+}
+
+/**
+ * Claim the session name, or say who holds it.
+ *
+ * The claim is one O_EXCL syscall. The read-then-write pair this replaced let two concurrent
+ * `tools codex spawn --name x` both see the name as free, both start a daemon, and the second
+ * overwrite the first's record — the first daemon then ran with nothing pointing at its pid.
+ * Reclaiming a name whose session is closed, failed or whose daemon is gone still goes through
+ * a write, so two simultaneous reclaims of one DEAD name remain last-writer-wins.
+ */
+function claimSessionName(store: CodexSessionStore, meta: CodexSessionMeta): void {
+    try {
+        store.createMeta(meta);
+        return;
+    } catch (err) {
+        if (!(err instanceof WorkerNameTakenError)) {
+            throw err;
+        }
+    }
+
+    const current = store.readMeta(meta.name);
+
+    if (current && isActiveCodexSession(current, meta.name)) {
+        throw new Error(`Codex session "${meta.name}" is already active (pid ${current.daemonPid})`);
+    }
+
+    store.writeMeta(meta);
+}
+
 export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSessionMeta> {
     const account = options.account
         ? await CodexAccountBinding.create(options.account, { allowRefresh: true })
@@ -92,12 +126,8 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     await account?.tokens();
     const store = new CodexSessionStore();
     const existing = await store.readMeta(options.name);
-    if (
-        existing &&
-        existing.status !== "closed" &&
-        existing.status !== "failed" &&
-        isCodexDaemonPid(existing.daemonPid, options.name)
-    ) {
+
+    if (existing && isActiveCodexSession(existing, options.name)) {
         throw new Error(`Codex session "${options.name}" is already active (pid ${existing.daemonPid})`);
     }
 
@@ -168,7 +198,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         codexVersion,
         pendingApprovals: {},
     };
-    store.writeMeta(meta);
+    claimSessionName(store, meta);
 
     const proc = (() => {
         try {

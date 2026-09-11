@@ -39,6 +39,12 @@ function requireTurnLog(meta: GrokSessionMeta, turn: number): string {
 export const grokDriver: WorkerDriver<GrokSessionMeta> = {
     backend: "grok",
     store: new GrokSessionStore(),
+    help: {
+        spawn: "turn 1 of a new session (blocking; can take minutes)",
+        steer: "Send the next instruction to an existing session (blocking; can take minutes)",
+        read: "its turn report",
+        tail: "Follow the running turn's transcript as it is written; stops when the turn ends",
+    },
 
     extendSpawn(command: Command) {
         command
@@ -117,7 +123,6 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
 
     latestTurn: (meta) => meta.turns,
     turnFile: (meta, turn) => requireTurnLog(meta, turn),
-    readDefaultLabel: "its turn report",
 
     async readDefault(meta, turn) {
         const logPath = requireTurnLog(meta, turn);
