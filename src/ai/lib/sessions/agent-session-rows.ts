@@ -1,4 +1,6 @@
+import { loadPins } from "@app/claude/lib/cmux/pins";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
+import type { SessionPin } from "@app/claude/lib/cmux/types";
 import { type CacheStatus, listSessionRows, type SessionCmuxLocation } from "@app/claude/lib/usage/session-rows";
 import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
@@ -29,10 +31,12 @@ export interface AgentSessionRow {
     /**
      * The account this session bills, when it can be known.
      *
-     * Claude: the SessionStart pin journal. Grok: the account whose login file the session's
-     * home holds. **Codex: always null.** Every Codex account shares one home and nothing in a
-     * rollout or a `threads` row records an account, so attributing a past Codex session is
-     * not possible — only a LIVE one can be attributed, off the process table.
+     * Claude and Codex: the SessionStart pin journal, which every agent's hook now writes.
+     * Grok: the account whose login file the session's home holds.
+     *
+     * Codex records nothing of its own — every account shares one home, and neither a rollout
+     * nor a `threads` row names an account. The pin is the only record, so a Codex session
+     * started before the hook learned about Codex, or outside `tools codex run`, stays null.
      */
     account: string | null;
     filePath: string;
@@ -83,7 +87,21 @@ async function grokAccount(home: string): Promise<string | null> {
 }
 
 /**
- * Codex and Grok rows, straight off the shared history index.
+ * Grok can answer from the session's own home. Codex cannot answer at all on its own, so it
+ * falls back to the SessionStart pin its launcher's `TOOLS_CODEX_ACCOUNT` produced.
+ */
+async function accountOf(
+    alias: Exclude<AccountProviderAlias, "claude">,
+    record: { sessionId: string | null; sourceHome?: string | null },
+    pins: Map<string, SessionPin>
+): Promise<string | null> {
+    if (alias === "grok") {
+        return record.sourceHome ? await grokAccount(record.sourceHome) : null;
+    }
+
+    return (record.sessionId ? pins.get(record.sessionId)?.account : null) ?? null;
+}
+
 /**
  * Codex and Grok rows, straight off the shared history index.
  *
@@ -95,6 +113,9 @@ async function nativeRows(
     alias: Exclude<AccountProviderAlias, "claude">,
     options: AgentSessionRowsOptions
 ): Promise<AgentSessionRow[]> {
+    // Read-only: a session listing is a diagnostic and must not rewrite the journal, and a
+    // provider-filtered load must never compact it (see `loadPins`).
+    const pins = await loadPins({ readOnly: true, provider: alias });
     const service = openHistoryService({ provider: PROVIDER_ALIASES[alias] });
     const { metadata } = await service.catalog({
         excludeAgents: true,
@@ -119,7 +140,7 @@ async function nativeRows(
             project: record.project,
             mtime: record.mtime,
             model: null,
-            account: alias === "grok" && record.sourceHome ? await grokAccount(record.sourceHome) : null,
+            account: await accountOf(alias, record, pins),
             filePath: record.filePath,
             ...(record.sourceHome ? { sourceHome: record.sourceHome } : {}),
             archived: record.archived,

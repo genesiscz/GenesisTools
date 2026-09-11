@@ -5,21 +5,12 @@
 // decided from the payload, never from the environment: a Codex worker spawned from a Claude
 // session inherits every CLAUDE_CODE_* variable, so env would call it Claude.
 
+import { harnessOf, type SessionStartPayload } from "./harness";
+
 // biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @genesiscz/utils/json
 const SafeJSON = JSON;
 
-interface SessionStartPayload {
-    transcript_path?: string;
-}
-
-/**
- * Codex writes its transcript as `~/.codex-<name>/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`;
- * Claude writes `~/.claude/projects/<slug>/<uuid>.jsonl`. The rollout name is the decisive signal.
- */
-export function harnessOf(payload: SessionStartPayload): "codex" | "claude" {
-    const transcript = payload.transcript_path ?? "";
-    return /\/rollout-[^/]*\.jsonl$/.test(transcript) || /\/\.codex[^/]*\//.test(transcript) ? "codex" : "claude";
-}
+export { harnessOf };
 
 export const CLAUDE_REMINDER =
     "Only when a `gt:handoff-to` run needs several agents to talk to each other WHILE they work: invoke the `genesis-tools:agents-talk` skill first, to pick the channel. Ordinary subagents that report back when finished need nothing from it. The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.";
