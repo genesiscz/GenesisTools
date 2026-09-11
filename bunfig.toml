@@ -34,6 +34,9 @@ preload = [
     "./src/utils/bun/preload-test-tmpdir.ts",
     "./src/utils/bun/preload-test-sandbox.ts",
     "./src/utils/bun/preload-test-keyring.ts",
+    # After the sandbox, because it imports modules that build a Storage at
+    # class-eval time and those paths must already point inside the sandbox.
+    "./src/utils/bun/preload-test-host-effects.ts",
     "./src/utils/bun/preload-test-process-exit.ts",
     "./src/indexer/lib/test-cleanup-preload.ts",
 ]
