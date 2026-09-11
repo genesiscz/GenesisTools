@@ -21,7 +21,7 @@ export interface ResolveAccountInput {
     hintOf?: (account: AccountEntry) => string | undefined;
     /**
      * After the exact id-then-name pass fails, accept a unique case-insensitive substring of
-     * a name (`tools codex run fol` for `cdx-foltyn`). Several substring hits prompt on a TTY
+     * a name (`tools codex run shop` for `cdx-shop`). Several substring hits prompt on a TTY
      * and are an error otherwise; the exact pass always runs first, so an id or a full name
      * can never be shadowed by a longer name that contains it.
      */

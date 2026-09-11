@@ -127,17 +127,17 @@ describe("nothing matched", () => {
 });
 describe("fuzzy: a unique substring resolves, an ambiguous one is refused off a TTY", () => {
     test("a substring of one name resolves it", async () => {
-        const picked = await resolve("folt", [account("acc_cdx", "cdx-foltyn"), account("acc_work", "work")], true);
+        const picked = await resolve("shop", [account("acc_cdx", "cdx-shop"), account("acc_work", "work")], true);
 
         expect(picked.status === "ok" && picked.account.id).toBe("acc_cdx");
     });
 
     test("a substring shared by two names is an error naming both (non-TTY)", async () => {
-        const picked = await resolve("res", [account("acc_a", "reservine"), account("acc_b", "info.reservine")], true);
+        const picked = await resolve("orb", [account("acc_a", "orbit"), account("acc_b", "info.orbit")], true);
 
         expect(picked.status).toBe("error");
         expect(errorLines.join("\n")).toContain("ambiguous");
-        expect(errLines.join("\n")).toContain("info.reservine");
+        expect(errLines.join("\n")).toContain("info.orbit");
     });
 
     test("the exact pass still wins over a longer name that contains it", async () => {
@@ -147,7 +147,7 @@ describe("fuzzy: a unique substring resolves, an ambiguous one is refused off a 
     });
 
     test("NEGATIVE CONTROL: without fuzzy a substring is not found", async () => {
-        const picked = await resolve("folt", [account("acc_cdx", "cdx-foltyn")]);
+        const picked = await resolve("shop", [account("acc_cdx", "cdx-shop")]);
 
         expect(picked.status).toBe("error");
         expect(errorLines.join("\n")).toContain("not found");
