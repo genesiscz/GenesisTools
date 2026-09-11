@@ -94,7 +94,7 @@ export function runPeekabooListJson(args: string[]): { ok: boolean; data?: unkno
 }
 
 export function listScreens(): ScreenInfo[] {
-    const r = runPeekabooListJson(["list", "screens"]);
+    const r = runPeekabooListJson(["screen", "list"]);
     // runPeekabooJson already unwrapped the envelope's .data
     const screens =
         (
@@ -126,6 +126,8 @@ export function listScreens(): ScreenInfo[] {
 export interface WindowBounds {
     title: string;
     index: number;
+    /** CG window id; Peekaboo 4 reports it, 3 did not */
+    id?: number;
     isMainWindow: boolean;
     // CG points: [[x, y], [w, h]]
     x: number;
@@ -134,32 +136,140 @@ export interface WindowBounds {
     h: number;
 }
 
-export function listWindowBounds(app: string): WindowBounds[] {
-    const r = runPeekabooListJson(["list", "windows", "--app", app, "--include-details", "bounds"]);
-    const wins =
-        (
-            r.data as {
-                windows?: {
-                    title: string;
-                    index: number;
-                    isMainWindow: boolean;
-                    isMinimized: boolean;
-                    bounds?: [[number, number], [number, number]];
-                }[];
-            }
-        )?.windows ?? [];
+interface PeekabooV4Window {
+    window_title?: string;
+    window_index?: number;
+    window_id?: number;
+    is_key?: boolean;
+    is_on_screen?: boolean;
+    bounds?: { x: number; y: number; width: number; height: number };
+}
 
-    return wins
-        .filter((w) => !w.isMinimized && w.bounds)
-        .map((w) => ({
-            title: w.title,
-            index: w.index,
-            isMainWindow: w.isMainWindow,
-            x: w.bounds![0][0],
-            y: w.bounds![0][1],
-            w: w.bounds![1][0],
-            h: w.bounds![1][1],
-        }));
+interface PeekabooV3Window {
+    title: string;
+    index: number;
+    isMainWindow: boolean;
+    isMinimized: boolean;
+    bounds?: [[number, number], [number, number]];
+}
+
+function isV4Window(window: PeekabooV3Window | PeekabooV4Window): window is PeekabooV4Window {
+    return "window_title" in window || "window_index" in window;
+}
+
+/** Peekaboo 4 renamed every field and dropped the details flag; bounds are always present now. */
+export function parseWindowList(data: unknown): WindowBounds[] {
+    const wins = (data as { windows?: (PeekabooV3Window | PeekabooV4Window)[] } | undefined)?.windows ?? [];
+    const bounds: WindowBounds[] = [];
+
+    for (const w of wins) {
+        if (isV4Window(w)) {
+            if (w.is_on_screen === false || !w.bounds) {
+                continue;
+            }
+
+            bounds.push({
+                title: w.window_title ?? "",
+                index: w.window_index ?? 0,
+                id: w.window_id,
+                isMainWindow: w.is_key === true,
+                x: w.bounds.x,
+                y: w.bounds.y,
+                w: w.bounds.width,
+                h: w.bounds.height,
+            });
+        } else if (!w.isMinimized && w.bounds) {
+            bounds.push({
+                title: w.title,
+                index: w.index,
+                isMainWindow: w.isMainWindow,
+                x: w.bounds[0][0],
+                y: w.bounds[0][1],
+                w: w.bounds[1][0],
+                h: w.bounds[1][1],
+            });
+        }
+    }
+
+    return bounds;
+}
+
+export function listWindowBounds(app: string): WindowBounds[] {
+    return parseWindowList(runPeekabooListJson(["window", "list", "--app", app]).data);
+}
+
+/** Recorder actions fire without a snapshot, so Peekaboo 4 needs explicit foreground consent. */
+export function peekabooChord(keys: string): string {
+    return keys
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean)
+        .join("+");
+}
+
+export function clickArgv(coords: string): string[] {
+    return ["click", "--at", coords, "--global", "--foreground"];
+}
+
+export function moveArgv(coords: string): string[] {
+    return ["move", "--at", coords, "--global", "--foreground"];
+}
+
+export function pressArgv(keys: string, holdMs?: number): string[] {
+    const argv = ["press", peekabooChord(keys), "--foreground"];
+    if (holdMs !== undefined) {
+        argv.push("--hold", String(holdMs));
+    }
+
+    return argv;
+}
+
+export function typeArgv(text: string, delayMs: number): string[] {
+    return ["type", "--text", text, "--profile", "linear", "--delay", String(delayMs), "--foreground"];
+}
+
+export function scrollArgv(options: {
+    direction: string;
+    amount?: number;
+    app?: string;
+    windowTitle?: string;
+}): string[] {
+    const argv = ["scroll", "--direction", options.direction, "--amount", String(options.amount ?? 3)];
+    if (options.app) {
+        argv.push("--app", options.app);
+    }
+
+    if (options.windowTitle) {
+        argv.push("--window-title", options.windowTitle);
+    }
+
+    argv.push("--foreground");
+    return argv;
+}
+
+/** A window PNG for the clickmap: the native tool when it is built, else Peekaboo 4's `see --no-elements` (`image` is gone). */
+export function windowShotArgv(options: {
+    axToolPath?: string;
+    app: string;
+    path: string;
+    windowTitle?: string;
+}): string[] {
+    if (options.axToolPath) {
+        const argv = [options.axToolPath, "screenshot", "--app", options.app, "--path", options.path];
+        if (options.windowTitle) {
+            argv.push("--window", options.windowTitle);
+        }
+
+        return argv;
+    }
+
+    const argv = ["peekaboo", "see", "--app", options.app, "--path", options.path, "--no-elements"];
+    if (options.windowTitle) {
+        argv.push("--window-title", options.windowTitle);
+    }
+
+    argv.push("--json");
+    return argv;
 }
 
 export function pickLargestWindow(wins: WindowBounds[]): WindowBounds | undefined {

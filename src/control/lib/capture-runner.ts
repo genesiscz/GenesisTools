@@ -30,13 +30,16 @@ import {
     AX_TOOL_AVAILABLE,
     AX_TOOL_PATH,
     CHROMIUM_APPS,
+    clickArgv,
     focusWindow,
     killTree,
     listScreens,
     listWindowBounds,
     MEDIA_KEY_SCRIPTS,
+    moveArgv,
     navigateBrowser,
     pickLargestWindow,
+    pressArgv,
     resolveRelativeCoords,
     resolveTargetRegion,
     runAxAction,
@@ -44,9 +47,12 @@ import {
     runCountdown,
     runPeekabooJson,
     type ScreenInfo,
+    scrollArgv,
     startCapture,
     stripBypassFlags,
+    typeArgv,
     type WindowBounds,
+    windowShotArgv,
 } from "./peekaboo";
 import { publishVitrinka } from "./vitrinka-publish";
 
@@ -269,7 +275,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                     }
                     clickCoords = resolved.global;
                 }
-                result = runPeekabooJson(["click", "--coords", clickCoords]);
+                result = runPeekabooJson(clickArgv(clickCoords));
                 break;
             }
             case "focus": {
@@ -295,12 +301,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                     break;
                 }
 
-                const cmd = ["hotkey", "--keys", action.keys];
-                if (action.holdMs !== undefined) {
-                    cmd.push("--hold-duration", String(action.holdMs));
-                }
-
-                result = runPeekabooJson(cmd);
+                result = runPeekabooJson(pressArgv(action.keys, action.holdMs));
                 if (!result.ok) {
                     result.stderr = `${result.stderr} (valid keys: cmd/shift/alt/ctrl/fn, a-z, 0-9, space/return/tab/escape/delete/arrows, f1-f12; media keys only via volumeup/volumedown/mute/unmute rewrite)`;
                 }
@@ -308,14 +309,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                 break;
             }
             case "type":
-                result = runPeekabooJson([
-                    "type",
-                    action.text,
-                    "--profile",
-                    "linear",
-                    "--delay",
-                    String(action.delayMs ?? 0),
-                ]);
+                result = runPeekabooJson(typeArgv(action.text, action.delayMs ?? 0));
                 break;
             case "ax-set": {
                 result = runAxAction(action.app, action.axId, "set", action.value, undefined, action.q);
@@ -346,20 +340,18 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                             `scroll at ${action.atMs}ms: peekaboo move rejects negative coords (${cx},${cy}) — scrolling at current cursor position`
                         );
                     } else {
-                        runCmd(["peekaboo", "move", "--coords", `${cx},${cy}`]);
+                        runCmd(["peekaboo", ...moveArgv(`${cx},${cy}`)]);
                     }
                 }
 
-                const cmd = ["scroll", "--direction", action.direction, "--amount", String(action.amount ?? 3)];
-                if (action.app) {
-                    cmd.push("--app", action.app);
-                }
-
-                if (action.windowTitle) {
-                    cmd.push("--window-title", action.windowTitle);
-                }
-
-                result = runPeekabooJson(cmd);
+                result = runPeekabooJson(
+                    scrollArgv({
+                        direction: action.direction,
+                        amount: action.amount,
+                        app: action.app,
+                        windowTitle: action.windowTitle,
+                    })
+                );
                 break;
             }
             case "crop": {
@@ -778,14 +770,15 @@ export async function runClickmap(opts: ClickmapOptions): Promise<ClickmapResult
     }
 
     const rawPath = `${opts.outPath.replace(/\.png$/, "")}-raw.png`;
-    const shotCmd = ["peekaboo", "image", "--app", opts.app, "--path", rawPath];
-    if (opts.windowTitle) {
-        shotCmd.push("--window-title", opts.windowTitle);
-    }
-
+    const shotCmd = windowShotArgv({
+        axToolPath: AX_TOOL_AVAILABLE ? AX_TOOL_PATH : undefined,
+        app: opts.app,
+        path: rawPath,
+        windowTitle: opts.windowTitle,
+    });
     const shot = runCmd(shotCmd, 20_000);
     if (!shot.ok || !existsSync(rawPath)) {
-        throw new CaptureRunError(`peekaboo image failed: ${shot.stderr || shot.stdout}`);
+        throw new CaptureRunError(`window screenshot failed (${shotCmd[0]}): ${shot.stderr || shot.stdout}`);
     }
 
     // Normalize the shot to point dimensions (retina shots are points x scale),
