@@ -338,7 +338,7 @@ export const ai = {
     async realtime(): Promise<never> {
         throw new NotImplementedError(
             "ai.realtime()",
-            "realtime sessions are planned as an ai-proxy surface (see 2026-07-28-RearchitectureRealtime.plan)"
+            "realtime is an ai-proxy HTTP surface, not a facade verb: POST /v1/realtime/client_secrets then connect (src/ai-proxy/lib/realtime.ts, src/ai-proxy/REALTIME.md)"
         );
     },
 };

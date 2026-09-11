@@ -1620,12 +1620,12 @@ main().catch((err) => {
 
 #### Extended Functionality
 
--   [ ] Tool calling integration (GenesisTools integration) ❌ **NOT IMPLEMENTED** - Only web search tool exists, no GenesisTools integration
+-   [x] Tool calling integration (GenesisTools integration) ✅ **SHIPPED** (noted 2026-09-11 23:20) - `readFile`, `grep` and `bash` in `src/ask/tools/file-tools.ts`, wired beside the web-search tool at `src/ask/index.ts:690`
 -   [ ] Agent modes (autonomous multi-step workflows) ❌ **NOT IMPLEMENTED**
 -   [ ] Multi-modal support (image generation/analysis) ❌ **NOT IMPLEMENTED**
 -   [ ] Batch processing (multiple questions from files) ❌ **NOT IMPLEMENTED**
 -   [x] Conversation loading and management ✅ **PARTIALLY COMPLETED** - Can load/list conversations via `ConversationManager.ts`, but no CLI commands for loading
--   [ ] Configuration persistence (preferred models/settings) ❌ **NOT IMPLEMENTED** - No config file persistence
+-   [x] Configuration persistence (preferred models/settings) ✅ **SHIPPED** (noted 2026-09-11 23:20) - `loadAskConfig()` / `saveAskConfig()` over `Storage("ask")` in `src/ask/config/index.ts`, written by `tools ask configure`
 
 #### Quality of Life
 

@@ -51,8 +51,8 @@ The mcp-manager tool is a cross-platform MCP (Model Context Protocol) server con
 
 ### Priority 1: Critical Workflow Improvements
 
-#### 1.1 Project-Specific Server Management for Claude
-**Problem**: Claude supports project-specific MCP server configurations (in the `projects` object), but the tool currently only manages global servers.
+#### 1.1 Project-Specific Server Management for Claude — ✅ SHIPPED (noted 2026-09-11 23:20)
+**Problem (solved)**: Claude supports project-specific MCP server configurations (in the `projects` object), and the tool manages them: `--project <path>` on `enable` and `disable` (`src/mcp-manager/index.ts:169,188`), reading and writing `.projects[<cwd>].disabledMcpServers` (`src/mcp-manager/utils/providers/claude.ts:19-23,105`).
 
 **Impact**: HIGH - Claude users work with multiple projects and need per-project server configurations
 
