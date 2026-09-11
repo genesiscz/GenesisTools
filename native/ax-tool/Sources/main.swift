@@ -2259,6 +2259,11 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       --crop is PIXELS of the captured image; --window fails loud on 0/2+ matches
                       --annotate draws numbered boxes on interactable elements + legend in JSON
       ax-tool ocr     --app <name> | --image <path> [--crop x,y,w,h]   Vision OCR: text blocks + pixel boxes
+      ax-tool capture --mode window|screen|region [--app <name> | --window-id ID] [--window-title T] [--window-index N]
+                      [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
+                      [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
+                      keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape
+      ax-tool screens                                         Displays in NSScreen order: index, name, scale, position, resolution
       ax-tool hotkey --keys <cmd,a> [--app <name>]            Key combo (--app activates target first)
       ax-tool snapshot                                        Capture mouse + focused app/window
       ax-tool restore --snapshot <json>                       Restore mouse + focus from snapshot
@@ -2342,6 +2347,16 @@ if command == "hittest" {
         errorExit("hittest requires --at <x,y>")
     }
     cmdHitTest(x: hx, y: hy)
+    exit(0)
+}
+
+// `screens` has no app, and `capture` needs one only in window mode.
+if command == "screens" {
+    cmdScreens()
+    exit(0)
+}
+if command == "capture" {
+    cmdCaptureScreen()
     exit(0)
 }
 
@@ -2617,5 +2632,5 @@ case "screenshot":
     guard let path = argValue("--path") else { errorExit("--path <file.png> required") }
     cmdScreenshot(appName: appName, path: path)
 default:
-    errorExit("unknown command: \(command). Use: list, tree, dump, typography, hittest, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, snapshot, restore, record")
+    errorExit("unknown command: \(command). Use: list, tree, dump, typography, hittest, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, snapshot, restore, record, capture, screens")
 }

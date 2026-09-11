@@ -42,10 +42,10 @@ private final class FakeSource: HierarchySource {
         switch name {
         case "AXRole": return node.role
         case "AXSubrole": return node.subrole
-        case kAXPositionAttribute as String:
+        case kAXPositionAttribute:
             var point = node.frame.origin
             return AXValueCreate(.cgPoint, &point)
-        case kAXSizeAttribute as String:
+        case kAXSizeAttribute:
             var size = node.frame.size
             return AXValueCreate(.cgSize, &size)
         default: return node.attributes[name]
