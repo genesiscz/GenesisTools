@@ -7,7 +7,7 @@ function container(overrides: Partial<ContainerInfo>): ContainerInfo {
 }
 
 describe("containers units — runState", () => {
-    it("treats only lowercase 'running' as running, everything else as stopped", () => {
+    it("normalizes 'running' case-insensitively, everything else as stopped", () => {
         expect(runState({ state: "running" })).toBe("running");
         expect(runState({ state: "Running" })).toBe("running");
         expect(runState({ state: "exited" })).toBe("stopped");

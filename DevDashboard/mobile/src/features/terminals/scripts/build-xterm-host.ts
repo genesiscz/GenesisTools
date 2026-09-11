@@ -14,10 +14,9 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = import.meta.dir;
 const mobileRoot = resolve(here, "../../../..");
 const out = join(here, "..", "xterm-host.generated.ts");
 

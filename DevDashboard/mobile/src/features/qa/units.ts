@@ -62,7 +62,7 @@ export function relativeTime(ts: number | undefined, now: number = Date.now()): 
 
 export type QaTagTone = "accent" | "muted" | "danger";
 
-/** Maps a QA tag to a StatusPill tone (question→accent, action→accent, directive→danger). */
+/** Maps a QA tag to a StatusPill tone (action→accent, directive→danger, everything else incl. question→muted). */
 export function tagTone(tag: QaRow["tag"] | undefined): QaTagTone {
     if (tag === "directive") {
         return "danger";
