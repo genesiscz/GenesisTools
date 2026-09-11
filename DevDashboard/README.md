@@ -87,5 +87,10 @@ Implementation has landed on `feat/dev-dashboard-mobile` (PR #193), not just bee
 - `mobile/` — the Expo SDK 55 app: connect/pairing, terminals, Pulse, Q&A, Obsidian, daemon and the
   more-tab feature screens, with unit tests under `bun test` and an Appium e2e suite.
 
-**Remaining scope is tracked on the PR, not here** — this hub is a map, and a second copy of the
-open list would go stale the way the 2026-05-29 block above it did.
+Landed, checked against the tree rather than the plan: **01, 02, 03, 04** (agent registry, transport
+tiers incl. the E2E box cipher, the shared contract, the Expo scaffold + Appium harness), **05-08**
+(Pulse, Terminals, QA, Obsidian), **09** (todos, claude-usage, daemon, containers, weather — all five
+feature directories exist) and **10** (cloud landing, billing, provisioning, customer dashboard).
+
+**Not landed: plan 11, Distribution.** There is no EAS configuration anywhere on the branch, so the
+app is built and installed by hand; agent packaging is unstarted. That is the one plan with no code.

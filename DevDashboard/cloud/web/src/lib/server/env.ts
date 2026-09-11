@@ -134,8 +134,31 @@ export function getCloudflareEnv(): CloudflareEnv | null {
     };
 }
 
+let billingWarned = false;
+
+/**
+ * Whether billing is wired up. The managed-subdomain gate keys off this, so a PRODUCTION deployment
+ * that reaches here unconfigured hands out a paid, globally-unique resource for free.
+ *
+ * That is legitimate on a self-hosted instance with no upgrade path, and a silent misconfiguration
+ * everywhere else, and the two are indistinguishable from the code. So it is said out loud once
+ * rather than failing closed, which would brick the deliberate case. NODE_ENV is read directly
+ * instead of through `getCloudEnv()`, because that call throws when the auth secret is unset and a
+ * diagnostic must not be the thing that crashes the boot.
+ */
 export function isStripeConfigured(): boolean {
-    return getStripeEnv() !== null;
+    const configured = getStripeEnv() !== null;
+
+    if (!configured && !billingWarned && withDefault("NODE_ENV", "development") === "production") {
+        billingWarned = true;
+        console.error(
+            "[dd-cloud] STRIPE_SECRET_KEY is unset in production: billing is inert and the Pro gate on " +
+                "managed subdomains is SKIPPED, so any account can claim a globally unique hostname for " +
+                "free. Set STRIPE_SECRET_KEY, or accept this deliberately on a self-hosted instance."
+        );
+    }
+
+    return configured;
 }
 
 export function isCloudflareConfigured(): boolean {
