@@ -15,7 +15,9 @@ Your spawn prompt gives you: `BACKEND` (default `codex`), `NAME`, `CWD`, `BRIEF_
 tools agents login --agent-name driver_<NAME>
 ```
 
-Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you, and how `lead` forwards you an approval it saw first. Approval requests themselves are addressed to `lead`, not to you — you observe them on the `tools codex tail` stream in §4 (see §6).
+Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you, and how `lead` forwards you an approval it saw first.
+
+⚠️ **`Monitor` is a Claude Code tool.** Driving from Codex or Grok, which have neither it nor the background re-invoke: redirect the stream to a file (`tools codex tail --name <NAME> --follow > <file> 2>/dev/null &`) and re-read the new tail between your own turns. The requirement is that you keep OBSERVING the stream, not the particular tool; a driver that never reads it cannot be steered and cannot relay an approval. Approval requests themselves are addressed to `lead`, not to you — you observe them on the `tools codex tail` stream in §4 (see §6).
 
 ## 2. Check the brief before spawning
 
@@ -42,7 +44,7 @@ tools codex spawn --name <NAME> --write <WRITE_POLICY> --cwd <CWD> --prompt-file
 
 ```bash
 tools codex status --name <NAME>
-tools codex tail   --name <NAME> --follow     # background + Monitor
+tools codex tail   --name <NAME> --follow     # background + Monitor (Claude), or redirect to a file and re-read it
 ```
 
 Read for these and nothing else: the worker drifting outside `SCOPE`, a verify failure it is patching around, an approval request, a stall, a checkpoint report.
