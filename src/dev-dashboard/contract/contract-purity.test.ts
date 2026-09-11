@@ -45,10 +45,7 @@ describe("contract purity", () => {
     // `node:` dependencies into Hermes — which is how the pino logger reached the bundle through a
     // single `logger.warn` in auth-header.ts.
     it("every @genesiscz/utils value-import the contract makes is aliased for the mobile bundle", () => {
-        const metroConfig = readFileSync(
-            join(import.meta.dir, "../../../DevDashboard/mobile/metro.config.js"),
-            "utf8",
-        );
+        const metroConfig = readFileSync(join(import.meta.dir, "../../../DevDashboard/mobile/metro.config.js"), "utf8");
         const unaliased: string[] = [];
 
         for (const file of FILES) {
