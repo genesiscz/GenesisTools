@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { getMainRepoRootSync } from "@genesiscz/utils/git/worktree";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -80,7 +81,14 @@ export function projectForCwd(
  */
 export async function assignThreadToProject(
     client: ProjectClient,
-    options: { threadId: string; cwd: string; limit?: number; home?: string }
+    options: {
+        threadId: string;
+        cwd: string;
+        limit?: number;
+        home?: string;
+        /** Injected by tests: the real resolver shells out to git, and a fixture path is no repo. */
+        mainCheckout?: string;
+    }
 ): Promise<CodexProject | undefined> {
     const { threadId, cwd } = options;
     const threads = await client.request<{ data?: Array<{ id?: string; projectId?: string | null }> }>("thread/list", {
@@ -98,10 +106,17 @@ export async function assignThreadToProject(
     }
 
     const projects = await client.request<{ data?: CodexProject[] }>("project/list", {});
-    const project = projectForCwd(projects.data ?? [], cwd, options.home);
+    // A linked worktree lives BESIDE the repo, not inside it (`GenesisTools.worktrees/x` is a
+    // sibling of `GenesisTools`), so a project rooted at the checkout never contains a worktree
+    // cwd. Measured 2026-09-11: four threads started in worktrees matched nothing and fell to a
+    // catch-all. The main checkout is the honest answer for them.
+    const mainCheckout = options.mainCheckout ?? getMainRepoRootSync(cwd);
+    const project =
+        projectForCwd(projects.data ?? [], cwd, options.home) ??
+        (mainCheckout === cwd ? undefined : projectForCwd(projects.data ?? [], mainCheckout, options.home));
 
     if (!project) {
-        logger.debug({ threadId, cwd }, "[codex] no Desktop project owns this directory");
+        logger.debug({ threadId, cwd, mainCheckout }, "[codex] no Desktop project owns this directory");
         return undefined;
     }
 

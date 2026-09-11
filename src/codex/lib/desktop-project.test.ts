@@ -86,3 +86,33 @@ test("nothing is written when the thread is not in the page or no project owns t
     expect(await assignThreadToProject(outside, { threadId: "t1", cwd: "/elsewhere" })).toBeUndefined();
     expect(updates(outside.calls)).toEqual([]);
 });
+/**
+ * A linked worktree is a SIBLING of the checkout (`…/Tools.worktrees/x` beside `…/Tools`), so a
+ * project rooted at the checkout never contains it. Four real threads started in worktrees
+ * matched nothing on 2026-09-11 and fell into a catch-all project.
+ */
+test("a thread started in a worktree is filed under the main checkout's project", async () => {
+    const worktree = "/Users/fixture/Projects/Tools.worktrees/feature-x";
+    const api = client([{ id: "t1", projectId: null }]);
+    const project = await assignThreadToProject(api, {
+        threadId: "t1",
+        cwd: worktree,
+        home: HOME,
+        // Injected: the real resolver shells out to git, and the fixture path is not a repo.
+        mainCheckout: "/Users/fixture/Projects/Tools",
+    });
+
+    expect(project?.id).toBe("p-tools");
+});
+
+test("a cwd that is its own checkout is not looked up twice", async () => {
+    const api = client([{ id: "t1", projectId: null }]);
+    const project = await assignThreadToProject(api, {
+        threadId: "t1",
+        cwd: "/Users/fixture/Projects/Rewind",
+        home: HOME,
+        mainCheckout: "/Users/fixture/Projects/Rewind",
+    });
+
+    expect(project?.id).toBe("p-rewind");
+});
