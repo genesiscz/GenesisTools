@@ -157,9 +157,20 @@ export function registerAgentHistoryCommand(
             if (options.excludeCurrent) {
                 const runtime = getAgentRuntimeContext();
                 const expected = adapter.kind === "claude" ? "claude-code" : adapter.kind;
+
                 if (runtime.agent !== expected || !runtime.sessionId) {
-                    throw new Error(`--exclude-current requires an active ${adapter.kind} session`);
+                    // The id is matched against THIS provider's transcripts, so another harness's
+                    // id would quietly exclude nothing at all. Name what was detected and the flag
+                    // that works anyway, on stderr rather than as a stack trace.
+                    const detected = runtime.agent === "unknown" ? "no agent session" : runtime.agent;
+                    out.error(
+                        `--exclude-current needs an active ${adapter.kind} session (detected: ${detected}). ` +
+                            "Use --exclude-session <id> instead."
+                    );
+                    process.exitCode = 1;
+                    return;
                 }
+
                 options.excludeSession = [...(options.excludeSession ?? []), runtime.sessionId];
             }
             const filters = filtersFromHistoryOptions(query, options, process.cwd());
@@ -218,10 +229,18 @@ export function registerAgentHistoryCommand(
                 return;
             }
 
+            // The search MODE belongs in the output: a `--sort-relevance` listing that does not
+            // say so is indistinguishable from an unsorted one.
+            const render = {
+                summaryOnly: Boolean(filters.summaryOnly),
+                sortByRelevance: Boolean(filters.sortByRelevance),
+                ...(filters.context ? { context: filters.context } : {}),
+            };
+
             if (process.stdout.isTTY && !filters.context) {
-                renderHistoryTable(selected);
+                renderHistoryTable(selected, query, render);
             } else {
-                out.print(formatHistoryMarkdown(selected, query));
+                out.print(formatHistoryMarkdown(selected, query, render));
             }
         });
     registerHistoryIndexCommand(history, adapter);
