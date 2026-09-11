@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DevDashboard — Your machine, on your phone. Your keys, not ours.</title>
+  <meta name="description" content="Stream your dev machine to your phone: live terminals, system Pulse metrics, and AI agent sessions. Privacy-first, trust-verifiable transport. Your machine. Your keys. We can't see your data — and you can prove it." />
+
+  <!-- Fonts: Fontshare (Clash Display / General Sans / Satoshi) + Zodiak serif accent -->
+  <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+  <link href="https://api.fontshare.com/v2/css?f[]=clash-display@600,700&f[]=general-sans@400,500,600&f[]=satoshi@400,500&f[]=zodiak@400,500&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['"Clash Display"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            sans: ['"General Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['"Satoshi"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+            serif: ['"Zodiak"', 'ui-serif', 'Georgia', 'serif'],
+            term: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+          colors: {
+            ink: {
+              DEFAULT: '#0a0a0c',
+              soft: '#1a1a1f',
+              mute: '#56565f',
+              faint: '#8a8a93',
+            },
+            paper: {
+              DEFAULT: '#fafafa',
+              2: '#f4f4f6',
+              3: '#f1f1f3',
+              edge: '#e7e7ec',
+            },
+            accent: {
+              DEFAULT: '#4f46e5',
+              bright: '#6366f1',
+              soft: '#a5b4fc',
+              wash: '#eef0ff',
+              deep: '#3730a3',
+            },
+            term: {
+              bg: '#0c0c12',
+              line: '#15151e',
+            },
+          },
+          letterSpacing: {
+            tightest: '-0.045em',
+          },
+          boxShadow: {
+            'soft-sm': '0 2px 8px -2px rgba(20,20,40,0.06), 0 8px 24px -8px rgba(20,20,40,0.05)',
+            'soft': '0 4px 18px -6px rgba(20,20,45,0.07), 0 22px 60px -24px rgba(30,30,70,0.10), 0 40px 120px -40px rgba(40,40,90,0.10)',
+            'soft-lg': '0 8px 30px -10px rgba(20,20,45,0.08), 0 40px 90px -30px rgba(30,30,70,0.12), 0 80px 180px -50px rgba(50,40,120,0.14)',
+            'glow-accent': '0 10px 40px -10px rgba(79,70,229,0.35), 0 30px 80px -30px rgba(79,70,229,0.30)',
+            'inset-hi': 'inset 0 1px 0 0 rgba(255,255,255,0.9)',
+            'inset-term': 'inset 0 1px 0 0 rgba(255,255,255,0.06)',
+          },
+          transitionTimingFunction: {
+            cascade: 'cubic-bezier(0.32, 0.72, 0, 1)',
+          },
+          keyframes: {
+            blink: { '0%,49%': { opacity: '1' }, '50%,100%': { opacity: '0' } },
+            float: { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-7px)' } },
+            'pulse-soft': { '0%,100%': { opacity: '0.55' }, '50%': { opacity: '1' } },
+            'draw-bar': { '0%': { transform: 'scaleY(0.2)' }, '100%': { transform: 'scaleY(1)' } },
+          },
+          animation: {
+            blink: 'blink 1.1s steps(1) infinite',
+            float: 'float 7s cubic-bezier(0.45,0,0.55,1) infinite',
+            'pulse-soft': 'pulse-soft 2.4s ease-in-out infinite',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root { color-scheme: light; }
+    html { background: #fafafa; }
+    body {
+      background:
+        radial-gradient(1200px 700px at 78% -8%, rgba(99,102,241,0.10), transparent 60%),
+        radial-gradient(900px 600px at 8% 6%, rgba(165,180,252,0.12), transparent 55%),
+        linear-gradient(180deg, #fafafa 0%, #f4f4f6 42%, #f1f1f3 100%);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    /* No-JS safety: only hide reveal elements when JS is present */
+    .reveal { will-change: transform, opacity, filter; }
+    .js .reveal {
+      opacity: 0;
+      transform: translateY(26px);
+      filter: blur(8px);
+      transition:
+        opacity 820ms cubic-bezier(0.32,0.72,0,1),
+        transform 820ms cubic-bezier(0.32,0.72,0,1),
+        filter 820ms cubic-bezier(0.32,0.72,0,1);
+    }
+    .js .reveal.is-in {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
+
+    .grain {
+      background-image: radial-gradient(rgba(20,20,40,0.025) 1px, transparent 1px);
+      background-size: 4px 4px;
+    }
+
+    /* faux terminal sparkle scanline */
+    .term-glow { box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 30px 80px -30px rgba(79,70,229,0.45); }
+
+    /* sparkline stroke draw */
+    .spark-path { stroke-dasharray: 320; stroke-dashoffset: 320; transition: stroke-dashoffset 1500ms cubic-bezier(0.32,0.72,0,1); }
+    .is-in .spark-path { stroke-dashoffset: 0; }
+
+    .bars span { transform-origin: bottom; animation: draw-bar 1.4s cubic-bezier(0.32,0.72,0,1) backwards; }
+
+    ::selection { background: #c7d2fe; color: #0a0a0c; }
+
+    /* nav pill scroll state */
+    #pillnav { transition: box-shadow 500ms cubic-bezier(0.32,0.72,0,1), background-color 500ms ease, transform 500ms cubic-bezier(0.32,0.72,0,1); }
+  </style>
+</head>
+
+<body class="font-sans text-ink antialiased overflow-x-hidden">
+
+  <!-- ============ FLOATING PILL NAV ============ -->
+  <header class="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pointer-events-none">
+    <nav id="pillnav" class="pointer-events-auto mt-6 w-max max-w-[calc(100vw-2rem)] rounded-full border border-white/70 bg-white/55 px-2.5 py-2 backdrop-blur-xl shadow-soft-sm">
+      <div class="flex items-center gap-1 sm:gap-2">
+        <a href="#top" class="flex items-center gap-2 rounded-full px-3 py-1.5">
+          <span class="relative flex h-7 w-7 items-center justify-center rounded-xl bg-ink text-paper">
+            <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="1.4">
+              <rect x="3" y="4" width="18" height="13" rx="2" />
+              <path d="M7 9l3 2.5L7 14M12 14h4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent-bright ring-2 ring-white animate-pulse-soft"></span>
+          </span>
+          <span class="font-display text-[15px] font-semibold tracking-tightest text-ink">DevDashboard</span>
+        </a>
+        <div class="mx-1 hidden h-5 w-px bg-paper-edge md:block"></div>
+        <div class="hidden items-center md:flex">
+          <a href="#trust" class="rounded-full px-3.5 py-1.5 text-sm font-medium text-ink-mute transition-colors hover:text-ink">Trust</a>
+          <a href="#features" class="rounded-full px-3.5 py-1.5 text-sm font-medium text-ink-mute transition-colors hover:text-ink">Features</a>
+          <a href="#how" class="rounded-full px-3.5 py-1.5 text-sm font-medium text-ink-mute transition-colors hover:text-ink">How it works</a>
+          <a href="#pricing" class="rounded-full px-3.5 py-1.5 text-sm font-medium text-ink-mute transition-colors hover:text-ink">Pricing</a>
+        </div>
+        <a href="#pricing" class="group ml-0.5 flex items-center gap-2 rounded-full bg-ink py-1.5 pl-4 pr-1.5 text-sm font-semibold text-paper transition-transform active:scale-[0.98]">
+          <span>Get the app</span>
+          <span class="flex h-7 w-7 items-center justify-center rounded-full bg-paper/15">
+            <svg viewBox="0 0 24 24" fill="none" class="h-3.5 w-3.5 transition-transform duration-500 ease-cascade group-hover:translate-x-0.5" stroke="currentColor" stroke-width="1.6">
+              <path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+        </a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+
+    <!-- ============ HERO ============ -->
+    <section class="relative px-4 pt-36 pb-24 sm:pt-44 md:pb-32 lg:pt-48">
+      <div class="pointer-events-none absolute inset-0 grain opacity-60"></div>
+      <div class="relative mx-auto grid max-w-7xl items-center gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-10">
+
+        <!-- Copy column -->
+        <div class="relative z-10 max-w-xl">
+          <div class="reveal inline-flex items-center gap-2 rounded-full border border-accent-soft/60 bg-accent-wash/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-deep">
+            <span class="h-1.5 w-1.5 rounded-full bg-accent-bright animate-pulse-soft"></span>
+            For agent-devs &amp; vibecoders
+          </div>
+
+          <h1 class="reveal mt-6 font-display text-[2.7rem] font-semibold leading-[0.98] tracking-tightest text-ink sm:text-6xl lg:text-[4.15rem]" style="transition-delay:60ms">
+            Steer your AI agents<br class="hidden sm:block" />
+            <span class="text-accent">from your pocket.</span>
+          </h1>
+
+          <p class="reveal mt-6 max-w-md text-[17px] leading-relaxed text-ink-mute" style="transition-delay:120ms">
+            Stream your dev machine to your phone — live tmux terminals, system Pulse, and your Claude&nbsp;Code, Cursor &amp; Codex sessions. Get pinged the moment an agent needs you, and type back in a real shell.
+          </p>
+
+          <!-- Trust headline, front and center in hero -->
+          <p class="reveal mt-7 font-serif text-lg italic leading-snug text-ink-soft" style="transition-delay:160ms">
+            “Your machine. Your keys. <span class="text-accent">We can&rsquo;t see your data</span> — and you can prove it.”
+          </p>
+
+          <div class="reveal mt-9 flex flex-col items-start gap-4 sm:flex-row sm:items-center" style="transition-delay:220ms">
+            <a href="#pricing" class="group flex items-center gap-3 rounded-full bg-accent py-3 pl-6 pr-2 text-[15px] font-semibold text-white shadow-glow-accent transition-transform active:scale-[0.98]">
+              <span>Start free — self-host</span>
+              <span class="flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 transition-transform duration-500 ease-cascade group-hover:translate-x-1" stroke="currentColor" stroke-width="1.7">
+                  <path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
+            </a>
+            <a href="#trust" class="group flex items-center gap-2 rounded-full border border-paper-edge bg-white/85 px-5 py-3 text-[15px] font-semibold text-ink transition-colors hover:border-ink/20">
+              See how we prove it
+              <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-ink-faint transition-transform duration-500 ease-cascade group-hover:translate-x-0.5" stroke="currentColor" stroke-width="1.6">
+                <path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </a>
+          </div>
+
+          <div class="reveal mt-10 flex flex-wrap items-center gap-x-6 gap-y-3 text-[13px] text-ink-faint" style="transition-delay:280ms">
+            <span class="inline-flex items-center gap-1.5">
+              <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-accent" stroke="currentColor" stroke-width="1.4"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              End-to-end encrypted
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+              <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-accent" stroke="currentColor" stroke-width="1.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Open client &amp; auditable source
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+              <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-accent" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Pairs in ~30s
+            </span>
+          </div>
+        </div>
+
+        <!-- Z-AXIS CASCADE VISUAL: stacked on mobile, overlapping + rotated on desktop -->
+        <div class="reveal relative mx-auto flex w-full max-w-[600px] flex-col items-center gap-6 lg:block lg:h-[560px] lg:gap-0" style="transition-delay:200ms">
+
+          <!-- ambient accent halo -->
+          <div class="pointer-events-none absolute left-1/2 top-1/2 hidden h-[380px] w-[380px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent-bright/20 blur-[90px] lg:block"></div>
+
+          <!-- MAC CARD (back, rotated on desktop) -->
+          <div class="relative z-0 w-full max-w-[480px] lg:absolute lg:left-2 lg:top-2 lg:w-[88%] lg:rotate-[-2deg]">
+            <!-- double bezel outer -->
+            <div class="rounded-[2rem] border border-white/80 bg-white/55 p-1.5 shadow-soft-lg">
+              <div class="overflow-hidden rounded-[calc(2rem-0.375rem)] bg-term-bg shadow-inset-term term-glow">
+                <!-- traffic lights + title -->
+                <div class="flex items-center gap-2 border-b border-white/5 px-4 py-3">
+                  <span class="h-2.5 w-2.5 rounded-full bg-[#ff5f57]"></span>
+                  <span class="h-2.5 w-2.5 rounded-full bg-[#febc2e]"></span>
+                  <span class="h-2.5 w-2.5 rounded-full bg-[#28c840]"></span>
+                  <span class="ml-3 font-term text-[11px] text-white/40">tmux · ~/genesis-tools — agent-run</span>
+                  <span class="ml-auto flex items-center gap-1.5 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-soft"></span>live
+                  </span>
+                </div>
+                <!-- tmux split -->
+                <div class="grid grid-cols-[1.4fr_1fr] font-term text-[11px] leading-[1.55]">
+                  <!-- left pane -->
+                  <div class="border-r border-white/5 p-4 text-white/75">
+                    <p><span class="text-accent-soft">claude</span> <span class="text-white/40">·</span> implement auth guard</p>
+                    <p class="text-emerald-300/90">✓ wrote src/auth/guard.ts</p>
+                    <p class="text-emerald-300/90">✓ wrote guard.test.ts</p>
+                    <p class="text-white/50">› running 14 tests…</p>
+                    <p class="text-emerald-300/90">✓ 14 passed <span class="text-white/40">(1.2s)</span></p>
+                    <p class="mt-1 text-amber-300/90">? Apply migration to prod db?</p>
+                    <p class="text-white/85">›&nbsp;<span class="inline-block h-3.5 w-[7px] translate-y-[2px] bg-accent-soft animate-blink"></span></p>
+                  </div>
+                  <!-- right pane: logs -->
+                  <div class="bg-term-line/60 p-4 text-white/55">
+                    <p class="text-white/35">[runner]</p>
+                    <p>build ✓ 0.4s</p>
+                    <p>lint  ✓ 0.2s</p>
+                    <p>tsc   ✓ 0.9s</p>
+                    <p class="mt-2 text-white/35">[docker]</p>
+                    <p class="text-emerald-300/80">▲ web    up</p>
+                    <p class="text-emerald-300/80">▲ db     up</p>
+                    <p class="text-sky-300/80">↻ worker  restarting</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PHONE CARD (front; stacked on mobile, rotated + overlapping on desktop) -->
+          <div class="relative z-10 w-[225px] sm:w-[248px] lg:absolute lg:-bottom-2 lg:right-1 lg:animate-float lg:rotate-[3deg]">
+            <!-- double bezel outer (phone shell) -->
+            <div class="rounded-[2.6rem] border border-white/90 bg-white/70 p-2 shadow-soft-lg">
+              <div class="overflow-hidden rounded-[2.1rem] border border-paper-edge bg-paper shadow-inset-hi">
+                <!-- phone status strip -->
+                <div class="flex items-center justify-between bg-white px-5 pb-2 pt-3 text-[10px] font-medium text-ink-mute">
+                  <span>9:41</span>
+                  <span class="h-4 w-16 rounded-full bg-paper-2"></span>
+                  <span class="flex items-center gap-1">
+                    <svg viewBox="0 0 24 24" class="h-3 w-3 fill-current"><path d="M2 17h20v2H2zM4 13h16v2H4zM6 9h12v2H6zM8 5h8v2H8z"/></svg>
+                  </span>
+                </div>
+                <!-- Pulse header -->
+                <div class="flex items-center justify-between px-5 pt-2">
+                  <div>
+                    <p class="font-display text-[15px] font-semibold tracking-tight text-ink">Pulse</p>
+                    <p class="text-[10px] text-ink-faint">studio-mbp · WireGuard</p>
+                  </div>
+                  <span class="flex items-center gap-1 rounded-full bg-accent-wash px-2 py-0.5 text-[9px] font-semibold text-accent-deep">
+                    <span class="h-1.5 w-1.5 rounded-full bg-accent-bright animate-pulse-soft"></span>E2E
+                  </span>
+                </div>
+
+                <!-- metric tiles -->
+                <div class="grid grid-cols-2 gap-2 px-4 pt-3">
+                  <!-- CPU sparkline -->
+                  <div class="rounded-2xl border border-paper-edge bg-white p-2.5">
+                    <div class="flex items-center justify-between">
+                      <span class="text-[9px] font-medium uppercase tracking-wider text-ink-faint">CPU</span>
+                      <span class="font-term text-[11px] font-semibold text-ink">38%</span>
+                    </div>
+                    <svg viewBox="0 0 100 32" class="mt-1 h-7 w-full" fill="none" preserveAspectRatio="none">
+                      <polyline class="spark-path" points="0,24 12,20 24,26 36,14 48,18 60,8 72,16 84,6 100,12" stroke="#4f46e5" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                  <!-- MEM sparkline -->
+                  <div class="rounded-2xl border border-paper-edge bg-white p-2.5">
+                    <div class="flex items-center justify-between">
+                      <span class="text-[9px] font-medium uppercase tracking-wider text-ink-faint">MEM</span>
+                      <span class="font-term text-[11px] font-semibold text-ink">11.4G</span>
+                    </div>
+                    <svg viewBox="0 0 100 32" class="mt-1 h-7 w-full" fill="none" preserveAspectRatio="none">
+                      <polyline class="spark-path" style="transition-delay:200ms" points="0,18 12,16 24,17 36,14 48,15 60,12 72,13 84,10 100,11" stroke="#6366f1" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </div>
+                </div>
+
+                <!-- battery + disk bars -->
+                <div class="px-4 pt-2">
+                  <div class="rounded-2xl border border-paper-edge bg-white p-2.5">
+                    <div class="flex items-center justify-between text-[9px] text-ink-faint">
+                      <span class="font-medium uppercase tracking-wider">Disk · Wi-Fi · Batt</span>
+                      <span class="font-term text-ink">⚡ 92%</span>
+                    </div>
+                    <div class="bars mt-2 flex h-8 items-end gap-[3px]">
+                      <span class="w-full rounded-sm bg-accent/30" style="height:40%;animation-delay:.05s"></span>
+                      <span class="w-full rounded-sm bg-accent/45" style="height:60%;animation-delay:.10s"></span>
+                      <span class="w-full rounded-sm bg-accent/40" style="height:52%;animation-delay:.15s"></span>
+                      <span class="w-full rounded-sm bg-accent/60" style="height:78%;animation-delay:.20s"></span>
+                      <span class="w-full rounded-sm bg-accent/50" style="height:66%;animation-delay:.25s"></span>
+                      <span class="w-full rounded-sm bg-accent" style="height:96%;animation-delay:.30s"></span>
+                      <span class="w-full rounded-sm bg-accent/55" style="height:70%;animation-delay:.35s"></span>
+                      <span class="w-full rounded-sm bg-accent/35" style="height:46%;animation-delay:.40s"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- agent alert toast -->
+                <div class="mx-4 mb-4 mt-3 flex items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/80 px-3 py-2.5">
+                  <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-400/20 text-amber-600">
+                    <svg viewBox="0 0 24 24" fill="none" class="h-3.5 w-3.5" stroke="currentColor" stroke-width="1.6"><path d="M12 9v4M12 17h.01M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </span>
+                  <div class="min-w-0">
+                    <p class="truncate text-[11px] font-semibold text-ink">Agent needs input</p>
+                    <p class="truncate text-[10px] text-ink-mute">Apply migration to prod db?</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- marquee logos / context -->
+      <div class="reveal mx-auto mt-20 max-w-5xl">
+        <p class="text-center text-[11px] font-medium uppercase tracking-[0.25em] text-ink-faint">Monitors the agents &amp; runtimes you already run</p>
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-4 font-display text-lg font-semibold tracking-tight text-ink/35">
+          <span>Claude&nbsp;Code</span>
+          <span class="hidden h-4 w-px bg-paper-edge sm:block"></span>
+          <span>Cursor</span>
+          <span class="hidden h-4 w-px bg-paper-edge sm:block"></span>
+          <span>Codex</span>
+          <span class="hidden h-4 w-px bg-paper-edge sm:block"></span>
+          <span>tmux / cmux</span>
+          <span class="hidden h-4 w-px bg-paper-edge sm:block"></span>
+          <span>Docker</span>
+          <span class="hidden h-4 w-px bg-paper-edge sm:block"></span>
+          <span>Obsidian</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TRUST / VERIFIABILITY (front and center) ============ -->
+    <section id="trust" class="relative px-4 py-24 md:py-36">
+      <div class="mx-auto max-w-7xl">
+        <div class="reveal mx-auto max-w-2xl text-center">
+          <span class="inline-block rounded-full border border-accent-soft/60 bg-accent-wash/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-deep">Trust, not promises</span>
+          <h2 class="mt-6 font-display text-4xl font-semibold leading-[1.02] tracking-tightest text-ink sm:text-5xl lg:text-[3.4rem]">
+            Pick exactly how far<br class="hidden sm:block" /> your bytes travel.
+          </h2>
+          <p class="mt-5 text-[17px] leading-relaxed text-ink-mute">
+            One switchable transport layer, four trust tiers. The further right you go, the more convenient — and we designed every tier so the vendor still can&rsquo;t read your terminal. You don&rsquo;t take our word for it; you verify it.
+          </p>
+        </div>
+
+        <!-- 4 transport tiers as double-bezel cards -->
+        <div class="mt-16 grid gap-5 lg:grid-cols-2">
+
+          <!-- LAN -->
+          <article class="reveal group rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft transition-shadow duration-500 hover:shadow-soft-lg">
+            <div class="h-full rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi">
+              <div class="flex items-start justify-between">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-paper-2 text-ink">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.3"><path d="M5 12.5a10 10 0 0 1 14 0M8 15.5a6 6 0 0 1 8 0" stroke-linecap="round"/><circle cx="12" cy="19" r="1.3" fill="currentColor" stroke="none"/></svg>
+                </div>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-mute">Zero third party</span>
+              </div>
+              <h3 class="mt-5 font-display text-2xl font-semibold tracking-tight text-ink">LAN</h3>
+              <p class="mt-2 text-sm leading-relaxed text-ink-mute">Same Wi-Fi, phone talks straight to your Mac. Nothing leaves your network — no relay, no tunnel, no account. The simplest possible path.</p>
+              <p class="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-faint">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-emerald-500" stroke="currentColor" stroke-width="1.5"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Verify: it literally has nowhere else to go
+              </p>
+            </div>
+          </article>
+
+          <!-- Tailscale / WireGuard -->
+          <article class="reveal group rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft transition-shadow duration-500 hover:shadow-soft-lg" style="transition-delay:80ms">
+            <div class="h-full rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi">
+              <div class="flex items-start justify-between">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent-wash text-accent-deep">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.3"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3Z"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <span class="rounded-full bg-accent-wash px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-accent-deep">Trust-max</span>
+              </div>
+              <h3 class="mt-5 font-display text-2xl font-semibold tracking-tight text-ink">Tailscale / WireGuard</h3>
+              <p class="mt-2 text-sm leading-relaxed text-ink-mute">A private, end-to-end encrypted mesh between your devices. Reach your machine from anywhere with nobody in the middle — the traffic is yours alone, edge to edge.</p>
+              <p class="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-faint">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-emerald-500" stroke="currentColor" stroke-width="1.5"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Verify: standard WireGuard keys, on your own tailnet
+              </p>
+            </div>
+          </article>
+
+          <!-- Self-hosted Cloudflare tunnel -->
+          <article class="reveal group rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft transition-shadow duration-500 hover:shadow-soft-lg" style="transition-delay:40ms">
+            <div class="h-full rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi">
+              <div class="flex items-start justify-between">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-paper-2 text-ink">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.3"><path d="M7 17a4 4 0 0 1 .5-7.97A5 5 0 0 1 17 9a3.5 3.5 0 0 1 0 7H8" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 14l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-ink-mute">Your own account</span>
+              </div>
+              <h3 class="mt-5 font-display text-2xl font-semibold tracking-tight text-ink">Self-hosted Cloudflare tunnel</h3>
+              <p class="mt-2 text-sm leading-relaxed text-ink-mute">A one-command guided wizard stands up a tunnel under <em>your</em> Cloudflare account. Public reach without port-forwarding — and we, the vendor, are never in the path.</p>
+              <p class="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-faint">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-emerald-500" stroke="currentColor" stroke-width="1.5"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Verify: it&rsquo;s your domain, your tunnel, your dashboard
+              </p>
+            </div>
+          </article>
+
+          <!-- Managed (E2E) -->
+          <article class="reveal group rounded-[2rem] border border-accent-soft/50 bg-accent-wash/40 p-2 shadow-soft transition-shadow duration-500 hover:shadow-soft-lg" style="transition-delay:120ms">
+            <div class="relative h-full overflow-hidden rounded-[calc(2rem-0.5rem)] border border-accent-soft/40 bg-white p-7 shadow-inset-hi">
+              <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-accent-bright/15 blur-3xl"></div>
+              <div class="relative flex items-start justify-between">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent text-white shadow-glow-accent">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.3"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke-linecap="round"/><circle cx="12" cy="15.5" r="1.3" fill="currentColor" stroke="none"/></svg>
+                </div>
+                <span class="rounded-full bg-accent px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">One-tap · E2E</span>
+              </div>
+              <h3 class="relative mt-5 font-display text-2xl font-semibold tracking-tight text-ink">Managed relay</h3>
+              <p class="relative mt-2 text-sm leading-relaxed text-ink-mute">The easiest path: one tap, remote access anywhere. We relay the connection — but the payload is sealed by <strong class="font-semibold text-ink">app-layer end-to-end encryption</strong>. The keys live only on your phone and your Mac. We carry the envelope; we can&rsquo;t open it.</p>
+              <p class="relative mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-accent-deep">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="1.5"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Verify: pin the key fingerprint &amp; audit the open client
+              </p>
+            </div>
+          </article>
+        </div>
+
+        <!-- "Prove it" banner -->
+        <div class="reveal mt-6 overflow-hidden rounded-[2rem] border border-white/70 bg-ink p-2 shadow-soft-lg">
+          <div class="grid items-center gap-6 rounded-[calc(2rem-0.5rem)] bg-gradient-to-br from-ink to-ink-soft p-8 md:grid-cols-[1.3fr_1fr] md:p-10">
+            <div>
+              <span class="inline-block rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-soft">The promise we can prove</span>
+              <p class="mt-5 font-serif text-2xl italic leading-snug text-paper sm:text-3xl">
+                “Your machine. Your keys. We can&rsquo;t see your data — and you can prove it.”
+              </p>
+              <p class="mt-4 max-w-md text-sm leading-relaxed text-white/55">
+                Even on the managed relay, encryption happens before a byte leaves your devices. Three ways to confirm it yourself — no trust required.
+              </p>
+            </div>
+            <ul class="space-y-3">
+              <li class="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/5 p-4">
+                <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-white text-xs font-semibold">1</span>
+                <div>
+                  <p class="text-sm font-semibold text-paper">Open, auditable client</p>
+                  <p class="text-[12px] leading-relaxed text-white/50">The pairing &amp; crypto code is public. Read it, build it, ship it yourself.</p>
+                </div>
+              </li>
+              <li class="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/5 p-4">
+                <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-white text-xs font-semibold">2</span>
+                <div>
+                  <p class="text-sm font-semibold text-paper">Pinned key fingerprints</p>
+                  <p class="text-[12px] leading-relaxed text-white/50">Compare the fingerprint on your phone with the one on your Mac. Match = no one in between.</p>
+                </div>
+              </li>
+              <li class="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/5 p-4">
+                <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-white text-xs font-semibold">3</span>
+                <div>
+                  <p class="text-sm font-semibold text-paper">Inspect the relay</p>
+                  <p class="text-[12px] leading-relaxed text-white/50">Sniff our relay — you&rsquo;ll only ever see ciphertext, never your terminal.</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FEATURES ============ -->
+    <section id="features" class="relative px-4 py-24 md:py-36">
+      <div class="mx-auto max-w-7xl">
+        <div class="reveal max-w-2xl">
+          <span class="inline-block rounded-full border border-accent-soft/60 bg-accent-wash/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-deep">What you get</span>
+          <h2 class="mt-6 font-display text-4xl font-semibold leading-[1.02] tracking-tightest text-ink sm:text-5xl lg:text-[3.4rem]">
+            Your whole machine,<br class="hidden sm:block" /> pocket-sized.
+          </h2>
+        </div>
+
+        <div class="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-12">
+
+          <!-- big: live terminals -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft lg:col-span-7">
+            <div class="h-full overflow-hidden rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi sm:p-9">
+              <div class="flex items-center gap-3">
+                <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-ink text-paper">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.3"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 9l3 2.5L7 14M12 14h5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold tracking-tight text-ink">Live, interactive terminals</h3>
+              </div>
+              <p class="mt-4 max-w-lg text-[15px] leading-relaxed text-ink-mute">Full tmux &amp; cmux sessions over ttyd — real keystrokes, real scrollback, real colors. Not a screenshot, not a read-only mirror. A mobile key-bar gives you Ctrl, Esc, arrows and Tab so you can actually <em>drive</em>.</p>
+              <!-- mini faux terminal -->
+              <div class="mt-6 overflow-hidden rounded-2xl bg-term-bg p-4 font-term text-[11px] leading-relaxed text-white/70">
+                <p><span class="text-emerald-300">~/app</span> <span class="text-accent-soft">git</span> rebase --onto main</p>
+                <p class="text-white/45">Successfully rebased and updated refs/heads/feat.</p>
+                <p class="mt-1"><span class="text-emerald-300">~/app</span> <span class="text-accent-soft">bun</span> test<span class="ml-1 inline-block h-3 w-[6px] translate-y-[1px] bg-accent-soft animate-blink"></span></p>
+              </div>
+            </div>
+          </article>
+
+          <!-- Pulse -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft lg:col-span-5" style="transition-delay:60ms">
+            <div class="h-full rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi sm:p-8">
+              <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-accent-wash text-accent-deep">
+                <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.4"><path d="M3 12h4l2-6 4 13 2-7h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <h3 class="mt-5 font-display text-2xl font-semibold tracking-tight text-ink">System Pulse</h3>
+              <p class="mt-3 text-[15px] leading-relaxed text-ink-mute">CPU, memory, swap, battery, disk and Wi-Fi — live sparklines that update as your machine breathes. Spot a runaway build before it cooks your laptop.</p>
+              <div class="mt-5 flex flex-wrap gap-2 text-[11px] font-medium text-ink-mute">
+                <span class="rounded-full bg-paper-2 px-2.5 py-1">CPU</span>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1">Memory</span>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1">Swap</span>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1">Battery</span>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1">Disk</span>
+                <span class="rounded-full bg-paper-2 px-2.5 py-1">Wi-Fi</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- agent monitoring + push -->
+          <article class="reveal rounded-[2rem] border border-accent-soft/50 bg-accent-wash/40 p-2 shadow-soft lg:col-span-5" style="transition-delay:40ms">
+            <div class="relative h-full overflow-hidden rounded-[calc(2rem-0.5rem)] border border-accent-soft/40 bg-white p-7 shadow-inset-hi sm:p-8">
+              <div class="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-accent-bright/15 blur-3xl"></div>
+              <div class="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-accent text-white shadow-glow-accent">
+                <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="1.3"><rect x="4" y="6" width="16" height="12" rx="3"/><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none"/><path d="M12 3v3M8 18l-1.5 3M16 18l1.5 3" stroke-linecap="round"/></svg>
+              </div>
+              <h3 class="relative mt-5 font-display text-2xl font-semibold tracking-tight text-ink">Agent sessions &amp; push alerts</h3>
+              <p class="relative mt-3 text-[15px] leading-relaxed text-ink-mute">Watch Claude&nbsp;Code, Cursor and Codex run in real time. When an agent stalls on a question or hits a gate, your phone buzzes — tap in, answer, and it keeps going. Steer from anywhere.</p>
+            </div>
+          </article>
+
+          <!-- signals row -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft lg:col-span-7" style="transition-delay:90ms">
+            <div class="grid h-full gap-4 rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi sm:grid-cols-2 sm:p-8">
+              <div>
+                <h3 class="font-display text-2xl font-semibold tracking-tight text-ink">Every signal, one feed</h3>
+                <p class="mt-3 text-[15px] leading-relaxed text-ink-mute">QA &amp; agent signals, Obsidian notes, Claude usage, daemon runs and Docker containers — surfaced and searchable in one place.</p>
+              </div>
+              <ul class="grid grid-cols-2 gap-2.5 text-[13px] font-medium text-ink-soft">
+                <li class="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2.5"><span class="h-1.5 w-1.5 rounded-full bg-accent"></span>QA / agent signals</li>
+                <li class="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2.5"><span class="h-1.5 w-1.5 rounded-full bg-accent"></span>Obsidian notes</li>
+                <li class="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2.5"><span class="h-1.5 w-1.5 rounded-full bg-accent"></span>Claude usage</li>
+                <li class="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2.5"><span class="h-1.5 w-1.5 rounded-full bg-accent"></span>Daemon runs</li>
+                <li class="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2.5"><span class="h-1.5 w-1.5 rounded-full bg-accent"></span>Docker containers</li>
+                <li class="flex items-center gap-2 rounded-xl bg-paper-2 px-3 py-2.5"><span class="h-1.5 w-1.5 rounded-full bg-accent"></span>Build &amp; test runs</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section id="how" class="relative px-4 py-24 md:py-36">
+      <div class="mx-auto max-w-7xl">
+        <div class="reveal mx-auto max-w-2xl text-center">
+          <span class="inline-block rounded-full border border-accent-soft/60 bg-accent-wash/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-deep">Up &amp; running fast</span>
+          <h2 class="mt-6 font-display text-4xl font-semibold leading-[1.02] tracking-tightest text-ink sm:text-5xl lg:text-[3.4rem]">
+            Pair in about 30 seconds.
+          </h2>
+          <p class="mt-5 text-[17px] leading-relaxed text-ink-mute">No port-forwarding, no cloud account required, no YAML. Install the agent, scan a code, you&rsquo;re live.</p>
+        </div>
+
+        <div class="mt-16 grid gap-5 md:grid-cols-3">
+          <!-- step 1 -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft">
+            <div class="h-full rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi">
+              <span class="font-serif text-5xl font-medium text-accent/30">01</span>
+              <h3 class="mt-3 font-display text-xl font-semibold tracking-tight text-ink">Install the agent</h3>
+              <p class="mt-2 text-sm leading-relaxed text-ink-mute">One command on your Mac. It runs locally, binds to your sessions, and stays under your control.</p>
+              <div class="mt-4 rounded-xl bg-term-bg px-3.5 py-2.5 font-term text-[11px] text-white/75">
+                <span class="text-emerald-300">$</span> brew install devdashboard
+              </div>
+            </div>
+          </article>
+          <!-- step 2 -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft" style="transition-delay:80ms">
+            <div class="h-full rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-7 shadow-inset-hi">
+              <span class="font-serif text-5xl font-medium text-accent/30">02</span>
+              <h3 class="mt-3 font-display text-xl font-semibold tracking-tight text-ink">Scan to pair</h3>
+              <p class="mt-2 text-sm leading-relaxed text-ink-mute">Open the app, scan the QR. Keys are generated on-device and exchanged directly — your fingerprints get pinned.</p>
+              <div class="mt-4 flex items-center justify-center rounded-xl bg-paper-2 py-3">
+                <svg viewBox="0 0 48 48" class="h-12 w-12 text-ink" fill="currentColor"><path d="M6 6h12v12H6V6Zm3 3v6h6V9H9Zm21-3h12v12H30V6Zm3 3v6h6V9h-6ZM6 30h12v12H6V30Zm3 3v6h6v-6H9Zm18-3h3v3h-3v-3Zm6 0h3v3h-3v-3Zm-6 6h3v6h-3v-6Zm6 0h6v3h-3v3h-3v-6Zm6-6h3v9h-3v-9Z"/></svg>
+              </div>
+            </div>
+          </article>
+          <!-- step 3 -->
+          <article class="reveal rounded-[2rem] border border-accent-soft/50 bg-accent-wash/40 p-2 shadow-soft" style="transition-delay:160ms">
+            <div class="relative h-full overflow-hidden rounded-[calc(2rem-0.5rem)] border border-accent-soft/40 bg-white p-7 shadow-inset-hi">
+              <div class="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-accent-bright/15 blur-3xl"></div>
+              <span class="relative font-serif text-5xl font-medium text-accent/40">03</span>
+              <h3 class="relative mt-3 font-display text-xl font-semibold tracking-tight text-ink">Pick your transport</h3>
+              <p class="relative mt-2 text-sm leading-relaxed text-ink-mute">LAN, WireGuard, your own Cloudflare tunnel, or one-tap managed relay. Switch any time — your keys never change hands.</p>
+              <div class="relative mt-4 flex flex-wrap gap-1.5 text-[10px] font-semibold text-accent-deep">
+                <span class="rounded-full bg-white px-2.5 py-1">LAN</span>
+                <span class="rounded-full bg-white px-2.5 py-1">WireGuard</span>
+                <span class="rounded-full bg-white px-2.5 py-1">Cloudflare</span>
+                <span class="rounded-full bg-accent px-2.5 py-1 text-white">Managed · E2E</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PRICING ============ -->
+    <section id="pricing" class="relative px-4 py-24 md:py-36">
+      <div class="mx-auto max-w-7xl">
+        <div class="reveal mx-auto max-w-2xl text-center">
+          <span class="inline-block rounded-full border border-accent-soft/60 bg-accent-wash/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-accent-deep">Simple pricing</span>
+          <h2 class="mt-6 font-display text-4xl font-semibold leading-[1.02] tracking-tightest text-ink sm:text-5xl lg:text-[3.4rem]">
+            Self-host free. Forever.
+          </h2>
+          <p class="mt-5 text-[17px] leading-relaxed text-ink-mute">Pay only when you want the one-tap managed relay — and even then, we can&rsquo;t read your data.</p>
+        </div>
+
+        <div class="mt-16 grid items-stretch gap-5 lg:grid-cols-3">
+
+          <!-- Free -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft">
+            <div class="flex h-full flex-col rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-8 shadow-inset-hi">
+              <p class="text-sm font-semibold uppercase tracking-[0.15em] text-ink-faint">Free</p>
+              <p class="mt-1 text-[13px] text-ink-mute">Self-host</p>
+              <div class="mt-6 flex items-end gap-1">
+                <span class="font-display text-5xl font-semibold tracking-tightest text-ink">$0</span>
+                <span class="mb-1.5 text-sm text-ink-faint">/ forever</span>
+              </div>
+              <p class="mt-4 text-sm leading-relaxed text-ink-mute">Everything, on your own transport. LAN, WireGuard, or your own Cloudflare tunnel.</p>
+              <ul class="mt-6 space-y-2.5 text-sm text-ink-soft">
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Live terminals &amp; Pulse metrics</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Agent sessions &amp; push alerts</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>LAN · WireGuard · Cloudflare</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>1 device</li>
+              </ul>
+              <a href="#top" class="group mt-8 flex items-center justify-between gap-2 rounded-full border border-paper-edge bg-white py-3 pl-5 pr-2 text-[15px] font-semibold text-ink transition-colors hover:border-ink/20">
+                <span>Download free</span>
+                <span class="flex h-8 w-8 items-center justify-center rounded-full bg-paper-2">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 transition-transform duration-500 ease-cascade group-hover:translate-x-0.5" stroke="currentColor" stroke-width="1.6"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </a>
+            </div>
+          </article>
+
+          <!-- Pro (featured) -->
+          <article class="reveal rounded-[2rem] border border-accent-soft/60 bg-accent-wash/50 p-2 shadow-soft-lg lg:-mt-4" style="transition-delay:80ms">
+            <div class="relative flex h-full flex-col overflow-hidden rounded-[calc(2rem-0.5rem)] border border-accent-soft/40 bg-ink p-8 shadow-inset-term">
+              <div class="pointer-events-none absolute -right-12 -top-12 h-44 w-44 rounded-full bg-accent-bright/30 blur-3xl"></div>
+              <div class="relative flex items-center justify-between">
+                <div>
+                  <p class="text-sm font-semibold uppercase tracking-[0.15em] text-accent-soft">Pro</p>
+                  <p class="mt-1 text-[13px] text-white/45">Managed relay</p>
+                </div>
+                <span class="rounded-full bg-accent px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">Most popular</span>
+              </div>
+              <div class="relative mt-6 flex items-end gap-1">
+                <span class="font-display text-5xl font-semibold tracking-tightest text-paper">$9</span>
+                <span class="mb-1.5 text-sm text-white/45">/ month</span>
+              </div>
+              <p class="relative mt-4 text-sm leading-relaxed text-white/55">One-tap remote access from anywhere — with app-layer E2E so the relay never sees your data.</p>
+              <ul class="relative mt-6 space-y-2.5 text-sm text-white/75">
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent-soft" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Free</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent-soft" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>One-tap managed relay (E2E)</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent-soft" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to 5 machines</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent-soft" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Priority push delivery</li>
+              </ul>
+              <a href="#top" class="group relative mt-8 flex items-center justify-between gap-2 rounded-full bg-accent py-3 pl-5 pr-2 text-[15px] font-semibold text-white shadow-glow-accent transition-transform active:scale-[0.98]">
+                <span>Start Pro trial</span>
+                <span class="flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 transition-transform duration-500 ease-cascade group-hover:translate-x-1" stroke="currentColor" stroke-width="1.7"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </a>
+            </div>
+          </article>
+
+          <!-- Team -->
+          <article class="reveal rounded-[2rem] border border-white/70 bg-white/50 p-2 shadow-soft" style="transition-delay:160ms">
+            <div class="flex h-full flex-col rounded-[calc(2rem-0.5rem)] border border-paper-edge bg-white p-8 shadow-inset-hi">
+              <p class="text-sm font-semibold uppercase tracking-[0.15em] text-ink-faint">Team</p>
+              <p class="mt-1 text-[13px] text-ink-mute">For squads &amp; on-call</p>
+              <div class="mt-6 flex items-end gap-1">
+                <span class="font-display text-5xl font-semibold tracking-tightest text-ink">$24</span>
+                <span class="mb-1.5 text-sm text-ink-faint">/ user / mo</span>
+              </div>
+              <p class="mt-4 text-sm leading-relaxed text-ink-mute">Shared machines, SSO, audit logs and rotation-friendly alerting for on-call teams.</p>
+              <ul class="mt-6 space-y-2.5 text-sm text-ink-soft">
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Pro</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>Shared machines &amp; roles</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>SSO &amp; audit logs</li>
+                <li class="flex items-start gap-2.5"><svg viewBox="0 0 24 24" fill="none" class="mt-0.5 h-4 w-4 shrink-0 text-accent" stroke="currentColor" stroke-width="1.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg>On-call rotation alerts</li>
+              </ul>
+              <a href="#footer" class="group mt-8 flex items-center justify-between gap-2 rounded-full border border-paper-edge bg-white py-3 pl-5 pr-2 text-[15px] font-semibold text-ink transition-colors hover:border-ink/20">
+                <span>Talk to us</span>
+                <span class="flex h-8 w-8 items-center justify-center rounded-full bg-paper-2">
+                  <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 transition-transform duration-500 ease-cascade group-hover:translate-x-0.5" stroke="currentColor" stroke-width="1.6"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </a>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FOOTER / SIGNUP CTA ============ -->
+    <footer id="footer" class="relative px-4 pb-12 pt-12">
+      <div class="reveal mx-auto max-w-7xl rounded-[2.5rem] border border-white/70 bg-white/50 p-2 shadow-soft-lg">
+        <div class="relative overflow-hidden rounded-[calc(2.5rem-0.5rem)] bg-gradient-to-br from-ink to-ink-soft px-7 py-14 sm:px-12 sm:py-20">
+          <div class="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-accent-bright/25 blur-[100px]"></div>
+          <div class="pointer-events-none absolute -bottom-24 -left-16 h-72 w-72 rounded-full bg-accent/20 blur-[110px]"></div>
+
+          <div class="relative grid gap-10 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+            <div>
+              <h2 class="font-display text-3xl font-semibold leading-[1.04] tracking-tightest text-paper sm:text-5xl">
+                Put your machine<br />in your pocket — safely.
+              </h2>
+              <p class="mt-5 max-w-md text-[15px] leading-relaxed text-white/55">
+                Join the agent-devs and vibecoders steering their sessions from anywhere. Free to self-host, ~30 seconds to pair, and a trust promise you can verify yourself.
+              </p>
+
+              <form class="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row" onsubmit="return false">
+                <label class="sr-only" for="email">Email address</label>
+                <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@yourmachine.dev"
+                  class="w-full rounded-full border border-white/10 bg-white/8 px-5 py-3.5 text-[15px] text-paper placeholder-white/35 outline-none transition-colors focus:border-accent-soft/60 focus:bg-white/12" />
+                <button type="submit" class="group flex shrink-0 items-center justify-center gap-2 rounded-full bg-accent py-3.5 pl-6 pr-2 text-[15px] font-semibold text-white shadow-glow-accent transition-transform active:scale-[0.98]">
+                  <span>Get early access</span>
+                  <span class="flex h-8 w-8 items-center justify-center rounded-full bg-white/20">
+                    <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 transition-transform duration-500 ease-cascade group-hover:translate-x-1" stroke="currentColor" stroke-width="1.7"><path d="M5 12h14M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </span>
+                </button>
+              </form>
+              <p class="mt-3 text-[12px] text-white/35">No spam. We email once when the app ships. Your keys never touch our servers.</p>
+            </div>
+
+            <!-- mini trust recap -->
+            <div class="rounded-[2rem] border border-white/8 bg-white/5 p-6">
+              <p class="font-serif text-lg italic leading-snug text-paper">“Your machine. Your keys. We can&rsquo;t see your data — and you can prove it.”</p>
+              <div class="mt-5 grid grid-cols-2 gap-2 text-[11px] font-medium text-white/55">
+                <span class="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-2"><span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>LAN</span>
+                <span class="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-2"><span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>WireGuard</span>
+                <span class="flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-2"><span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>Cloudflare</span>
+                <span class="flex items-center gap-1.5 rounded-full bg-accent/20 px-3 py-2 text-accent-soft"><span class="h-1.5 w-1.5 rounded-full bg-accent-bright"></span>Managed E2E</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- bottom bar -->
+      <div class="mx-auto mt-10 flex max-w-7xl flex-col items-center justify-between gap-4 px-2 text-sm text-ink-faint sm:flex-row">
+        <div class="flex items-center gap-2">
+          <span class="flex h-6 w-6 items-center justify-center rounded-lg bg-ink text-paper">
+            <svg viewBox="0 0 24 24" fill="none" class="h-3.5 w-3.5" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 9l3 2.5L7 14M12 14h4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="font-display font-semibold tracking-tight text-ink">DevDashboard</span>
+        </div>
+        <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
+          <a href="#trust" class="transition-colors hover:text-ink">Trust</a>
+          <a href="#features" class="transition-colors hover:text-ink">Features</a>
+          <a href="#pricing" class="transition-colors hover:text-ink">Pricing</a>
+          <a href="#" class="transition-colors hover:text-ink">Open client source</a>
+          <a href="#" class="transition-colors hover:text-ink">Privacy</a>
+        </div>
+        <p class="text-ink-faint">© <span id="year"></span> DevDashboard</p>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    // Mark JS available so reveal initial-hidden state only applies with JS (no-JS = visible)
+    document.documentElement.classList.add('js');
+
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // IntersectionObserver scroll reveals (staggered, transform/opacity/blur only)
+    (function () {
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var els = Array.prototype.slice.call(document.querySelectorAll('.reveal'));
+
+      if (reduce || !('IntersectionObserver' in window)) {
+        els.forEach(function (el) { el.classList.add('is-in'); });
+        return;
+      }
+
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-in');
+            io.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+
+      els.forEach(function (el) { io.observe(el); });
+
+      // Failsafe 1: anything already in viewport on load (e.g. hero) reveals immediately
+      requestAnimationFrame(function () {
+        els.forEach(function (el) {
+          var r = el.getBoundingClientRect();
+          if (r.top < window.innerHeight && r.bottom > 0) {
+            el.classList.add('is-in');
+          }
+        });
+      });
+
+      // Failsafe 2: a content section must NEVER stay invisible. If the observer
+      // hasn't surfaced an element within a grace window, force it visible.
+      window.setTimeout(function () {
+        els.forEach(function (el) {
+          if (!el.classList.contains('is-in')) {
+            el.classList.add('is-in');
+          }
+        });
+      }, 2600);
+    })();
+
+    // Floating pill nav: subtle lift on scroll
+    (function () {
+      var nav = document.getElementById('pillnav');
+      var onScroll = function () {
+        if (window.scrollY > 24) {
+          nav.classList.add('bg-white/80', 'shadow-soft');
+          nav.classList.remove('bg-white/55', 'shadow-soft-sm');
+        } else {
+          nav.classList.add('bg-white/55', 'shadow-soft-sm');
+          nav.classList.remove('bg-white/80', 'shadow-soft');
+        }
+      };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
+    })();
+  </script>
+</body>
+</html>

@@ -39,4 +39,27 @@ describe("contract purity", () => {
 
         expect(offenders).toEqual([]);
     });
+
+    // Every `@genesiscz/utils/*` the contract VALUE-imports must have an RN shim in the mobile app's
+    // Metro alias table. Without one Metro resolves the repo's server-side module and pulls its
+    // `node:` dependencies into Hermes — which is how the pino logger reached the bundle through a
+    // single `logger.warn` in auth-header.ts.
+    it("every @genesiscz/utils value-import the contract makes is aliased for the mobile bundle", () => {
+        const metroConfig = readFileSync(join(import.meta.dir, "../../../DevDashboard/mobile/metro.config.js"), "utf8");
+        const unaliased: string[] = [];
+
+        for (const file of FILES) {
+            const src = readFileSync(join(import.meta.dir, file), "utf8");
+
+            for (const match of src.matchAll(/^import\s+(?!type\b)[^;]*from\s+["'](@genesiscz\/utils[^"']*)["']/gm)) {
+                const specifier = match[1];
+
+                if (!metroConfig.includes(`match: "${specifier}"`)) {
+                    unaliased.push(`${file} → ${specifier}`);
+                }
+            }
+        }
+
+        expect(unaliased).toEqual([]);
+    });
 });

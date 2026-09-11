@@ -1,0 +1,39 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@/assets/*": [
+        "./assets/*"
+      ],
+      "@dd/*": [
+        "../../src/dev-dashboard/*"
+      ],
+      "@genesiscz/utils/json": [
+        "./src/shims/safe-json.ts"
+      ],
+      "@genesiscz/utils": [
+        "../../src/utils/index.ts"
+      ],
+      "@genesiscz/utils/*": [
+        "../../src/utils/*"
+      ],
+      "@app/*": [
+        "../../src/*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts"
+  ],
+  "exclude": [
+    "e2e"
+  ]
+}

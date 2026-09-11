@@ -1,0 +1,14 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.2.4/schema.json",
+  "extends": "//",
+  "files": {
+    "includes": ["**", "!**/.output", "!**/.nitro", "!**/.tanstack", "!**/routeTree.gen.ts", "!**/*.css"]
+  },
+  "linter": {
+    "rules": {
+      "correctness": {
+        "useUniqueElementIds": "off"
+      }
+    }
+  }
+}

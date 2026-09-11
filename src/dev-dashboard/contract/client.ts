@@ -101,7 +101,10 @@ export function createDashboardClient(opts: DashboardClientOptions) {
         weather: () => get<WeatherRes>(paths.weather()),
         processes: {
             list: (sort: ProcessSort = "rss", limit?: number) => get<ProcessesRes>(paths.processes(sort, limit)),
-            kill: (pid: number) => post<{ ok: boolean }>(paths.processesKill(), { pid }),
+            // `command` is REQUIRED by the route, which fails closed without it: a pid can be
+            // reissued between the render and the click, so the server compares the name the
+            // caller listed against the live one. Send the name the row displayed.
+            kill: (pid: number, command: string) => post<{ ok: boolean }>(paths.processesKill(), { pid, command }),
         },
         ports: {
             list: () => get<PortsResult>(paths.ports()),
@@ -109,7 +112,8 @@ export function createDashboardClient(opts: DashboardClientOptions) {
                 post<KillPortResult>(paths.portsKill(), { pid, expectedCommand }),
         },
         tmux: {
-            sessions: () => get<TmuxSessionsRes>(paths.tmuxSessions()),
+            sessions: (opts: { includeCmux?: boolean } = {}) =>
+                get<TmuxSessionsRes>(paths.tmuxSessions(opts.includeCmux ?? false)),
             create: (body: { name?: string; cwd?: string; command?: string } = {}) =>
                 post<{ sessionName: string; cwd: string; command: string }>(paths.tmuxCreate(), body),
             rename: (body: { from: string; to: string }) => post<{ sessionName: string }>(paths.tmuxRename(), body),

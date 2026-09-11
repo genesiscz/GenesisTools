@@ -139,6 +139,15 @@ jobs:
           # vs 34371404874/34371445859; reverting the toon bump changed nothing).
           # A CI VM is discarded after the job, so there is no orphan to guard against.
           GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS: "1"
+          # DevDashboard ships its own runners (bun for the mobile units, WDIO for
+          # the Appium specs, vitest for the cloud). bun's discovery swallows all
+          # three, so the 34 WDIO/Playwright specs error on an undefined `this.skip`
+          # and the cloud files cannot load better-sqlite3. Those phantoms are cheap;
+          # the 97 files together are not — they took the ubuntu job from 218.83s to
+          # 250.07s against a 4-minute budget, and a job killed by the budget writes
+          # no `[test] suite complete` marker, which is the only thing that reddens
+          # this workflow. The tree runs locally and under its own runners.
+          GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD: "1"
         run: |
           set -o pipefail
           bun run test 2>&1 | tee "test-${{ runner.os }}.log"
