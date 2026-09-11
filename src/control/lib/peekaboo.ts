@@ -7,8 +7,10 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { tmpdir } from "@genesiscz/utils/paths";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
+import { parseNativeWindowList, parseScreenList, type ScreenInfo, type WindowBounds } from "./native-record";
 
 export const CHROMIUM_APPS = new Set([
     "Brave Browser",
@@ -68,18 +70,7 @@ export function runPeekabooJson(
     };
 }
 
-export interface ScreenInfo {
-    index: number;
-    name: string;
-    isPrimary: boolean;
-    points: { width: number; height: number };
-    scaleFactor: number;
-    framePixels: { width: number; height: number };
-    // top-left origin of this screen in GLOBAL CG points — the space click
-    // coords and window bounds live in (peekaboo `list screens` positions are
-    // Cocoa-flipped; converted here so agents never have to)
-    originCG: { x: number; y: number };
-}
+export type { ScreenInfo, WindowBounds } from "./native-record";
 
 // list lookups run inside the action timeline — keep them FAST: 4s via the
 // bridge, then one --no-remote retry (local AX/CG; works when the bridge is
@@ -93,47 +84,25 @@ export function runPeekabooListJson(args: string[]): { ok: boolean; data?: unkno
     return runPeekabooJson([...args, "--no-remote"], 6_000);
 }
 
+/** Displays from `ax-tool screens` when the binary is built, else Peekaboo's `screen list`; same shape either way. */
 export function listScreens(): ScreenInfo[] {
-    const r = runPeekabooListJson(["screen", "list"]);
-    // runPeekabooJson already unwrapped the envelope's .data
-    const screens =
-        (
-            r.data as {
-                screens?: {
-                    index: number;
-                    name: string;
-                    isPrimary: boolean;
-                    scaleFactor: number;
-                    position: { x: number; y: number };
-                    resolution: { width: number; height: number };
-                }[];
+    if (AX_TOOL_AVAILABLE) {
+        const native = runCmd([AX_TOOL_PATH, "screens"]);
+
+        if (native.ok) {
+            try {
+                const screens = parseScreenList(SafeJSON.parse(native.stdout, { strict: true }));
+
+                if (screens.length > 0) {
+                    return screens;
+                }
+            } catch (error) {
+                logger.debug({ error }, "ax-tool screens returned unparsable JSON; asking Peekaboo");
             }
-        )?.screens ?? [];
-    const primary = screens.find((s) => s.isPrimary) ?? screens[0];
-    const primaryH = primary?.resolution.height ?? 0;
+        }
+    }
 
-    return screens.map((s) => ({
-        index: s.index,
-        name: s.name,
-        isPrimary: s.isPrimary,
-        points: { width: s.resolution.width, height: s.resolution.height },
-        scaleFactor: s.scaleFactor,
-        framePixels: { width: s.resolution.width * s.scaleFactor, height: s.resolution.height * s.scaleFactor },
-        originCG: { x: s.position.x, y: primaryH - (s.position.y + s.resolution.height) },
-    }));
-}
-
-export interface WindowBounds {
-    title: string;
-    index: number;
-    /** CG window id; Peekaboo 4 reports it, 3 did not */
-    id?: number;
-    isMainWindow: boolean;
-    // CG points: [[x, y], [w, h]]
-    x: number;
-    y: number;
-    w: number;
-    h: number;
+    return parseScreenList(runPeekabooListJson(["screen", "list"]).data);
 }
 
 interface PeekabooV4Window {
@@ -194,7 +163,24 @@ export function parseWindowList(data: unknown): WindowBounds[] {
     return bounds;
 }
 
+/** Window geometry from `ax-tool window --app` when the binary is built, else Peekaboo's `window list`. */
 export function listWindowBounds(app: string): WindowBounds[] {
+    if (AX_TOOL_AVAILABLE) {
+        const native = runCmd([AX_TOOL_PATH, "window", "--app", app]);
+
+        if (native.ok) {
+            try {
+                const windows = parseNativeWindowList(SafeJSON.parse(native.stdout, { strict: true }));
+
+                if (windows.length > 0) {
+                    return windows;
+                }
+            } catch (error) {
+                logger.debug({ error, app }, "ax-tool window returned unparsable JSON; asking Peekaboo");
+            }
+        }
+    }
+
     return parseWindowList(runPeekabooListJson(["window", "list", "--app", app]).data);
 }
 
@@ -643,11 +629,12 @@ export interface CaptureAttempt {
 
 // Recording-start detection: peekaboo writes keep-0001.png into a fresh
 // capture-<UUID> dir the moment the first frame is grabbed.
-export async function startCapture(captureArgs: string[]): Promise<CaptureAttempt> {
+export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
     const sessionsRoot = captureSessionsRoot();
     mkdirSync(sessionsRoot, { recursive: true });
     const preexisting = new Set(readdirSync(sessionsRoot));
-    const p = Bun.spawn(["peekaboo", ...captureArgs], { stdout: "pipe", stderr: "pipe" });
+    const tool = argv[0].split("/").pop() ?? argv[0];
+    const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
     // Drain both pipes from spawn time: an undrained 64KB pipe blocks peekaboo
     // mid-write (large final JSON on long captures, or visualizer logs when
     // PEEKABOO_VISUALIZER_STDOUT=true) and is indistinguishable from a hang.
@@ -698,8 +685,8 @@ export async function startCapture(captureArgs: string[]): Promise<CaptureAttemp
 
         failDiag = [
             exitedEarly
-                ? `peekaboo exited (code ${p.exitCode}) before writing a frame`
-                : "peekaboo still running with no frame after 15s — killed its process tree",
+                ? `${tool} exited (code ${p.exitCode}) before writing a frame`
+                : `${tool} still running with no frame after 15s — killed its process tree`,
             envelope ? `error ${envelope}` : `stdout: ${so.trim().slice(0, 300) || "empty"}`,
             `stderr: ${se.trim().slice(0, 300) || "empty"}`,
         ].join(" · ");
