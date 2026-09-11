@@ -4,12 +4,40 @@ import Darwin
 import Foundation
 import SnapshotSupport
 
-private struct ObservedTree {
-    var elements: [AXUIElement] = []
-    var frames: [CGRect] = []
-    var rows: [[String: Any]] = []
-    var digest: String
+/// The per-attribute walk: one AX round trip per attribute per element. It is the ground truth
+/// the bulk read is measured against, and the fallback when the bulk read has a gap.
+private struct LiveHierarchySource: HierarchySource {
+    func attribute(_ element: AXUIElement, _ name: String) -> Any? {
+        axAttribute(element, name)
+    }
+
+    func children(of element: AXUIElement) throws -> [AXUIElement] {
+        var raw: CFTypeRef?
+        let read = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw)
+        guard read == .success || read == .attributeUnsupported || read == .noValue else {
+            throw ObservedTreeError("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree")
+        }
+        return raw as? [AXUIElement] ?? []
+    }
+
+    func actionNames(of element: AXUIElement) -> [String] {
+        axActionNames(element)
+    }
+
+    func isValueSettable(_ element: AXUIElement) -> Bool? {
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success else {
+            return nil
+        }
+        return settable.boolValue
+    }
 }
+
+private let bulkAttributeList = ["AXRole", "AXSubrole", kAXPositionAttribute as String, kAXSizeAttribute as String, kAXChildrenAttribute as String] + observedAttributeKeys
+
+/// True when the last tree came from the bulk read; reported by `see` so a slow snapshot can be
+/// attributed instead of guessed.
+private var workflowBulkUsed = false
 
 private struct ObservedWindow {
     let ax: AXUIElement
@@ -101,79 +129,33 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
     return ObservedWindow(ax: ax, id: id, bounds: frame)
 }
 
-private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTree {
-    guard (1...50).contains(depth) else {
-        workflowFailure("--depth must be between 1 and 50")
-    }
-    var tree = ObservedTree(digest: "")
-    var visited = SnapshotObjectSet()
-    func walk(_ element: AXUIElement, level: Int, clip: CGRect) {
-        let identity = CFHash(element)
-        guard visited.insert(element) else {
-            return
-        }
-        guard tree.elements.count < 4000 else {
-            workflowFailure("AX tree exceeds 4000 elements; snapshot refused rather than truncated")
-        }
-        var rawChildren: CFTypeRef?
-        let read = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &rawChildren)
-        guard read == .success || read == .attributeUnsupported || read == .noValue else {
-            workflowFailure("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree")
-        }
-        // AppKit animates anonymous glyph groups inside standard window buttons.
-        // Expose the actual button as a leaf; those decorative descendants are not controls.
-        let subrole = axStringAttribute(element, "AXSubrole") ?? ""
-        let windowButton = ["AXCloseButton", "AXZoomButton", "AXFullScreenButton", "AXMinimizeButton"].contains(subrole)
-        let role = axStringAttribute(element, "AXRole") ?? ""
-        let omittedWebContent = scope == "chrome" && role == "AXWebArea"
-        let children = windowButton || omittedWebContent ? [] : (rawChildren as? [AXUIElement] ?? [])
-        guard level < depth || children.isEmpty else {
-            workflowFailure("AX tree exceeds --depth \(depth); increase depth and run see again")
-        }
-        let frame = axFrame(element)
-        var row: [String: Any] = [
-            "index": tree.elements.count, "depth": level, "role": role,
-            "identity": identity,
-            "x": axPx(frame.minX), "y": axPx(frame.minY), "width": axPx(frame.width), "height": axPx(frame.height),
-            "visible": frame.width > 0 && frame.height > 0 && clip.contains(CGPoint(x: frame.midX, y: frame.midY)),
-            "actions": axActionNames(element).sorted(),
-        ]
-        if omittedWebContent { row["childrenOmitted"] = "chrome scope" }
-        for key in ["AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXValue", "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange"] {
-            if let value = axAttribute(element, key) {
-                if key == "AXSelectedTextRange", CFGetTypeID(value) == AXValueGetTypeID() {
-                    var range = CFRange(location: 0, length: 0)
-                    if AXValueGetValue(value as! AXValue, .cfRange, &range) {
-                        row[key] = "\(range.location):\(range.length)"
-                    } else {
-                        workflowFailure("selected text range is unreadable; inspect again")
-                    }
-                } else if let stable = snapshotValue(value) {
-                    row[key] = stable
-                } else {
-                    row["\(key)Readable"] = false
-                }
-            }
-        }
-        var settable = DarwinBoolean(false)
-        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success {
-            row["valueSettable"] = settable.boolValue
-        }
-        tree.elements.append(element)
-        tree.frames.append(frame)
-        tree.rows.append(row)
-        let childClip = role == "AXScrollArea" ? clip.intersection(frame) : clip
-        for child in children {
-            walk(child, level: level + 1, clip: childClip)
+private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
+    workflowBulkUsed = false
+    // The bulk read cannot stop at a web area, so under chrome scope it would fetch the whole
+    // page only for the builder to discard it; the walk never descends into it. Measured on
+    // Brave 2026-09-11: walk 342-461 ms, bulk 544-911 ms for the same 125 rows.
+    if scope != "chrome", ProcessInfo.processInfo.environment["AX_TOOL_NO_BULK"] == nil, let reader = BulkHierarchyReader() {
+        do {
+            let source = try reader.read(root: window, attributes: bulkAttributeList, maxDepth: depth + 2, maxArrayCount: observedElementLimit)
+            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope)
+            workflowBulkUsed = true
+            return tree
+        } catch is BulkHierarchyError {
+            // A structural gap in the bulk result (an element it did not return, a truncated
+            // children list) is answered by the per-attribute walk, which is the ground truth.
+        } catch let error as ObservedTreeError {
+            workflowFailure(error.message)
+        } catch {
+            workflowFailure(error.localizedDescription)
         }
     }
-    walk(window, level: 0, clip: axFrame(window))
     do {
-        tree.digest = try snapshotDigest(tree.rows)
+        return try buildObservedTree(root: window, source: LiveHierarchySource(), depth: depth, scope: scope)
+    } catch let error as ObservedTreeError {
+        workflowFailure(error.message)
     } catch {
-        workflowFailure("cannot encode observed AX tree: \(error.localizedDescription)")
+        workflowFailure(error.localizedDescription)
     }
-    return tree
 }
 
 private func workflowPermissions() {
@@ -275,7 +257,8 @@ func cmdSee(appName _: String) {
                                "x": window.bounds.minX, "y": window.bounds.minY,
                                "width": window.bounds.width, "height": window.bounds.height],
                     "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
-                    "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "elements": publicRows])
+                    "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
+                    "elements": publicRows])
     } catch {
         workflowFailure("cannot save snapshot: \(error.localizedDescription)")
     }
