@@ -73,6 +73,7 @@ function fakeDriver(options: { backend?: WorkerBackend; daemon?: boolean; prompt
         async readDefault() {
             return Promise.resolve();
         },
+        readDefaultLabel: "the fixture transcript",
         rowHeaders: ["NAME"],
         row: (meta) => [meta.name],
     };

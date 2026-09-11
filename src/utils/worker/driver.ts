@@ -86,6 +86,8 @@ export interface WorkerDriver<Meta extends WorkerMeta = WorkerMeta> {
     turnFile?(meta: Meta, turn: number): string;
     /** What `read` prints with no `--format`: grok the turn report, claude raw stream-json, codex the thread snapshot. */
     readDefault(meta: Meta, turn: number): Promise<void>;
+    /** That default named in a few words, for the `read` help line. */
+    readDefaultLabel: string;
     /** What `tail` does with no `--format`, when it is not the transcript door (codex follows its raw event log). */
     tailDefault?(meta: Meta, extras: Record<string, unknown>): Promise<void>;
     /** `sessions` table. */

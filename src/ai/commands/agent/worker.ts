@@ -159,8 +159,8 @@ export function registerWorkerVerbs<Meta extends WorkerMeta>(
         .command("read")
         .description(
             driver.turnFile
-                ? "Re-print a finished turn: its report (default), or the transcript in a chosen --format"
-                : `Read the current ${driver.backend} thread snapshot`
+                ? `Re-print a finished turn: ${driver.readDefaultLabel} (default), or the transcript in a chosen --format`
+                : `Read ${driver.readDefaultLabel}`
         )
         .requiredOption("--name <name>", "Session name");
 

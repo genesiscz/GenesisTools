@@ -117,6 +117,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
 
     latestTurn: (meta) => meta.turns,
     turnFile: (meta, turn) => requireTurnLog(meta, turn),
+    readDefaultLabel: "its turn report",
 
     async readDefault(meta, turn) {
         const logPath = requireTurnLog(meta, turn);
