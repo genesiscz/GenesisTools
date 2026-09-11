@@ -118,7 +118,7 @@ A **resume loop**: each turn is one blocking headless `grok` invocation, steerin
 
 | Codex step above | Grok equivalent |
 |---|---|
-| §3 spawn | `tools grok run --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
+| §3 spawn | `tools grok spawn --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
 | §4 watch | `tools grok tail --name <NAME>` follows the running turn and exits when it ends; `tools grok status --name <NAME>` (metadata + whether a turn is running); `tools grok read --name <NAME> [--turn N] [--format compact]` re-prints any finished turn |
 | §5 steer | `tools grok steer --name <NAME> --prompt '<correction>'`; between turns only — `tools grok stop --name <NAME>` kills a running turn (the session survives and the next steer resumes it) |
 | §6 approvals | none (see the capability matrix). `WRITE_POLICY: deny` → `--readonly` (sticky across steers); `ask` → refuse the spawn and report that grok cannot do supervised writes (the orchestrator must pick `deny` or `allow`, or route to Codex); `allow` → default Auto-mode cwd jail (full trust is not exposed — ask for a disposable worktree instead) |

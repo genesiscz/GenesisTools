@@ -44,6 +44,16 @@ export interface WorkerMetaStoreOptions<T extends { name: string }> {
 export class WorkerMetaStore<T extends { name: string }> {
     constructor(private readonly options: WorkerMetaStoreOptions<T>) {}
 
+    /** Capitalised wording for user-facing errors, e.g. "Grok session". */
+    get title(): string {
+        return this.options.title;
+    }
+
+    /** Lower-case wording for log lines, e.g. "grok session". */
+    get label(): string {
+        return this.options.label;
+    }
+
     /**
      * The mode is re-applied on every call, so a directory created before the
      * mode was introduced is tightened too.

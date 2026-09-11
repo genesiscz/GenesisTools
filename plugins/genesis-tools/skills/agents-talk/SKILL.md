@@ -276,7 +276,7 @@ On exit (signal, cap, or crash), the tool prints a `tools agents login ...` resu
 The CLI auto-detects the session in this order:
 
 1. `--session <id>` explicit
-2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok run` — the parent saying which swarm to join)
+2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok spawn` — the parent saying which swarm to join)
 3. The host session id: `$CLAUDE_CODE_SESSION_ID`, `$CODEX_THREAD_ID`, `$GROK_SESSION_ID`, `$COPILOT_AGENT_SESSION_ID`. When several are set (a worker inherits its parent's), the one whose swarm ALREADY EXISTS wins, so a worker joins its parent instead of starting an orphan swarm. If none exists, the first present id creates one.
 4. Single session active (feed touched) in the last 60 seconds
 5. Otherwise: a friendly error asking for `--session` or one of those env vars

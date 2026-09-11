@@ -16,12 +16,14 @@ import type { WorkerTurnReport } from "./turn-report";
  * door, the sessions table, the absent-verb stubs.
  */
 
+/**
+ * What every backend's record carries. A turn counter is NOT in here: codex numbers nothing
+ * and answers `read` with the current thread, so the turn lives on `latestTurn` below, where a
+ * backend without one simply omits it.
+ */
 export interface WorkerMeta {
     name: string;
-    sessionId: string;
     cwd: string;
-    turns: number;
-    createdAt: string;
 }
 
 /** A backend that runs the turn in-process answers with the turn; a daemon answers with an ack. */
@@ -30,7 +32,8 @@ export type WorkerVerbOutcome = { kind: "turn"; report: WorkerTurnReport } | { k
 export interface WorkerSpawnInput {
     name: string;
     cwd: string;
-    prompt: string;
+    /** Absent only when the backend declared `spawnFlags.promptOptional`. */
+    prompt?: string;
     model?: string;
     account?: string;
     surfaces: WorkerSurfaces;
@@ -52,6 +55,19 @@ export interface WorkerLiveness {
 export interface WorkerDriver<Meta extends WorkerMeta = WorkerMeta> {
     backend: WorkerBackend;
     store: WorkerMetaStore<Meta>;
+    /** How the shared `spawn` differs here. Everything else a backend needs goes in `extendSpawn`. */
+    spawnFlags?: {
+        /** `--cwd` must be given: a claude worker never guesses the directory it will write in. */
+        cwdRequired?: boolean;
+        /** A first prompt is optional: codex spawns the session and waits for a steer. */
+        promptOptional?: boolean;
+    };
+    /**
+     * Commander attribute names of an older spelling of `--prompt` / `--prompt-file` that
+     * `steer` still accepts. The backend declares the options themselves, hidden, in
+     * `extendSteer`; naming them here is what lets the shared prompt reader find them.
+     */
+    legacyPromptFlags?: { text: string; file: string };
     /** Extra spawn flags: codex `--effort --write --mode --session --writable-root`; grok `--readonly --worker-home --auth`. */
     extendSpawn?(command: Command): void;
     extendSteer?(command: Command): void;
@@ -61,9 +77,11 @@ export interface WorkerDriver<Meta extends WorkerMeta = WorkerMeta> {
     /** ps-backed backends answer from the process table; codex from the daemon pid and last event age. */
     liveness(meta: Meta): Promise<WorkerLiveness>;
     /** End the running turn; the session survives. Every backend has this. */
-    interruptTurn(meta: Meta): Promise<WorkerVerbOutcome | void>;
+    interruptTurn(meta: Meta): Promise<WorkerVerbOutcome | undefined>;
     /** Tear the daemon down. Only a backend that has one. */
-    shutdown?(meta: Meta): Promise<WorkerVerbOutcome | void>;
+    shutdown?(meta: Meta): Promise<WorkerVerbOutcome | undefined>;
+    /** The turn `read` defaults to. Absent on a backend that does not number turns. */
+    latestTurn?(meta: Meta): number;
     /** Transcript file of one finished turn for the transcript door; absent when the door discovers it by name. */
     turnFile?(meta: Meta, turn: number): string;
     /** What `read` prints with no `--format`: grok the turn report, claude raw stream-json, codex the thread snapshot. */

@@ -13,7 +13,7 @@ import {
     surfacesFromFlags,
     type WorkerSurfaces,
 } from "@genesiscz/utils/worker/isolation";
-import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
+import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
 import { turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
@@ -417,8 +417,9 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
     return runTurn(store, { ...meta, readOnly, surfaces }, meta.turns + 1, args, modeChange);
 }
 
-export function printTurn(result: TurnResult): void {
-    printWorkerTurn({
+/** The turn report a finished grok turn renders as, for the shared worker verbs. */
+export function grokTurnReport(result: TurnResult): WorkerTurnReport {
+    return {
         backend: "grok",
         name: result.meta.name,
         turn: result.turn,
@@ -433,5 +434,9 @@ export function printTurn(result: TurnResult): void {
             result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
         logPath: result.logPath,
         transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
-    });
+    };
+}
+
+export function printTurn(result: TurnResult): void {
+    printWorkerTurn(grokTurnReport(result));
 }

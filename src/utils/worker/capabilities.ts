@@ -62,7 +62,7 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["streaming-json (flat NDJSON)"],
         steering: "between-turns",
         accountRequired: false,
-        verbs: ["run", "steer", "read", "tail", "status", "stop", "sessions"],
+        verbs: ["spawn", "steer", "read", "tail", "status", "stop", "interrupt", "sessions"],
         absentVerbs: {
             approve: "grok has no approval channel (approvals: none) — the cwd jail and the brief are the only brakes",
             deny: "grok has no approval channel (approvals: none)",
@@ -82,6 +82,7 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
             "worker tail",
             "worker status",
             "worker stop",
+            "worker interrupt",
             "worker sessions",
         ],
         absentVerbs: {
