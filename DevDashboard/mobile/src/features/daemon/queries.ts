@@ -31,9 +31,21 @@ export const STATUS_INTERVAL_MS = 10_000;
 export const RUNS_INTERVAL_MS = 15_000;
 export const DEFAULT_RUNS_LIMIT = 25;
 
-/** Coerce an escape-hatch payload to an array (mock returns `{}` for the unmocked routes). */
-function asArray<T>(value: unknown): T[] {
-    return Array.isArray(value) ? (value as T[]) : [];
+/**
+ * Coerce an escape-hatch payload to an array. The mock's gap is specifically an EMPTY object, so only
+ * that shape is absorbed — any other non-array is a real malformed response and throws rather than
+ * being silently rendered as an empty list.
+ */
+function asArray<T>(value: unknown, source: string): T[] {
+    if (Array.isArray(value)) {
+        return value as T[];
+    }
+
+    if (value && typeof value === "object" && Object.keys(value).length === 0) {
+        return [];
+    }
+
+    throw new TypeError(`${source} returned a non-array payload`);
 }
 
 export function daemonStatusQuery(client: DashboardClient) {
@@ -47,7 +59,8 @@ export function daemonStatusQuery(client: DashboardClient) {
 export function daemonRunsQuery(client: DashboardClient, limit: number = DEFAULT_RUNS_LIMIT) {
     return queryOptions<RunSummary[]>({
         queryKey: daemonKeys.runs(limit),
-        queryFn: async () => asArray<RunSummary>(await client.get<RunSummary[]>(paths.daemonRuns({ limit }))),
+        queryFn: async () =>
+            asArray<RunSummary>(await client.get<RunSummary[]>(paths.daemonRuns({ limit })), "daemon runs"),
         refetchInterval: RUNS_INTERVAL_MS,
     });
 }
@@ -60,8 +73,8 @@ export function daemonRunLogQuery(client: DashboardClient, logFile: string | nul
                 return [];
             }
 
-            return asArray<LogEntry>(await client.get<LogEntry[]>(paths.daemonRunLog(logFile)));
+            return asArray<LogEntry>(await client.get<LogEntry[]>(paths.daemonRunLog(logFile)), "daemon run log");
         },
-        enabled: logFile != null,
+        enabled: Boolean(logFile),
     });
 }
