@@ -219,8 +219,8 @@ function PairStep({ deviceCount }: { deviceCount: number }) {
                 <StepHeader n={3} title="Pair a device" done={deviceCount > 0} />
                 <p className="mt-3 text-sm leading-relaxed text-zinc-500">
                     Run <span className="font-mono text-zinc-400">tools dev-dashboard pair</span> on your Mac to print a
-                    device code and public key, then enter them here. The cloud records the public key only — the
-                    end-to-end handshake happens phone&#8596;Mac.
+                    public key, then enter it here. The cloud records the public key only — the end-to-end handshake
+                    happens phone&#8596;Mac.
                 </p>
 
                 <form onSubmit={onSubmit} className="mt-5 space-y-3" data-testid="setup-pair-form">

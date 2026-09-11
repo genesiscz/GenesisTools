@@ -64,9 +64,9 @@ read in a privacy page.
   `assertNoKeyMaterial(table, record)`.
 - The allow-list is per-table (`CLOUD_PERSISTABLE_FIELDS`). A field not on the list — even an
   innocent one — is rejected, so the surface can't silently grow to leak something later.
-- Device pairing records the device's **public** key plus an out-of-band **device code** (proof your
-  Mac agent consents). The cloud never validates or decrypts the pairing secret; the real handshake
-  (X25519 ECDH → per-message AEAD) happens phone ↔ Mac, never through the cloud.
+- Device pairing records the device's **public** key and nothing else. The cloud never validates or
+  decrypts the pairing secret; the real handshake (X25519 ECDH → per-message AEAD) happens
+  phone ↔ Mac, never through the cloud.
 
 This is tested: [`shared/data-boundary.test.ts`](../../shared/data-boundary.test.ts) asserts the
 guard rejects forbidden and off-list fields.

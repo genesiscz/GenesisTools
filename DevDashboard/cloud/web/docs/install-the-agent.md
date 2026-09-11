@@ -86,20 +86,19 @@ Pairing links one phone (or another device) to your agent and establishes the en
 
 1. With the agent running and a transport chosen, the agent (or the tunnel wizard) shows a
    **pairing QR**.
-2. To register a device against your cloud account out-of-band, the agent prints a short
-   **device code**:
+2. To register a device against your cloud account, the agent prints the device's **public key**:
 
    ```bash
    tools dev-dashboard pair
    ```
 
-   The device code is checked by *the agent* when your phone pairs with it. The cloud records it
-   without verifying it — it never sees the agent's codes, and never validates or decrypts the
-   pairing secret itself.
+   The agent verifies the pairing itself when your phone connects to it. The cloud is not part of
+   that check: it never sees the agent's secrets, and never validates or decrypts the pairing
+   secret itself.
 3. In the mobile app, **scan the QR**. Your phone and Mac each generate an X25519 keypair on-device
    and perform the ECDH handshake → per-message AEAD. Keys live only on the two devices.
 4. When you pair via the dashboard's Setup wizard, you provide the device **label**, **kind**
-   (`phone` or `agent`), its **public key**, and the **device code**. The cloud records the
+   (`phone` or `agent`) and its **public key**. The cloud records the
    **public key only** — never any private/secret/session/pairing material (enforced by the
    [data boundary](./security-and-trust.md#the-data-boundary)).
 

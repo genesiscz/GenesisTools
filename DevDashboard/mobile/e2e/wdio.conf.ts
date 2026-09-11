@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { getDevDashboardBundleId } from "@e2e/bundle-id";
+import { getDevDashboardBundleId } from "./bundle-id";
 
 // ── App under test ───────────────────────────────────────────────────────────
 // Two modes:
