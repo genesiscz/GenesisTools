@@ -21,9 +21,17 @@ import { type AppServerProcess, spawnAppServer } from "./app-server-client";
 import { computerUseLaunchOverrides } from "./computer-use";
 import { ACCOUNT_ENV_UNSET, buildAccountLaunchOptions, validateTuiArgs } from "./launch-options";
 import { buildNativeRunArgs, type CodexRunOptions } from "./run-options";
-import { openTerminalServer } from "./terminal-server";
+import { CodexHomeBusyError, openTerminalServer } from "./terminal-server";
 import { createTerminalShutdown } from "./terminal-shutdown";
 import { detectCodexVersion } from "./version";
+
+/**
+ * Starts allowed while another app-server is initializing the same home.
+ *
+ * Three is two waits of 500ms and 1000ms. The winner of the race needs well under a second,
+ * so a start that is still refused after that is a real failure and has to surface.
+ */
+const HOME_BUSY_ATTEMPTS = 3;
 
 export async function runAccountTerminal(input: {
     selector: string;
@@ -154,13 +162,42 @@ export async function runAccountTerminal(input: {
     process.on("uncaughtExceptionMonitor", onCrash);
     process.on("unhandledRejection", onRejection);
     try {
-        child = spawnAppServer(launch);
-        const appServer = child;
         // Process boot, the JSON-RPC initialize and the login handshake, in one number: today a
         // slow start cannot be attributed to any of the three.
-        server = await prof.measureAsync("app-server-ready", () =>
-            openTerminalServer({ account, child: appServer, signal: initialization.signal })
-        );
+        const started = await prof.measureAsync("app-server-ready", async () => {
+            for (let attempt = 1; ; attempt++) {
+                const appServer = spawnAppServer(launch);
+
+                child = appServer;
+
+                try {
+                    const bound = await openTerminalServer({
+                        account,
+                        child: appServer,
+                        signal: initialization.signal,
+                    });
+
+                    return { appServer, bound };
+                } catch (error) {
+                    if (!(error instanceof CodexHomeBusyError) || attempt >= HOME_BUSY_ATTEMPTS) {
+                        throw error;
+                    }
+
+                    // Another account's terminal is initializing this same home right now, and
+                    // it finishes in well under a second. Waiting is the whole fix, and it is
+                    // what lets two accounts be launched into one home at the same moment.
+                    appServer.kill("SIGKILL");
+                    logger.warn(
+                        { attempt, home, account: account.name },
+                        "Codex home was busy initializing; retrying the app-server start"
+                    );
+                    await Bun.sleep(attempt * 500);
+                }
+            }
+        });
+        const appServer = started.appServer;
+
+        server = started.bound;
         shutdown = createTerminalShutdown(server, () => tui);
         const childEnv: Record<string, string | undefined> = {
             ...env.getProcessEnv(),
@@ -200,7 +237,7 @@ export async function runAccountTerminal(input: {
         });
         process.exitCode = await Promise.race([
             tui.exited,
-            child.exited.then(() => {
+            appServer.exited.then(() => {
                 throw new Error("Account-bound Codex app-server exited");
             }),
         ]);

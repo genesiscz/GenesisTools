@@ -10,7 +10,7 @@ import WebSocket from "ws";
 import { CodexAccountBinding } from "./account";
 import { type AppServerProcess, spawnAppServer } from "./app-server-client";
 import { buildAccountLaunchOptions } from "./launch-options";
-import { openTerminalServer } from "./terminal-server";
+import { CodexHomeBusyError, isHomeInitRace, openTerminalServer } from "./terminal-server";
 
 afterEach(() => {
     env.testing.unset("GENESIS_TOOLS_HOME");
@@ -269,4 +269,59 @@ test("aborting initialization closes the app-server before its timeout", async (
         child.kill("SIGKILL");
         await opening.catch(() => undefined);
     }
+});
+/**
+ * Two app-servers that initialize the SAME CODEX_HOME in the same instant fight over its
+ * sqlite state runtime and one dies. Measured 2026-09-11: two simultaneous cold starts on one
+ * home left one survivor, while the same two started a second apart both ran and a third then
+ * joined them, each reporting its own account's usage. So the launcher retries rather than
+ * failing, and this is the sentence it recognises.
+ */
+test("a home-init race is recognised, and an unrelated failure is not", () => {
+    expect(isHomeInitRace("Error: failed to initialize sqlite state runtime under /tmp/x\n")).toBe(true);
+    expect(isHomeInitRace("failed to initialize state runtime at /tmp/x")).toBe(true);
+    expect(isHomeInitRace("Error: no such file or directory (os error 2)")).toBe(false);
+    expect(isHomeInitRace("")).toBe(false);
+});
+
+/** An app-server that prints one line on stderr and exits, exactly as the loser of the race does. */
+function childThatDies(stderrText: string): AppServerProcess {
+    const encoder = new TextEncoder();
+
+    return {
+        pid: 0,
+        stdin: { write: () => 0, flush: () => 0, end: () => 0 },
+        stdout: new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.close();
+            },
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoder.encode(stderrText));
+                controller.close();
+            },
+        }),
+        // Deferred so the stderr pump is drained first: the exit is what rejects the pending
+        // request, and the tail is what classifies it.
+        exited: new Promise<number>((resolve) => setTimeout(() => resolve(1), 50)),
+        kill: () => undefined,
+    };
+}
+
+const neverAsked = {
+    authenticate: () => Promise.reject(new Error("the handshake never got this far")),
+    refresh: () => Promise.reject(new Error("the handshake never got this far")),
+};
+
+test("losing the home race is reported as a retryable busy home, not as a bare exit", async () => {
+    const child = childThatDies("Error: failed to initialize sqlite state runtime under /tmp/gt-codex-home\n");
+    await expect(openTerminalServer({ account: neverAsked, child })).rejects.toBeInstanceOf(CodexHomeBusyError);
+});
+
+test("an app-server that dies for any other reason keeps its own error", async () => {
+    const child = childThatDies("Error: codex: command not found\n");
+    const caught = await openTerminalServer({ account: neverAsked, child }).catch((error: unknown) => error);
+    expect(caught).not.toBeInstanceOf(CodexHomeBusyError);
+    expect(String(caught)).toContain("exited with code 1");
 });

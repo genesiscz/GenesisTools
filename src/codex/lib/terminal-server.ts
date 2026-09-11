@@ -32,6 +32,30 @@ export async function initializeAccountClient(
  */
 const MAX_PEERS = 8;
 
+/** Enough of the child's stderr to recognise why it died; it explains itself in one line. */
+const STDERR_TAIL = 4000;
+
+/**
+ * Two `codex app-server` children that initialize the SAME `CODEX_HOME` in the same instant
+ * fight over its sqlite state runtime, and one of them dies.
+ *
+ * Measured 2026-09-11 against three accounts and one home: two simultaneous cold starts left
+ * one survivor and one `exited with code 1`, while the same two started a second apart both
+ * ran, and a third then joined them, each reporting its own usage. So the home is not
+ * single-owner; only the first moment of initializing it is. The loser has to wait for the
+ * winner to finish, which takes well under a second.
+ */
+export class CodexHomeBusyError extends Error {
+    constructor(readonly stderr: string) {
+        super("Another Codex app-server was initializing this home; it was not ready in time");
+        this.name = "CodexHomeBusyError";
+    }
+}
+
+export function isHomeInitRace(stderr: string): boolean {
+    return /failed to initialize (?:sqlite )?state runtime/i.test(stderr);
+}
+
 export async function openTerminalServer(options: {
     account: TerminalAccount;
     child: AppServerProcess;
@@ -42,6 +66,7 @@ export async function openTerminalServer(options: {
     let primary: WebSocket | undefined;
     let bridge: CodexTuiBridge | undefined;
     let threadId: string | undefined;
+    let stderrTail = "";
     const client = new AppServerClient(options.child, {
         onNotification: (notification) => {
             if (notification.method === "thread/started") {
@@ -62,11 +87,15 @@ export async function openTerminalServer(options: {
         },
         // The byte count alone said nothing: when the app-server explains a failure on stderr,
         // that text is the only account of it anywhere, so keep it (bounded, file-only).
-        onStderr: (text) =>
+        onStderr: (text) => {
+            // Kept, not only logged: a cold-start race on the home says so here and nowhere
+            // else, and the launcher retries on exactly that sentence.
+            stderrTail = `${stderrTail}${text}`.slice(-STDERR_TAIL);
             logger.debug(
                 { bytes: text.length, stderr: text.length > 2000 ? `${text.slice(0, 2000)}…` : text },
                 "Codex app-server stderr received"
-            ),
+            );
+        },
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     let removeAbortListener: (() => void) | undefined;
@@ -92,8 +121,13 @@ export async function openTerminalServer(options: {
             aborted,
         ]);
     } catch (error) {
-        logger.warn({ error }, "Codex account initialization failed");
+        logger.warn({ error, stderr: stderrTail }, "Codex account initialization failed");
         await client.close();
+
+        if (isHomeInitRace(stderrTail)) {
+            throw new CodexHomeBusyError(stderrTail);
+        }
+
         throw error;
     } finally {
         clearTimeout(timer);
