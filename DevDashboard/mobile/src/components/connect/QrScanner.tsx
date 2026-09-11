@@ -3,7 +3,12 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useThemeColors } from "@/theme/colors";
 
-export function QrScanner({ onScanned }: { onScanned: (data: string) => void }) {
+/**
+ * `onScanned` reports whether the code was accepted. The latch is released on a rejection, so a
+ * wrong QR or a failed pairing does not end the scanning session — it used to latch on the first
+ * frame regardless of outcome, and the only way back was to switch tier away and return.
+ */
+export function QrScanner({ onScanned }: { onScanned: (data: string) => Promise<boolean> | boolean }) {
     const c = useThemeColors();
     const [permission, requestPermission] = useCameraPermissions();
     const [scannedOnce, setScannedOnce] = useState(false);
@@ -42,8 +47,21 @@ export function QrScanner({ onScanned }: { onScanned: (data: string) => void }) 
                     return;
                 }
 
+                // Latch BEFORE the await: onBarcodeScanned fires many times a second, so the latch
+                // is what suppresses duplicates. Releasing it only on a known failure keeps that.
                 setScannedOnce(true);
-                onScanned(data);
+                void (async () => {
+                    try {
+                        const ok = await onScanned(data);
+
+                        if (!ok) {
+                            setScannedOnce(false);
+                        }
+                    } catch (err) {
+                        console.warn("[qr] scan handler threw", err);
+                        setScannedOnce(false);
+                    }
+                })();
             }}
         />
     );

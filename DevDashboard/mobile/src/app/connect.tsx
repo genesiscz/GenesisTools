@@ -171,6 +171,13 @@ export default function ConnectScreen() {
         try {
             const [host, portStr] = lanHost.replace(/^https?:\/\//, "").split(":");
             const port = portStr ? Number.parseInt(portStr, 10) : 3042;
+
+            // Unlike connectLan this path never goes through `new URL()`, so nothing has rejected a
+            // non-numeric or out-of-range port yet; without this it persists as `http://host:NaN`.
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                throw new Error("Invalid port. Use a value between 1 and 65535.");
+            }
+
             console.log(`[connect] connectTailscale tier=tailscale baseUrl=http://${host}:${port}`);
             await setTailscale({ tailnetHost: host, port, username, password });
             await runProbe(useConnectionStore.getState().transport);
@@ -179,12 +186,13 @@ export default function ConnectScreen() {
         }
     }
 
-    async function onQrScanned(data: string): Promise<void> {
+    /** Returns whether the code was accepted, so the scanner can keep scanning after a rejection. */
+    async function onQrScanned(data: string): Promise<boolean> {
         setError(null);
 
         if (!parseScannedPairing(data)) {
             setError("That QR is not a DevDashboard pairing code.");
-            return;
+            return false;
         }
 
         // Same path as a deep-link pair (see app/pair.tsx) — applyPairingUri connects + probes; the
@@ -195,14 +203,17 @@ export default function ConnectScreen() {
         if (result.ok) {
             console.log("[connect] reachability dispatch: probe-ok (pairing)");
             dispatchReach({ type: "probe-ok" });
-        } else {
-            setError(result.error ?? "Pairing failed.");
-
-            if (tier) {
-                console.log(`[connect] reachability dispatch: probe-fail tier=${tier} (pairing)`);
-                dispatchReach({ type: "probe-fail", tier, paired: tier !== "managed" });
-            }
+            return true;
         }
+
+        setError(result.error ?? "Pairing failed.");
+
+        if (tier) {
+            console.log(`[connect] reachability dispatch: probe-fail tier=${tier} (pairing)`);
+            dispatchReach({ type: "probe-fail", tier, paired: tier !== "managed" });
+        }
+
+        return false;
     }
 
     return (
