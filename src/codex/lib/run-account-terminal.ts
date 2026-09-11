@@ -19,6 +19,7 @@ import { CodexAccountBinding } from "./account";
 import { formatActiveWriter, inspectActiveWriter, isActiveWriterError } from "./active-writer";
 import { type AppServerProcess, spawnAppServer } from "./app-server-client";
 import { computerUseLaunchOverrides } from "./computer-use";
+import { assignThreadToProject } from "./desktop-project";
 import { ACCOUNT_ENV_UNSET, buildAccountLaunchOptions, validateTuiArgs } from "./launch-options";
 import { buildNativeRunArgs, type CodexRunOptions } from "./run-options";
 import { CodexHomeBusyError, openTerminalServer } from "./terminal-server";
@@ -250,6 +251,23 @@ export async function runAccountTerminal(input: {
         process.off("uncaughtExceptionMonitor", onCrash);
         process.off("unhandledRejection", onRejection);
         tui?.kill("SIGTERM");
+
+        // While the app-server is still up. A thread that belongs to no project is filed under
+        // `projectless-thread-ids` and never appears in Codex Desktop's sidebar, which is how a
+        // `tools codex run` session went missing from the app with its rollout, its row and its
+        // name all correct on disk.
+        if (server?.threadId) {
+            const filing = server.threadId;
+
+            await withTimeout(
+                assignThreadToProject(server.client, { threadId: filing, cwd }),
+                5000,
+                new Error("Codex project assignment")
+            ).catch((error: unknown) => {
+                logger.warn({ error, threadId: filing, cwd }, "Could not file the thread under a Desktop project");
+            });
+        }
+
         if (shutdown) {
             // A shutdown that hangs leaves the app-server alive holding the thread's writer lock,
             // and the next `--resume` of that thread is refused for as long as this process lives.
