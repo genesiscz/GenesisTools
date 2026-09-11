@@ -3,6 +3,8 @@ import { createGrokAdapter } from "@genesiscz/utils/agent-sessions/grok-sessions
 import { resumeArgv } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
 import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
+import { grokAccountNameForHome } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { grokRoot } from "@genesiscz/utils/grok/worker-paths";
@@ -69,16 +71,23 @@ export async function resolveGrokTuiSession(
  * facade rather than `process.env` (repo rule), so `env.testing.set()` reaches
  * this spawn like it reaches the worker's.
  */
-export function buildGrokTuiSpawn(options: { session?: AgentSession; binary: string }): {
+export function buildGrokTuiSpawn(options: { session?: AgentSession; binary: string; account?: string }): {
     cmd: string[];
     cwd: string;
     env: Record<string, string | undefined>;
 } {
-    const { session, binary } = options;
+    const { session, binary, account } = options;
     return {
         cmd: session ? grokTuiResumeArgv(binary, session.sessionId) : [binary, "--resume"],
         cwd: session?.cwd ?? process.cwd(),
-        env: { ...env.getProcessEnv(), ...(session?.sourceHome ? { GROK_HOME: session.sourceHome } : {}) },
+        env: {
+            ...env.getProcessEnv(),
+            ...(session?.sourceHome ? { GROK_HOME: session.sourceHome } : {}),
+            // Read back off the process table to say which account a live pane bills. Grok
+            // identifies a login by its home and never by a name, and no transcript records
+            // one either, so this export is the only place the name survives the launch.
+            ...(account ? { [accountEnvVar("grok")]: account } : {}),
+        },
     };
 }
 
@@ -92,8 +101,9 @@ export async function launchGrokTui(session?: AgentSession): Promise<never> {
         );
     }
 
+    const account = session?.sourceHome ? await grokAccountNameForHome(session.sourceHome) : undefined;
     const proc = Bun.spawn({
-        ...buildGrokTuiSpawn({ session, binary: resolveGrokBinary() }),
+        ...buildGrokTuiSpawn({ session, binary: resolveGrokBinary(), ...(account ? { account } : {}) }),
         stdio: ["inherit", "inherit", "inherit"],
     });
     const code = await proc.exited;

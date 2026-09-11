@@ -18,6 +18,18 @@ describe("buildGrokTuiSpawn", () => {
         expect(spawn.cwd).toBe("/tmp/grok-tui-resume");
     });
 
+    /**
+     * Grok names a login by its home, never by an account, and no transcript records one
+     * either. This export is the only thing that lets a live grok pane be attributed to an
+     * account off the process table, the way `tools claude run` panes already are.
+     */
+    test("the account rides in TOOLS_GROK_ACCOUNT, and is absent when none was resolved", () => {
+        expect(
+            buildGrokTuiSpawn({ session: SESSION, binary: "/fixture/grok", account: "personal" }).env.TOOLS_GROK_ACCOUNT
+        ).toBe("personal");
+        expect(buildGrokTuiSpawn({ session: SESSION, binary: "/fixture/grok" }).env.TOOLS_GROK_ACCOUNT).toBeUndefined();
+    });
+
     test("the child env comes from the env facade, so a test override reaches it", async () => {
         await env.testing.withOverrides({ GROK_TUI_RESUME_PROBE: "on" }, () => {
             expect(buildGrokTuiSpawn({ session: SESSION, binary: "/fixture/grok" }).env.GROK_TUI_RESUME_PROBE).toBe(

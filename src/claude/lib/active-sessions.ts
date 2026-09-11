@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { CMUX_REFS_PATH, type SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { getActiveSessionIds } from "@app/claude/lib/tail-list";
+import { accountFromEnv, type LiveAccount } from "@genesiscz/utils/ai/account-env";
 import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
@@ -258,21 +259,13 @@ export function extractLaunchDetails(args: string): { resumeId: string | null; m
     return { resumeId, model };
 }
 
-/** From a `ps -e` args+env line: the TOOLS_CLAUDE_ACCOUNT value, split into account vs proxy target. */
-export function parseAccountEnv(envArgs: string): { account: string | null; proxyTarget: string | null } {
-    const match = envArgs.match(/(?:^|\s)TOOLS_CLAUDE_ACCOUNT=(\S+)/);
-
-    if (!match) {
-        return { account: null, proxyTarget: null };
-    }
-
-    const value = match[1];
-
-    if (value.startsWith("proxy:")) {
-        return { account: null, proxyTarget: value.slice("proxy:".length) };
-    }
-
-    return { account: value, proxyTarget: null };
+/**
+ * From a `ps -e` args+env line: the TOOLS_CLAUDE_ACCOUNT value, split into account vs proxy
+ * target. One provider's door onto the shared reader, which Codex and Grok use through the
+ * same function with their own alias.
+ */
+export function parseAccountEnv(envArgs: string): LiveAccount {
+    return accountFromEnv(envArgs, "claude");
 }
 
 export type SessionIdSource = "resume-arg" | "hook-tty" | "cwd-unique" | "none";
