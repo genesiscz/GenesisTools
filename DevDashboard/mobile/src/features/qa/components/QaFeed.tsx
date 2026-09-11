@@ -17,7 +17,12 @@ interface QaFeedProps {
 
 /** Resolves the effective unread state: a local toggle wins over the server's `readAt`. */
 function resolveUnread(row: QaRow, locallyUnread: Set<string>, locallyRead: Set<string>): boolean {
-    const id = row.id ?? "";
+    const id = row.id;
+
+    // An id-less row has no stable override key — every one of them would share `""` and toggle together.
+    if (!id) {
+        return isUnread(row);
+    }
 
     if (locallyRead.has(id)) {
         return false;

@@ -51,6 +51,7 @@ export function openQaSubscription(
 ): QaSubscriptionHandle {
     const seen = new Set<string>();
     let closed = false;
+    let live = false;
 
     callbacks.onStatus?.("connecting");
 
@@ -70,7 +71,11 @@ export function openQaSubscription(
             seen.add(id);
         }
 
-        callbacks.onStatus?.("live");
+        if (!live) {
+            live = true;
+            callbacks.onStatus?.("live");
+        }
+
         callbacks.onRow(row);
     });
 
