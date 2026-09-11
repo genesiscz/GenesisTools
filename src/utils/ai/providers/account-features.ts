@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { AccountEntry } from "../config/schema";
+import type { AccountProviderAlias } from "./alias-list";
 
 /**
  * Account lifecycle and quota features of a provider plugin: login flows, home discovery,
@@ -196,7 +197,7 @@ export interface SpendScope {
     /** Roots on disk that belong to this account. */
     transcriptRoots: string[];
     /** Source id for ai-spend. */
-    source: "claude" | "codex" | "grok";
+    source: AccountProviderAlias;
 }
 
 /**

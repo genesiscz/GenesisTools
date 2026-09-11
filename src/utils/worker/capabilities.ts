@@ -7,7 +7,9 @@
  * a missing capability is declared, never emulated or silently degraded.
  */
 
-export type WorkerBackend = "codex" | "grok" | "claude";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
+export type WorkerBackend = AccountProviderAlias;
 
 export interface WorkerCapabilities {
     /** Mid-turn approval channel (pause + approve/deny) or none at all. */

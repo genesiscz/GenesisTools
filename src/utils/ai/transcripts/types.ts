@@ -1,4 +1,6 @@
-export type TranscriptProvider = "claude" | "grok" | "codex";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
+export type TranscriptProvider = AccountProviderAlias;
 
 export type TranscriptRole = "user" | "assistant" | "system";
 

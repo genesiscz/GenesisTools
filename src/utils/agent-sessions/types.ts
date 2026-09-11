@@ -1,6 +1,7 @@
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { DailyStats, HistoryFileStatistics, SessionMetadataRecord, TokenUsage } from "./cache-types";
 
-export type AgentKind = "claude" | "grok" | "codex";
+export type AgentKind = AccountProviderAlias;
 
 export interface AgentSession<Kind extends string = AgentKind> {
     kind: Kind;

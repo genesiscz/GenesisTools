@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -340,7 +341,7 @@ export function isAgentLauncher(command: string): boolean {
     );
 }
 
-export function agentKindFromLauncher(command: string): "claude" | "grok" | "codex" | undefined {
+export function agentKindFromLauncher(command: string): AccountProviderAlias | undefined {
     const trimmed = command.trim();
     if (GROK_LAUNCHER.test(trimmed)) {
         return "grok";
