@@ -537,28 +537,35 @@ func cmdAct(appName _: String) {
                     throw WindowEventError.unavailable("wrong frontmost app/window; focus explicitly and refresh")
                 }
             }
-            var hit: AXUIElement?
             let root = background ? AXUIElementCreateApplication(pid) : AXUIElementCreateSystemWide()
-            guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success else {
-                throw WindowEventError.unavailable("cannot verify event hit target")
-            }
-            guard let hit else {
-                throw WindowEventError.unavailable("cannot verify event hit target")
-            }
-            var ancestor: AXUIElement? = hit
-            var enabledStates: [Bool?] = []
-            for _ in 0..<50 {
-                guard let current = ancestor else { break }
-                enabledStates.append((axAttribute(current, "AXEnabled") as? NSNumber)?.boolValue)
-                if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
-                    throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
+            // Chromium answers a hit test coarsely the first time (a container group) and
+            // refines it once the renderer has resolved the point, so inside web content the
+            // first answer disagrees with the target and a later one agrees. Ask up to five
+            // times, 50 ms apart, before calling the target occluded. Native apps answer the
+            // same way every time and pay nothing here.
+            for attempt in 0..<5 {
+                if attempt > 0 {
+                    Thread.sleep(forTimeInterval: 0.05)
                 }
-                if CFEqual(current, target) {
-                    try validatePointerHitEnabled(enabledStates)
-                    return hit
+                var hit: AXUIElement?
+                guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success, let hit else {
+                    throw WindowEventError.unavailable("cannot verify event hit target")
                 }
-                guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
-                ancestor = (parent as! AXUIElement)
+                var ancestor: AXUIElement? = hit
+                var enabledStates: [Bool?] = []
+                for _ in 0..<50 {
+                    guard let current = ancestor else { break }
+                    enabledStates.append((axAttribute(current, "AXEnabled") as? NSNumber)?.boolValue)
+                    if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
+                        throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
+                    }
+                    if CFEqual(current, target) {
+                        try validatePointerHitEnabled(enabledStates)
+                        return hit
+                    }
+                    guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+                    ancestor = (parent as! AXUIElement)
+                }
             }
             throw WindowEventError.unavailable("observed target is occluded or hit testing disagrees; no event dispatched")
         }
