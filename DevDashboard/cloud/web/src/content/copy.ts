@@ -141,7 +141,9 @@ export const FOOTER = {
     body: "Your machine. Your keys. We can't see your data — and you can prove it.",
     cta: "Get early access",
     finePrint: "No credit card · self-host stays free",
-    links: ["Trust", "Features", "Pricing", "Open protocol", "Security"],
+    // Each label becomes a `#<slug>` jump, so only sections that actually exist may be listed.
+    // "Open protocol" and "Security" are dropped until landing sections with those ids ship.
+    links: ["Trust", "Features", "Pricing"],
 } as const;
 
 /** The four trust tiers, in display order, straight from the policy. */

@@ -104,6 +104,7 @@ export function AuthCard({ mode, plan }: AuthCardProps) {
 
                         {error && (
                             <p
+                                role="alert"
                                 data-testid="auth-error"
                                 className="rounded-xl bg-red-500/10 px-3.5 py-2.5 font-mono text-[12px] text-red-300 ring-1 ring-red-400/20"
                             >
