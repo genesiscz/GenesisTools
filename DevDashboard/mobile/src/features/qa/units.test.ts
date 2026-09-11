@@ -4,6 +4,7 @@ import {
     DASH,
     isAnswerTruncated,
     isUnread,
+    plainPreview,
     relativeTime,
     tagTone,
 } from "@/features/qa/units";
@@ -21,6 +22,27 @@ describe("isAnswerTruncated / answerPreview", () => {
 
     it("returns the dash for a missing answer", () => {
         expect(answerPreview(undefined)).toBe(DASH);
+    });
+});
+
+describe("plainPreview", () => {
+    it("drops the inline markdown that a plain Text would render literally", () => {
+        expect(plainPreview("**bold** and `code`")).toBe("bold and code");
+        expect(plainPreview("# Heading")).toBe("Heading");
+        expect(plainPreview("- one\n- two")).toBe("one\ntwo");
+        expect(plainPreview("1. one\n2. two")).toBe("one\ntwo");
+        expect(plainPreview("see [the docs](https://example.com)")).toBe("see the docs");
+        expect(plainPreview("__loud__ and _quiet_")).toBe("loud and quiet");
+        expect(plainPreview("> quoted")).toBe("quoted");
+    });
+
+    it("leaves plain prose and the em dash alone", () => {
+        expect(plainPreview("just a sentence")).toBe("just a sentence");
+        expect(plainPreview(undefined)).toBe(DASH);
+    });
+
+    it("keeps the truncation ellipsis answerPreview added", () => {
+        expect(plainPreview("**1**\n2\n3\n4")).toBe("1\n2\n3\n…");
         expect(isAnswerTruncated(undefined)).toBe(false);
     });
 });

@@ -2,7 +2,7 @@ import type { QaRow } from "@dd/contract";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { QaAnswerHtml } from "@/features/qa/components/QaAnswerHtml";
-import { answerPreview, DASH, isAnswerTruncated, relativeTime, tagTone } from "@/features/qa/units";
+import { DASH, isAnswerTruncated, plainPreview, relativeTime, tagTone } from "@/features/qa/units";
 import { Card } from "@/ui/Card";
 import { StatusPill } from "@/ui/StatusPill";
 import { useThemeColors } from "@/theme/colors";
@@ -28,7 +28,7 @@ export function QaCard({ entry, unread, onToggleRead }: QaCardProps) {
 
     // Collapsed: cheap plain-text preview. Expanded: rich web-parity HTML in a WebView (heavy, so only
     // mounted on expand) when the server enriched the answer; otherwise the plain markdown text.
-    const collapsedAnswer = answerPreview(entry.answerMd);
+    const collapsedAnswer = plainPreview(entry.answerMd);
     // Only SSE frames carry the enrichment now; `/api/qa/log` returns raw rows, so `answerHtml` is
     // optional on QaRow. Bind it to a local so the emptiness check narrows the value that is used.
     const answerHtml = entry.answerHtml;

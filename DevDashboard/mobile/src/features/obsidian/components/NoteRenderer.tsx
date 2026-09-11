@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import {
@@ -33,6 +33,13 @@ export function WebViewNoteRenderer({ html, baseUrl, onOpenNote, onOpenExternal 
     // navigation's URL to `baseUrl` (an http URL) — NOT `about:blank` — so we cannot key the
     // allow-decision off the URL. Instead we allow exactly the first load, then intercept the rest.
     const firstLoadConsumed = useRef(false);
+
+    // Reset per document. A new `html` prop starts a new main-frame load, and without this the ref is
+    // still consumed from the previous one, so the renderer blocks its own reload and shows a blank
+    // WebView. The `key={path}` at the NoteReader call site worked around it from the outside.
+    useEffect(() => {
+        firstLoadConsumed.current = false;
+    }, [document]);
 
     const onMessage = (event: WebViewMessageEvent): void => {
         const message: NoteMessage | null = parseNoteMessage(event.nativeEvent.data);

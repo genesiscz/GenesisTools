@@ -33,6 +33,32 @@ export function answerPreview(answerMd: string | undefined): string {
     return `${answerMd.split("\n").slice(0, QA_ANSWER_PREVIEW_LINES).join("\n")}\n…`;
 }
 
+/**
+ * Strip inline markdown so the collapsed preview reads as text in a plain `<Text>`. The rich HTML
+ * renderer only engages for entries that arrived over SSE, so everything loaded from `/api/qa/log`
+ * would otherwise show literal `**bold**`, backticks, `#` headings and `- ` bullets in the feed.
+ */
+export function plainPreview(answerMd: string | undefined): string {
+    const preview = answerPreview(answerMd);
+
+    if (preview === DASH) {
+        return preview;
+    }
+
+    return preview
+        .replace(/```[a-zA-Z0-9]*\n?/g, "")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+        .replace(/^\s*>\s?/gm, "")
+        .replace(/^(\s*)[-*+]\s+/gm, "$1")
+        .replace(/^(\s*)\d+\.\s+/gm, "$1")
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
+        .replace(/__([^_]+)__/g, "$1")
+        .replace(/\*([^*\n]+)\*/g, "$1")
+        .replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, "$1$2");
+}
+
 /** A short relative time ("now", "5m", "3h", "2d") from an epoch-ms timestamp. */
 export function relativeTime(ts: number | undefined, now: number = Date.now()): string {
     if (ts == null || Number.isNaN(ts)) {

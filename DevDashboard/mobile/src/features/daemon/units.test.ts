@@ -18,6 +18,13 @@ describe("daemon units — duration", () => {
         expect(duration(64000)).toBe("1m04s");
         expect(duration(null)).toBe(DASH);
     });
+
+    it("carries a rounded-up remainder into the minute instead of printing 60s", () => {
+        expect(duration(119900)).toBe("2m00s");
+        expect(duration(119400)).toBe("1m59s");
+        // Under a minute still takes the seconds branch, so the minute carry cannot start there.
+        expect(duration(59500)).toBe("59.5s");
+    });
 });
 
 describe("daemon units — startedAt", () => {

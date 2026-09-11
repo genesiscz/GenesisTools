@@ -33,8 +33,11 @@ export function duration(ms: number | null): string {
         return `${seconds.toFixed(1)}s`;
     }
 
-    const mins = Math.floor(seconds / 60);
-    const rem = Math.round(seconds % 60);
+    // Round ONCE, before splitting. Rounding the remainder separately produced "1m60s" for anything
+    // in [m*60000 + 59500, m*60000 + 60000).
+    const totalSeconds = Math.round(seconds);
+    const mins = Math.floor(totalSeconds / 60);
+    const rem = totalSeconds % 60;
     return `${mins}m${String(rem).padStart(2, "0")}s`;
 }
 
