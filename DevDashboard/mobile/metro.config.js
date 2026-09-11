@@ -29,6 +29,9 @@ config.resolver.nodeModulesPaths = [
 //            everything else from there is a type-only re-export — see contract-purity.test.ts)
 // Every `@genesiscz/utils/*` the contract VALUE-imports needs an entry here, or Metro resolves it
 // to the repo's server-side module and bundles its node: dependencies into Hermes.
+// tsconfig also maps `@/assets/*`, `@genesiscz/utils` and `@genesiscz/utils/*`; those are omitted on
+// purpose, because nothing in the bundle imports them at runtime. Adding such an import means
+// adding a rule here as well — `contract-purity.test.ts` checks the `@genesiscz/utils` half.
 const aliasResolvers = [
     { match: "@genesiscz/utils/json", target: path.resolve(projectRoot, "src/shims/safe-json.ts") },
     { match: "@genesiscz/utils/logger", target: path.resolve(projectRoot, "src/shims/logger.ts") },

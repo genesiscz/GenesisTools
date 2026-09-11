@@ -15,8 +15,10 @@ const withoutPushEntitlement = (config: ExpoConfig): ExpoConfig =>
 // `config`; we MERGE the transport/trust native requirements onto it so no app.json key is
 // lost. Adds: iOS Bonjour (`_devdashboard._tcp`) + local-network + camera usage strings;
 // Android INTERNET / network-state / Wi-Fi-multicast / camera permissions; the
-// `react-native-zeroconf` + `expo-camera` config plugins; and the `devdashboard` deep-link
-// scheme used by the pairing QR.
+// `expo-camera` config plugin (zeroconf is autolinked — see the note on `plugins` below); and
+// the `devdashboard` deep-link scheme used by the pairing QR.
+const CAMERA_PERMISSION = "Scan the pairing QR shown by the DevDashboard agent.";
+
 export default ({ config }: ConfigContext): ExpoConfig => {
     const existingScheme = config.scheme;
     const schemes = Array.isArray(existingScheme)
@@ -36,7 +38,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
                 ...config.ios?.infoPlist,
                 NSBonjourServices: ["_devdashboard._tcp"],
                 NSLocalNetworkUsageDescription: "DevDashboard discovers your Mac's agent on the local network.",
-                NSCameraUsageDescription: "Scan the pairing QR shown by the DevDashboard agent.",
+                NSCameraUsageDescription: CAMERA_PERMISSION,
             },
         },
         android: {
@@ -56,7 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         // NSLocalNetworkUsageDescription) and the Android `permissions` above.
         plugins: [
             ...(config.plugins ?? []),
-            ["expo-camera", { cameraPermission: "Scan the pairing QR shown by the DevDashboard agent." }],
+            ["expo-camera", { cameraPermission: CAMERA_PERMISSION }],
         ],
     });
 };
