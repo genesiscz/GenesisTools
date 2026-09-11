@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import Zeroconf, { type Service } from "react-native-zeroconf";
 
@@ -32,14 +32,23 @@ export interface ZeroconfDiscovery {
 export function useZeroconfDiscovery(): ZeroconfDiscovery {
     const [agents, setAgents] = useState<DiscoveredAgent[]>([]);
     const [scanning, setScanning] = useState(false);
+    // The instance lives in a ref rather than the effect closure so `rescan` can actually reach it.
+    const zeroconfRef = useRef<Zeroconf | null>(null);
+
+    const startScan = useCallback((): void => {
+        setScanning(true);
+        zeroconfRef.current?.scan(SERVICE_TYPE, "tcp", "local.");
+    }, []);
+
+    const rescan = useCallback((): void => {
+        zeroconfRef.current?.stop();
+        setAgents([]);
+        startScan();
+    }, [startScan]);
 
     useEffect(() => {
         const zeroconf = new Zeroconf();
-
-        const startScan = (): void => {
-            setScanning(true);
-            zeroconf.scan(SERVICE_TYPE, "tcp", "local.");
-        };
+        zeroconfRef.current = zeroconf;
 
         zeroconf.on("resolved", (service: Service) => {
             const agent = toAgent(service);
@@ -50,13 +59,15 @@ export function useZeroconfDiscovery(): ZeroconfDiscovery {
         });
 
         zeroconf.on("error", () => setScanning(false));
+        // `start`/`stop` are the native scan lifecycle. Without the `stop` listener a scan that ends
+        // cleanly leaves the UI saying "Scanning…" forever, since only `error` ever cleared the flag.
+        zeroconf.on("start", () => setScanning(true));
+        zeroconf.on("stop", () => setScanning(false));
         startScan();
 
         const sub = AppState.addEventListener("change", (next: AppStateStatus) => {
             if (next === "active") {
-                setAgents([]);
-                zeroconf.stop();
-                startScan();
+                rescan();
             }
         });
 
@@ -64,8 +75,9 @@ export function useZeroconfDiscovery(): ZeroconfDiscovery {
             sub.remove();
             zeroconf.stop();
             zeroconf.removeDeviceListeners();
+            zeroconfRef.current = null;
         };
-    }, []);
+    }, [rescan, startScan]);
 
-    return { agents, scanning, rescan: () => setAgents([]) };
+    return { agents, scanning, rescan };
 }
