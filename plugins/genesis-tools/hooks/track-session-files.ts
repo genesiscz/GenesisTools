@@ -48,11 +48,16 @@ interface HookInput {
  * tracked; the hook never guesses from arguments, because a shell call that happens to carry
  * a path is usually reading it.
  *
- * ⚠️ Only the Claude names are VERIFIED (they are the ones `hooks.json` matches on). The
- * others are candidates read off Codex rollouts and Grok transcripts, where the item type is
- * not necessarily the hook's `tool_name`. `recordUnknownTool` below is what settles it: every
- * unrecognised PostToolUse name is tallied to `hook-tool-names.json`, so one real edit in a
- * harness names its tool permanently. Move a name up here once the tally shows it.
+ * 🛑 Outside Claude this set is currently unreachable, and that is deliberate. Verified
+ * 2026-09-11: a `codex exec` that really created a file produced NO PostToolUse hook call at
+ * all, because Codex honours the `matcher` in `hooks.json` and none of its tool names match
+ * it. Widening the matcher to `*` would spawn this process on every Read, Grep and Bash call
+ * in every harness to discard almost all of them. Codex and Grok do not need it: their own
+ * transcripts already record every file they changed.
+ *
+ * The set and `recordUnknownTool` stay because they cost nothing and remove the guesswork if
+ * a harness ever does deliver an edit tool here — the tally names it instead of the hook
+ * silently dropping it.
  */
 const EDIT_TOOLS = new Set([
     // Claude Code — verified, and the matcher in hooks.json uses the first three.
@@ -98,6 +103,25 @@ function recordUnknownTool(harness: string, toolName: string): void {
     } catch {
         // A vocabulary note is never worth failing a tool call over.
     }
+}
+
+/**
+ * What SessionStart tells the model, which is not the same sentence on every harness.
+ *
+ * 🛑 A SessionStart `additionalContext` reaches Codex as a DEVELOPER message, which outranks
+ * AGENTS.md. Promising "all files you modify are tracked" there was simply false: the
+ * PostToolUse matcher names Claude's edit tools, so nothing is tracked outside Claude. Codex
+ * and Grok are not missing the feature — their own transcripts record every file they changed,
+ * and `tools codex history` / `tools grok history` read it out (see
+ * `src/utils/agent-sessions/readers/codex.ts`). So say the session id and stop.
+ */
+function sessionStartOutput(input: HookInput): { hookEventName: string; additionalContext: string } {
+    const tracked =
+        harnessOf(input) === "claude"
+            ? `\n\n**Modified files tracking:** All files you modify are tracked in ~/.genesis-tools/claude-code/sessions/${input.session_id}.json`
+            : "";
+
+    return { hookEventName: "SessionStart", additionalContext: `📌 Session ID: ${input.session_id}${tracked}` };
 }
 
 /** The path an edit tool names, in whichever field its harness puts it. */
@@ -202,16 +226,9 @@ async function main() {
     const input: HookInput = SafeJSON.parse(await Bun.stdin.text()) as HookInput;
     const { session_id, hook_event_name, tool_response } = input;
 
-    // On SessionStart, output session ID and clean up old sessions
+    // On SessionStart, output session ID and clean up old sessions.
     if (hook_event_name === "SessionStart") {
-        console.log(
-            SafeJSON.stringify({
-                hookSpecificOutput: {
-                    hookEventName: "SessionStart",
-                    additionalContext: `📌 Session ID: ${session_id}\n\n**Modified files tracking:** All files you modify are tracked in ~/.genesis-tools/claude-code/sessions/${session_id}.json`,
-                },
-            })
-        );
+        console.log(SafeJSON.stringify({ hookSpecificOutput: sessionStartOutput(input) }));
         cleanupOldSessions();
         process.exit(0);
     }
