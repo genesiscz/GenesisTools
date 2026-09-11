@@ -31,11 +31,15 @@ test("a codex row carries no cache, context or cmux field at all", () => {
     expect("lastUserAt" in codexRow).toBe(false);
 });
 
-test("a codex row never claims an account, because nothing records one", () => {
+test("a codex row's account is nullable, because Codex itself records none", () => {
     // Every Codex account shares one home, and neither a rollout's session_meta nor a `threads`
-    // row carries an account. Only a LIVE session can be attributed, off the process table.
+    // row carries an account. The SessionStart pin journal is the only record, so a session
+    // started outside `tools codex run` — or before the hook learned about Codex — has none.
     expect(codexRow.account).toBeNull();
     expect(codexRow.sourceHome).toBe("/home/.codex");
+
+    const pinned: AgentSessionRow = { ...codexRow, account: "work" };
+    expect(pinned.account).toBe("work");
 });
 
 test("a claude row is the same shape with the extra fields filled", () => {
