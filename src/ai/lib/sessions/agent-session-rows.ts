@@ -63,7 +63,12 @@ export interface AgentSessionRowsOptions {
     providers?: readonly AccountProviderAlias[];
     /** Keep rows with mtime within this many hours. Omitted = no time filter. */
     hours?: number;
-    /** If the hours window has fewer rows, append older sessions by mtime. */
+    /**
+     * If the hours window has fewer rows, append older sessions by mtime.
+     *
+     * ⚠️ Claude only. `nativeRows()` never receives it, so Codex and Grok ignore it silently.
+     * The CLI help says so; a programmatic caller reads this instead.
+     */
     minRows?: number;
     limit?: number;
     now?: number;

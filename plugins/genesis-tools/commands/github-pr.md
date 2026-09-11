@@ -8,6 +8,13 @@ argument-hint: "<pr-number-or-url> [-u] [-w] [--save] [--open] [--open-only]"
 
 Fetch PR review comments, let user select which to fix, implement fixes, and commit.
 
+⚠️ **Written for Claude Code; Codex and Grok install this plugin verbatim.** Where this document
+says `Explore` agent, `Task` / `subagent_type`, `thoroughness`, `run_in_background`, a Claude
+model id, or `AskUserQuestion`, those are Claude Code tools. In Codex use `spawn_agent` /
+`followup_task` and ask in plain text; in Grok do the step inline and ask in plain text. The
+REVIEW contract — fetch through `tools github review`, judge each comment on the real code, one
+commit per logical fix, reply per thread — is what matters and holds on all three.
+
 ## Usage
 
 ```

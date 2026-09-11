@@ -9,6 +9,13 @@ Dispatcher for internet research. Main Claude stays in charge: classifies the qu
 
 The skill is **tolerant of missing MCPs**: if a preferred MCP isn't installed, the agent uses what's available, the gap is recorded in `Confidence & Gaps`, and the user is offered a one-time install path (see "MCP availability" below).
 
+⚠️ **Written for Claude Code, and this plugin is installed verbatim by Codex and Grok too.** The
+dispatch model below (`Agent` / subagent types, `general-purpose`, `gt:explore`, per-agent model
+pins, the concurrency cap) and every `AskUserQuestion` budget are Claude Code tools. In Codex use
+`spawn_agent` / `followup_task` and ask in plain text; in Grok, do the categories yourself in the
+same order and ask in plain text. The RESEARCH contract — source minimums, per-category coverage,
+citations, `Confidence & Gaps` — is what matters and holds on all three.
+
 ## When to use
 
 - "research X", "look up X online"

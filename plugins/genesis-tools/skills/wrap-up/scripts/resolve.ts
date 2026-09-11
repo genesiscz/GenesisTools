@@ -370,7 +370,7 @@ export function nextSteps({
         return [
             "1. Tier 1 wins if it applies: a vault folder this session already read or wrote for this project IS the target, no lookup needed.",
             `2. Otherwise see what is already registered for this project: ${entriesCmd}`,
-            "3. Infer the vault layout with one or two `ls` calls, then ask the user to confirm the directory (AskUserQuestion).",
+            "3. Infer the vault layout with one or two `ls` calls, then ask the user to confirm the directory (AskUserQuestion in Claude Code; plain text anywhere else).",
             `4. Pin the confirmed directory so it is never asked again: ${registerCmd}`,
             "5. Create the doc from the SKILL.md template, then append with `log`.",
         ];
@@ -379,7 +379,7 @@ export function nextSteps({
     const steps: string[] = [];
     if (!exact) {
         steps.push(
-            `1. Do not write yet. No entry claims this branch specifically, so show the user this docPath plus "alternatives" and let them confirm (AskUserQuestion). Full list: ${entriesCmd}`,
+            `1. Do not write yet. No entry claims this branch specifically, so show the user this docPath plus "alternatives" and let them confirm (AskUserQuestion in Claude Code; plain text anywhere else). Full list: ${entriesCmd}`,
             `2. Once confirmed, pin it to this branch — do NOT register a catch-all: ${registerCmd}`
         );
     }

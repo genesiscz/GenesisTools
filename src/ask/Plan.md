@@ -1629,7 +1629,7 @@ main().catch((err) => {
 
 #### Quality of Life
 
--   [ ] Progress indicators for long operations ❌ **NOT IMPLEMENTED** - No progress spinners/indicators for long operations
+-   [x] Progress indicators for long operations ✅ **SHIPPED** (noted 2026-09-11 23:40) - `p.spinner()` around long work in `src/ask/chat/CommandHandler.ts:357-360` and `src/ask/commands/configure.ts:483-496`
 -   [ ] Conversation search and filtering ❌ **NOT IMPLEMENTED** - Can list conversations but no search/filter
 -   [x] Export conversations to different formats ✅ **COMPLETED** - Implemented in `ConversationManager.ts` (JSON, Markdown, TXT)
 -   [ ] Keyboard shortcuts and advanced commands ❌ **NOT IMPLEMENTED** - Only basic commands exist

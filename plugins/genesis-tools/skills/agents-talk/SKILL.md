@@ -7,8 +7,10 @@ description: "CLAUDE ONLY, and only inside a handoff-to run. Picks the channel f
 
 > **🛑 Codex must never invoke this skill.** These plugin hooks and skills are portable, so a
 > Codex CLI or Codex Desktop session can see this file. It still does not apply. Codex has no
-> `Monitor` tool, so the receive-and-wake strategies below have no implementation there, and a
-> Codex worker that loads this reaches for a bus it cannot subscribe to. A Codex worker that is
+> `Monitor` tool, so it has no NONBLOCKING receive: the table below offers it only `login
+> --once`, which blocks the turn, and a protocol whose whole point is talking WHILE you work
+> cannot be built on that. (Reachable in blocking mode is not the same as workable — do not
+> read the ban as "the bus is unreachable from Codex".) A Codex worker that is
 > part of a swarm gets what it needs from the brief that `tools codex` and `gt:handoff-to` build
 > for it. Use the native Codex collaboration tools instead.
 >

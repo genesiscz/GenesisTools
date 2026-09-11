@@ -5,6 +5,12 @@ allowed-tools: Bash, Read, Grep, Glob, Task, WebFetch, WebSearch
 
 # Linux Server Security Audit
 
+⚠️ **The parallel scanner phase below is written for Claude Code** (`Task` with
+`run_in_background`, then `TaskOutput`), and the `allowed-tools` line names `Task`, which this
+harness now exposes as `Agent`. Codex and Grok install this plugin verbatim and have neither:
+there, run the three scanner groups sequentially in the same order. Nothing else in the audit
+changes, and a sequential run produces the same report.
+
 You are performing a comprehensive security audit on this Linux server. Analyze all security logs, detect attack patterns, identify malicious IPs, check security tool status, and run malware/rootkit scans.
 
 ---
