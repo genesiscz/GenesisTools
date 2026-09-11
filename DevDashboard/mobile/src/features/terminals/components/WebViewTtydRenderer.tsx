@@ -109,7 +109,7 @@ export const WebViewTtydRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 sendInput(text) {
                     run(injectText(text));
                 },
-                sendKey(key: TerminalKey, mods?: TerminalKeyMods) {
+                sendKey(key: TerminalKey | string, mods?: TerminalKeyMods) {
                     run(injectKey(key, mods));
                 },
                 paste(text) {

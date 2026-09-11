@@ -55,7 +55,8 @@ export interface TerminalRenderer {
     attach(session: TerminalSession, cb: TerminalCallbacks): Promise<void>;
     detach(): Promise<void>;
     sendInput(text: string): void;
-    sendKey(key: TerminalKey, mods?: TerminalKeyMods): void;
+    /** A named key, or a single character when the key bar sends Ctrl plus punctuation. */
+    sendKey(key: TerminalKey | string, mods?: TerminalKeyMods): void;
     paste(text: string): void;
     scroll(lines: number): void;
     scrollPage(direction: -1 | 1): void;

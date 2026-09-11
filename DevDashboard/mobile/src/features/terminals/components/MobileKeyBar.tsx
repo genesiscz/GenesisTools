@@ -46,7 +46,7 @@ export function MobileKeyBar({ renderer, onPaste }: MobileKeyBarProps) {
             }
 
             if (ctrl) {
-                renderer.sendKey(char as TerminalKey, { ctrl: true });
+                renderer.sendKey(char, { ctrl: true });
                 setCtrl(false);
                 return;
             }

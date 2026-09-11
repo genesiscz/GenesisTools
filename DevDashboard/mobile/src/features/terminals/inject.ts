@@ -27,9 +27,20 @@ const KEY_TABLE: Record<TerminalKey, KeySpec> = {
     PageDown: { key: "PageDown", code: "PageDown", keyCode: 34 },
 };
 
-/** Dispatch a synthetic keydown for a NAMED key against the ttyd page's xterm helper textarea. */
-export function injectKey(key: TerminalKey, mods: { shift?: boolean; ctrl?: boolean; alt?: boolean } = {}): string {
-    const spec = KEY_TABLE[key];
+/**
+ * Dispatch a synthetic keydown against the ttyd page's xterm helper textarea. The key bar sends
+ * single characters here too (Ctrl plus punctuation), which are not in `KEY_TABLE` — the fallback
+ * mirrors what `keyToBytes` in keymap.ts already does for Driver B.
+ */
+export function injectKey(
+    key: TerminalKey | string,
+    mods: { shift?: boolean; ctrl?: boolean; alt?: boolean } = {},
+): string {
+    const spec: KeySpec = KEY_TABLE[key as TerminalKey] ?? {
+        key,
+        code: `Key${key.toUpperCase()}`,
+        keyCode: key.toUpperCase().charCodeAt(0),
+    };
 
     return `(function(){
         var ta=document.querySelector(".xterm-helper-textarea");
@@ -43,14 +54,14 @@ export function injectKey(key: TerminalKey, mods: { shift?: boolean; ctrl?: bool
     })();true;`;
 }
 
-/** Type a raw string into the ttyd terminal (Paste / printable key-bar keys). */
+/**
+ * Type a raw string into the ttyd terminal (Paste / printable key-bar keys). Uses the shell's own
+ * `__ddTtydPaste` (`term.paste(text)`), the same server-injected surface the scroll helpers below
+ * use. A synthetic `InputEvent` does nothing here: xterm.js reads the helper textarea on its own
+ * key handlers and never listens for `input`.
+ */
 export function injectText(text: string): string {
-    return `(function(){
-        var ta=document.querySelector(".xterm-helper-textarea");
-        if(!ta){return;}
-        ta.focus();
-        ta.dispatchEvent(new InputEvent("input",{data:${str(text)},inputType:"insertText",bubbles:true}));
-    })();true;`;
+    return `window.__ddTtydPaste&&window.__ddTtydPaste(${str(text)});true;`;
 }
 
 /** Scroll the ttyd scrollback via the server-injected helper (positive = newer/down). */
