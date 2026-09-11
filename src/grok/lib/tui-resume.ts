@@ -1,69 +1,27 @@
-import { formatHistoryMarkdown } from "@genesiscz/utils/agent-sessions/format-history";
-import { createGrokAdapter } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { resumeArgv } from "@genesiscz/utils/agent-sessions/resume-argv";
-import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
-import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
 import { accountEnvVar } from "@genesiscz/utils/ai/account-env";
-import { grokAccountNameForHome } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
-import { suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
-import { grokRoot } from "@genesiscz/utils/grok/worker-paths";
-import { out } from "@genesiscz/utils/logger";
-import { resolveGrokBinary } from "./worker";
-
-export interface TuiResumeOptions {
-    query?: string;
-    list?: boolean;
-    all?: boolean;
-    limit?: number;
-}
 
 export function grokTuiResumeArgv(binary: string, sessionId: string): string[] {
     return [binary, ...resumeArgv("grok", sessionId).slice(1)];
 }
 
-export function parseResumeLimit(raw: string | undefined, fallback = 20): number {
-    if (raw === undefined || raw.trim() === "") {
-        return fallback;
-    }
-
-    const trimmed = raw.trim();
-    if (!/^\d+$/.test(trimmed)) {
-        throw new Error(`--limit must be a positive integer (got "${raw}")`);
-    }
-
-    const n = Number.parseInt(trimmed, 10);
-    if (n < 1) {
-        throw new Error(`--limit must be a positive integer (got "${raw}")`);
-    }
-
-    return n;
-}
-
-export async function resolveGrokTuiSession(
-    opts: TuiResumeOptions,
-    adapter: AgentSessionAdapter = createGrokAdapter()
-): Promise<AgentSession | undefined> {
-    const filters = { cwd: opts.all ? undefined : process.cwd(), all: Boolean(opts.all), limit: opts.limit ?? 20 };
-    if (opts.list) {
-        const sessions = opts.query
-            ? await adapter.search({ ...filters, query: opts.query })
-            : await adapter.list(filters);
-        out.print(formatHistoryMarkdown(sessions, opts.query));
-        return undefined;
-    }
-    if (!opts.query) {
-        out.error(`Pass a session query, or use native bare resume. ${suggestCommand("tools grok run --resume")}`);
-        process.exitCode = 1;
-        return undefined;
-    }
-    try {
-        return await selectResumeSession({ adapter, query: opts.query, filters });
-    } catch (error) {
-        out.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 1;
-        return undefined;
-    }
+export interface GrokTuiSpawnInput {
+    binary: string;
+    session?: AgentSession;
+    /** `--resume` with no value: the native picker. */
+    nativeResume?: boolean;
+    /** `-c, --continue`. */
+    continueLast?: boolean;
+    model?: string;
+    passthrough?: string[];
+    cwd?: string;
+    account?: string;
+    /** The login file the session bills; `GROK_AUTH_PATH` overrides the home's own `auth.json`. */
+    authPath?: string;
+    /** The home the session tree lives in; the session's own home wins over it. */
+    home?: string;
 }
 
 /**
@@ -71,55 +29,38 @@ export async function resolveGrokTuiSession(
  * facade rather than `process.env` (repo rule), so `env.testing.set()` reaches
  * this spawn like it reaches the worker's.
  */
-export function buildGrokTuiSpawn(options: { session?: AgentSession; binary: string; account?: string }): {
+export function buildGrokTuiSpawn(options: GrokTuiSpawnInput): {
     cmd: string[];
     cwd: string;
     env: Record<string, string | undefined>;
 } {
     const { session, binary, account } = options;
-    return {
-        cmd: session ? grokTuiResumeArgv(binary, session.sessionId) : [binary, "--resume"],
-        cwd: session?.cwd ?? process.cwd(),
-        env: {
-            ...env.getProcessEnv(),
-            ...(session?.sourceHome ? { GROK_HOME: session.sourceHome } : {}),
-            // Read back off the process table to say which account a live pane bills. Grok
-            // identifies a login by its home and never by a name, and no transcript records
-            // one either, so this export is the only place the name survives the launch.
-            ...(account ? { [accountEnvVar("grok")]: account } : {}),
-        },
+    const mode = session
+        ? grokTuiResumeArgv(binary, session.sessionId)
+        : [binary, ...(options.nativeResume ? ["--resume"] : options.continueLast ? ["--continue"] : [])];
+    const home = session?.sourceHome ?? options.home;
+    const built: Record<string, string | undefined> = {
+        ...env.getProcessEnv(),
+        ...(home ? { GROK_HOME: home } : {}),
+        // Read back off the process table to say which account a live pane bills. Grok
+        // identifies a login by its home and never by a name, and no transcript records
+        // one either, so this export is the only place the name survives the launch.
+        ...(account ? { [accountEnvVar("grok")]: account } : {}),
     };
-}
 
-export async function launchGrokTui(session?: AgentSession): Promise<never> {
-    // A worker home is isolated on purpose and carries no subscription login, so resuming a
-    // worker transcript in the interactive TUI would otherwise fall back to metered XAI_API_KEY
-    // billing without saying so.
-    if (session?.sourceHome?.startsWith(grokRoot())) {
-        out.log.warn(
-            `This session lives in the managed worker home ${session.sourceHome}, which has no subscription login. The interactive session will use XAI_API_KEY billing if it authenticates at all.`
-        );
+    if (options.authPath) {
+        // The binary prefers an API key over its OAuth login, so the key has to go, exactly
+        // as the headless worker does; otherwise a subscription launch bills the metered team.
+        delete built.XAI_API_KEY;
+        delete built.GROK_CODE_XAI_API_KEY;
+        built.GROK_AUTH_PATH = options.authPath;
     }
 
-    const account = session?.sourceHome ? await grokAccountNameForHome(session.sourceHome) : undefined;
-    const proc = Bun.spawn({
-        ...buildGrokTuiSpawn({ session, binary: resolveGrokBinary(), ...(account ? { account } : {}) }),
-        stdio: ["inherit", "inherit", "inherit"],
-    });
-    const code = await proc.exited;
-    process.exit(code ?? 1);
-}
-
-export async function runGrokTuiResume(opts: TuiResumeOptions): Promise<void> {
-    if (!opts.query && !opts.list) {
-        await launchGrokTui();
-        return;
-    }
-    const session = await resolveGrokTuiSession(opts);
-    if (!session) {
-        return;
-    }
-
-    out.println(`Resuming grok ${session.sessionId.slice(0, 8)} (${session.title}) in ${session.cwd}`);
-    await launchGrokTui(session);
+    return {
+        cmd: [...mode, ...(options.model ? ["-m", options.model] : []), ...(options.passthrough ?? [])],
+        // The shared launch path already chose between the session's directory and the
+        // requested one (and warned when the recorded one is gone), so an explicit cwd wins.
+        cwd: options.cwd ?? session?.cwd ?? process.cwd(),
+        env: built,
+    };
 }

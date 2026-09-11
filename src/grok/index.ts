@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync } from "node:fs";
+import { registerAgentResumeCommand, registerAgentRunCommand } from "@app/ai/commands/agent/run";
 import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
@@ -8,19 +9,16 @@ import { runTool } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import { WORKER_CAPABILITIES } from "@genesiscz/utils/worker/capabilities";
-import { surfacesFromFlags } from "@genesiscz/utils/worker/isolation";
 import { runningTurnPids as findRunningTurns } from "@genesiscz/utils/worker/ps";
-import { printWorkerTurn } from "@genesiscz/utils/worker/turn-report";
 import { Command } from "commander";
 import { registerGrokHistoryCommand } from "./commands/history";
 import { registerGrokLoginCommand } from "./commands/login";
-import { registerGrokResumeCommand } from "./commands/resume";
 import { registerUsageCommand } from "./commands/usage";
 import { turnErrPath, turnLogPath } from "./lib/paths";
+import { grokSpec } from "./lib/spec";
 import { GrokSessionStore } from "./lib/store";
 import { parseTurnLog } from "./lib/stream";
-import { parseResumeLimit, runGrokTuiResume } from "./lib/tui-resume";
-import { runSession, steerSession, type TurnResult } from "./lib/worker";
+import { printTurn, steerSession } from "./lib/worker";
 
 function runningTurnPids(sessionId: string) {
     // The grok child carries the session uuid as --session-id (turn 1) or
@@ -30,81 +28,10 @@ function runningTurnPids(sessionId: string) {
 
 const program = new Command();
 
-program.name("grok").description("Drive an isolated headless grok worker: run, steer between turns, read transcripts");
+program.name("grok").description(grokSpec.description);
 
-function printTurn(result: TurnResult): void {
-    printWorkerTurn({
-        backend: "grok",
-        name: result.meta.name,
-        turn: result.turn,
-        ended: result.summary.ended,
-        exitCode: result.exitCode,
-        report: result.summary.report,
-        stderr: result.stderr,
-        errPath: result.errPath,
-        toolCalls: result.summary.toolCalls,
-        // A read-only turn changes nothing by design; a replay has no snapshot to compare.
-        worktree:
-            result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
-        logPath: result.logPath,
-        transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
-    });
-}
-
-program
-    .command("run")
-    .description("Start a new headless worker (--name/--cwd) or resume a grok TUI session (--resume)")
-    .option("--name <name>", "worker session name (the steering handle)")
-    .option("--cwd <path>", "project directory the worker may touch")
-    .option("--prompt-file <path>", "brief file (preferred; inline prompts break on backticks)")
-    .option("--prompt <text>", "inline brief")
-    .option("--model <model>", "grok model id", "grok-4.6")
-    .option("--readonly", "review mode: worker gets read_file,list_dir,grep only (sticky across steers)", false)
-    .option("--worker-home <path>", "override the isolated GROK_HOME (default ~/.genesis-tools/grok/worker-home)")
-    .option(
-        "--auth <mode>",
-        "subscription (your `grok login` in ~/.grok, the default when it exists) or api-key (XAI_API_KEY, metered)"
-    )
-    .option("--skills", "load your personal skills (~/.agents, ~/.claude); the default")
-    .option("--no-skills", "hide your personal skills from the worker (sticky across steers)")
-    .option("--rules", "load your personal rules (~/.claude rules and CLAUDE.md); the default")
-    .option("--no-rules", "hide your personal rules from the worker (sticky across steers)")
-    .option("-r, --resume [query]", "Resume a grok TUI session by id, title, or transcript (not the headless worker)")
-    .option("-l, --list", "With --resume, list matching TUI sessions")
-    .option("-a, --all", "With --resume, search every project")
-    .option("-n, --limit <n>", "With --resume, number of sessions to show", "20")
-    .action(async (options) => {
-        if (options.resume !== undefined || options.list) {
-            await runGrokTuiResume({
-                query: typeof options.resume === "string" ? options.resume : undefined,
-                list: Boolean(options.list),
-                all: Boolean(options.all),
-                limit: parseResumeLimit(options.limit),
-            });
-            return;
-        }
-
-        if (!options.name || !options.cwd) {
-            throw new Error("Worker mode needs --name and --cwd. To resume a TUI session, pass --resume [query].");
-        }
-
-        if (options.auth !== undefined && options.auth !== "subscription" && options.auth !== "api-key") {
-            throw new Error(`--auth must be subscription or api-key, got '${options.auth}'.`);
-        }
-
-        const result = await runSession({
-            name: options.name,
-            cwd: options.cwd,
-            prompt: options.prompt,
-            promptFile: options.promptFile,
-            model: options.model,
-            readOnly: options.readonly,
-            workerHome: options.workerHome,
-            auth: options.auth,
-            surfaces: surfacesFromFlags({ skills: options.skills, rules: options.rules }),
-        });
-        printTurn(result);
-    });
+registerAgentRunCommand(program, grokSpec);
+registerAgentResumeCommand(program, grokSpec);
 
 program
     .command("steer")
@@ -302,7 +229,6 @@ for (const [verb, reason] of Object.entries(WORKER_CAPABILITIES.grok.absentVerbs
 registerGrokHistoryCommand(program);
 registerGrokLoginCommand(program);
 registerWarmupCommand(program, { provider: "grok-sub", tool: "tools grok warmup" });
-registerGrokResumeCommand(program);
 registerUsageCommand(program);
 
 await runTool(program, { tool: "grok" });

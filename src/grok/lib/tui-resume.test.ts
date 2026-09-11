@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import type { AgentSession } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
-import { buildGrokTuiSpawn, grokTuiResumeArgv, resolveGrokTuiSession } from "./tui-resume";
+import { buildGrokTuiSpawn, grokTuiResumeArgv } from "./tui-resume";
 
 const SESSION = {
     sessionId: "sess_0001",
@@ -55,29 +55,6 @@ function session(id: string, title: string): AgentSession {
 }
 
 const A = session("01a05cc5-0ecf-7d40-945e-977e45b3f935", "PRs merged into release/2026-09-03");
-const B = session("01a05d17-c512-7dd2-abb6-e62d8c7d612a", "aws-costs");
-
-function adapterWithSearch(hits: AgentSession[]): AgentSessionAdapter {
-    return {
-        kind: "grok",
-        async list() {
-            return [A, B];
-        },
-        async search() {
-            return hits;
-        },
-    };
-}
-
-describe("parseResumeLimit", () => {
-    test("defaults and rejects non-integers", async () => {
-        const { parseResumeLimit } = await import("./tui-resume");
-        expect(parseResumeLimit(undefined)).toBe(20);
-        expect(parseResumeLimit("5")).toBe(5);
-        expect(() => parseResumeLimit("nope")).toThrow(/positive integer/);
-        expect(() => parseResumeLimit("20.5")).toThrow(/positive integer/);
-    });
-});
 
 describe("grokTuiResumeArgv", () => {
     test("pins -r through resumeArgv", () => {
@@ -85,25 +62,19 @@ describe("grokTuiResumeArgv", () => {
     });
 });
 
-describe("resolveGrokTuiSession", () => {
-    test("a unique body-search hit resumes that session", async () => {
-        const session = await resolveGrokTuiSession({ query: "burn auth" }, adapterWithSearch([A]));
-        expect(session?.sessionId).toBe(A.sessionId);
-    });
+/**
+ * `run` starts fresh and `--resume` asks for a session — the split Claude and Codex already
+ * had. `tools grok run` used to mean "open the native picker" no matter what, which is the
+ * asymmetry this campaign removes. The picker itself is still Grok's own; the wrapper only
+ * decides whether to ask for it.
+ */
+test("a bare run starts fresh, and only --resume delegates to native Grok's picker", () => {
+    const fresh = buildGrokTuiSpawn({ binary: "/fixture/grok" });
+    expect(fresh.cmd.slice(1)).toEqual([]);
+    expect(fresh.cwd).toBe(process.cwd());
 
-    test("an empty body search does not fall back to the unfiltered list", async () => {
-        process.exitCode = 0;
-        const session = await resolveGrokTuiSession({ query: "no-such-body" }, adapterWithSearch([]));
-        expect(session).toBeUndefined();
-        expect(process.exitCode).toBe(1);
-        process.exitCode = 0;
-    });
-});
-
-test("bare resume delegates selection to native Grok instead of a wrapper picker", () => {
-    const spawn = buildGrokTuiSpawn({ binary: "/fixture/grok" });
-    expect(spawn.cmd.slice(1)).toEqual(["--resume"]);
-    expect(spawn.cwd).toBe(process.cwd());
+    expect(buildGrokTuiSpawn({ binary: "/fixture/grok", nativeResume: true }).cmd.slice(1)).toEqual(["--resume"]);
+    expect(buildGrokTuiSpawn({ binary: "/fixture/grok", continueLast: true }).cmd.slice(1)).toEqual(["--continue"]);
 });
 
 test("query resume opens the selected session's native home without changing the parent environment", async () => {
