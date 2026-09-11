@@ -1,5 +1,6 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -14,6 +15,12 @@ const log = logger.child({ component: "claude:cmux-refs" });
  */
 export interface SessionCmuxRefs {
     sessionId: string;
+    /**
+     * Which agent wrote this record. ABSENT means Claude — every line written before the tag
+     * existed is a Claude session. Codex and Grok run the same hook, so their records land
+     * here too, and `latestRefsBySession` keeps only Claude's.
+     */
+    provider?: AccountProviderAlias;
     workspaceId: string | null;
     surfaceId: string | null;
     workspaceRef: string | null;

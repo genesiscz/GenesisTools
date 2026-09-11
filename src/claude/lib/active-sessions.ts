@@ -266,7 +266,15 @@ export function parseCmuxSurfaceTtys(output: string): Map<string, string> {
     return result;
 }
 
-/** Latest journal line per session — later lines win, as the hook appends. */
+/**
+ * Latest journal line per CLAUDE session — later lines win, as the hook appends.
+ *
+ * 🛑 Codex and Grok run the same cmux hook, and a codex session started inside a claude pane
+ * inherits that pane's surface. Its record therefore names a claude pane's tty, and
+ * `assignSessionIds` drops BOTH hints for a tty that two sessions claim — so one nested codex
+ * run used to blank `tools claude who` for the pane it ran in. A record with no `provider`
+ * predates the tag and is claude's, which every existing line is.
+ */
 export function latestRefsBySession(raw: string): Map<string, SessionCmuxRefs> {
     const latest = new Map<string, SessionCmuxRefs>();
 
@@ -283,7 +291,7 @@ export function latestRefsBySession(raw: string): Map<string, SessionCmuxRefs> {
             continue;
         }
 
-        if (!entry?.sessionId) {
+        if (!entry?.sessionId || (entry.provider ?? "claude") !== "claude") {
             continue;
         }
 
