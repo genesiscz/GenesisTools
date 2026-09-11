@@ -23,11 +23,15 @@ config.resolver.nodeModulesPaths = [
 // Alias map (project convention D30 — no relative imports in app code):
 //   @/*   → mobile-internal modules (DevDashboard/mobile/src)
 //   @dd/* → shared dev-dashboard code (repo src/dev-dashboard), e.g. @dd/contract
-//   @genesiscz/utils/json → the RN-safe SafeJSON shim (the contract's one runtime value-import)
+//   @genesiscz/utils/json   → the RN-safe SafeJSON shim
+//   @genesiscz/utils/logger → the RN-safe console shim (the real one is pino + node:fs)
 //   @app/* → repo src (only the contract's own internal re-exports reach this at runtime;
 //            everything else from there is a type-only re-export — see contract-purity.test.ts)
+// Every `@genesiscz/utils/*` the contract VALUE-imports needs an entry here, or Metro resolves it
+// to the repo's server-side module and bundles its node: dependencies into Hermes.
 const aliasResolvers = [
     { match: "@genesiscz/utils/json", target: path.resolve(projectRoot, "src/shims/safe-json.ts") },
+    { match: "@genesiscz/utils/logger", target: path.resolve(projectRoot, "src/shims/logger.ts") },
     { prefix: "@dd/", target: path.resolve(workspaceRoot, "src/dev-dashboard") },
     { prefix: "@/", target: path.resolve(projectRoot, "src") },
     { prefix: "@app/", target: path.resolve(workspaceRoot, "src") },
