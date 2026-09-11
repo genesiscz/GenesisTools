@@ -1,8 +1,11 @@
 # Peekaboo as a separate provider
 
-Use this only when Peekaboo is the chosen provider, or when you need recording. It is not
-Sky, and it does not use GenesisTools snapshot tokens. Opaque Peekaboo element IDs and
-GenesisTools integer indexes are different things; never mix them.
+Use this only when Peekaboo is the chosen provider. Since 2026-09-11 it is the fallback
+recorder, not the default: `tools control capture` records through `ax-tool capture` when that
+binary is built, and reaches Peekaboo only on `capture.backend: "peekaboo"` or when the native
+recorder writes no frame (see [capture.md](capture.md)). It is not Sky, and it does not use
+GenesisTools snapshot tokens. Opaque Peekaboo element IDs and GenesisTools integer indexes are
+different things; never mix them.
 
 ## Version, and why that matters here
 

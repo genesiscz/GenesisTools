@@ -610,6 +610,12 @@ timing model, crop markers, focus re-assertion, review, troubleshooting and anti
 [references/peekaboo.md](references/peekaboo.md) has the Peekaboo contract.
 [references/vitrinka.md](references/vitrinka.md) covers optional publishing.
 
+The recorder is native since 2026-09-11: `ax-tool capture` (ScreenCaptureKit) records,
+diff-samples and tiles, and `ax-tool screens` lists displays, so a plan needs no Peekaboo.
+The result says `capture.data.source: "native"`. Peekaboo is the fallback, chosen with
+`capture.backend: "peekaboo"` or automatically when the native recorder writes no frame.
+`duration` is seconds on both.
+
 ❗ **Peekaboo 4 changed its grammar and the recorder was repaired for it on 2026-09-11**
 (branch `feat/control-native-port`): `screen list` and `window list` replace the removed
 `list`, `press <chord>` replaces the removed `hotkey`, `--at --global --foreground` replaces

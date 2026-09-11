@@ -1,8 +1,37 @@
 # Recording — `tools control capture` (short motion, reviewed frame-by-frame)
 
 The recording arm of macos-control. Everything here is multi-frame capture. Single-shot
-element control lives in SKILL.md. Recording is the only part of this skill that needs the
-external Peekaboo binary.
+element control lives in SKILL.md. Since 2026-09-11 the recorder is native: `ax-tool capture`
+records through ScreenCaptureKit, and Peekaboo is only the fallback when the binary is not
+built.
+
+## Which recorder runs
+
+- **Native (default).** When `native/ax-tool/.build/release/ax-tool` exists, `tools control
+  capture` runs `ax-tool capture --mode <mode> --duration <seconds> --out <dir>` with the plan's
+  `activeFps`, `idleFps`, `threshold` and `videoOut`. Screens come from `ax-tool screens` and
+  window bounds from `ax-tool window --app`, so a plan needs no Peekaboo at all. The result
+  says `capture.data.source: "native"` and `captureEngine: "ScreenCaptureKit"`.
+- **Peekaboo (fallback).** `capture.backend: "peekaboo"` in the plan forces it. The runner also
+  falls back on its own when the native recorder never writes a frame and Peekaboo is
+  installed, with a warning that names both reasons.
+- The native recorder has no bridge, no daemon and no `noRemote` or `captureEngine` knobs:
+  those two plan fields only matter on the Peekaboo path.
+- Raw form, the same shape the runner reads:
+
+```bash
+native/ax-tool/.build/release/ax-tool capture --mode window --app "Calculator" \
+  --duration 3 --threshold 0.3 --out /tmp/rec-$(date +%s) 1>/tmp/rec.json 2>/tmp/rec.err
+native/ax-tool/.build/release/ax-tool screens      # index, name, scale, position, resolution
+```
+
+`--duration` is **seconds** on the native recorder (0.1 to 180, default 3). The runner
+sends Peekaboo `<seconds>s`, because Peekaboo 4 reads a bare number as milliseconds.
+
+Timing you will see in the result: an action's `actualMs` is when the runner *started* it,
+and the pre-input refocus plus the AX call add several hundred milliseconds before the pixels
+move, so the matching kept frame lands later than `actualMs`. Measured 2026-09-11 with three
+Calculator presses at 700, 1500 and 2300 ms: the change frames came at 1424, 2214 and 2988 ms.
 
 ## Repaired 2026-09-11 for Peekaboo 4
 
@@ -95,6 +124,17 @@ A suggested plan is a starting point, not proof it picked the right window. If t
 one window, do not widen the capture to the whole screen just to dodge a targeting failure.
 
 ## Step 3 — plain capture, no interactions
+
+Native, the default:
+
+```bash
+native/ax-tool/.build/release/ax-tool capture --mode <screen|window|region> \
+  [--app "<Name>"] [--screen-index N] [--region "x,y,width,height"] \
+  --duration <seconds> [--active-fps <n>] [--threshold <pct>] [--video-out f.mp4] \
+  --out /tmp/rec-$(date +%s) 1>/tmp/capture-out.json 2>/tmp/capture-err.log
+```
+
+Peekaboo, the fallback:
 
 ```bash
 peekaboo capture live --mode <screen|window|region> \
@@ -207,7 +247,8 @@ because the keys were only ever shown as CLI flags. They are camelCase inside th
     "app": "Genesis",          // window mode
     "windowTitle": "Settings", // window mode narrowing
     "region": "x,y,w,h",       // region mode
-    "duration": 3,             // ALWAYS set this explicitly
+    "duration": 3,             // ALWAYS set this explicitly; SECONDS on both backends
+    "backend": "native",       // default when ax-tool is built; "peekaboo" forces the fallback
     "activeFps": 8,            // default 8, max 15
     "idleFps": 2,              // default 2
     "threshold": 2.5,          // change % cutoff; ~0.1 for a sub-second blip
@@ -302,7 +343,9 @@ running. Check `peekaboo permissions status` and `peekaboo bridge status --verbo
   `peekaboo screen list` and always verify frame 1's content.
 - **Give the runner a generous Bash timeout.** Wall time is countdown plus up to 15 s
   start-wait plus a 15 s bypass retry plus duration plus crops plus publish. A default 10 s
-  tool timeout kills it and it looks like a mystery failure.
+  tool timeout kills it and it looks like a mystery failure. A native 3 s window capture with
+  three AX presses took 4.5 s end to end on 2026-09-11; before that day the runner idled a
+  further 33 s after printing its result, because the exit-grace timer was never cleared.
 - Missing permission: report the exact responsible process and grant error. Never reinterpret
   it as "no content".
 - Failed focus or wrong window: stop before capturing another app. Re-inspect the intended
@@ -320,8 +363,8 @@ running. Check `peekaboo permissions status` and `peekaboo bridge status --verbo
 - Never merge stdout and stderr, and never pipe the capture command.
 - Never treat a single empty-output failure as real. Retry once first.
 - Never call `capture` through MCP. Only the CLI has it.
-- Never reach for ffmpeg or `screencapture` pipelines. Peekaboo does recording, diff sampling
-  and tiling natively.
+- Never reach for ffmpeg or `screencapture` pipelines. The native recorder and Peekaboo both
+  do recording, diff sampling and tiling themselves.
 - Never hand-construct a vitrinka board URL. Relay the server-returned `url`.
 - Never retry a mutating plan just because the capture output was empty. Verify the target's
   state first, because some actions may already have completed.

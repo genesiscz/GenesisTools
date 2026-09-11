@@ -91,6 +91,30 @@ const probes = [
     { argv: [...control, "capture", "preflight", "--help"], command: "control capture preflight", flags: ["--app"] },
 ];
 
+// The native recorder is documented in ax-tool's own usage text; probe it when the binary is built.
+const axTool = repo ? resolve(repo, "native/ax-tool/.build/release/ax-tool") : undefined;
+
+if (axTool && existsSync(axTool)) {
+    probes.push(
+        {
+            argv: [axTool, "--help"],
+            command: "ax-tool capture",
+            flags: [
+                "--mode",
+                "--duration",
+                "--active-fps",
+                "--idle-fps",
+                "--threshold",
+                "--video-out",
+                "--out",
+                "--screen-index",
+                "--region",
+            ],
+        },
+        { argv: [axTool, "--help"], command: "ax-tool screens", flags: [] }
+    );
+}
+
 if (peekaboo) {
     probes.push(
         {

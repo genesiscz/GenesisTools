@@ -110,7 +110,7 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 | `ocr` | Vision OCR over an app window or `--image` file. Returns text blocks with pixel bounding boxes. |
 | `draw <image>` | Draw annotations onto an existing image from a JSON plan |
 | `compare-screenshot <a> <b>` | Pixelmatch two images: mismatch count and percentage, similarity score, optional diff PNG |
-| `capture` | Screen recording with timed UI actions, crop compositing and vitrinka publish |
+| `capture` | Screen recording with timed UI actions, crop compositing and vitrinka publish. Records natively through `ax-tool capture` (ScreenCaptureKit) when the binary is built; `capture.backend: "peekaboo"` or a native start failure selects Peekaboo. |
 
 `screenshot --window` **fails loud on zero or two-plus title matches**, and unscoped picks the largest window. Failing on an ambiguous match is deliberate: silently shooting the wrong window wastes far more time.
 
@@ -192,7 +192,7 @@ Modes for `--record`:
 
 ## Permissions
 
-This tool needs macOS Accessibility permission for the process that runs it, and Screen Recording permission for the capture and screenshot paths. A missing permission usually presents as an empty element list rather than an error, so if `list` returns nothing for an app you can see, check permissions before debugging selectors.
+This tool needs macOS Accessibility permission for the process that runs it, and Screen Recording permission for the capture and screenshot paths. The native recorder (`ax-tool capture`) checks `CGPreflightScreenCaptureAccess` first and fails with a named error instead of an empty recording. A missing Accessibility permission usually presents as an empty element list rather than an error, so if `list` returns nothing for an app you can see, check permissions before debugging selectors.
 
 ⚠️ A runtime upgrade (a new `bun` or `node` binary) silently revokes previously granted permissions, because the grant is per-binary. Re-grant after upgrading.
 
