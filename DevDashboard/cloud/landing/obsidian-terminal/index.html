@@ -165,7 +165,7 @@
         </a>
 
         <!-- Hamburger -->
-        <button id="menuBtn" aria-label="Open menu" class="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10 md:hidden">
+        <button type="button" id="menuBtn" aria-label="Open menu" class="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] ring-1 ring-white/10 md:hidden">
           <span id="ham1" class="absolute h-px w-4 bg-zinc-200 transition-transform duration-500 ease-silk -translate-y-1"></span>
           <span id="ham2" class="absolute h-px w-4 bg-zinc-200 transition-transform duration-500 ease-silk translate-y-1"></span>
         </button>
@@ -720,7 +720,7 @@
           </p>
           <form class="relative mx-auto mt-10 flex max-w-md flex-col items-center gap-3 sm:flex-row" onsubmit="return false;">
             <div class="w-full rounded-full border border-white/10 bg-white/[0.04] p-1.5 sm:flex-1">
-              <input type="email" required placeholder="you@yourmachine.dev" class="w-full rounded-full bg-transparent px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none" />
+              <input type="email" required aria-label="Email address" placeholder="you@yourmachine.dev" class="w-full rounded-full bg-transparent px-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none" />
             </div>
             <button type="submit" class="group flex shrink-0 items-center gap-2.5 rounded-full bg-zinc-100 py-3 pl-5 pr-2 text-[15px] font-medium text-zinc-900 transition-transform duration-500 ease-silk active:scale-[0.98]">
               Get early access

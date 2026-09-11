@@ -59,6 +59,7 @@ function SettingsPage() {
                     <Toggle
                         checked={pushAlertsEnabled}
                         disabled={pending}
+                        label="Push alerts"
                         onChange={persist}
                         testId="settings-push-alerts"
                     />
@@ -83,11 +84,14 @@ function SettingsPage() {
 function Toggle({
     checked,
     disabled,
+    label,
     onChange,
     testId,
 }: {
     checked: boolean;
     disabled?: boolean;
+    /** The switch's only child is a decorative span, so this is its entire accessible name. */
+    label: string;
     onChange: (next: boolean) => void;
     testId: string;
 }) {
@@ -95,6 +99,7 @@ function Toggle({
         <button
             type="button"
             role="switch"
+            aria-label={label}
             aria-checked={checked}
             disabled={disabled}
             onClick={() => onChange(!checked)}
