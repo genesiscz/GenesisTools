@@ -42,13 +42,16 @@ There are two command families and they are both correct. Pick by what the task 
 | The task | Use | Why |
 |---|---|---|
 | Read something, or act once where a mistake is cheap | **selector commands** (`find`, `press`, `click`, `set`, `window`, `list`) | One call. Human-readable output. About 300-450 ms. Roughly 170 bytes back. |
-| The action must be verified, must not steal focus, or targets a moving UI (browser tabs, lists, anything animating) | **`see` → `act` → `see`** | Validated snapshot token. Refuses a stale tree. Background delivery without moving the pointer. About 1.2 s for the cycle. Roughly 17 kB back. |
+| The action must be verified, must not steal focus, or targets a moving UI (browser tabs, lists, anything animating) | **`see` → `act --refresh`** | Validated snapshot token. Refuses a stale tree. Background delivery without moving the pointer. About 0.6 s for the cycle, 8 kB back; `see --since` cuts a re-inspection to about 1.6 kB. |
 | Multi-frame recording of a transition | **`capture`** | Only the recorder produces video, diff-sampled frames and contact sheets. |
 | A repeatable click-through with pass/fail per step | **`run plan.json`** | Declarative, asserted, re-runnable. |
 
 Measured 2026-09-11 on this machine: selector `press` + `find` = 541 ms and 166 bytes;
-`see` + `act` + `see` = 1226 ms and 17,608 bytes. The verified path costs about 100x the
-context. Spend it when the guarantee matters, not by default.
+`see` + `act` + `see` = 1226 ms and 17,608 bytes. Same day, after the native port: `see`
+(200 ms, 7,823 bytes) + `act --refresh` (378 ms, the settled state included) replaces the
+third call, and `see --since` returns 1,569 bytes for the same window. The verified path still
+costs about 10x the context of a selector command. Spend it when the guarantee matters, not
+by default.
 
 ## Providers
 
@@ -86,6 +89,13 @@ tools control press --app Genesis --id save-btn      # already focus-safe
 tools control see --app Genesis > /tmp/s.json
 tools control act --app Genesis --snapshot "$(jq -r .snapshot /tmp/s.json)" \
     --element <N> --action click --background        # window-addressed, pointer never moves
+
+# Act AND read the settled result in one call (no second see)
+tools control act --app Genesis --snapshot "$(jq -r .snapshot /tmp/s.json)" \
+    --element <N> --action press --refresh > /tmp/s2.json   # .after holds the new tree + token
+
+# Re-inspect and get only what moved since a previous see
+tools control see --app Genesis --since /tmp/s.json          # .changes + only added/changed rows
 
 # Fill a text field and PROVE the text landed
 tools control set --app Genesis --id auth-email --value "alice@example.com"   # reads back, retries once, fails loud
@@ -348,7 +358,9 @@ Use it when the action must be verified, must not steal focus, or targets a movi
    not a guessed label.
 3. **Act** once. Coordinate desktop input with other sessions.
 4. **Refresh** before choosing the next action. A dispatch acknowledgment is not proof the UI
-   changed. `refreshRequired: true` means dispatched, not succeeded.
+   changed. `refreshRequired: true` means dispatched, not succeeded. `act --refresh` does
+   this step for you: it waits until two consecutive tree reads agree (one second cap) and
+   returns the same payload `see` prints under `after`, so one call replaces two.
 
 ```bash
 tools control see --app com.apple.calculator --path /tmp/calc.png > /tmp/calc.json
@@ -373,6 +385,7 @@ Calculator. Every element carries an `index`, which is the integer `act --elemen
   "pid": 71368,
   "scope": "window",
   "expiresInSeconds": 120,
+  "bulk": true,
   "snapshot": "eyJwaWQiOjcxMzY4LCJkZXB0aCI6MjAsImxhdW5jaCI6…",
   "window":     { "id": 24968, "index": 0, "title": "Calculator", "x": 1761, "y": 842, "width": 230, "height": 408 },
   "screenshot": { "path": "/tmp/calc.png", "width": 460, "height": 816 },
@@ -418,6 +431,29 @@ references stable while page content changes. Web-content coordinates need the d
 
 **Depth.** `--depth` is 1-50. A truncated tree fails rather than issuing partial references.
 
+**Read path.** `"bulk": true` means the tree came from one `AXUIElementCopyHierarchy` round
+trip, the same private call Sky uses; `false` means the per-attribute walk. Both produce
+byte-identical rows. The bulk read is about 2x faster on large windows (Brave, 1,661 elements:
+0.9 s against 2.0 s) and a tie on small ones. Chrome scope always walks, because the bulk read
+cannot stop at a web area. `AX_TOOL_NO_BULK=1` forces the walk, which is the A/B control.
+
+### `see --since <previous.json>`: only what moved
+
+```bash
+tools control see --app Genesis --path /tmp/s1.png > /tmp/s1.json
+# ...an action or two later...
+tools control see --app Genesis --since /tmp/s1.json > /tmp/s2.json
+```
+
+The second call still returns a fresh `snapshot`, `window` and `screenshot`, but `elements`
+holds only the rows that were added or changed, and `changes` carries `added` (indexes),
+`removed` (index, role, label), `changed` (index, previousIndex, and each field's `from`/`to`),
+`unchanged` (a count) and `indexMap` (old index → new index for every row that survived).
+Rows are matched by depth, role, identifier, title, description and subrole, in tree order,
+so a control whose label changed ("All Clear" → "Clear") shows as removed plus added: the label
+is the identity you target by. A different window id makes the diff refuse and returns the
+full rows with `since.comparable: false`.
+
 ### `act --action` matrix
 
 | Action | Extra fields | Behaviour | Needs the app frontmost? |
@@ -435,6 +471,14 @@ references stable while page content changes. Web-content coordinates need the d
 | `select` | `--text MATCH` (+`--prefix`/`--suffix`) or `--range START,LENGTH`, `--selection text\|cursor_before\|cursor_after` | select a unique literal match or a UTF-16 range | no |
 | `paste` | `--text PAYLOAD`, `--format text\|md\|html` | paste at the current selection in the already focused input | 🛑 **yes** |
 | `key` | `--keys cmd,a` | one supported key plus modifiers, confined to the selected process | 🛑 **yes** |
+
+**`--refresh` (any action) and `--path <png>` (with `--refresh`).** After the action, `act`
+waits until two consecutive tree reads agree (50 ms apart, one second cap), then returns
+under `after` the same object `see` prints: a new `snapshot` token, `elements`, `window`,
+`screenshot` and `bulk`. `refreshRequired` is then `false`. A refresh that could not settle
+lands as `after: { ok: false, error }` while the action itself stays `ok: true`, because the
+action was dispatched and must not be retried on that account. Measured on Calculator:
+378 ms against 210 ms for a plain `act`, and no third tool call.
 
 🛑 **The four foreground-only actions refuse with `wrong frontmost app/window; focus
 explicitly and refresh` when the target is not already frontmost.** A background agent
@@ -566,13 +610,12 @@ timing model, crop markers, focus re-assertion, review, troubleshooting and anti
 [references/peekaboo.md](references/peekaboo.md) has the Peekaboo contract.
 [references/vitrinka.md](references/vitrinka.md) covers optional publishing.
 
-🛑 **KNOWN BREAKAGE, 2026-09-11: recording is down on this machine.** Peekaboo 4.x removed
-the `peekaboo list` command, `src/control/lib/peekaboo.ts:97` and `:138` still call it, so
-`listScreens()` returns `[]` and `tools control capture preflight` exits 1 with
-`undefined is not an object (evaluating 'activeScreen.scaleFactor')`. This is broken on
-master too. v4 equivalents are `peekaboo screen list` and `peekaboo window list`, and
-`--include-details` is gone because bounds are returned by default. Element control,
-screenshots, annotate and OCR do not use that path and keep working.
+❗ **Peekaboo 4 changed its grammar and the recorder was repaired for it on 2026-09-11**
+(branch `feat/control-native-port`): `screen list` and `window list` replace the removed
+`list`, `press <chord>` replaces the removed `hotkey`, `--at --global --foreground` replaces
+`--coords`, and the clickmap screenshot now comes from `ax-tool screenshot`. On an older
+checkout `capture preflight` dies with `undefined is not an object (evaluating
+'activeScreen.scaleFactor')`; that is the symptom of the unrepaired wrapper, not of empty data.
 
 Capture plans support three AX action types with the same targeting as the CLI: `ax-set`,
 `ax-press` (both fall back to osascript without the native binary) and `ax-perform` (native

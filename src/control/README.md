@@ -10,6 +10,8 @@ Drives native macOS apps by addressing real accessibility elements instead of gu
 
 Start adaptive UI work with `tools control see --app APP`. It returns JSON with the selected window's stable CG ID, a PNG path, indexed AX elements and a short-lived snapshot token. Multiple windows require an explicit `--window-index` from the returned candidates; no largest-window fallback is used. Refresh the selected window with `--window-id` using its returned CG ID, since indexes reorder when focus changes. Do not combine both selectors.
 
+`see` reads the whole tree in one `AXUIElementCopyHierarchy` round trip when that private call is available (`"bulk": true` in the output; `AX_TOOL_NO_BULK=1` forces the per-attribute walk, and chrome scope always walks). `act --refresh` settles and returns the post-action snapshot under `after`, so one call replaces `act` plus a second `see`; `--path <png>` names its screenshot. `see --since previous.json` returns the fresh token, window and screenshot with only the rows that were added or changed, plus a `changes` block with an old-to-new `indexMap`.
+
 ```bash
 tools control see \
   --app Calculator \

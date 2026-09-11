@@ -44,7 +44,7 @@ const probes = [
     {
         argv: [...control, "see", "--help"],
         command: "control see",
-        flags: ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope"],
+        flags: ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--since"],
     },
     {
         argv: [...control, "act", "--help"],
@@ -56,6 +56,8 @@ const probes = [
             "--action",
             "--value",
             "--ax-action",
+            "--refresh",
+            "--path",
             "--direction",
             "--text",
             "--keys",

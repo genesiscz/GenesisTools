@@ -4,26 +4,21 @@ The recording arm of macos-control. Everything here is multi-frame capture. Sing
 element control lives in SKILL.md. Recording is the only part of this skill that needs the
 external Peekaboo binary.
 
-## 🛑 Current state on this machine, 2026-09-11
+## Repaired 2026-09-11 for Peekaboo 4
 
-**`tools control capture preflight` is broken, and it is broken on master too.** Peekaboo 4.x
-removed the `peekaboo list` command. `src/control/lib/peekaboo.ts:97` still calls
-`["list","screens"]` and `:138` calls `["list","windows","--app",app,"--include-details","bounds"]`.
-Both now return an error envelope, so `listScreens()` returns `[]` and preflight dies at
-`src/control/lib/capture-runner.ts:677` with
-`undefined is not an object (evaluating 'activeScreen.scaleFactor')`.
+Peekaboo 4.x removed `list`, `hotkey` and `image`, renamed `--coords` to `--at`, and refuses
+untargeted background input. The wrapper now speaks that grammar: `screen list`, `window
+list`, `press <cmd+shift+a>`, `--at --global --foreground` on every timed action, and the
+clickmap PNG comes from `ax-tool screenshot`. The argv builders live in
+`src/control/lib/peekaboo.ts` with tests, so the next grammar change is one file.
 
-The v4 replacements are `peekaboo screen list` and `peekaboo window list`. `--include-details`
-is gone; bounds come back by default. `peekaboo screen list --json` returns exactly the shape
-`listScreens()` already expects, so the repair is a command rename at those two call sites.
+On a checkout without that repair, `tools control capture preflight` exits 1 with
+`undefined is not an object (evaluating 'activeScreen.scaleFactor')`. That is the wrapper
+calling a removed command, never evidence of empty data.
 
-Separately, the installed Peekaboo daemon refuses the default capture engine with
-`predates safe process-lifetime ScreenCaptureKit ownership`. `--capture-engine classic` works.
-Verified: `peekaboo capture live --mode window --app Calculator --duration 2000
---capture-engine classic` produced `keep-0001.png` and `contact.png`.
-
-Until that is fixed, do not report "recording produced nothing". Report that the wrapper is
-calling a removed Peekaboo command.
+⚠️ The installed Peekaboo daemon may still refuse the default capture engine with
+`predates safe process-lifetime ScreenCaptureKit ownership`; `captureEngine: "cg"` in the plan,
+or `--capture-engine classic` on the CLI, works around it until the host is relaunched.
 
 ## The mental model
 
