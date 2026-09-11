@@ -26,7 +26,12 @@ Fix all TypeScript compilation errors systematically using a 4-phase workflow. Z
 
 ## Phase 3: Subagent Deployment
 
-For each file with errors, deploy a subagent (via the Agent tool):
+For each file with errors, deploy a subagent.
+
+⚠️ **Only Claude Code has the `Agent` tool.** In Codex use its native `spawn_agent` /
+`followup_task`; in Grok, or in any harness without subagents at all, work the files yourself
+one at a time in the same order — the per-file isolation below is what matters, not the
+parallelism. The rest of this phase applies either way:
 
 - **Identifier**: `ts-fix-<filename-without-extension>`
 - **Context to provide**:
