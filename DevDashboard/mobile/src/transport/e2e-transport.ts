@@ -53,7 +53,16 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
             body: reqEnvelope,
         });
 
-        const env = decodeEnvelope(await res.text());
+        const raw = await res.text();
+
+        // Check the status BEFORE decoding. A relay outage answers with an HTML or plain-text body,
+        // and feeding that to decodeEnvelope threw a JSON syntax error that hid the status entirely —
+        // `reachable()`'s catch then turned every outage into a bare false with no reason logged.
+        if (!res.ok) {
+            throw new Error(`e2e: relay returned HTTP ${res.status}: ${raw.slice(0, 200)}`);
+        }
+
+        const env = decodeEnvelope(raw);
         const plain = opts.cipher.open({
             ciphertext: fromBase64(env.ct),
             nonce: fromBase64(env.n),
@@ -70,7 +79,10 @@ export function createE2eTransport(opts: E2eTransportOptions): Transport {
 
     /** A `fetch`-shaped wrapper the contract client uses, but every byte is E2E-encrypted. */
     const encryptingFetch = (async (url: string, init?: RequestInit): Promise<Response> => {
-        const path = url.replace(opts.relayBaseUrl, "");
+        // Prefix-strip, not `String.replace`: replace substitutes the FIRST occurrence anywhere, so a
+        // query value repeating the relay base (a callback or redirect parameter) was cut mid-query
+        // and the agent received a mangled path.
+        const path = url.startsWith(opts.relayBaseUrl) ? url.slice(opts.relayBaseUrl.length) : url;
         const request: E2eRequest = {
             method: init?.method ?? "GET",
             path,
