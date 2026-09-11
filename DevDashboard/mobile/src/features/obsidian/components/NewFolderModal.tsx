@@ -18,7 +18,8 @@ export function NewFolderModal({ visible, parentDir, submitting, onClose, onCrea
     const submit = (): void => {
         const trimmed = name.trim();
 
-        if (!trimmed) {
+        // A single folder name only: a separator would silently nest, and `.`/`..` would escape parentDir.
+        if (!trimmed || trimmed.includes("/") || trimmed.includes("\\") || trimmed === "." || trimmed === "..") {
             return;
         }
 

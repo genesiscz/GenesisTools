@@ -74,6 +74,9 @@ const KATEX_CSS_URL = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min
 const KATEX_CSS_SRI = "sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+";
 const MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.esm.min.mjs";
 
+/** The exact subresources the built document loads — the renderer allows these URLs and nothing else. */
+export const NOTE_ASSET_URLS: ReadonlySet<string> = new Set([HLJS_CSS_URL, KATEX_CSS_URL, MERMAID_JS_URL]);
+
 // Mermaid theme tuned to the emerald palette (accent #34d399, panel #101316, base #0c0e10).
 const MERMAID_SCRIPT = `
 <script type="module">

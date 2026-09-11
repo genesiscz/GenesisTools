@@ -1,7 +1,12 @@
 import { useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { buildNoteDocument, type NoteMessage, parseNoteMessage } from "@/features/obsidian/note-html";
+import {
+    buildNoteDocument,
+    NOTE_ASSET_URLS,
+    type NoteMessage,
+    parseNoteMessage,
+} from "@/features/obsidian/note-html";
 import { useThemeColors } from "@/theme/colors";
 
 export interface NoteRendererProps {
@@ -14,8 +19,6 @@ export interface NoteRendererProps {
     /** Tapped an external http(s) link — open in the system browser. */
     onOpenExternal: (url: string) => void;
 }
-
-const CDN_HOST_RE = /^https:\/\/cdn\.jsdelivr\.net\//;
 
 /**
  * NoteRenderer contract: render a note for reading. v1 ships the WebView driver only — it renders the
@@ -60,8 +63,9 @@ export function WebViewNoteRenderer({ html, baseUrl, onOpenNote, onOpenExternal 
                         return true;
                     }
 
-                    // CDN subresources (katex.css / hljs theme / mermaid module) must load too.
-                    if (CDN_HOST_RE.test(request.url)) {
+                    // The three pinned subresources (katex.css / hljs theme / mermaid module) must load
+                    // too — matched exactly, so the rest of the CDN host stays blocked.
+                    if (NOTE_ASSET_URLS.has(request.url)) {
                         return true;
                     }
 
