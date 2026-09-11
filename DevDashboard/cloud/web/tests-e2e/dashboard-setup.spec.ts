@@ -45,7 +45,7 @@ test.describe("setup wizard", () => {
         const page = await user.context.newPage();
 
         await page.goto("/dashboard/setup");
-        await page.getByTestId("setup-subdomain-input").fill("A_B C!");
+        await fillHydrated(page.getByTestId("setup-subdomain-input"), "A_B C!");
         await page.getByTestId("setup-subdomain-submit").click();
 
         await expect(page.getByTestId("setup-subdomain-error")).toBeVisible();

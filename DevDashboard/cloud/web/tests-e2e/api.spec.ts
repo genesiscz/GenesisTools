@@ -14,7 +14,7 @@ test.describe("api routes", () => {
         expect(res.status()).toBe(200);
         const body = await res.text();
         // Better-Auth returns null (or an empty body) for an anonymous session.
-        expect(body === "null" || body === "" || body === "{}").toBeTruthy();
+        expect(["null", "", "{}"]).toContain(body);
     });
 
     test("POST /api/stripe/webhook acks inert without a signature", async ({ request }) => {

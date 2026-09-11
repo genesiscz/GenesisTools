@@ -21,7 +21,8 @@ data/
 
 # Playwright-mcp scratch (verification artifacts, never committed)
 .playwright-mcp/
-*.png
+# Scoped to this directory: a bare `*.png` would also swallow public/ and any future asset dir.
+/*.png
 
 # Playwright e2e — throwaway test DB, saved auth cookie, and reports (never committed)
 .e2e/

@@ -29,7 +29,16 @@ setup("authenticate", async ({ context }) => {
     // function" and bounces to the error boundary).
     const warm = await context.newPage();
 
-    for (const path of ["/", "/signin", "/signup", "/dashboard", "/dashboard/setup", "/dashboard/devices", "/dashboard/settings", "/dashboard/billing"]) {
+    for (const path of [
+        "/",
+        "/signin",
+        "/signup",
+        "/dashboard",
+        "/dashboard/setup",
+        "/dashboard/devices",
+        "/dashboard/settings",
+        "/dashboard/billing",
+    ]) {
         await warm.goto(path, { waitUntil: "networkidle" });
     }
 
