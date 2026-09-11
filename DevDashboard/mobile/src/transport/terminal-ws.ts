@@ -37,6 +37,8 @@ export function createTerminalTransport(opts: TerminalTransportOptions): Termina
     let status: TerminalStatus = "connecting";
     let heartbeat: HeartbeatState = { pendingPings: 0, dead: false };
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    /** True while a close was asked for, so the socket's own close event is not read as a drop. */
+    let closedByApp = false;
     const messageHandlers: ((d: string | ArrayBuffer) => void)[] = [];
     const statusHandlers: ((s: TerminalStatus) => void)[] = [];
 
@@ -77,13 +79,14 @@ export function createTerminalTransport(opts: TerminalTransportOptions): Termina
         }, HEARTBEAT_INTERVAL_MS);
     }
 
-    socket.addEventListener("open", () => {
+    function onOpen(): void {
+        closedByApp = false;
         heartbeat = heartbeatReducer(heartbeat, { type: "reset" });
         setStatus("open");
         startHeartbeat();
-    });
+    }
 
-    socket.addEventListener("message", (ev: MessageEvent) => {
+    function onMessage(ev: MessageEvent): void {
         if (typeof ev.data === "string" && ev.data === " pong") {
             heartbeat = heartbeatReducer(heartbeat, { type: "pong" });
             return;
@@ -92,20 +95,37 @@ export function createTerminalTransport(opts: TerminalTransportOptions): Termina
         for (const h of messageHandlers) {
             h(ev.data as string | ArrayBuffer);
         }
-    });
+    }
 
-    socket.addEventListener("close", () => setStatus("reconnecting"));
-    socket.addEventListener("error", () => setStatus("reconnecting"));
+    /**
+     * The socket's own close event arrives AFTER we asked for the close, so reporting
+     * "reconnecting" here would overwrite the "closed" that backgrounding just set — and the
+     * foreground branch below only reconnects from "closed", so the terminal would never come back.
+     */
+    function onDisconnect(): void {
+        if (closedByApp) {
+            return;
+        }
+
+        setStatus("reconnecting");
+    }
+
+    socket.addEventListener("open", onOpen);
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("close", onDisconnect);
+    socket.addEventListener("error", onDisconnect);
 
     const appStateSub = AppState.addEventListener("change", (next: AppStateStatus) => {
         if (next === "background" || next === "inactive") {
             stopHeartbeat();
+            closedByApp = true;
             socket.close();
             setStatus("closed");
             return;
         }
 
         if (next === "active" && status === "closed") {
+            closedByApp = false;
             socket.reconnect();
             setStatus("connecting");
         }
@@ -130,8 +150,18 @@ export function createTerminalTransport(opts: TerminalTransportOptions): Termina
         close() {
             stopHeartbeat();
             appStateSub.remove();
+            closedByApp = true;
             socket.close();
             setStatus("closed");
+
+            // Drop every subscription. Without this a torn-down session's late frames and close
+            // event still run its old handlers, which now belong to whatever session replaced it.
+            socket.removeEventListener("open", onOpen);
+            socket.removeEventListener("message", onMessage);
+            socket.removeEventListener("close", onDisconnect);
+            socket.removeEventListener("error", onDisconnect);
+            messageHandlers.length = 0;
+            statusHandlers.length = 0;
         },
     };
 }

@@ -123,7 +123,15 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 const ws = transport.openTerminal(sessionId);
                 wsRef.current = ws;
 
+                // Both callbacks check they still own the current socket. Switching sessions closes
+                // the old one, and its close event and any in-flight frame arrive afterwards — they
+                // would otherwise flip the new session's status back to "reconnecting" and inject
+                // the previous session's bytes into the new page.
                 ws.onStatus((s) => {
+                    if (wsRef.current !== ws) {
+                        return;
+                    }
+
                     if (s === "open") {
                         setStatus("connected");
                     } else if (s === "reconnecting") {
@@ -134,6 +142,10 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 });
 
                 ws.onMessage((data) => {
+                    if (wsRef.current !== ws) {
+                        return;
+                    }
+
                     const chunk = typeof data === "string" ? data : new Uint8Array(data);
                     if (chunk instanceof Uint8Array) {
                         cbRef.current.onData?.(chunk);
@@ -164,7 +176,7 @@ export const WebViewHtmlRenderer = forwardRef<TerminalRenderer, TerminalDriverPr
                 sendInput(text) {
                     wsRef.current?.send(text);
                 },
-                sendKey(key: TerminalKey, mods?: TerminalKeyMods) {
+                sendKey(key: TerminalKey | string, mods?: TerminalKeyMods) {
                     wsRef.current?.send(keyToBytes(key, mods));
                 },
                 paste(text) {
