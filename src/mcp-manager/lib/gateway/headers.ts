@@ -10,7 +10,20 @@ const STRIP_TO_UPSTREAM = new Set([
     "transfer-encoding",
 ]);
 
-const STRIP_FROM_UPSTREAM = new Set(["set-cookie", "www-authenticate"]);
+// Bun's fetch decodes the upstream body, and server.ts hands that decoded stream
+// to `new Response(...)`, which derives its own framing. Copying the upstream's
+// framing headers therefore describes a body that no longer exists: the client is
+// told `gzip` over plain bytes, with a length measured on the compressed form.
+// STRIP_TO_UPSTREAM already drops content-length in the other direction, so the
+// omission here was one-directional and unintentional.
+const STRIP_FROM_UPSTREAM = new Set([
+    "set-cookie",
+    "www-authenticate",
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+]);
 
 export function loopbackHostOk(hostHeader: string | null): boolean {
     const host = (hostHeader ?? "").replace(/:\d+$/, "");

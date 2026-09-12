@@ -47,8 +47,20 @@ export async function gatewayStart(opts: { port?: string; detach?: boolean } = {
 }
 
 export async function gatewayStop(): Promise<void> {
-    stopInProcessGateways();
-    ui.ok("stopped in-process gateway (launchd agents need gateway uninstall)");
+    // `started` is a module-level array in THIS process, so a fresh CLI invocation can
+    // only ever stop a gateway it started itself. It printed "stopped" regardless,
+    // which is the answer that made a wedged gateway look unfixable.
+    const stopped = stopInProcessGateways();
+
+    if (stopped === 0) {
+        ui.warn("no gateway running in this process — nothing to stop here");
+        ui.dim(`    a gateway started elsewhere is not reachable from this process`);
+        ui.dim(`    check: ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "status"] })}`);
+
+        return;
+    }
+
+    ui.ok(`stopped ${stopped} in-process gateway(s) (launchd agents need gateway uninstall)`);
 }
 
 export async function gatewayStatus(): Promise<void> {
@@ -66,7 +78,12 @@ export async function gatewayStatus(): Promise<void> {
 export async function gatewayRotateClient(): Promise<void> {
     await rotateGatewayClientToken();
     ui.ok("rotated local gateway client token");
-    ui.dim(`resync with ${suggestCommand("tools mcp-manager", { replaceCommand: ["sync", "-p", "all", "-y"] })}`);
+    // A running gateway now re-reads on mismatch, so it follows the rotation. The
+    // HARNESS configs still carry the old token in their headers, and nothing else
+    // rewrites them, so every harness stays 401'd until this resync runs. That is a
+    // config write across every provider, so it stays an explicit user action.
+    ui.warn("every harness config still carries the OLD token and will be refused until you resync");
+    ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["sync", "-p", "all", "-y"] })}`);
 }
 
 export async function gatewayStdio(serverName: string | undefined): Promise<void> {

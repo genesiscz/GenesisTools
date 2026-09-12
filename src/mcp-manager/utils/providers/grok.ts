@@ -188,7 +188,19 @@ export class GrokProvider extends MCPProvider {
     }
 
     async syncServers(servers: Record<string, UnifiedMCPServerConfig>): Promise<WriteResult> {
-        return this.writeConfig(this.fromUnifiedConfig(servers));
+        // Read first, then replace ONLY mcp_servers. fromUnifiedConfig builds a fresh
+        // object, so writing its result straight out drops every other top-level key:
+        // disabled_mcp_servers, [features], [telemetry], [skills], [plugins] and
+        // [toolset.*] are lost outright, while [cli], [models], [ui], [marketplace] and
+        // [privacy] come back as DEFAULTS on the next grok start, which is why the loss
+        // reads as a settings reset rather than a deletion. It destroyed a live
+        // ~/.grok/config.toml on 2026-09-10 (diff: -428 +333 lines). Every other writer
+        // in this class already reads before it writes; this was the one that did not.
+        const config = await this.readConfig();
+        const synced = this.fromUnifiedConfig(servers) as GrokGenericConfig;
+        config.mcp_servers = synced.mcp_servers ?? {};
+
+        return this.writeConfig(config);
     }
 
     toUnifiedConfig(config: unknown): Record<string, UnifiedMCPServerConfig> {

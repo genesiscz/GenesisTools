@@ -13,6 +13,13 @@ export interface GatewayHandle {
     hostname: string;
     url: string;
     stop(): void;
+    /**
+     * Stop the listener from holding the event loop open. `gateway start` wants the
+     * opposite and never calls this; a command that merely needed a gateway to exist
+     * (`auth login`, `scripts run`, the stdio trampoline) calls it so the process can
+     * exit when its real work is done. See ensureGatewayUp.
+     */
+    unref(): void;
 }
 
 function jsonRpcError(message: string, status = 401): Response {
@@ -46,7 +53,7 @@ export async function startGatewayServer(
     const listen = gatewayListen(config);
     const hostname = opts.hostname ?? listen.host;
     const port = opts.port ?? listen.port;
-    const localToken = await ensureGatewayClientToken();
+    let localToken = await ensureGatewayClientToken();
 
     const server = Bun.serve({
         hostname,
@@ -73,7 +80,16 @@ export async function startGatewayServer(
             }
 
             if (!localTokenMatches(request, localToken)) {
-                return jsonRpcError(`missing ${GATEWAY_HEADER}. Run tools mcp-manager auth login ${name}`);
+                // Re-read once before rejecting. This value was read at startup, so a
+                // `gateway rotate-client` in another process used to be invisible here
+                // for the lifetime of the server: every harness 401'd until someone
+                // killed the process by hand, and `gateway stop` could not do it.
+                // The happy path still costs no vault read.
+                localToken = await ensureGatewayClientToken();
+
+                if (!localTokenMatches(request, localToken)) {
+                    return jsonRpcError(`missing ${GATEWAY_HEADER}. Run tools mcp-manager auth login ${name}`);
+                }
             }
 
             const live = opts.readConfig ? await opts.readConfig() : config;
@@ -179,5 +195,6 @@ export async function startGatewayServer(
         hostname: boundHost,
         url: gatewayServerUrl({ host: boundHost, port: boundPort }, "x").replace(/\/mcp\/x$/, ""),
         stop: () => server.stop(true),
+        unref: () => server.unref(),
     };
 }

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { secrets } from "@genesiscz/utils/security";
+import { withRefreshLock } from "./lock.ts";
 import { GATEWAY_CLIENT_TOKEN_PATH, secretPath } from "./paths.ts";
 
 export async function readSecret(path: string): Promise<string | undefined> {
@@ -33,10 +34,23 @@ export async function ensureGatewayClientToken(): Promise<string> {
         return existing;
     }
 
-    const token = randomBytes(32).toString("base64url");
-    await writeSecret(GATEWAY_CLIENT_TOKEN_PATH, token);
+    // Mint under the same lock the token refresh already uses. Concurrency here is
+    // guaranteed by design, not hypothetical: projectServerForHarness gives Cursor one
+    // `gateway stdio` process PER SERVER, and every one of them calls this on first
+    // run. Unlocked, each read `undefined`, each minted its own randomBytes(32), and
+    // last write won — every loser was left holding a token the gateway 401s.
+    return withRefreshLock("gateway-client", async () => {
+        const raced = await readSecret(GATEWAY_CLIENT_TOKEN_PATH);
 
-    return token;
+        if (raced && raced.length > 0) {
+            return raced;
+        }
+
+        const token = randomBytes(32).toString("base64url");
+        await writeSecret(GATEWAY_CLIENT_TOKEN_PATH, token);
+
+        return token;
+    });
 }
 
 export async function rotateGatewayClientToken(): Promise<string> {

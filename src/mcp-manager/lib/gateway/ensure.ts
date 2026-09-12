@@ -2,9 +2,9 @@ import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { logger } from "@genesiscz/utils/logger";
 import { gatewayListen } from "../auth/project.ts";
-import { startGatewayServer } from "./server.ts";
+import { type GatewayHandle, startGatewayServer } from "./server.ts";
 
-const started: { stop: () => void; port: number }[] = [];
+const started: GatewayHandle[] = [];
 
 export async function gatewayHealth(host: string, port: number): Promise<"ok" | "stranger" | "down"> {
     try {
@@ -39,12 +39,23 @@ export async function ensureGatewayUp(config: UnifiedMCPConfig): Promise<void> {
         port: listen.port,
         readConfig: readUnifiedConfig,
     });
+    // Every caller of ensureGatewayUp wants a gateway to EXIST, not to be kept alive
+    // by it: `auth login` printed "logged in" and then hung forever, and `tools
+    // scripts run` inherited the same hang through kit.ts. Unref-ing here fixes both
+    // at the lifecycle rather than at each caller, and cannot regress `gateway start`,
+    // which builds its handle through startGatewayServer directly and needs the ref.
     started.push(handle);
+    handle.unref();
     logger.info({ port: handle.port }, "mcp gateway started in-process");
 }
 
-export function stopInProcessGateways(): void {
-    for (const handle of started.splice(0)) {
+/** Returns how many listeners this process actually stopped, which may be zero. */
+export function stopInProcessGateways(): number {
+    const handles = started.splice(0);
+
+    for (const handle of handles) {
         handle.stop();
     }
+
+    return handles.length;
 }

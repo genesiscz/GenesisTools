@@ -37,7 +37,9 @@ function parseResourceMetadata(wwwAuthenticate: string | null): string | undefin
 }
 
 async function getJson(url: string): Promise<unknown | undefined> {
-    const response = await mcpFetch(url, { headers: { Accept: "application/json" } });
+    // No credential travels with this request, and a well-known document is allowed to
+    // redirect, so this is the one place that opts out of mcpFetch's manual default.
+    const response = await mcpFetch(url, { headers: { Accept: "application/json" }, redirect: "follow" });
 
     if (!response.ok) {
         return undefined;

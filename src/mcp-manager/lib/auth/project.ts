@@ -40,6 +40,58 @@ export function isGatewayProjectedUrl(url: string | undefined, listen: GatewayLi
     }
 }
 
+/**
+ * True when `config` is Cursor's gateway trampoline for this server. It carries no
+ * `url` at all, which is why a url-only check never recognised it.
+ */
+export function isGatewayProjectedStdio(config: UnifiedMCPServerConfig, server: string): boolean {
+    if (config.command !== "tools") {
+        return false;
+    }
+
+    const args = config.args ?? [];
+    const expected = ["mcp-manager", "gateway", "stdio", "--server", server];
+
+    return expected.every((value, index) => args[index] === value);
+}
+
+/**
+ * True when `config` is anything projectServerForHarness would have written for this
+ * server: the http form (gateway url plus the local token header) or Cursor's stdio
+ * trampoline. Use this, not isGatewayProjectedUrl, whenever the question is "did WE
+ * write this?" — a url-only test answers `false` for every Cursor server.
+ */
+export function isGatewayProjection(config: UnifiedMCPServerConfig, listen: GatewayListen, server: string): boolean {
+    const url = typeof config.url === "string" ? config.url : undefined;
+
+    return isGatewayProjectedUrl(url, listen, server) || isGatewayProjectedStdio(config, server);
+}
+
+/**
+ * Put the stored remote definition back over a projection, in place.
+ *
+ * Wholesale, not field by field: the two projection shapes carry different keys, so
+ * restoring `url`/`httpUrl` alone leaves Cursor's `command` and `args` sitting on top
+ * of the restored url, and drops `auth` (tokenEndpoint, resource) every time, because
+ * projectServerForHarness never emits it. A dropped `auth` degrades the server to
+ * "run auth login" on the next gateway start.
+ *
+ * `_meta` is never part of a projection round trip; the caller owns it.
+ */
+export function restoreProjectedServer(projected: UnifiedMCPServerConfig, stored: UnifiedMCPServerConfig): void {
+    for (const key of Object.keys(projected)) {
+        if (key !== "_meta") {
+            delete (projected as Record<string, unknown>)[key];
+        }
+    }
+
+    for (const [key, value] of Object.entries(stored)) {
+        if (key !== "_meta") {
+            (projected as Record<string, unknown>)[key] = value;
+        }
+    }
+}
+
 export function projectServerForHarness(
     name: string,
     config: UnifiedMCPServerConfig,
