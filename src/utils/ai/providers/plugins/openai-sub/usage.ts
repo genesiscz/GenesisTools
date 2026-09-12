@@ -174,22 +174,26 @@ export function mapRateLimits(result: CodexRateLimitsResult | null | undefined):
     planName?: string;
 } {
     const rateLimits = result?.rateLimits ?? result?.rate_limits ?? null;
-
-    if (!rateLimits) {
-        return { limits: [] };
-    }
-
     const limits: LimitWindow[] = [];
 
-    for (const key of WINDOW_KEYS) {
-        const window = toWindow(key, rateLimits[key]);
+    // Returning early here dropped every per-model window whenever the payload carried
+    // rateLimitsByLimitId alone — which is exactly the shape this code was added to
+    // read. pollCodexAccount turns `limits.length === 0` into
+    // `auth: { reason: "not logged in" }`, so a healthy account reported as logged out.
+    if (rateLimits) {
+        for (const key of WINDOW_KEYS) {
+            const window = toWindow(key, rateLimits[key]);
 
-        if (window) {
-            limits.push(window);
+            if (window) {
+                limits.push(window);
+            }
         }
     }
 
-    const defaultLimitId = rateLimits.limitId ?? DEFAULT_LIMIT_ID;
+    // Skip the scoped copy of the plan-wide window only when the top-level block
+    // actually emitted it. With no top-level rateLimits nothing was emitted as primary,
+    // so skipping by name would discard the account's only windows.
+    const defaultLimitId = rateLimits ? (rateLimits.limitId ?? DEFAULT_LIMIT_ID) : undefined;
 
     for (const [limitId, scoped] of Object.entries(result?.rateLimitsByLimitId ?? {})) {
         if (limitId === defaultLimitId || !scoped) {
@@ -207,7 +211,7 @@ export function mapRateLimits(result: CodexRateLimitsResult | null | undefined):
         }
     }
 
-    const planName = rateLimits.planType ?? rateLimits.plan_type;
+    const planName = rateLimits?.planType ?? rateLimits?.plan_type;
 
     return { limits, ...(planName === undefined ? {} : { planName }) };
 }

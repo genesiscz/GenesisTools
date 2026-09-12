@@ -330,6 +330,20 @@ export function inspectHome(home: string, inspect: (query: OpenFilesQuery) => Op
         }
     }
 
+    // writeThreadNames opens every state database READ-WRITE. Probing only the
+    // HOME_LOCK_FILES meant a home with Codex holding state.sqlite reported "clear",
+    // and the migration then wrote into a database another process had open. These
+    // live in the home ROOT, not under sessions/, so the directory probe never saw
+    // them either.
+    // writeThreadNames opens every state database READ-WRITE. Probing only the
+    // HOME_LOCK_FILES meant a home with Codex holding state.sqlite reported "clear",
+    // and the migration then wrote into a database another process had open. These
+    // live in the home ROOT, not under sessions/, so the directory probe never saw
+    // them either.
+    for (const path of stateDatabaseSidecars(home)) {
+        files.push(path);
+    }
+
     const locks = join(home, "thread-writer-locks");
 
     if (existsSync(locks)) {
@@ -528,6 +542,23 @@ async function writeDesktopState(path: string, state: DesktopState, stamp: strin
 
 function sessionIndexOf(home: string): string {
     return join(home, SESSION_INDEX_FILE);
+}
+
+/**
+ * Every state database plus its `-wal` and `-shm` sidecars, for the two callers that must
+ * treat the three as one unit: the busy probe and the backup. A `.sqlite` restored beside
+ * a surviving newer `-wal` is worse than no restore at all.
+ */
+export function stateDatabaseSidecars(home: string): string[] {
+    const out: string[] = [];
+
+    for (const database of stateDatabases(home)) {
+        for (const sidecar of SQLITE_SIDECARS) {
+            out.push(`${database}${sidecar}`);
+        }
+    }
+
+    return out;
 }
 
 export function stateDatabases(home: string): string[] {
@@ -1044,8 +1075,15 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
         report.backups.globalState = backup;
     }
 
-    // The name merge below writes `threads.name` into these, so they are backed up like the rest.
-    for (const path of stateDatabases(destination)) {
+    // The name merge below writes `threads.name` into these, so they are backed up like
+    // the rest — sidecars included. A backup taken while the database has an
+    // uncheckpointed WAL cannot be restored from the `.sqlite` alone, and restoring that
+    // file beside a surviving newer `-wal` corrupts rather than recovers.
+    for (const path of stateDatabaseSidecars(destination)) {
+        if (!existsSync(path)) {
+            continue;
+        }
+
         const backup = join(backupRoot, basename(path));
         await clonePath(path, backup, false);
         report.backups.state = [...(report.backups.state ?? []), backup];

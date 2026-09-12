@@ -100,7 +100,17 @@ async function sendCmux(
     enterDelayMs: number
 ): Promise<void> {
     const where = surfaceTargetArgs(surfaceId, workspaceId);
-    logger.info({ pid: process.pid, surfaceId, text, enter, enterDelayMs }, "[cmux send-self] sending text");
+    // Never log `text` itself. This types arbitrary content into a terminal — a prompt,
+    // a pasted command, a token being echoed into a login flow — and logger always
+    // writes the day-stamped plaintext file, at every level. The length plus the enter
+    // flag is what the triage actually needs: the 2026-09-10 failure was a `send` with
+    // no matching `send-key enter`, which this still shows. A bare slash command is
+    // named in full because it cannot be a credential and it is the case being debugged.
+    const command = /^\/[a-z][a-z-]{0,31}$/.test(text) ? text : undefined;
+    logger.info(
+        { pid: process.pid, surfaceId, textLength: text.length, command, enter, enterDelayMs },
+        "[cmux send-self] sending text"
+    );
     await runCmuxOk(["send", ...where, text]);
 
     if (!enter) {

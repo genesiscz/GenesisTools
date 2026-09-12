@@ -10,6 +10,7 @@ import {
     type DesktopState,
     discoverSourceHomes,
     enumerateRollouts,
+    inspectHome,
     mergeDesktopState,
     migrateHome,
     normaliseRootPath,
@@ -801,5 +802,42 @@ describe("thread names in the Codex state database", () => {
 
         expect(rerun.sessionNames[0]).toMatchObject({ stateAdded: 0, stateAlreadyNamed: 2 });
         expect(threadName(destination, uuid("0041"))).toBe("astra-pricing");
+    });
+});
+
+describe("inspectHome", () => {
+    test("probes the state databases the migration writes to, sidecars included", () => {
+        const home = scratch();
+        writeFileSync(join(home, "state.sqlite"), "");
+        writeFileSync(join(home, "state_2.sqlite"), "");
+
+        let asked: string[] = [];
+        inspectHome(home, (query: OpenFilesQuery): OpenFilesResult => {
+            asked = query.files ?? [];
+            return [];
+        });
+
+        // writeThreadNames opens these read-write. A busy check that cannot see them
+        // reports "clear" while Codex holds the database the migration is about to edit.
+        expect(asked).toContain(join(home, "state.sqlite"));
+        expect(asked).toContain(join(home, "state.sqlite-wal"));
+        expect(asked).toContain(join(home, "state.sqlite-shm"));
+        expect(asked).toContain(join(home, "state_2.sqlite"));
+    });
+
+    test("reports busy when a state database is held", () => {
+        const home = scratch();
+        writeFileSync(join(home, "state.sqlite"), "");
+
+        const report = inspectHome(
+            home,
+            (query: OpenFilesQuery): OpenFilesResult =>
+                (query.files ?? []).some((file) => file.endsWith("state.sqlite"))
+                    ? [{ path: join(home, "state.sqlite"), pid: 4242, command: "codex" }]
+                    : []
+        );
+
+        expect(report.status).toBe("busy");
+        expect(report.holders[0]?.pid).toBe(4242);
     });
 });
