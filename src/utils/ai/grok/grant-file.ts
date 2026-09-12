@@ -156,8 +156,16 @@ export async function materialiseGrokGrant(
     function onSignal(signal: NodeJS.Signals): void {
         stopWatching();
 
-        if (finished) {
+        // Re-raising the signal on ourselves is how a handler restores the default
+        // disposition, so the exit status the parent sees is the one the signal would have
+        // produced on its own.
+        const reRaise = (): void => {
+            // pid-verified: our OWN pid, never read from durable state, so it cannot be recycled.
             process.kill(process.pid, signal);
+        };
+
+        if (finished) {
+            reRaise();
             return;
         }
 
@@ -169,9 +177,7 @@ export async function materialiseGrokGrant(
             .catch((error: unknown) => {
                 logger.error({ error, account: account.name, signal }, "grok: could not sync the rotated token");
             })
-            .finally(() => {
-                process.kill(process.pid, signal);
-            });
+            .finally(reRaise);
     }
 
     function removeAuthFileSync(): void {
