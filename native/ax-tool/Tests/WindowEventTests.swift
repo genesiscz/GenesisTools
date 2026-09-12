@@ -68,4 +68,41 @@ final class WindowEventTests: XCTestCase {
         let getLocation = unsafeBitCast(symbol, to: GetLocation.self)
         XCTAssertEqual(getLocation(event), CGPoint(x: 85, y: 121))
     }
+
+    func testDragPinsTheElementOnlyBeforeMouseDown() {
+        // Regression: the final review round on PR #376. verifyPoint ignored the target
+        // it was handed and asserted the captured element frame on EVERY step, so a drag
+        // whose target moves — which is every real drag — threw after the first movement
+        // and left the caller with a half-completed drag plus an error.
+        let start = CGPoint(x: 100, y: 200)
+
+        XCTAssertEqual(WindowEventFactory.dragVerifyTarget(point: start, start: start), .element)
+        XCTAssertEqual(WindowEventFactory.dragVerifyTarget(point: CGPoint(x: 101, y: 200), start: start), .window)
+        XCTAssertEqual(WindowEventFactory.dragVerifyTarget(point: CGPoint(x: 400, y: 640), start: start), .window)
+    }
+
+    func testDragVerifiesEveryStepAndAbortsWithRelease() throws {
+        // The verification is per step, not sampled: a drag that becomes unsafe midway
+        // must stop there. Pair this with the rule above — every step is checked, but
+        // after mouse-down the check pins the window, not the moving element.
+        let factory = try WindowEventFactory(windowID: 789, bounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+        var verified: [CGPoint] = []
+        var posted: [CGEventType] = []
+        let start = CGPoint(x: 10, y: 10)
+        let points = [CGPoint(x: 20, y: 20), CGPoint(x: 30, y: 30), CGPoint(x: 40, y: 40)]
+
+        XCTAssertThrowsError(
+            try factory.drag(start: start, points: points, stepDelay: 0,
+                             verify: { point in
+                                 verified.append(point)
+                                 if point == points[1] {
+                                     throw WindowEventError.unavailable("geometry moved")
+                                 }
+                             },
+                             post: { posted.append($0.type) })
+        )
+
+        XCTAssertEqual(verified, [start, points[0], points[1]])
+        XCTAssertEqual(posted.last, .leftMouseUp)
+    }
 }

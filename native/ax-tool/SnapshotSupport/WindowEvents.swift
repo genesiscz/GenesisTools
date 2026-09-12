@@ -1,6 +1,14 @@
 import AppKit
 import Darwin
 
+/// What a verification pins before an event is posted.
+public enum SnapshotVerifyTarget: Equatable {
+    /// The element the snapshot captured, at the frame it was captured with.
+    case element
+    /// The window only, at its CG bounds. Used once a drag is under way.
+    case window
+}
+
 public enum WindowEventError: Error, LocalizedError {
     case unavailable(String)
     public var errorDescription: String? {
@@ -34,6 +42,17 @@ public final class WindowEventFactory {
     }
 
     deinit { dlclose(handle) }
+
+    /// Which thing a drag step must pin: the dragged element, or only the window.
+    ///
+    /// A drag verifies the element ONCE, before mouse-down, because from then on the
+    /// element is supposed to move — that is what a drag is. Every later step pins the
+    /// window instead. `verifyPoint` used to ignore this choice and assert the captured
+    /// element frame on every step, so any drag that moved its own target aborted after
+    /// the first movement and left a half-completed drag behind.
+    public static func dragVerifyTarget(point: CGPoint, start: CGPoint) -> SnapshotVerifyTarget {
+        point == start ? .element : .window
+    }
 
     public func drag(start: CGPoint, points: [CGPoint], stepDelay: Double,
                      verify: (CGPoint) throws -> Void, post: (CGEvent) -> Void) throws {

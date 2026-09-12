@@ -466,6 +466,16 @@ func cmdAct(appName _: String) {
             return point
         }
         func verifyPoint(_ point: CGPoint, target: AXUIElement) throws -> AXUIElement {
+            // Pin whatever the CALLER named. The parameter existed but was ignored: the
+            // guard asserted the captured `element` frame every time, so a drag — which
+            // passes `window.ax` for every step after mouse-down precisely because the
+            // dragged element is meant to move — aborted the moment its target moved,
+            // posted the release and reported a half-completed drag.
+            //
+            // `--coords` made it worse: it forces elementIndex 0, which IS the window, so
+            // the window frame was asserted twice, once tolerantly against the CG bounds
+            // and once exactly against the AX frame.
+            let expectedTargetFrame = CFEqual(target, window.ax) ? window.bounds : frame
             let listed = CGWindowListCopyWindowInfo(.optionIncludingWindow, window.id) as? [[CFString: Any]] ?? []
             guard listed.contains(where: { info in
                 guard (info[kCGWindowNumber] as? CGWindowID) == window.id,
@@ -474,7 +484,7 @@ func cmdAct(appName _: String) {
                       let raw = info[kCGWindowBounds] as? NSDictionary,
                       let current = CGRect(dictionaryRepresentation: raw) else { return false }
                 return workflowSameFrame(current, window.bounds)
-            }), axFrame(window.ax) == window.bounds, axFrame(element) == frame else {
+            }), axFrame(window.ax) == window.bounds, axFrame(target) == expectedTargetFrame else {
                 throw WindowEventError.unavailable("window or element geometry changed; inspect before retrying")
             }
             if !background {
@@ -605,7 +615,10 @@ func cmdAct(appName _: String) {
                             y: point.y + (end.y - point.y) * Double(step) / Double(steps))
                 }
                 try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
-                                 verify: { _ = try verifyPoint($0, target: $0 == point ? element : window.ax) }, post: { $0.postToPid(pid) })
+                                 verify: {
+                                     let pin = WindowEventFactory.dragVerifyTarget(point: $0, start: point)
+                                     _ = try verifyPoint($0, target: pin == .element ? element : window.ax)
+                                 }, post: { $0.postToPid(pid) })
                 Thread.sleep(forTimeInterval: 0.05)
             } else {
                 let button = workflowArgument("--button") ?? "left"
