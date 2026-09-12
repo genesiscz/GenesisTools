@@ -26,9 +26,9 @@ public struct WorkflowArguments {
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
-                "--suffix", "--selection", "--format",
+                "--suffix", "--selection", "--format", "--path",
             ]
-            flagOptions = ["--background", "--double"]
+            flagOptions = ["--background", "--double", "--refresh"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -96,6 +96,10 @@ public struct WorkflowArguments {
         try reject(["--value"], unless: ["set"])
         try reject(["--keys"], unless: ["key"])
         try reject(["--ax-action"], unless: ["perform"])
+
+        if values["--path"] != nil, !flags.contains("--refresh") {
+            throw WorkflowArgumentError.invalid("--path requires --refresh")
+        }
 
         if action == "type", let text = values["--text"], text.utf16.count > 256 {
             throw WorkflowArgumentError.invalid("type text exceeds 256 UTF-16 units; use paste for longer text")

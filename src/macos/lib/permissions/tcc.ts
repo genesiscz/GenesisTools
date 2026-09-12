@@ -53,6 +53,10 @@ export interface TccRow {
     /** 0 = bundle id, 1 = absolute path of the executable */
     clientType: number;
     authValue: number;
+    /** TCC auth_reason; 9 is a prompt that was never answered */
+    authReason?: number;
+    /** Automation only: the bundle id the client was granted or denied for */
+    target?: string;
     label: string;
     lastModified: string;
 }
@@ -63,11 +67,13 @@ export interface TccReadResult {
     error?: string;
 }
 
+const TCC_REASON_PROMPT_TIMEOUT = 9;
+
 /** TCC `auth_value` meanings. 4 is "Add Only" for Calendar and "Limited" style grants elsewhere. */
-export function tccAuthLabel(service: string, authValue: number): string {
+export function tccAuthLabel(service: string, authValue: number, authReason?: number): string {
     switch (authValue) {
         case 0:
-            return "denied";
+            return authReason === TCC_REASON_PROMPT_TIMEOUT ? "prompt timed out (never answered)" : "denied";
         case 1:
             return "unknown";
         case 2:
@@ -90,6 +96,8 @@ interface RawRow {
     client: string;
     client_type: number;
     auth_value: number;
+    auth_reason: number | null;
+    indirect_object_identifier: string | null;
     last_modified: number;
 }
 
@@ -108,7 +116,7 @@ export function readTccRows(options: { dbPath: string; services: readonly string
 
         const raw = db
             .query<RawRow, string[]>(
-                `SELECT service, client, client_type, auth_value, last_modified FROM access WHERE service IN (${placeholders})${clientClause} ORDER BY service, client`
+                `SELECT service, client, client_type, auth_value, auth_reason, indirect_object_identifier, last_modified FROM access WHERE service IN (${placeholders})${clientClause} ORDER BY service, client, indirect_object_identifier`
             )
             .all(...params);
         logger.debug({ dbPath: options.dbPath, rows: raw.length, client: options.client }, "read TCC rows");
@@ -120,7 +128,9 @@ export function readTccRows(options: { dbPath: string; services: readonly string
                 client: r.client,
                 clientType: r.client_type,
                 authValue: r.auth_value,
-                label: tccAuthLabel(r.service, r.auth_value),
+                authReason: r.auth_reason ?? undefined,
+                target: r.indirect_object_identifier ?? undefined,
+                label: tccAuthLabel(r.service, r.auth_value, r.auth_reason ?? undefined),
                 lastModified: new Date(r.last_modified * 1000).toISOString(),
             })),
         };

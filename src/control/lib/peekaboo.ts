@@ -7,8 +7,10 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { tmpdir } from "@genesiscz/utils/paths";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
+import { parseNativeWindowList, parseScreenList, type ScreenInfo, type WindowBounds } from "./native-record";
 
 export const CHROMIUM_APPS = new Set([
     "Brave Browser",
@@ -68,18 +70,7 @@ export function runPeekabooJson(
     };
 }
 
-export interface ScreenInfo {
-    index: number;
-    name: string;
-    isPrimary: boolean;
-    points: { width: number; height: number };
-    scaleFactor: number;
-    framePixels: { width: number; height: number };
-    // top-left origin of this screen in GLOBAL CG points — the space click
-    // coords and window bounds live in (peekaboo `list screens` positions are
-    // Cocoa-flipped; converted here so agents never have to)
-    originCG: { x: number; y: number };
-}
+export type { ScreenInfo, WindowBounds } from "./native-record";
 
 // list lookups run inside the action timeline — keep them FAST: 4s via the
 // bridge, then one --no-remote retry (local AX/CG; works when the bridge is
@@ -93,73 +84,178 @@ export function runPeekabooListJson(args: string[]): { ok: boolean; data?: unkno
     return runPeekabooJson([...args, "--no-remote"], 6_000);
 }
 
+/** Displays from `ax-tool screens` when the binary is built, else Peekaboo's `screen list`; same shape either way. */
 export function listScreens(): ScreenInfo[] {
-    const r = runPeekabooListJson(["list", "screens"]);
-    // runPeekabooJson already unwrapped the envelope's .data
-    const screens =
-        (
-            r.data as {
-                screens?: {
-                    index: number;
-                    name: string;
-                    isPrimary: boolean;
-                    scaleFactor: number;
-                    position: { x: number; y: number };
-                    resolution: { width: number; height: number };
-                }[];
-            }
-        )?.screens ?? [];
-    const primary = screens.find((s) => s.isPrimary) ?? screens[0];
-    const primaryH = primary?.resolution.height ?? 0;
+    if (axToolAvailable()) {
+        const native = runCmd([AX_TOOL_PATH, "screens"]);
 
-    return screens.map((s) => ({
-        index: s.index,
-        name: s.name,
-        isPrimary: s.isPrimary,
-        points: { width: s.resolution.width, height: s.resolution.height },
-        scaleFactor: s.scaleFactor,
-        framePixels: { width: s.resolution.width * s.scaleFactor, height: s.resolution.height * s.scaleFactor },
-        originCG: { x: s.position.x, y: primaryH - (s.position.y + s.resolution.height) },
-    }));
+        if (native.ok) {
+            try {
+                const screens = parseScreenList(SafeJSON.parse(native.stdout, { strict: true }), "cocoa");
+
+                if (screens.length > 0) {
+                    return screens;
+                }
+            } catch (error) {
+                logger.debug({ error }, "ax-tool screens returned unparsable JSON; asking Peekaboo");
+            }
+        }
+    }
+
+    return parseScreenList(runPeekabooListJson(["screen", "list"]).data, "coregraphics");
 }
 
-export interface WindowBounds {
+interface PeekabooV4Window {
+    window_title?: string;
+    window_index?: number;
+    window_id?: number;
+    is_key?: boolean;
+    is_on_screen?: boolean;
+    bounds?: { x: number; y: number; width: number; height: number };
+}
+
+interface PeekabooV3Window {
     title: string;
     index: number;
     isMainWindow: boolean;
-    // CG points: [[x, y], [w, h]]
-    x: number;
-    y: number;
-    w: number;
-    h: number;
+    isMinimized: boolean;
+    bounds?: [[number, number], [number, number]];
 }
 
-export function listWindowBounds(app: string): WindowBounds[] {
-    const r = runPeekabooListJson(["list", "windows", "--app", app, "--include-details", "bounds"]);
-    const wins =
-        (
-            r.data as {
-                windows?: {
-                    title: string;
-                    index: number;
-                    isMainWindow: boolean;
-                    isMinimized: boolean;
-                    bounds?: [[number, number], [number, number]];
-                }[];
-            }
-        )?.windows ?? [];
+function isV4Window(window: PeekabooV3Window | PeekabooV4Window): window is PeekabooV4Window {
+    return "window_title" in window || "window_index" in window;
+}
 
-    return wins
-        .filter((w) => !w.isMinimized && w.bounds)
-        .map((w) => ({
-            title: w.title,
-            index: w.index,
-            isMainWindow: w.isMainWindow,
-            x: w.bounds![0][0],
-            y: w.bounds![0][1],
-            w: w.bounds![1][0],
-            h: w.bounds![1][1],
-        }));
+/** Peekaboo 4 renamed every field and dropped the details flag; bounds are always present now. */
+export function parseWindowList(data: unknown): WindowBounds[] {
+    const wins = (data as { windows?: (PeekabooV3Window | PeekabooV4Window)[] } | undefined)?.windows ?? [];
+    const bounds: WindowBounds[] = [];
+
+    for (const w of wins) {
+        if (isV4Window(w)) {
+            if (w.is_on_screen === false || !w.bounds) {
+                continue;
+            }
+
+            bounds.push({
+                title: w.window_title ?? "",
+                index: w.window_index ?? 0,
+                id: w.window_id,
+                isMainWindow: w.is_key === true,
+                x: w.bounds.x,
+                y: w.bounds.y,
+                w: w.bounds.width,
+                h: w.bounds.height,
+            });
+        } else if (!w.isMinimized && w.bounds) {
+            bounds.push({
+                title: w.title,
+                index: w.index,
+                isMainWindow: w.isMainWindow,
+                x: w.bounds[0][0],
+                y: w.bounds[0][1],
+                w: w.bounds[1][0],
+                h: w.bounds[1][1],
+            });
+        }
+    }
+
+    return bounds;
+}
+
+/** Window geometry from `ax-tool window --app` when the binary is built, else Peekaboo's `window list`. */
+export function listWindowBounds(app: string): WindowBounds[] {
+    if (axToolAvailable()) {
+        const native = runCmd([AX_TOOL_PATH, "window", "--app", app]);
+
+        if (native.ok) {
+            try {
+                const windows = parseNativeWindowList(SafeJSON.parse(native.stdout, { strict: true }));
+
+                if (windows.length > 0) {
+                    return windows;
+                }
+            } catch (error) {
+                logger.debug({ error, app }, "ax-tool window returned unparsable JSON; asking Peekaboo");
+            }
+        }
+    }
+
+    return parseWindowList(runPeekabooListJson(["window", "list", "--app", app]).data);
+}
+
+/** Recorder actions fire without a snapshot, so Peekaboo 4 needs explicit foreground consent. */
+export function peekabooChord(keys: string): string {
+    return keys
+        .split(",")
+        .map((key) => key.trim())
+        .filter(Boolean)
+        .join("+");
+}
+
+export function clickArgv(coords: string): string[] {
+    return ["click", "--at", coords, "--global", "--foreground"];
+}
+
+export function moveArgv(coords: string): string[] {
+    return ["move", "--at", coords, "--global", "--foreground"];
+}
+
+export function pressArgv(keys: string, holdMs?: number): string[] {
+    const argv = ["press", peekabooChord(keys), "--foreground"];
+    if (holdMs !== undefined) {
+        argv.push("--hold", String(holdMs));
+    }
+
+    return argv;
+}
+
+export function typeArgv(text: string, delayMs: number): string[] {
+    return ["type", "--text", text, "--profile", "linear", "--delay", String(delayMs), "--foreground"];
+}
+
+export function scrollArgv(options: {
+    direction: string;
+    amount?: number;
+    app?: string;
+    windowTitle?: string;
+}): string[] {
+    const argv = ["scroll", "--direction", options.direction, "--amount", String(options.amount ?? 3)];
+    if (options.app) {
+        argv.push("--app", options.app);
+    }
+
+    if (options.windowTitle) {
+        argv.push("--window-title", options.windowTitle);
+    }
+
+    argv.push("--foreground");
+    return argv;
+}
+
+/** A window PNG for the clickmap: the native tool when it is built, else Peekaboo 4's `see --no-elements` (`image` is gone). */
+export function windowShotArgv(options: {
+    axToolPath?: string;
+    app: string;
+    path: string;
+    windowTitle?: string;
+}): string[] {
+    if (options.axToolPath) {
+        const argv = [options.axToolPath, "screenshot", "--app", options.app, "--path", options.path];
+        if (options.windowTitle) {
+            argv.push("--window", options.windowTitle);
+        }
+
+        return argv;
+    }
+
+    const argv = ["peekaboo", "see", "--app", options.app, "--path", options.path, "--no-elements"];
+    if (options.windowTitle) {
+        argv.push("--window-title", options.windowTitle);
+    }
+
+    argv.push("--json");
+    return argv;
 }
 
 export function pickLargestWindow(wins: WindowBounds[]): WindowBounds | undefined {
@@ -272,7 +368,20 @@ export const AX_TOOL_PATH = join(
     "release",
     "ax-tool"
 );
-export const AX_TOOL_AVAILABLE = existsSync(AX_TOOL_PATH);
+/**
+ * Whether the native binary exists RIGHT NOW.
+ *
+ * This was a module const, evaluated once at import. On a fresh clone (or with a stale build
+ * receipt) it was `false` before `ensureBinary()` ran, and stayed `false` for the rest of the
+ * process — so the recorder built the binary and recorded natively while `listScreens` and
+ * `listWindowBounds` kept answering from Peekaboo, which carries a different screen-origin
+ * convention (see ScreenOriginConvention). `capture.md` claims the opposite in the same commit.
+ *
+ * A stat per call is nothing next to the subprocess each caller is about to spawn.
+ */
+export function axToolAvailable(): boolean {
+    return existsSync(AX_TOOL_PATH);
+}
 
 export function runAxAction(
     app: string,
@@ -282,7 +391,7 @@ export function runAxAction(
     axAction?: string,
     q?: string
 ): { ok: boolean; stdout: string; stderr: string } {
-    if (AX_TOOL_AVAILABLE) {
+    if (axToolAvailable()) {
         return runAxActionFast(app, axId, mode, value, axAction, q);
     }
     if (mode === "perform" || q) {
@@ -450,7 +559,7 @@ export function focusWindow(
 ): { ok: boolean; via: "ax-tool" | "peekaboo" | "osascript" | "none"; detail: string } {
     // Native ax-tool first: activates + raises without the peekaboo bridge
     // (peekaboo 3.9.4 'window focus' HANGS — observed killed at 30s+).
-    if (AX_TOOL_AVAILABLE) {
+    if (axToolAvailable()) {
         const axCmd = target.windowTitle
             ? [AX_TOOL_PATH, "window", "--app", target.app, "--action", "focus", "--window", target.windowTitle]
             : [AX_TOOL_PATH, "focus", "--app", target.app];
@@ -533,11 +642,12 @@ export interface CaptureAttempt {
 
 // Recording-start detection: peekaboo writes keep-0001.png into a fresh
 // capture-<UUID> dir the moment the first frame is grabbed.
-export async function startCapture(captureArgs: string[]): Promise<CaptureAttempt> {
+export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
     const sessionsRoot = captureSessionsRoot();
     mkdirSync(sessionsRoot, { recursive: true });
     const preexisting = new Set(readdirSync(sessionsRoot));
-    const p = Bun.spawn(["peekaboo", ...captureArgs], { stdout: "pipe", stderr: "pipe" });
+    const tool = argv[0].split("/").pop() ?? argv[0];
+    const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
     // Drain both pipes from spawn time: an undrained 64KB pipe blocks peekaboo
     // mid-write (large final JSON on long captures, or visualizer logs when
     // PEEKABOO_VISUALIZER_STDOUT=true) and is indistinguishable from a hang.
@@ -588,8 +698,8 @@ export async function startCapture(captureArgs: string[]): Promise<CaptureAttemp
 
         failDiag = [
             exitedEarly
-                ? `peekaboo exited (code ${p.exitCode}) before writing a frame`
-                : "peekaboo still running with no frame after 15s — killed its process tree",
+                ? `${tool} exited (code ${p.exitCode}) before writing a frame`
+                : `${tool} still running with no frame after 15s — killed its process tree`,
             envelope ? `error ${envelope}` : `stdout: ${so.trim().slice(0, 300) || "empty"}`,
             `stderr: ${se.trim().slice(0, 300) || "empty"}`,
         ].join(" · ");

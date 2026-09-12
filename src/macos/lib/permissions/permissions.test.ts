@@ -245,3 +245,60 @@ describe("collectProblems", () => {
         expect(problems[0]).toContain("not running under GenesisTools.app");
     });
 });
+describe("grantsFor: Automation is per target", () => {
+    const automation = TCC_SERVICES.find((s) => s.id === "kTCCServiceAppleEvents");
+
+    if (!automation) {
+        throw new Error("service table changed");
+    }
+
+    const user: TccReadResult = {
+        readable: true,
+        rows: [
+            {
+                service: "kTCCServiceAppleEvents",
+                client: "com.genesiscz.genesistools",
+                clientType: 0,
+                authValue: 0,
+                authReason: 9,
+                target: "com.apple.Notes",
+                label: "prompt timed out (never answered)",
+                lastModified: "2026-09-09T21:06:00.000Z",
+            },
+            {
+                service: "kTCCServiceAppleEvents",
+                client: "com.genesiscz.genesistools",
+                clientType: 0,
+                authValue: 2,
+                authReason: 3,
+                target: "com.apple.systemevents",
+                label: "allowed",
+                lastModified: "2026-09-07T12:10:00.000Z",
+            },
+        ],
+    };
+
+    it("does not let one unanswered prompt read as a global denial", () => {
+        const [grant] = grantsFor("com.genesiscz.genesistools", user, user, [automation]);
+        expect(grant.granted).toBe(true);
+        expect(grant.label).toBe("1 of 2 targets allowed");
+        expect(grant.targets).toEqual([
+            { target: "com.apple.Notes", granted: false, label: "prompt timed out (never answered)" },
+            { target: "com.apple.systemevents", granted: true, label: "allowed" },
+        ]);
+    });
+
+    it("stays not asked yet with no rows at all", () => {
+        const [grant] = grantsFor("com.other", user, user, [automation]);
+        expect(grant).toMatchObject({ granted: false, label: "not asked yet" });
+        expect(grant.targets).toBeUndefined();
+    });
+});
+
+describe("tccAuthLabel with a reason", () => {
+    it("names a timed-out prompt instead of calling it denied", () => {
+        expect(tccAuthLabel("kTCCServiceAppleEvents", 0, 9)).toBe("prompt timed out (never answered)");
+        expect(tccAuthLabel("kTCCServiceAppleEvents", 0, 3)).toBe("denied");
+        expect(tccAuthLabel("kTCCServiceAppleEvents", 0)).toBe("denied");
+    });
+});

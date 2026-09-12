@@ -88,6 +88,9 @@ PLAN CONTRACT (TypeScript)
           // show no panel); may render from a human Terminal session. Treat
           // stderr as the real channel. Pointless for fully synthetic plans.
       noRemote?: boolean;         // pass --no-remote (skip bridge hosts, run local)
+      backend?: "native" | "peekaboo"; // DEFAULT "native" when ax-tool is built: the recorder is
+          // ScreenCaptureKit inside ax-tool (\`ax-tool capture\`), no Peekaboo, no bridge, no
+          // daemon. "peekaboo" opts back into the external binary; the flags below then apply.
       captureEngine?: "cg" | "sc"; // pass --capture-engine; "cg" = CoreGraphics.
           // RECOMMENDED DEFAULT FOR AGENT-DRIVEN PLANS: \`noRemote: true,
           // captureEngine: "cg"\` — skips the bridge entirely, which is the
@@ -395,6 +398,8 @@ export interface CaptureSpec {
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";
+    /** default native when ax-tool is built: ScreenCaptureKit, no Peekaboo; "peekaboo" opts back in */
+    backend?: "native" | "peekaboo";
 }
 
 export interface CropSpec {

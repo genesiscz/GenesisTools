@@ -19,6 +19,20 @@ final class WorkflowArgumentsTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--unknown", "value"], command: "see"))
     }
 
+    func testRefreshOwnsPath() throws {
+        let refreshed = try WorkflowArguments([
+            "--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press", "--refresh", "--path", "/tmp/after.png",
+        ], command: "act")
+        XCTAssertTrue(refreshed.flags.contains("--refresh"))
+        XCTAssertEqual(refreshed.values["--path"], "/tmp/after.png")
+
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press", "--path", "/tmp/after.png",
+        ], command: "act")) { error in
+            XCTAssertEqual(error.localizedDescription, "--path requires --refresh")
+        }
+    }
+
     func testSelectOnlyFlagsAreRejectedForPaste() {
         XCTAssertThrowsError(try WorkflowArguments([
             "--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "paste", "--range", "0,1",

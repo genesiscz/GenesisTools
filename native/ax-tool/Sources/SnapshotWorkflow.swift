@@ -4,12 +4,40 @@ import Darwin
 import Foundation
 import SnapshotSupport
 
-private struct ObservedTree {
-    var elements: [AXUIElement] = []
-    var frames: [CGRect] = []
-    var rows: [[String: Any]] = []
-    var digest: String
+/// The per-attribute walk: one AX round trip per attribute per element. It is the ground truth
+/// the bulk read is measured against, and the fallback when the bulk read has a gap.
+private struct LiveHierarchySource: HierarchySource {
+    func attribute(_ element: AXUIElement, _ name: String) -> Any? {
+        axAttribute(element, name)
+    }
+
+    func children(of element: AXUIElement) throws -> [AXUIElement] {
+        var raw: CFTypeRef?
+        let read = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw)
+        guard read == .success || read == .attributeUnsupported || read == .noValue else {
+            throw ObservedTreeError("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree")
+        }
+        return raw as? [AXUIElement] ?? []
+    }
+
+    func actionNames(of element: AXUIElement) -> [String] {
+        axActionNames(element)
+    }
+
+    func isValueSettable(_ element: AXUIElement) -> Bool? {
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success else {
+            return nil
+        }
+        return settable.boolValue
+    }
 }
+
+private let bulkAttributeList = ["AXRole", "AXSubrole", kAXPositionAttribute as String, kAXSizeAttribute as String, kAXChildrenAttribute as String] + observedAttributeKeys
+
+/// True when the last tree came from the bulk read; reported by `see` so a slow snapshot can be
+/// attributed instead of guessed.
+private var workflowBulkUsed = false
 
 private struct ObservedWindow {
     let ax: AXUIElement
@@ -76,12 +104,12 @@ private func workflowSameFrame(_ first: CGRect, _ second: CGRect) -> Bool {
         && abs(first.width - second.width) < 1 && abs(first.height - second.height) < 1
 }
 
-private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
+private func observedWindow(_ ax: AXUIElement, pid: pid_t) throws -> ObservedWindow {
     let frame = axFrame(ax)
     guard frame.origin.x.isFinite, frame.origin.y.isFinite,
           frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0,
           (axAttribute(ax, "AXMinimized") as? Bool) != true else {
-        workflowFailure("selected window is minimized or has no usable geometry; inspect again")
+        throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again")
     }
     let matches = workflowWindows(pid).filter { info in
         guard let raw = info[kCGWindowBounds] as? NSDictionary,
@@ -91,89 +119,146 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
         return workflowSameFrame(bounds, frame)
     }
     guard matches.count == 1, let id = matches[0][kCGWindowNumber] as? CGWindowID else {
-        workflowFailure("selected AX window has \(matches.count) matching on-screen CG windows; refusing an ambiguous or offscreen screenshot")
+        throw ObservedTreeError("selected AX window has \(matches.count) matching on-screen CG windows; refusing an ambiguous or offscreen screenshot")
     }
     // Matching a frame is safe only when exactly one AX window owns it too.
     let sameFrame = axWindows(AXUIElementCreateApplication(pid)).filter { workflowSameFrame(axFrame($0), frame) }
     guard sameFrame.count == 1 else {
-        workflowFailure("multiple AX windows share the selected frame; cannot prove screenshot ownership")
+        throw ObservedTreeError("multiple AX windows share the selected frame; cannot prove screenshot ownership")
     }
     return ObservedWindow(ax: ax, id: id, bounds: frame)
 }
 
-private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTree {
-    guard (1...50).contains(depth) else {
-        workflowFailure("--depth must be between 1 and 50")
+private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
+    do {
+        return try observedWindow(ax, pid: pid)
+    } catch {
+        workflowFailure(error.localizedDescription)
     }
-    var tree = ObservedTree(digest: "")
-    var visited = SnapshotObjectSet()
-    func walk(_ element: AXUIElement, level: Int, clip: CGRect) {
-        let identity = CFHash(element)
-        guard visited.insert(element) else {
-            return
+}
+
+private func observedTree(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
+    workflowBulkUsed = false
+    // The bulk read cannot stop at a web area, so under chrome scope it would fetch the whole
+    // page only for the builder to discard it; the walk never descends into it. Measured on
+    // Brave 2026-09-11: walk 342-461 ms, bulk 544-911 ms for the same 125 rows.
+    if scope != "chrome", ProcessInfo.processInfo.environment["AX_TOOL_NO_BULK"] == nil, let reader = BulkHierarchyReader() {
+        do {
+            let source = try reader.read(root: window, attributes: bulkAttributeList, maxDepth: depth + 2, maxArrayCount: observedElementLimit)
+            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope)
+            workflowBulkUsed = true
+            return tree
+        } catch is BulkHierarchyError {
+            // A structural gap in the bulk result (an element it did not return, a truncated
+            // children list) is answered by the per-attribute walk, which is the ground truth.
         }
-        guard tree.elements.count < 4000 else {
-            workflowFailure("AX tree exceeds 4000 elements; snapshot refused rather than truncated")
-        }
-        var rawChildren: CFTypeRef?
-        let read = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &rawChildren)
-        guard read == .success || read == .attributeUnsupported || read == .noValue else {
-            workflowFailure("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree")
-        }
-        // AppKit animates anonymous glyph groups inside standard window buttons.
-        // Expose the actual button as a leaf; those decorative descendants are not controls.
-        let subrole = axStringAttribute(element, "AXSubrole") ?? ""
-        let windowButton = ["AXCloseButton", "AXZoomButton", "AXFullScreenButton", "AXMinimizeButton"].contains(subrole)
-        let role = axStringAttribute(element, "AXRole") ?? ""
-        let omittedWebContent = scope == "chrome" && role == "AXWebArea"
-        let children = windowButton || omittedWebContent ? [] : (rawChildren as? [AXUIElement] ?? [])
-        guard level < depth || children.isEmpty else {
-            workflowFailure("AX tree exceeds --depth \(depth); increase depth and run see again")
-        }
-        let frame = axFrame(element)
-        var row: [String: Any] = [
-            "index": tree.elements.count, "depth": level, "role": role,
-            "identity": identity,
-            "x": axPx(frame.minX), "y": axPx(frame.minY), "width": axPx(frame.width), "height": axPx(frame.height),
-            "visible": frame.width > 0 && frame.height > 0 && clip.contains(CGPoint(x: frame.midX, y: frame.midY)),
-            "actions": axActionNames(element).sorted(),
-        ]
-        if omittedWebContent { row["childrenOmitted"] = "chrome scope" }
-        for key in ["AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXValue", "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange"] {
-            if let value = axAttribute(element, key) {
-                if key == "AXSelectedTextRange", CFGetTypeID(value) == AXValueGetTypeID() {
-                    var range = CFRange(location: 0, length: 0)
-                    if AXValueGetValue(value as! AXValue, .cfRange, &range) {
-                        row[key] = "\(range.location):\(range.length)"
-                    } else {
-                        workflowFailure("selected text range is unreadable; inspect again")
-                    }
-                } else if let stable = snapshotValue(value) {
-                    row[key] = stable
-                } else {
-                    row["\(key)Readable"] = false
-                }
+    }
+    return try buildObservedTree(root: window, source: LiveHierarchySource(), depth: depth, scope: scope)
+}
+
+private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
+    do {
+        return try observedTree(window, depth: depth, scope: scope)
+    } catch {
+        workflowFailure(error.localizedDescription)
+    }
+}
+
+private struct SnapshotUnstable: Error {
+    let message = "UI changed during screenshot capture; run see again"
+    let changes: [[String: Any]]
+}
+
+/// One snapshot: the tree, the window's PNG, and a second tree read proving the UI did not move
+/// between the two. `settled` lets a caller that has just watched the tree stop moving reuse
+/// that read as the first one.
+private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, window: ObservedWindow, index: Int,
+                              depth: Int, scope: String, path requestedPath: String?,
+                              settled: ObservedTreeData?) throws -> [String: Any] {
+    let tree = try settled ?? observedTree(window.ax, depth: depth, scope: scope)
+    guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
+        throw ObservedTreeError("screenshot failed for the selected window; no snapshot issued")
+    }
+    let refreshed = try observedWindow(window.ax, pid: pid)
+    let after = try observedTree(window.ax, depth: depth, scope: scope)
+    guard refreshed.id == window.id, workflowLaunch(pid) == launch, after.digest == tree.digest else {
+        var changes: [[String: Any]] = []
+        for index in 0..<max(tree.rows.count, after.rows.count) {
+            let beforeRow = index < tree.rows.count ? tree.rows[index] : [:]
+            let afterRow = index < after.rows.count ? after.rows[index] : [:]
+            let fields = Set(beforeRow.keys).union(afterRow.keys).filter { key in
+                String(describing: beforeRow[key]) != String(describing: afterRow[key])
+            }.sorted()
+            if !fields.isEmpty {
+                changes.append(["index": index, "fields": fields])
             }
         }
-        var settable = DarwinBoolean(false)
-        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success {
-            row["valueSettable"] = settable.boolValue
-        }
-        tree.elements.append(element)
-        tree.frames.append(frame)
-        tree.rows.append(row)
-        let childClip = role == "AXScrollArea" ? clip.intersection(frame) : clip
-        for child in children {
-            walk(child, level: level + 1, clip: childClip)
-        }
+        throw SnapshotUnstable(changes: changes)
     }
-    walk(window, level: 0, clip: axFrame(window))
+    let path = requestedPath ?? FileManager.default.temporaryDirectory
+        .appendingPathComponent("control-see-\(UUID().uuidString).png").path
+    guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+        throw ObservedTreeError("PNG encoding failed")
+    }
     do {
-        tree.digest = try snapshotDigest(tree.rows)
+        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
     } catch {
-        workflowFailure("cannot encode observed AX tree: \(error.localizedDescription)")
+        throw ObservedTreeError("cannot save snapshot: \(error.localizedDescription)")
     }
-    return tree
+    let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
+                              digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
+    let encoded: String
+    do {
+        encoded = try JSONEncoder().encode(token).base64EncodedString()
+    } catch {
+        throw ObservedTreeError("cannot encode snapshot token: \(error.localizedDescription)")
+    }
+    let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
+    return ["ok": true, "app": appName, "pid": pid,
+            "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
+                       "x": window.bounds.minX, "y": window.bounds.minY,
+                       "width": window.bounds.width, "height": window.bounds.height],
+            "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
+            "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
+            "elements": publicRows]
+}
+
+/// Wait until two consecutive reads agree, so a post-action snapshot describes a UI that has
+/// finished moving. Sky settles on AXObserver notifications; polling the digest needs no run
+/// loop subscription. Capped at one second.
+private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
+    var previous = try observedTree(window, depth: depth, scope: scope)
+    let deadline = Date().addingTimeInterval(1)
+    while Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.05)
+        let next = try observedTree(window, depth: depth, scope: scope)
+        if next.digest == previous.digest {
+            return next
+        }
+        previous = next
+    }
+    return previous
+}
+
+/// The post-action snapshot for `act --refresh`. A failure here lands inside `after`, never as
+/// the action failing: the action was dispatched, and the caller must not retry it just because
+/// the UI was still moving.
+private func workflowAfterState(appName: String, pid: pid_t, launch: Double, window: ObservedWindow,
+                                token: SnapshotToken) -> [String: Any] {
+    do {
+        let current = try observedWindow(window.ax, pid: pid)
+        let settled = try workflowSettle(current.ax, depth: token.depth, scope: token.effectiveScope)
+        guard let index = axWindows(AXUIElementCreateApplication(pid)).firstIndex(where: { CFEqual($0, current.ax) }) else {
+            return ["ok": false, "error": "window list changed after the action; run see again"]
+        }
+        return try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
+                                    depth: token.depth, scope: token.effectiveScope,
+                                    path: workflowArgument("--path"), settled: settled)
+    } catch let unstable as SnapshotUnstable {
+        return ["ok": false, "error": unstable.message, "changedElements": unstable.changes]
+    } catch {
+        return ["ok": false, "error": error.localizedDescription]
+    }
 }
 
 private func workflowPermissions() {
@@ -238,46 +323,14 @@ func cmdSee(appName _: String) {
     let depth = workflowInteger("--depth", defaultValue: 20)
     let scope = workflowArgument("--scope") ?? "window"
     guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
-    let tree = workflowTree(window.ax, depth: depth, scope: scope)
-    guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
-        workflowFailure("screenshot failed for the selected window; no snapshot issued")
-    }
-    let refreshed = workflowWindow(window.ax, pid: pid)
-    let after = workflowTree(window.ax, depth: depth, scope: scope)
-    guard refreshed.id == window.id, workflowLaunch(pid) == launch, after.digest == tree.digest else {
-        var changes: [[String: Any]] = []
-        for index in 0..<max(tree.rows.count, after.rows.count) {
-            let beforeRow = index < tree.rows.count ? tree.rows[index] : [:]
-            let afterRow = index < after.rows.count ? after.rows[index] : [:]
-            let fields = Set(beforeRow.keys).union(afterRow.keys).filter { key in
-                String(describing: beforeRow[key]) != String(describing: afterRow[key])
-            }.sorted()
-            if !fields.isEmpty {
-                changes.append(["index": index, "fields": fields])
-            }
-        }
-        jsonOutput(["ok": false, "error": "UI changed during screenshot capture; run see again", "changedElements": changes])
-        exit(1)
-    }
-    let path = workflowArgument("--path") ?? FileManager.default.temporaryDirectory
-        .appendingPathComponent("control-see-\(UUID().uuidString).png").path
     do {
-        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
-            workflowFailure("PNG encoding failed")
-        }
-        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
-        let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
-                                  digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
-        let encoded = try JSONEncoder().encode(token).base64EncodedString()
-        let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
-        jsonOutput(["ok": true, "app": appName, "pid": pid,
-                    "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
-                               "x": window.bounds.minX, "y": window.bounds.minY,
-                               "width": window.bounds.width, "height": window.bounds.height],
-                    "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
-                    "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "elements": publicRows])
+        jsonOutput(try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: window, index: index,
+                                        depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil))
+    } catch let unstable as SnapshotUnstable {
+        jsonOutput(["ok": false, "error": unstable.message, "changedElements": unstable.changes])
+        exit(1)
     } catch {
-        workflowFailure("cannot save snapshot: \(error.localizedDescription)")
+        workflowFailure(error.localizedDescription)
     }
 }
 
@@ -494,28 +547,35 @@ func cmdAct(appName _: String) {
                     throw WindowEventError.unavailable("wrong frontmost app/window; focus explicitly and refresh")
                 }
             }
-            var hit: AXUIElement?
             let root = background ? AXUIElementCreateApplication(pid) : AXUIElementCreateSystemWide()
-            guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success else {
-                throw WindowEventError.unavailable("cannot verify event hit target")
-            }
-            guard let hit else {
-                throw WindowEventError.unavailable("cannot verify event hit target")
-            }
-            var ancestor: AXUIElement? = hit
-            var enabledStates: [Bool?] = []
-            for _ in 0..<50 {
-                guard let current = ancestor else { break }
-                enabledStates.append((axAttribute(current, "AXEnabled") as? NSNumber)?.boolValue)
-                if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
-                    throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
+            // Chromium answers a hit test coarsely the first time (a container group) and
+            // refines it once the renderer has resolved the point, so inside web content the
+            // first answer disagrees with the target and a later one agrees. Ask up to five
+            // times, 50 ms apart, before calling the target occluded. Native apps answer the
+            // same way every time and pay nothing here.
+            for attempt in 0..<5 {
+                if attempt > 0 {
+                    Thread.sleep(forTimeInterval: 0.05)
                 }
-                if CFEqual(current, target) {
-                    try validatePointerHitEnabled(enabledStates)
-                    return hit
+                var hit: AXUIElement?
+                guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success, let hit else {
+                    throw WindowEventError.unavailable("cannot verify event hit target")
                 }
-                guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
-                ancestor = (parent as! AXUIElement)
+                var ancestor: AXUIElement? = hit
+                var enabledStates: [Bool?] = []
+                for _ in 0..<50 {
+                    guard let current = ancestor else { break }
+                    enabledStates.append((axAttribute(current, "AXEnabled") as? NSNumber)?.boolValue)
+                    if token.effectiveScope == "chrome", axStringAttribute(current, "AXRole") == "AXWebArea" {
+                        throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
+                    }
+                    if CFEqual(current, target) {
+                        try validatePointerHitEnabled(enabledStates)
+                        return hit
+                    }
+                    guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+                    ancestor = (parent as! AXUIElement)
+                }
             }
             throw WindowEventError.unavailable("observed target is occluded or hit testing disagrees; no event dispatched")
         }
@@ -738,8 +798,26 @@ func cmdAct(appName _: String) {
     default:
         workflowFailure("unsupported action")
     }
-    jsonOutput(["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id,
-                "refreshRequired": true, "note": "action dispatched; use see to verify the resulting UI"])
+    var payload: [String: Any] = ["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id]
+    if workflowFlag("--refresh") {
+        // Derive it from the result. workflowAfterState has three failure returns — the
+        // window list changed, the tree never settled, or any other throw — and each one
+        // yields `{ok: false}` with no new token. Hard-coding `false` told the agent its
+        // token was still good, and SKILL.md teaches agents to key on exactly this field,
+        // so the agent went on to reuse a token that no longer matched the tree.
+        let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+        let refreshed = (after["ok"] as? Bool) ?? false
+        payload["refreshRequired"] = !refreshed
+        payload["after"] = after
+
+        if !refreshed {
+            payload["note"] = "the refresh did not produce a new snapshot; run see again before acting"
+        }
+    } else {
+        payload["refreshRequired"] = true
+        payload["note"] = "action dispatched; use see to verify the resulting UI"
+    }
+    jsonOutput(payload)
     }
     } catch {
         workflowFailure(error.localizedDescription)

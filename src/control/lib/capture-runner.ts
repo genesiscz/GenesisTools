@@ -26,17 +26,22 @@ import {
     validatePlan,
 } from "./capture-plan";
 import { applyCrops } from "./crop-compositing";
+import { nativeCaptureArgv } from "./native-record";
 import {
-    AX_TOOL_AVAILABLE,
     AX_TOOL_PATH,
+    axToolAvailable,
     CHROMIUM_APPS,
+    captureSessionsRoot,
+    clickArgv,
     focusWindow,
     killTree,
     listScreens,
     listWindowBounds,
     MEDIA_KEY_SCRIPTS,
+    moveArgv,
     navigateBrowser,
     pickLargestWindow,
+    pressArgv,
     resolveRelativeCoords,
     resolveTargetRegion,
     runAxAction,
@@ -44,10 +49,14 @@ import {
     runCountdown,
     runPeekabooJson,
     type ScreenInfo,
+    scrollArgv,
     startCapture,
     stripBypassFlags,
+    typeArgv,
     type WindowBounds,
+    windowShotArgv,
 } from "./peekaboo";
+import { ensureBinary } from "./runner";
 import { publishVitrinka } from "./vitrinka-publish";
 
 /** Operational failure of a capture-family command; exitCode preserves the legacy script's codes. */
@@ -99,39 +108,18 @@ export function normalizePlan(plan: Plan): Plan {
     return plan;
 }
 
-export async function runCapturePlan(plan: Plan): Promise<RunResult> {
-    normalizePlan(plan);
-    const cap = plan.capture;
-    if (!cap?.mode || !cap?.duration) {
-        throw new CaptureRunError("plan.capture.mode and plan.capture.duration are required");
-    }
+type CaptureAttempt = Awaited<ReturnType<typeof startCapture>>;
+type CaptureSpec = NonNullable<Plan["capture"]>;
 
-    const warnings = validatePlan(plan);
-    for (const w of warnings) {
-        console.error(`capture-with-actions: WARNING: ${w}`);
-    }
-
-    const hasTargetCrops = (plan.actions ?? []).some((a) => a.do === "crop" && a.target && !a.region);
-    if (hasTargetCrops && cap.mode !== "screen") {
-        warnings.push("crop target markers only work with capture.mode 'screen' — they will be dropped");
-    }
-
-    if (plan.focus) {
-        const f = focusWindow(plan.focus);
-        if (!f.ok) {
-            warnings.push(`focus ${plan.focus.app} failed (peekaboo AND osascript): ${f.detail}`);
-        } else {
-            if (f.via === "osascript") {
-                warnings.push(
-                    `focus ${plan.focus.app}: peekaboo window focus failed (bridge?), fell back to osascript activate (windowTitle ignored)`
-                );
-            }
-
-            await Bun.sleep(300);
-        }
-    }
-
-    const args = ["capture", "live", "--mode", cap.mode, "--duration", String(cap.duration), "--json"];
+/**
+ * Start Peekaboo 4's recorder. Self-heals by flipping transport: bridge runs stall when the
+ * bridge socket wedges or a fallback host lacks Screen Recording; bypass runs (--no-remote,
+ * in-process CG) fail when THIS process's own TCC ancestry lacks the grant, exactly the case
+ * where a bridge host still works. The retry always takes the path attempt 1 did not.
+ */
+async function startPeekabooCapture(cap: CaptureSpec, warnings: string[]): Promise<CaptureAttempt> {
+    // Peekaboo 4 reads a bare duration as milliseconds; the plan declares seconds.
+    const args = ["capture", "live", "--mode", cap.mode, "--duration", `${cap.duration}s`, "--json"];
     if (cap.screenIndex !== undefined) {
         args.push("--screen-index", String(cap.screenIndex));
     }
@@ -166,18 +154,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         args.push("--capture-engine", cap.captureEngine);
     }
 
-    if (cap.countdownSec && cap.countdownSec > 0) {
-        await runCountdown(Math.min(cap.countdownSec, 10));
-    }
-
-    let attempt = await startCapture(args);
-
-    // Self-heal by flipping transport — the two paths fail for DIFFERENT reasons.
-    // Bridge runs stall when the bridge socket wedges or a fallback host lacks
-    // Screen Recording; bypass runs (--no-remote, in-process CG) fail when THIS
-    // process's own TCC ancestry lacks the grant — exactly the case where a bridge
-    // host (GUI app with its own grant) still works. So the retry always takes the
-    // path attempt 1 did NOT take.
+    let attempt = await startCapture(["peekaboo", ...args]);
     if (!attempt.sessionDir) {
         const bypassed = Boolean(cap.noRemote);
         const diag1 = attempt.failDiag;
@@ -188,13 +165,93 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
             `recording never started via ${bypassed ? "bypass (--no-remote)" : "bridge"} — ${diag1} — retrying once via ${bypassed ? "bridge" : "--no-remote --capture-engine cg"}`
         );
         await Bun.sleep(2_000);
-        attempt = await startCapture(retryArgs);
+        attempt = await startCapture(["peekaboo", ...retryArgs]);
 
         if (!attempt.sessionDir) {
             throw new CaptureRunError(
                 `recording never started on either transport.\n  attempt 1 (${bypassed ? "bypass" : "bridge"}): ${diag1}\n  retry (${bypassed ? "bridge" : "bypass"}): ${attempt.failDiag}`
             );
         }
+    }
+
+    return attempt;
+}
+
+export async function runCapturePlan(plan: Plan): Promise<RunResult> {
+    normalizePlan(plan);
+    const cap = plan.capture;
+    if (!cap?.mode || !cap?.duration) {
+        throw new CaptureRunError("plan.capture.mode and plan.capture.duration are required");
+    }
+
+    const warnings = validatePlan(plan);
+    for (const w of warnings) {
+        console.error(`capture-with-actions: WARNING: ${w}`);
+    }
+
+    const hasTargetCrops = (plan.actions ?? []).some((a) => a.do === "crop" && a.target && !a.region);
+    if (hasTargetCrops && cap.mode !== "screen") {
+        warnings.push("crop target markers only work with capture.mode 'screen' — they will be dropped");
+    }
+
+    // Native unless the plan says otherwise. A missing or stale binary is built here, so a
+    // fresh clone records natively too; only a failed build (no Swift toolchain) goes to
+    // Peekaboo, and the warning says why.
+    //
+    // Build the binary BEFORE anything reaches for it. The focus step below used to run
+    // first, so on a fresh clone it found no binary, fell through peekaboo to osascript and
+    // warned `windowTitle ignored` — for a capture that recorded natively moments later.
+    let backend = cap.backend ?? "native";
+    let axTool = AX_TOOL_PATH;
+    if (backend === "native") {
+        try {
+            axTool = ensureBinary();
+        } catch (error) {
+            const reason = (error instanceof Error ? error.message : String(error)).split("\n")[0];
+
+            if (Bun.which("peekaboo") === null) {
+                throw new CaptureRunError(`native recorder unavailable: ${reason}`);
+            }
+
+            warnings.push(`native recorder unavailable — ${reason} — falling back to peekaboo`);
+            backend = "peekaboo";
+        }
+    }
+
+    if (plan.focus) {
+        const f = focusWindow(plan.focus);
+        if (!f.ok) {
+            warnings.push(`focus ${plan.focus.app} failed (peekaboo AND osascript): ${f.detail}`);
+        } else {
+            if (f.via === "osascript") {
+                warnings.push(
+                    `focus ${plan.focus.app}: peekaboo window focus failed (bridge?), fell back to osascript activate (windowTitle ignored)`
+                );
+            }
+
+            await Bun.sleep(300);
+        }
+    }
+
+    if (cap.countdownSec && cap.countdownSec > 0) {
+        await runCountdown(Math.min(cap.countdownSec, 10));
+    }
+
+    let attempt: CaptureAttempt;
+    if (backend === "native") {
+        const outDir = join(captureSessionsRoot(), `native-${Date.now()}`);
+        attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)]);
+
+        if (!attempt.sessionDir) {
+            if (Bun.which("peekaboo") === null) {
+                throw new CaptureRunError(`native recording never started: ${attempt.failDiag}`);
+            }
+
+            warnings.push(`native recording never started — ${attempt.failDiag} — falling back to peekaboo`);
+            attempt = await startPeekabooCapture(cap, warnings);
+        }
+    } else {
+        attempt = await startPeekabooCapture(cap, warnings);
     }
 
     const proc = attempt.proc;
@@ -269,7 +326,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                     }
                     clickCoords = resolved.global;
                 }
-                result = runPeekabooJson(["click", "--coords", clickCoords]);
+                result = runPeekabooJson(clickArgv(clickCoords));
                 break;
             }
             case "focus": {
@@ -295,12 +352,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                     break;
                 }
 
-                const cmd = ["hotkey", "--keys", action.keys];
-                if (action.holdMs !== undefined) {
-                    cmd.push("--hold-duration", String(action.holdMs));
-                }
-
-                result = runPeekabooJson(cmd);
+                result = runPeekabooJson(pressArgv(action.keys, action.holdMs));
                 if (!result.ok) {
                     result.stderr = `${result.stderr} (valid keys: cmd/shift/alt/ctrl/fn, a-z, 0-9, space/return/tab/escape/delete/arrows, f1-f12; media keys only via volumeup/volumedown/mute/unmute rewrite)`;
                 }
@@ -308,14 +360,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                 break;
             }
             case "type":
-                result = runPeekabooJson([
-                    "type",
-                    action.text,
-                    "--profile",
-                    "linear",
-                    "--delay",
-                    String(action.delayMs ?? 0),
-                ]);
+                result = runPeekabooJson(typeArgv(action.text, action.delayMs ?? 0));
                 break;
             case "ax-set": {
                 result = runAxAction(action.app, action.axId, "set", action.value, undefined, action.q);
@@ -346,20 +391,18 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
                             `scroll at ${action.atMs}ms: peekaboo move rejects negative coords (${cx},${cy}) — scrolling at current cursor position`
                         );
                     } else {
-                        runCmd(["peekaboo", "move", "--coords", `${cx},${cy}`]);
+                        runCmd(["peekaboo", ...moveArgv(`${cx},${cy}`)]);
                     }
                 }
 
-                const cmd = ["scroll", "--direction", action.direction, "--amount", String(action.amount ?? 3)];
-                if (action.app) {
-                    cmd.push("--app", action.app);
-                }
-
-                if (action.windowTitle) {
-                    cmd.push("--window-title", action.windowTitle);
-                }
-
-                result = runPeekabooJson(cmd);
+                result = runPeekabooJson(
+                    scrollArgv({
+                        direction: action.direction,
+                        amount: action.amount,
+                        app: action.app,
+                        windowTitle: action.windowTitle,
+                    })
+                );
                 break;
             }
             case "crop": {
@@ -410,11 +453,17 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     // finishing — observed live with a duration-2 capture still alive minutes
     // later, wedging the whole CG capture stack for every later run
     // (CGDisplayCreateImage returned nil). Never leave a zombie behind.
+    // The losing timer must be cleared: a pending 33 s sleep keeps the process alive long
+    // after the result is printed, which read as a 38 s runner for a 3 s capture.
     const exitGraceMs = 30_000;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const exitedInTime = await Promise.race([
         proc.exited.then(() => true),
-        Bun.sleep(cap.duration * 1000 + exitGraceMs).then(() => false),
+        new Promise<boolean>((resolve) => {
+            graceTimer = setTimeout(() => resolve(false), cap.duration * 1000 + exitGraceMs);
+        }),
     ]);
+    clearTimeout(graceTimer);
 
     if (!exitedInTime) {
         warnings.push(
@@ -610,7 +659,7 @@ export function buildPreflightReport(appArg?: string): Record<string, unknown> {
     // Cross-check against the AX window list: peekaboo's CGWindowList view
     // includes other-Space/stale windows the AX API doesn't show — picking one
     // of those as the crop basis targets the wrong window (blind-test 6).
-    if (app && AX_TOOL_AVAILABLE) {
+    if (app && axToolAvailable()) {
         const axr = runCmd([AX_TOOL_PATH, "window", "--app", app]);
         if (axr.ok) {
             try {
@@ -778,14 +827,15 @@ export async function runClickmap(opts: ClickmapOptions): Promise<ClickmapResult
     }
 
     const rawPath = `${opts.outPath.replace(/\.png$/, "")}-raw.png`;
-    const shotCmd = ["peekaboo", "image", "--app", opts.app, "--path", rawPath];
-    if (opts.windowTitle) {
-        shotCmd.push("--window-title", opts.windowTitle);
-    }
-
+    const shotCmd = windowShotArgv({
+        axToolPath: axToolAvailable() ? AX_TOOL_PATH : undefined,
+        app: opts.app,
+        path: rawPath,
+        windowTitle: opts.windowTitle,
+    });
     const shot = runCmd(shotCmd, 20_000);
     if (!shot.ok || !existsSync(rawPath)) {
-        throw new CaptureRunError(`peekaboo image failed: ${shot.stderr || shot.stdout}`);
+        throw new CaptureRunError(`window screenshot failed (${shotCmd[0]}): ${shot.stderr || shot.stdout}`);
     }
 
     // Normalize the shot to point dimensions (retina shots are points x scale),

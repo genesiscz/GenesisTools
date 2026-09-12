@@ -1,29 +1,72 @@
 # Recording — `tools control capture` (short motion, reviewed frame-by-frame)
 
 The recording arm of macos-control. Everything here is multi-frame capture. Single-shot
-element control lives in SKILL.md. Recording is the only part of this skill that needs the
-external Peekaboo binary.
+element control lives in SKILL.md. Since 2026-09-11 the recorder is native: `ax-tool capture`
+records through ScreenCaptureKit, and Peekaboo is only the fallback when the binary is not
+built.
 
-## 🛑 Current state on this machine, 2026-09-11
+## Which recorder runs
 
-**`tools control capture preflight` is broken, and it is broken on master too.** Peekaboo 4.x
-removed the `peekaboo list` command. `src/control/lib/peekaboo.ts:97` still calls
-`["list","screens"]` and `:138` calls `["list","windows","--app",app,"--include-details","bounds"]`.
-Both now return an error envelope, so `listScreens()` returns `[]` and preflight dies at
-`src/control/lib/capture-runner.ts:677` with
-`undefined is not an object (evaluating 'activeScreen.scaleFactor')`.
+- **Native (default).** When `native/ax-tool/.build/release/ax-tool` exists, `tools control
+  capture` runs `ax-tool capture --mode <mode> --duration <seconds> --out <dir>` with the plan's
+  `activeFps`, `idleFps`, `threshold` and `videoOut`. Screens come from `ax-tool screens` and
+  window bounds from `ax-tool window --app`, so a plan needs no Peekaboo at all. The result
+  says `capture.data.source: "native"` and `captureEngine: "ScreenCaptureKit"`.
+- **Peekaboo (fallback).** `capture.backend: "peekaboo"` in the plan forces it. The runner also
+  falls back on its own when the native recorder never writes a frame and Peekaboo is
+  installed, with a warning that names both reasons.
+- The native recorder has no bridge, no daemon and no `noRemote` or `captureEngine` knobs:
+  those two plan fields only matter on the Peekaboo path.
+- Raw form, the same shape the runner reads:
 
-The v4 replacements are `peekaboo screen list` and `peekaboo window list`. `--include-details`
-is gone; bounds come back by default. `peekaboo screen list --json` returns exactly the shape
-`listScreens()` already expects, so the repair is a command rename at those two call sites.
+```bash
+native/ax-tool/.build/release/ax-tool capture --mode window --app "Calculator" \
+  --duration 3 --threshold 0.3 --out /tmp/rec-$(date +%s) 1>/tmp/rec.json 2>/tmp/rec.err
+native/ax-tool/.build/release/ax-tool screens      # index, name, scale, position, resolution
+```
 
-Separately, the installed Peekaboo daemon refuses the default capture engine with
-`predates safe process-lifetime ScreenCaptureKit ownership`. `--capture-engine classic` works.
-Verified: `peekaboo capture live --mode window --app Calculator --duration 2000
---capture-engine classic` produced `keep-0001.png` and `contact.png`.
+`--duration` is **seconds** on the native recorder (0.1 to 180, default 3). The runner
+sends Peekaboo `<seconds>s`, because Peekaboo 4 reads a bare number as milliseconds.
 
-Until that is fixed, do not report "recording produced nothing". Report that the wrapper is
-calling a removed Peekaboo command.
+A plan that ran on 2026-09-11 (Calculator, three presses). `q` matches title, description and
+identifier, so `"q": "7"` resolves to the button whose AXIdentifier is `Seven`:
+
+```json
+{
+  "capture": { "mode": "window", "app": "Calculator", "duration": 3, "threshold": 0.3 },
+  "focus": { "app": "Calculator" },
+  "actions": [
+    { "atMs": 700,  "do": "ax-press", "q": "7", "app": "Calculator" },
+    { "atMs": 1500, "do": "ax-press", "q": "8", "app": "Calculator" },
+    { "atMs": 2300, "do": "ax-press", "q": "9", "app": "Calculator" }
+  ]
+}
+```
+
+Result: `ok: true`, `capture.data.source: "native"`, four kept frames reading 0, 7, 78 and 789,
+4.5 s wall time. A missing or stale binary is built by the runner itself (`bun run build:native`
+does the same by hand); only a failed build falls back to Peekaboo, and `warnings` says so.
+
+Timing you will see in the result: an action's `actualMs` is when the runner *started* it,
+and the pre-input refocus plus the AX call add several hundred milliseconds before the pixels
+move, so the matching kept frame lands later than `actualMs`. Measured 2026-09-11 with three
+Calculator presses at 700, 1500 and 2300 ms: the change frames came at 1424, 2214 and 2988 ms.
+
+## Repaired 2026-09-11 for Peekaboo 4
+
+Peekaboo 4.x removed `list`, `hotkey` and `image`, renamed `--coords` to `--at`, and refuses
+untargeted background input. The wrapper now speaks that grammar: `screen list`, `window
+list`, `press <cmd+shift+a>`, `--at --global --foreground` on every timed action, and the
+clickmap PNG comes from `ax-tool screenshot`. The argv builders live in
+`src/control/lib/peekaboo.ts` with tests, so the next grammar change is one file.
+
+On a checkout without that repair, `tools control capture preflight` exits 1 with
+`undefined is not an object (evaluating 'activeScreen.scaleFactor')`. That is the wrapper
+calling a removed command, never evidence of empty data.
+
+⚠️ The installed Peekaboo daemon may still refuse the default capture engine with
+`predates safe process-lifetime ScreenCaptureKit ownership`; `captureEngine: "cg"` in the plan,
+or `--capture-engine classic` on the CLI, works around it until the host is relaunched.
 
 ## The mental model
 
@@ -100,6 +143,17 @@ A suggested plan is a starting point, not proof it picked the right window. If t
 one window, do not widen the capture to the whole screen just to dodge a targeting failure.
 
 ## Step 3 — plain capture, no interactions
+
+Native, the default:
+
+```bash
+native/ax-tool/.build/release/ax-tool capture --mode <screen|window|region> \
+  [--app "<Name>"] [--screen-index N] [--region "x,y,width,height"] \
+  --duration <seconds> [--active-fps <n>] [--threshold <pct>] [--video-out f.mp4] \
+  --out /tmp/rec-$(date +%s) 1>/tmp/capture-out.json 2>/tmp/capture-err.log
+```
+
+Peekaboo, the fallback:
 
 ```bash
 peekaboo capture live --mode <screen|window|region> \
@@ -212,7 +266,8 @@ because the keys were only ever shown as CLI flags. They are camelCase inside th
     "app": "Genesis",          // window mode
     "windowTitle": "Settings", // window mode narrowing
     "region": "x,y,w,h",       // region mode
-    "duration": 3,             // ALWAYS set this explicitly
+    "duration": 3,             // ALWAYS set this explicitly; SECONDS on both backends
+    "backend": "native",       // default when ax-tool is built; "peekaboo" forces the fallback
     "activeFps": 8,            // default 8, max 15
     "idleFps": 2,              // default 2
     "threshold": 2.5,          // change % cutoff; ~0.1 for a sub-second blip
@@ -273,16 +328,26 @@ embed a `see` token in a plan as if the recorder revalidated it.
 
 ## Step 4 — read the result
 
-Top-level capture JSON: `{success, data: {contactSheet: {path, …}, frames: [{path,
-timestampMs, changePercent, motionBoxes, …}], stats}, error?}`.
+Two shapes, one object. The recorder itself (`ax-tool capture` or `peekaboo capture live`)
+prints `{success, ok, data: {source, captureEngine, contactSheet: {path, file, rows, columns},
+frames: [{index, file, path, timestampMs, changePercent, reason}], stats: {capturedFrames,
+keptFrames, droppedFrames, durationMs}, sessionDir, metadataFile, videoOut?, window?,
+warnings}}`. `tools control capture plan.json` wraps it: its stdout is `{ok, sessionDir,
+exitCode, warnings, actions: [{action, plannedMs, actualMs, ok, stdout?, error?}], crops,
+strip, stripReview, capture}`, and `capture.data` is that same object. So `capture.data.source`
+in the runner result is `data.source` in the raw recorder output.
 
-1. Read `data.contactSheet.path`. That is the whole motion in one call.
-2. Use `frames[].changePercent` with `timestampMs` to locate the discontinuity. A spike
-   between adjacent frames is where it jumped; `motionBoxes` gives the changed region.
+1. Read `capture.data.contactSheet.path` (runner) or `data.contactSheet.path` (raw). That is
+   the whole motion in one call.
+2. Use `frames[].changePercent` with `timestampMs` to locate the discontinuity. A spike between
+   adjacent frames is where it jumped. Native frames carry `reason` (`first`, `change`,
+   `still`, `cap`); Peekaboo frames carry `motionBoxes` for the changed region instead.
 3. Open individual full-resolution frames only when a visual change needs closer inspection.
 
-Session output lives in a fresh temp directory per run, auto-cleaned by Peekaboo. Do not
-manage that cleanup.
+Session output lives in a fresh directory per run under the capture-sessions root in the
+temp dir (`native-<epoch>` for the native recorder, Peekaboo's own naming otherwise). Peekaboo
+cleans its own; native directories stay until the OS clears the temp dir. Do not manage that
+cleanup.
 
 ⚠️ Review contact-sheet PNGs, never animated GIFs: vision sees only frame 1 of a GIF. Crops
 use frame pixels while window geometry uses screen points, so derive the scale from the
@@ -299,15 +364,18 @@ running. Check `peekaboo permissions status` and `peekaboo bridge status --verbo
 - 🛑 **Never run two captures concurrently.** It wedges the bridge socket, and every later
   capture returns a screen-recording permission error that looks exactly like a lost grant.
   Stop the other capture, back off about 10 s, retry.
-- **Agent-driven plans: set `capture.noRemote: true` and `captureEngine: "cg"` up front.**
-  Local CoreGraphics, no bridge. The runner also self-heals: if recording has not started in
+- **Peekaboo path only: agent-driven plans set `capture.noRemote: true` and
+  `captureEngine: "cg"` up front.** Local CoreGraphics, no bridge. The native recorder ignores
+  both fields. On the Peekaboo path the runner also self-heals: if recording has not started in
   15 s it kills the attempt's process TREE (killing only the shim pid orphans the recorder),
   settles 2 s, and retries once on the opposite transport.
 - **Screen-index numbering is not consistent across Peekaboo surfaces.** Trust
   `peekaboo screen list` and always verify frame 1's content.
 - **Give the runner a generous Bash timeout.** Wall time is countdown plus up to 15 s
   start-wait plus a 15 s bypass retry plus duration plus crops plus publish. A default 10 s
-  tool timeout kills it and it looks like a mystery failure.
+  tool timeout kills it and it looks like a mystery failure. A native 3 s window capture with
+  three AX presses took 4.5 s end to end on 2026-09-11; before that day the runner idled a
+  further 33 s after printing its result, because the exit-grace timer was never cleared.
 - Missing permission: report the exact responsible process and grant error. Never reinterpret
   it as "no content".
 - Failed focus or wrong window: stop before capturing another app. Re-inspect the intended
@@ -325,8 +393,8 @@ running. Check `peekaboo permissions status` and `peekaboo bridge status --verbo
 - Never merge stdout and stderr, and never pipe the capture command.
 - Never treat a single empty-output failure as real. Retry once first.
 - Never call `capture` through MCP. Only the CLI has it.
-- Never reach for ffmpeg or `screencapture` pipelines. Peekaboo does recording, diff sampling
-  and tiling natively.
+- Never reach for ffmpeg or `screencapture` pipelines. The native recorder and Peekaboo both
+  do recording, diff sampling and tiling themselves.
 - Never hand-construct a vitrinka board URL. Relay the server-returned `url`.
 - Never retry a mutating plan just because the capture output was empty. Verify the target's
   state first, because some actions may already have completed.
