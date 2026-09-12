@@ -58,8 +58,10 @@ describe("loopback OAuth callback listener", () => {
         const port = listener.port;
         expect(listener.hostname).toBe("127.0.0.1");
         const response = await fetch(callbackUrl(listener, "?code=grant&state=session"));
+        const html = await response.text();
         expect(response.status).toBe(200);
-        expect(await response.text()).toContain("You can close this tab");
+        expect(html).toContain("You can close this tab");
+        expect(html).not.toContain("mcp-manager");
         expect(await listener.callback).toEqual({ code: "grant", state: "session" });
         await listener.close();
         expect(await portIsFree(port)).toBe(true);
@@ -121,6 +123,26 @@ describe("loopback OAuth callback listener", () => {
         expect(await requestWithHost(listener.port, "attacker.example")).toContain("403");
         expect(await requestWithHost(listener.port, `localhost:${listener.port}`)).toContain("200");
         expect(await listener.callback).toEqual({ code: "grant", state: "session" });
+        await listener.close();
+    });
+
+    test("brands the success page when the caller owns it", async () => {
+        const listener = await startCallbackListener({
+            redirectUri: REDIRECT_URI,
+            port: 0,
+            verifyState: acceptSession,
+            brand: { app: "Genesis Tools", product: "mcp-manager" },
+        });
+
+        if (listener === null) {
+            throw new Error("An ephemeral port must always bind");
+        }
+
+        const html = await (await fetch(callbackUrl(listener, "?code=grant&state=session"))).text();
+        expect(html).toContain("Signed in");
+        expect(html).toContain("Genesis Tools");
+        expect(html).toContain("mcp-manager");
+        expect(html).toContain("<svg");
         await listener.close();
     });
 

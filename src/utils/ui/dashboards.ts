@@ -350,6 +350,17 @@ export const WEB_SERVICES = {
         note: "Default listen.port in ai-proxy config-store.",
         matchProcess: matchGenesisTool("ai-proxy"),
     },
+    "mcp-gateway": {
+        key: "mcp-gateway",
+        name: "MCP Auth Gateway",
+        description: "Loopback MCP reverse proxy that owns upstream OAuth for remote servers.",
+        port: 8318,
+        launch: "tools mcp-manager gateway start",
+        portOverride: { flag: "--port" },
+        serviceKind: "proxy",
+        note: "Bind 127.0.0.1 only. Local header X-Genesis-Mcp-Gateway. Default in mcp-manager gateway.listen.",
+        matchProcess: matchGenesisTool("mcp-manager", "mcp-gateway"),
+    },
 } as const satisfies Record<string, WebServiceEntry>;
 
 export type WebServiceKey = keyof typeof WEB_SERVICES;

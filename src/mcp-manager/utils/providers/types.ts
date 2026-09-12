@@ -1,5 +1,6 @@
-import { writeFile } from "node:fs/promises";
+import { chmod, stat, writeFile } from "node:fs/promises";
 import type { EnabledMcpServers, HarnessSyncMap, MCPServerMeta } from "@app/mcp-manager/utils/types.js";
+import { logger } from "@genesiscz/utils/logger";
 
 /**
  * Result of a write operation to a provider config.
@@ -12,6 +13,29 @@ export enum WriteResult {
     Applied = "applied",
     NoChanges = "no_changes",
     Rejected = "rejected",
+}
+
+export type McpAuthKind = "oauth" | "bearer" | "none";
+
+export type McpAuthPolicy = "open-dcr" | "static-client" | "device-code" | "figma-client-name" | "borrow-forbidden";
+
+export interface McpServerAuth {
+    kind: McpAuthKind;
+    gateway?: boolean;
+    policy?: McpAuthPolicy;
+    resource?: string;
+    authorizationServer?: string;
+    tokenEndpoint?: string;
+    clientName?: string;
+}
+
+export interface McpGatewayListen {
+    host?: string;
+    port?: number;
+}
+
+export interface McpGatewayConfig {
+    listen?: McpGatewayListen;
 }
 
 /**
@@ -33,6 +57,12 @@ export interface UnifiedMCPServerConfig {
     headers?: Record<string, string>;
 
     /**
+     * GenesisTools-owned auth. Stays in the unified config.
+     * Provider projections get a loopback URL plus a local header, never these fields.
+     */
+    auth?: McpServerAuth;
+
+    /**
      * Meta information for this server.
      * This field is NOT synchronized to/from providers.
      * Contains enabled state per provider.
@@ -48,6 +78,7 @@ export interface UnifiedMCPServerConfig {
  */
 export interface UnifiedMCPConfig {
     mcpServers: Record<string, UnifiedMCPServerConfig>;
+    gateway?: McpGatewayConfig;
     /**
      * Enabled state for MCP servers per provider.
      * This is a duplicate of _meta.enabled information for easier access.
@@ -112,6 +143,37 @@ export abstract class MCPProvider {
         await this.backupManager.createBackup(this.configPath, this.providerName);
         // Write the file
         await writeFile(this.configPath, content, "utf-8");
+        await this.tightenConfigMode();
+    }
+
+    /**
+     * Every harness config written through this base class can now carry the gateway
+     * bearer token in `headers`, so a 0644 file hands it to every local process.
+     *
+     * stat-then-chmod, not `writeFile(..., { mode })`: mode applies only when the file
+     * is CREATED, and these files already exist at whatever the umask gave them. The
+     * same shape is already used by repairCacheMode in src/scripts/lib/registry.ts.
+     *
+     * A failure here is logged, never thrown: the config write itself succeeded, and
+     * turning a permissions warning into a failed sync would be worse than the leak.
+     */
+    private async tightenConfigMode(): Promise<void> {
+        try {
+            const info = await stat(this.configPath);
+
+            if ((info.mode & 0o077) !== 0) {
+                await chmod(this.configPath, 0o600);
+                logger.info(
+                    { path: this.configPath, provider: this.providerName },
+                    "tightened harness config permissions to 0600"
+                );
+            }
+        } catch (error) {
+            logger.warn(
+                { error, path: this.configPath, provider: this.providerName },
+                "could not tighten harness config permissions; it may be world-readable while holding a gateway token"
+            );
+        }
     }
 
     /**

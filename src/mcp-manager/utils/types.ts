@@ -1,7 +1,7 @@
 /**
  * Provider names that can be used for enabling/disabling MCP servers
  */
-export type MCPProviderName = "claude" | "gemini" | "codex" | "cursor";
+export type MCPProviderName = "claude" | "gemini" | "codex" | "cursor" | "grok";
 
 /**
  * Per-project enabled state for providers that support project-specific configuration (e.g., Claude)

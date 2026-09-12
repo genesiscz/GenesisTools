@@ -16,6 +16,8 @@
  * fires them concurrently over the already-open session instead, which is the
  * only lever left.
  */
+import { ensureGatewayUp } from "@app/mcp-manager/lib/gateway/ensure.ts";
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -77,6 +79,10 @@ export async function createKit(options: KitOptions = {}): Promise<Kit> {
     const { definitions, authProblems } = await toServerDefinitions(registry, options.servers, {
         refreshAuth: options.refresh,
     });
+
+    if (definitions.some((d) => d.command.kind === "http" && d.command.url.hostname === "127.0.0.1")) {
+        await ensureGatewayUp(await readUnifiedConfig());
+    }
 
     // A stale token surfaces downstream as a 405 from the legacy SSE fallback,
     // which reads like a transport bug. Say the real thing once, up front, on

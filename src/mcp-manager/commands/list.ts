@@ -1,6 +1,11 @@
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, MCPServerInfo, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
+import { GATEWAY_CLIENT_TOKEN_PATH } from "../lib/auth/paths.ts";
+import { isGatewayOauth, serverAuth } from "../lib/auth/policy.ts";
+import { gatewayListen, projectServerForHarness } from "../lib/auth/project.ts";
+import { readSecret } from "../lib/auth/secrets.ts";
 
 /**
  * Options for {@link listServers}. `json` switches the output MODE, not just the
@@ -53,6 +58,9 @@ export interface ServerJsonEntry {
     providers: ServerProviderEntry[];
     /** Transport details taken from the winning config (see {@link pickConfig}). */
     connection: ServerConnection;
+    /** Unified-config upstream resource, when this server is gateway-projected. */
+    upstream?: { url: string };
+    auth?: { kind: string; gateway: boolean };
 }
 
 /**
@@ -167,6 +175,9 @@ async function collect(providers: MCPProvider[]): Promise<{
  */
 export async function buildListJson(providers: MCPProvider[], options: ListOptions = {}): Promise<ListJsonOutput> {
     const { byName, scanned, failed } = await collect(providers);
+    const unified = await readUnifiedConfig();
+    const listen = gatewayListen(unified);
+    const localToken = (await readSecret(GATEWAY_CLIENT_TOKEN_PATH)) ?? "";
     const servers: ServerJsonEntry[] = [];
 
     for (const [name, instances] of byName.entries()) {
@@ -177,12 +188,30 @@ export async function buildListJson(providers: MCPProvider[], options: ListOptio
             continue;
         }
 
+        const unifiedServer = unified.mcpServers[name];
+        let connection = toConnection(pickConfig(instances));
+        let upstream: { url: string } | undefined;
+        let auth: ServerJsonEntry["auth"];
+
+        if (unifiedServer && isGatewayOauth(unifiedServer)) {
+            const projected = projectServerForHarness(name, unifiedServer, {
+                provider: "claude",
+                localToken,
+                listen,
+            });
+            connection = toConnection(projected);
+            upstream = unifiedServer.url ? { url: unifiedServer.url } : undefined;
+            auth = { kind: serverAuth(unifiedServer)?.kind ?? "oauth", gateway: true };
+        }
+
         servers.push({
             name,
             enabled: enabledCount > 0,
             status,
             providers: instances.map((i) => ({ provider: i.provider, enabled: i.enabled })),
-            connection: toConnection(pickConfig(instances)),
+            connection,
+            ...(upstream ? { upstream } : {}),
+            ...(auth ? { auth } : {}),
         });
     }
 
