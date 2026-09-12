@@ -58,7 +58,7 @@ describe("nativeCaptureArgv", () => {
 });
 
 describe("parseScreenList", () => {
-    it("converts Cocoa positions to CG origins, for native and Peekaboo alike", () => {
+    it("flips a Cocoa position from ax-tool screens into a CG origin", () => {
         const data = {
             screens: [
                 {
@@ -79,14 +79,46 @@ describe("parseScreenList", () => {
                 },
             ],
         };
-        const screens = parseScreenList(data);
+        const screens = parseScreenList(data, "cocoa");
         expect(screens[0]).toMatchObject({ framePixels: { width: 4112, height: 2658 }, originCG: { x: 0, y: 0 } });
         expect(screens[1].originCG).toEqual({ x: -2560, y: 1329 - (1329 + 1440) });
     });
 
+    it("passes a CoreGraphics position through untouched, because Peekaboo already reports CG", () => {
+        // Real `peekaboo screen list` output, measured 2026-09-12. The maximized window on
+        // this display reports CG x=-1488 y=-1410: the x matches exactly and y differs by
+        // the 30-point title strip, which is only possible if position is already CG.
+        // Flipping it produced y=1329 instead of -1440, an error of 2769 points.
+        const screens = parseScreenList(
+            {
+                screens: [
+                    {
+                        index: 0,
+                        name: "Built-in",
+                        isPrimary: true,
+                        scaleFactor: 2,
+                        position: { x: 0, y: 0 },
+                        resolution: { width: 2056, height: 1329 },
+                    },
+                    {
+                        index: 1,
+                        name: "2560x1440 Display",
+                        isPrimary: false,
+                        scaleFactor: 1,
+                        position: { x: -1488, y: -1440 },
+                        resolution: { width: 2560, height: 1440 },
+                    },
+                ],
+            },
+            "coregraphics"
+        );
+
+        expect(screens[1].originCG).toEqual({ x: -1488, y: -1440 });
+    });
+
     it("is empty for an error envelope", () => {
-        expect(parseScreenList(undefined)).toEqual([]);
-        expect(parseScreenList({ error: "nope" })).toEqual([]);
+        expect(parseScreenList(undefined, "cocoa")).toEqual([]);
+        expect(parseScreenList({ error: "nope" }, "coregraphics")).toEqual([]);
     });
 });
 

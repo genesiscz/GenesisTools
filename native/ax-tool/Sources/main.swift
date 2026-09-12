@@ -25,7 +25,15 @@ private func enableManualAccessibility(_ pid: pid_t) {
     _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
 }
 
-private func resolveAppPid(_ name: String) -> pid_t {
+/// Resolve a name or pid WITHOUT touching the target. Use this wherever the pid is only an
+/// identifier — a `kCGWindowOwnerPID` filter, a process lookup — because `resolveApp` writes
+/// `AXManualAccessibility` into the app and nothing ever clears it again.
+///
+/// Every other command in this file legitimately keeps `resolveApp`: they read or drive the AX
+/// tree, and on Chromium and Electron there IS no tree until that attribute is set. That
+/// includes `window`, `screenshot`/`ocr` and `preflight`, each of which calls `axWindows` or
+/// `resolveWindow` within a few lines of resolving the pid.
+func resolveAppPid(_ name: String) -> pid_t {
     let apps = NSWorkspace.shared.runningApplications
     if let pidNum = Int32(name) {
         if apps.contains(where: { $0.processIdentifier == pidNum }) { return pidNum }

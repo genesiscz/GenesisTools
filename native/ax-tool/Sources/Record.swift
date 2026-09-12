@@ -9,7 +9,10 @@ import SnapshotSupport
 
 /// Displays in the order and coordinate convention `NSScreen` uses: index 0 is the primary,
 /// `position` is Cocoa (bottom-left origin), `resolution` is points. The runner already converts
-/// that convention to CoreGraphics, because Peekaboo reported screens the same way.
+/// that convention to CoreGraphics. 🛑 Peekaboo's `screen list` does NOT match: it reports CG
+/// already, so the two sources are parsed with different conventions (ScreenOriginConvention in
+/// native-record.ts). `screensInfo()` in main.swift emits a pre-converted `originCG` instead;
+/// this command stays raw so the flip lives in exactly one place.
 func cmdScreens() {
     let rows: [[String: Any]] = NSScreen.screens.enumerated().map { index, screen in
         let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
@@ -138,7 +141,11 @@ private func resolveRecordWindow(_ options: RecordOptions) -> (id: CGWindowID, b
     guard let app = options.app else {
         errorExit("window mode needs --app or --window-id")
     }
-    let pid = resolveApp(app)
+    // resolveAppPid, not resolveApp: the pid is used for the kCGWindowOwnerPID filter below
+    // and nowhere else, and this recorder never reads the AX tree. Going through resolveApp
+    // meant `capture --mode window --app "Brave Browser"` permanently flipped Brave into
+    // manual-accessibility mode as a side effect of a screen recording.
+    let pid = resolveAppPid(app)
     var candidates = list.filter { info in
         guard (info[kCGWindowOwnerPID] as? Int32) == pid, (info[kCGWindowLayer] as? Int) == 0,
               let frame = bounds(info), frame.height > 50 else { return false }

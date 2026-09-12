@@ -28,8 +28,8 @@ import {
 import { applyCrops } from "./crop-compositing";
 import { nativeCaptureArgv } from "./native-record";
 import {
-    AX_TOOL_AVAILABLE,
     AX_TOOL_PATH,
+    axToolAvailable,
     CHROMIUM_APPS,
     captureSessionsRoot,
     clickArgv,
@@ -194,6 +194,30 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         warnings.push("crop target markers only work with capture.mode 'screen' — they will be dropped");
     }
 
+    // Native unless the plan says otherwise. A missing or stale binary is built here, so a
+    // fresh clone records natively too; only a failed build (no Swift toolchain) goes to
+    // Peekaboo, and the warning says why.
+    //
+    // Build the binary BEFORE anything reaches for it. The focus step below used to run
+    // first, so on a fresh clone it found no binary, fell through peekaboo to osascript and
+    // warned `windowTitle ignored` — for a capture that recorded natively moments later.
+    let backend = cap.backend ?? "native";
+    let axTool = AX_TOOL_PATH;
+    if (backend === "native") {
+        try {
+            axTool = ensureBinary();
+        } catch (error) {
+            const reason = (error instanceof Error ? error.message : String(error)).split("\n")[0];
+
+            if (Bun.which("peekaboo") === null) {
+                throw new CaptureRunError(`native recorder unavailable: ${reason}`);
+            }
+
+            warnings.push(`native recorder unavailable — ${reason} — falling back to peekaboo`);
+            backend = "peekaboo";
+        }
+    }
+
     if (plan.focus) {
         const f = focusWindow(plan.focus);
         if (!f.ok) {
@@ -211,26 +235,6 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
 
     if (cap.countdownSec && cap.countdownSec > 0) {
         await runCountdown(Math.min(cap.countdownSec, 10));
-    }
-
-    // Native unless the plan says otherwise. A missing or stale binary is built here, so a
-    // fresh clone records natively too; only a failed build (no Swift toolchain) goes to
-    // Peekaboo, and the warning says why.
-    let backend = cap.backend ?? "native";
-    let axTool = AX_TOOL_PATH;
-    if (backend === "native") {
-        try {
-            axTool = ensureBinary();
-        } catch (error) {
-            const reason = (error instanceof Error ? error.message : String(error)).split("\n")[0];
-
-            if (Bun.which("peekaboo") === null) {
-                throw new CaptureRunError(`native recorder unavailable: ${reason}`);
-            }
-
-            warnings.push(`native recorder unavailable — ${reason} — falling back to peekaboo`);
-            backend = "peekaboo";
-        }
     }
 
     let attempt: CaptureAttempt;
@@ -655,7 +659,7 @@ export function buildPreflightReport(appArg?: string): Record<string, unknown> {
     // Cross-check against the AX window list: peekaboo's CGWindowList view
     // includes other-Space/stale windows the AX API doesn't show — picking one
     // of those as the crop basis targets the wrong window (blind-test 6).
-    if (app && AX_TOOL_AVAILABLE) {
+    if (app && axToolAvailable()) {
         const axr = runCmd([AX_TOOL_PATH, "window", "--app", app]);
         if (axr.ok) {
             try {
@@ -824,7 +828,7 @@ export async function runClickmap(opts: ClickmapOptions): Promise<ClickmapResult
 
     const rawPath = `${opts.outPath.replace(/\.png$/, "")}-raw.png`;
     const shotCmd = windowShotArgv({
-        axToolPath: AX_TOOL_AVAILABLE ? AX_TOOL_PATH : undefined,
+        axToolPath: axToolAvailable() ? AX_TOOL_PATH : undefined,
         app: opts.app,
         path: rawPath,
         windowTitle: opts.windowTitle,

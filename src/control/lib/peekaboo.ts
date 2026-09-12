@@ -86,12 +86,12 @@ export function runPeekabooListJson(args: string[]): { ok: boolean; data?: unkno
 
 /** Displays from `ax-tool screens` when the binary is built, else Peekaboo's `screen list`; same shape either way. */
 export function listScreens(): ScreenInfo[] {
-    if (AX_TOOL_AVAILABLE) {
+    if (axToolAvailable()) {
         const native = runCmd([AX_TOOL_PATH, "screens"]);
 
         if (native.ok) {
             try {
-                const screens = parseScreenList(SafeJSON.parse(native.stdout, { strict: true }));
+                const screens = parseScreenList(SafeJSON.parse(native.stdout, { strict: true }), "cocoa");
 
                 if (screens.length > 0) {
                     return screens;
@@ -102,7 +102,7 @@ export function listScreens(): ScreenInfo[] {
         }
     }
 
-    return parseScreenList(runPeekabooListJson(["screen", "list"]).data);
+    return parseScreenList(runPeekabooListJson(["screen", "list"]).data, "coregraphics");
 }
 
 interface PeekabooV4Window {
@@ -165,7 +165,7 @@ export function parseWindowList(data: unknown): WindowBounds[] {
 
 /** Window geometry from `ax-tool window --app` when the binary is built, else Peekaboo's `window list`. */
 export function listWindowBounds(app: string): WindowBounds[] {
-    if (AX_TOOL_AVAILABLE) {
+    if (axToolAvailable()) {
         const native = runCmd([AX_TOOL_PATH, "window", "--app", app]);
 
         if (native.ok) {
@@ -368,7 +368,20 @@ export const AX_TOOL_PATH = join(
     "release",
     "ax-tool"
 );
-export const AX_TOOL_AVAILABLE = existsSync(AX_TOOL_PATH);
+/**
+ * Whether the native binary exists RIGHT NOW.
+ *
+ * This was a module const, evaluated once at import. On a fresh clone (or with a stale build
+ * receipt) it was `false` before `ensureBinary()` ran, and stayed `false` for the rest of the
+ * process — so the recorder built the binary and recorded natively while `listScreens` and
+ * `listWindowBounds` kept answering from Peekaboo, which carries a different screen-origin
+ * convention (see ScreenOriginConvention). `capture.md` claims the opposite in the same commit.
+ *
+ * A stat per call is nothing next to the subprocess each caller is about to spawn.
+ */
+export function axToolAvailable(): boolean {
+    return existsSync(AX_TOOL_PATH);
+}
 
 export function runAxAction(
     app: string,
@@ -378,7 +391,7 @@ export function runAxAction(
     axAction?: string,
     q?: string
 ): { ok: boolean; stdout: string; stderr: string } {
-    if (AX_TOOL_AVAILABLE) {
+    if (axToolAvailable()) {
         return runAxActionFast(app, axId, mode, value, axAction, q);
     }
     if (mode === "perform" || q) {
@@ -546,7 +559,7 @@ export function focusWindow(
 ): { ok: boolean; via: "ax-tool" | "peekaboo" | "osascript" | "none"; detail: string } {
     // Native ax-tool first: activates + raises without the peekaboo bridge
     // (peekaboo 3.9.4 'window focus' HANGS — observed killed at 30s+).
-    if (AX_TOOL_AVAILABLE) {
+    if (axToolAvailable()) {
         const axCmd = target.windowTitle
             ? [AX_TOOL_PATH, "window", "--app", target.app, "--action", "focus", "--window", target.windowTitle]
             : [AX_TOOL_PATH, "focus", "--app", target.app];

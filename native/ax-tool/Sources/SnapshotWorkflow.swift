@@ -787,8 +787,19 @@ func cmdAct(appName _: String) {
     }
     var payload: [String: Any] = ["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id]
     if workflowFlag("--refresh") {
-        payload["refreshRequired"] = false
-        payload["after"] = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+        // Derive it from the result. workflowAfterState has three failure returns — the
+        // window list changed, the tree never settled, or any other throw — and each one
+        // yields `{ok: false}` with no new token. Hard-coding `false` told the agent its
+        // token was still good, and SKILL.md teaches agents to key on exactly this field,
+        // so the agent went on to reuse a token that no longer matched the tree.
+        let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+        let refreshed = (after["ok"] as? Bool) ?? false
+        payload["refreshRequired"] = !refreshed
+        payload["after"] = after
+
+        if !refreshed {
+            payload["note"] = "the refresh did not produce a new snapshot; run see again before acting"
+        }
     } else {
         payload["refreshRequired"] = true
         payload["note"] = "action dispatched; use see to verify the resulting UI"

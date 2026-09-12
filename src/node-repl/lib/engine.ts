@@ -55,12 +55,36 @@ export class ReplEngine {
         logger.debug({ pid: worker.pid }, "node-repl worker started");
         this.worker = worker;
         void this.readResponses(worker);
+        void this.drainStderr(worker);
         // A respawned worker starts empty; re-register the directories the session added.
         for (const dir of this.moduleDirs) {
             this.send(worker, { id: this.nextId++, op: "addDir", dir });
         }
 
         return worker;
+    }
+
+    /**
+     * An undrained 64 KB pipe blocks the writer mid-write, and from the parent that is
+     * indistinguishable from a long computation: the turn burns its whole 30-second budget and
+     * then the worker is killed with every binding lost. A `console.error` loop or a noisy
+     * dependency is enough. The same hazard is handled three files away in
+     * src/control/lib/peekaboo.ts, which says so in its own comment.
+     */
+    private async drainStderr(worker: ReturnType<typeof Bun.spawn>): Promise<void> {
+        const decoder = new TextDecoder();
+
+        try {
+            for await (const chunk of worker.stderr as ReadableStream<Uint8Array>) {
+                const text = decoder.decode(chunk, { stream: true }).trimEnd();
+
+                if (text.length > 0) {
+                    logger.debug({ pid: worker.pid, stderr: text.slice(0, 2000) }, "node-repl worker stderr");
+                }
+            }
+        } catch (error) {
+            logger.debug({ error, pid: worker.pid }, "node-repl worker stderr stream ended");
+        }
     }
 
     private async readResponses(worker: ReturnType<typeof Bun.spawn>): Promise<void> {

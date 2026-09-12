@@ -64,14 +64,29 @@ export interface ScreenInfo {
     points: { width: number; height: number };
     scaleFactor: number;
     framePixels: { width: number; height: number };
-    // top-left origin of this screen in GLOBAL CG points — the space click
-    // coords and window bounds live in (`screens` positions are Cocoa-flipped,
-    // like Peekaboo's were; converted here so agents never have to)
+    // top-left origin of this screen in GLOBAL CG points — the space click coords and
+    // window bounds live in. `ax-tool screens` reports Cocoa and is flipped here;
+    // Peekaboo reports CG already and is passed through. See ScreenOriginConvention.
     originCG: { x: number; y: number };
 }
 
-/** Both `ax-tool screens` and Peekaboo's `screen list` report this shape; the conversion is shared. */
-export function parseScreenList(data: unknown): ScreenInfo[] {
+/**
+ * Which space a source's `position` is already in.
+ *
+ * 🛑 The two sources DISAGREE, and the shape of the JSON does not say which is which:
+ *
+ * - `ax-tool screens` emits `NSScreen.frame.origin`, which is **Cocoa** (origin at the
+ *   bottom-left of the primary display). It needs the flip.
+ * - Peekaboo's `screen list` emits **CoreGraphics** already. Measured 2026-09-12: screen 1
+ *   reports `position x=-1488 y=-1440` for a 2560x1440 display, and the maximized window on
+ *   it reports CG `x=-1488 y=-1410` — the x values agree exactly and y differs by the 30-point
+ *   title strip. Cocoa origins could not produce that agreement. Flipping it anyway moved the
+ *   origin by 2769 points, which puts an external-display crop entirely off the image.
+ */
+export type ScreenOriginConvention = "cocoa" | "coregraphics";
+
+/** Both sources report the same FIELDS; `convention` says what `position` means. */
+export function parseScreenList(data: unknown, convention: ScreenOriginConvention): ScreenInfo[] {
     const screens = (data as { screens?: RawScreen[] } | undefined)?.screens ?? [];
     const primary = screens.find((s) => s.isPrimary) ?? screens[0];
     const primaryH = primary?.resolution.height ?? 0;
@@ -83,7 +98,10 @@ export function parseScreenList(data: unknown): ScreenInfo[] {
         points: { width: s.resolution.width, height: s.resolution.height },
         scaleFactor: s.scaleFactor,
         framePixels: { width: s.resolution.width * s.scaleFactor, height: s.resolution.height * s.scaleFactor },
-        originCG: { x: s.position.x, y: primaryH - (s.position.y + s.resolution.height) },
+        originCG: {
+            x: s.position.x,
+            y: convention === "cocoa" ? primaryH - (s.position.y + s.resolution.height) : s.position.y,
+        },
     }));
 }
 
