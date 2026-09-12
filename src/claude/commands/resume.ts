@@ -4,13 +4,14 @@ import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
+import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
 import {
     buildSessionTableOpts,
     printAmbiguousSessions,
     type SessionDisplayItem,
     toSessionDisplay,
 } from "@genesiscz/utils/agent-sessions/session-display";
-import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
@@ -325,19 +326,71 @@ export interface SessionPickOptions {
     interactive?: boolean;
 }
 
+/** The Claude home a resume would actually open into. */
+function effectiveClaudeHome(): string {
+    return env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+}
+
 /**
- * Interactive session selection (load → match → content-search → select).
- * Shared by `tools claude resume` and `tools claude start --resume <query>`.
+ * Which session `tools claude resume <query>` and `tools claude start --resume <query>` open.
+ *
+ * A QUERY goes through the shared ladder, the same one codex and grok resume on. Replaying 50
+ * real queries through both settled that it never lands on a different session and decides 10
+ * of 50 that this door refused: a session indexed from several homes stayed two rival
+ * candidates here, while `preferHomeCopies` collapses them onto the launch home's copy.
+ *
+ * A LISTING (`--list`, or no query at all) still uses Claude's own loader. The shared ladder
+ * answers "which session is this query", and a listing is not a query.
  */
 export async function pickSessionForResume(
     query: string | undefined,
     opts: SessionPickOptions = {}
 ): Promise<DisplaySession> {
+    const adapter = opts.adapter ?? createClaudeAdapter();
+
+    if (query && !opts.list) {
+        // A short listing is annoying; a session resume cannot find is the one that costs an
+        // evening, because the user knows the conversation exists.
+        await warnUnresolvedIdentities(adapter, "claude");
+        const spinner = p.spinner();
+        spinner.start("Searching Claude history: index, then transcripts...");
+        let session: AgentSession | undefined;
+
+        try {
+            session = await selectResumeSession({
+                adapter,
+                query,
+                filters: {
+                    cwd: opts.allProjects ? undefined : (opts.cwd ?? process.cwd()),
+                    all: Boolean(opts.allProjects),
+                    limit: opts.limit ?? 20,
+                    excludeAgents: true,
+                },
+                ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
+                preferredHome: effectiveClaudeHome(),
+            });
+            spinner.stop(session ? "1 matching session" : "cancelled");
+        } catch (error) {
+            spinner.stop("History search failed");
+            throw error;
+        }
+
+        if (!session) {
+            throw new Error("Cancelled");
+        }
+
+        const selected = toSessionDisplay(session);
+        assertClaudeResumeHome({ session: selected });
+
+        return selected;
+    }
+
     const spinner = p.spinner();
-    // Named phases, because the transcript pass costs seconds on a large corpus and a spinner that
-    // only says "synchronizing" for four of them reads as a hang.
-    spinner.start("Searching Claude history: index, then transcripts...");
+    // Named phases, because the transcript pass costs seconds on a large corpus and a spinner
+    // that only says "synchronizing" for four of them reads as a hang.
+    spinner.start("Listing Claude history...");
     let candidates: DisplaySession[];
+
     try {
         candidates = await loadClaudeResumeCandidates({ ...opts, query });
         spinner.stop(`${candidates.length} matching sessions`);
@@ -345,8 +398,10 @@ export async function pickSessionForResume(
         spinner.stop("History search failed");
         throw error;
     }
+
     const selected = await selectClaudeResumeSession({ candidates, query, interactive: opts.interactive });
     assertClaudeResumeHome({ session: selected });
+
     return selected;
 }
 

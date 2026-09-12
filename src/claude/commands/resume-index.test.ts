@@ -7,7 +7,7 @@ import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/nati
 import type { AgentSearchFilters, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { assertClaudeResumeHome, loadClaudeResumeCandidates } from "./resume";
+import { assertClaudeResumeHome, loadClaudeResumeCandidates, pickSessionForResume } from "./resume";
 
 const ID = "11111111-2222-4333-8444-555555555555";
 function fixture() {
@@ -269,6 +269,78 @@ test("a harness-block title becomes a readable one-line name", async () => {
         expect(hits[0]?.name).toBe("/resume");
         expect(hits[0]?.name).not.toContain("\n");
     } finally {
+        db.close();
+    }
+});
+
+/**
+ * A QUERY resolves through the shared ladder now, the same one codex and grok resume on.
+ *
+ * Replaying 50 real queries through both settled that it never lands on a different session
+ * and decides 10 of 50 that Claude's own loader refused. The reason is here: one session
+ * indexed from two homes stayed two rival candidates, so an unambiguous query was reported
+ * ambiguous and the user had to paste a full id to open a conversation only they had.
+ */
+test("one session indexed from two homes resolves to the launch home's copy", async () => {
+    const source = fixture();
+    const retained = fixture();
+    // The same session id, carried over into a second home, exactly as a home migration leaves it.
+    mkdirSync(join(retained.root, "-projects-shop"), { recursive: true });
+    writeFileSync(
+        join(retained.root, "-projects-shop", `${ID}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: ID, cwd: "/projects/shop", message: { content: "Invoice callback" } })}\n`
+    );
+
+    const db = new Database(":memory:");
+    env.testing.set("CLAUDE_CONFIG_DIR", source.home);
+
+    try {
+        const adapter = createNativeHistoryAdapter({
+            kind: "claude",
+            roots: [source.root, retained.root],
+            database: db,
+        });
+
+        // Claude's own loader still sees both copies, which is what made it ambiguous.
+        const candidates = await loadClaudeResumeCandidates({
+            query: "Invoice callback",
+            cwd: "/projects/shop",
+            adapter,
+        });
+        expect(candidates.length).toBeGreaterThan(1);
+
+        const picked = await pickSessionForResume("Invoice callback", {
+            cwd: "/projects/shop",
+            adapter,
+            interactive: false,
+        });
+        expect(picked.sessionId).toBe(ID);
+        expect(picked.sourceHome).toBe(source.home);
+    } finally {
+        env.testing.unset("CLAUDE_CONFIG_DIR");
+        db.close();
+    }
+});
+
+test("a query that matches nothing still fails, and the home guard still refuses a foreign copy", async () => {
+    const source = fixture();
+    const db = new Database(":memory:");
+
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [source.root], database: db });
+
+        await expect(
+            pickSessionForResume("a phrase no session contains", { cwd: "/projects/shop", adapter, interactive: false })
+        ).rejects.toThrow(/No claude session/);
+
+        // The launch home is somewhere else entirely, so opening this copy would resume a
+        // session the running Claude cannot see.
+        env.testing.set("CLAUDE_CONFIG_DIR", fixture().home);
+        await expect(
+            pickSessionForResume("Invoice callback", { cwd: "/projects/shop", adapter, interactive: false })
+        ).rejects.toThrow(/CLAUDE_CONFIG_DIR=/);
+    } finally {
+        env.testing.unset("CLAUDE_CONFIG_DIR");
         db.close();
     }
 });
