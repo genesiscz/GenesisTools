@@ -2193,12 +2193,26 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
     let help = """
     ax-tool — fast AX API CLI for macOS UI automation
 
-    RUN `ax-tool preflight --app <name>` FIRST — one call returns screens
-    (scale/origins), frontmost app, windows (phantom strips flagged), element
-    inventory grouped by role, active browser tab, units reminder, and a
-    suggested plan. Kills the guess-the-coordinates/guess-the-field footguns.
+    Use see → act → see for snapshot-scoped computer use. Inspection never activates
+    an app. Actions validate the observed app/window/tree before dispatch. preflight
+    remains available for legacy discovery and screen metadata.
 
     Usage:
+      ax-tool see --app <name> [--window-index N | --window-id ID] [--depth 20] [--scope window|chrome] [--path shot.png]
+                      Indexed AX tree + exact-window PNG + 120-second snapshot token; multiple windows require an index.
+      ax-tool act --app <name> --snapshot TOKEN --element N --action ACTION
+                      ACTION: get|press|click|move|drag|set|perform|focus|scroll|type|key|select|paste
+                      set: --value TEXT; perform: --ax-action AXName; type: --text TEXT (single line, max 256 UTF-16 units); key: --keys cmd,a
+                      click: --button left|right|middle; --double
+                      drag: --to x,y [--duration 0.1–5]; left-button only, destination in the snapshot window
+                      click/move/drag/scroll: --coords x,y replaces --element; --background skips explicit activation and pointer movement
+                      move sends a window-addressed hover event; named cursor storage is provided by tools control cursor
+                      scroll: --direction up|down|left|right [--pages 1–20 | --pixels 1–10000]
+                              pages use observed viewport dimensions (default: one page); pixels use an exact wheel distance
+                      select: --text TEXT [--prefix TEXT] [--suffix TEXT] OR --range utf16Start,length
+                              [--selection text|cursor_before|cursor_after]
+                      paste: --text TEXT [--format text|md|html]; restores clipboard unless another writer changes it
+                      Refuses stale app/window/tree/index. No automatic retries or focus. Refresh with see after action.
       ax-tool preflight --app <name> [--depth <n>] [--wanted g1,g2]  Discover everything (see above)
                         --wanted groups: screens,frontmost,windows,elements,browser,plan
                         (elements truncated 15/role; --wanted elements:<Role> = full one role)
@@ -2536,6 +2550,10 @@ func cmdHitTest(x: Double, y: Double) {
 let maxDepth = Int(argValue("--depth") ?? "10") ?? 10
 
 switch command {
+case "see":
+    cmdSee(appName: appName)
+case "act":
+    cmdAct(appName: appName)
 case "list":
     cmdList(appName: appName, maxDepth: maxDepth)
 case "tree":

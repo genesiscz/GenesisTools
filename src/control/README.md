@@ -6,7 +6,50 @@ Drives native macOS apps by addressing real accessibility elements instead of gu
 
 ---
 
-## 🛑 Run `preflight` first
+## Snapshot-scoped inspection and actions
+
+Start adaptive UI work with `tools control see --app APP`. It returns JSON with the selected window's stable CG ID, a PNG path, indexed AX elements and a short-lived snapshot token. Multiple windows require an explicit `--window-index` from the returned candidates; no largest-window fallback is used. Refresh the selected window with `--window-id` using its returned CG ID, since indexes reorder when focus changes. Do not combine both selectors.
+
+```bash
+tools control see \
+  --app Calculator \
+  --path /tmp/calculator.png > /tmp/calculator-state.json
+tools json /tmp/calculator-state.json
+```
+
+View the PNG, choose an element from `elements`, and pass that index and token to `act`:
+
+```bash
+tools control act \
+  --app Calculator \
+  --snapshot "$(jq -r .snapshot /tmp/calculator-state.json)" \
+  --element N \
+  --action press
+```
+
+Replace `N` with the observed index. Refresh with `see` after every action, including focus. `act --help` lists get, press, click, move, drag, set, perform, focus, scroll, type, key, select and paste. Foreground pointer actions require the exact window already focused; `--background` pointer actions retain geometry and hit-ownership checks without requiring focus. Keyboard/text input requires the intended input/window focused, and AX actions remain explicitly separate. Stale app instances, closed/wrong windows, changed observable trees, expired tokens and invalid indexes fail before dispatch. `ok: true` acknowledges dispatch, not the outcome of the user's task.
+
+The screenshot and tree belong to the same window. Indexes are specific to that observation, not persistent AX object identities. Replacement or reordering of completely indistinguishable anonymous controls cannot be detected. Standard window buttons exclude decorative glyph descendants. Unsupported AX values are marked unreadable. The tool cannot lock out concurrent desktop changes; inspect errors and refresh rather than replaying automatically.
+
+The wrapper accepts native output up to 32 MiB per stream. Exceeding that budget fails explicitly and never retries an action automatically; execution may already have partially completed. Use a smaller observation depth or the explicit browser-chrome scope for large trees, and refresh before deciding what to do next.
+
+This workflow uses native `ax-tool` with macOS APIs, not Codex, Sky or Peekaboo. A shell, Bun, Swift, and the relevant macOS grants are sufficient. The normal launcher attributes permissions to GenesisTools.app; directly invoking the binary can have a different responsible process. The CLI rebuilds when its native sources change. Direct native callers should run `swift build --package-path native/ax-tool -c release` after source changes.
+
+`see` tokens are unrelated to the legacy mouse/focus `snapshot` and `restore`. Existing selector commands, sequential plans and recording plans retain their existing semantics and do not accept the new snapshot contract.
+
+Validation:
+
+```bash
+bun run test src/control
+swift test --package-path native/ax-tool
+bun src/control/scripts/live-smoke.ts
+bun plugins/genesis-tools/skills/macos-control/scripts/check-help.ts --repo .
+```
+
+The live smoke opens a dedicated two-window test app and terminates only that app. It requires desktop access; ordinary tests do not operate personal apps. Add `--peekaboo` to the help check when validating the optional recording provider.
+
+## Legacy discovery and recording preflight
+
 
 ```bash
 tools control apps                          # valid --app values
@@ -45,12 +88,12 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 |---------|-------------|
 | `focus` | Activate an app, and optionally focus a specific element |
 | `press` | Press an element via AXPress |
-| `click` | CGEvent click at the element centre, no coordinates needed |
+| `click` | CGEvent click at the element centre, or an observed global point with background delivery |
 | `perform` | Perform any AX action on an element, the generic form of `press` |
 | `set` | Set the value of a text field |
 | `type` | Type keystrokes and hard-verify the result |
 | `hotkey` | Send a key combo via CGEvent |
-| `scroll` | Send wheel events with `--direction`, or scroll an element into view without it |
+| `scroll` | Legacy wheel scrolling with `--direction` and `--amount`, or scroll an element into view without direction. Snapshot-scoped `act --action scroll` has its own page/pixel options below |
 | `window` | Get window bounds and state, or mutate with `--action move\|resize\|minimize\|maximize\|close\|focus` |
 
 ⚠️ **`type` inserts at the current cursor.** Use `--end` to jump to the end of the field first, or `--clear` to replace the whole field. Without either, you get text spliced into the middle of whatever was there.
@@ -156,3 +199,36 @@ This tool needs macOS Accessibility permission for the process that runs it, and
 - `tools macos control` reaches the same functionality through the macOS umbrella tool.
 - The `macos-control` skill wraps this tool with the discovery-first workflow and the frame-by-frame review loop for recordings.
 - `hittest` is the tie-breaker when a click "works" but the wrong thing responds. It reports which element the system would actually deliver the event to, which is not always the element you targeted.
+
+### Independent software cursor
+
+`cursor move --app APP --snapshot TOKEN --coords X,Y --name NAME` moves a named software cursor through a process-targeted mouse-move event. It saves its own coordinates without moving the hardware pointer. `cursor show --name NAME` reads that position; `cursor click --name NAME --snapshot FRESH_TOKEN` clicks it. Fresh tokens must match the saved app launch and window. Stale tokens fail natively, and failed moves do not overwrite cursor state.
+
+For browser tab strips and toolbars, `see --scope chrome` omits web-area descendants explicitly. The token remembers that scope and cannot be used to dispatch pointer events inside omitted web content. Use the default `window` scope to inspect and operate page content.
+
+```bash
+tools control see \
+  --app com.brave.Browser --window-id ID --scope chrome > /tmp/brave-state.json
+tools control cursor move \
+  --app com.brave.Browser --name brave \
+  --snapshot "$(jq -r .snapshot /tmp/brave-state.json)" --coords X,Y
+# Refresh after movement before choosing the click.
+tools control see \
+  --app com.brave.Browser --window-id ID --scope chrome > /tmp/brave-next.json
+tools control cursor click \
+  --name brave --snapshot "$(jq -r .snapshot /tmp/brave-next.json)"
+```
+
+`bun src/control/scripts/brave-tabs.ts --window-id ID --proof /tmp/brave-proof.json` verifies every visible browser tab through the real CLI, compares hardware-pointer positions, and restores the initial tab. It does not click page controls or submit forms. Hidden tabs and a changed tab inventory cause a failure rather than partial-success reporting.
+
+### Snapshot drag, selection and paste
+
+`drag` uses the left mouse button and accepts `--to X,Y`, `--duration 0.1..5`, `--coords` and `--background`. `click --button left|right|middle` selects a mouse button for clicks. Background drag and right-click passed the dedicated AppKit fixture; receiving apps must accept background events. The tool does not explicitly activate or raise the app, but an app may change its own key window in response.
+
+`scroll --direction up|down|left|right` uses viewport-sized wheel distance with `--pages 1..20` (default one), or an exact distance with `--pixels 1..10000`. These are mutually exclusive. Both modes accept `--coords` and `--background`. Page mode uses the nearest receiving AX scroll area's viewport at the verified point, including when targeting a child row. If that viewport cannot be established, the command refuses and requests explicit `--pixels`.
+
+`select` accepts a UTF-16 `--range START,LENGTH` or a unique literal `--text MATCH`. With a literal match, `--prefix` and `--suffix` disambiguate its immediate surroundings. `--selection text|cursor_before|cursor_after` chooses the selected range or caret. These options belong only to `select`.
+
+`paste --text PAYLOAD --format text|md|html` pastes at the focused input's existing selection. To choose another range or caret, use `select → see → paste`. Prefix/suffix do not modify the paste payload, and selection flags on `paste` are rejected. `type` is limited to single-line text of at most 256 UTF-16 code units; use paste for longer text.
+
+Clipboard restoration checks ownership and skips observed competing copies. It is best effort because AppKit has no atomic compare-and-swap; a narrow concurrent-copy race remains. HTML paste also carries raw markup as its plain-text representation, so rendering depends on the receiver.

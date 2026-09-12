@@ -16,6 +16,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { registerCaptureCommands } from "./commands/capture";
 import { registerCompareScreenshotCommand } from "./commands/compare-screenshot";
+import { registerCursorCommands } from "./commands/cursor";
 import { registerDiscoveryCommands } from "./commands/discovery";
 import { registerDrawCommand } from "./commands/draw";
 import { registerInteractCommands } from "./commands/interact";
@@ -23,18 +24,20 @@ import { registerRecordPlanCommand } from "./commands/record-plan";
 import { registerRunCommand } from "./commands/run";
 import { registerStateCommands } from "./commands/state";
 import { registerVerifyCommands } from "./commands/verify";
+import { registerWorkflowCommands } from "./commands/workflow";
 
 const program = new Command();
 
 program
     .name("control")
     .description(
-        "macOS UI automation — element control via the Accessibility API, plus screen recording with timed actions (capture).\nRUN `control preflight --app <name>` FIRST: one call returns screens, frontmost app, windows, element inventory, browser tab, and a suggested plan.\nDiscover valid --app values with `control apps`."
+        "macOS UI automation — element control via the Accessibility API, plus screen recording with timed actions (capture).\nStart with `control see --app <name>` for indexed snapshot inspection and `control act` for validated actions. Use `control preflight --app <name>` for legacy discovery and recording plans.\nDiscover valid --app values with `control apps`."
     )
     .version("1.0.0");
 
 registerCaptureCommands(program);
 registerCompareScreenshotCommand(program);
+registerCursorCommands(program);
 registerDiscoveryCommands(program);
 registerDrawCommand(program);
 registerInteractCommands(program);
@@ -42,6 +45,7 @@ registerRecordPlanCommand(program);
 registerRunCommand(program);
 registerStateCommands(program);
 registerVerifyCommands(program);
+registerWorkflowCommands(program);
 
 try {
     await runTool(program, { tool: "control" });
