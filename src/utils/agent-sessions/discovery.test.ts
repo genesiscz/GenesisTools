@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { discoverClaudeHistorySources, readBounded } from "./readers/claude-discovery";
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { discoverGrokHistorySources } from "./readers/grok-discovery";
 import { walkSourceRoots } from "./source-discovery";
@@ -154,9 +154,51 @@ test("Claude discovery excludes workflow journals and keeps the winning copy of 
     expect(result.issues).toHaveLength(1);
     expect(result.issues[0]?.path).toBe(realpathSync(smaller));
     expect(result.issues[0]?.message).toContain(realpathSync(larger));
+    expect(result.displaced).toEqual([realpathSync(smaller)]);
     // Choosing a winner resolves the conflict, so the root is still fully scanned.
     expect(result.completeRoots).toEqual([realpathSync(root)]);
     expect(result.sources.some((source) => source.filePath === realpathSync(workflow))).toBe(false);
+});
+
+test("Claude discovery displaces a sidecar stub of a moved session without reporting it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-discovery-claude-stub-"));
+    const root = join(home, "projects");
+    const oldProject = join(root, "-projects-old");
+    const newProject = join(root, "-projects-new");
+    const sessionId = "44444444-5555-4666-8777-888888888888";
+    const stub = join(oldProject, `${sessionId}.jsonl`);
+    const transcript = join(newProject, `${sessionId}.jsonl`);
+    mkdirSync(oldProject, { recursive: true });
+    mkdirSync(newProject, { recursive: true });
+    // What a cwd move leaves behind on the live corpus: title and agent-name records, no turn.
+    writeFileSync(
+        stub,
+        [
+            line({ type: "agent-name", sessionId, agentName: "fixture" }),
+            line({ type: "custom-title", sessionId, customTitle: "moved session" }),
+        ].join("")
+    );
+    writeFileSync(transcript, line({ type: "user", sessionId, message: { content: "the real conversation" } }));
+
+    const result = await discoverClaudeHistorySources([root]);
+    expect(result.sources.map((source) => source.filePath)).toEqual([realpathSync(transcript)]);
+    expect(result.issues).toEqual([]);
+    expect(result.displaced).toEqual([realpathSync(stub)]);
+    expect(result.completeRoots).toEqual([realpathSync(root)]);
+});
+
+// The stub check stats first and reads second; a turn appended in between must stop the
+// read at the bound instead of loading a whole transcript to answer "is this a stub".
+test("readBounded answers null past the bound instead of reading the rest", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-discovery-bounded-"));
+    const small = join(home, "small.jsonl");
+    const grown = join(home, "grown.jsonl");
+    writeFileSync(small, "abc");
+    writeFileSync(grown, "x".repeat(9));
+
+    expect(await readBounded(small, 8)).toBe("abc");
+    expect(await readBounded(grown, 9)).toBe("x".repeat(9));
+    expect(await readBounded(grown, 8)).toBeNull();
 });
 
 test("Codex discovery keys sidecars and projections by the first header id", async () => {

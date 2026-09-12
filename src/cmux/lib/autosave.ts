@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -25,12 +26,12 @@ export interface AutosavePanel {
         scrollback?: string;
         tmuxStartCommand?: string;
         agent?: {
-            kind: "claude" | "grok" | "codex";
+            kind: AccountProviderAlias;
             sessionId?: string;
             workingDirectory?: string;
             launchCommand?: { arguments?: string[]; executablePath?: string; workingDirectory?: string };
         };
-        resumeBinding?: { kind: "claude" | "grok" | "codex"; checkpointId?: string; cwd?: string; command?: string };
+        resumeBinding?: { kind: AccountProviderAlias; checkpointId?: string; cwd?: string; command?: string };
     };
 }
 

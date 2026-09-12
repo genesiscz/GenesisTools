@@ -33,13 +33,14 @@ function account(id: string, name: string, provider = "anthropic-sub"): AccountE
     };
 }
 
-function resolve(requested: string | undefined, accounts: AccountEntry[]) {
+function resolve(requested: string | undefined, accounts: AccountEntry[], fuzzy = false) {
     return resolveAccountName({
         requested,
         accounts,
         message: "Which account?",
         tool: "tools ai accounts logout",
         subcommand: ["accounts", "logout"],
+        fuzzy,
     });
 }
 
@@ -122,5 +123,76 @@ describe("nothing matched", () => {
 
         expect(picked.status).toBe("error");
         expect(errorLines.join("\n")).toContain("No accounts configured");
+    });
+});
+describe("fuzzy: a unique substring resolves, an ambiguous one is refused off a TTY", () => {
+    test("a substring of one name resolves it", async () => {
+        const picked = await resolve("shop", [account("acc_cdx", "cdx-shop"), account("acc_work", "work")], true);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_cdx");
+    });
+
+    test("a substring shared by two names is an error naming both (non-TTY)", async () => {
+        const picked = await resolve("orb", [account("acc_a", "orbit"), account("acc_b", "info.orbit")], true);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("ambiguous");
+        expect(errLines.join("\n")).toContain("info.orbit");
+    });
+
+    test("the exact pass still wins over a longer name that contains it", async () => {
+        const picked = await resolve("work", [account("acc_work2", "work-2"), account("acc_work", "work")], true);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_work");
+    });
+
+    test("NEGATIVE CONTROL: without fuzzy a substring is not found", async () => {
+        const picked = await resolve("shop", [account("acc_cdx", "cdx-shop")]);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("not found");
+    });
+});
+
+describe("a case difference is a typo, not a different account", () => {
+    test("a differently-cased name resolves without the substring pass", async () => {
+        const picked = await resolve("WORK", [account("acc_work", "work"), account("acc_shop", "shop")]);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_work");
+    });
+
+    test("a differently-cased id resolves too", async () => {
+        const picked = await resolve("ACC_WORK", [account("acc_work", "work")]);
+
+        expect(picked.status === "ok" && picked.account.name).toBe("work");
+    });
+
+    test("the cased-exact name beats a longer name that merely contains it", async () => {
+        // Without the case-folded pass this fell through to the substring pass, which matched
+        // BOTH and then had to ask which one — for a name the user had spelled in full.
+        const picked = await resolve("Shop", [account("acc_shop", "shop"), account("acc_arch", "shop-archive")], true);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_shop");
+    });
+
+    test("the literal spelling still wins when both cases exist as separate accounts", async () => {
+        const picked = await resolve("work", [account("acc_upper", "Work"), account("acc_lower", "work")]);
+
+        expect(picked.status === "ok" && picked.account.id).toBe("acc_lower");
+    });
+
+    test("two accounts differing only in case are refused, never guessed", async () => {
+        const picked = await resolve("WORK", [account("acc_upper", "Work"), account("acc_lower", "work")]);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("ambiguous");
+        expect(errLines.join("\n")).toContain("acc_upper");
+    });
+
+    test("NEGATIVE CONTROL: an unknown name is still not found", async () => {
+        const picked = await resolve("GHOST", [account("acc_work", "work")]);
+
+        expect(picked.status).toBe("error");
+        expect(errorLines.join("\n")).toContain("not found");
     });
 });

@@ -1,3 +1,4 @@
+import { registerAccountLoginCommand } from "@app/ai/commands/accounts/login";
 import { runLogin } from "@app/ai/lib/accounts/run-login";
 import { type ClaudeConfig, DEFAULT_WARMUP, loadConfig, updateConfig } from "@app/claude/lib/config";
 import { partialRenameAdvice, renameClaudeAccount, resolveRenameTo } from "@app/claude/lib/rename-account";
@@ -772,11 +773,12 @@ export function registerConfigCommand(program: Command): void {
 
     // OAuth login command (top-level, not under config). A door onto the shared
     // account lib with the provider pinned; `tools ai accounts login --provider
-    // claude` reaches the identical code.
-    program
-        .command("login [name]")
-        .description("Login with OAuth to add an account (with auto-refresh)")
-        .action(async (name?: string) => {
-            await runLogin({ provider: "anthropic-sub", name, tool: "tools claude login", subcommand: ["login"] });
-        });
+    // claude` reaches the identical code. anthropic has no credential file to
+    // bind, so the shared registration offers it none of the file flags.
+    registerAccountLoginCommand(program, {
+        provider: "anthropic-sub",
+        tool: "tools claude login",
+        subcommand: ["login"],
+        description: "Login with OAuth to add an account (with auto-refresh)",
+    });
 }

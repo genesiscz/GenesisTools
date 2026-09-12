@@ -5,10 +5,11 @@ import { sep } from "node:path";
 
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
-import { asRecord, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
+import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
     BoundedMetadataField,
@@ -890,7 +891,21 @@ function pushBoundedField(fields: BoundedMetadataField[], field: BoundedMetadata
     }
 }
 
+/**
+ * The most expensive per-file unit in the pipeline: a full JSONL scan, plus a paginated thread's
+ * `thread_history.sqlite`, plus the home's `state.sqlite` and `session_index.jsonl`. Only sources
+ * whose fingerprint changed reach it, so this is bounded and never gated behind `--detail all`.
+ */
 export async function readCodexMetadata(
+    source: NativeSessionSource<"codex">,
+    options: HistoryReadOptions = {}
+): Promise<HistoryMetadataRead> {
+    return profiler
+        .scope("agent-sessions")
+        .measureAsync("metadata.codex", () => readCodexMetadataUncounted(source, options));
+}
+
+async function readCodexMetadataUncounted(
     source: NativeSessionSource<"codex">,
     options: HistoryReadOptions = {}
 ): Promise<HistoryMetadataRead> {
@@ -1076,7 +1091,7 @@ export async function readCodexMetadata(
             storageTruncatedFields,
         },
         issues,
-        complete: fatalIssueCount(issues) === 0,
+        complete: !issues.some((issue) => issue.message !== PROJECTION_UNAVAILABLE && blocksMetadata(issue)),
     };
 }
 

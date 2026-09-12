@@ -27,7 +27,10 @@ import { codexUsage } from "./usage";
  */
 const resolver = new OpenAISubResolver();
 
-/** The two windows the Codex app-server reports: a 5h `primary` and a weekly `secondary`. */
+/**
+ * The two plan-wide window slots the Codex app-server reports. Per-model pools
+ * (`primary:codex_bengalfox`) follow in the order the account lists them.
+ */
 const presentation: AccountFeatures["presentation"] = {
     displayName: "Codex",
     alias: "codex",

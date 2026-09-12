@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -9,9 +10,11 @@ import {
     type DesktopState,
     discoverSourceHomes,
     enumerateRollouts,
+    inspectHome,
     mergeDesktopState,
     migrateHome,
     normaliseRootPath,
+    SESSION_INDEX_FILE,
 } from "./migrate-home";
 
 const roots: string[] = [];
@@ -66,6 +69,33 @@ function makeHome(root: string, name: string, rollouts: RolloutSpec[], state?: D
 
 function uuid(suffix: string): string {
     return `01a07dd8-4417-7be3-b922-74db43df${suffix}`;
+}
+
+/** One `session_index.jsonl` record, the shape Codex writes when a thread is named. */
+function nameRecord(id: string, threadName: string): string {
+    return SafeJSON.stringify({ id, thread_name: threadName, updated_at: "2026-09-09T11:24:45.138882Z" });
+}
+
+/** The home's Codex state database, cut down to the one table the name merge touches. */
+function stateDatabase(home: string, rows: Array<{ id: string; name?: string }>): void {
+    const database = new Database(join(home, "state_5.sqlite"));
+    database.exec("create table threads (id text primary key, name text)");
+
+    for (const row of rows) {
+        database.query("insert into threads (id, name) values (?, ?)").run(row.id, row.name ?? null);
+    }
+
+    database.close();
+}
+
+function threadName(home: string, id: string): string | null {
+    const database = new Database(join(home, "state_5.sqlite"), { readonly: true });
+
+    try {
+        return (database.query("select name from threads where id = ?").get(id) as { name: string | null }).name;
+    } finally {
+        database.close();
+    }
 }
 
 /** Path + size + content digest of every file below `root`, so "nothing was written" is checkable. */
@@ -627,5 +657,187 @@ describe("mergeDesktopState with a colliding project id", () => {
         expect(report.duplicatesAvoided).toHaveLength(1);
         expect(Object.keys(merged["local-projects"] ?? {})).toEqual(["shared"]);
         expect(merged["thread-project-assignments"]?.["thread-s"]?.projectId).toBe("shared");
+    });
+});
+
+describe("thread names through migrateHome", () => {
+    test("a dry run names nothing; applying carries every name whose rollout the destination holds", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", [{ date: "2026-09-01", uuid: uuid("0031") }]);
+        const source = makeHome(root, ".codex-named", [
+            { date: "2026-09-01", uuid: uuid("0031") },
+            { date: "2026-09-02", uuid: uuid("0032") },
+        ]);
+        const index = join(destination, SESSION_INDEX_FILE);
+        writeFileSync(
+            join(source, SESSION_INDEX_FILE),
+            `${[
+                nameRecord(uuid("0031"), "astra-pricing"),
+                nameRecord(uuid("0032"), "invoice-sweep"),
+                nameRecord(uuid("0033"), "never-copied"),
+            ].join("\n")}\n`
+        );
+
+        const options = {
+            from: [source],
+            to: destination,
+            backupRoot: join(root, "backups"),
+            stamp: "20260910-193000",
+            inspectOpenFiles: clear,
+        };
+
+        // 0031's rollout is already in the destination, 0032 arrives with this run, 0033 has none.
+        const planned = await migrateHome(options);
+
+        expect(planned.sessionNames).toEqual([
+            {
+                home: source,
+                sourcePath: join(source, SESSION_INDEX_FILE),
+                destinationPath: index,
+                added: 2,
+                alreadyNamed: 0,
+                skippedUnknown: 1,
+                stateAdded: 0,
+                stateAlreadyNamed: 0,
+                stateMissing: 0,
+                written: false,
+            },
+        ]);
+        expect(existsSync(index)).toBe(false);
+
+        const applied = await migrateHome({ ...options, apply: true });
+
+        expect(applied.refusals).toEqual([]);
+        expect(applied.sessionNames[0]).toMatchObject({ added: 2, skippedUnknown: 1, written: true });
+
+        const names = readFileSync(index, "utf8")
+            .split("\n")
+            .filter((line) => line.trim())
+            .map((line) => SafeJSON.parse(line) as { id: string; thread_name: string });
+
+        expect(names.map((entry) => [entry.id, entry.thread_name])).toEqual([
+            [uuid("0031"), "astra-pricing"],
+            [uuid("0032"), "invoice-sweep"],
+        ]);
+    });
+
+    test("the destination's own name wins, and a rerun adds nothing", async () => {
+        const root = scratch();
+        const destination = makeHome(root, ".codex", [{ date: "2026-09-01", uuid: uuid("0034") }]);
+        const source = makeHome(root, ".codex-named", [
+            { date: "2026-09-01", uuid: uuid("0034") },
+            { date: "2026-09-02", uuid: uuid("0035") },
+        ]);
+        const index = join(destination, SESSION_INDEX_FILE);
+        writeFileSync(index, `${nameRecord(uuid("0034"), "destination-name")}\n`);
+        writeFileSync(
+            join(source, SESSION_INDEX_FILE),
+            `${[nameRecord(uuid("0034"), "source-name"), nameRecord(uuid("0035"), "carried")].join("\n")}\n`
+        );
+
+        const options = {
+            from: [source],
+            to: destination,
+            apply: true,
+            backupRoot: join(root, "backups"),
+            inspectOpenFiles: clear,
+        };
+
+        const first = await migrateHome({ ...options, stamp: "20260910-193100" });
+
+        expect(first.sessionNames[0]).toMatchObject({ added: 1, alreadyNamed: 1, skippedUnknown: 0, written: true });
+
+        const written = readFileSync(index, "utf8");
+        const second = await migrateHome({ ...options, stamp: "20260910-193200" });
+
+        expect(second.sessionNames[0]).toMatchObject({ added: 0, alreadyNamed: 2, written: false });
+        expect(readFileSync(index, "utf8")).toBe(written);
+        expect(written.split("\n").filter((line) => line.trim())).toEqual([
+            nameRecord(uuid("0034"), "destination-name"),
+            nameRecord(uuid("0035"), "carried"),
+        ]);
+    });
+});
+
+describe("thread names in the Codex state database", () => {
+    test("names a thread the destination holds but never named, and never overwrites one it has", async () => {
+        const root = scratch();
+        const rollouts = [
+            { date: "2026-09-01", uuid: uuid("0041") },
+            { date: "2026-09-02", uuid: uuid("0042") },
+            { date: "2026-09-03", uuid: uuid("0044") },
+        ];
+        const destination = makeHome(root, ".codex", rollouts);
+        const source = makeHome(root, ".codex-named", rollouts);
+        // 0041 is unnamed here and named there; 0042 is named on both; 0043 has no rollout at all;
+        // 0044 has one, but the destination's state database has never heard of the thread.
+        stateDatabase(destination, [{ id: uuid("0041") }, { id: uuid("0042"), name: "destination-name" }]);
+        stateDatabase(source, [
+            { id: uuid("0041"), name: "astra-pricing" },
+            { id: uuid("0042"), name: "source-name" },
+            { id: uuid("0043"), name: "never-copied" },
+            { id: uuid("0044"), name: "no-destination-row" },
+        ]);
+
+        const options = {
+            from: [source],
+            to: destination,
+            backupRoot: join(root, "backups"),
+            inspectOpenFiles: clear,
+        };
+
+        const planned = await migrateHome({ ...options, stamp: "20260910-210000" });
+
+        expect(planned.sessionNames[0]).toMatchObject({ stateAdded: 1, stateAlreadyNamed: 1, stateMissing: 1 });
+        expect(threadName(destination, uuid("0041"))).toBeNull();
+
+        const applied = await migrateHome({ ...options, apply: true, stamp: "20260910-210100" });
+
+        expect(applied.sessionNames[0]).toMatchObject({ stateAdded: 1, stateAlreadyNamed: 1, written: true });
+        expect(threadName(destination, uuid("0041"))).toBe("astra-pricing");
+        expect(threadName(destination, uuid("0042"))).toBe("destination-name");
+        expect(applied.backups.state?.length).toBe(1);
+
+        const rerun = await migrateHome({ ...options, apply: true, stamp: "20260910-210200" });
+
+        expect(rerun.sessionNames[0]).toMatchObject({ stateAdded: 0, stateAlreadyNamed: 2 });
+        expect(threadName(destination, uuid("0041"))).toBe("astra-pricing");
+    });
+});
+
+describe("inspectHome", () => {
+    test("probes the state databases the migration writes to, sidecars included", () => {
+        const home = scratch();
+        writeFileSync(join(home, "state.sqlite"), "");
+        writeFileSync(join(home, "state_2.sqlite"), "");
+
+        let asked: string[] = [];
+        inspectHome(home, (query: OpenFilesQuery): OpenFilesResult => {
+            asked = query.files ?? [];
+            return [];
+        });
+
+        // writeThreadNames opens these read-write. A busy check that cannot see them
+        // reports "clear" while Codex holds the database the migration is about to edit.
+        expect(asked).toContain(join(home, "state.sqlite"));
+        expect(asked).toContain(join(home, "state.sqlite-wal"));
+        expect(asked).toContain(join(home, "state.sqlite-shm"));
+        expect(asked).toContain(join(home, "state_2.sqlite"));
+    });
+
+    test("reports busy when a state database is held", () => {
+        const home = scratch();
+        writeFileSync(join(home, "state.sqlite"), "");
+
+        const report = inspectHome(
+            home,
+            (query: OpenFilesQuery): OpenFilesResult =>
+                (query.files ?? []).some((file) => file.endsWith("state.sqlite"))
+                    ? [{ path: join(home, "state.sqlite"), pid: 4242, command: "codex" }]
+                    : []
+        );
+
+        expect(report.status).toBe("busy");
+        expect(report.holders[0]?.pid).toBe(4242);
     });
 });

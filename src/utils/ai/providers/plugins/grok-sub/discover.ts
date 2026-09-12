@@ -75,11 +75,24 @@ async function identityFromAuthFile(authFile: string): Promise<AccountIdentity |
     };
 }
 
-function accountForAuthFile(authFile: string, accounts: AccountEntry[]): string | undefined {
+function accountForAuthFile(authFile: string, accounts: AccountEntry[]): AccountEntry | undefined {
     return accounts.find(
         (account) =>
             account.credentials.authFile !== undefined && resolve(account.credentials.authFile) === resolve(authFile)
-    )?.id;
+    );
+}
+
+/**
+ * The account NAME whose login file a grok home holds, for `TOOLS_GROK_ACCOUNT`.
+ *
+ * The launcher exports that variable so a live grok process can be attributed to an account
+ * off the process table, the same way `tools claude run` and `tools codex run` do. Grok itself
+ * identifies a login by its home, never by a name, so this is the translation.
+ */
+export async function grokAccountNameForHome(home: string): Promise<string | undefined> {
+    const accounts = (await AiConfigStore.load()).accounts({ provider: "grok-sub" });
+
+    return accountForAuthFile(join(home, "auth.json"), accounts)?.name;
 }
 
 export async function discoverGrokHomes(options: DiscoverGrokOptions = {}): Promise<DiscoveredHome[]> {
@@ -102,8 +115,8 @@ export async function discoverGrokHomes(options: DiscoverGrokOptions = {}): Prom
             home,
             authFile,
             ...(identity ? { identity } : {}),
-            ...(accountForAuthFile(authFile, accounts)
-                ? { boundToAccountId: accountForAuthFile(authFile, accounts) }
+            ...(accountForAuthFile(authFile, accounts)?.id
+                ? { boundToAccountId: accountForAuthFile(authFile, accounts)?.id }
                 : {}),
         });
     }
@@ -112,7 +125,7 @@ export async function discoverGrokHomes(options: DiscoverGrokOptions = {}): Prom
     // account owns the default auth file, because that is the credential
     // `GROK_AUTH_PATH` hands the worker.
     const defaultAuthFile = options.root ? join(defaultHome, "auth.json") : grokAuthPath(defaultHome);
-    const workerOwner = accountForAuthFile(defaultAuthFile, accounts);
+    const workerOwner = accountForAuthFile(defaultAuthFile, accounts)?.id;
 
     for (const home of workerHomesIn(workerRoot)) {
         found.push({

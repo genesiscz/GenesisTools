@@ -4,7 +4,6 @@ import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Duplex } from "node:stream";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -27,15 +26,47 @@ export async function initializeAccountClient(
     return initialized;
 }
 
+/**
+ * A cap, not a design limit: the socket is 0600 inside a 0700 directory, so only this user can
+ * reach it, and this only stops a runaway from opening connections without bound.
+ */
+const MAX_PEERS = 8;
+
+/** Enough of the child's stderr to recognise why it died; it explains itself in one line. */
+const STDERR_TAIL = 4000;
+
+/**
+ * Two `codex app-server` children that initialize the SAME `CODEX_HOME` in the same instant
+ * fight over its sqlite state runtime, and one of them dies.
+ *
+ * Measured 2026-09-11 against three accounts and one home: two simultaneous cold starts left
+ * one survivor and one `exited with code 1`, while the same two started a second apart both
+ * ran, and a third then joined them, each reporting its own usage. So the home is not
+ * single-owner; only the first moment of initializing it is. The loser has to wait for the
+ * winner to finish, which takes well under a second.
+ */
+export class CodexHomeBusyError extends Error {
+    constructor(readonly stderr: string) {
+        super("Another Codex app-server was initializing this home; it was not ready in time");
+        this.name = "CodexHomeBusyError";
+    }
+}
+
+export function isHomeInitRace(stderr: string): boolean {
+    return /failed to initialize (?:sqlite )?state runtime/i.test(stderr);
+}
+
 export async function openTerminalServer(options: {
     account: TerminalAccount;
     child: AppServerProcess;
     signal?: AbortSignal;
     socketRoot?: string;
 }) {
-    let socket: WebSocket | undefined;
+    const peers = new Set<WebSocket>();
+    let primary: WebSocket | undefined;
     let bridge: CodexTuiBridge | undefined;
     let threadId: string | undefined;
+    let stderrTail = "";
     const client = new AppServerClient(options.child, {
         onNotification: (notification) => {
             if (notification.method === "thread/started") {
@@ -54,7 +85,17 @@ export async function openTerminalServer(options: {
 
             return bridge?.serverRequest(request) ?? Promise.reject(new Error("Codex terminal is not connected"));
         },
-        onStderr: (text) => logger.debug({ bytes: text.length }, "Codex app-server stderr received"),
+        // The byte count alone said nothing: when the app-server explains a failure on stderr,
+        // that text is the only account of it anywhere, so keep it (bounded, file-only).
+        onStderr: (text) => {
+            // Kept, not only logged: a cold-start race on the home says so here and nowhere
+            // else, and the launcher retries on exactly that sentence.
+            stderrTail = `${stderrTail}${text}`.slice(-STDERR_TAIL);
+            logger.debug(
+                { bytes: text.length, stderr: text.length > 2000 ? `${text.slice(0, 2000)}…` : text },
+                "Codex app-server stderr received"
+            );
+        },
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     let removeAbortListener: (() => void) | undefined;
@@ -80,13 +121,21 @@ export async function openTerminalServer(options: {
             aborted,
         ]);
     } catch (error) {
+        logger.warn({ error, stderr: stderrTail }, "Codex account initialization failed");
         await client.close();
+
+        if (isHomeInitRace(stderrTail)) {
+            throw new CodexHomeBusyError(stderrTail);
+        }
+
         throw error;
     } finally {
         clearTimeout(timer);
         removeAbortListener?.();
     }
 
+    /** Requests the TUI made that the app-server refused; reported after the TUI releases the screen. */
+    const failures: Array<{ method: string; error: Error }> = [];
     let setupDir: string | undefined;
     let setupServer: ReturnType<typeof createServer> | undefined;
     let setupSockets: WebSocketServer | undefined;
@@ -101,17 +150,32 @@ export async function openTerminalServer(options: {
         const socketPath = join(dir, "tui.sock");
         bridge = new CodexTuiBridge({
             client,
-            send: (message) => {
-                socket?.send(SafeJSON.stringify(message, { strict: true }));
+            send: (message, target) => {
+                const frame = SafeJSON.stringify(message, { strict: true });
+
+                if (target.kind === "peer") {
+                    (target.peer as WebSocket | undefined)?.send(frame);
+                    return;
+                }
+
+                if (target.kind === "primary") {
+                    primary?.send(frame);
+                    return;
+                }
+
+                for (const peer of peers) {
+                    peer.send(frame);
+                }
             },
+            onRequestFailed: (failure) => failures.push(failure),
         });
         bridge.ready(initialized);
         const activeBridge = bridge;
-        // One peer at a time, held for exactly as long as the admitted connection lives. A plain
-        // boolean latch was never released: after any websocket drop the next upgrade was
-        // destroyed and the native TUI could never re-attach, and a handshake that failed before
-        // `handleUpgrade` called back wedged the server with no connection at all.
-        let admitted: Duplex | undefined;
+        /**
+         * Several peers at once: the native TUI opens a SECOND connection for its own session
+         * picker, and a single-peer relay refused it with "failed to connect to remote app server".
+         * The first peer stays the primary, which is where a server-initiated request goes.
+         */
         const server = createServer((_request, response) => {
             response.writeHead(400).end();
         });
@@ -124,19 +188,23 @@ export async function openTerminalServer(options: {
         setupServer = server;
         setupSockets = sockets;
         server.on("upgrade", (request, connection, head) => {
-            if (admitted || request.headers.origin) {
+            if (request.headers.origin || peers.size >= MAX_PEERS) {
+                logger.debug(
+                    {
+                        reason: request.headers.origin
+                            ? "cross-origin upgrade"
+                            : `already relaying ${peers.size} peers`,
+                        socketPath,
+                    },
+                    "Refused a Codex terminal upgrade"
+                );
                 connection.destroy();
                 return;
             }
-
-            admitted = connection;
-            connection.once("close", () => {
-                if (admitted === connection) {
-                    admitted = undefined;
-                }
-            });
             sockets.handleUpgrade(request, connection, head, (ws) => {
-                socket = ws;
+                peers.add(ws);
+                primary ??= ws;
+                logger.debug({ peers: peers.size, primary: primary === ws }, "Admitted a Codex terminal peer");
                 // The bridge outlives each peer, and the previous peer's close disconnected it,
                 // so a replacement has to be re-attached or it is admitted into a dead relay.
                 activeBridge.connect();
@@ -144,13 +212,17 @@ export async function openTerminalServer(options: {
                     let message: unknown;
                     try {
                         message = SafeJSON.parse(String(data), { strict: true });
-                    } catch {
-                        logger.debug("Rejected malformed Codex terminal JSON");
+                    } catch (error) {
+                        const raw = String(data);
+                        logger.debug(
+                            { error, bytes: raw.length, preview: raw.slice(0, 200) },
+                            "Rejected malformed Codex terminal JSON"
+                        );
                         ws.close(1007, "Invalid JSON");
                         return;
                     }
 
-                    void activeBridge.receive(message).catch((error) => {
+                    void activeBridge.receive(message, ws).catch((error) => {
                         logger.debug({ error }, "Codex terminal relay rejected a message");
                         ws.close(1011, "Codex relay failed");
                     });
@@ -158,22 +230,31 @@ export async function openTerminalServer(options: {
                 // A superseded peer still emits `close` and `error`, and the raw connection's own
                 // close already released the latch, so an unguarded handler would tear down the
                 // relay belonging to the peer that replaced it.
-                ws.on("close", () => {
-                    if (socket !== ws) {
+                const forget = () => {
+                    if (!peers.delete(ws)) {
                         return;
                     }
 
-                    socket = undefined;
-                    activeBridge.disconnect();
-                });
+                    if (primary === ws) {
+                        primary = peers.values().next().value;
+                        // Requests already sent to the departing primary can never be answered:
+                        // their ids were issued to that socket and the peer taking over never saw
+                        // them. Reject them here or the caller awaits a response that cannot come.
+                        if (primary) {
+                            activeBridge.failPending("Codex terminal primary disconnected");
+                        }
+                    }
+
+                    // Only the LAST peer leaving tears the relay down; a picker closing must not
+                    // disconnect the TUI that opened it.
+                    if (peers.size === 0) {
+                        activeBridge.disconnect();
+                    }
+                };
+                ws.on("close", forget);
                 ws.on("error", (error) => {
-                    logger.debug({ error }, "Codex terminal socket failed");
-
-                    if (socket !== ws) {
-                        return;
-                    }
-
-                    activeBridge.disconnect();
+                    logger.debug({ error, peers: peers.size }, "Codex terminal socket failed");
+                    forget();
                 });
             });
         });
@@ -203,6 +284,7 @@ export async function openTerminalServer(options: {
             socketPath,
             address: `unix://${socketPath}`,
             client,
+            failures,
             get threadId() {
                 return threadId;
             },
@@ -213,7 +295,12 @@ export async function openTerminalServer(options: {
 
                 closed = true;
                 activeBridge.disconnect();
-                socket?.terminate();
+
+                for (const peer of peers) {
+                    peer.terminate();
+                }
+
+                peers.clear();
                 for (const connection of connections) {
                     connection.destroy();
                 }
@@ -233,7 +320,7 @@ export async function openTerminalServer(options: {
                     await unlink(socketPath);
                 } catch (error) {
                     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-                        logger.warn({ socketPath }, "Could not remove Codex terminal socket");
+                        logger.warn({ error, socketPath }, "Could not remove Codex terminal socket");
                     }
                 }
 
@@ -243,8 +330,14 @@ export async function openTerminalServer(options: {
             },
         };
     } catch (error) {
+        // The caller may or may not reach a logger before this ends the process, and this is the
+        // only place that knows which stage failed.
+        logger.warn({ error, setupDir }, "Codex terminal setup failed");
         await client.close();
-        socket?.terminate();
+
+        for (const peer of peers) {
+            peer.terminate();
+        }
         setupSockets?.close();
         setupServer?.closeAllConnections();
         setupServer?.close();
@@ -252,7 +345,7 @@ export async function openTerminalServer(options: {
             try {
                 await unlink(join(setupDir, "tui.sock"));
             } catch (cleanupError) {
-                logger.debug({ failed: cleanupError instanceof Error }, "Cleaning failed Codex socket setup");
+                logger.debug({ cleanupError }, "Cleaning failed Codex socket setup");
             }
             // Never let a cleanup failure replace the reason the terminal could not start.
             await rmdir(setupDir).catch((cleanupError: unknown) => {

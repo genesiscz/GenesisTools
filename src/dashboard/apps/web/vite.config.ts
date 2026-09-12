@@ -13,6 +13,21 @@ import viteTsConfigPaths from "vite-tsconfig-paths";
 // this isolated workspace — the bare import kept the dev server from booting.
 import { env } from "../../../utils/env.client";
 
+// vite's own `UserConfig` has no `test` key. The obvious fix — importing `defineConfig` from
+// `vitest/config` — is worse: vitest@3 bundles vite@7 types while this app is on vite@8, so the
+// `plugins` array's `Plugin` type collides (tsconfig.build.json used to exclude this file from the
+// build gate for that reason; it is included again now). A structural type for exactly the fields
+// set below avoids both problems: no import from vitest, so no risk of pulling its nested vite@7 copy.
+declare module "vite" {
+    interface UserConfig {
+        test?: {
+            include?: string[];
+            exclude?: string[];
+            fileParallelism?: boolean;
+        };
+    }
+}
+
 const nitroConfig: NitroConfig = {
     experimental: {
         websocket: false,
@@ -167,6 +182,11 @@ const config = defineConfig({
         // `tests/e2e/**/*.spec.ts` (see playwright.config.ts).
         include: ["src/**/*.test.{ts,tsx}"],
         exclude: ["**/node_modules/**", "**/dist/**", "tests/e2e/**"],
+        // Three test files import `src/drizzle/index.ts`, which opens the sqlite file and runs the
+        // migrations at import. Parallel workers on a fresh database (every CI checkout) raced that
+        // migration: "database is locked" or "table already exists" in one run out of three. The
+        // suite is ten files in three seconds, so one worker at a time costs nothing.
+        fileParallelism: false,
     },
 });
 

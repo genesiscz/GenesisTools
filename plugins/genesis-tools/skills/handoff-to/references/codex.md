@@ -126,11 +126,15 @@ The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-50
 tools codex status  --name <task>
 tools codex tail    --name <task> --follow      # background + Monitor
 tools codex read    --name <task>               # thread snapshot
-tools codex steer   --name <task> --body 'Focus on the auth path; do NOT refactor the router'
+tools codex steer   --name <task> --prompt 'Focus on the auth path; do NOT refactor the router'
 tools codex interrupt --name <task>             # kill the current turn
 tools codex rollback  --name <task> --turns 1   # drop turns from the end
 tools codex stop      --name <task>             # tear down
+tools codex sessions [--json]                   # every session, with its derived status
 ```
+
+`--prompt` / `--prompt-file` are the shared spelling on every backend. Codex's older `--body` /
+`--body-file` still work and are hidden from help; nothing that already uses them breaks.
 
 `tools codex logs` and `tail` take `--events` to render the shared worker-event stream (`src/utils/worker/events.ts`) instead of raw notifications, and `--format compact|json|jsonl|events|raw` to go through the transcript door every backend shares (`tools grok read --format`, `tools claude worker read --format`, `tools ai sessions tail <name> --provider codex`). The default raw view is unchanged and stays the authoritative one for approvals, since it carries the request ids; the transcript formats do not. Codex's capabilities (the only backend with mid-turn approvals and mid-turn steering) are declared in `WORKER_CAPABILITIES.codex` (`src/utils/worker/capabilities.ts`).
 

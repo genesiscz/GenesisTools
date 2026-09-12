@@ -566,7 +566,12 @@ When bootstrapping or auditing docs, these GenesisTools utilities help:
 
 ## Parallel Dispatch (subagent_type: living-docs)
 
-This skill has `context: fork` — it is registered as a Task `subagent_type`. Use this when you need multiple independent living-docs agents working in parallel.
+⚠️ **The registered subagent TYPE is Claude-only.** `context:` in this skill's frontmatter is a
+Claude plugin key, so only Claude Code registers a `living-docs` `subagent_type`. Codex and Grok
+both have subagents (`spawn_agent` / `spawn_subagent`, see `references/harness-tools.md`) — pass
+this skill's instructions as the prompt instead of naming a type.
+
+Use this when you need multiple independent living-docs agents working in parallel.
 
 **When to dispatch as subagent:**
 - Bootstrapping docs for multiple independent areas simultaneously

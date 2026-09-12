@@ -9,6 +9,7 @@ import {
     workspaceCreate,
 } from "@genesiscz/utils/cmux/lib/socket";
 import { logger } from "@genesiscz/utils/logger";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { localeExportPrefix } from "@genesiscz/utils/terminal/locale";
 
 export interface OpenSplitResult {
@@ -124,10 +125,6 @@ export async function openSurfaceInPane(workspaceRef: string, paneRef: string): 
 
         return { surfaceId: created.surface_ref };
     });
-}
-
-function shellQuote(value: string): string {
-    return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 async function sendShellCommand(workspaceRef: string, surfaceRef: string, command: string): Promise<void> {

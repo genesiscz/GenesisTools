@@ -53,6 +53,13 @@ tools codex run work -- resume <thread-id>
 Each launch has the selected account's authentication in memory and defaults to the
 same real `~/.codex` for configuration, plugins and conversations. An inherited
 `CODEX_HOME` does not select another target home; use `--home` explicitly if needed.
+
+The account argument is matched by substring within `openai-sub` accounts, the same
+rule `tools claude run` uses for its target: an exact id or account name wins first,
+otherwise every whitespace/slash-separated token of what you typed must appear in an
+enabled account's name (`work` matches `cdx-work`). A name that is also the exact name
+of an account on a different provider never wins by accident — the match is scoped to
+`openai-sub`. Several accounts matching is an error naming the candidates.
 Requires Codex CLI 0.153.4 or newer and macOS or Linux. The external-token and native
 remote-terminal interfaces are experimental upstream.
 
@@ -149,6 +156,14 @@ Safety rules, all of them load-bearing:
 - **Every copy is verified** by size and SHA-256 before the run counts it.
 - **The date tree is preserved verbatim.** Paths are never re-derived from the rollout header
   timestamp, which differs from the filename timestamp.
+- **Thread names come with the transcripts, through both of the places Codex keeps them.** A name
+  never lives in the rollout. `session_index.jsonl` is what this repo's history index reads, and
+  `threads.name` in the home's `state_*.sqlite` is what the Codex TUI shows — carrying only the
+  first still opens the thread unnamed, and then the first thing you type into it becomes the
+  thread's new name. Both are carried, for every thread whose rollout the destination now holds,
+  an earlier run's copies included. A name the destination already has is never overwritten, so a
+  rerun is a no-op and Codex's own rename always wins. Names for rollouts that are not there are
+  left behind, and the state databases are backed up beside `sessions/` before anything is written.
 - `--archive-source` renames each source `sessions/` to `sessions.migrated-<stamp>` after the
   copy verifies. It is off by default and it still deletes nothing.
 
@@ -224,16 +239,25 @@ tools codex spawn \
 tools codex status --name reviewer
 tools codex tail --name reviewer --follow
 tools codex logs --name reviewer --format compact   # the transcript door every backend shares (json|jsonl|events|raw)
-tools codex steer --name reviewer --body "Focus on the auth path"
+tools codex steer --name reviewer --prompt "Focus on the auth path"
 tools codex interrupt --name reviewer
 tools codex read --name reviewer
 tools codex review --name reviewer --scope working-tree
 tools codex review --name reviewer --base main --scope branch --adversarial auth rollback
 tools codex stop --name reviewer
+tools codex sessions [--json]                   # every session with its derived status
+tools codex who [--json] [--all]                # live codex processes and the account each one bills
+
+tools codex warmup [name...] [--all] [--json]   # one tiny request per account to start its session timer (shared with tools ai warmup)
 
 tools codex login [name]                       # browser login into the shared account vault
 tools codex usage [--json] [--range 24h]          # the shared usage dashboard pinned to this provider
 ```
+
+`spawn`, `steer`, `read`, `tail`, `status`, `sessions`, `stop` and `interrupt` are the shared
+worker verbs (`src/ai/commands/agent/worker.ts`); what makes them codex is `codexDriver`
+(`src/codex/lib/driver.ts`). `steer` still answers to its older `--body` / `--body-file`
+spelling, hidden from help.
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.
 

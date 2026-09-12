@@ -8,6 +8,14 @@ argument-hint: "<pr-number-or-url> [-u] [-w] [--save] [--open] [--open-only]"
 
 Fetch PR review comments, let user select which to fix, implement fixes, and commit.
 
+⚠️ **Written with Claude Code's tool names; Codex and Grok install this plugin verbatim.** All
+three have subagents and a structured user question under different names — see
+`references/harness-tools.md` in this plugin. What does not port is the named `Explore`
+`subagent_type` with its `thoroughness` parameter, and the Claude model ids: pass the brief as a
+prompt and read "haiku" as "a cheap model". The REVIEW contract — fetch through
+`tools github review`, judge each comment against the real code, one commit per logical fix,
+reply per thread — holds unchanged on all three.
+
 ## Usage
 
 ```

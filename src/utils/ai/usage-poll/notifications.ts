@@ -21,6 +21,15 @@ const KIND_THRESHOLD_MAP: Partial<Record<LimitKind, "session" | "weekly">> = {
 };
 
 export interface UsageWindowNotification {
+    /**
+     * `AccountEntry.id`, the immutable one. The tracker is keyed on it because
+     * `AiConfigStore` permits duplicate names on purpose: two same-named codex
+     * accounts used to share one threshold tracker, so one suppressed the
+     * other's alert and their different reset times reset each other's state
+     * (PR #368 review t4).
+     */
+    accountId: string;
+    /** Display only. Never a key. */
     accountName: string;
     /** `LimitWindow.key`; the tracker is keyed on it. */
     key: string;
@@ -172,11 +181,12 @@ export class NotificationManager {
             return;
         }
 
-        const { accountName, key, utilization, resetsAt } = window;
-        const trackerKey = `${accountName}:${key}`;
-        let tracker = this.trackers.get(trackerKey);
+        const { accountId, accountName, key, utilization, resetsAt } = window;
+        const trackerKey = `${accountId}:${key}`;
+        let tracker = this.trackers.get(trackerKey) ?? this.adoptLegacyTracker(accountName, key, trackerKey);
+
         if (!tracker) {
-            tracker = new BucketTracker(accountName, key);
+            tracker = new BucketTracker(accountId, key);
             this.trackers.set(trackerKey, tracker);
         }
 
@@ -204,6 +214,32 @@ export class NotificationManager {
 
             await this.dispatchDesktop({ title: "AI Usage Alert", message, group: "ai-usage" });
         }
+    }
+
+    /**
+     * Carry a `name:key` tracker over to its `id:key` home, once.
+     *
+     * Without it the first poll after this change finds nothing under the new key,
+     * treats every window as never-notified and fires a banner for each one that is
+     * already over a threshold — the same burst the legacy-store read above exists
+     * to prevent. Two accounts sharing a name cannot both adopt: the first takes the
+     * state and removes it, and the second starts clean, which is the correct
+     * outcome for a tracker that never distinguished them.
+     */
+    private adoptLegacyTracker(accountName: string, key: string, trackerKey: string): BucketTracker | undefined {
+        const legacyKey = `${accountName}:${key}`;
+        const legacy = this.trackers.get(legacyKey);
+
+        if (!legacy || legacyKey === trackerKey) {
+            return undefined;
+        }
+
+        this.trackers.delete(legacyKey);
+        this.trackers.set(trackerKey, legacy);
+        this.dirty = true;
+        logger.debug({ legacyKey, trackerKey }, "[usage] re-keyed a notification tracker onto the account id");
+
+        return legacy;
     }
 
     /**

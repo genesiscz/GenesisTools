@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { SessionPin } from "@app/claude/lib/cmux/types";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -31,6 +32,16 @@ export interface LoadPinsOptions {
      * mutate durable state. Those callers pass this.
      */
     readOnly?: boolean;
+    /**
+     * Keep only this agent's records. Codex and Grok run the same SessionStart hook, so one
+     * journal holds all three.
+     *
+     * 🛑 A record with NO `provider` counts as claude and nothing else. Those lines predate the
+     * field, and 9 of them are Codex sessions that captured a Claude account by inheriting
+     * `TOOLS_CLAUDE_ACCOUNT` from the pane that launched them. Matching them as codex would
+     * publish that mistake as a fact.
+     */
+    provider?: AccountProviderAlias;
 }
 
 /** Every pin, newest write per session id. Missing or torn lines are skipped, never fatal. */
@@ -65,6 +76,10 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
                 continue;
             }
 
+            if (opts.provider && (pin.provider ?? "claude") !== opts.provider) {
+                continue;
+            }
+
             const existing = pins.get(pin.sessionId);
 
             if (!existing || pin.at >= existing.at) {
@@ -75,7 +90,10 @@ export async function loadPins(opts: LoadPinsOptions = {}): Promise<Map<string, 
         }
     }
 
-    if (!opts.readOnly && lines > COMPACT_THRESHOLD) {
+    // 🛑 Never compact a FILTERED read. `compact` rewrites the journal as exactly the map it is
+    // handed, so compacting after a `provider: "codex"` load would delete every Claude and Grok
+    // record in the file.
+    if (!opts.readOnly && !opts.provider && lines > COMPACT_THRESHOLD) {
         await compact(path, pins).catch((err) => {
             logger.warn({ err, path }, "[cmux-pins] compaction failed; the journal keeps growing");
         });

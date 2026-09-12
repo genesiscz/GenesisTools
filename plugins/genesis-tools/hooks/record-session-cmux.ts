@@ -3,15 +3,21 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type Harness, harnessOf } from "./harness";
 
 // biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @genesiscz/utils/json
 const SafeJSON = JSON;
 
 /**
- * SessionStart + UserPromptSubmit hook: journal which cmux pane this Claude
- * Code session lives in, so `tools claude cmux focus/send <session-id>` can
- * resolve a fresh, untitled session instantly instead of guessing from tab
- * titles and pane text.
+ * SessionStart + UserPromptSubmit hook: journal which cmux pane this session
+ * lives in, so `tools claude cmux focus/send <session-id>` can resolve a fresh,
+ * untitled session instantly instead of guessing from tab titles and pane text.
+ *
+ * 🛑 Codex and Grok run this same plugin hook, and a codex session started inside a claude
+ * pane inherits that pane's CMUX_SURFACE_ID. An untagged record would then put a codex
+ * thread id on a claude pane's tty: `assignSessionIds` sees two hints for one tty and drops
+ * BOTH, so `tools claude who` goes blank for exactly the pane you were looking at. Every
+ * record therefore carries its harness, and the claude reader keeps only claude's.
  *
  * The launch env carries the stable surface/workspace UUIDs; `cmux identify`
  * adds the pane/window refs a focus needs. Re-recorded on every prompt so a
@@ -24,6 +30,7 @@ const SafeJSON = JSON;
 interface HookInput {
     session_id?: string;
     cwd?: string;
+    transcript_path?: string;
 }
 
 // Standalone hook script: no access to @genesiscz/utils/env, so process.env directly.
@@ -67,8 +74,12 @@ function identifyRefs(): IdentifyCaller {
  * claude that actually OWNS the pane has one (`ttys…`), a headless run shows
  * `??`. CLAUDE_PID names the claude process in hook env; without it, fail
  * open and record, matching the old behavior.
+ *
+ * ⚠️ Codex and Grok export no equivalent, so this fails open there. That is safe only
+ * because the record is tagged with its harness and the claude reader filters it out — a
+ * non-claude record can no longer claim a claude pane's tty.
  */
-function claudeHasTty(): boolean {
+function agentHasTty(): boolean {
     const pid = process.env.CLAUDE_PID;
 
     if (!pid || !/^\d+$/.test(pid)) {
@@ -114,13 +125,16 @@ function main(raw: string): void {
 
     // Headless claude (`-p` child, probe, subagent): the surface in its env is
     // its PARENT's pane, and recording it would steal that pane's label.
-    if (!claudeHasTty()) {
+    if (!agentHasTty()) {
         return;
     }
 
+    const harness: Harness = harnessOf(input);
     const caller = surfaceId ? identifyRefs() : {};
     const entry = {
         sessionId: input.session_id,
+        // Absent means claude, so every record written before this field keeps its meaning.
+        ...(harness === "claude" ? {} : { provider: harness }),
         workspaceId,
         surfaceId,
         workspaceRef: caller.workspace_ref ?? null,

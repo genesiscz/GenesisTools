@@ -1,37 +1,124 @@
+import { homedir } from "node:os";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
+import { truncateText } from "@genesiscz/utils/string";
+import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
+import pc from "picocolors";
+import { formatSessionAge } from "./session-display";
 import type { AgentSearchHit, NativeHistoryEntry } from "./types";
 
-export function formatHistoryMarkdown(hits: AgentSearchHit<string>[], query?: string): string {
-    const q = query ? `"${query}"` : "all";
-    const lines = [`## Found ${hits.length} conversation${hits.length === 1 ? "" : "s"} matching ${q}`, ""];
+/**
+ * What the flags add to a rendering, for the doors that have them.
+ *
+ * `tools claude history` printed the search MODE in its heading, the relevance score beside each
+ * hit and the context size above the context block; the shared renderer named none of them, so
+ * `tools codex history --sort-relevance` looked the same as an unsorted listing. Optional, so
+ * `run --list` can keep calling with two arguments.
+ */
+export interface HistoryRenderOptions {
+    summaryOnly?: boolean;
+    sortByRelevance?: boolean;
+    /** `--context <n>`, named in the context heading. */
+    context?: number;
+}
 
-    for (let i = 0; i < hits.length; i++) {
-        const hit = hits[i];
-        const date = hit.mtime.toISOString().slice(0, 10);
-        lines.push(`### ${i + 1}. ${hit.title}`);
-        lines.push(`**Date:** ${date} | **Kind:** ${hit.kind} | **Session ID:** \`${hit.sessionId}\``);
+/** Long enough to judge a hit by, short enough that `--context 5` is still readable. */
+const MARKDOWN_TEXT_LIMIT = 500;
+
+function shorten(text: string, limit = MARKDOWN_TEXT_LIMIT): string {
+    const flat = text.replace(/\n/g, " ").trim();
+
+    return flat.length > limit ? `${flat.slice(0, limit)}...` : flat;
+}
+
+function entryLine(entry: NativeHistoryEntry): string {
+    const text = shorten(entry.text);
+
+    if (entry.tool) {
+        const path = entry.paths[0];
+
+        return `  - **Tool:** ${entry.tool}${path ? ` \`${path}\`` : ""}${text ? ` — ${text}` : ""}`;
+    }
+
+    return `**[${entry.role.charAt(0).toUpperCase()}${entry.role.slice(1)}]** ${text}`;
+}
+
+/** The commits a hit recorded; the Claude door has always listed them under `--commit`. */
+function commitsOf(hit: AgentSearchHit<string>): string[] {
+    return [...new Set((hit.matchedEntries ?? []).flatMap((entry) => entry.commits))];
+}
+
+export function formatHistoryMarkdown(
+    hits: AgentSearchHit<string>[],
+    query?: string,
+    options: HistoryRenderOptions = {}
+): string {
+    const q = query ? `"${query}"` : "all";
+    const mode = options.summaryOnly ? " (summary-only)" : options.sortByRelevance ? " (by relevance)" : "";
+    const lines = [`## Found ${hits.length} conversation${hits.length === 1 ? "" : "s"} matching ${q}${mode}`, ""];
+
+    for (const [index, hit] of hits.entries()) {
+        const score =
+            options.sortByRelevance && hit.relevanceScore !== undefined ? ` [score: ${hit.relevanceScore}]` : "";
+        lines.push(
+            `### ${index + 1}. ${hit.title}${hit.project ? ` (${hit.project})` : ""}${hit.isSubagent ? " [Subagent]" : ""}${score}`
+        );
+        lines.push(
+            [
+                `**Date:** ${hit.mtime.toISOString().slice(0, 10)}`,
+                `**Kind:** ${hit.kind}`,
+                ...(hit.gitBranch ? [`**Branch:** ${hit.gitBranch}`] : []),
+            ].join(" | ")
+        );
+        lines.push(`**Session ID:** \`${hit.sessionId}\``);
         lines.push(`**Cwd:** \`${hit.cwd}\``);
-        if (hit.sourceHome) {
-            lines.push(`**Source home:** \`${hit.sourceHome}\``);
+
+        if (hit.summary && hit.summary !== hit.title) {
+            lines.push(`**Summary:** ${hit.summary}`);
         }
+
         if (hit.account) {
             lines.push(`**Account:** ${hit.account}`);
         }
+
+        if (hit.sourceHome) {
+            lines.push(`**Source home:** \`${hit.sourceHome}\``);
+        }
+
         if (hit.archived) {
             lines.push("**Archived:** yes");
         }
-        if (hit.isSubagent) {
-            lines.push("**Subagent:** yes");
+
+        const commits = commitsOf(hit);
+
+        if (commits.length > 0) {
+            const shown = commits.slice(0, 5).map((hash) => `\`${hash.slice(0, 7)}\``);
+            lines.push(`**Commits:** ${shown.join(", ")}${commits.length > 5 ? "..." : ""}`);
         }
-        for (const entry of hit.contextEntries ?? []) {
-            lines.push(`**[${entry.role}${entry.tool ? `: ${entry.tool}` : ""}]** ${entry.text}`);
+
+        lines.push(`**File:** \`${hit.filePath.replace(homedir(), "~")}\``);
+
+        const context = hit.contextEntries ?? [];
+
+        if (context.length > 0) {
+            lines.push("");
+            const size = options.context
+                ? ` (${options.context} message${options.context === 1 ? "" : "s"} before/after match)`
+                : "";
+            lines.push(`#### Context${size}`);
+            lines.push("");
+
+            for (const entry of context) {
+                lines.push(entryLine(entry));
+                lines.push("");
+            }
         }
+
         if (hit.matchedText) {
             lines.push("");
             lines.push(hit.matchedText.replace(/\n/g, " ").trim());
         }
+
         lines.push("");
     }
 
@@ -81,51 +168,86 @@ function boundedEntries(entries: NativeHistoryEntry[] | undefined) {
  */
 export function formatHistoryJson(hits: AgentSearchHit<string>[]): string {
     return `${SafeJSON.stringify(
-        hits.map((hit) => ({
-            kind: hit.kind,
-            sessionId: hit.sessionId,
-            title: hit.title,
-            cwd: hit.cwd,
-            mtime: hit.mtime.toISOString(),
-            matchedText: hit.matchedText,
-            filePath: hit.filePath,
-            sourceHome: hit.sourceHome,
-            sourceKey: hit.sourceKey,
-            account: hit.account,
-            summary: hit.summary,
-            archived: hit.archived,
-            isSubagent: hit.isSubagent,
-            relevanceScore: hit.relevanceScore,
-            matchedEntries: boundedEntries(hit.matchedEntries),
-            contextEntries: boundedEntries(hit.contextEntries),
-            ...((hit.matchedEntries?.length ?? 0) > JSON_ENTRY_LIMIT
-                ? { matchedEntriesTruncatedFrom: hit.matchedEntries!.length }
-                : {}),
-        })),
+        hits.map((hit) => {
+            const commits = commitsOf(hit);
+
+            return {
+                kind: hit.kind,
+                sessionId: hit.sessionId,
+                title: hit.title,
+                cwd: hit.cwd,
+                project: hit.project,
+                gitBranch: hit.gitBranch,
+                ...(commits.length > 0 ? { commitHashes: commits } : {}),
+                mtime: hit.mtime.toISOString(),
+                matchedText: hit.matchedText,
+                filePath: hit.filePath,
+                sourceHome: hit.sourceHome,
+                sourceKey: hit.sourceKey,
+                account: hit.account,
+                summary: hit.summary,
+                archived: hit.archived,
+                isSubagent: hit.isSubagent,
+                relevanceScore: hit.relevanceScore,
+                matchedEntries: boundedEntries(hit.matchedEntries),
+                contextEntries: boundedEntries(hit.contextEntries),
+                ...((hit.matchedEntries?.length ?? 0) > JSON_ENTRY_LIMIT
+                    ? { matchedEntriesTruncatedFrom: hit.matchedEntries!.length }
+                    : {}),
+            };
+        }),
         null,
         2
     )}\n`;
 }
 
-export function renderHistoryTable(hits: AgentSearchHit<string>[]): void {
-    // A search whose table shows no matched text gives the reader nothing to judge the hit by,
-    // which is the one thing the markdown form always printed. Only add the column when a hit
-    // actually carries a snippet, so a plain listing keeps the narrow table.
+export function renderHistoryTable(
+    hits: AgentSearchHit<string>[],
+    query?: string,
+    options: HistoryRenderOptions = {}
+): void {
+    renderCliHeader("History", query ? `matching "${query}"` : "recent sessions");
+
+    // Two columns that only earn their width when they can tell rows apart: a match snippet,
+    // which a plain listing has none of, and a source home, which only disambiguates when the
+    // hits actually span several homes.
     const matched = hits.some((hit) => hit.matchedText);
-    const table = createBoxTable(
-        matched
-            ? ["Session", "Title", "Match", "Project", "Updated", "Source"]
-            : ["Session", "Title", "Project", "Updated", "Source"]
-    );
+    const sourced = new Set(hits.map((hit) => hit.sourceHome).filter(Boolean)).size > 1;
+    const table = createBoxTable([
+        "ID",
+        "PROJECT",
+        "TITLE",
+        ...(matched ? ["MATCH"] : []),
+        "BRANCH",
+        "AGE",
+        "STATUS",
+        ...(sourced ? ["SOURCE"] : []),
+    ]);
+
     for (const hit of hits) {
+        const project = (hit.project ?? "").trim();
         table.push([
-            hit.sessionId.slice(0, 12),
-            hit.title,
+            pc.white(pc.bold(hit.sessionId)),
+            project ? pc.blue(truncateText(project, 18)) : pc.dim("—"),
+            pc.white(truncateText(hit.title, 36)),
             ...(matched ? [truncateDisplay(hit.matchedText?.replace(/\s+/g, " ").trim() ?? "", 60)] : []),
-            hit.project ?? hit.cwd,
-            hit.mtime.toISOString().slice(0, 10),
-            hit.sourceHome ?? "native",
+            hit.gitBranch ? pc.magenta(truncateText(hit.gitBranch, 18)) : pc.dim("—"),
+            formatSessionAge(hit.mtime.toISOString()),
+            hit.isSubagent ? formatDotStatus("dim", "agent") : formatDotStatus("ok", "main"),
+            ...(sourced ? [pc.dim(truncateText(hit.sourceHome ?? "native", 24))] : []),
         ]);
     }
+
     out.println(table.toString());
+    out.println();
+    out.println(
+        `  ${[
+            pc.dim(`${hits.length} result${hits.length === 1 ? "" : "s"}`),
+            options.sortByRelevance ? pc.dim("sorted by relevance") : "",
+            options.summaryOnly ? pc.dim("summary-only") : "",
+        ]
+            .filter(Boolean)
+            .join(pc.dim("  ·  "))}`
+    );
+    out.println();
 }

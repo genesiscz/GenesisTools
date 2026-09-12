@@ -1,7 +1,8 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { bytesEqualStreaming } from "@genesiscz/utils/fs/disk-usage";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import { historyProjectMatches } from "../project-scope";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, date, type JsonRecord, type JsonValue, text } from "../source-scan";
@@ -13,6 +14,63 @@ function sourceHome(root: string): string {
 }
 
 const isSubagentPath = isClaudeSubagentPath;
+
+/** Record types that make a file a transcript rather than a sidecar of one. */
+const CONVERSATION_TYPES = new Set(["user", "assistant", "summary", "system"]);
+const STUB_MAX_BYTES = 64 * 1024;
+
+/**
+ * True when the file holds only sidecar records (titles, agent name, modes) and no turn. Bounded
+ * by size so a real transcript is never read whole to answer this. The read itself is capped
+ * too: a turn appended between the stat and the read grows the file past the stub limit, and
+ * one byte over it is answered from the bound, not from a whole transcript (PR #383 review).
+ */
+async function isMetadataStub(path: string, size: number): Promise<boolean> {
+    if (size > STUB_MAX_BYTES) {
+        return false;
+    }
+
+    const content = await readBounded(path, STUB_MAX_BYTES);
+
+    if (content === null) {
+        return false;
+    }
+
+    for (const line of content.split("\n")) {
+        if (!line.trim()) {
+            continue;
+        }
+
+        let record: JsonValue;
+        try {
+            record = SafeJSON.parse(line, { strict: true });
+        } catch {
+            return false;
+        }
+
+        const type = asRecord(record).type;
+
+        if (typeof type !== "string" || CONVERSATION_TYPES.has(type)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/** The first `maxBytes` of a file, or null when it holds more than that. */
+export async function readBounded(path: string, maxBytes: number): Promise<string | null> {
+    const handle = await open(path, "r");
+
+    try {
+        const buffer = Buffer.alloc(maxBytes + 1);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+
+        return bytesRead > maxBytes ? null : buffer.toString("utf8", 0, bytesRead);
+    } finally {
+        await handle.close();
+    }
+}
 
 function indexMetadata(entry: JsonRecord): Partial<AgentSession<"claude">> {
     return {
@@ -73,6 +131,7 @@ export async function discoverClaudeHistorySources(
     sources: Array<NativeSessionSource<"claude">>;
     issues: NativeSourceIssue[];
     completeRoots: string[];
+    displaced: string[];
 }> {
     const filtered = options.excludeAgents === true || options.agentsOnly === true || options.project !== undefined;
     const shallowMainOnly = options.excludeAgents === true && options.agentsOnly !== true;
@@ -110,6 +169,7 @@ export async function discoverClaudeHistorySources(
     });
 
     const issues = [...walked.issues];
+    const displaced: string[] = [];
     const incompleteRoots = new Set<string>();
     const mainGroups = new Map<string, (typeof files)[number][]>();
 
@@ -129,9 +189,24 @@ export async function discoverClaudeHistorySources(
             continue;
         }
 
-        const ranked = await Promise.all(group.map(async (file) => ({ file, stats: await stat(file.path) })));
+        // Each candidate is stat'ed and read up to the stub bound, and a size tie below costs a
+        // full byte-for-byte compare. Gated: it fires per duplicate group, not per corpus.
+        const rank = () =>
+            Promise.all(
+                group.map(async (file) => {
+                    const stats = await stat(file.path);
+                    return { file, stats, stub: await isMetadataStub(file.path, stats.size) };
+                })
+            );
+        const ranked =
+            profiler.detail === "all"
+                ? await profiler.scope("agent-sessions").measureAsync("discover.claude-dedup-group", rank)
+                : await rank();
+        // A copy that holds conversation outranks a sidecar stub whatever their sizes: a stub
+        // with a long title used to beat a short real transcript on bytes alone.
         ranked.sort(
             (left, right) =>
+                Number(left.stub) - Number(right.stub) ||
                 right.stats.size - left.stats.size ||
                 right.stats.mtimeMs - left.stats.mtimeMs ||
                 left.file.path.localeCompare(right.file.path)
@@ -149,6 +224,10 @@ export async function discoverClaudeHistorySources(
                         bytesEqualStreaming(candidate.file.path, selected.file.path, { signal: options.signal })
                 );
 
+            for (const candidate of ranked.slice(1)) {
+                displaced.push(candidate.file.path);
+            }
+
             if (!copiesAgree) {
                 // Claude Code writes the same session id under a second encoded project directory
                 // whenever the cwd moves (a worktree, a renamed checkout), usually leaving a stub
@@ -160,6 +239,14 @@ export async function discoverClaudeHistorySources(
                 // pruning, froze statistics at partial coverage and made every read open a write
                 // transaction.
                 for (const candidate of ranked.slice(1)) {
+                    // A sidecar stub (agent-name, custom-title, ai-title, mode lines, no turn at all)
+                    // is what the cwd move leaves behind every time; it is not a divergent
+                    // transcript and warned on every search for months (7 of 7 on the live corpus,
+                    // 2026-09-10). Only a copy that carries conversation of its own is reported.
+                    if (candidate.stub) {
+                        continue;
+                    }
+
                     issues.push({
                         path: candidate.file.path,
                         message: `Divergent live file claims the same Claude session identity; indexing ${selected.file.path} instead`,
@@ -215,5 +302,6 @@ export async function discoverClaudeHistorySources(
         sources,
         issues,
         completeRoots: walked.completeRoots.filter((root) => !incompleteRoots.has(root)),
+        displaced,
     };
 }

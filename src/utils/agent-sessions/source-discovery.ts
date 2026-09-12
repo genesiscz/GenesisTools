@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { profiler } from "@genesiscz/utils/profile";
 import type { NativeSourceIssue } from "./types";
 
 export type { HistoryDiscoveryOptions } from "./types";
@@ -42,7 +43,15 @@ function errorCategory(error: unknown, fallback: string, missing = fallback): st
     return fallback;
 }
 
+/**
+ * The syscall floor under every provider's discovery: claude, codex and grok all reach it, so one
+ * timer here prices the whole corpus scan.
+ */
 export async function walkSourceRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {
+    return profiler.scope("agent-sessions").measureAsync("discover.walk", () => walkRoots(options));
+}
+
+async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {
     const files: DiscoveredSourceFile[] = [];
     const issues: NativeSourceIssue[] = [];
     const completeRoots: string[] = [];

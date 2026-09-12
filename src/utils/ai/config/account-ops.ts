@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { secrets } from "@genesiscz/utils/security";
 import type { LoginOutcome } from "../providers/account-features";
@@ -63,6 +64,29 @@ export class AccountNotFoundError extends Error {
     constructor(idOrName: string) {
         super(`No AI account matches "${idOrName}". List them with: tools ai config account list`);
         this.name = "AccountNotFoundError";
+    }
+}
+
+/**
+ * The entry a login's guards were decided against is not the entry the lock found.
+ *
+ * Every policy in `write-outcome.ts` (identity, guessed name, auth-file ownership)
+ * runs BEFORE `applyLoginOutcome` takes the config lock, because a policy may
+ * have to prompt and a prompt must never be held open across the lock. That gap
+ * is minutes wide on an OAuth flow, so the decision is re-checked against the
+ * live entry inside the lock and the write is refused when it no longer holds
+ * (PR #368 review t2).
+ */
+export class AccountChangedError extends Error {
+    constructor(
+        readonly accountName: string,
+        detail: string
+    ) {
+        super(
+            `Account "${accountName}" changed while this login was running (${detail}). ` +
+                "Nothing was written. Re-run the login, or pass --name to choose another account."
+        );
+        this.name = "AccountChangedError";
     }
 }
 
@@ -207,6 +231,15 @@ export interface ApplyLoginOutcomeInput {
      * exact; the name is used only to CREATE an account that does not exist.
      */
     id?: string;
+    /**
+     * The entry the caller's guards were decided against: the account they
+     * inspected, or null when they concluded there was none.
+     *
+     * Required rather than optional on purpose. An optional safety parameter
+     * only protects the callers that remember to pass it, and this one guards a
+     * write that switches providers and deletes vault secrets.
+     */
+    guardedAgainst: AccountEntry | null;
     outcome: LoginOutcome;
     /** Apps to record on an account that lists none yet. */
     apps?: string[];
@@ -223,6 +256,62 @@ export interface ApplyLoginOutcomeResult {
     created: boolean;
     /** Apps whose empty default this login filled. */
     defaultsSet: string[];
+}
+
+/**
+ * The identity fingerprint an entry carries: primary and secondary grant as four separate
+ * slots. A `primary ?? secondary` fallback hid a secondary identity behind a present primary
+ * one, so a concurrent change to the secondary grant passed the guard (PR #383 review t2).
+ */
+function fingerprintOf(entry: AccountEntry): string {
+    const secondary = entry.credentials.secondary;
+
+    return SafeJSON.stringify(
+        [
+            entry.provider,
+            entry.accountUuid ?? null,
+            entry.organizationUuid ?? null,
+            secondary?.accountUuid ?? null,
+            secondary?.organizationUuid ?? null,
+        ],
+        { strict: true }
+    );
+}
+
+/**
+ * Refuse the write when the live entry is not the one the caller's guards saw.
+ *
+ * The dangerous case is the FIRST login of a name: the caller found nothing, so
+ * no identity check and no provider check ran, and by the time the lock is taken
+ * another login has created that name. The merge below would then switch that
+ * stranger's provider and delete its vault secrets without a single guard having
+ * looked at it (PR #368 review t2). An entry that merely changed under a caller
+ * that DID inspect it is refused for the same reason.
+ */
+function assertUnchangedSinceGuard(
+    name: string,
+    guardedAgainst: AccountEntry | null,
+    existing: AccountEntry | undefined
+): void {
+    if (guardedAgainst === null) {
+        if (existing !== undefined) {
+            throw new AccountChangedError(name, "another login created it in the meantime");
+        }
+
+        return;
+    }
+
+    if (existing === undefined) {
+        throw new AccountChangedError(name, "it was removed in the meantime");
+    }
+
+    if (existing.id !== guardedAgainst.id) {
+        throw new AccountChangedError(name, `the name now belongs to ${existing.id}, not ${guardedAgainst.id}`);
+    }
+
+    if (fingerprintOf(existing) !== fingerprintOf(guardedAgainst)) {
+        throw new AccountChangedError(name, "its provider or identity was rewritten in the meantime");
+    }
 }
 
 /**
@@ -251,6 +340,10 @@ export async function applyLoginOutcome(input: ApplyLoginOutcomeInput): Promise<
         if (input.id !== undefined && existing === undefined) {
             throw new Error(`Account "${input.id}" no longer exists; nothing written.`);
         }
+
+        // Before ANY mutation below: the merge switches providers and deletes the
+        // old vault entries, so an entry the caller never inspected must not reach it.
+        assertUnchangedSinceGuard(input.name, input.guardedAgainst, existing);
 
         const created = existing === undefined;
         const providerChanged = existing !== undefined && existing.provider !== input.outcome.provider;

@@ -4,44 +4,33 @@ import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { warnUnresolvedIdentities } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
-import type { AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
+import {
+    buildSessionTableOpts,
+    printAmbiguousSessions,
+    type SessionDisplayItem,
+    toSessionDisplay,
+} from "@genesiscz/utils/agent-sessions/session-display";
+import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
-import { buildSessionTableOpts } from "@genesiscz/utils/claude/session-display";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
-import { formatClock, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
+import { profiler } from "@genesiscz/utils/profile";
 import { tableSelect } from "@genesiscz/utils/prompts/clack/table-select";
 import { escapeShellArg } from "@genesiscz/utils/string";
-import { createBoxTable, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-// --- Constants ---
-
-const PROMPT_PREVIEW_LEN = 60;
-
 // --- Types ---
 
-export interface DisplaySession {
-    sessionId: string;
-    name: string;
-    summary: string;
-    branch: string;
-    project: string;
-    modified: string;
-    created?: string;
-    /** Friendly project name; `project` may hold the encoded transcript directory. */
-    projectName?: string;
-    source: "cache" | "search";
-    firstPrompt: string;
-    matchSnippet?: string;
-    sourceHome?: string;
-    sourceKey?: string;
-    filePath?: string;
-    cwd?: string;
-}
+/**
+ * Claude's resume rows ARE the shared session-display shape; the duplicate mapper this file
+ * carried is now `toSessionDisplay` in `utils/agent-sessions/session-display.ts`, so codex and
+ * grok render the same rows from the same code.
+ */
+export type DisplaySession = SessionDisplayItem;
 
 interface ResumeOptions {
     list?: boolean;
@@ -50,34 +39,6 @@ interface ResumeOptions {
 }
 
 // --- Helpers ---
-
-function toDisplay(
-    sessionId: string,
-    opts: {
-        title?: string | null;
-        summary?: string | null;
-        firstPrompt?: string | null;
-        branch?: string | null;
-        project?: string | null;
-        timestamp?: string | null;
-        created?: string | null;
-        source?: "cache" | "search";
-        matchSnippet?: string;
-    }
-): DisplaySession {
-    return {
-        sessionId,
-        name: opts.title || opts.summary || opts.firstPrompt?.slice(0, PROMPT_PREVIEW_LEN) || "(unnamed)",
-        summary: opts.summary || "",
-        branch: opts.branch || "",
-        project: opts.project || "",
-        modified: opts.timestamp || "",
-        created: opts.created ?? undefined,
-        source: opts.source ?? "cache",
-        firstPrompt: opts.firstPrompt || "",
-        matchSnippet: opts.matchSnippet,
-    };
-}
 
 function dedup(sessions: DisplaySession[]): DisplaySession[] {
     const seen = new Set<string>();
@@ -168,25 +129,21 @@ function matchByIdOrName(all: DisplaySession[], query: string): DisplaySession[]
     return [];
 }
 
-function displayNativeSession(session: AgentSearchHit): DisplaySession {
-    return {
-        ...toDisplay(session.sessionId, {
-            title: session.title,
-            summary: session.summary,
-            firstPrompt: session.prompt,
-            branch: session.gitBranch,
-            project: session.projectDirectory ?? session.project,
-            timestamp: session.mtime.toISOString(),
-            created: session.createdAt?.toISOString(),
-            source: session.matchedText ? "search" : "cache",
-            matchSnippet: session.matchedText,
-        }),
-        projectName: session.project,
-        sourceHome: session.sourceHome,
-        sourceKey: session.sourceKey,
-        filePath: session.filePath,
-        cwd: session.cwd,
-    };
+/**
+ * The query IS this session's identifier: an id prefix, a source key, a path, or its whole name.
+ * Only those end the search. A SUBSTRING of a name is not identity — one session captured as
+ * `/resume reports-02` is named after the query and would otherwise bury every real match.
+ */
+function identifiesSession(session: DisplaySession, query: string): boolean {
+    const q = query.trim().toLowerCase();
+
+    return (
+        session.sessionId.toLowerCase().startsWith(q) ||
+        session.sourceKey === query.trim() ||
+        session.filePath === query.trim() ||
+        session.name.trim().toLowerCase() === q ||
+        normalizeAlphanumeric(session.name) === normalizeAlphanumeric(q)
+    );
 }
 
 export async function loadClaudeResumeCandidates(
@@ -213,9 +170,10 @@ export async function loadClaudeResumeCandidates(
     // The limit bounds the REFRESH, which is what a plain list needs; it also bounds the rows that
     // come back, which is what a search must not accept.
     const listing = async (limit: number | undefined) =>
-        dedup((await adapter.list({ ...filters, limit, summaryOnly: true })).map(displayNativeSession));
+        dedup((await adapter.list({ ...filters, limit, summaryOnly: true })).map(toSessionDisplay));
     const display = options.limit ?? 20;
-    let sessions = await listing(display);
+    const prof = profiler.scope("claude-history");
+    let sessions = await prof.measureAsync("resume.listing", () => listing(display));
 
     /**
      * Every indexed session, for matching by id or name. Bounding this by the DISPLAY limit made
@@ -228,12 +186,14 @@ export async function loadClaudeResumeCandidates(
      * is indexed yet, and only a full refresh can answer that.
      */
     async function everyIndexed(): Promise<DisplaySession[]> {
-        const cached = adapter.listCached
-            ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(displayNativeSession))
-            : [];
-        sessions = dedup([...(cached.length ? cached : await listing(Number.MAX_SAFE_INTEGER)), ...sessions]);
+        return prof.measureAsync("resume.every-indexed", async () => {
+            const cached = adapter.listCached
+                ? dedup((await adapter.listCached({ ...filters, summaryOnly: true })).map(toSessionDisplay))
+                : [];
+            sessions = dedup([...(cached.length ? cached : await listing(Number.MAX_SAFE_INTEGER)), ...sessions]);
 
-        return sessions;
+            return sessions;
+        });
     }
 
     if (fullNativeId) {
@@ -246,47 +206,32 @@ export async function loadClaudeResumeCandidates(
     if (!options.query || options.list) {
         return sessions.slice(0, display);
     }
-    const matches = matchByIdOrName(await everyIndexed(), options.query);
-    if (matches.length) {
-        return matches.sort((a, b) => scoreContentMatch(b, options.query!) - scoreContentMatch(a, options.query!));
+    const query = options.query;
+    const rank = (rows: DisplaySession[]) =>
+        rows.sort((a, b) => scoreContentMatch(b, query) - scoreContentMatch(a, query));
+    const indexed = await everyIndexed();
+    const matches = prof.measure("resume.match-score", () => matchByIdOrName(indexed, query));
+
+    if (matches.some((session) => identifiesSession(session, query))) {
+        return rank(matches);
     }
-    return dedup(
-        (
-            await adapter.search({
-                ...filters,
-                query: options.query,
-                limit: options.limit ?? 20,
-                sortByRelevance: true,
-            })
-        ).map(displayNativeSession)
+
+    // A partial metadata hit does NOT stand in for the content pass. `--resume reports` matched
+    // one session whose opening prompt says the word once, and that single hit suppressed the
+    // search that finds the session whose transcript says it 207 times, so the session the user
+    // wanted was never offered at all.
+    const found = await prof.measureAsync("resume.content-search", () =>
+        adapter.search({
+            ...filters,
+            query,
+            limit: options.limit ?? 20,
+            sortByRelevance: true,
+        })
     );
+
+    return rank(dedup([...matches, ...found.map(toSessionDisplay)]));
 }
 // --- UI ---
-
-/** Outside a TTY there is no picker, so the candidates have to be readable enough to choose from. */
-function printAmbiguousCandidates(candidates: DisplaySession[], shown = 20): void {
-    const table = createBoxTable(["#", "SESSION ID", "NAME", "CREATED", "AGE", "LAST PROMPT", "PROJECT"]);
-
-    for (const [index, candidate] of candidates.slice(0, shown).entries()) {
-        const created = candidate.created ? new Date(candidate.created) : undefined;
-        const modified = candidate.modified ? new Date(candidate.modified) : undefined;
-        table.push([
-            String(index + 1),
-            candidate.sessionId,
-            truncateDisplay(candidate.name, 40),
-            created ? formatClock(created, { date: "short" }) : "—",
-            created ? formatRelativeTime(created) : "—",
-            modified ? formatRelativeTime(modified) : "—",
-            truncateDisplay(candidate.projectName || candidate.project, 24),
-        ]);
-    }
-
-    out.println(table.toString());
-
-    if (candidates.length > shown) {
-        out.println(pc.dim(`… and ${candidates.length - shown} more; narrow the query to see them.`));
-    }
-}
 
 export async function selectClaudeResumeSession({
     candidates,
@@ -310,26 +255,15 @@ export async function selectClaudeResumeSession({
     }
 
     if (!interactive) {
-        printAmbiguousCandidates(candidates);
+        printAmbiguousSessions(candidates);
         throw new Error(
             `Ambiguous Claude resume (${candidates.length} matches). Pass a session id from the table above, or use an interactive terminal.`
         );
     }
 
-    const opts = buildSessionTableOpts(candidates, {
-        message: "Select session to resume:",
-        query,
-    });
-
-    for (const row of opts.rows) {
-        const source = row.value as DisplaySession;
-        row.detail = [
-            ...(row.detail ?? []),
-            ...(source.sourceHome ? [`Source home: ${source.sourceHome}`] : []),
-            ...(source.filePath ? [`Source file: ${source.filePath}`] : []),
-        ];
-    }
-    const result = await tableSelect(opts);
+    const result = await tableSelect(
+        buildSessionTableOpts(candidates, { message: "Select session to resume:", query })
+    );
 
     if (!result) {
         p.cancel("Cancelled");
@@ -392,17 +326,71 @@ export interface SessionPickOptions {
     interactive?: boolean;
 }
 
+/** The Claude home a resume would actually open into. */
+function effectiveClaudeHome(): string {
+    return env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+}
+
 /**
- * Interactive session selection (load → match → content-search → select).
- * Shared by `tools claude resume` and `tools claude start --resume <query>`.
+ * Which session `tools claude resume <query>` and `tools claude start --resume <query>` open.
+ *
+ * A QUERY goes through the shared ladder, the same one codex and grok resume on. Replaying 50
+ * real queries through both settled that it never lands on a different session and decides 10
+ * of 50 that this door refused: a session indexed from several homes stayed two rival
+ * candidates here, while `preferHomeCopies` collapses them onto the launch home's copy.
+ *
+ * A LISTING (`--list`, or no query at all) still uses Claude's own loader. The shared ladder
+ * answers "which session is this query", and a listing is not a query.
  */
 export async function pickSessionForResume(
     query: string | undefined,
     opts: SessionPickOptions = {}
 ): Promise<DisplaySession> {
+    const adapter = opts.adapter ?? createClaudeAdapter();
+
+    if (query && !opts.list) {
+        // A short listing is annoying; a session resume cannot find is the one that costs an
+        // evening, because the user knows the conversation exists.
+        await warnUnresolvedIdentities(adapter, "claude");
+        const spinner = p.spinner();
+        spinner.start("Searching Claude history: index, then transcripts...");
+        let session: AgentSession | undefined;
+
+        try {
+            session = await selectResumeSession({
+                adapter,
+                query,
+                filters: {
+                    cwd: opts.allProjects ? undefined : (opts.cwd ?? process.cwd()),
+                    all: Boolean(opts.allProjects),
+                    limit: opts.limit ?? 20,
+                    excludeAgents: true,
+                },
+                ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
+                preferredHome: effectiveClaudeHome(),
+            });
+            spinner.stop(session ? "1 matching session" : "cancelled");
+        } catch (error) {
+            spinner.stop("History search failed");
+            throw error;
+        }
+
+        if (!session) {
+            throw new Error("Cancelled");
+        }
+
+        const selected = toSessionDisplay(session);
+        assertClaudeResumeHome({ session: selected });
+
+        return selected;
+    }
+
     const spinner = p.spinner();
-    spinner.start("Synchronizing Claude history...");
+    // Named phases, because the transcript pass costs seconds on a large corpus and a spinner
+    // that only says "synchronizing" for four of them reads as a hang.
+    spinner.start("Listing Claude history...");
     let candidates: DisplaySession[];
+
     try {
         candidates = await loadClaudeResumeCandidates({ ...opts, query });
         spinner.stop(`${candidates.length} matching sessions`);
@@ -410,8 +398,10 @@ export async function pickSessionForResume(
         spinner.stop("History search failed");
         throw error;
     }
+
     const selected = await selectClaudeResumeSession({ candidates, query, interactive: opts.interactive });
     assertClaudeResumeHome({ session: selected });
+
     return selected;
 }
 

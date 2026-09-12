@@ -19,6 +19,47 @@ export interface ResolveAccountInput {
     tool: string;
     subcommand?: string[];
     hintOf?: (account: AccountEntry) => string | undefined;
+    /**
+     * After the exact id-then-name pass fails, accept a unique case-insensitive substring of
+     * a name (`tools codex run shop` for `cdx-shop`). Several substring hits prompt on a TTY
+     * and are an error otherwise; the exact pass always runs first, so an id or a full name
+     * can never be shadowed by a longer name that contains it.
+     */
+    fuzzy?: boolean;
+}
+
+/**
+ * The accounts an explicit `requested` names exactly, by the first pass that hits anything.
+ *
+ * Ids FIRST, then names, exactly as `AiConfigStore.account()` resolves: checking names first
+ * let an account whose NAME equals another account's id intercept an explicit id (PR #359
+ * review t10). Each of those runs on the literal spelling before the case-folded one, so a
+ * differently-cased id can never shadow an exact one.
+ *
+ * The case-folded passes come from `tools claude run`, which has always treated a case
+ * difference as a typo rather than a different account. Without them `tools codex run Shop`
+ * fell through to the substring pass and then had to ask between `shop` and `shop-archive`.
+ *
+ * Several hits mean the caller must refuse: this returns them all rather than choosing.
+ */
+function matchExactly(accounts: AccountEntry[], requested: string): AccountEntry[] {
+    const needle = requested.toLowerCase();
+    const passes = [
+        (entry: AccountEntry) => entry.id === requested,
+        (entry: AccountEntry) => entry.name === requested,
+        (entry: AccountEntry) => entry.id.toLowerCase() === needle,
+        (entry: AccountEntry) => entry.name.toLowerCase() === needle,
+    ];
+
+    for (const pass of passes) {
+        const hits = accounts.filter(pass);
+
+        if (hits.length > 0) {
+            return hits;
+        }
+    }
+
+    return [];
 }
 
 export async function resolveAccountName(input: ResolveAccountInput): Promise<AccountResolution> {
@@ -28,30 +69,42 @@ export async function resolveAccountName(input: ResolveAccountInput): Promise<Ac
     }
 
     if (input.requested) {
-        // Ids FIRST, then names, exactly as `AiConfigStore.account()` resolves:
-        // checking names first let an account whose NAME equals another account's
-        // id intercept an explicit id (PR #359 review t10).
-        const byId = input.accounts.find((entry) => entry.id === input.requested);
-        const byName = byId ? [] : input.accounts.filter((entry) => entry.name === input.requested);
+        const exact = matchExactly(input.accounts, input.requested);
 
         // An ambiguous name is an ERROR, never the first match. `runLogout` hands
         // the resolved id straight to the irreversible `clearCredentials`, so
         // guessing here silently wipes the wrong account's credentials.
-        if (byName.length > 1) {
-            out.error(pc.red(`Account name "${input.requested}" is ambiguous (${byName.length} accounts share it).`));
-            out.printlnErr(pc.dim(`Use the id: ${byName.map((entry) => entry.id).join(", ")}`));
+        if (exact.length > 1) {
+            out.error(pc.red(`Account name "${input.requested}" is ambiguous (${exact.length} accounts share it).`));
+            out.printlnErr(pc.dim(`Use the id: ${exact.map((entry) => entry.id).join(", ")}`));
             return { status: "error" };
         }
 
-        const account = byId ?? byName[0];
+        if (exact.length === 1) {
+            return { status: "ok", account: exact[0] };
+        }
 
-        if (!account) {
+        const needle = input.requested.toLowerCase();
+        const partial = input.fuzzy ? input.accounts.filter((entry) => entry.name.toLowerCase().includes(needle)) : [];
+
+        if (partial.length === 1) {
+            return { status: "ok", account: partial[0] };
+        }
+
+        if (partial.length === 0) {
             out.error(pc.red(`Account "${input.requested}" not found.`));
             out.printlnErr(pc.dim(`Known: ${input.accounts.map((entry) => entry.name).join(", ")}`));
             return { status: "error" };
         }
 
-        return { status: "ok", account };
+        if (!isInteractive()) {
+            out.error(pc.red(`Account "${input.requested}" is ambiguous in non-interactive mode.`));
+            out.printlnErr(pc.dim(`Matches: ${partial.map((entry) => entry.name).join(", ")}`));
+            return { status: "error" };
+        }
+
+        // Several substring hits on a TTY: the same picker as a missing name, scoped to them.
+        return promptForAccount({ ...input, accounts: partial });
     }
 
     if (!isInteractive()) {
@@ -65,6 +118,10 @@ export async function resolveAccountName(input: ResolveAccountInput): Promise<Ac
         return { status: "error" };
     }
 
+    return promptForAccount(input);
+}
+
+async function promptForAccount(input: ResolveAccountInput): Promise<AccountResolution> {
     // Keyed by the immutable id, not the name: two accounts sharing a name gave
     // the picker two identical values, so either choice resolved to the first of
     // them and the other was unreachable (PR #359 review t10). The name is still

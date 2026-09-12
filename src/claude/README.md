@@ -28,6 +28,9 @@ tools claude resume
 # Claude usage
 tools claude usage
 
+# Start the session timer on accounts with one tiny request (same command as tools ai warmup)
+tools claude warmup --all
+
 # Migrate Claude assets to Codex (interactive wizard)
 tools claude migrate-to codex
 

@@ -47,12 +47,15 @@ async function rgFableFiles(root: string): Promise<string[]> {
         return [];
     }
 
-    // Bun.spawn throws ENOENT synchronously when the binary is missing, which
-    // would abort enumeration instead of degrading to the mirror scan.
+    // Without rg there is no way to tell a fable session from any other, so returning [] here would
+    // be indistinguishable from "this root holds no fable sessions" — a wrong answer rather than an
+    // error. The repo used to vendor a copy, so this branch was unreachable; on PATH alone it is not.
     const rg = ripgrepBinary();
+
     if (!rg) {
-        logger.warn({ root }, "no ripgrep on PATH or vendored — skipping fable-file enumeration for this root");
-        return [];
+        throw new Error(
+            "ripgrep is required to enumerate fable sessions and is not on PATH. Install it (`brew install ripgrep`) and re-run."
+        );
     }
 
     const proc = Bun.spawn([rg, "-l", "--no-messages", "-F", `"model":"${FABLE_MODEL}"`, root, "--glob", "*.jsonl"], {

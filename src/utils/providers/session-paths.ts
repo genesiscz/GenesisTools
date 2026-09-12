@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHome } from "@genesiscz/utils/grok/worker-paths";
 
@@ -31,7 +32,7 @@ export function primaryCodexHome(): string | undefined {
     return codexHomeOverrides()[0];
 }
 
-export type NativeSessionProvider = "claude" | "grok" | "codex";
+export type NativeSessionProvider = AccountProviderAlias;
 
 /**
  * On-disk CLI session stores. Claude: `~/.claude/projects`. Grok:

@@ -1,45 +1,26 @@
 #!/usr/bin/env bun
 
+import { registerAgentTool } from "@app/ai/commands/agent/register";
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerApprovalCommands } from "./commands/approve";
-import { registerCodexHistoryCommand } from "./commands/history";
-import { registerInterruptCommand } from "./commands/interrupt";
-import { registerCodexLoginCommand } from "./commands/login";
 import { registerLogsCommand } from "./commands/logs";
 import { registerMigrateHomeCommand } from "./commands/migrate-home";
-import { registerReadCommand } from "./commands/read";
 import { registerReviewCommand } from "./commands/review";
 import { registerRollbackCommand } from "./commands/rollback";
-import { registerRunCommand } from "./commands/run";
-import { registerSessionsCommand } from "./commands/sessions";
-import { registerSpawnCommand } from "./commands/spawn";
-import { registerStatusCommand } from "./commands/status";
-import { registerSteerCommand } from "./commands/steer";
-import { registerStopCommand } from "./commands/stop";
-import { registerTailCommand } from "./commands/tail";
-import { registerUsageCommand } from "./commands/usage";
+import { codexSpec } from "./lib/spec";
 
 const program = new Command();
 
-program.name("codex").description("Spawn, monitor, and steer Codex app-server sessions");
+program.name("codex").description(codexSpec.description);
+registerAgentTool(program, codexSpec);
 
-registerCodexLoginCommand(program);
-registerCodexHistoryCommand(program);
+// Codex's own verbs: a persistent daemon with a control channel is the only backend that can
+// offer mid-turn approvals, a turn rollback, a native review, or a raw event log.
 registerMigrateHomeCommand(program);
-registerRunCommand(program);
-registerSpawnCommand(program);
-registerSteerCommand(program);
-registerInterruptCommand(program);
 registerRollbackCommand(program);
-registerReadCommand(program);
 registerReviewCommand(program);
 registerApprovalCommands(program);
-registerStatusCommand(program);
-registerSessionsCommand(program);
 registerLogsCommand(program);
-registerTailCommand(program);
-registerStopCommand(program);
-registerUsageCommand(program);
 
 await runTool(program, { tool: "codex" });

@@ -15,7 +15,9 @@ Your spawn prompt gives you: `BACKEND` (default `codex`), `NAME`, `CWD`, `BRIEF_
 tools agents login --agent-name driver_<NAME>
 ```
 
-Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you, and how `lead` forwards you an approval it saw first. Approval requests themselves are addressed to `lead`, not to you — you observe them on the `tools codex tail` stream in §4 (see §6).
+Run it with `run_in_background: true` and follow its **stdout** with `Monitor` (never `2>&1` — stderr is diagnostics and will corrupt the event stream). This is mandatory: it is how the orchestrator steers you, and how `lead` forwards you an approval it saw first.
+
+⚠️ **`Monitor` is Claude Code's name for this.** Codex and Grok have no PUSH subscription, but both can read a backgrounded command: Codex `wait` / `wait_agent`, Grok `get_command_or_subagent_output` (see `references/harness-tools.md` in the genesis-tools plugin). Background `tools codex tail --name <NAME> --follow` and read it back between your own turns. The requirement is that you keep OBSERVING the stream, not the particular tool; a driver that never reads it cannot be steered and cannot relay an approval. Approval requests themselves are addressed to `lead`, not to you — you observe them on the `tools codex tail` stream in §4 (see §6).
 
 ## 2. Check the brief before spawning
 
@@ -42,7 +44,7 @@ tools codex spawn --name <NAME> --write <WRITE_POLICY> --cwd <CWD> --prompt-file
 
 ```bash
 tools codex status --name <NAME>
-tools codex tail   --name <NAME> --follow     # background + Monitor
+tools codex tail   --name <NAME> --follow     # background + Monitor (Claude), or redirect to a file and re-read it
 ```
 
 Read for these and nothing else: the worker drifting outside `SCOPE`, a verify failure it is patching around, an approval request, a stall, a checkpoint report.
@@ -50,7 +52,7 @@ Read for these and nothing else: the worker drifting outside `SCOPE`, a verify f
 ## 5. Steer
 
 ```bash
-tools codex steer --name <NAME> --body '<correction + the negative constraints again>'
+tools codex steer --name <NAME> --prompt '<correction + the negative constraints again>'
 tools codex interrupt --name <NAME>          # when the current turn is already wrong
 ```
 
@@ -118,7 +120,7 @@ A **resume loop**: each turn is one blocking headless `grok` invocation, steerin
 
 | Codex step above | Grok equivalent |
 |---|---|
-| §3 spawn | `tools grok run --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
+| §3 spawn | `tools grok spawn --name <NAME> --cwd <CWD> --prompt-file <BRIEF_FILE> [--readonly]` — background Bash, wait for completion |
 | §4 watch | `tools grok tail --name <NAME>` follows the running turn and exits when it ends; `tools grok status --name <NAME>` (metadata + whether a turn is running); `tools grok read --name <NAME> [--turn N] [--format compact]` re-prints any finished turn |
 | §5 steer | `tools grok steer --name <NAME> --prompt '<correction>'`; between turns only — `tools grok stop --name <NAME>` kills a running turn (the session survives and the next steer resumes it) |
 | §6 approvals | none (see the capability matrix). `WRITE_POLICY: deny` → `--readonly` (sticky across steers); `ask` → refuse the spawn and report that grok cannot do supervised writes (the orchestrator must pick `deny` or `allow`, or route to Codex); `allow` → default Auto-mode cwd jail (full trust is not exposed — ask for a disposable worktree instead) |

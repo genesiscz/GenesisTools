@@ -64,7 +64,7 @@ Is this a NEW tool?
 bun add @clack/prompts picocolors
 ```
 
-> **Note:** We keep both libraries installed. `@inquirer/prompts` is still used for tools not yet migrated and for the `editor` prompt which has no clack equivalent.
+> **Note:** We keep both libraries installed. `@inquirer/prompts` is still used for tools not yet migrated. It is NOT needed for the `editor` prompt: `p.editor()` has a clack backend that spawns `$EDITOR`/`$VISUAL` on a temp file (`src/utils/prompts/p/clack-backend.ts:173`). Reach for the `p` facade rather than importing either library directly.
 
 **package.json changes:**
 ```json

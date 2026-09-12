@@ -7,19 +7,19 @@ The harness is **`tools grok`** (`src/grok/`) — the grok counterpart of `tools
 ## Drive loop
 
 ```bash
-tools grok run    --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly] [--no-skills] [--no-rules]
+tools grok spawn  --name <task> --cwd <abs project path> --prompt-file <brief path> [--readonly] [--no-skills] [--no-rules]
 tools grok steer  --name <task> --prompt-file <correction file>   # preferred
 tools grok steer  --name <task> --prompt '<correction + the negative constraints restated>'
 tools grok read   --name <task> [--turn N] [--format compact|json|jsonl|events|raw] [--thoughts none|short|full]
 tools grok tail   --name <task> [--format compact]   # follow the running turn; exits when the turn ends
 tools grok status --name <task>      # metadata + whether a turn is running right now
 tools grok stop   --name <task>      # kill the running turn; the session survives, steer resumes it
-tools grok sessions
+tools grok sessions [--json]
 ```
 
 `--format` is the one transcript door every backend shares (`src/utils/ai/transcripts/door.ts`; `tools ai sessions tail <task> --provider grok` is the same thing without the backend prefix). `compact` is the agent-friendly view: one numbered block per model call, thoughts shortened to one line, tool results folded into the call line, a totals footer, and a `--offset` hint for the next window. `jsonl` streams one JSON turn per line, `events` is the shared worker-event vocabulary (`src/utils/worker/events.ts`, deltas already folded), `raw` is the CLI's own NDJSON. What this backend can and cannot do is declared in `WORKER_CAPABILITIES.grok` (`src/utils/worker/capabilities.ts`); a verb it lacks (approve, deny) errors naming that entry.
 
-- **`run` and `steer` block for the whole turn (minutes).** Run them with Bash `run_in_background: true` and wait for the completion notification. A foreground call is killed at the Bash timeout cap mid-turn.
+- **`spawn` and `steer` block for the whole turn (minutes).** In Claude Code run them with Bash `run_in_background: true` and wait for the completion notification; a foreground call is killed at the Bash timeout cap mid-turn. Codex and Grok have no such re-invoke: background the command yourself (`… &` with output to a file, or a detached run) and poll `tools grok status --name <task>`, or accept a blocking call if your harness has no timeout cap.
 - Write the brief to a file (session scratchpad) and pass `--prompt-file`. Inside single quotes a backtick and `$(...)` stay literal, so those are safe; what breaks is an **apostrophe** in the brief, which closes the quote and leaves the shell parsing the rest as arguments. A file has no quoting rules at all.
 - **`steer` takes `--prompt-file` too**, and should use it for the same reason. A steering message is prose restating constraints, so it is *more* likely to contain an apostrophe than the original brief.
 - On completion the harness prints the worker's report (stdout) and its tool calls (stderr), and **exits 1 when the turn died mid-flight** (the raw grok CLI exits 0 even then).
@@ -52,7 +52,7 @@ tools grok sessions
 - **Surfaces on, side effects off.** Workers run with `GROK_HOME=~/.genesis-tools/grok/worker-home`; hooks, MCP servers and session pickup from `~/.claude` are off unconditionally. The user's personal skills and rules are ON by default (decided 2026-09-04: a worker that knows them does better work) and `--no-skills` / `--no-rules` opt out, sticky across steers. Because the personal rules include interactive rituals, every turn carries the shared contract as `--rules` (`src/utils/worker/contract.ts`), which tells the worker those rituals (`tools say`, spoken summaries, asking the user) do not apply to it. Before 2026-09-04 the toggles were meant to block everything and did not: grok scans `~/.agents/skills` against the real `$HOME` with no toggle, so the "isolated" planner read the user's `best-skill` before its own brief; `--no-skills` now handles that tier through a `[skills] ignore` block in the worker home's `config.toml`. Project-local configuration in the worker's own `--cwd` always loads — `CLAUDE.md`, and any `.grok/` config the repo carries (MCP servers, hooks, permission rules). `GROK_HOME` redirects *user* state only, never the target repo's; point `--cwd` at a scratch dir or a worktree when that is not what you want.
 - **Session bookkeeping.** The session uuid and cwd live in `~/.genesis-tools/grok/sessions/<task>.meta.json`; grok keys sessions by cwd, and `steer` resumes with the identical cwd automatically.
 - **Sticky `--readonly`.** The raw grok CLI forgets `--tools` on every `--resume` (verified: a read-only session edited a file on its first unflagged resume). The harness re-arms the allowlist on every steer — verified: an unflagged steer of a read-only session still had only `read_file,list_dir,grep` and left the target file untouched. `--writable` on a steer deliberately switches back (verified: write tools returned, the edit landed, and `sessions` then shows the session as `jail`).
-- **A per-handoff worker home** via `--worker-home <path>` when running handoffs in parallel (verified: grok populated the override directory instead of the default one). Keep it constant for the whole handoff — grok keys sessions by cwd inside that home. ⚠️ It moves the worker's own state, **not** the session records: those stay under `~/.genesis-tools/grok/sessions/` so `tools grok sessions` lists every worker, so two runs sharing a `--name` share one record whatever their home, and `run` refuses the second.
+- **A per-handoff worker home** via `--worker-home <path>` when running handoffs in parallel (verified: grok populated the override directory instead of the default one). Keep it constant for the whole handoff — grok keys sessions by cwd inside that home. ⚠️ It moves the worker's own state, **not** the session records: those stay under `~/.genesis-tools/grok/sessions/` so `tools grok sessions` lists every worker, so two runs sharing a `--name` share one record whatever their home, and `spawn` refuses the second.
 - **Direct binary spawn.** No shell in the path, so the user's zsh `grok` wrapper function (proxy env injection) cannot interfere.
 
 ## Safety dial
@@ -90,7 +90,7 @@ The readiness gate in `gt:handoff-to` applies unchanged. Because there are no ap
 - Do NOT create new files, do NOT commit or push, do NOT touch <paths>.
 ```
 
-Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message. The finished-turn printer puts the worker's `RESULT:` line on its status line, so `tools grok run … 2>&1 | head -1` tells you `done`, `stopped-at-checkpoint`, `blocked` or `failed` without reading the report.
+Grok honors diagnose-only and touch-only-X constraints reliably when they are spelled out (verified across a 3-turn bug-fix session). Restate the negative constraints in every steering message. The finished-turn printer puts the worker's `RESULT:` line on its status line, so `tools grok spawn … 2>&1 | head -1` tells you `done`, `stopped-at-checkpoint`, `blocked` or `failed` without reading the report.
 
 ## What the raw CLI still has that the harness does not
 
@@ -113,7 +113,7 @@ For a long grok handoff, spawn a `genesis-tools:agent-driver` subagent with `BAC
 
 The `tools agents` bus is optional here: the transcript already lands in the turn logs. Add bus reporting (per `gt:agents-talk`) only when the worker is part of a multi-agent swarm — and then know its limits, verified in a live 5-agent chain probe (2026-08-26):
 
-- **Pass `--session <id>` explicitly** in every `tools agents` command you put in a grok brief. Since 2026-08-29 `tools grok run` also writes `$GT_RENDEZVOUS_SESSION` into the worker environment, so auto-detection resolves the parent's swarm on its own — but the explicit flag is still what the brief should say, because it survives a worker that shells out through something that strips the environment.
+- **Pass `--session <id>` explicitly** in every `tools agents` command you put in a grok brief. Since 2026-08-29 `tools grok spawn` also writes `$GT_RENDEZVOUS_SESSION` into the worker environment, so auto-detection resolves the parent's swarm on its own — but the explicit flag is still what the brief should say, because it survives a worker that shells out through something that strips the environment.
 - A grok worker **receives** bus mail fine: a blocking `tools agents login --agent-name <name> --once --session <id>` inside its turn delivered the message.
 - Its **sends are unreliable**: in both observed turns the *second* `tools agents` command of the turn was cancelled by grok's own permission layer ("User cancelled the execution for tool `run_terminal_command`"), while the first succeeded. The cause was not isolated — treat it as an observation, not a rule. What matters: the worker **reported the cancelled send as successful anyway**. Budget ONE bus send per turn, split extra reports across steered turns, and confirm every hop by reading the feed from the lead side — never from the worker's claim. A steered retry of a cancelled send succeeded unchanged.
 - **The worker's bus identity is not yours to choose.** A codex worker auto-registers as `codex_<name from --spawn>`; a grok worker has no auto-registration and uses whatever `--agent-name` its brief tells it to log in with. Naming a different identity in `--from` fails with "not registered". Write the brief's identity to match the spawn name exactly.
@@ -121,7 +121,7 @@ The `tools agents` bus is optional here: the transcript already lands in the tur
 
 ## Human TUI resume and native history
 
-The headless worker loop is distinct from `tools grok run --resume [query]`. Bare resume follows native Grok's most recent session; a query searches native history in the current project unless --all is supplied. --list prints matches without launching a TUI. Grok run does not accept a positional account name.
+The headless worker loop is `tools grok spawn`, distinct from `tools grok run [account] --resume [query]`, which opens the interactive TUI. Bare resume follows native Grok's most recent session; a query searches native history in the current project unless --all is supplied. --list prints matches without launching a TUI. `tools grok run --name` is the worker's older spelling and still routes to `spawn`.
 
 `tools grok history` searches/listings automatically refresh shared provider metadata in `~/.genesis-tools/claude-history/index.db`, including known worker roots. Search reads native chat records; `updates.jsonl` stays separate statistics telemetry. No manual indexing or login is required. Explicit index sync/rebuild preserve historical usage/spending observations; status is read-only. Preserve worker-home isolation and auth-file reference rules. Searching does not authorize login, account import or migration.
 

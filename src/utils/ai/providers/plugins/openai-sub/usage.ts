@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
@@ -26,15 +26,36 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** Anything longer than a day is the weekly window; the 5h one is the session window. */
 const WEEKLY_THRESHOLD_MINS = 24 * 60;
 
-/** The two windows the app-server names, in display order. */
+/** The two window slots the app-server names, in display order. */
 const WINDOW_KEYS = ["primary", "secondary"] as const;
 
 type WindowKey = (typeof WINDOW_KEYS)[number];
 
-const WINDOW_LABELS: Record<WindowKey, string> = {
-    primary: "Session",
-    secondary: "Weekly",
+/**
+ * The slot is not the window: a Pro plan without a 5h window reports its WEEKLY limit
+ * as `primary` and no `secondary` at all (cdx account observed 2026-09-10: primary =
+ * 10080 min, secondary = null), so labelling by slot drew "Session 48%" over a weekly
+ * limit. Duration decides; the slot is only the fallback for a window that carries none.
+ */
+const SLOT_FALLBACK_KIND: Record<WindowKey, "session" | "weekly"> = {
+    primary: "session",
+    secondary: "weekly",
 };
+
+const KIND_LABELS = { session: "5h", weekly: "Weekly" } as const;
+
+function windowKind(key: WindowKey, durationMins: number | undefined): "session" | "weekly" {
+    if (durationMins === undefined) {
+        return SLOT_FALLBACK_KIND[key];
+    }
+
+    return durationMins > WEEKLY_THRESHOLD_MINS ? "weekly" : "session";
+}
+
+/** `GPT-5.3-Codex-Spark` fits a 16-cell label column as `Spark`; the full name stays in `scopeModel`. */
+function shortScopeName(limitName: string): string {
+    return limitName.split("-").at(-1) || limitName;
+}
 
 /**
  * One window as the app-server sends it. Field names captured from a live
@@ -53,16 +74,29 @@ export interface CodexRateLimitWindow {
 }
 
 export interface CodexRateLimits {
+    /** `codex` for the plan-wide limit; a per-model limit names its model (`codex_bengalfox`). */
+    limitId?: string | null;
+    /** Display name of a per-model limit (`GPT-5.3-Codex-Spark`); null on the plan-wide one. */
+    limitName?: string | null;
     primary?: CodexRateLimitWindow | null;
     secondary?: CodexRateLimitWindow | null;
     planType?: string;
     plan_type?: string;
 }
 
+/** The plan-wide limit id, the one `rateLimits` repeats, when a payload does not name it. */
+const DEFAULT_LIMIT_ID = "codex";
+
 /** The whole `account/rateLimits/read` result. Other keys are ignored, never rejected. */
 export interface CodexRateLimitsResult {
     rateLimits?: CodexRateLimits | null;
     rate_limits?: CodexRateLimits | null;
+    /**
+     * Every limit the account has, keyed by limit id, the plan-wide one included. Models
+     * with their own pool (Spark, 2026-09-10) appear only here, so reading `rateLimits`
+     * alone silently drops them.
+     */
+    rateLimitsByLimitId?: Record<string, CodexRateLimits | null> | null;
     accountId?: string;
 }
 
@@ -90,7 +124,16 @@ function pickNumber(...values: Array<number | undefined>): number | undefined {
     return undefined;
 }
 
-function toWindow(key: WindowKey, raw: CodexRateLimitWindow | null | undefined): LimitWindow | null {
+interface WindowScope {
+    limitId: string;
+    limitName: string;
+}
+
+function toWindow(
+    key: WindowKey,
+    raw: CodexRateLimitWindow | null | undefined,
+    scope?: WindowScope
+): LimitWindow | null {
     if (!raw) {
         return null;
     }
@@ -102,12 +145,23 @@ function toWindow(key: WindowKey, raw: CodexRateLimitWindow | null | undefined):
     }
 
     const durationMins = pickNumber(raw.windowDurationMins, raw.window_duration_mins);
-    const resetsAtSeconds = pickNumber(raw.resetsAt, raw.resets_at);
+    // An untouched window carries `resetsAt = now + window`, re-stamped on every read: a
+    // placeholder, not a running clock (observed 2026-09-10: 19:20:22, 19:22:36, 19:24:55
+    // for the same 0% window). Dropping it lets every consumer treat the window as idle,
+    // the way anthropic's missing `resets_at` already does, instead of counting down a
+    // reset that never comes.
+    const resetsAtSeconds = percentUsed === 0 ? undefined : pickNumber(raw.resetsAt, raw.resets_at);
+    const kind = windowKind(key, durationMins);
 
     return {
-        key,
-        label: WINDOW_LABELS[key],
-        kind: durationMins !== undefined && durationMins > WEEKLY_THRESHOLD_MINS ? "weekly" : "session",
+        ...(scope
+            ? {
+                  key: `${key}:${scope.limitId}`,
+                  label: `${KIND_LABELS[kind]} ${shortScopeName(scope.limitName)}`,
+                  kind: "scoped" as const,
+                  scopeModel: scope.limitName,
+              }
+            : { key, label: KIND_LABELS[kind], kind }),
         percentUsed,
         ...(durationMins === undefined ? {} : { periodMs: durationMins * 60_000 }),
         ...(resetsAtSeconds === undefined ? {} : { resetsAt: new Date(resetsAtSeconds * 1000).toISOString() }),
@@ -120,22 +174,44 @@ export function mapRateLimits(result: CodexRateLimitsResult | null | undefined):
     planName?: string;
 } {
     const rateLimits = result?.rateLimits ?? result?.rate_limits ?? null;
-
-    if (!rateLimits) {
-        return { limits: [] };
-    }
-
     const limits: LimitWindow[] = [];
 
-    for (const key of WINDOW_KEYS) {
-        const window = toWindow(key, rateLimits[key]);
+    // Returning early here dropped every per-model window whenever the payload carried
+    // rateLimitsByLimitId alone — which is exactly the shape this code was added to
+    // read. pollCodexAccount turns `limits.length === 0` into
+    // `auth: { reason: "not logged in" }`, so a healthy account reported as logged out.
+    if (rateLimits) {
+        for (const key of WINDOW_KEYS) {
+            const window = toWindow(key, rateLimits[key]);
 
-        if (window) {
-            limits.push(window);
+            if (window) {
+                limits.push(window);
+            }
         }
     }
 
-    const planName = rateLimits.planType ?? rateLimits.plan_type;
+    // Skip the scoped copy of the plan-wide window only when the top-level block
+    // actually emitted it. With no top-level rateLimits nothing was emitted as primary,
+    // so skipping by name would discard the account's only windows.
+    const defaultLimitId = rateLimits ? (rateLimits.limitId ?? DEFAULT_LIMIT_ID) : undefined;
+
+    for (const [limitId, scoped] of Object.entries(result?.rateLimitsByLimitId ?? {})) {
+        if (limitId === defaultLimitId || !scoped) {
+            continue;
+        }
+
+        const scope: WindowScope = { limitId, limitName: scoped.limitName ?? limitId };
+
+        for (const key of WINDOW_KEYS) {
+            const window = toWindow(key, scoped[key], scope);
+
+            if (window) {
+                limits.push(window);
+            }
+        }
+    }
+
+    const planName = rateLimits?.planType ?? rateLimits?.plan_type;
 
     return { limits, ...(planName === undefined ? {} : { planName }) };
 }
@@ -176,6 +252,114 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Pr
     }
 }
 
+const USAGE_HOME_PREFIX = "gt-codex-usage-";
+
+/**
+ * Ephemeral homes THIS process created and has not finished with.
+ *
+ * `cleanup` removes each one on the normal path, but it never runs when the process is
+ * killed, and this one is killed routinely: `src/daemon/lib/runner.ts` SIGTERMs the whole
+ * task tree once a round passes its 60s budget, which a laptop waking mid-poll reaches every
+ * time. Ten abandoned Codex homes, 12 MB of sqlite, had collected by 2026-09-11.
+ */
+const liveHomes = new Set<string>();
+
+/**
+ * Age past which a leftover home belongs to a run that is gone.
+ *
+ * One poll lives for a handshake plus a single `account/rateLimits/read` (10s ceiling), and
+ * the floor between polls is 120s, so an hour is far outside any live run. That margin is the
+ * point: a `tools ai usage` or `tools codex usage` in another terminal keeps its own home in
+ * this same directory, and sweeping it out from under that process would break a poll the
+ * user is watching.
+ */
+const ABANDONED_HOME_MS = 60 * 60 * 1000;
+
+/** Ceiling on one sweep, so a pathological temp directory cannot stall a poll. */
+const MAX_SWEEP = 50;
+
+let sweptThisProcess = false;
+
+/** Once per process: the daemon is a fresh process per round, so that is still every round. */
+async function sweepOnce(root: string): Promise<void> {
+    if (sweptThisProcess) {
+        return;
+    }
+
+    sweptThisProcess = true;
+    await sweepAbandonedHomes(root);
+}
+
+/**
+ * Remove `gt-codex-usage-*` directories older than {@link ABANDONED_HOME_MS} and answer how
+ * many went.
+ *
+ * Exported because the age rule is the only thing standing between this sweep and the live
+ * home of a `tools ai usage` running in another terminal, so both halves of it need a test:
+ * an abandoned home goes, a fresh one stays.
+ */
+export async function sweepAbandonedHomes(root: string): Promise<number> {
+    let names: string[];
+
+    try {
+        names = await readdir(root);
+    } catch (err) {
+        logger.debug({ err, root }, "[usage] could not list the temp root to sweep codex homes");
+        return 0;
+    }
+
+    let removed = 0;
+
+    for (const name of names) {
+        if (removed >= MAX_SWEEP || !name.startsWith(USAGE_HOME_PREFIX)) {
+            continue;
+        }
+
+        const dir = join(root, name);
+
+        if (liveHomes.has(dir)) {
+            continue;
+        }
+
+        try {
+            const age = Date.now() - (await stat(dir)).mtimeMs;
+
+            if (age < ABANDONED_HOME_MS) {
+                continue;
+            }
+
+            await rm(dir, { recursive: true, force: true });
+            removed += 1;
+        } catch (err) {
+            logger.debug({ err, dir }, "[usage] an abandoned codex home could not be removed");
+        }
+    }
+
+    if (removed > 0) {
+        logger.info({ removed, root }, "[usage] removed abandoned codex usage homes");
+    }
+
+    return removed;
+}
+
+/**
+ * Remove every ephemeral home this process still owns, for a signal handler, where `cleanup`
+ * never gets its turn. Only this process's own homes: a concurrent poll in another terminal
+ * owns its own, and both live in the same directory.
+ */
+export async function releaseCodexUsageHomes(): Promise<void> {
+    const homes = [...liveHomes];
+    liveHomes.clear();
+
+    await Promise.all(
+        homes.map((home) =>
+            rm(home, { recursive: true, force: true }).catch((err: unknown) =>
+                logger.debug({ err, home }, "[usage] could not release an ephemeral codex home")
+            )
+        )
+    );
+}
+
 async function spawnClient(
     account: AccountEntry,
     options: UsagePollOptions,
@@ -184,7 +368,13 @@ async function spawnClient(
     const binding = await CodexAccountBinding.create(account.id, { allowRefresh: !options.probe });
     // Resolve first: expired diagnostic credentials must fail before any vendor process starts.
     const tokens = await binding.tokens({ refresh: !options.probe });
-    const home = await mkdtemp(join(tmpdir(), "gt-codex-usage-"));
+    const root = tmpdir();
+
+    await sweepOnce(root);
+
+    const home = await mkdtemp(join(root, USAGE_HOME_PREFIX));
+
+    liveHomes.add(home);
     let client: AppServerClient | undefined;
     const cleanup = async () => {
         await client?.close();
@@ -197,6 +387,7 @@ async function spawnClient(
             }
         }
         // This directory was created exclusively for this poll, never supplied by a user.
+        liveHomes.delete(home);
         await rm(home, { recursive: true, force: true });
     };
 

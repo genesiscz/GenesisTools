@@ -1,5 +1,6 @@
 import { getAllConversations, type SearchFilters, searchConversations } from "@app/claude/lib/history/search";
 import { serializeResult } from "@app/claude-history-dashboard/src/server/serializers";
+import { profiler } from "@genesiscz/utils/profile";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/api/conversations")({
@@ -16,7 +17,11 @@ export const Route = createFileRoute("/api/conversations")({
 
 				const results = query ? await searchConversations(filters) : await getAllConversations({ ...filters, limit });
 
-				return Response.json(results.map(serializeResult));
+				// `serializeResult` may reach a synchronous SQLite read per row when hydrated counts
+				// are missing: N+1-shaped on a route hit for every page load and every search.
+				return Response.json(
+					profiler.scope("claude-history").measure("conversations.serialize", () => results.map(serializeResult))
+				);
 			},
 		},
 	},

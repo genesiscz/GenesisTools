@@ -13,6 +13,7 @@ import {
     surfacesFromFlags,
     type WorkerSurfaces,
 } from "@genesiscz/utils/worker/isolation";
+import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
 import { turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
@@ -414,4 +415,28 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
             : { ...(readOnly === meta.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
 
     return runTurn(store, { ...meta, readOnly, surfaces }, meta.turns + 1, args, modeChange);
+}
+
+/** The turn report a finished grok turn renders as, for the shared worker verbs. */
+export function grokTurnReport(result: TurnResult): WorkerTurnReport {
+    return {
+        backend: "grok",
+        name: result.meta.name,
+        turn: result.turn,
+        ended: result.summary.ended,
+        exitCode: result.exitCode,
+        report: result.summary.report,
+        stderr: result.stderr,
+        errPath: result.errPath,
+        toolCalls: result.summary.toolCalls,
+        // A read-only turn changes nothing by design; a replay has no snapshot to compare.
+        worktree:
+            result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
+        logPath: result.logPath,
+        transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+    };
+}
+
+export function printTurn(result: TurnResult): void {
+    printWorkerTurn(grokTurnReport(result));
 }

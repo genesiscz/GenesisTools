@@ -7,7 +7,9 @@
  * a missing capability is declared, never emulated or silently degraded.
  */
 
-export type WorkerBackend = "codex" | "grok" | "claude";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
+export type WorkerBackend = AccountProviderAlias;
 
 export interface WorkerCapabilities {
     /** Mid-turn approval channel (pause + approve/deny) or none at all. */
@@ -60,7 +62,7 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["streaming-json (flat NDJSON)"],
         steering: "between-turns",
         accountRequired: false,
-        verbs: ["run", "steer", "read", "tail", "status", "stop", "sessions"],
+        verbs: ["spawn", "steer", "read", "tail", "status", "stop", "interrupt", "sessions"],
         absentVerbs: {
             approve: "grok has no approval channel (approvals: none) — the cwd jail and the brief are the only brakes",
             deny: "grok has no approval channel (approvals: none)",
@@ -80,6 +82,7 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
             "worker tail",
             "worker status",
             "worker stop",
+            "worker interrupt",
             "worker sessions",
         ],
         absentVerbs: {

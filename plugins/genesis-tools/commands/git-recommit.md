@@ -28,7 +28,12 @@ tree-identity gate prove it).
 
 ## Process
 
-1. Read `${CLAUDE_PLUGIN_ROOT}/skills/git/references/recommit.md` in full.
+1. Read `${CLAUDE_PLUGIN_ROOT}/skills/git/references/recommit.md` in full. The harness
+   substitutes that placeholder at load time; if you see it literally, build the path from the
+   "Base directory for this skill" line printed when this loaded rather than passing it to a
+   shell, which would expand it to nothing. If both fail, read
+   `plugins/genesis-tools/skills/git/references/recommit.md` in the GenesisTools repo. 🛑 Do not
+   improvise these phases from memory — this rewrites git history.
 2. Follow its phases in order: detect the base with `tools git base`, sync local and remote base,
    collect commit and file data from the MERGE-BASE (never the moving base tip), decide the
    count, categorise (a Sonnet subagent for the grouping), present the plan, then backup tag,

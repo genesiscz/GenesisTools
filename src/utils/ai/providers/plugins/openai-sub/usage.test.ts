@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import type { AccountEntry } from "../../../config/schema";
 import type { CodexUsageClient } from "./usage";
@@ -70,7 +73,7 @@ describe("mapRateLimits", () => {
         expect(limits).toEqual([
             {
                 key: "primary",
-                label: "Session",
+                label: "5h",
                 kind: "session",
                 percentUsed: 41.5,
                 periodMs: 300 * 60_000,
@@ -90,6 +93,99 @@ describe("mapRateLimits", () => {
     // The protocol is unversioned, so both spellings are accepted rather than guessed at.
     it("reads the snake_case spelling identically", () => {
         expect(mapRateLimits(SNAKE)).toEqual(mapRateLimits(CAMEL));
+    });
+
+    it("drops the placeholder resetsAt of an untouched (0%) window", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: {
+                primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: 1_757_000_000 },
+                secondary: { usedPercent: 12, windowDurationMins: 10_080, resetsAt: 1_757_400_000 },
+            },
+        });
+
+        expect(limits[0]).toEqual({
+            key: "primary",
+            label: "5h",
+            kind: "session",
+            percentUsed: 0,
+            periodMs: 300 * 60_000,
+        });
+        expect(limits[1]?.resetsAt).toBe(new Date(1_757_400_000 * 1000).toISOString());
+    });
+
+    // A Pro plan with no 5h window reports its weekly limit in the `primary` slot and no
+    // `secondary` at all (observed 2026-09-10). Labelled by slot it read "Session 48%".
+    it("names a window by its duration, not by the slot it arrives in", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: {
+                limitId: "codex",
+                primary: { usedPercent: 48, windowDurationMins: 10_080, resetsAt: 1_789_435_346 },
+                secondary: null,
+                planType: "pro",
+            },
+        });
+
+        expect(limits).toEqual([
+            {
+                key: "primary",
+                label: "Weekly",
+                kind: "weekly",
+                percentUsed: 48,
+                periodMs: 10_080 * 60_000,
+                resetsAt: "2026-09-15T01:22:26.000Z",
+            },
+        ]);
+    });
+
+    it("falls back to the slot's meaning when a window carries no duration", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: { primary: { usedPercent: 10 }, secondary: { usedPercent: 20 } },
+        });
+
+        expect(limits.map((w) => [w.key, w.label, w.kind])).toEqual([
+            ["primary", "5h", "session"],
+            ["secondary", "Weekly", "weekly"],
+        ]);
+    });
+
+    // Models with their own pool appear only under `rateLimitsByLimitId`; reading the
+    // top-level `rateLimits` alone dropped the Spark limit entirely (2026-09-10).
+    it("emits scoped windows for every per-model limit beside the plan-wide one", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: { limitId: "codex", primary: { usedPercent: 48, windowDurationMins: 10_080 } },
+            rateLimitsByLimitId: {
+                codex: { limitId: "codex", primary: { usedPercent: 48, windowDurationMins: 10_080 } },
+                codex_bengalfox: {
+                    limitId: "codex_bengalfox",
+                    limitName: "GPT-5.3-Codex-Spark",
+                    primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_789_073_660 },
+                    secondary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: 1_789_660_460 },
+                },
+                codex_empty: null,
+            },
+        });
+
+        expect(limits.map((w) => w.key)).toEqual(["primary", "primary:codex_bengalfox", "secondary:codex_bengalfox"]);
+        expect(limits[1]).toEqual({
+            key: "primary:codex_bengalfox",
+            label: "5h Spark",
+            kind: "scoped",
+            scopeModel: "GPT-5.3-Codex-Spark",
+            percentUsed: 7,
+            periodMs: 300 * 60_000,
+            resetsAt: new Date(1_789_073_660 * 1000).toISOString(),
+        });
+        expect(limits[2]).toMatchObject({ label: "Weekly Spark", kind: "scoped", percentUsed: 0 });
+        expect(limits[2]?.resetsAt).toBeUndefined();
+    });
+
+    it("keys a per-model limit without a display name by its id", () => {
+        const { limits } = mapRateLimits({
+            rateLimits: { primary: { usedPercent: 1, windowDurationMins: 300 } },
+            rateLimitsByLimitId: { codex_x: { primary: { usedPercent: 2, windowDurationMins: 300 } } },
+        });
+
+        expect(limits[1]).toMatchObject({ key: "primary:codex_x", label: "5h codex_x", scopeModel: "codex_x" });
     });
 
     it("returns nothing when the payload carries no rate limits", () => {
@@ -223,4 +319,38 @@ it("vault credential stamps are independent of an old native data directory", as
     const account = entry("vault", { accessToken: "vault-access", expiresAt: 12345, dataDir: "/obsolete-profile" });
     expect(codexHomeFor(account)).toBeNull();
     expect(await codexCredentialStamp(account)).toBe(12345);
+});
+describe("sweepAbandonedHomes", () => {
+    /**
+     * The poll's throwaway `CODEX_HOME` is removed in a `finally` that a killed round never
+     * reaches, so a later round sweeps. The age rule is all that separates an abandoned home
+     * from the live home of a `tools ai usage` or `tools codex usage` in another terminal.
+     */
+    it("removes an abandoned home, keeps a live one, and never touches another tool's", async () => {
+        const { sweepAbandonedHomes } = await import("./usage");
+        const root = mkdtempSync(join(tmpdir(), "codex-usage-sweep-"));
+        const abandoned = join(root, "gt-codex-usage-abandoned");
+        const live = join(root, "gt-codex-usage-live");
+        const foreign = join(root, "gt-test-tmp-someone-else");
+
+        for (const dir of [abandoned, live, foreign]) {
+            mkdirSync(dir);
+        }
+
+        // Two hours back, past the one-hour rule. `live` keeps the mtime it was just created
+        // with, which is what a poll in flight looks like.
+        const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        utimesSync(abandoned, old, old);
+        utimesSync(foreign, old, old);
+
+        expect(await sweepAbandonedHomes(root)).toBe(1);
+        expect(existsSync(abandoned)).toBe(false);
+        expect(existsSync(live)).toBe(true);
+        expect(existsSync(foreign)).toBe(true);
+    });
+
+    it("answers zero for a root that does not exist rather than throwing", async () => {
+        const { sweepAbandonedHomes } = await import("./usage");
+        expect(await sweepAbandonedHomes(join(tmpdir(), "codex-usage-sweep-absent-root"))).toBe(0);
+    });
 });

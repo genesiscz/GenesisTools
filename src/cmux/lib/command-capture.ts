@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -160,13 +161,23 @@ export async function collectTtyLaunchCommands(): Promise<Map<string, string>> {
 export interface SurfaceSessionInfo {
     sessionId: string;
     account?: string;
+    /**
+     * Which agent this id belongs to. The cmux hook is shared, so the journal holds Codex and
+     * Grok records too; a record with no `provider` predates the tag and is Claude's.
+     *
+     * 🛑 Load-bearing, not decoration: the replay path turns this id into a launch command, and
+     * assuming "claude" replayed a Codex thread id as `claude -r <codex uuid>` — a session
+     * Claude has never seen. That is the same defect the comment at `snapshot.ts` already
+     * described for Grok, arriving through the journal instead of a tab title.
+     */
+    provider: AccountProviderAlias;
 }
 
-/** surface uuid (CMUX_SURFACE_ID) → newest known claude session + account. */
+/** surface uuid (CMUX_SURFACE_ID) → newest known agent session + account. */
 export async function loadSurfaceSessions(
     options: { beforeMs?: number } = {}
 ): Promise<Map<string, SurfaceSessionInfo>> {
-    const out = new Map<string, { sessionId: string; account?: string; at: number }>();
+    const out = new Map<string, { sessionId: string; account?: string; provider: AccountProviderAlias; at: number }>();
     try {
         const refs = loadAllSessionCmuxRefs(undefined, options);
         const pins = await loadPins({ readOnly: true });
@@ -179,9 +190,15 @@ export async function loadSurfaceSessions(
             if (existing && existing.at >= (entry.at ?? 0)) {
                 continue;
             }
+
+            const provider = entry.provider ?? "claude";
+            const pin = pins.get(entry.sessionId);
             out.set(entry.surfaceId, {
                 sessionId: entry.sessionId,
-                account: pins.get(entry.sessionId)?.account ?? undefined,
+                // Only this agent's own pin: an untagged pin is Claude's, and reading it for a
+                // Codex surface would attach a Claude account to a Codex session.
+                account: (pin?.provider ?? "claude") === provider ? (pin?.account ?? undefined) : undefined,
+                provider,
                 at: entry.at ?? 0,
             });
         }
@@ -189,7 +206,7 @@ export async function loadSurfaceSessions(
         logger.warn({ error }, "[command-capture] session refs/pins unavailable");
     }
 
-    return new Map([...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account }]));
+    return new Map([...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider }]));
 }
 
 /** session id → pinned account, for ids the process table (not the journal) supplied. */
@@ -340,7 +357,7 @@ export function isAgentLauncher(command: string): boolean {
     );
 }
 
-export function agentKindFromLauncher(command: string): "claude" | "grok" | "codex" | undefined {
+export function agentKindFromLauncher(command: string): AccountProviderAlias | undefined {
     const trimmed = command.trim();
     if (GROK_LAUNCHER.test(trimmed)) {
         return "grok";

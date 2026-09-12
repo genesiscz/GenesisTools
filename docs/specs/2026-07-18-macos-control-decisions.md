@@ -27,6 +27,13 @@
 
 ## Fix inputs (agent #1 blind UX test, 9m44s, score 6/10)
 
+<!-- updated 2026-09-11 23:22: items 4, 5, 7 and 8 have SHIPPED; the list below is the
+original test output and is kept as written. 4 → `--app` on the interact commands
+(`src/control/commands/interact.ts:13,46,68`); 5 → `tools control apps`
+(`src/control/commands/discovery.ts:155`); 7 → `--crop <x,y,w,h>` (`interact.ts:292`);
+8 → `--expect` / `--contains` / `--gone` (`src/control/commands/verify.ts:121,123`).
+Read the rest as open until verified the same way. -->
+
 1. **CRITICAL** — ambiguous `--window` substring silently resolves to wrong window (Find-in-page popup captured as "Brave - Main", `ok:true`, only tell = undocumented empty `window:""`). Fix: fail loud with candidate list when substring doesn't cleanly resolve to one window.
 2. `run` top-level `ok:true` despite failed steps. Fix: `failedSteps` count at top level + documented semantics.
 3. `find` lacks `--window`/`--subrole`/`--q` filters the other 9 commands have; help needs "Chromium-style apps expose text via AXDescription, not AXTitle — try --desc when --title returns 0".

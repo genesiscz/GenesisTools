@@ -44,6 +44,10 @@ for (const name of ["TMPDIR", "TMP", "TEMP"]) {
     // Writes straight through to process.env, which is what os.tmpdir() reads.
     env.testing.set(name, root);
 }
+// `@genesiscz/utils/paths`.tmpdir() reads no environment: it returns the literal "/tmp" so
+// production temp paths stay short and stable. This marker is the one thing that redirects it,
+// which is what brings the fixtures built through the repo helper into this root as well.
+env.testing.set("GENESIS_TEST_TMP_ROOT", root);
 
 const sweepStale = (): void => {
     let names: string[];

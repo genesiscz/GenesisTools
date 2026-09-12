@@ -5,21 +5,12 @@
 // decided from the payload, never from the environment: a Codex worker spawned from a Claude
 // session inherits every CLAUDE_CODE_* variable, so env would call it Claude.
 
+import { harnessOf, type SessionStartPayload } from "./harness";
+
 // biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @genesiscz/utils/json
 const SafeJSON = JSON;
 
-interface SessionStartPayload {
-    transcript_path?: string;
-}
-
-/**
- * Codex writes its transcript as `~/.codex-<name>/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`;
- * Claude writes `~/.claude/projects/<slug>/<uuid>.jsonl`. The rollout name is the decisive signal.
- */
-export function harnessOf(payload: SessionStartPayload): "codex" | "claude" {
-    const transcript = payload.transcript_path ?? "";
-    return /\/rollout-[^/]*\.jsonl$/.test(transcript) || /\/\.codex[^/]*\//.test(transcript) ? "codex" : "claude";
-}
+export { harnessOf };
 
 export const CLAUDE_REMINDER =
     "Only when a `gt:handoff-to` run needs several agents to talk to each other WHILE they work: invoke the `genesis-tools:agents-talk` skill first, to pick the channel. Ordinary subagents that report back when finished need nothing from it. The Skill tool only accepts that full id — `gt:agents-talk` is not a valid skill name.";
@@ -27,8 +18,22 @@ export const CLAUDE_REMINDER =
 export const CODEX_REMINDER =
     "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: it needs a Monitor tool Codex does not have. For subagent communication use Codex's native collaboration tools (send_message for active peers, followup_task for idle ones).";
 
+export const GROK_REMINDER =
+    "Never invoke the `genesis-tools:agents-talk` / `agents-talk` skill: its protocol needs a PUSH subscription to be woken by, and Grok's `get_command_or_subagent_output` is a poll — you get what has accumulated when you ask. Grok does have subagents (`spawn_subagent`) and can read their output that way. To talk to another agent, use the `tools agents` CLI directly and pass `--session <id>` explicitly on every call: a grok worker's environment may be stripped, so auto-detection of the parent swarm cannot be relied on.";
+
+/**
+ * Grok used to receive the CLAUDE text, which tells it to invoke a skill that needs the
+ * Monitor tool. Grok has no Monitor either, so that advice was as wrong there as it was on
+ * Codex; the two just need different replacements, because their messaging tools differ.
+ */
 export function reminderFor(payload: SessionStartPayload): string {
-    return harnessOf(payload) === "codex" ? CODEX_REMINDER : CLAUDE_REMINDER;
+    const harness = harnessOf(payload);
+
+    if (harness === "codex") {
+        return CODEX_REMINDER;
+    }
+
+    return harness === "grok" ? GROK_REMINDER : CLAUDE_REMINDER;
 }
 
 if (import.meta.main) {

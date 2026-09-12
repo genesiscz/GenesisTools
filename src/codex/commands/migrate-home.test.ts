@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { type MigrateHomeInteraction, runMigrateHome } from "./migrate-home";
+import { Command } from "commander";
+import { type MigrateHomeInteraction, registerMigrateHomeCommand, runMigrateHome } from "./migrate-home";
 
 /**
  * The order of the two questions is load-bearing. `--archive-source` refuses against a source
@@ -36,6 +37,8 @@ function scripted(answers: boolean[]): MigrateHomeInteraction & { asked: string[
     return {
         asked,
         interactive: () => true,
+        // Never the real probe: it shells out to `lsof`, which starves under a parallel suite.
+        inspectOpenFiles: () => [],
         confirm(options) {
             asked.push(options.message);
             return Promise.resolve(answers[index++] ?? false);
@@ -72,5 +75,25 @@ describe("runMigrateHome question order", () => {
         );
 
         expect(interaction.asked).toEqual([expect.stringContaining("Copy 1 rollout(s)")]);
+    });
+});
+
+describe("the registered command", () => {
+    test("runs, because commander's second argument never lands on the interaction", async () => {
+        const root = mkdtempSync(join(tmpdir(), "codex-migrate-cli-register-"));
+        const program = new Command();
+        registerMigrateHomeCommand(program);
+        const previous = process.exitCode;
+
+        // A bare `.action(runMigrateHome)` handed the Command object to the injected interaction,
+        // and every invocation threw `interaction.interactive is not a function` on the FIRST line
+        // of the command. A destination that does not exist is refused before the run inspects
+        // anything, so this proves the wiring and never reaches a probe or the filesystem walk.
+        await expect(
+            program.parseAsync(["migrate-home", "--json", "--to", join(root, "absent-home")], { from: "user" })
+        ).resolves.toBeDefined();
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = previous;
     });
 });

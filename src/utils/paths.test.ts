@@ -361,14 +361,36 @@ describe("paths: tmpdir", () => {
         }
     });
 
-    it("defaults to /tmp on macOS (preferRoot implicit true)", () => {
+    it("defaults to /tmp on macOS (preferRoot implicit true)", async () => {
         restorePlatform();
 
         if (process.platform === "win32") {
             return;
         }
 
-        expect(tmpdir()).toBe("/tmp");
+        // The preload sets the sandbox marker for the whole run, so it has to come off to see
+        // what production does.
+        await env.testing.withOverrides({ GENESIS_TEST_TMP_ROOT: undefined }, () => {
+            expect(tmpdir()).toBe("/tmp");
+        });
+    });
+
+    it("the test sandbox root wins over /tmp, so a fixture goes with the run", async () => {
+        restorePlatform();
+
+        if (process.platform === "win32") {
+            return;
+        }
+
+        // Without this branch every fixture built through the repo helper landed in /tmp,
+        // outside the root the preload removes at exit: 1,018 `history-*` directories were
+        // still there on 2026-09-11. An invented value proves the variable is read at call
+        // time rather than captured when the module loaded.
+        await env.testing.withOverrides({ GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-pinned" }, () => {
+            expect(tmpdir()).toBe("/tmp/gt-test-tmp-pinned");
+            expect(tmpdir({ preferRoot: false })).toBe("/tmp/gt-test-tmp-pinned");
+            expect(tmpPath("history-repository-x")).toBe("/tmp/gt-test-tmp-pinned/history-repository-x");
+        });
     });
 
     it("preferRoot:false returns os.tmpdir() ($TMPDIR)", async () => {
@@ -385,8 +407,11 @@ describe("paths: tmpdir", () => {
         // hardcoded "/tmp". (Can't assert !startsWith("/tmp") here: mocking
         // process.platform doesn't change what node's os.tmpdir() returns, and
         // on a Linux test host that is genuinely "/tmp".)
-        expect(tmpdir()).toBe(realOsTmp);
-        expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
+        // The sandbox marker comes off so this reaches the platform branch at all.
+        await env.testing.withOverrides({ GENESIS_TEST_TMP_ROOT: undefined }, () => {
+            expect(tmpdir()).toBe(realOsTmp);
+            expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
+        });
     });
 
     it("tmpPath joins segments under the temp root", () => {
@@ -396,7 +421,9 @@ describe("paths: tmpdir", () => {
             return;
         }
 
-        expect(tmpPath("genesis", "x.db")).toBe(join("/tmp", "genesis", "x.db"));
+        // Against the resolved root, not a literal: inside a test run that root is the
+        // sandbox the preload removes at exit, which is the whole point of the branch.
+        expect(tmpPath("genesis", "x.db")).toBe(join(tmpdir(), "genesis", "x.db"));
     });
 
     it("makeTempDir creates a unique existing directory under the root", async () => {
@@ -411,9 +438,7 @@ describe("paths: tmpdir", () => {
         expect(existsSync(b)).toBe(true);
         expect(a).not.toBe(b);
 
-        if (process.platform !== "win32") {
-            expect(a.startsWith("/tmp/genesis-paths-test-")).toBe(true);
-        }
+        expect(a.startsWith(join(tmpdir(), "genesis-paths-test-"))).toBe(true);
     });
 });
 

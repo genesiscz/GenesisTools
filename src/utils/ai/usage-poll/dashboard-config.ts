@@ -41,7 +41,7 @@ type StoredConfig = Omit<Partial<UsageDashboardConfig>, "prominentBuckets" | "hi
 
 export const DEFAULT_PROMINENT_LIMITS: PerProviderKeys = {
     "anthropic-sub": ["five_hour", "seven_day", "seven_day_sonnet"],
-    "openai-sub": ["primary"],
+    "openai-sub": ["primary", "secondary"],
     "grok-sub": ["weekly"],
 };
 

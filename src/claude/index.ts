@@ -8,6 +8,7 @@ import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
+import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { Command } from "commander";
 import { registerCmuxCommand } from "./commands/cmux";
 import { registerCodeCommand } from "./commands/code";
@@ -34,7 +35,6 @@ import { registerTailCommand } from "./commands/tail";
 import { registerTeamsCommand } from "./commands/teams";
 import { registerTranscriptCommand } from "./commands/transcript";
 import { registerUsageCommand } from "./commands/usage";
-import { registerWarmupCommand } from "./commands/warmup";
 import { registerWhoCommand } from "./commands/who";
 import { registerWorkerCommand } from "./commands/worker";
 
@@ -62,7 +62,7 @@ registerInfoCommand(program);
 registerConfigCommand(program);
 registerDaemonCommand(program);
 registerMigrateCommand(program);
-registerWarmupCommand(program);
+registerWarmupCommand(program, { provider: "anthropic-sub", tool: "tools claude warmup" });
 registerMcpCommand(program);
 registerLoginLongCommand(program);
 registerLoginSecondaryCommand(program);

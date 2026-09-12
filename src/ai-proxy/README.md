@@ -85,7 +85,9 @@ How it works (`lib/anthropic-messages.ts`):
 - Upstreams that report no streaming usage (Grok drops `stream_options`) get an estimate rather
   than `0`, so Claude Code's context meter and auto-compact still work.
 
-Caveats: `count_tokens` is a ~4-chars-per-token estimate (no upstream here exposes a counter),
+Caveats: `count_tokens` is a ~4-chars-per-token estimate by choice (the anthropic-subscription
+upstream does expose a real counter; proxying to it would cost a round trip per turn and is
+untested against a subscription grant),
 thinking blocks carry no `signature`, and a model whose catalog entry says `supportsTools: false`
 cannot edit files — `tools claude proxy` warns before launching one.
 

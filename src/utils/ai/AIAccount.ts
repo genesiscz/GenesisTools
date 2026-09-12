@@ -57,7 +57,7 @@ export class AIAccount {
         return accounts.map((a) => new AIAccount(a.name, "anthropic-sub"));
     }
 
-    // ── Codex factories (stub) ──
+    // ── Codex factories ──
 
     /** Choose a specific OpenAI/Codex account by name. Synchronous — no I/O. */
     static chooseCodex(name: string, providerType: AIProvider = "openai-sub"): AIAccount {

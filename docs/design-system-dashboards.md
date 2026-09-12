@@ -142,9 +142,11 @@ beats reinventing it.
   Vite + TanStack Start history browser, own tsconfig (`@app/@ui` → repo).
   Functional, not part of the shared-shell contract; not drift-audited
   beyond the registry. Treat as standalone.
-- **debugging-master** — orphaned plain-Vite dashboard, **no CLI entry
-  point**, no shared system. Legacy; tracked in `@ui/dashboards` only so its
-  port (7244) participates in conflict detection.
+- **debugging-master** — plain-Vite dashboard outside the shared system, but
+  NOT orphaned: `tools debugging-master dashboard serve|build` is its entry
+  point (`src/debugging-master/index.ts:31`), and `tools task dashboard open`
+  shares it. Tracked in `@ui/dashboards` so its port (7244) participates in
+  conflict detection.
 
 ---
 
@@ -157,7 +159,7 @@ beats reinventing it.
 | youtube | C | own `Sidebar`+`Topbar` | shared `@ui/theme` (`.cyberpunk`) | yes (+ `youtube/*`) | no (correct consumer) | none |
 | dev-dashboard | D | own | private `--dd-*` | no | no (grandfathered) | basic-auth |
 | claude-history | E | own | own | partial | not audited | none |
-| debugging-master | E | own | own (plain) | no | n/a (orphaned) | none |
+| debugging-master | E | own | own (plain) | no | n/a (outside the shared system) | none |
 
 > Port / launch / strictPort details intentionally omitted here — single
 > source of truth is `src/utils/ui/dashboards.ts`.

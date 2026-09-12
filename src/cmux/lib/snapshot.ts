@@ -511,13 +511,16 @@ export function buildTerminalSurfaceSnapshot(input: {
         capture && entry.id
             ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
             : undefined;
-    // Always "claude": this id comes from the Claude cmux-refs journal and
-    // nowhere else. Typing it from the tab title made any pane whose title ends
-    // in the word "grok" (including a shell in a directory named grok) replay
-    // `grok -r <claude uuid>`, a session grok has never seen.
+    // The kind comes from the journal RECORD, never from the tab title: typing it from the
+    // title made any pane whose title ends in the word "grok" (including a shell in a
+    // directory named grok) replay `grok -r <claude uuid>`, a session grok has never seen.
+    //
+    // 🛑 It is not always "claude" either. The SessionStart hook is shared, so Codex sessions
+    // write to this journal too; hardcoding the kind replayed a Codex thread id as
+    // `claude -r <codex uuid>` — the same defect from the other direction.
     const preferred: ReplayCatalogSession | undefined = session
         ? {
-              kind: "claude",
+              kind: session.provider,
               sessionId: session.sessionId,
               cwd: cwd ?? "",
               title,

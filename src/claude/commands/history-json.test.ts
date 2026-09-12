@@ -4,7 +4,7 @@ import { Command } from "commander";
 import { registerHistoryCommand } from "./history";
 
 test("Claude empty history preserves the machine-readable array contract", async () => {
-    const output = spyOn(out, "println").mockImplementation(() => undefined);
+    const output = spyOn(out, "print").mockImplementation(() => undefined);
     try {
         const program = new Command().exitOverride();
         registerHistoryCommand(program);
@@ -15,7 +15,10 @@ test("Claude empty history preserves the machine-readable array contract", async
             ["history", "gt-absent-fixture-token", "--project", "gt-absent-fixture-project", "--format", "json"],
             { from: "user" }
         );
-        expect(output).toHaveBeenCalledWith("[]");
+        // `out.print` is the raw stdout path and carries its own newline; the door used
+        // `out.println("[]")` before it registered over the shared command. The BYTES on
+        // stdout are the same, which is what a machine reader sees.
+        expect(output).toHaveBeenCalledWith("[]\n");
     } finally {
         output.mockRestore();
     }

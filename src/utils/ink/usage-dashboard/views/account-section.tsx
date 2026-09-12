@@ -4,7 +4,8 @@ import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-mo
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { Box, Text } from "ink";
 import { UsageBar } from "../components/usage-bar";
-import { colorForWindow, colorForWindowKey, type UsageColor } from "../lib/colors";
+import { colorForWindow, colorForWindowKey, isResetImminent, type UsageColor } from "../lib/colors";
+import { windowTail } from "../lib/reset-countdown";
 
 export interface GenericAccountSectionProps {
     snapshot: AccountUsageSnapshot;
@@ -20,9 +21,12 @@ export interface GenericAccountSectionProps {
 const LABEL_WIDTH = 16;
 
 /**
- * Windows to render. A `prominent` list both selects and orders them: the compact views
- * show that subset only, which is what `prominentBuckets` means in the dashboard config.
- * An empty or omitted list shows everything the provider returned.
+ * Windows to render. A `prominent` list orders them and is what the compact views show
+ * while nothing else is spent, which is what `prominentBuckets` means in the dashboard
+ * config. A window that is not prominent but carries usage follows anyway, the rule the
+ * anthropic presenter always had: a per-model pool at 40% hidden behind a config default
+ * is the one row the reader needed (codex Spark, 2026-09-10). An empty or omitted list
+ * shows everything the provider returned.
  */
 export function orderWindows(limits: readonly LimitWindow[], prominent?: string[]): LimitWindow[] {
     if (!prominent || prominent.length === 0) {
@@ -41,6 +45,12 @@ export function orderWindows(limits: readonly LimitWindow[], prominent?: string[
         }
     }
 
+    for (const window of byKey.values()) {
+        if (window.percentUsed > 0) {
+            out.push(window);
+        }
+    }
+
     return out;
 }
 
@@ -48,6 +58,17 @@ export function orderWindows(limits: readonly LimitWindow[], prominent?: string[
  * The default per-account block: a title line and one bar per limit window. A provider
  * that wants more (the anthropic Overview) supplies `presenters.AccountSection` instead.
  */
+/**
+ * The title line as plain strings: the account NAME, the provider, then the plan once.
+ * Codex and grok store the plan as the account label too, so a title of
+ * `label ?? accountName` drew "pro  openai-sub  pro" and hid which account the block
+ * was (2026-09-10); the anthropic presenter always led with the name.
+ */
+export function accountHeaderParts(snapshot: AccountUsageSnapshot): string[] {
+    const plan = snapshot.plan?.name ?? snapshot.label;
+    return plan ? [snapshot.accountName, snapshot.provider, plan] : [snapshot.accountName, snapshot.provider];
+}
+
 export function GenericAccountSection({
     snapshot,
     width = 60,
@@ -56,6 +77,7 @@ export function GenericAccountSection({
     now = Date.now(),
 }: GenericAccountSectionProps) {
     const windows = orderWindows(snapshot.limits, prominent);
+    const header = accountHeaderParts(snapshot);
     const barWidth = Math.max(10, Math.min(30, width - LABEL_WIDTH - 12));
     // While the gate holds the account back nothing was requested this round, so the raw
     // error alone would read as a failure happening right now.
@@ -66,10 +88,9 @@ export function GenericAccountSection({
         <Box flexDirection="column" marginBottom={1}>
             <Box>
                 <Text bold color="cyan">
-                    {snapshot.label ?? snapshot.accountName}
+                    {header[0]}
                 </Text>
-                <Text dimColor>{`  ${snapshot.provider}`}</Text>
-                {snapshot.plan?.name ? <Text dimColor>{`  ${snapshot.plan.name}`}</Text> : null}
+                <Text dimColor>{`  ${header.slice(1).join("  ")}`}</Text>
                 {snapshot.stale ? (
                     <Text color="yellow">{`  ! stale ${formatRelativeTime(new Date(snapshot.stale.lastSuccessAt))}`}</Text>
                 ) : null}
@@ -90,6 +111,11 @@ export function GenericAccountSection({
             {windows.map((window) => {
                 const money = formatMoney(window);
                 const color = colorFor(window, now);
+                // The reset is the one number a spent window is really about, and this
+                // block drew none of it (2026-09-10): codex and grok accounts showed a
+                // percent and nothing else while the anthropic presenter counted down.
+                const tail = windowTail(window, now);
+                const imminent = isResetImminent(window, now);
 
                 return (
                     <Box key={window.key}>
@@ -99,6 +125,9 @@ export function GenericAccountSection({
                             {` ${percentOf(window).toFixed(1)}%`}
                         </Text>
                         {money ? <Text dimColor>{`  ${money}`}</Text> : null}
+                        {tail ? (
+                            <Text dimColor={!imminent} color={imminent ? "green" : undefined}>{`  ${tail}`}</Text>
+                        ) : null}
                     </Box>
                 );
             })}

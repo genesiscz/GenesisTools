@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerCodexLoginCommand } from "@app/codex/commands/login";
+import { registerAgentTool } from "@app/ai/commands/agent/register";
+import { codexSpec } from "@app/codex/lib/spec";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
@@ -80,7 +81,10 @@ afterEach(() => {
 function command(door: "codex" | "ai-codex" | "ai-accounts") {
     const program = new Command().exitOverride();
     if (door === "codex") {
-        registerCodexLoginCommand(program);
+        // The whole tool, not just its login: `tools codex login` is one verb that
+        // `registerAgentTool` produces from the spec, and the point of this door is that it
+        // reaches the same `runLogin` as the two below it.
+        registerAgentTool(program, codexSpec);
         return { program, args: ["login", "work"] };
     }
     if (door === "ai-codex") {

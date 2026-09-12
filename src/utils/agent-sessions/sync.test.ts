@@ -18,6 +18,7 @@ type ReaderState = {
     issues: Array<{ path: string; message: string }>;
     title: string;
     sources: NativeSessionSource<string>[];
+    displaced?: string[];
 };
 
 function createFixture(): {
@@ -57,7 +58,12 @@ function createFixture(): {
         kind: "fixture",
         parserVersion: "fixture-v1",
         roots: () => [root],
-        discover: async () => ({ sources: state.sources, issues: state.issues, completeRoots: state.completeRoots }),
+        discover: async () => ({
+            sources: state.sources,
+            issues: state.issues,
+            completeRoots: state.completeRoots,
+            ...(state.displaced === undefined ? {} : { displaced: state.displaced }),
+        }),
         readMetadata: async (current): Promise<HistoryMetadataRead> => {
             reads++;
             return {
@@ -221,6 +227,81 @@ test("sync removes a missing source only after an unfiltered complete root scan"
         const removed = await sync(fixture);
         expect(removed.report).toMatchObject({ sessions: 0, sources: 0, removed: 1 });
         expect(metadataTitle(fixture.repository)).toBeNull();
+    } finally {
+        fixture.db.close();
+    }
+});
+
+test("sync removes the row of a displaced copy even though its file still exists", async () => {
+    const fixture = createFixture();
+    try {
+        await sync(fixture);
+        expect(metadataTitle(fixture.repository)).toBe("First fixture title");
+
+        // The file stays on disk (a sidecar stub of a moved session); discovery dropped it for
+        // another copy, so the existence check alone would keep this row forever.
+        fixture.state.sources = [];
+        fixture.state.displaced = [fixture.filePath];
+        const removed = await sync(fixture);
+        expect(removed.report).toMatchObject({ sources: 0, removed: 1 });
+        expect(metadataTitle(fixture.repository)).toBeNull();
+    } finally {
+        fixture.db.close();
+    }
+});
+
+// The displaced cleanup runs the same generation guard as the deletion pass: an older sync
+// that learns of a displacement must not remove a row a newer sync has since re-indexed.
+test("an older sync's displaced cleanup leaves a row a newer generation re-indexed", async () => {
+    const fixture = createFixture();
+    let releaseOlder: (() => void) | undefined;
+    let olderDiscoverStarted: (() => void) | undefined;
+    const olderDiscover = new Promise<void>((resolve) => {
+        olderDiscoverStarted = resolve;
+    });
+    const olderRelease = new Promise<void>((resolve) => {
+        releaseOlder = resolve;
+    });
+    const originalDiscover = fixture.reader.discover;
+    let discoveries = 0;
+
+    try {
+        await sync(fixture);
+        expect(metadataTitle(fixture.repository)).toBe("First fixture title");
+
+        // One sync discovers twice: an observation pass, then the real pass after its
+        // generation is reserved. The older sync owns the first two calls; it pauses in
+        // the second, so its generation is already taken when the newer sync starts.
+        fixture.reader.discover = async (roots, options) => {
+            discoveries++;
+            if (discoveries > 2) {
+                return originalDiscover(roots, options);
+            }
+
+            if (discoveries === 2) {
+                olderDiscoverStarted?.();
+                await olderRelease;
+            }
+
+            return {
+                sources: [],
+                issues: [],
+                completeRoots: fixture.state.completeRoots,
+                displaced: [fixture.filePath],
+            };
+        };
+
+        const older = sync(fixture);
+        await olderDiscover;
+        fixture.state.title = "Newer fixture title";
+        writeFileSync(fixture.filePath, "second fixture source\n");
+        const newer = await sync(fixture);
+        releaseOlder?.();
+        const olderResult = await older;
+
+        expect(newer.report.parsed).toBe(1);
+        expect(olderResult.report.removed).toBe(0);
+        expect(metadataTitle(fixture.repository)).toBe("Newer fixture title");
     } finally {
         fixture.db.close();
     }
