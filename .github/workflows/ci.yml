@@ -272,6 +272,31 @@ jobs:
 
           grep "$marker" "$log" | tail -n 1
 
+      # A per-file runtime ceiling, so one slow test cannot eat the step budget unnoticed
+      # again. The budget has now been raised twice (4m, then 5m) because the suite grew
+      # into it, and a budget kill arrives disguised as the hang guard above. Linux only:
+      # the windows job runs the same files on a 7-minute budget and would only duplicate
+      # the finding.
+      #
+      # 🛑 An exit code above 1 is a BROKEN SCAN, not a pass, and is handled here rather
+      # than trusted: four guards in this repo have passed while enforcing nothing because
+      # the tool exited 127 and `if` read that as "no matches". The guard catches its own
+      # crashes and returns 1, so anything above 1 means it never even got that far.
+      - name: Per-file test runtime ceiling
+        if: always() && runner.os == 'Linux'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set +e
+          bun scripts/ci/test-runtime-guard.ts "test-${{ runner.os }}.log"
+          code=$?
+          set -e
+          if [ "$code" -gt 1 ]; then
+            echo "::error:: the runtime guard itself exited ${code}, so nothing was enforced. This is a broken scan, not a pass."
+            exit 1
+          fi
+          exit "$code"
+
       # Lint/typecheck — ubuntu only (redundant + slow on Windows), and only
       # after test discovery + Upload logs above, so they can't block the
       # test signal. NOT continue-on-error: a real lint/tsc failure should
