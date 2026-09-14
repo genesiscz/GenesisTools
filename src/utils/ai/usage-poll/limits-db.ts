@@ -326,9 +326,14 @@ export class UsageLimitsDb {
             latest &&
             latest.utilization === utilization &&
             normalizeNullableSeverity(latest.severity) === normalizeNullableSeverity(extras.severity) &&
-            resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt) &&
+            (utilization === 0 || resetsAtRoughlyEqual(latest.resetsAt, extras.resetsAt)) &&
             this.moneyUnchanged(latest, extras.money)
         ) {
+            // An idle window has no reset clock worth recording. Codex reports "now + window"
+            // for a 0% window, so `resetsAt` moved with every poll and each poll appended a
+            // +0.0 row (17 rows/hour per untouched account, 2026-09-10). Anthropic does the
+            // same in reverse: an idle window's `resets_at` flips between absent and a value.
+            // Once utilization is above 0 the clock is real again and its drift counts.
             return false;
         }
 

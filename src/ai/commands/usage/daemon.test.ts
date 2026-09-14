@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseInterval } from "@app/daemon/lib/interval";
 import type { RegisterTaskOptions } from "@app/daemon/lib/register";
 import {
@@ -136,4 +139,72 @@ describe("registerUsagePollTask", () => {
         expect(result.created).toBe(false);
         expect(registeredWith[0].overwrite).toBe(true);
     });
+});
+
+/**
+ * PR #368 review t5. The daemon runs a registered command as `sh -c <command>`
+ * (`src/daemon/lib/runner.ts`), so interpolating the Bun path and the poll script
+ * into it unquoted meant a checkout or a Bun install under a directory containing
+ * a space registered successfully and then failed on every single poll.
+ *
+ * The proof is the argv a REAL `sh` derives from the registered string, not the
+ * string itself: a string comparison would only restate the implementation.
+ */
+describe("the registered command survives paths with spaces", () => {
+    /** What `sh -c` makes of the registered command, without running bun. */
+    async function argvFrom(command: string): Promise<string[]> {
+        const proc = Bun.spawn(["sh", "-c", `printf '%s\\n' ${command}`], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: process.env,
+        });
+        const stdout = await new Response(proc.stdout).text();
+        await proc.exited;
+
+        // `printf '%s\n'` writes a trailing newline per argument, so only the last
+        // split element is dropped.
+        return stdout.split("\n").slice(0, -1);
+    }
+
+    test("a script path with a space stays one argument", async () => {
+        const { registry, registeredWith } = fakeRegistry([]);
+        const script = "/Users/dev/My Projects/GenesisTools/poll-daemon.ts";
+
+        await registerUsagePollTask({ ...ARGS, script, registry });
+
+        const argv = await argvFrom(registeredWith[0].command);
+        expect(argv.at(-1)).toBe(script);
+        expect(argv.at(-2)).toBe("run");
+    });
+
+    test("a script path holding shell metacharacters is not interpreted", async () => {
+        const { registry, registeredWith } = fakeRegistry([]);
+        const script = "/tmp/a b/$HOME;`whoami`/poll-daemon.ts";
+
+        await registerUsagePollTask({ ...ARGS, script, registry });
+
+        expect((await argvFrom(registeredWith[0].command)).at(-1)).toBe(script);
+    });
+
+    // NEGATIVE CONTROL: the command still RUNS. Quoting that broke the invocation
+    // would pass every assertion above while polling nothing.
+    test("the registered command actually executes the script", async () => {
+        const dir = join(mkdtempSync(join(tmpdir(), "gt-usage-daemon-")), "my scripts");
+        mkdirSync(dir, { recursive: true });
+        const script = join(dir, "poll-daemon.ts");
+        writeFileSync(script, 'console.log("POLLED-OK");\n');
+
+        const { registry, registeredWith } = fakeRegistry([]);
+        await registerUsagePollTask({ ...ARGS, script, registry });
+
+        const proc = Bun.spawn(["sh", "-c", registeredWith[0].command], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: process.env,
+        });
+        const stdout = await new Response(proc.stdout).text();
+
+        expect(await proc.exited).toBe(0);
+        expect(stdout).toContain("POLLED-OK");
+    }, 30_000);
 });

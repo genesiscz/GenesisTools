@@ -147,10 +147,12 @@ describe("overview sorting", () => {
 });
 
 describe("generic account section", () => {
-    test("prominent keys decide the order and drop the rest", () => {
-        const windows = orderWindows(codex("work", 40).limits, ["secondary"]);
-
-        expect(windows.map((w) => w.key)).toEqual(["secondary"]);
+    test("prominent keys lead in their own order; a spent window is never hidden, an idle one is", () => {
+        expect(orderWindows(codex("work", 40).limits, ["secondary"]).map((w) => w.key)).toEqual([
+            "secondary",
+            "primary",
+        ]);
+        expect(orderWindows(codex("work", 0, 0).limits, ["secondary"]).map((w) => w.key)).toEqual(["secondary"]);
     });
 
     test("no prominent list shows every window the provider returned", () => {

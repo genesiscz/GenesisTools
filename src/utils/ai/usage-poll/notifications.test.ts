@@ -38,6 +38,7 @@ function config(overrides: Partial<NotifyConfig> = {}): NotifyConfig {
 }
 
 const WINDOW = {
+    accountId: "acc_work",
     accountName: "work",
     key: "five_hour",
     kind: "session" as const,
@@ -153,6 +154,57 @@ describe("NotificationManager tracker state", () => {
         await manager.processUsage(WINDOW);
 
         expect(dispatched).toHaveLength(1);
+    });
+});
+
+/**
+ * PR #368 review t4. `AiConfigStore` permits duplicate names on purpose and hands out
+ * ids to tell them apart, but the tracker was keyed `name:key`, so two same-named codex
+ * accounts shared one threshold and one reset epoch: the second account's crossing was
+ * read as "already notified", and their different reset times reset each other's state.
+ */
+describe("NotificationManager keys trackers by the immutable account id", () => {
+    const OTHER = { ...WINDOW, accountId: "acc_work_two" };
+
+    test("two accounts sharing a name each get their own alert", async () => {
+        dispatched.length = 0;
+        const manager = new NotificationManager(config());
+
+        await manager.processUsage(WINDOW);
+        manager.markFirstPollDone();
+        await manager.processUsage(OTHER);
+
+        expect(dispatched).toHaveLength(2);
+    });
+
+    test("NEGATIVE CONTROL: one account crossing the same threshold twice still fires once", async () => {
+        dispatched.length = 0;
+        const manager = new NotificationManager(config());
+
+        await manager.processUsage(WINDOW);
+        manager.markFirstPollDone();
+        await manager.processUsage(WINDOW);
+
+        expect(dispatched).toHaveLength(1);
+    });
+
+    test("a namesake's window rollover does not clear this account's notified threshold", async () => {
+        dispatched.length = 0;
+        const manager = new NotificationManager(config());
+
+        // Both start on the same window, then only the namesake's window rolls over.
+        await manager.processUsage({ ...WINDOW, resetsAt: "2026-09-01T00:00:00.000Z" });
+        await manager.processUsage({ ...OTHER, resetsAt: "2026-09-01T00:00:00.000Z" });
+        manager.markFirstPollDone();
+        await manager.processUsage({ ...OTHER, resetsAt: "2026-09-08T00:00:00.000Z" });
+
+        // Three so far: two first-poll alerts, plus the namesake's fresh window.
+        expect(dispatched).toHaveLength(3);
+
+        // The first account never moved, so it must stay silent.
+        await manager.processUsage({ ...WINDOW, resetsAt: "2026-09-01T00:00:00.000Z" });
+
+        expect(dispatched).toHaveLength(3);
     });
 });
 

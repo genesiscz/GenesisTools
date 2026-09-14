@@ -1,6 +1,8 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir as realTmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { skip } from "@genesiscz/utils/test/skip";
 
@@ -361,14 +363,36 @@ describe("paths: tmpdir", () => {
         }
     });
 
-    it("defaults to /tmp on macOS (preferRoot implicit true)", () => {
+    it("defaults to /tmp on macOS (preferRoot implicit true)", async () => {
         restorePlatform();
 
         if (process.platform === "win32") {
             return;
         }
 
-        expect(tmpdir()).toBe("/tmp");
+        // The preload sets the sandbox marker for the whole run, so it has to come off to see
+        // what production does.
+        await env.testing.withOverrides({ GENESIS_TEST_TMP_ROOT: undefined }, () => {
+            expect(tmpdir()).toBe("/tmp");
+        });
+    });
+
+    it("the test sandbox root wins over /tmp, so a fixture goes with the run", async () => {
+        restorePlatform();
+
+        if (process.platform === "win32") {
+            return;
+        }
+
+        // Without this branch every fixture built through the repo helper landed in /tmp,
+        // outside the root the preload removes at exit: 1,018 `history-*` directories were
+        // still there on 2026-09-11. An invented value proves the variable is read at call
+        // time rather than captured when the module loaded.
+        await env.testing.withOverrides({ GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-pinned" }, () => {
+            expect(tmpdir()).toBe("/tmp/gt-test-tmp-pinned");
+            expect(tmpdir({ preferRoot: false })).toBe("/tmp/gt-test-tmp-pinned");
+            expect(tmpPath("history-repository-x")).toBe("/tmp/gt-test-tmp-pinned/history-repository-x");
+        });
     });
 
     it("preferRoot:false returns os.tmpdir() ($TMPDIR)", async () => {
@@ -385,8 +409,11 @@ describe("paths: tmpdir", () => {
         // hardcoded "/tmp". (Can't assert !startsWith("/tmp") here: mocking
         // process.platform doesn't change what node's os.tmpdir() returns, and
         // on a Linux test host that is genuinely "/tmp".)
-        expect(tmpdir()).toBe(realOsTmp);
-        expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
+        // The sandbox marker comes off so this reaches the platform branch at all.
+        await env.testing.withOverrides({ GENESIS_TEST_TMP_ROOT: undefined }, () => {
+            expect(tmpdir()).toBe(realOsTmp);
+            expect(tmpdir({ preferRoot: true })).toBe(realOsTmp);
+        });
     });
 
     it("tmpPath joins segments under the temp root", () => {
@@ -396,7 +423,9 @@ describe("paths: tmpdir", () => {
             return;
         }
 
-        expect(tmpPath("genesis", "x.db")).toBe(join("/tmp", "genesis", "x.db"));
+        // Against the resolved root, not a literal: inside a test run that root is the
+        // sandbox the preload removes at exit, which is the whole point of the branch.
+        expect(tmpPath("genesis", "x.db")).toBe(join(tmpdir(), "genesis", "x.db"));
     });
 
     it("makeTempDir creates a unique existing directory under the root", async () => {
@@ -411,9 +440,7 @@ describe("paths: tmpdir", () => {
         expect(existsSync(b)).toBe(true);
         expect(a).not.toBe(b);
 
-        if (process.platform !== "win32") {
-            expect(a.startsWith("/tmp/genesis-paths-test-")).toBe(true);
-        }
+        expect(a.startsWith(join(tmpdir(), "genesis-paths-test-"))).toBe(true);
     });
 });
 
@@ -443,5 +470,91 @@ describe("paths: toPosixPath", () => {
     it("handles empty and separatorless strings", () => {
         expect(toPosixPath("")).toBe("");
         expect(toPosixPath("file.ts")).toBe("file.ts");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// canonicalPath — both branches must return the SAME spelling
+// ---------------------------------------------------------------------------
+
+describe("paths: canonicalPath", () => {
+    let canonicalPath: typeof import("./paths").canonicalPath;
+    let root = "";
+
+    beforeEach(async () => {
+        canonicalPath = (await import("./paths")).canonicalPath;
+        root = mkdtempSync(join(realTmpdir(), "canonical-path-"));
+        mkdirSync(join(root, "real"));
+    });
+
+    afterEach(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    it("gives an existing directory one spelling whatever the caller typed", () => {
+        const plain = canonicalPath(join(root, "real"));
+
+        expect(canonicalPath(`${join(root, "real")}/`)).toBe(plain);
+        expect(canonicalPath(`${root}/real/../real`)).toBe(plain);
+    });
+
+    it("strips a trailing separator from a path that does not exist yet", () => {
+        // The doc's own example: CLAUDE_CONFIG_DIR="~/.claude/" against join(home, ".claude").
+        const missing = join(root, "not-created");
+
+        expect(canonicalPath(`${missing}/`)).toBe(canonicalPath(missing));
+    });
+
+    it("collapses a `..` segment in a path that does not exist yet", () => {
+        expect(canonicalPath(`${root}/real/../not-created`)).toBe(canonicalPath(join(root, "not-created")));
+    });
+
+    it("gives an existing directory and a missing sibling the same parent spelling", () => {
+        // On macOS /tmp is a symlink to /private/tmp, so a realpath'd existing path and a raw
+        // missing one under the SAME root used to disagree on every character of the prefix.
+        const existing = canonicalPath(join(root, "real"));
+        const missing = canonicalPath(join(root, "not-created"));
+
+        expect(dirname(missing)).toBe(dirname(existing));
+    });
+
+    it("NEGATIVE CONTROL: two genuinely different directories still compare unequal", () => {
+        mkdirSync(join(root, "other"));
+
+        expect(canonicalPath(join(root, "other"))).not.toBe(canonicalPath(join(root, "real")));
+    });
+
+    it("does not throw when a path component is a file (ENOTDIR)", () => {
+        // `select-resume.ts` runs this over every indexed session, so one unreadable sourceHome
+        // must not abort the whole listing with a raw errno.
+        writeFileSync(join(root, "a-file"), "x");
+
+        expect(() => canonicalPath(join(root, "a-file", "child"))).not.toThrow();
+    });
+
+    describe.skipIf(skip.onWindows)("POSIX-only shapes", () => {
+        it("resolves a symlinked ancestor of a path that does not exist yet", () => {
+            symlinkSync(join(root, "real"), join(root, "link"));
+
+            expect(canonicalPath(join(root, "link", "not-created"))).toBe(
+                canonicalPath(join(root, "real", "not-created"))
+            );
+        });
+
+        it("does not throw when an ancestor cannot be traversed (EACCES)", () => {
+            if (process.getuid?.() === 0) {
+                return; // root traverses everything, so the errno never happens.
+            }
+
+            const locked = join(root, "locked");
+            mkdirSync(join(locked, "inner"), { recursive: true });
+            chmodSync(locked, 0o000);
+
+            try {
+                expect(() => canonicalPath(join(locked, "inner"))).not.toThrow();
+            } finally {
+                chmodSync(locked, 0o700);
+            }
+        });
     });
 });

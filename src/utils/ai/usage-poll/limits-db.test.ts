@@ -236,6 +236,45 @@ describe("UsageLimitsDb", () => {
         expect(db.getSnapshots("work", "seven_day", 60)).toHaveLength(1);
     });
 
+    test("recordIfChangedV2 ignores a moving resets_at while the window is idle (0%)", () => {
+        // Codex reports resets_at = poll time + window for an untouched window, so it moves
+        // by the poll interval every time; anthropic flips it between null and a value.
+        db.recordSnapshotV2("work", "primary", 0, recentTimestamp(5), {
+            resetsAt: "2026-09-10T19:20:22.000Z",
+            severity: null,
+            scopeModel: null,
+        });
+
+        expect(
+            db.recordIfChangedV2("work", "primary", 0, {
+                resetsAt: "2026-09-10T19:24:55.000Z",
+                severity: null,
+                scopeModel: null,
+            })
+        ).toBe(false);
+        expect(db.recordIfChangedV2("work", "primary", 0, { resetsAt: null, severity: null, scopeModel: null })).toBe(
+            false
+        );
+        expect(db.getSnapshots("work", "primary", 60)).toHaveLength(1);
+    });
+
+    test("recordIfChangedV2 still records a moving resets_at once the window is in use", () => {
+        db.recordSnapshotV2("work", "primary", 1, recentTimestamp(5), {
+            resetsAt: "2026-09-10T19:20:22.000Z",
+            severity: null,
+            scopeModel: null,
+        });
+
+        expect(
+            db.recordIfChangedV2("work", "primary", 1, {
+                resetsAt: "2026-09-10T19:24:55.000Z",
+                severity: null,
+                scopeModel: null,
+            })
+        ).toBe(true);
+        expect(db.getSnapshots("work", "primary", 60)).toHaveLength(2);
+    });
+
     test("recordIfChangedV2 inserts when resets_at changes well beyond jitter tolerance", () => {
         db.recordSnapshotV2("work", "seven_day", 100, recentTimestamp(5), {
             resetsAt: "2026-07-02T19:00:00.000Z",

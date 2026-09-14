@@ -37,7 +37,7 @@ describe("loadDashboardConfig", () => {
         const config = await loadDashboardConfig();
 
         expect(prominentFor(config, "anthropic-sub")).toEqual(["five_hour", "seven_day", "seven_day_sonnet"]);
-        expect(prominentFor(config, "openai-sub")).toEqual(["primary"]);
+        expect(prominentFor(config, "openai-sub")).toEqual(["primary", "secondary"]);
         expect(prominentFor(config, "grok-sub")).toEqual(["weekly"]);
         expect(hiddenFor(config, "openai-sub")).toEqual([]);
     });

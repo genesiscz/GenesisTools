@@ -32,6 +32,9 @@ describe("notifiableWindows", () => {
     test("flattens every window of a healthy snapshot", () => {
         expect(notifiableWindows([snapshot()])).toEqual([
             {
+                // The immutable id rides along: the notification tracker keys on it,
+                // because two accounts may legitimately share a name (PR #368 t4).
+                accountId: "acc_work",
                 accountName: "work",
                 key: "five_hour",
                 kind: "session",

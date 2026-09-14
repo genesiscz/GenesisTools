@@ -4,9 +4,10 @@
  * that work correctly on both Unix and Windows.
  */
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { homedir, tmpdir as osTmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { env } from "./env.client";
 import { SafeJSON } from "./json";
 import { collapsePathForDisplay as collapsePathHeuristic } from "./paths.client";
 
@@ -60,6 +61,64 @@ export function expandPath(p: string): string {
     }
 
     return p;
+}
+
+/**
+ * `realpath` of the deepest ancestor that resolves, with the unresolvable tail appended.
+ *
+ * A path that does not exist yet still has to canonicalize, and returning it untouched is not
+ * good enough: `~/.claude/` under a symlinked home would then compare unequal to the same
+ * directory once it exists, which is the whole failure {@link canonicalPath} removes. Walking
+ * up gives the missing path the SAME prefix its existing siblings get.
+ *
+ * Every errno stops the walk, not just ENOENT. This function's only job is to produce a
+ * comparable spelling; a caller asking "are these the same home?" over a list of rows can do
+ * nothing with an EACCES or ENOTDIR thrown from the middle of it except fail the whole list.
+ * A path nothing in the chain resolves comes back resolved-but-not-realpath'd, which every
+ * other unreadable path under the same root also does, so they still compare consistently.
+ */
+function realpathDeepest(absolute: string): string {
+    const tail: string[] = [];
+    let current = absolute;
+
+    for (;;) {
+        try {
+            const resolved = realpathSync(current);
+
+            return tail.length > 0 ? join(resolved, ...tail) : resolved;
+        } catch {
+            // Unreadable for any reason — try this component's parent. See the note above:
+            // throwing here would abort a caller that is only comparing strings.
+        }
+
+        const parent = dirname(current);
+
+        if (parent === current) {
+            return absolute;
+        }
+
+        tail.unshift(basename(current));
+        current = parent;
+    }
+}
+
+/**
+ * The one spelling of a directory that two paths can be compared on.
+ *
+ * `~`, a trailing slash, a `..` segment, a relative value and a symlink all name the same home
+ * while comparing unequal as strings. Anything asking "are these the same home?" must go through
+ * this, or the comparison silently answers no and whatever it guarded becomes a no-op.
+ *
+ * 🛑 Every input gets the SAME normalization, whether or not it exists and whether or not it is
+ * readable. Two values this returns are always comparable with each other. An earlier version
+ * returned the merely-expanded string for a missing path and threw on any other errno, so a
+ * trailing slash, a symlinked ancestor and `/tmp` vs `/private/tmp` all survived on that branch
+ * and the two branches could never match — the no-op this function exists to prevent.
+ */
+export function canonicalPath(p: string): string {
+    // `resolve` is what makes the branches comparable: it makes the value absolute, collapses
+    // `.` and `..`, and drops a trailing separator. `expandPath` does none of those.
+    return realpathDeepest(resolve(expandPath(p)));
 }
 
 /**
@@ -174,6 +233,17 @@ export interface TmpdirOptions {
  */
 export function tmpdir(options: TmpdirOptions = {}): string {
     const { preferRoot = true } = options;
+
+    // Inside a test run this wins over both branches below. The preload gives each test
+    // process a temp root it removes at exit by pointing TMPDIR at it, but the `/tmp` branch
+    // reads no environment at all, so every fixture built through this helper walked out of
+    // that sandbox and stayed. Measured 2026-09-11: 1,018 `history-*` directories left in
+    // /private/tmp, which macOS removes only once they are EMPTY and three days old.
+    const sandbox = env.test.getTmpRoot();
+
+    if (sandbox) {
+        return sandbox;
+    }
 
     if (preferRoot && process.platform !== "win32") {
         return "/tmp";

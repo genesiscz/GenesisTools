@@ -55,6 +55,15 @@ export const env = {
         getRoot: () => getTrimmed("GENESIS_TOOLS_ROOT"),
     },
 
+    test: {
+        /**
+         * The per-process temp root `src/utils/bun/preload-test-tmpdir.ts` creates and removes
+         * at exit. Set only inside a test run, and read by `paths.tmpdir()` so a fixture built
+         * through the repo helper lands inside the sandbox instead of in `/tmp`.
+         */
+        getTmpRoot: () => getTrimmed("GENESIS_TEST_TMP_ROOT"),
+    },
+
     youtube: {
         getGitSha: () => getTrimmed("YOUTUBE_GIT_SHA"),
         getUiPort: () => getTrimmed("YOUTUBE_UI_PORT"),

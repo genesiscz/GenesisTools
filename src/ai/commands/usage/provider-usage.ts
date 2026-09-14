@@ -5,31 +5,43 @@ import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
-interface GrokUsageOptions {
+/**
+ * `tools <agent> usage`: the shared dashboard pinned to one provider.
+ *
+ * `src/codex/commands/usage.tsx` and `src/grok/commands/usage.tsx` were byte-identical apart
+ * from the provider id, the tool name in the `--range` hint, and the one-line description.
+ * Those three are the arguments now. The provider-neutral `tools ai usage` keeps its own
+ * richer command: it takes `--provider`, `--no-tui` and `--scored`, which a pinned door cannot.
+ */
+export interface ProviderUsageOptions {
+    /** Plugin id, e.g. `openai-sub`. */
+    provider: string;
+    /** `tools codex usage`, for the enum-flag hint. */
+    tool: string;
+    description: string;
+}
+
+interface UsageFlags {
     account?: string[];
     range?: string | boolean;
     json?: boolean;
     fresh?: boolean;
 }
 
-/**
- * `tools grok usage` is the shared dashboard pinned to `grok-sub`. xAI reports one monthly
- * billing credit rather than percentage windows, so the generic block draws it as money.
- */
-export function registerUsageCommand(program: Command): void {
-    program
+export function registerProviderUsageCommand(program: Command, options: ProviderUsageOptions): Command {
+    return program
         .command("usage")
-        .description("Grok monthly billing credit (interactive TUI)")
+        .description(options.description)
         .option("--account <name...>", "Limit to these account names")
         .option("--range [value]", `History range: ${RANGE_VALUES.join(" | ")}`)
         .option("--json", "Output the snapshots as JSON instead of opening the TUI")
         .option("--fresh", "Force a live poll, bypassing the shared cache")
-        .action(async (opts: GrokUsageOptions) => {
-            const range = resolveRangeFlag(opts.range);
+        .action(async (flags: UsageFlags) => {
+            const range = resolveRangeFlag(flags.range);
 
             if (range.status === "invalid") {
                 out.printlnErr(
-                    suggestEnumFlag("tools grok usage", "--range", RANGE_VALUES, {
+                    suggestEnumFlag(options.tool, "--range", RANGE_VALUES, {
                         subcommand: ["usage"],
                         ...(range.given === undefined ? {} : { given: range.given }),
                     })
@@ -38,11 +50,11 @@ export function registerUsageCommand(program: Command): void {
                 return;
             }
 
-            if (opts.json) {
+            if (flags.json) {
                 const accounts = await pollAccounts({
-                    providers: ["grok-sub"],
-                    ...(opts.account === undefined ? {} : { accountFilter: opts.account }),
-                    ...(opts.fresh === undefined ? {} : { force: opts.fresh }),
+                    providers: [options.provider],
+                    ...(flags.account === undefined ? {} : { accountFilter: flags.account }),
+                    ...(flags.fresh === undefined ? {} : { force: flags.fresh }),
                 });
                 out.result({ fetchedAt: new Date().toISOString(), accounts });
                 await out.flush();
@@ -51,8 +63,8 @@ export function registerUsageCommand(program: Command): void {
 
             const { renderAiUsageTui } = await import("@app/ai/commands/usage/render-tui");
             await renderAiUsageTui({
-                providers: ["grok-sub"],
-                ...(opts.account === undefined ? {} : { accountFilter: opts.account }),
+                providers: [options.provider],
+                ...(flags.account === undefined ? {} : { accountFilter: flags.account }),
                 ...(range.status === "ok" ? { range: range.range } : {}),
             });
         });
