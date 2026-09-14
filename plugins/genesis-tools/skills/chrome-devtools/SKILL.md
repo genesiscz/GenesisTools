@@ -1,6 +1,6 @@
 ---
 name: chrome-devtools
-description: Drive a REAL running browser (Brave/Chrome) over the Chrome DevTools Protocol via `tools chrome-devtools` to debug things that only break in the user's own browser — auth/SSO redirect loops, OAuth and OIDC failures, "works in incognito but not for me", cookie/session corruption, stuck SPAs, CORS errors, and captured .har files. Use this WHENEVER the user says "hook into my browser", "use chrome devtools", "attach to my brave", "why does this loop", "I get redirected forever", "login fails only for me", "unknown_error", "check my cookies/localStorage/session", "trace the redirects", "read this HAR", "download the HAR", or shares a URL that misbehaves while logged in. Also use it PROACTIVELY when a bug reproduces for the user but not on a clean profile — the differential (broken browser vs fresh profile) is the fastest root cause there is. Covers launching a CDP endpoint, retroactive HAR capture, live channel following, CDP scripting, and HAR analysis via tools har-analyzer.
+description: Drive a REAL running browser (Brave/Chrome) over the Chrome DevTools Protocol via `tools chrome-devtools` to debug things that only break in the user's own browser — auth/SSO redirect loops, OAuth and OIDC failures, "works in incognito but not for me", cookie/session corruption, stuck SPAs, CORS errors, and captured .har files. Use this WHENEVER the user says "hook into my browser", "use chrome devtools", "attach to my brave", "why does this loop", "I get redirected forever", "login fails only for me", "unknown_error", "check my cookies/localStorage/session", "trace the redirects", "read this HAR", "download the HAR", or shares a URL that misbehaves while logged in. Also use it when the user's OWN Network tab shows requests no other log has — "my network tab has 600 rows but you see nothing", "read what's already in my devtools", "I had devtools open the whole time" — that history lives only in the panel's NetworkLog and `net-panel` is the only way to read it. Also use it PROACTIVELY when a bug reproduces for the user but not on a clean profile — the differential (broken browser vs fresh profile) is the fastest root cause there is. Covers launching a CDP endpoint, retroactive HAR capture, live channel following, CDP scripting, and HAR analysis via tools har-analyzer.
 ---
 
 # Chrome DevTools debugging harness
@@ -20,11 +20,47 @@ is relaunched with the flag.
 ```bash
 # A) reuse the real profile — restart quits, waits for exit, then relaunches with the flag
 tools chrome-devtools restart --browser brave --port 9222
-# if quit sticks: add --force (kill -KILL). Ask first. Tabs usually restore.
 
 # B) throwaway profile alongside their browser — nothing of theirs touched, but they must log in again
 tools chrome-devtools open --browser chrome --port 9223 --fresh <url>
 ```
+
+### 🛑 A slow quit is NOT a failed quit
+
+A page with a `beforeunload` handler (a live streaming/testing session is the classic one)
+makes the browser ask the user to confirm before it closes. That prompt can hold the process
+for tens of seconds. `restart` polls for real exit for **45s** and reports why the wait is
+happening; only past that deadline does it mention `--force`.
+
+If you see it still waiting, **look at the browser and answer the prompt**. That is the fix.
+`--force` is `kill -KILL` on a browser that is already shutting down cleanly, and it costs
+the session restore that was the whole reason for choosing option A.
+
+### The profile picker, which used to eat the other half of the restart
+
+On a multi-profile browser a plain relaunch opens **"Who's using Brave?"** beside the real
+window, so `restart` handed back a browser the user still had to finish launching by hand.
+`restart` now reads `profile.last_used` from the browser's own `Local State` and passes
+`--profile-directory=<dir>`, so no picker appears and no Accessibility grant is needed.
+Override with `--profile-directory 'Profile 1'`. A `last_used` naming a profile that is not
+on disk is refused rather than passed on, because an unknown name makes the browser create a
+brand new empty profile — which looks exactly like the logged-out browser you were avoiding.
+
+### What a verified-good restart looks like
+
+Every run now ends with its own end-state block, so nobody has to reach for `curl` or an
+AppleScript window walk:
+
+```
+up: Brave/152.1.94.117 on 9222 (3 pages)
+verify: port 9222 answers (Brave/152.1.94.117) · 3 page target(s)
+verify: no profile picker is open.
+```
+
+A picker still open is reported as such, with a copy-pasteable dismissal, and the verb exits
+non-zero — a browser behind a picker is not ready to drive, and must never be reported as a
+success. A tab list that did not answer exits non-zero too: the picker check never ran on
+that path, so "no picker" would be a claim nothing checked.
 
 Ask which before quitting anything. Losing their tab set without warning is the one thing
 they will be annoyed about. Do not `osascript quit` + `open -a`: `open -a` reuses the live
@@ -62,6 +98,69 @@ next commands. That recorder is what makes retroactive HAR possible.
   `--sanitize` redacts secrets; `--analyze` chains into `tools har-analyzer load`.
 
 The old `watch` verb is gone; running it explains this split.
+
+## 🛑 THREE network logs exist. Pick by what you need to SEE, not by habit
+
+A request lives in whichever log was already collecting when it happened. Nothing
+backfills: a second `Network.enable` does not replay history, and rows the panel holds never
+existed as events in the other two. Reach for the wrong one and you conclude "there is no
+traffic" about a browser that recorded 600 requests.
+
+| Log | Verb | Covers | Blind to |
+|---|---|---|---|
+| Recorder buffer | `har --last 30m` | everything since **this tool's** recorder started, all tabs, rolling 4h | anything before `attach` ran |
+| MCP attach log | `mcp__chrome-devtools-mcp__list_network_requests` | everything since **that MCP session** attached, in its own browser | the user's browser; anything before its attach |
+| Panel `NetworkLog` | `net-panel` | what the user's **own open Network tab** is showing, back to when they opened it with Preserve log | anything with DevTools closed; headers and bodies (never collected) |
+
+**The symptom that names the third one:** the user's Network tab visibly lists hundreds of
+rows, and `list_network_requests` comes back empty, or `har` dumps only the last minute.
+Observed live: the panel held **631** rows while the MCP list returned nothing. Only
+`net-panel` can read those, because DevTools collected them into its own frontend and no
+CDP client was attached at the time.
+
+```bash
+# --match names the INSPECTED tab; the DevTools window is then resolved by TITLE
+tools chrome-devtools net-panel --match app.example.com --summary
+tools chrome-devtools net-panel --match app.example.com -o /tmp/panel.har
+```
+
+Use it when the user already had DevTools open through the bug and you arrived afterwards.
+Do NOT reload their tab to "get a proper capture": the reload destroys exactly the history
+you came for. If DevTools was never open, this log does not exist — say so and start a
+recorder for the next reproduction instead.
+
+⚠️ **The title-match trap.** Every open inspector reports the same URL,
+`devtools://devtools/bundled/devtools_app.html`, so picking by URL grabs whichever happens
+to be first and silently dumps a DIFFERENT tab's log. The window title (`DevTools - <host><path>`)
+is the only discriminator, and on Brave these targets report `type: "page"`, so type cannot
+classify them either. `--match` on a page substring walks to that page's inspector by title;
+`--match 'DevTools - app.example.com'` names the inspector outright. When the match is
+ambiguous the verb refuses and lists the candidates rather than guessing — on either side
+of the walk: several matching TABS, or one tab that several inspectors tie to. The `--match`
+it prints names the candidate that resolves, not merely the first one, because one candidate
+is routinely a substring of another.
+
+⚠️ **One inspector on a SHORTER path is accepted, with a warning.** DevTools truncates a long
+title, and a truncated title is a prefix of the page subject — so a lone prefix candidate has
+to stay usable. An inspector open on the site ROOT looks identical, though, so if you see
+`'DevTools - <host>' does not name <url> exactly`, the panel you are about to read may belong
+to a different tab. Check the inspector named in the output, and open DevTools on the tab you
+actually want rather than trusting the fallback.
+
+**Sanitized by default, and it cannot leak headers.** Summary URLs are cut to
+origin+pathname, so an OIDC `?code=` or an implicit-flow `#access_token=` never reaches
+stdout. `-o file.har` carries no headers, no cookies and no POST bodies at all — the eval
+never collects them, so no flag can make them appear. `--full-urls` keeps query strings and
+runs them through the shared HAR sanitizer instead. It does NOT widen `data:` or
+`javascript:` urls: those are their own payload, the sanitizer only redacts `?name=value`
+pairs and the fragment, so they stay reduced to a scheme marker under every flag.
+
+It is read-only: one `Runtime.evaluate` against the DevTools frontend. No reload, no
+navigate, no `Network.enable`, no panel switching. Running it cannot change what the user
+is looking at.
+
+> Not to be confused with `references/net-panel-symptoms.md`, which is about reading the
+> panel's columns BY EYE. This verb dumps the same panel's log programmatically.
 
 `/tmp/...` paths in the examples here are the POSIX default. On Windows the tool uses
 `%TEMP%` — trust the paths the tool itself prints (guidance, doctor, `--help`) over
@@ -112,6 +211,7 @@ The tool runs on macOS, Linux and Windows; on Windows the capture root is
 | Raw redirect chain with `Location` + `Set-Cookie` | `follow --channels redirect,cookie --match <substr>` (live) or `har --last 10m` (retroactive) |
 | Quick one-tab docs+redirect trace to a file | `trace --seconds 90 --match <substr> --out /tmp/t.log` |
 | HAR of what already happened | `har --last 30m -o /tmp/cdp.har` |
+| Their Network tab shows hundreds of rows that no other log has | `net-panel --match <substr> --summary` (see the three-logs table above) |
 | HAR of a fresh load + bodies | `har --now --reload -o /tmp/cdp.har` |
 | One-shot per-request assertion table (method/status/sizes/auth scheme) | `har --last 10m --match token --summary` |
 | Read page state | `eval '() => ({url: location.href, ls: {...localStorage}, ss: {...sessionStorage}})'` — quoting trouble or a hook blocking inline eval? write the JS to a file and use `eval --file <path>` |
