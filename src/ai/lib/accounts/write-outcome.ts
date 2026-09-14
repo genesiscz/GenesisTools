@@ -210,20 +210,29 @@ export interface WriteLoginOutcomeInput {
 }
 
 /**
+ * Undo whatever the flow already wrote outside the config, for a login that will
+ * not be committed.
+ *
+ * Exported because the rollback obligation starts the moment the flow returns,
+ * which is BEFORE this module is reached: `runLogin` re-reads the config, may
+ * prompt for a name and may throw on an ambiguous one, all with the vendor's
+ * `auth.json` already replaced (PR #368 review t1). It owns the window up to the
+ * `writeLoginOutcome` call; everything from there on is owned here.
+ *
  * A rollback that fails must not turn a clean refusal into a crash: the config
  * was NOT written either way, so the account is still consistent. Say what was
  * left behind rather than swallowing it.
  */
-async function rollbackOutcome(outcome: LoginOutcome): Promise<void> {
+export async function rollbackLoginOutcome(outcome: LoginOutcome): Promise<void> {
     if (!outcome.rollback) {
         return;
     }
 
     try {
         await outcome.rollback();
-        logger.info({ provider: outcome.provider }, "identity refused: rolled back the flow's on-disk write");
+        logger.info({ provider: outcome.provider }, "login not committed: rolled back the flow's on-disk write");
     } catch (err) {
-        logger.warn({ err, provider: outcome.provider }, "identity refused but the rollback failed");
+        logger.warn({ err, provider: outcome.provider }, "login not committed but the rollback failed");
         out.printlnErr(
             pc.yellow("  Could not undo the credential file this login wrote — check it before using the account.")
         );
@@ -242,7 +251,7 @@ export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<
 
         if (!named.ok) {
             out.printlnErr(pc.red(named.reason));
-            await rollbackOutcome(input.outcome);
+            await rollbackLoginOutcome(input.outcome);
             return null;
         }
     }
@@ -260,7 +269,7 @@ export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<
         // Refusing the CONFIG write while leaving that file replaced is the worst
         // of both: the account still names the old identity while the resolver
         // reads the new credential (PR #360 review t17).
-        await rollbackOutcome(input.outcome);
+        await rollbackLoginOutcome(input.outcome);
         return null;
     }
 
@@ -273,18 +282,32 @@ export async function writeLoginOutcome(input: WriteLoginOutcomeInput): Promise<
 
     if (!ownership.ok) {
         out.printlnErr(pc.red(ownership.reason));
-        await rollbackOutcome(input.outcome);
+        await rollbackLoginOutcome(input.outcome);
         return null;
     }
 
     // By id whenever the caller resolved one: the secondary flow and a re-login
     // both start from an existing entry, and a name alone picks the first
     // namesake across every provider (PR #360 review t4).
-    return applyLoginOutcome({
-        name: input.name,
-        id: input.account?.id,
-        outcome: input.outcome,
-        apps: input.apps,
-        defaultForApps: input.defaultForApps,
-    });
+    //
+    // `guardedAgainst` carries the entry all three policies above were decided
+    // against — or null, meaning they concluded there was none. The write
+    // re-checks it inside the config lock and refuses when it no longer holds,
+    // because none of these policies can run there: they prompt (PR #368 t2).
+    try {
+        return await applyLoginOutcome({
+            name: input.name,
+            id: input.account?.id,
+            guardedAgainst: input.account ?? null,
+            outcome: input.outcome,
+            apps: input.apps,
+            defaultForApps: input.defaultForApps,
+        });
+    } catch (err) {
+        // The write refused inside the lock (the account was deleted, or another
+        // login claimed the name while this flow ran). Nothing landed in the
+        // config, so the vendor file this flow replaced has to go back too.
+        await rollbackLoginOutcome(input.outcome);
+        throw err;
+    }
 }

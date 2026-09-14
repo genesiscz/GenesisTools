@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { AccountChangedError } from "@genesiscz/utils/ai/config/account-ops";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type {
     AccountFeatures,
@@ -18,7 +19,7 @@ import { out } from "@genesiscz/utils/logger";
 import { expandPath } from "@genesiscz/utils/paths";
 import pc from "picocolors";
 import { resolveAccountsProvider } from "./select-provider";
-import { writeLoginOutcome } from "./write-outcome";
+import { rollbackLoginOutcome, writeLoginOutcome } from "./write-outcome";
 
 /**
  * The two side effects of the external flow, behind one seam so a test can drive
@@ -207,21 +208,30 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     const alias = providerAliasOf(plugin.id);
-    const suggested = opts.name ?? outcome.suggestedName ?? alias;
-    // Re-read: the browser round-trip takes minutes, and another terminal may
-    // have added an account under the name this one is about to claim.
-    const fresh = await AiConfigStore.load();
-    const name =
-        opts.name === undefined && opts.promptName === true && interactive
-            ? await promptAccountName(fresh, suggested)
-            : suggested;
+    // The flow has already replaced the vendor's credential file by the time it
+    // returns (`codexLogin` writes `auth.json` before this line). Everything
+    // between here and `writeLoginOutcome` can still fail — an ambiguous name
+    // makes `account()` throw, a config read can fail, a name prompt can be
+    // cancelled — and leaving the new credential on disk while writing no config
+    // lets the existing account go on serving an identity nobody committed
+    // (PR #368 review t1). `writeLoginOutcome` owns the rollback from the moment
+    // it is called; this window is owned here.
+    let target: LoginTarget | null;
 
-    if (name === null) {
+    try {
+        target = await resolveLoginTarget(opts, outcome, alias, interactive);
+    } catch (err) {
+        await rollbackLoginOutcome(outcome);
+        throw err;
+    }
+
+    if (target === null) {
+        await rollbackLoginOutcome(outcome);
         p.cancel("Cancelled — nothing written.");
         return { ok: false };
     }
 
-    const existing = fresh.account(name);
+    const { name, existing } = target;
 
     if (existing) {
         out.println(pc.yellow(`Updating existing account "${name}"...`));
@@ -231,17 +241,33 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     // the other providers there would silently retarget every `tools ask` call.
     const anthropic = plugin.id === "anthropic-sub";
 
-    const written = await writeLoginOutcome({
-        name,
-        outcome,
-        interactive,
-        account: existing,
-        // A name nobody typed or confirmed: `--name` is explicit, and the prompt
-        // above already asked before reusing an existing one.
-        autoNamed: opts.name === undefined && !(opts.promptName === true && interactive),
-        apps: anthropic ? ["claude", "ask"] : undefined,
-        defaultForApps: anthropic ? ["claude", "ask"] : undefined,
-    });
+    let written: Awaited<ReturnType<typeof writeLoginOutcome>>;
+
+    try {
+        written = await writeLoginOutcome({
+            name,
+            outcome,
+            interactive,
+            account: existing,
+            // A name nobody typed or confirmed: `--name` is explicit, and the prompt
+            // above already asked before reusing an existing one.
+            autoNamed: opts.name === undefined && !(opts.promptName === true && interactive),
+            apps: anthropic ? ["claude", "ask"] : undefined,
+            defaultForApps: anthropic ? ["claude", "ask"] : undefined,
+        });
+    } catch (error) {
+        // The write refused inside the lock because the account changed under this flow
+        // (removed, renamed, or re-identified by another login). `writeLoginOutcome` has
+        // already rolled the vendor credential back, so this is a normal failed login for
+        // the caller, not a crash: `ask config`'s wizard keeps running (PR #383 review t1).
+        if (!(error instanceof AccountChangedError)) {
+            throw error;
+        }
+
+        out.error(error.message);
+        process.exitCode = 1;
+        return { ok: false };
+    }
 
     if (!written) {
         process.exitCode = 1;
@@ -275,6 +301,40 @@ export async function runLogin(opts: RunLoginOptions): Promise<RunLoginResult> {
     }
 
     return { ok: true, account: written.account };
+}
+
+interface LoginTarget {
+    name: string;
+    /** The account this login is about to overwrite, when there is one. */
+    existing: AccountEntry | undefined;
+}
+
+/**
+ * Which account this login is about to write, decided against a FRESH read of
+ * the config. Null when the user cancelled the name prompt.
+ *
+ * Re-read: the browser round-trip takes minutes, and another terminal may have
+ * added an account under the name this one is about to claim. That re-read is
+ * also why this can throw: `account()` refuses an ambiguous name.
+ */
+async function resolveLoginTarget(
+    opts: RunLoginOptions,
+    outcome: LoginOutcome,
+    alias: string,
+    interactive: boolean
+): Promise<LoginTarget | null> {
+    const suggested = opts.name ?? outcome.suggestedName ?? alias;
+    const fresh = await AiConfigStore.load();
+    const name =
+        opts.name === undefined && opts.promptName === true && interactive
+            ? await promptAccountName(fresh, suggested)
+            : suggested;
+
+    if (name === null) {
+        return null;
+    }
+
+    return { name, existing: fresh.account(name) };
 }
 
 /**

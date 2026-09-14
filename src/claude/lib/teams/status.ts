@@ -1,3 +1,4 @@
+import { psEnvValue } from "@genesiscz/utils/ai/account-env";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -117,10 +118,13 @@ export function readProcessEnvKeys(pid: number, keys: string[]): Record<string, 
 
         const text = result.stdout;
         for (const key of keys) {
-            const re = new RegExp(`(?:^|\\s)${key}=([^\\s]*)`);
-            const m = text.match(re);
-            if (m) {
-                out[key] = m[1];
+            // `psEnvValue` ends a value at the next `KEY=` word rather than at the next space,
+            // so an account named `work laptop` reads back whole. One reader for every caller;
+            // see @genesiscz/utils/ai/account-env.
+            const value = psEnvValue(text, key);
+
+            if (value !== undefined) {
+                out[key] = value;
             }
         }
     } catch (error) {

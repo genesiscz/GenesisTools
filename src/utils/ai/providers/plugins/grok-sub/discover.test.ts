@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { AiConfigStore } from "../../../config/AiConfigStore";
 import type { AccountEntry } from "../../../config/schema";
-import { discoverGrokHomes } from "./discover";
+import { discoverGrokHomes, grokAccountNameForHome, grokAccountNameLookup } from "./discover";
 
 function jwt(payload: Record<string, unknown>): string {
     return `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(SafeJSON.stringify(payload)).toString("base64url")}.signature`;
@@ -53,7 +54,70 @@ afterEach(() => {
     workerRoot = "";
 });
 
+describe("grokAccountNameLookup", () => {
+    test("one config read answers every home in a listing", async () => {
+        // `grokAccountNameForHome` read and zod-parsed ~/.genesis-tools/ai/config.json on EVERY
+        // call, because `AiConfigStore.readOnly()` has no cache where `load()` returned the
+        // singleton. `tools ai usage sessions` calls it once per row: 2627 grok rows here, all
+        // resolving the same handful of homes.
+        const accounts = [
+            account({ id: "acc_a", name: "work", credentials: { authFile: join(root, ".grok/auth.json") } }),
+            account({ id: "acc_b", name: "personal", credentials: { authFile: join(root, ".grok-side/auth.json") } }),
+        ];
+        const reads = spyOn(AiConfigStore, "readOnly").mockResolvedValue({
+            accounts: () => accounts,
+        } as unknown as AiConfigStore);
+
+        try {
+            const lookup = await grokAccountNameLookup();
+
+            expect(lookup(join(root, ".grok"))).toBe("work");
+            expect(lookup(join(root, ".grok-side"))).toBe("personal");
+            expect(lookup(join(root, ".grok-unknown"))).toBeUndefined();
+            expect(reads).toHaveBeenCalledTimes(1);
+        } finally {
+            reads.mockRestore();
+        }
+    });
+
+    test("NEGATIVE CONTROL: the single-home convenience still answers on its own", async () => {
+        const accounts = [
+            account({ id: "acc_a", name: "work", credentials: { authFile: join(root, ".grok/auth.json") } }),
+        ];
+        const reads = spyOn(AiConfigStore, "readOnly").mockResolvedValue({
+            accounts: () => accounts,
+        } as unknown as AiConfigStore);
+
+        try {
+            expect(await grokAccountNameForHome(join(root, ".grok"))).toBe("work");
+        } finally {
+            reads.mockRestore();
+        }
+    });
+});
+
 describe("discoverGrokHomes", () => {
+    test("an inspection never runs a config migration, even with no accounts injected", async () => {
+        // `discoverGrokHomes` is reached from `account show`, `account discover` and the spend
+        // reports — all inspections. `AiConfigStore.load()` may run `ensureAiConfigMigrated()`,
+        // which writes. The sibling four lines above was fixed and this one was left behind.
+        writeGrokHome(root, ".grok", "user-default");
+        const readOnly = spyOn(AiConfigStore, "readOnly").mockResolvedValue({
+            accounts: () => [],
+        } as unknown as AiConfigStore);
+        const load = spyOn(AiConfigStore, "load");
+
+        try {
+            await discoverGrokHomes({ root, workerRoot });
+
+            expect(readOnly).toHaveBeenCalled();
+            expect(load).not.toHaveBeenCalled();
+        } finally {
+            readOnly.mockRestore();
+            load.mockRestore();
+        }
+    });
+
     test("lists the default home and every ~/.grok-* sibling, with the subject decoded", async () => {
         writeGrokHome(root, ".grok", "user-default");
         writeGrokHome(root, ".grok-work", "user-work");

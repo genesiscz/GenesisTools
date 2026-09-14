@@ -194,12 +194,16 @@ describe("statusOf does not report a teammate dead on a failed scan", () => {
 
 describe("readProcessEnvKeys falls back rather than inventing an account", () => {
     test("reads the requested key from a successful ps", () => {
+        // 🛑 The account is the LAST `KEY=` word, and the line ends in a newline, which is the
+        // shape `ps eww -p <pid>` always produces and the shape the reader used to answer
+        // `undefined` for (review round 4). Put another `KEY=` after it and this test passes
+        // against a reader that cannot read the codex or grok launchers' environment at all.
         const keys = withPsRunner(
-            () => psOk("  PID TTY  TOOLS_CLAUDE_ACCOUNT=max-primary OTHER=x\n"),
+            () => psOk("  PID TTY  OTHER=x TOOLS_CLAUDE_ACCOUNT=work laptop\n"),
             () => readProcessEnvKeys(4242, ["TOOLS_CLAUDE_ACCOUNT"])
         );
 
-        expect(keys).toEqual({ TOOLS_CLAUDE_ACCOUNT: "max-primary" });
+        expect(keys).toEqual({ TOOLS_CLAUDE_ACCOUNT: "work laptop" });
     });
 
     test("a nonzero exit yields no keys, so callers fall back to the default account", () => {

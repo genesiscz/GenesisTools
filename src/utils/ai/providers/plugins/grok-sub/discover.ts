@@ -75,18 +75,51 @@ async function identityFromAuthFile(authFile: string): Promise<AccountIdentity |
     };
 }
 
-function accountForAuthFile(authFile: string, accounts: AccountEntry[]): string | undefined {
+function accountForAuthFile(authFile: string, accounts: AccountEntry[]): AccountEntry | undefined {
     return accounts.find(
         (account) =>
             account.credentials.authFile !== undefined && resolve(account.credentials.authFile) === resolve(authFile)
-    )?.id;
+    );
+}
+
+/**
+ * One config read, answering the account NAME whose login file any grok home holds.
+ *
+ * `grokAccountNameForHome` used to read and zod-parse `~/.genesis-tools/ai/config.json` on
+ * EVERY call — `readOnly()` has no cache the way `load()`'s process singleton does. A session
+ * listing calls it once per grok row (thousands, all resolving the same handful of homes), so
+ * the read has to happen once for the whole listing, not once per row.
+ */
+export async function grokAccountNameLookup(): Promise<(home: string) => string | undefined> {
+    // `readOnly()`, never `load()`: this is a metadata lookup reached from session LISTING, and
+    // `load()` may run config migrations. An inspection path must not write durable state.
+    const accounts = (await AiConfigStore.readOnly()).accounts({ provider: "grok-sub" });
+
+    return (home: string) => accountForAuthFile(join(home, "auth.json"), accounts)?.name;
+}
+
+/**
+ * The account NAME whose login file a grok home holds, for `TOOLS_GROK_ACCOUNT`.
+ *
+ * The launcher exports that variable so a live grok process can be attributed to an account
+ * off the process table, the same way `tools claude run` and `tools codex run` do. Grok itself
+ * identifies a login by its home, never by a name, so this is the translation.
+ *
+ * A single-home convenience over {@link grokAccountNameLookup} — reach for the lookup directly
+ * when resolving more than one home, so the config is read once.
+ */
+export async function grokAccountNameForHome(home: string): Promise<string | undefined> {
+    return (await grokAccountNameLookup())(home);
 }
 
 export async function discoverGrokHomes(options: DiscoverGrokOptions = {}): Promise<DiscoveredHome[]> {
     const root = options.root ?? homedir();
     const defaultHome = options.home ?? (options.root ? join(options.root, ".grok") : resolveGrokHome());
     const workerRoot = options.workerRoot ?? grokRoot();
-    const accounts = options.accounts ?? (await AiConfigStore.load()).accounts({ provider: "grok-sub" });
+    // `readOnly()`, never `load()`: `discoverGrokHomes` is reached only from inspection surfaces
+    // (`account show`, `account discover`, the spend reports), and `load()` may run a config
+    // migration that a read-only path must not trigger.
+    const accounts = options.accounts ?? (await AiConfigStore.readOnly()).accounts({ provider: "grok-sub" });
     const found: DiscoveredHome[] = [];
 
     for (const home of [defaultHome, ...grokHomesIn(root).filter((dir) => resolve(dir) !== resolve(defaultHome))]) {
@@ -102,8 +135,8 @@ export async function discoverGrokHomes(options: DiscoverGrokOptions = {}): Prom
             home,
             authFile,
             ...(identity ? { identity } : {}),
-            ...(accountForAuthFile(authFile, accounts)
-                ? { boundToAccountId: accountForAuthFile(authFile, accounts) }
+            ...(accountForAuthFile(authFile, accounts)?.id
+                ? { boundToAccountId: accountForAuthFile(authFile, accounts)?.id }
                 : {}),
         });
     }
@@ -112,7 +145,7 @@ export async function discoverGrokHomes(options: DiscoverGrokOptions = {}): Prom
     // account owns the default auth file, because that is the credential
     // `GROK_AUTH_PATH` hands the worker.
     const defaultAuthFile = options.root ? join(defaultHome, "auth.json") : grokAuthPath(defaultHome);
-    const workerOwner = accountForAuthFile(defaultAuthFile, accounts);
+    const workerOwner = accountForAuthFile(defaultAuthFile, accounts)?.id;
 
     for (const home of workerHomesIn(workerRoot)) {
         found.push({

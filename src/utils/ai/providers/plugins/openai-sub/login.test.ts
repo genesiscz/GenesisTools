@@ -144,7 +144,7 @@ describe("the stored codex fingerprint", () => {
             authFile,
         });
 
-        await applyLoginOutcome({ name: "work", outcome: mine });
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: mine });
 
         expect(storedAccount("work")?.accountUuid).toBe("chatgpt-acct-1");
         expect(storedAccount("work")?.label).toBe("plus");
@@ -172,7 +172,7 @@ describe("the stored codex fingerprint", () => {
             authFile,
         });
 
-        await applyLoginOutcome({ name: "work", outcome: first });
+        await applyLoginOutcome({ name: "work", guardedAgainst: null, outcome: first });
 
         const again = codexLoginOutcome({
             tokens: fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1", plan: "pro" }),
@@ -321,6 +321,7 @@ test("default login stores a new vault grant without changing the native file", 
     await writeCodexAuthJson(authFile, fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1" }));
     await applyLoginOutcome({
         name: "work",
+        guardedAgainst: null,
         outcome: codexLoginOutcome({
             tokens: fakeTokens({ email: "alice@example.com", accountUuid: "chatgpt-acct-1" }),
             authFile,
@@ -333,7 +334,7 @@ test("default login stores a new vault grant without changing the native file", 
 
     expect(outcome.credentials.accessToken).toBe("codex-access-invented");
     expect(outcome.credentials.refreshToken).toBe("codex-refresh-invented");
-    await applyLoginOutcome({ name: "work", outcome });
+    await applyLoginOutcome({ name: "work", guardedAgainst: storedAccount("work") ?? null, outcome });
     expect(storedAccount("work")?.credentials.authFile).toBe("");
     expect(storedAccount("work")?.credentials.accessToken).toEqual({ type: "secure", path: "ai/acc_work/accessToken" });
     expect(readFileSync(authFile, "utf8")).toBe(original);
