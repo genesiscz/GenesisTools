@@ -268,13 +268,27 @@ const DEFAULT_EXCLUDES = [
  * ⚠️ That command is `bun scripts/test.ts DevDashboard/mobile/src`, NOT
  * `bun run test …`. The npm script hardcodes `--parallel`, and this suite
  * deadlocks under the 16x parallel run: it prints the `16x PARALLEL` banner and
- * then never writes a `[test] suite complete` marker. Measured on this machine —
- * serial 282 pass in 14.3s, parallel still hung at a 75s cap, while `--parallel`
- * on a non-DevDashboard path finishes normally, so it is this tree that breaks
- * parallel mode rather than parallel mode being broken. Root cause is not pinned
- * (RN/expo module init across 16 concurrent processes is the suspect) and is
- * tracked separately; until it is, recommending the parallel form sends the
- * reader into a hang.
+ * then never writes a `[test] suite complete` marker.
+ *
+ * 🛑 ROOT CAUSE FOUND 2026-09-15, and the earlier guess here was WRONG. This text
+ * used to blame "RN/expo module init" and conclude "it is this tree that breaks
+ * parallel mode rather than parallel mode being broken". Both halves are false:
+ * `bun test --parallel=2` on two plain `src/utils/*.test.ts` files hangs 5/5 in a
+ * long-lived worktree, touching no RN, no expo and no WDIO.
+ *
+ * It is two upstream bugs in the bun this repo pins (1.3.13), both fixed in 1.4.1:
+ *   - TRIGGER: the test scanner leaks one directory fd per visited directory
+ *     (oven-sh/bun issue 39783, fixed by 40016). Past macOS OPEN_MAX (10240),
+ *     posix_spawn fails with EBADF. Reproduced here: a piped `Bun.spawnSync` is
+ *     correct 5/5 with the highest fd at 10233 and fails SILENTLY 5/5 at 10303.
+ *   - AMPLIFIER: the coordinator neither reports that failure nor caps retries
+ *     (issue 40782, fixed by 40784), so it respawns the slot forever.
+ * A worktree carrying a generated `ios/Pods` tree (2021 directories) crosses the
+ * fd ceiling; the main checkout does not, which is why only some checkouts bomb.
+ * ⚠️ 1.4.0 is NOT enough — it turns the hang into an EBADF fast-fail.
+ *
+ * Workaround until the pin moves: `--config "$PWD/bunfig.toml"` passes 5/5, because
+ * it cuts the fd count (lsof rows 14167 -> 196), NOT because it changes file order.
  */
 const DEVDASHBOARD_EXCLUDES = ["**/DevDashboard/**"];
 

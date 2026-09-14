@@ -88,6 +88,43 @@ function isOurWatchdog(pid: number, selfPid: number): boolean {
     }
 }
 
+/**
+ * Single-quote a value for `/bin/sh`.
+ *
+ * `SafeJSON` is the repo's rule everywhere else, but this file must stay importable by
+ * isolate workers and `/tmp` repro scripts with no `@genesiscz/*` alias graph, and a bare
+ * `JSON` is biome-restricted. The value here is a `ps` date string, so the only character
+ * that can break out is a quote; the standard `'\''` dance covers it regardless.
+ */
+function shQuote(value: string): string {
+    return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The process's start time, as `ps` reports it — the discriminator that separates "this pid"
+ * from "a pid the kernel reissued to someone else".
+ *
+ * A liveness probe cannot do this: `kill -0` succeeds for whoever holds the number now. At
+ * 400-800 pids/second the macOS pid space recycles in about three minutes, so liveness alone
+ * is not identity. Returns null when `ps` cannot answer, and the caller then declines to
+ * schedule a kill at all.
+ */
+function startedAt(pid: number): string | null {
+    try {
+        // Normalise whitespace the same way the shell side does. `ps -o lstart=` pads its
+        // column, so a raw `$(ps ...)` in sh keeps leading spaces that `.trim()` here would
+        // strip — the two strings then never match and the kill silently never fires. That
+        // exact mismatch turned the guard's own SIGKILL test red, which is how it was caught.
+        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" })
+            .replace(/\s+/g, " ")
+            .trim();
+
+        return started.length > 0 ? started : null;
+    } catch {
+        return null;
+    }
+}
+
 function rememberWatchdog(notePath: string, watchdogPid: number): void {
     try {
         writeFileSync(notePath, String(watchdogPid), { mode: 0o600 });
@@ -147,6 +184,23 @@ export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid
     // `Bun.spawn` queues the fork on the event loop. A tight `for (;;)` after
     // install never ticks, so the helper would never start — the exact hang this
     // exists to stop. `child_process.spawn` forks before returning.
+    // 🛑 The kill below is identity-verified, not just liveness-verified. `kill -0` proves
+    // SOMETHING is alive at that number, never that it is still us. A `bun test --parallel`
+    // failure mode on bun 1.3.13 burns 400-800 pids/second, which recycles the macOS pid
+    // space in about three minutes, so a watchdog that outlived its worker and then fired on
+    // a bare `kill -0` would SIGKILL whatever unrelated program inherited the number.
+    //
+    // `ps -o lstart=` is the standard discriminator: a recycled pid has a different start
+    // time. It is captured HERE, at install, while the process is provably us, and compared
+    // immediately before the signal. If `ps` fails or the strings differ, the loop exits
+    // without signalling — refusing to kill is always safe, killing the wrong process is not.
+    const selfStart = startedAt(selfPid);
+
+    if (!selfStart) {
+        // No identity to verify against, so there is no safe kill to schedule.
+        return;
+    }
+
     const proc = spawn(
         "/bin/sh",
         [
@@ -154,12 +208,18 @@ export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid
             [
                 `parent=${parentPid}`,
                 `self=${selfPid}`,
+                `selfstart=${shQuote(selfStart)}`,
                 "while :; do",
                 '  if ! kill -0 "$self"; then',
                 "    exit 0",
                 "  fi",
                 '  if ! kill -0 "$parent"; then',
-                '    kill -0 "$self" && kill -KILL "$self"',
+                // pid-verified: `ps -o lstart=` is re-read here and compared against the value
+                // captured at install time, so a recycled pid fails the check and is spared.
+                `    now=$(ps -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
+                '    if [ -n "$now" ] && [ "$now" = "$selfstart" ]; then',
+                '      kill -KILL "$self"',
+                "    fi",
                 "    exit 0",
                 "  fi",
                 `  sleep ${POLL_SECONDS}`,
