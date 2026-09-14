@@ -1,3 +1,5 @@
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
 /** How a session's account pin was learned. */
 export type PinSource = "hook" | "manual";
 
@@ -28,6 +30,15 @@ export type PinAuthSource = "launch-env" | "argv" | "oauth-env" | "default-named
 
 export interface SessionPin {
     sessionId: string;
+    /**
+     * Which agent wrote this record. ABSENT means Claude.
+     *
+     * Codex and Grok run the same SessionStart hook, so one journal now holds all three. A
+     * missing field is never treated as "any provider": the rows written before the field
+     * existed include Codex sessions that wrongly captured a Claude account, and reading those
+     * as Codex would re-publish the mistake.
+     */
+    provider?: AccountProviderAlias;
     account: string | null;
     auth?: PinAuth;
     authSource?: PinAuthSource;

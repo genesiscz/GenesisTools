@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { CLAUDE_REMINDER, CODEX_REMINDER, harnessOf, reminderFor } from "./agents-talk-hint";
+import { CLAUDE_REMINDER, CODEX_REMINDER, GROK_REMINDER, harnessOf, reminderFor } from "./agents-talk-hint";
 
 const HOOK = join(import.meta.dir, "agents-talk-hint.ts");
 
@@ -71,4 +71,22 @@ describe("the hook as Claude Code and Codex run it", () => {
         expect(result.stderr).toContain("assuming Claude");
         expect(reminderFor({})).toBe(CLAUDE_REMINDER);
     });
+});
+
+test("grok is told not to invoke the skill either, with the advice grok can act on", () => {
+    // Grok has no Monitor tool, so the Claude text — "invoke the agents-talk skill" — was
+    // wrong there in exactly the way it was wrong on Codex. Its replacement names grok's own
+    // route, not Codex's send_message.
+    const payload = { transcript_path: "/Users/u/.grok/sessions/%2Frepo/019ffbbd-80e9-79f1-a619-2c8d52bb5377.jsonl" };
+
+    expect(harnessOf(payload)).toBe("grok");
+    expect(reminderFor(payload)).toBe(GROK_REMINDER);
+    expect(GROK_REMINDER).toMatch(/never invoke/i);
+    expect(GROK_REMINDER).toContain("--session");
+    expect(GROK_REMINDER).not.toContain("send_message");
+    // 🛑 Grok HAS subagents (`spawn_subagent`) and can read their output
+    // (`get_command_or_subagent_output`). The ban is about the lack of a PUSH subscription, and
+    // saying "Grok has no subagents" or "Grok has no Monitor tool" was simply wrong.
+    expect(GROK_REMINDER).toContain("spawn_subagent");
+    expect(GROK_REMINDER).not.toMatch(/Monitor tool Grok does not have/);
 });

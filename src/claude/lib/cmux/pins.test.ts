@@ -119,3 +119,42 @@ describe("pins", () => {
         });
     });
 });
+
+describe("one journal, three agents", () => {
+    test("a provider filter keeps that agent's records, and an untagged record is claude's", async () => {
+        await recordPin(pin({ sessionId: "claude-1", account: "personal" }));
+        await recordPin(pin({ sessionId: "codex-1", provider: "codex", account: "work" }));
+        await recordPin(pin({ sessionId: "grok-1", provider: "grok", account: "shop" }));
+
+        expect([...(await loadPins({ provider: "claude" })).keys()]).toEqual(["claude-1"]);
+        expect([...(await loadPins({ provider: "codex" })).keys()]).toEqual(["codex-1"]);
+        expect((await loadPins({ provider: "grok" })).get("grok-1")?.account).toBe("shop");
+        // No filter still means everything, so `tools claude cmux` keeps reading the whole file.
+        expect((await loadPins()).size).toBe(3);
+    });
+
+    /**
+     * The real journal holds Codex thread ids that captured a Claude account, from before the
+     * hook checked the harness. They carry no `provider`, so a Codex read must not claim them.
+     */
+    test("an untagged record is never matched as codex, however codex-shaped its id looks", async () => {
+        await recordPin(pin({ sessionId: "01a0862a-1cc3-7643-b2b9-2a06424f5276", account: "personal" }));
+
+        expect((await loadPins({ provider: "codex" })).size).toBe(0);
+        expect((await loadPins({ provider: "claude" })).size).toBe(1);
+    });
+
+    test("a filtered read never compacts, so it cannot delete the other agents' records", async () => {
+        const path = pinsPath();
+        await mkdir(dirname(path), { recursive: true });
+        // Well past COMPACT_THRESHOLD, so an unfiltered read would rewrite the file.
+        const lines = Array.from({ length: 4100 }, (_, index) =>
+            SafeJSON.stringify(pin({ sessionId: `claude-${index}` }))
+        );
+        lines.push(SafeJSON.stringify(pin({ sessionId: "codex-1", provider: "codex", account: "work" })));
+        await writeFile(path, `${lines.join("\n")}\n`, "utf8");
+
+        expect((await loadPins({ provider: "codex" })).size).toBe(1);
+        expect((await readFile(path, "utf8")).split("\n").filter(Boolean)).toHaveLength(lines.length);
+    });
+});
