@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { initializeCompactHistorySchema } from "./migrations";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
-import { HistoryService } from "./service";
+import { fallbackTitle, HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
 import { type BaselineOracle, createBaselineOracle } from "./testing/baseline-oracle";
 import { generateHistoryCorpus } from "./testing/corpus";
@@ -197,4 +197,29 @@ test("service initializes a cached listing, reports unchanged refreshes, and wor
         database.close();
         await world.dispose();
     }
+});
+
+/**
+ * An untitled Claude SUBAGENT rendered as 120 characters of directory in every table, picker
+ * and menu-bar row, because the title fell back to the native id and a subagent's native id is
+ * its whole project-relative path. Found by running the converted `tools claude history`
+ * against the real index; no unit fixture was shaped like one.
+ */
+test("an untitled row falls back to a name a human can read, never to a whole path", () => {
+    expect(
+        fallbackTitle({
+            nativeId: "-Users-me-Projects-shop/54cad246-b912-4ba4-892b-b9f9cf67d90a/subagents/agent-areview-0ec859f1",
+        })
+    ).toBe("agent-areview-0ec859f1");
+
+    // A short native id is already the name; there is nothing to strip.
+    expect(fallbackTitle({ nativeId: "01a08283-d374-7ab3-bcc5-72f83340a153" })).toBe(
+        "01a08283-d374-7ab3-bcc5-72f83340a153"
+    );
+
+    // Anything the session actually calls itself still wins, in the order it always did.
+    expect(fallbackTitle({ customTitle: "invoice import", summary: "s", nativeId: "x/y" })).toBe("invoice import");
+    expect(fallbackTitle({ summary: "refund rounding", nativeId: "x/y" })).toBe("refund rounding");
+    expect(fallbackTitle({ firstPrompt: "fix the refund", nativeId: "x/y" })).toBe("fix the refund");
+    expect(fallbackTitle({})).toBe("");
 });

@@ -1,6 +1,10 @@
 /** Scope names tools already pass to `profiler.scope()`. `--scopes` help lists these. */
 export const PROFILER_SCOPE_NAMES = [
     "claude-history",
+    "agent-sessions",
+    "agent-history",
+    "codex-run",
+    "codex-account",
     "du",
     "du.engine",
     "du.bun",

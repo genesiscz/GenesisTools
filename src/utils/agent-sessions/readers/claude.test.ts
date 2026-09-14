@@ -327,6 +327,50 @@ test("subagent metadata separates the public parent ID from unsupported native r
     expect(result.metadata?.isSubagent).toBe(true);
 });
 
+test("one malformed line in the middle records an issue but still yields complete metadata", async () => {
+    const { path, source } = fixture();
+    writeFileSync(
+        path,
+        `${jsonl({
+            type: "user",
+            sessionId: MAIN_ID,
+            cwd: "/projects/shop",
+            timestamp: "2026-05-30T13:52:00.000Z",
+            message: { role: "user", content: "first prompt" },
+        })}{"type":"assistant","message":{"content":echo broken\n${jsonl({
+            type: "assistant",
+            sessionId: MAIN_ID,
+            timestamp: "2026-05-30T13:52:05.000Z",
+            message: { role: "assistant", content: [{ type: "text", text: "fine" }] },
+        })}`
+    );
+
+    const result = await readClaudeMetadata(source);
+
+    expect(result.issues.map((issue) => issue.message)).toEqual(["Malformed record at line 2"]);
+    expect(result.complete).toBe(true);
+    expect(result.metadata?.firstPrompt).toBe("first prompt");
+});
+
+test("a partial final record still marks metadata incomplete: the file is mid-write", async () => {
+    const { path, source } = fixture();
+    writeFileSync(
+        path,
+        `${jsonl({
+            type: "user",
+            sessionId: MAIN_ID,
+            cwd: "/projects/shop",
+            timestamp: "2026-05-30T13:52:00.000Z",
+            message: { role: "user", content: "first prompt" },
+        })}{"type":"assistant","message":{"content":"still being writ`
+    );
+
+    const result = await readClaudeMetadata(source);
+
+    expect(result.issues.map((issue) => issue.message)).toEqual(["Partial final record at line 2"]);
+    expect(result.complete).toBe(false);
+});
+
 test("malformed-only sources cannot replace metadata with a valid empty record", async () => {
     const { path, source } = fixture();
     writeFileSync(path, '{"type":"user","message":\n');

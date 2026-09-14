@@ -8,6 +8,7 @@ import {
     extractAccountId,
     readCodexAuthJson,
 } from "@genesiscz/utils/ai/openai/codex-auth";
+import { profiler } from "@genesiscz/utils/profile";
 import { masterKey, resolveSecret, secrets } from "@genesiscz/utils/security";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
 
@@ -91,6 +92,10 @@ export class CodexAccountBinding {
     }
 
     private async resolve(force: boolean, allowRefresh = true): Promise<CodexAccountTokens> {
+        return profiler.scope("codex-account").measureAsync("resolve", () => this.resolveTokens(force, allowRefresh));
+    }
+
+    private async resolveTokens(force: boolean, allowRefresh = true): Promise<CodexAccountTokens> {
         const store = await (allowRefresh ? AiConfigStore.load() : AiConfigStore.readOnly());
         const account = requireAccount(store.account(this.accountId));
         const reference = nativeAuthReference(account);
@@ -124,7 +129,11 @@ export class CodexAccountBinding {
                 await masterKey();
                 let rotated: CodexTokens;
                 try {
-                    rotated = await codexOAuth.refresh(latest.refreshToken);
+                    // The one genuinely variable network call in a launcher's startup: without its
+                    // own number, a fresh token and a refreshed one look identical from outside.
+                    rotated = await profiler
+                        .scope("codex-account")
+                        .measureAsync("network-refresh", () => codexOAuth.refresh(latest.refreshToken));
                 } catch {
                     // Provider errors can contain credentials. Never send their text to clients or logs.
                     throw new Error("Codex token refresh failed; re-login with tools codex login <account>");

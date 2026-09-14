@@ -7,7 +7,7 @@ import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/nati
 import type { AgentSearchFilters, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { assertClaudeResumeHome, loadClaudeResumeCandidates } from "./resume";
+import { assertClaudeResumeHome, loadClaudeResumeCandidates, pickSessionForResume } from "./resume";
 
 const ID = "11111111-2222-4333-8444-555555555555";
 function fixture() {
@@ -200,4 +200,147 @@ test("content fallback keeps its own bounded result limit", async () => {
 
     expect(seen.list?.limit).toBe(Number.MAX_SAFE_INTEGER);
     expect(seen.search?.limit).toBe(7);
+});
+
+test("a first-prompt hit does not suppress the content pass that finds the session by name", async () => {
+    // Regression test: `--resume reports` offered only the session whose opening prompt says the
+    // word once, because that weak hit returned early and the content search never ran.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "gt-claude-resume-weak-")));
+    const root = join(home, "projects");
+    const project = join(root, "-projects-shop");
+    mkdirSync(project, { recursive: true });
+    const prompted = "11111111-2222-4333-8444-555555555551";
+    const deep = "11111111-2222-4333-8444-555555555552";
+    const namesake = "11111111-2222-4333-8444-555555555553";
+
+    writeFileSync(
+        join(project, `${prompted}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: prompted, cwd: "/projects/shop", message: { content: "please attach the reports folder" } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "weekly rollup", sessionId: prompted })}\n`
+    );
+    writeFileSync(
+        join(project, `${deep}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: deep, cwd: "/projects/shop", message: { content: "start here" } })}\n${SafeJSON.stringify({ type: "assistant", sessionId: deep, cwd: "/projects/shop", message: { content: [{ type: "text", text: "generated three reports for the client" }] } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "report-2026-09", sessionId: deep })}\n`
+    );
+
+    // A session NAMED after the query is not the same thing as a session identified by it: one
+    // captured `/resume reports-02` used to be treated as identity and buried every real match.
+    writeFileSync(
+        join(project, `${namesake}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: namesake, cwd: "/projects/shop", message: { content: "unrelated" } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: "reports-02 rerun", sessionId: namesake })}\n`
+    );
+
+    const db = new Database(":memory:");
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [root], database: db });
+        const hits = await loadClaudeResumeCandidates({ query: "reports", cwd: "/projects/shop", adapter });
+
+        expect(hits.map((hit) => hit.name).sort()).toEqual(["report-2026-09", "reports-02 rerun", "weekly rollup"]);
+
+        // A name still answers on its own: no content pass, no second session dragged in.
+        const named = await loadClaudeResumeCandidates({ query: "weekly rollup", cwd: "/projects/shop", adapter });
+
+        expect(named.map((hit) => hit.name)).toEqual(["weekly rollup"]);
+    } finally {
+        db.close();
+    }
+});
+
+test("a harness-block title becomes a readable one-line name", async () => {
+    // The picker printed `<command-name>/resume</command-name>` across two lines, which shifted
+    // every column of every row under it.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "gt-claude-resume-title-")));
+    const root = join(home, "projects");
+    const project = join(root, "-projects-shop");
+    mkdirSync(project, { recursive: true });
+    const id = "11111111-2222-4333-8444-555555555554";
+    const title = "<command-name>/resume</command-name>\n<command-args>reports-02</command-args>";
+
+    writeFileSync(
+        join(project, `${id}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: id, cwd: "/projects/shop", message: { content: "unrelated body" } })}\n${SafeJSON.stringify({ type: "custom-title", customTitle: title, sessionId: id })}\n`
+    );
+
+    const db = new Database(":memory:");
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [root], database: db });
+        const hits = await loadClaudeResumeCandidates({ query: id, cwd: "/projects/shop", adapter });
+
+        expect(hits).toHaveLength(1);
+        expect(hits[0]?.name).toBe("/resume");
+        expect(hits[0]?.name).not.toContain("\n");
+    } finally {
+        db.close();
+    }
+});
+
+/**
+ * A QUERY resolves through the shared ladder now, the same one codex and grok resume on.
+ *
+ * Replaying 50 real queries through both settled that it never lands on a different session
+ * and decides 10 of 50 that Claude's own loader refused. The reason is here: one session
+ * indexed from two homes stayed two rival candidates, so an unambiguous query was reported
+ * ambiguous and the user had to paste a full id to open a conversation only they had.
+ */
+test("one session indexed from two homes resolves to the launch home's copy", async () => {
+    const source = fixture();
+    const retained = fixture();
+    // The same session id, carried over into a second home, exactly as a home migration leaves it.
+    mkdirSync(join(retained.root, "-projects-shop"), { recursive: true });
+    writeFileSync(
+        join(retained.root, "-projects-shop", `${ID}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: ID, cwd: "/projects/shop", message: { content: "Invoice callback" } })}\n`
+    );
+
+    const db = new Database(":memory:");
+    env.testing.set("CLAUDE_CONFIG_DIR", source.home);
+
+    try {
+        const adapter = createNativeHistoryAdapter({
+            kind: "claude",
+            roots: [source.root, retained.root],
+            database: db,
+        });
+
+        // Claude's own loader still sees both copies, which is what made it ambiguous.
+        const candidates = await loadClaudeResumeCandidates({
+            query: "Invoice callback",
+            cwd: "/projects/shop",
+            adapter,
+        });
+        expect(candidates.length).toBeGreaterThan(1);
+
+        const picked = await pickSessionForResume("Invoice callback", {
+            cwd: "/projects/shop",
+            adapter,
+            interactive: false,
+        });
+        expect(picked.sessionId).toBe(ID);
+        expect(picked.sourceHome).toBe(source.home);
+    } finally {
+        env.testing.unset("CLAUDE_CONFIG_DIR");
+        db.close();
+    }
+});
+
+test("a query that matches nothing still fails, and the home guard still refuses a foreign copy", async () => {
+    const source = fixture();
+    const db = new Database(":memory:");
+
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [source.root], database: db });
+
+        await expect(
+            pickSessionForResume("a phrase no session contains", { cwd: "/projects/shop", adapter, interactive: false })
+        ).rejects.toThrow(/No claude session/);
+
+        // The launch home is somewhere else entirely, so opening this copy would resume a
+        // session the running Claude cannot see.
+        env.testing.set("CLAUDE_CONFIG_DIR", fixture().home);
+        await expect(
+            pickSessionForResume("Invoice callback", { cwd: "/projects/shop", adapter, interactive: false })
+        ).rejects.toThrow(/CLAUDE_CONFIG_DIR=/);
+    } finally {
+        env.testing.unset("CLAUDE_CONFIG_DIR");
+        db.close();
+    }
 });

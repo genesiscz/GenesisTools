@@ -1,27 +1,10 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { extractShellQuirks, renderShellQuirksMarkdown } from "@app/claude/lib/history/extract-shell-quirks";
-import { HISTORY_TABLE_HEADERS, historyTablePlainRow } from "@app/claude/lib/history/format-table";
-import { searchIndexedClaudeHistory } from "@app/claude/lib/history/indexed-search";
-import {
-    type AssistantMessage,
-    type ConversationMessage,
-    getAvailableProjects,
-    parseDate,
-    type SearchFilters,
-    type SearchResult,
-    type TextBlock,
-    type ToolUseBlock,
-    type UserMessage,
-} from "@app/claude/lib/history/search";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
-import {
-    registerHistoryIndexCommand,
-    resolveHistoryQuery,
-    warnUnresolvedIdentities,
-} from "@genesiscz/utils/agent-sessions/history-cli";
+import { getAvailableProjects } from "@app/claude/lib/history/search";
+import { type HistoryCliOptions, registerAgentHistoryCommand } from "@genesiscz/utils/agent-sessions/history-cli";
 import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
+import type { AgentSearchHit } from "@genesiscz/utils/agent-sessions/types";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
@@ -30,181 +13,25 @@ import { out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 import * as p from "@genesiscz/utils/prompts/p";
-import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import { spawn } from "bun";
-import chalk from "chalk";
 import type { Command } from "commander";
 import pc from "picocolors";
 
 /**
- * The current Claude Code session id, or an error naming the host we actually
- * found. --exclude-current matches against Claude transcripts, so accepting a
- * grok or codex id would quietly exclude nothing at all.
+ * `tools claude history`, over the shared command.
+ *
+ * This file used to be a second implementation of `registerAgentHistoryCommand`: the same
+ * twenty-seven flags declared by hand, plus its own markdown, table and JSON renderers. Those
+ * renderers were the RICHER ones, so they moved into the shared module first (d8bc00388) and
+ * every door gained them. What is left here is what is genuinely Claude's — the project
+ * auto-detect, the filter wizard, the offer to summarize, and two subcommands.
  */
-function claudeSessionIdOrThrow(): string {
-    const ctx = getAgentRuntimeContext();
-    if (ctx.agent === "claude-code" && ctx.sessionId) {
-        return ctx.sessionId;
-    }
-
-    const detected = ctx.agent === "unknown" ? "no agent session" : ctx.agent;
-    throw new Error(
-        `--exclude-current needs a Claude Code session (detected: ${detected}). Use --exclude-session <id> instead.`
-    );
-}
-
-// =============================================================================
-// Output Formatting
-// =============================================================================
-
-function formatMessageForMarkdown(msg: ConversationMessage, _excludeThinking: boolean): string {
-    const lines: string[] = [];
-
-    if (msg.type === "user") {
-        const userMsg = msg as UserMessage;
-        let content = "";
-        if (typeof userMsg.message.content === "string") {
-            content = userMsg.message.content;
-        } else if (Array.isArray(userMsg.message.content)) {
-            const textBlocks = userMsg.message.content
-                .filter((b): b is TextBlock => b.type === "text")
-                .map((b) => b.text);
-            content = textBlocks.join("\n");
-        }
-        if (content.length > 500) {
-            content = `${content.substring(0, 500)}...`;
-        }
-        lines.push(`**[User]** ${content.replace(/\n/g, " ").trim()}`);
-    } else if (msg.type === "assistant") {
-        const assistantMsg = msg as AssistantMessage;
-        const textBlocks = assistantMsg.message.content
-            .filter((b): b is TextBlock => b.type === "text")
-            .map((b) => b.text);
-        const toolUses = assistantMsg.message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
-
-        let text = textBlocks.join("\n").trim();
-        if (text.length > 500) {
-            text = `${text.substring(0, 500)}...`;
-        }
-
-        lines.push(`**[Assistant]** ${text.replace(/\n/g, " ").trim() || "(tool calls only)"}`);
-
-        if (toolUses.length > 0) {
-            for (const tool of toolUses) {
-                const filePath =
-                    tool.input && typeof tool.input === "object"
-                        ? (tool.input as Record<string, unknown>).file_path ||
-                          (tool.input as Record<string, unknown>).path ||
-                          ""
-                        : "";
-                if (filePath) {
-                    lines.push(`  - **Tool:** ${tool.name} \`${filePath}\``);
-                } else {
-                    lines.push(`  - **Tool:** ${tool.name}`);
-                }
-            }
-        }
-    }
-
-    return lines.join("\n");
-}
-
-function formatResultsAsMarkdown(results: SearchResult[], filters: SearchFilters): string {
-    const lines: string[] = [];
-
-    const queryDesc = filters.query ? `"${filters.query}"` : "all";
-    const modeDesc = filters.summaryOnly ? " (summary-only)" : filters.sortByRelevance ? " (by relevance)" : "";
-    lines.push(
-        `## Found ${results.length} conversation${results.length !== 1 ? "s" : ""} matching ${queryDesc}${modeDesc}\n`
-    );
-
-    for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        const title = result.customTitle || result.summary || result.sessionId;
-        const date = result.timestamp.toISOString().split("T")[0];
-
-        const relevanceStr =
-            filters.sortByRelevance && result.relevanceScore !== undefined ? ` [score: ${result.relevanceScore}]` : "";
-
-        lines.push(
-            `### ${i + 1}. ${title} (${result.project})${result.isSubagent ? " [Subagent]" : ""}${relevanceStr}`
-        );
-        lines.push(`**Date:** ${date}${result.gitBranch ? ` | **Branch:** ${result.gitBranch}` : ""}`);
-        lines.push(`**Session ID:** \`${result.sessionId}\``);
-
-        if (result.summary && result.summary !== title) {
-            lines.push(`**Summary:** ${result.summary}`);
-        }
-
-        if (result.commitHashes && result.commitHashes.length > 0) {
-            lines.push(
-                `**Commits:** ${result.commitHashes
-                    .slice(0, 5)
-                    .map((h) => `\`${h.substring(0, 7)}\``)
-                    .join(", ")}${result.commitHashes.length > 5 ? "..." : ""}`
-            );
-        }
-
-        lines.push(`**File:** \`${result.filePath.replace(homedir(), "~")}\``);
-
-        if (filters.context && result.contextMessages) {
-            lines.push("");
-            lines.push(`#### Context (${filters.context} messages before/after match)\n`);
-            for (const msg of result.contextMessages) {
-                const formatted = formatMessageForMarkdown(msg, !!filters.excludeThinking);
-                if (formatted) {
-                    lines.push(formatted);
-                    lines.push("");
-                }
-            }
-        }
-
-        lines.push("");
-    }
-
-    return lines.join("\n");
-}
-
-function formatResultsAsTable(results: SearchResult[], filters: SearchFilters): void {
-    const queryDesc = filters.query ? `matching "${filters.query}"` : "recent sessions";
-    renderCliHeader("History", queryDesc);
-
-    const table = createBoxTable([...HISTORY_TABLE_HEADERS]);
-
-    for (const result of results) {
-        const [shortId, project, title, branch, age, status] = historyTablePlainRow(result);
-
-        table.push([
-            pc.white(pc.bold(shortId)),
-            project === "—" ? pc.dim("—") : pc.blue(project),
-            pc.white(title),
-            branch === "—" ? pc.dim("—") : pc.magenta(branch),
-            age,
-            status === "agent" ? formatDotStatus("dim", "agent") : formatDotStatus("ok", "main"),
-        ]);
-    }
-
-    out.println(table.toString());
-    out.println();
-
-    const parts = [
-        pc.dim(`${results.length} result${results.length !== 1 ? "s" : ""}`),
-        filters.sortByRelevance ? pc.dim("sorted by relevance") : "",
-        filters.summaryOnly ? pc.dim("summary-only") : "",
-    ].filter(Boolean);
-    out.println(`  ${parts.join(pc.dim("  ·  "))}`);
-    out.println();
-}
-
-function formatResultsAsJson(results: SearchResult[]): string {
-    return SafeJSON.stringify(results, null, 2);
-}
 
 // =============================================================================
 // Interactive Mode
 // =============================================================================
 
-async function runInteractive(): Promise<SearchFilters> {
+async function runInteractive(): Promise<HistoryCliOptions> {
     const projects = await getAvailableProjects();
 
     const project = await p.search<string>({
@@ -246,12 +73,14 @@ async function runInteractive(): Promise<SearchFilters> {
     })) as string;
 
     return {
-        project: project === "all" ? undefined : project,
-        query: query || undefined,
-        tool: toolChoice || undefined,
-        since: sinceStr ? parseDate(sinceStr) : undefined,
-        context: parseInt(contextStr, 10) || undefined,
-        limit: 20,
+        ...(project === "all" ? { all: true } : { project }),
+        ...(query ? { query } : {}),
+        ...(toolChoice ? { tool: toolChoice } : {}),
+        ...(sinceStr ? { since: sinceStr } : {}),
+        // A free-text field reaches a parser that refuses anything but a non-negative integer,
+        // and refuses it by throwing. A typo in a prompt should not end the command.
+        context: /^\d+$/.test(contextStr.trim()) ? contextStr.trim() : "0",
+        limit: "20",
     };
 }
 
@@ -259,178 +88,68 @@ async function runInteractive(): Promise<SearchFilters> {
 // Command Registration
 // =============================================================================
 
+/**
+ * `-i` ends with the results on screen and one obvious next step.
+ *
+ * `isInteractive()` rather than a TTY check: it also accounts for CI, a pipe and a headless
+ * run, none of which can answer a prompt.
+ */
+async function offerToSummarize(hits: AgentSearchHit<string>[], options: HistoryCliOptions): Promise<void> {
+    if (!options.interactive || hits.length === 0 || !isInteractive()) {
+        return;
+    }
+
+    const wanted = await out.confirm({
+        message: "Would you like to summarize one of these sessions?",
+        initialValue: false,
+    });
+
+    if (out.isCancel(wanted) || !wanted) {
+        return;
+    }
+
+    const chosen = await out.select({
+        message: "Select session to summarize:",
+        options: hits.map((hit) => ({
+            value: hit.sessionId,
+            label: `${hit.title} (${hit.mtime.toISOString().slice(0, 10)})`,
+        })),
+    });
+
+    if (out.isCancel(chosen)) {
+        return;
+    }
+
+    const proc = spawn({
+        cmd: ["bun", "run", resolve(import.meta.dir, "../index.ts"), "summarize", chosen as string, "-i"],
+        stdio: ["inherit", "inherit", "inherit"],
+    });
+    await proc.exited;
+}
+
+// =============================================================================
+// Command Registration
+// =============================================================================
+
 export function registerHistoryCommand(program: Command): void {
-    const historyCmd = program.command("history").description("Search Claude Code conversation history");
-    registerHistoryIndexCommand(historyCmd, createClaudeAdapter());
+    const historyCmd = registerAgentHistoryCommand(program, createClaudeAdapter(), "claude", {
+        defaultScope: () => {
+            // A search run from a SUBdirectory of a project still means that project. The
+            // shared default is an exact cwd, which would match none of its sessions.
+            const project = resolveProjectFilter();
 
-    historyCmd
-        .argument("[query]", "Search query (fuzzy match by default)")
-        .option("-i, --interactive", "Interactive mode with prompts")
-        .option("-p, --project <name>", "Filter by project name")
-        .option("--all", "Search all projects (ignore cwd)")
-        .option(
-            "-f, --file <pattern>",
-            "Match tool-call file paths and tool inputs (repeatable)",
-            (value: string, previous: string[]) => [...previous, value],
-            [] as string[]
-        )
-        .option(
-            "--files <pattern>",
-            "Same as --file (repeatable)",
-            (value: string, previous: string[]) => [...previous, value],
-            [] as string[]
-        )
-        .option("-t, --tool <name>", "Filter by tool name (Edit, Write, Bash, etc.)")
-        .option("--since <date>", "Filter by date (e.g., '7 days ago', 'yesterday')")
-        .option("--until <date>", "Filter until date")
-        .option("-l, --limit <n>", "Limit results", "20")
-        .option("-c, --context <n>", "Show N messages before/after match", "0")
-        .option("--exact", "Exact match instead of fuzzy")
-        .option("--regex", "Use regex for query")
-        .option("--agents-only", "Only search subagent conversations")
-        .option("--exclude-agents", "Exclude subagent conversations")
-        .option("--exclude-thinking", "Exclude thinking blocks from search")
-        .option("--format <type>", "Output format: ai (default), json", "ai")
-        .option("--json", "Machine-readable output (same as --format json)")
-        .option(
-            "--summary-only",
-            "Search the metadata cache only: titles, summaries and the first 5000 chars of user text (faster)"
-        )
-        .option("--exclude-current", "Exclude current session (uses $CLAUDE_CODE_SESSION_ID)")
-        .option("--exclude-session <id>", "Exclude specific session ID from results")
-        .option("--sort-relevance", "Sort results by relevance score instead of date")
-        .option("--commit <hash>", "Find conversation that made a specific git commit")
-        .option("--commit-msg <text>", "Find conversation by commit message content")
-        .option("--conv-date <date>", "Filter by conversation start date (not message date)")
-        .option("--conv-date-until <date>", "Filter conversation start date until")
-        .option("--list-summaries", "Quick list of conversation topics (no content search)")
-        .action(async (positional, options) => {
-            const query = resolveHistoryQuery(positional, options);
-            try {
-                let filters: SearchFilters;
-
-                if (options.interactive) {
-                    filters = await runInteractive();
-                } else {
-                    let project = options.project;
-                    if (!project && !options.all) {
-                        project = resolveProjectFilter();
-                        if (project) {
-                            // For encoded dirs like "-Users-Martin-Projects-Foo", show just the leaf
-                            const displayName = project.startsWith("-") ? basename(process.cwd()) : project;
-                            out.printlnErr(
-                                chalk.dim(`Auto-detected project: ${displayName} (use --all to search all projects)`)
-                            );
-                        }
-                    }
-
-                    // Claude-only, like --current in summarize: the id is matched against
-                    // Claude transcripts, so another host's id would silently exclude nothing.
-                    const currentSessionId =
-                        options.excludeSession || (options.excludeCurrent ? claudeSessionIdOrThrow() : undefined);
-
-                    const fileArgs = [...(options.file ?? []), ...(options.files ?? [])];
-                    filters = {
-                        query,
-                        project: options.all ? undefined : project,
-                        files: fileArgs.length > 0 ? fileArgs : undefined,
-                        tool: options.tool,
-                        since: options.since ? parseDate(options.since) : undefined,
-                        until: options.until ? parseDate(options.until) : undefined,
-                        // `--limit 0` has always meant "no ceiling" here; the shared service
-                        // reads a literal 0 as an empty result.
-                        limit: parseInt(options.limit, 10) || undefined,
-                        context: parseInt(options.context, 10),
-                        exact: options.exact,
-                        regex: options.regex,
-                        agentsOnly: options.agentsOnly,
-                        excludeAgents: options.excludeAgents,
-                        excludeThinking: options.excludeThinking,
-                        summaryOnly: options.summaryOnly,
-                        excludeCurrentSession: currentSessionId,
-                        sortByRelevance: options.sortRelevance,
-                        commitHash: options.commit,
-                        commitMessage: options.commitMsg,
-                        conversationDate: options.convDate ? parseDate(options.convDate) : undefined,
-                        conversationDateUntil: options.convDateUntil ? parseDate(options.convDateUntil) : undefined,
-                    };
-                }
-
-                const p = profiler.scope("claude-history");
-                const results = options.listSummaries
-                    ? await p.measureAsync("history.list-summaries", () =>
-                          // "Conversation topics" means the ones that have a topic. `titledOnly`
-                          // is the shared engine's own predicate, applied before the limit, so
-                          // every provider door answers this the same way.
-                          searchIndexedClaudeHistory({
-                              filters: { ...filters, query: undefined, summaryOnly: true, titledOnly: true },
-                          })
-                      )
-                    : await p.measureAsync("history.search", () => searchIndexedClaudeHistory({ filters }));
-                // No p.summary() here: both callees already summarise the same
-                // cached `claude-history` scope at each return, so a second call
-                // printed and persisted every row twice (PR #343 review t3 round
-                // 13). Summary ownership stays in the library, with the timers.
-
-                await warnUnresolvedIdentities(createClaudeAdapter(), "claude");
-
-                if (results.length === 0) {
-                    if (options.json || options.format === "json") {
-                        out.println(formatResultsAsJson([]));
-                        return;
-                    }
-                    out.println(chalk.yellow("No conversations found matching your criteria."));
-                    return;
-                }
-
-                if (options.json || options.format === "json") {
-                    out.println(formatResultsAsJson(results));
-                } else if (process.stdout.isTTY && !filters.context) {
-                    formatResultsAsTable(results, filters);
-                } else {
-                    out.println(formatResultsAsMarkdown(results, filters));
-                }
-
-                // Post-search: offer to summarize a session (interactive only —
-                // isInteractive() also accounts for CI/piped/headless, not just TTY)
-                if (isInteractive() && options.interactive && results.length > 0) {
-                    const wantSummarize = await out.confirm({
-                        message: "Would you like to summarize one of these sessions?",
-                        initialValue: false,
-                    });
-                    if (!out.isCancel(wantSummarize) && wantSummarize) {
-                        const sessionChoices = results.map((r) => ({
-                            value: r.sessionId,
-                            label: `${r.customTitle || r.summary || r.sessionId} (${r.timestamp.toISOString().split("T")[0]})`,
-                        }));
-                        const chosen = await out.select({
-                            message: "Select session to summarize:",
-                            options: sessionChoices,
-                        });
-                        if (!out.isCancel(chosen)) {
-                            const proc = spawn({
-                                cmd: [
-                                    "bun",
-                                    "run",
-                                    resolve(import.meta.dir, "../index.ts"),
-                                    "summarize",
-                                    chosen as string,
-                                    "-i",
-                                ],
-                                stdio: ["inherit", "inherit", "inherit"],
-                            });
-                            await proc.exited;
-                        }
-                    }
-                }
-            } catch (error) {
-                if ((error as Error).message?.includes("canceled")) {
-                    out.println(chalk.dim("\nOperation cancelled."));
-                    process.exit(0);
-                }
-                throw error;
+            if (!project) {
+                return undefined;
             }
-        });
+
+            // An encoded transcript directory ("-Users-Martin-Projects-Foo") reads as noise.
+            const shown = project.startsWith("-") ? basename(process.cwd()) : project;
+
+            return { project, notice: `Auto-detected project: ${shown} (use --all to search all projects)` };
+        },
+        interactiveFilters: runInteractive,
+        afterResults: offerToSummarize,
+    });
 
     // -------------------------------------------------------------------------
     // extract-shell-quirks — mine zsh/bash NOMATCH failures from session JSONLs

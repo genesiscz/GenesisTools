@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, type JsonRecord, type JsonValue, scanJsonlRecords, text } from "../source-scan";
 import type { AgentSession, NativeSessionSource, NativeSourceIssue } from "../types";
@@ -297,13 +298,20 @@ export async function discoverCodexHistorySources(
             }
         }
 
-        const state = readStateMetadata({
-            paths: metadataPaths,
-            nativeId: header.nativeId,
-            root: file.root,
-            issues,
-            incompleteRoots,
-        });
+        // Opens a fresh read-only SQLite handle per rollout, in a sequential loop: gated, because
+        // on a home with thousands of rollouts one line per file would drown the phase view.
+        const readState = () =>
+            readStateMetadata({
+                paths: metadataPaths,
+                nativeId: header.nativeId,
+                root: file.root,
+                issues,
+                incompleteRoots,
+            });
+        const state =
+            profiler.detail === "all"
+                ? profiler.scope("agent-sessions").measure("discover.codex-state-sqlite", readState)
+                : readState();
         const indexed = sessionIndex.get(header.nativeId);
         const metadata = mergeMetadata(header, state, indexed, basename(file.root) === "archived_sessions");
         const source: NativeSessionSource<"codex"> = {

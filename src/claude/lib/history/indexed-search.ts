@@ -5,6 +5,7 @@ import type { HistorySearchResult } from "@genesiscz/utils/agent-sessions/servic
 import type { NativeSourceIssue } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import type { ConversationMessage, SearchFilters, SearchResult } from "./types";
 
 export function toClaudeSearchResult(result: HistorySearchResult, filters: SearchFilters): SearchResult {
@@ -62,7 +63,13 @@ export async function searchIndexedClaudeHistory(options: {
         logger.warn(issueSample(response.issues), "Claude history source issues");
     }
 
-    return response.results.map((result) => toClaudeSearchResult(result, filters));
+    // A `SafeJSON.parse` per matched AND context record, on the path behind every CLI search and
+    // the whole dashboard. Separate from the service call, so slowness has an owner.
+    return profiler
+        .scope("claude-history")
+        .measure("indexed-search.to-dto", () =>
+            response.results.map((result) => toClaudeSearchResult(result, filters))
+        );
 }
 
 export async function getIndexedClaudeConversation(options: {
@@ -78,5 +85,8 @@ export async function getIndexedClaudeConversation(options: {
     }
 
     const result = response.results[0];
-    return result ? toClaudeSearchResult(result, {}) : null;
+
+    return result
+        ? profiler.scope("claude-history").measure("indexed-detail.to-dto", () => toClaudeSearchResult(result, {}))
+        : null;
 }

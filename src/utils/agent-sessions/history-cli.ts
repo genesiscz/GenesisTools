@@ -1,13 +1,15 @@
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { createBoxTable } from "@genesiscz/utils/table";
 import type { Command } from "commander";
+import pc from "picocolors";
 import { formatHistoryJson, formatHistoryMarkdown, renderHistoryTable } from "./format-history";
 import { parseHistoryDate } from "./history-date";
 import { validateHistoryFilters } from "./native-match";
-import type { AgentSearchFilters, AgentSessionAdapter } from "./types";
+import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter } from "./types";
 
 /** A closed set, so the flag takes an optional value and prints the list itself. */
 const HISTORY_FORMATS = ["ai", "json"] as const;
@@ -95,11 +97,37 @@ export function filtersFromHistoryOptions(
     };
 }
 
+/**
+ * The three places a door genuinely differs, declared rather than duplicated.
+ *
+ * `tools claude history` was a second ~560-line implementation of this command because of these
+ * and nothing else. Codex and grok pass none of them.
+ */
+export interface HistoryCliHooks {
+    /**
+     * The scope for a search that named neither `--all`, `--project` nor `--cwd`.
+     *
+     * The shared default is an exact cwd, which is right for a provider whose sessions record
+     * one. Claude resolves the encoded project directory instead, so a search run from a
+     * SUBdirectory of a project still finds that project's sessions; an exact cwd would find
+     * none of them.
+     */
+    defaultScope?: () => { project?: string; notice?: string } | undefined;
+    /**
+     * `-i` builds the filters here rather than picking one of the results afterwards. A door
+     * that supplies this owns the whole meaning of `-i`, so the result picker below is skipped.
+     */
+    interactiveFilters?: () => Promise<HistoryCliOptions>;
+    /** A door that offers a follow-up once the results are on screen. */
+    afterResults?: (hits: AgentSearchHit<string>[], options: HistoryCliOptions) => Promise<void>;
+}
+
 export function registerAgentHistoryCommand(
     program: Command,
     adapter: AgentSessionAdapter<string>,
-    toolName: string
-): void {
+    toolName: string,
+    hooks: HistoryCliHooks = {}
+): Command {
     const history = program.command("history");
     history
         .description(`Search ${adapter.kind} conversation history`)
@@ -131,8 +159,9 @@ export function registerAgentHistoryCommand(
         .option("--sort-relevance", "Rank metadata and full-text matches")
         .option("--conv-date <date>", "Conversation start date lower bound")
         .option("--conv-date-until <date>", "Conversation start date upper bound")
-        .action(async (positional: string | undefined, options: HistoryCliOptions) => {
-            const query = resolveHistoryQuery(positional, options);
+        .action(async (positional: string | undefined, raw: HistoryCliOptions) => {
+            let options = raw;
+
             if (options.interactive && !isInteractive()) {
                 out.error(
                     `--interactive needs a TTY. ${suggestCommand(`tools ${toolName} history`, { add: ["--all"] })}`
@@ -140,6 +169,13 @@ export function registerAgentHistoryCommand(
                 process.exitCode = 1;
                 return;
             }
+
+            // Before the query is read, because a door whose `-i` builds the filters may supply one.
+            if (options.interactive && hooks.interactiveFilters) {
+                options = { ...options, ...(await hooks.interactiveFilters()) };
+            }
+
+            const query = resolveHistoryQuery(positional, options);
 
             // A bare `--format` used to reach commander's "argument missing" with no value list,
             // and `--format yaml` threw a raw stack trace at the user. Both now name the values.
@@ -156,12 +192,36 @@ export function registerAgentHistoryCommand(
             if (options.excludeCurrent) {
                 const runtime = getAgentRuntimeContext();
                 const expected = adapter.kind === "claude" ? "claude-code" : adapter.kind;
+
                 if (runtime.agent !== expected || !runtime.sessionId) {
-                    throw new Error(`--exclude-current requires an active ${adapter.kind} session`);
+                    // The id is matched against THIS provider's transcripts, so another harness's
+                    // id would quietly exclude nothing at all. Name what was detected and the flag
+                    // that works anyway, on stderr rather than as a stack trace.
+                    const detected = runtime.agent === "unknown" ? "no agent session" : runtime.agent;
+                    out.error(
+                        `--exclude-current needs an active ${adapter.kind} session (detected: ${detected}). ` +
+                            "Use --exclude-session <id> instead."
+                    );
+                    process.exitCode = 1;
+                    return;
                 }
+
                 options.excludeSession = [...(options.excludeSession ?? []), runtime.sessionId];
             }
-            const filters = filtersFromHistoryOptions(query, options, process.cwd());
+
+            // Only when the user named no scope at all: naming one is the whole point of
+            // `--project`, and `--all` is an explicit refusal to be scoped.
+            const scope = options.all || options.project || options.cwd ? undefined : hooks.defaultScope?.();
+
+            if (scope?.notice) {
+                out.printlnErr(pc.dim(scope.notice));
+            }
+
+            const filters = filtersFromHistoryOptions(
+                query,
+                scope?.project ? { ...options, project: scope.project } : options,
+                process.cwd()
+            );
 
             // These messages are already the right words for a user — "Invalid history regular
             // expression", "Choose --exact or --regex, not both" — but they reached the terminal as
@@ -174,9 +234,14 @@ export function registerAgentHistoryCommand(
                 return;
             }
 
-            const hits = await adapter.search(filters);
+            // The only CLI entry for `tools codex history` and `tools grok history`, so the label
+            // carries the provider: one scope, separable numbers.
+            const prof = profiler.scope("agent-history");
+            const hits = await prof.measureAsync(`history.search.${adapter.kind}`, () => adapter.search(filters));
 
-            await warnUnresolvedIdentities(adapter, toolName);
+            await prof.measureAsync("history.warn-unresolved-identities", () =>
+                warnUnresolvedIdentities(adapter, toolName)
+            );
 
             if (hits.length === 0) {
                 if (options.json || options.format === "json") {
@@ -188,7 +253,7 @@ export function registerAgentHistoryCommand(
             }
 
             let selected = hits;
-            if (options.interactive) {
+            if (options.interactive && !hooks.interactiveFilters) {
                 const p = await import("@clack/prompts");
                 const choice = await withCancel(
                     p.select({
@@ -212,13 +277,25 @@ export function registerAgentHistoryCommand(
                 return;
             }
 
+            // The search MODE belongs in the output: a `--sort-relevance` listing that does not
+            // say so is indistinguishable from an unsorted one.
+            const render = {
+                summaryOnly: Boolean(filters.summaryOnly),
+                sortByRelevance: Boolean(filters.sortByRelevance),
+                ...(filters.context ? { context: filters.context } : {}),
+            };
+
             if (process.stdout.isTTY && !filters.context) {
-                renderHistoryTable(selected);
+                renderHistoryTable(selected, query, render);
             } else {
-                out.print(formatHistoryMarkdown(selected, query));
+                out.print(formatHistoryMarkdown(selected, query, render));
             }
+
+            await hooks.afterResults?.(selected, options);
         });
     registerHistoryIndexCommand(history, adapter);
+
+    return history;
 }
 
 function collect(value: string, previous: string[]): string[] {
