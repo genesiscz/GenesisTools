@@ -28,6 +28,7 @@ const SERVERS: ServerUnderTest[] = [
     { name: "har-analyzer", entry: "har-analyzer/index.ts", args: ["mcp"], catchWrapped: true },
     { name: "mcp-web-reader", entry: "mcp-web-reader/index.ts", args: ["--server"], catchWrapped: true },
     { name: "mcp-ripgrep", entry: "mcp-ripgrep/index.ts", args: [], catchWrapped: false },
+    { name: "node-repl", entry: "node-repl/index.ts", args: ["mcp"], catchWrapped: false },
     {
         name: "jenkins-mcp",
         entry: "jenkins-mcp/index.ts",
