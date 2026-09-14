@@ -237,7 +237,8 @@ function main(argv: string[]): number {
     );
 
     for (const row of report.violations) {
-        process.stderr.write(`  ${(row.ms / 1000).toFixed(1)}s  ${row.tests} tests  ${row.file}\n`);
+        const tests = row.tests === 1 ? "1 test " : `${row.tests} tests`;
+        process.stderr.write(`  ${(row.ms / 1000).toFixed(1)}s  ${tests}  ${row.file}\n`);
     }
 
     return 1;

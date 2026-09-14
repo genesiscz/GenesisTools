@@ -166,3 +166,29 @@ Two more traps, both of which produced wrong conclusions while this was being wr
   contend. Confirm any suspect with `--jobs 1` before touching it.
 - Local wall time on a developer machine swings with load average. Three interleaved runs per
   arm, minimum, and report the spread rather than one number.
+
+## Where the remaining time is, as of 2026-09-15 03:00
+
+The step went from 276.7 / 273.3 / 274.2 s to 229.4 s, and summed per-test time from 679.1 s
+to 508.1 s, against a 300 s budget. What is left is NOT a short list of slow files:
+
+```
+(508 s of summed per-test time + 1272 files x X) / 4 workers = 229 s   ->   X = 363 ms per file
+```
+
+**1272 x 363 ms is 462 s of runner time, 40% of the whole step, and none of it is a test
+running.** The ten slowest files together hold about 110 s of the other 508 s, so even halving
+every one of them buys roughly 14 s of wall clock. Getting materially below 210 s means
+changing the shape of the run, not trimming more tests, and both options are somebody's call
+rather than a refactor:
+
+- **Shard the step across runners** (`bun test --shard=k/N`, which bun supports natively).
+  Two ubuntu jobs would roughly halve the wall clock and roughly double the runner minutes.
+- **Fewer test FILES.** Merging small related suites is worth ~363 ms of runner time each,
+  and costs nothing in coverage. This is the lever that created the problem, run backwards.
+
+Two files worth a look first, because they are far slower on CI than any local measurement
+explains: `src/utils/ai/config/account-ops.test.ts` is 0.54 s locally and 8.87 s on the runner,
+and `doctor-no-refresh.test.ts` is 1.67 s locally and 7.20 s. A 16x gap points at CPU-bound key
+derivation in the vault path rather than at anything the test does, so measure it on the runner
+before changing it here.
