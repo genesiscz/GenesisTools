@@ -8,9 +8,10 @@ export const DEFAULT_HARNESS_HOMES: Record<MCPProviderName, string[]> = {
     gemini: ["~/.gemini/settings.json"],
     cursor: ["~/.cursor/mcp.json"],
     codex: ["~/.codex"],
+    grok: ["~/.grok"],
 };
 
-const HARNESS_NAMES: MCPProviderName[] = ["claude", "gemini", "cursor", "codex"];
+const HARNESS_NAMES: MCPProviderName[] = ["claude", "gemini", "cursor", "codex", "grok"];
 
 function hasHomes(direction?: HarnessSyncDirection): boolean {
     return Boolean(direction?.homes && direction.homes.length > 0);

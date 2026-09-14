@@ -25,6 +25,10 @@ describe("ensureHarnessDefaults", () => {
                 syncTo: { homes: ["~/.codex"] },
                 syncFrom: { homes: ["~/.codex"] },
             },
+            grok: {
+                syncTo: { homes: ["~/.grok"] },
+                syncFrom: { homes: ["~/.grok"] },
+            },
         });
     });
 

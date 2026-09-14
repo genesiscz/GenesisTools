@@ -2,6 +2,7 @@ import { ClaudeProvider } from "./claude.js";
 import { CodexProvider } from "./codex.js";
 import { CursorProvider } from "./cursor.js";
 import { GeminiProvider } from "./gemini.js";
+import { GrokProvider } from "./grok.js";
 import type { MCPProvider } from "./types.js";
 
 /**
@@ -11,5 +12,5 @@ import type { MCPProvider } from "./types.js";
  * list --json`).
  */
 export function defaultProviders(): MCPProvider[] {
-    return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider()];
+    return [new ClaudeProvider(), new GeminiProvider(), new CodexProvider(), new CursorProvider(), new GrokProvider()];
 }

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { copyFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DiffUtil } from "@genesiscz/utils/diff";
 import { env } from "@genesiscz/utils/env";
@@ -40,7 +40,16 @@ export class BackupManager {
         const backupFileName = `${providerName}-${fileName}-${timestamp}.backup`;
         const backupPath = path.join(this.backupDir, backupFileName);
 
-        await copyFile(configPath, backupPath);
+        // Deliberately not a copy-plus-chmod-after sequence: a plain file copy preserves the
+        // source mode, and these configs can carry the gateway bearer token in `headers` and
+        // be left group/other-readable (an external tool wrote it, or the source's own 0600
+        // tighten had not run yet). Copying first and tightening permissions afterward would
+        // briefly leave the backup exactly as readable as the source, inside a backup
+        // directory this machine's default umask leaves world-traversable. Writing the backup
+        // with its final 0600 mode from the very first write closes that window entirely.
+        const configData = await readFile(configPath);
+        await writeFile(backupPath, configData, { mode: 0o600 });
+
         return backupPath;
     }
 

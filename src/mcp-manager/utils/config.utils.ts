@@ -109,12 +109,14 @@ export function ensureMetaFromEnabledMcpServers(config: UnifiedMCPConfig): Unifi
 /**
  * Read the unified config from storage
  */
-export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
-    const storage = mcpStorage();
-    await storage.ensureDirs();
-    let config = await storage.getConfig<UnifiedMCPConfig>();
-    if (!config) {
-        config = { mcpServers: {} };
+function normalizeUnifiedConfig(input: UnifiedMCPConfig | null): UnifiedMCPConfig {
+    let config = input ?? { mcpServers: {} };
+
+    // A hand-edited config that simply omits the key is valid JSON, and both helpers
+    // below iterate it unconditionally, so the read threw a TypeError before any caller
+    // could defend itself. Normalize once, here, rather than at every consumer.
+    if (!config.mcpServers || typeof config.mcpServers !== "object") {
+        config.mcpServers = {};
     }
 
     // Ensure _meta.enabled is synced from enabledMcpServers if needed
@@ -124,6 +126,23 @@ export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
     config = syncEnabledMcpServers(config);
 
     return config;
+}
+
+export async function readUnifiedConfig(): Promise<UnifiedMCPConfig> {
+    const storage = mcpStorage();
+    await storage.ensureDirs();
+
+    return normalizeUnifiedConfig(await storage.getConfig<UnifiedMCPConfig>());
+}
+
+/**
+ * Same read, no `ensureDirs()`. For diagnostics only: `doctor` advertises itself as
+ * read-only, and creating ~/.genesis-tools/mcp-manager/ as a side effect of inspecting
+ * it is exactly the mutation that rule forbids. `getConfig` already returns null for a
+ * missing file, so nothing else changes.
+ */
+export async function readUnifiedConfigReadOnly(): Promise<UnifiedMCPConfig> {
+    return normalizeUnifiedConfig(await mcpStorage().getConfig<UnifiedMCPConfig>());
 }
 
 /**
