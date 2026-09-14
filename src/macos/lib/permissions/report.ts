@@ -21,11 +21,19 @@ import {
     type TccService,
 } from "./tcc";
 
+export interface TargetGrant {
+    target: string;
+    granted: boolean;
+    label: string;
+}
+
 export interface ServiceGrant {
     service: TccService;
     /** undefined when the database was unreadable */
     granted?: boolean;
     label: string;
+    /** Automation is keyed per (client, target) pair; one boolean cannot describe it */
+    targets?: TargetGrant[];
 }
 
 export interface PermissionsReport {
@@ -57,13 +65,25 @@ export function grantsFor(
             return { service, label: "unknown (database not readable)" };
         }
 
-        const row = source.rows.find((r) => r.service === service.id && r.client === client);
+        const rows = source.rows.filter((r) => r.service === service.id && r.client === client);
 
-        if (!row) {
+        if (rows.length === 0) {
             return { service, granted: false, label: "not asked yet" };
         }
 
-        return { service, granted: isTccGranted(row), label: row.label };
+        // One row per target. Picking the first collapsed five real grants into "denied"
+        // whenever an unanswered prompt for some other app sorted ahead of them.
+        if (service.id === "kTCCServiceAppleEvents") {
+            const targets = rows.map((r) => ({
+                target: r.target ?? "(unknown target)",
+                granted: isTccGranted(r),
+                label: r.label,
+            }));
+            const allowed = targets.filter((t) => t.granted).length;
+            return { service, granted: allowed > 0, label: `${allowed} of ${targets.length} targets allowed`, targets };
+        }
+
+        return { service, granted: isTccGranted(rows[0]), label: rows[0].label };
     });
 }
 

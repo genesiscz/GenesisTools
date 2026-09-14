@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { runAx } from "../lib/runner";
+import { diffSnapshots, type SnapshotRow } from "../lib/snapshot-diff";
 
 const ACTIONS = [
     "get",
@@ -51,6 +54,111 @@ interface WorkflowOptions {
     suffix?: string;
     selection?: string | boolean;
     format?: string | boolean;
+    refresh?: boolean;
+    since?: string;
+}
+
+interface PreviousSnapshot {
+    elements: SnapshotRow[];
+    window?: { id?: number };
+}
+
+function isSnapshotRow(value: unknown): value is SnapshotRow {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+
+    const row = value as Record<string, unknown>;
+    return typeof row.index === "number" && typeof row.depth === "number" && typeof row.role === "string";
+}
+
+/** Narrows the whole array, so the caller never assigns an `any[]` into `SnapshotRow[]`. */
+function isSnapshotRows(value: unknown): value is SnapshotRow[] {
+    return Array.isArray(value) && value.every(isSnapshotRow);
+}
+
+function isSnapshotWindow(value: unknown): value is { id?: number } {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+
+    const id = (value as Record<string, unknown>).id;
+    return id === undefined || typeof id === "number";
+}
+
+/**
+ * The `--since` file is whatever path the caller typed. A missing file, a half-written one, or a
+ * `{}` that would make every current row read as added must not throw: the AX walk has already
+ * happened, and discarding that result to report a bad argument loses the more valuable half.
+ * `comparable: false` is the shape the window-id mismatch already uses.
+ */
+function readPreviousSnapshot(file: string): PreviousSnapshot | { reason: string } {
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(readFileSync(file, "utf8"), { strict: true });
+    } catch (error) {
+        logger.debug({ error, file }, "see --since could not read the previous snapshot");
+        const detail = error instanceof Error ? error.message : String(error);
+        return { reason: `previous snapshot unreadable (${detail}); full elements returned` };
+    }
+
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { reason: "previous snapshot is not a see result; full elements returned" };
+    }
+
+    const fields = parsed as Record<string, unknown>;
+
+    if (!isSnapshotRows(fields.elements)) {
+        return { reason: "previous snapshot has no usable elements[]; full elements returned" };
+    }
+
+    if (fields.window !== undefined && !isSnapshotWindow(fields.window)) {
+        return { reason: "previous snapshot has an unusable window; full elements returned" };
+    }
+
+    return { elements: fields.elements, window: fields.window };
+}
+
+/** `see --since`: keep the token, window and screenshot; replace the rows with what moved. */
+export function sinceSnapshot(previousFile: string, current: Record<string, unknown>): Record<string, unknown> {
+    const previous = readPreviousSnapshot(previousFile);
+
+    if ("reason" in previous) {
+        return { ...current, since: { file: previousFile, comparable: false, reason: previous.reason } };
+    }
+
+    const rows = (current.elements as SnapshotRow[] | undefined) ?? [];
+    const currentWindow = current.window as { id?: number } | undefined;
+
+    if (
+        previous.window?.id !== undefined &&
+        currentWindow?.id !== undefined &&
+        previous.window.id !== currentWindow.id
+    ) {
+        return {
+            ...current,
+            since: { file: previousFile, comparable: false, reason: "different window id; full elements returned" },
+        };
+    }
+
+    const diff = diffSnapshots(previous.elements, rows);
+    const moved = new Set([...diff.added.map((r) => r.index), ...diff.changed.map((c) => c.index)]);
+    const { elements: _all, ...rest } = current;
+
+    return {
+        ...rest,
+        elementCount: rows.length,
+        elements: rows.filter((r) => moved.has(r.index)),
+        changes: {
+            added: diff.added.map((r) => r.index),
+            removed: diff.removed,
+            changed: diff.changed,
+            unchanged: diff.unchanged,
+            indexMap: diff.indexMap,
+        },
+        since: { file: previousFile, comparable: true, previousElements: previous.elements.length },
+    };
 }
 
 export function registerWorkflowCommands(program: Command): void {
@@ -65,6 +173,10 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
         .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
+        .option(
+            "--since <json>",
+            "a previous see result for the same window; output carries changes and only the rows that moved"
+        )
         .action((opts: WorkflowOptions) => {
             if (opts.scope !== undefined && !["window", "chrome"].includes(String(opts.scope))) {
                 logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome"]));
@@ -88,7 +200,7 @@ export function registerWorkflowCommands(program: Command): void {
             }
 
             const result = runAx(args, 30_000);
-            out.result(result);
+            out.result(result.ok && opts.since ? sinceSnapshot(opts.since, result) : result);
             process.exitCode = result.ok ? 0 : 1;
         });
 
@@ -122,6 +234,11 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--suffix <text>", "select: immediate suffix after the unique text match")
         .option("--selection [mode]", "select: text, cursor_before or cursor_after")
         .option("--format [name]", "paste: text, md or html; consumes the current selection")
+        .option(
+            "--refresh",
+            "settle, then return the post-action snapshot under `after`; one round trip instead of two"
+        )
+        .option("--path <png>", "with --refresh: save the post-action screenshot here")
         .action((opts: WorkflowOptions) => {
             if (typeof opts.action !== "string" || !ACTIONS.some((action) => action === opts.action)) {
                 logger.error(suggestEnumFlag("tools control act", "--action", ACTIONS));
@@ -189,6 +306,14 @@ export function registerWorkflowCommands(program: Command): void {
 
             if (opts.background) {
                 args.push("--background");
+            }
+
+            if (opts.refresh) {
+                args.push("--refresh");
+            }
+
+            if (typeof opts.path === "string") {
+                args.push("--path", opts.path);
             }
 
             const result = runAx(args, 30_000);

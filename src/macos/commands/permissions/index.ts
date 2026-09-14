@@ -62,6 +62,16 @@ function printReport(report: PermissionsReport): void {
         } else {
             ui.warn(line);
         }
+
+        for (const target of grant.targets ?? []) {
+            const targetLine = `${target.target}: ${target.label}`;
+
+            if (target.granted) {
+                ui.ok(`  ${targetLine}`);
+            } else {
+                ui.dim(`    ${targetLine}`);
+            }
+        }
     }
 
     if (!report.userDb.readable) {

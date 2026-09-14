@@ -5,6 +5,7 @@
  */
 
 import { type Annotation, type PresetName, parseRect } from "@genesiscz/utils/image";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 export const CAPTURE_HELP = `control capture — declarative peekaboo capture + timed UI actions
 
@@ -73,7 +74,11 @@ PLAN CONTRACT (TypeScript)
       screenIndex?: number;       // screen mode: index from \`peekaboo list screens --json\`
       app?: string;               // window mode
       windowTitle?: string;       // window mode narrowing
-      windowIndex?: number;       // window mode narrowing
+      windowIndex?: number;       // window mode narrowing. AX-ordered, so the native recorder
+          // resolves it against its own CGWindowList and can land on a different window when an
+          // app has several. Prefer windowId whenever you have one.
+      windowId?: number;          // window mode, EXACT: the CG window id \`see\` reports as
+          // window.id. Both backends agree on it, and it wins over app/windowTitle/windowIndex.
       region?: string;            // region mode: "x,y,w,h"
       duration: number;           // seconds — REQUIRED (never rely on peekaboo's 60s default)
       activeFps?: number;         // default 8, max 15
@@ -88,6 +93,9 @@ PLAN CONTRACT (TypeScript)
           // show no panel); may render from a human Terminal session. Treat
           // stderr as the real channel. Pointless for fully synthetic plans.
       noRemote?: boolean;         // pass --no-remote (skip bridge hosts, run local)
+      backend?: "native" | "peekaboo"; // DEFAULT "native" when ax-tool is built: the recorder is
+          // ScreenCaptureKit inside ax-tool (\`ax-tool capture\`), no Peekaboo, no bridge, no
+          // daemon. "peekaboo" opts back into the external binary; the flags below then apply.
       captureEngine?: "cg" | "sc"; // pass --capture-engine; "cg" = CoreGraphics.
           // RECOMMENDED DEFAULT FOR AGENT-DRIVEN PLANS: \`noRemote: true,
           // captureEngine: "cg"\` — skips the bridge entirely, which is the
@@ -386,6 +394,8 @@ export interface CaptureSpec {
     app?: string;
     windowTitle?: string;
     windowIndex?: number;
+    /** CG window id (`see`'s window.id). Exact, and the only selector both backends agree on. */
+    windowId?: number;
     region?: string;
     duration: number;
     activeFps?: number;
@@ -395,6 +405,8 @@ export interface CaptureSpec {
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";
+    /** default native when ax-tool is built: ScreenCaptureKit, no Peekaboo; "peekaboo" opts back in */
+    backend?: "native" | "peekaboo";
 }
 
 export interface CropSpec {
@@ -511,6 +523,23 @@ export function extractCropSpecs(actions: Action[]): CropSpec[] {
     }
 
     return specs;
+}
+
+export const CAPTURE_BACKENDS = ["native", "peekaboo"] as const;
+
+/**
+ * A plan arrives as JSON, so `capture.backend` can hold anything the union forbids. Everything
+ * that is not exactly "native" selects Peekaboo downstream, which would silently turn a typo
+ * such as "Native" into the opposite of what it asks for — hence an error, not a warning.
+ */
+export function invalidBackend(plan: Plan): string | undefined {
+    const backend = plan.capture?.backend as string | undefined;
+
+    if (backend === undefined || CAPTURE_BACKENDS.includes(backend as (typeof CAPTURE_BACKENDS)[number])) {
+        return undefined;
+    }
+
+    return `capture.backend must be ${CAPTURE_BACKENDS.join(" or ")}, got ${SafeJSON.stringify(backend)}`;
 }
 
 export function validatePlan(plan: Plan): string[] {

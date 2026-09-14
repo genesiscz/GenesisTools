@@ -111,3 +111,13 @@ test("type rejects text over 256 UTF-16 units before native resolution", () => {
     expect(result.stderr).toContain("paste");
     expect(result.stderr).not.toContain("app not found");
 });
+test("see and act help name the diff and refresh options", () => {
+    const see = spawnSync("bun", [entry, "see", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
+    expect(see.status).toBe(0);
+    expect(see.stdout).toContain("--since <json>");
+
+    const act = spawnSync("bun", [entry, "act", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
+    expect(act.status).toBe(0);
+    expect(act.stdout).toContain("--refresh");
+    expect(act.stdout).toContain("--path <png>");
+});
