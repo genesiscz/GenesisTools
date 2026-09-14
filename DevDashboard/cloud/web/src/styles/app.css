@@ -1,0 +1,205 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   DevDashboard Cloud — "Obsidian Terminal" design system
+   Ported from DevDashboard/cloud/landing/obsidian-terminal/index.html.
+   Tokens, silk easing, mesh orbs, grain, double-bezel cards, gradient text.
+   ============================================================================ */
+
+@theme {
+    --font-display: "Clash Display", ui-sans-serif, system-ui, sans-serif;
+    --font-sans: "General Sans", ui-sans-serif, system-ui, sans-serif;
+    --font-satoshi: "Satoshi", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, "Cascadia Code", monospace;
+
+    --color-ink: #050505;
+    --color-emerald-glow: #10b981;
+    --color-violet-glow: #8b5cf6;
+
+    /* The silk easing curve used across every transition in the landing design. */
+    --ease-silk: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root {
+    color-scheme: dark;
+}
+
+html,
+body {
+    background: #050505;
+}
+
+body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    color: var(--color-zinc-300, #d4d4d8);
+    overflow-x: hidden;
+}
+
+/* ---- Background mesh orbs (fixed, blurred, low-opacity) ---- */
+.mesh {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.orb {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(120px);
+    opacity: 0.5;
+    will-change: transform;
+}
+
+.orb-emerald {
+    background: radial-gradient(circle at 30% 30%, #10b981, transparent 70%);
+}
+
+.orb-violet {
+    background: radial-gradient(circle at 70% 70%, #8b5cf6, transparent 70%);
+}
+
+/* Fine film-grain / noise via SVG, fixed + pointer-events-none */
+.grain {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---- Scroll-reveal base ---- */
+.reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    filter: blur(8px);
+    transition:
+        opacity 850ms var(--ease-silk),
+        transform 850ms var(--ease-silk),
+        filter 850ms var(--ease-silk);
+    will-change: transform, opacity;
+}
+
+.reveal.in {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+}
+
+/* ---- Gradient text ---- */
+.grad-text {
+    background: linear-gradient(110deg, #ecfdf5 0%, #6ee7b7 38%, #c4b5fd 88%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+/* ---- Sparkline draw animation ---- */
+@keyframes dash {
+    from {
+        stroke-dashoffset: 320;
+    }
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.sparkline-path {
+    stroke-dasharray: 320;
+    stroke-dashoffset: 320;
+    animation: dash 2.2s var(--ease-silk) forwards;
+}
+
+/* ---- Terminal caret blink ---- */
+@keyframes blink {
+    0%,
+    49% {
+        opacity: 1;
+    }
+    50%,
+    100% {
+        opacity: 0;
+    }
+}
+
+.caret {
+    animation: blink 1.05s steps(1) infinite;
+}
+
+/* ---- Live pulse dot ---- */
+@keyframes livepulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
+    }
+    70% {
+        box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+}
+
+.live-dot {
+    animation: livepulse 2s infinite var(--ease-silk);
+}
+
+/* ---- Bars in the pulse card ---- */
+@keyframes grow {
+    from {
+        transform: scaleY(0.15);
+    }
+}
+
+.bar {
+    transform-origin: bottom;
+    animation: grow 700ms var(--ease-silk) backwards;
+}
+
+/* Concentric squircle inner-highlight helper (the double-bezel inset highlight). */
+.inset-hi {
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+::selection {
+    background: rgba(16, 185, 129, 0.3);
+    color: #ecfdf5;
+}
+
+/* Mobile menu link stagger */
+#mobileMenu.open .m-link {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.m-link {
+    opacity: 0;
+    transform: translateY(40px);
+    transition:
+        opacity 600ms var(--ease-silk),
+        transform 600ms var(--ease-silk);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reveal,
+    .m-link {
+        transition: none !important;
+    }
+    .sparkline-path,
+    .caret,
+    .live-dot,
+    .bar {
+        animation: none !important;
+    }
+    .reveal {
+        opacity: 1;
+        transform: none;
+        filter: none;
+    }
+    .sparkline-path {
+        stroke-dashoffset: 0;
+    }
+}
