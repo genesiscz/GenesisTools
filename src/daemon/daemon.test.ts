@@ -60,7 +60,7 @@ describe("daemon SIGTERM shutdown ordering", () => {
     test("PID file is created on start and removed once the scheduler has fully shut down", async () => {
         const tmpDir = mkdtempSync(join(tmpdir(), "daemon-test-"));
         const proc = Bun.spawn(["bun", "run", "src/daemon/daemon.ts"], {
-            env: { ...process.env, GENESIS_TOOLS_DAEMON_DIR: tmpDir },
+            env: { ...process.env, GENESIS_TOOLS_DAEMON_DIR: tmpDir, GENESIS_TOOLS_DAEMON_WAKEFUL_TICK_MS: "25" },
             stderr: "pipe",
         });
 
@@ -152,7 +152,7 @@ describe("daemon pidfile atomic takeover", () => {
         // The negative control: the staleness check must not hand the pidfile
         // to a second daemon while the first one is still running.
         const proc = Bun.spawn(["bun", "run", "src/daemon/daemon.ts"], {
-            env: { ...process.env, GENESIS_TOOLS_DAEMON_DIR: dir },
+            env: { ...process.env, GENESIS_TOOLS_DAEMON_DIR: dir, GENESIS_TOOLS_DAEMON_WAKEFUL_TICK_MS: "25" },
             stderr: "pipe",
         });
 
@@ -163,7 +163,10 @@ describe("daemon pidfile atomic takeover", () => {
                 expect(getDaemonPid()).toBe(proc.pid);
             });
         } finally {
-            proc.kill("SIGTERM");
+            // SIGKILL rather than SIGTERM: no assertion follows this line, and afterEach
+            // rmSync's the directory with the pidfile a graceful unwind would have cleared,
+            // so waiting out the scheduler's unwind bought nothing but 1.9 s.
+            proc.kill("SIGKILL");
             await proc.exited;
         }
     });

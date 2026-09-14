@@ -180,7 +180,15 @@ export interface DownResult {
     message: string;
 }
 
-export async function runAiProxyDown(): Promise<DownResult> {
+/**
+ * `waits` is tuning, not behaviour: both settles exist so a real launchd bootout and a real
+ * SIGTERM have time to land, and a test that drives fakes needs neither. lifecycle.test.ts
+ * spent 2.0 s of its 5.2 s on the bootout settle alone (743/715/646/655 ms in the four
+ * launchd-installed cases, against 121 ms for the identical case with it false).
+ */
+export async function runAiProxyDown(
+    waits: { bootoutSettleMs?: number; sigtermSettleMs?: number } = {}
+): Promise<DownResult> {
     const store = getAiProxyConfigStore();
     const config = await store.load();
 
@@ -201,7 +209,7 @@ export async function runAiProxyDown(): Promise<DownResult> {
         out.log.step(`Unloading launchd agent ${AI_PROXY_LAUNCHD_LABEL}…`);
         await stopAiProxyLaunchd();
         bootedOut = true;
-        await Bun.sleep(500);
+        await Bun.sleep(waits.bootoutSettleMs ?? 500);
     }
 
     const launchdNote = bootedOut ? ` (launchd agent ${AI_PROXY_LAUNCHD_LABEL} unloaded)` : "";
@@ -262,7 +270,7 @@ export async function runAiProxyDown(): Promise<DownResult> {
         return { stopped: false, pid: targetPid, message: `Failed to stop pid ${targetPid}: ${message}` };
     }
 
-    await Bun.sleep(500);
+    await Bun.sleep(waits.sigtermSettleMs ?? 500);
 
     if (isProcessAlive(targetPid)) {
         // pid-verified: escalation on the pid inspectProxyPid already confirmed
@@ -373,7 +381,7 @@ export interface LaunchdInstallResult {
  * days, and the only symptom was `ECONNREFUSED 127.0.0.1:8317` inside two MCP
  * servers whose plain API tools kept working.
  */
-export async function runAiProxyInstallLaunchd(): Promise<LaunchdInstallResult> {
+export async function runAiProxyInstallLaunchd(waits: { sigtermGraceMs?: number } = {}): Promise<LaunchdInstallResult> {
     if (process.platform !== "darwin") {
         throw new Error("Launchd integration is macOS-only.");
     }
@@ -407,7 +415,9 @@ export async function runAiProxyInstallLaunchd(): Promise<LaunchdInstallResult> 
                 process.kill(owner.pid, "SIGTERM");
             }
 
-            const deadline = Date.now() + 3000;
+            // A child that ignores SIGTERM is alive at any deadline, so shortening this
+            // changes how long the test waits to learn that, never what it learns.
+            const deadline = Date.now() + (waits.sigtermGraceMs ?? 3000);
             while (isProcessAlive(owner.pid) && Date.now() < deadline) {
                 await Bun.sleep(100);
             }

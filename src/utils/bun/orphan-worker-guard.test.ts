@@ -78,7 +78,7 @@ async function spawnBusyChild(opts: { guard: boolean }): Promise<{ middlePid: nu
     const childSource = opts.guard
         ? `import { installOrphanWorkerGuard } from ${SafeJSON.stringify(guardPath)};
 import { writeFileSync } from "node:fs";
-installOrphanWorkerGuard();
+installOrphanWorkerGuard({ pollSeconds: 0.25 });
 writeFileSync(${SafeJSON.stringify(readyFile)}, "1");
 for (;;) {}`
         : `import { writeFileSync } from "node:fs";
@@ -163,6 +163,24 @@ function countOwnShells() {
             return parts.length >= 2 && Number(parts[0]) === process.pid && /sh$/.test(parts[1] ?? "");
         }).length;
 }
+
+/**
+ * Waits until at least \`min\` watchdog shells are visible to ps, then settles briefly.
+ *
+ * The four probes below used a flat 750 ms guess each. Polling for the shell to appear is
+ * both faster and stricter, and the trailing settle keeps the point of the probes intact:
+ * they count DUPLICATES, so a straggler second shell must still have time to show up before
+ * the count is taken.
+ */
+async function settleShells(min) {
+    const deadline = Date.now() + 5000;
+
+    while (countOwnShells() < min && Date.now() < deadline) {
+        await Bun.sleep(10);
+    }
+
+    await Bun.sleep(100);
+}
 `;
 
 /** Runs a generated script in its own process and returns what it wrote to the result file. */
@@ -216,7 +234,10 @@ describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
 
         const stillAlive = await waitUntil(() => !isProcessAlive(middlePid), 2_000);
         expect(stillAlive).toBe(true);
-        await Bun.sleep(1_500);
+        // The negative control, and it gets STRONGER rather than shorter: the guarded child
+        // now polls every 0.25 s, so 750 ms spans three poll intervals, where 1500 ms spanned
+        // less than a third of the five-second default.
+        await Bun.sleep(750);
         expect(isProcessAlive(childPid)).toBe(true);
     });
 
@@ -242,7 +263,7 @@ for (let i = 0; i < 10; i += 1) {
     installOrphanWorkerGuard();
 }
 
-await Bun.sleep(750);
+await settleShells(1);
 writeFileSync(RESULT_FILE, String(countOwnShells()));
 `);
 
@@ -260,7 +281,7 @@ writeFileSync(RESULT_FILE, String(countOwnShells()));
 import { isProcessAlive } from ${SafeJSON.stringify(processAlivePath)};
 
 installOrphanWorkerGuard();
-await Bun.sleep(750);
+await settleShells(1);
 const afterFirst = countOwnShells();
 
 // Anchored the same way watchdogRunning() is, above: an unanchored "self=" + pid would also
@@ -289,7 +310,7 @@ while (signalable() && Date.now() < deadline) {
 }
 
 installOrphanWorkerGuard();
-await Bun.sleep(750);
+await settleShells(1);
 writeFileSync(RESULT_FILE, afterFirst + "," + countOwnShells());
 `);
 
@@ -317,7 +338,7 @@ await Bun.sleep(200);
 writeFileSync(notePath, String(impostor.pid));
 
 installOrphanWorkerGuard();
-await Bun.sleep(750);
+await settleShells(1);
 writeFileSync(RESULT_FILE, String(countOwnShells()));
 impostor.kill("SIGKILL");
 `);
@@ -336,7 +357,7 @@ impostor.kill("SIGKILL");
             childFile,
             `import { existsSync, writeFileSync } from "node:fs";
 import { installOrphanWorkerGuard } from ${SafeJSON.stringify(guardPath)};
-installOrphanWorkerGuard();
+installOrphanWorkerGuard({ pollSeconds: 0.25 });
 writeFileSync(${SafeJSON.stringify(readyFile)}, "1");
 while (!existsSync(${SafeJSON.stringify(goFile)})) {
     await Bun.sleep(20);
@@ -431,14 +452,18 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
                     selfPid: self.pid,
                     selfStart: String(selfStart),
                     parentStart: String(parentStart),
+                    pollSeconds: 0.25,
                 }),
             ],
             { env: process.env, stdout: "ignore", stderr: "ignore" }
         );
         leftovers.push(watchdog.pid);
 
-        // Two poll intervals with margin: if it were going to misfire, it would have.
-        await Bun.sleep(12_000);
+        // THREE poll intervals with margin, where the five-second default bought two for
+        // 12 s. The window this test needs is measured in polls, not in seconds: a watchdog
+        // that was going to misfire does so on a poll, and shortening the interval gives it
+        // more chances to, not fewer. 12.09 s -> 0.8 s.
+        await Bun.sleep(750);
         expect(isProcessAlive(self.pid)).toBe(true);
     }, 40_000);
 });

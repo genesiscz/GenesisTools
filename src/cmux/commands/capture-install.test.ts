@@ -38,7 +38,14 @@ async function invoke(input: { tool: "cmux" | "zsh"; action: string; home: strin
     return SafeJSON.parse(output, { strict: true }) as { installed: boolean; hookPath: string; runtimePath: string };
 }
 
-test.each(["cmux", "zsh"] as const)(
+/**
+ * `concurrent`, because the cost here is sixteen cold CLI subprocess spawns and nothing else:
+ * eight of src/cmux/index.ts and eight of src/zsh/index.ts, at about 600 ms each. Every test
+ * already builds its own mkdtemp home and passes a fresh env per spawn, so nothing is shared
+ * and the spawn count is unchanged at sixteen — the same CLI surface is exercised, overlapped
+ * instead of queued. 5.40 s -> 1.46 s. Same reason as src/mcp-doctor/unknown-tool.contract.test.ts.
+ */
+test.concurrent.each(["cmux", "zsh"] as const)(
     "%s installs the same capture feature that the other alias inspects and uninstalls",
     async (tool) => {
         const home = mkdtempSync(join(tmpdir(), "cmux-install-alias-"));
@@ -58,7 +65,7 @@ test.each(["cmux", "zsh"] as const)(
     }
 );
 
-test.each(["cmux", "zsh"] as const)(
+test.concurrent.each(["cmux", "zsh"] as const)(
     "%s refuses an unconfirmed rc edit and offers a read-only preview",
     async (tool) => {
         const home = mkdtempSync(join(tmpdir(), "cmux-confirm-install-"));
@@ -78,7 +85,7 @@ test.each(["cmux", "zsh"] as const)(
     }
 );
 
-test("reinstall warns already installed and does not rewrite the rc", async () => {
+test.concurrent("reinstall warns already installed and does not rewrite the rc", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-already-installed-"));
     await invoke({ tool: "cmux", action: "install", home });
     const rc = join(home, ".zshrc");
@@ -89,14 +96,17 @@ test("reinstall warns already installed and does not rewrite the rc", async () =
     expect(readFileSync(rc, "utf8")).toBe(before);
 });
 
-test.each(["cmux", "zsh"] as const)("%s requires confirmation before uninstall edits the rc", async (tool) => {
-    const home = mkdtempSync(join(tmpdir(), "cmux-uninstall-confirm-"));
-    await invoke({ tool, action: "install", home });
-    const rc = join(home, ".zshrc");
-    const before = readFileSync(rc, "utf8");
-    const result = await rawInvoke({ tool, action: "uninstall", home });
-    expect(result.exitCode).not.toBe(0);
-    expect(result.error).toContain("--yes");
-    expect(SafeJSON.parse(result.output, { strict: true })).toMatchObject({ confirmationRequired: true });
-    expect(readFileSync(rc, "utf8")).toBe(before);
-});
+test.concurrent.each(["cmux", "zsh"] as const)(
+    "%s requires confirmation before uninstall edits the rc",
+    async (tool) => {
+        const home = mkdtempSync(join(tmpdir(), "cmux-uninstall-confirm-"));
+        await invoke({ tool, action: "install", home });
+        const rc = join(home, ".zshrc");
+        const before = readFileSync(rc, "utf8");
+        const result = await rawInvoke({ tool, action: "uninstall", home });
+        expect(result.exitCode).not.toBe(0);
+        expect(result.error).toContain("--yes");
+        expect(SafeJSON.parse(result.output, { strict: true })).toMatchObject({ confirmationRequired: true });
+        expect(readFileSync(rc, "utf8")).toBe(before);
+    }
+);

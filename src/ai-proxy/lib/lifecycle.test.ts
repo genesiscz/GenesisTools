@@ -139,7 +139,7 @@ describe("runAiProxyDown", () => {
         const kill = spyOnKill();
 
         try {
-            const result = await runAiProxyDown();
+            const result = await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(kill.signals).toEqual([]);
             expect(result.stopped).toBe(false);
@@ -157,7 +157,7 @@ describe("runAiProxyDown", () => {
         const kill = spyOnKill();
 
         try {
-            const result = await runAiProxyDown();
+            const result = await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(kill.signals).toEqual([]);
             expect(result.stopped).toBe(false);
@@ -176,10 +176,10 @@ describe("runAiProxyDown", () => {
 
         try {
             pidState = { status: "none" };
-            expect((await runAiProxyDown()).stopped).toBe(false);
+            expect((await runAiProxyDown({ bootoutSettleMs: 0 })).stopped).toBe(false);
 
             pidState = { status: "dead", pid: 4244 };
-            expect((await runAiProxyDown()).stopped).toBe(false);
+            expect((await runAiProxyDown({ bootoutSettleMs: 0 })).stopped).toBe(false);
 
             expect(kill.signals).toEqual([]);
         } finally {
@@ -194,7 +194,7 @@ describe("runAiProxyDown", () => {
         const kill = spyOnKill();
 
         try {
-            await runAiProxyDown();
+            await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(kill.signals[0]).toEqual({ pid: 4245, signal: "SIGTERM" });
         } finally {
@@ -213,7 +213,7 @@ describe("runAiProxyDown — launchd path", () => {
         const kill = spyOnKill();
 
         try {
-            await runAiProxyDown();
+            await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(bootouts).toEqual(["bootout"]);
             expect(kill.signals[0]).toEqual({ pid: 5101, signal: "SIGTERM" });
@@ -230,7 +230,7 @@ describe("runAiProxyDown — launchd path", () => {
         const kill = spyOnKill();
 
         try {
-            const result = await runAiProxyDown();
+            const result = await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(bootouts).toEqual(["bootout"]);
             expect(kill.signals).toEqual([]);
@@ -249,7 +249,7 @@ describe("runAiProxyDown — launchd path", () => {
         const kill = spyOnKill();
 
         try {
-            const result = await runAiProxyDown();
+            const result = await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(bootouts).toEqual([]);
             expect(kill.signals[0]).toEqual({ pid: 5103, signal: "SIGTERM" });
@@ -267,7 +267,7 @@ describe("runAiProxyDown — launchd path", () => {
         const kill = spyOnKill();
 
         try {
-            const result = await runAiProxyDown();
+            const result = await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(kill.signals).toEqual([]);
             expect(bootouts).toEqual(["bootout"]);
@@ -291,7 +291,7 @@ describe("runAiProxyDown — launchd path", () => {
         const kill = spyOnKill();
 
         try {
-            const result = await runAiProxyDown();
+            const result = await runAiProxyDown({ bootoutSettleMs: 0 });
 
             expect(kill.signals).toEqual([]);
             expect(bootouts).toEqual(["bootout"]);
@@ -313,7 +313,7 @@ describe.skipIf(process.platform !== "darwin")("runAiProxyInstallLaunchd — por
         const spy = spyOnKill();
 
         try {
-            await expect(runAiProxyInstallLaunchd()).rejects.toThrow(/not ai-proxy/);
+            await expect(runAiProxyInstallLaunchd({ sigtermGraceMs: 300 })).rejects.toThrow(/not ai-proxy/);
             expect(spy.signals).toEqual([]);
             expect(installs).toBe(0);
         } finally {
@@ -353,7 +353,7 @@ describe.skipIf(process.platform !== "darwin")("runAiProxyInstallLaunchd — por
         pidState = { status: "none" };
 
         try {
-            await expect(runAiProxyInstallLaunchd()).rejects.toThrow(/still holds port/);
+            await expect(runAiProxyInstallLaunchd({ sigtermGraceMs: 300 })).rejects.toThrow(/still holds port/);
             expect(installs).toBe(0);
         } finally {
             holder.kill("SIGKILL");

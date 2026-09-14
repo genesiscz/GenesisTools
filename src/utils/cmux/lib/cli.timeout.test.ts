@@ -24,7 +24,7 @@ describe("runCmux timeout", () => {
         fakeCmuxOnPath("#!/bin/sh\nsleep 30\n");
 
         const started = Date.now();
-        const result = await runCmux(["anything"], { timeoutMs: 300 });
+        const result = await runCmux(["anything"], { timeoutMs: 300, killGraceMs: 50 });
         const elapsed = Date.now() - started;
 
         expect(result.timedOut).toBe(true);
@@ -35,8 +35,8 @@ describe("runCmux timeout", () => {
     test("the wrappers forward the option, so every caller can bound its own call", async () => {
         fakeCmuxOnPath("#!/bin/sh\nsleep 30\n");
 
-        await expect(runCmuxOk(["anything"], { timeoutMs: 300 })).rejects.toThrow();
-        await expect(runCmuxJSON(["anything"], { timeoutMs: 300 })).rejects.toThrow();
+        await expect(runCmuxOk(["anything"], { timeoutMs: 300, killGraceMs: 50 })).rejects.toThrow();
+        await expect(runCmuxJSON(["anything"], { timeoutMs: 300, killGraceMs: 50 })).rejects.toThrow();
     });
 
     test("there is a default, so a caller that passes nothing is still bounded", () => {

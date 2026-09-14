@@ -139,6 +139,8 @@ export function buildWatchdogScript(args: {
     selfPid: number;
     selfStart: string;
     parentStart: string;
+    /** Seconds between polls; defaults to POLL_SECONDS. See installOrphanWorkerGuard. */
+    pollSeconds?: number;
 }): string {
     return [
         `parent=${args.parentPid}`,
@@ -167,7 +169,7 @@ export function buildWatchdogScript(args: {
         "    fi",
         "    exit 0",
         "  fi",
-        `  sleep ${POLL_SECONDS}`,
+        `  sleep ${args.pollSeconds ?? POLL_SECONDS}`,
         "done",
     ].join("\n");
 }
@@ -199,7 +201,17 @@ function rememberWatchdog(notePath: string, watchdogPid: number): void {
  * No `@genesiscz/*` imports: isolate workers and `/tmp` repro scripts must load this
  * file without the repo alias graph.
  */
-export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid?: number }): void {
+export function installOrphanWorkerGuard(options?: {
+    parentPid?: number;
+    selfPid?: number;
+    /**
+     * Seconds the watchdog sleeps between checks. Tuning, not behaviour: the guard's own
+     * tests must observe a real SIGKILL, and at the five-second default two of them waited
+     * out a whole poll, which was 10.5 s of a 15.7 s file. A shorter interval runs the same
+     * identity check more often rather than differently, so no test may assert on poll COUNT.
+     */
+    pollSeconds?: number;
+}): void {
     if (process.env.GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS === "1") {
         return;
     }
@@ -256,9 +268,13 @@ export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid
         return;
     }
 
-    const proc = spawn("/bin/sh", ["-c", buildWatchdogScript({ parentPid, selfPid, selfStart, parentStart })], {
-        stdio: "ignore",
-    });
+    const proc = spawn(
+        "/bin/sh",
+        ["-c", buildWatchdogScript({ parentPid, selfPid, selfStart, parentStart, pollSeconds: options?.pollSeconds })],
+        {
+            stdio: "ignore",
+        }
+    );
 
     proc.unref();
 

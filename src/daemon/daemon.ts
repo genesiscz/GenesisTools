@@ -107,9 +107,16 @@ export async function startDaemon(): Promise<void> {
         log.info("[daemon] stopped");
     };
 
+    // Test seam, in the same shape the daemon dir already uses: the scheduler idles inside
+    // wakefulSleep, which only re-reads its abort flag between 2 s ticks, so a spawned
+    // daemon took ~2.0 s to unwind after SIGTERM. The env var shortens the poll, never the
+    // shutdown path, so the graceful pidfile removal the tests assert still runs in full.
+    const tickOverride = Number(process.env.GENESIS_TOOLS_DAEMON_WAKEFUL_TICK_MS ?? "");
+
     try {
         await runSchedulerLoop(getLogsBaseDir(), {
             verifyOwnership: () => verifyPidfileOwnership(pidFile),
+            wakefulTickMs: Number.isFinite(tickOverride) && tickOverride > 0 ? tickOverride : undefined,
         });
     } catch (err) {
         log.error({ err }, "[daemon] crashed");
