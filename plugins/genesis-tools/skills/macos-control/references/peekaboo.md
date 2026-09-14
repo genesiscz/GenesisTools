@@ -47,7 +47,7 @@ All confirmed `(beta3 ✓)` via `peekaboo --help` unless noted.
 | `--region <x,y,w,h>` | Region for `--mode region` | — |
 | `--capture-focus <mode>` | Window focus behavior on capture | — |
 | `--capture-engine <e>` | `auto`\|`classic`\|`cg`\|`modern`\|`sckit` | `auto` |
-| `--duration <s>` | Recording length | **60**, max 180 |
+| `--duration <n>` | Recording length; a bare value is MILLISECONDS, so suffix `s` for seconds | **60s**, max 180s |
 | `--idle-fps <n>` | FPS while idle | 2 |
 | `--active-fps <n>` | FPS while changing | 8, max 15 |
 | `--threshold <pct>` | Change % to keep a frame | 2.5 |

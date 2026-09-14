@@ -29,9 +29,9 @@ Review is inline by default: capture → Read the contact sheet → answer. Fast
 
 ## Step 1 — parse duration and fps from the request
 
-- "2s" / "2 seconds" → `--duration 2`
+- "2s" / "2 seconds" → `--duration 2s`. **Always write the `s`**: peekaboo reads a bare `--duration 2` as 2 MILLISECONDS.
 - "4fps" → `--active-fps 4`
-- **No duration given → default `--duration 3`.** Never fall through to peekaboo's own 60s CLI default. Always pass `--duration` explicitly.
+- **No duration given → default `--duration 3s`.** Never fall through to peekaboo's own 60s CLI default. Always pass `--duration` explicitly.
 - fps not given → omit `--active-fps` (default 8, max 15). `--idle-fps` defaults to 2; `--threshold` defaults to 2.5 (% change cutoff for keeping a frame — raise for noisy content like video playback, lower to catch subtle motion).
 
 ## Step 2 — resolve the capture target (no drag-select exists, ever)
@@ -58,7 +58,7 @@ There is **no interactive rectangle picker anywhere in this stack** — don't at
 ```bash
 peekaboo capture live --mode <screen|window|region> \
   [--app "<Name>"] [--region "x,y,width,height"] \
-  --duration <seconds> [--active-fps <n>] [--threshold <pct>] \
+  --duration <N>s [--active-fps <n>] [--threshold <pct>] \
   --json 1>/tmp/capture-out.json 2>/tmp/capture-err.log
 ```
 

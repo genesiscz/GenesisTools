@@ -131,7 +131,8 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         }
     }
 
-    const args = ["capture", "live", "--mode", cap.mode, "--duration", String(cap.duration), "--json"];
+    // Peekaboo 4 reads a bare duration as milliseconds; the plan declares seconds.
+    const args = ["capture", "live", "--mode", cap.mode, "--duration", `${cap.duration}s`, "--json"];
     if (cap.screenIndex !== undefined) {
         args.push("--screen-index", String(cap.screenIndex));
     }
@@ -407,9 +408,12 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     }
 
     // Bounded exit wait: peekaboo occasionally hangs after (or instead of)
-    // finishing — observed live with a duration-2 capture still alive minutes
-    // later, wedging the whole CG capture stack for every later run
-    // (CGDisplayCreateImage returned nil). Never leave a zombie behind.
+    // finishing. The live observation behind this note was a `--duration 2` run,
+    // which asked peekaboo for 2 MILLISECONDS, not the 2 seconds the note claimed:
+    // that label was this file's own unit bug read back. The hang itself was real —
+    // the process was still alive minutes later, wedging the whole CG capture stack
+    // for every later run (CGDisplayCreateImage returned nil). Never leave a zombie
+    // behind.
     const exitGraceMs = 30_000;
     const exitedInTime = await Promise.race([
         proc.exited.then(() => true),
@@ -438,7 +442,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         const exitCode = exitedInTime ? await proc.exited : null;
         const diagnosis =
             stdoutText.length === 0
-                ? `peekaboo 'capture live' produced NO output${exitCode != null ? ` (exit ${exitCode}${exitCode === 133 ? " = SIGTRAP crash" : ""})` : ""} — the peekaboo binary itself is failing on this system. Verify standalone: peekaboo capture live --mode screen --duration 2 --json. Element control, screenshots, and OCR do not use this path and keep working.`
+                ? `peekaboo 'capture live' produced NO output${exitCode != null ? ` (exit ${exitCode}${exitCode === 133 ? " = SIGTRAP crash" : ""})` : ""} — the peekaboo binary itself is failing on this system. Verify standalone: peekaboo capture live --mode screen --duration 2s --json. Element control, screenshots, and OCR do not use this path and keep working.`
                 : "peekaboo stdout was not valid JSON";
         captureResult = {
             failed: true,
