@@ -22,6 +22,13 @@ export interface DeviceTokenSuccess {
     access_token: string;
     token_type?: string;
     scope?: string;
+    /**
+     * RFC 6749 lifetime of the ACCESS TOKEN, in seconds. Distinct from the
+     * `expires_in` of RFC 8628's device-authorization response, which is the lifetime
+     * of the device_code and user_code and is usually far shorter.
+     */
+    expires_in?: number;
+    refresh_token?: string;
 }
 
 export interface DeviceTokenError {

@@ -20,6 +20,8 @@ import {
     type ServerConnection,
     type ServerJsonEntry,
 } from "@app/mcp-manager/commands/list";
+import { isGatewayOauth } from "@app/mcp-manager/lib/auth/policy.ts";
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { defaultProviders } from "@app/mcp-manager/utils/providers/index.js";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -30,8 +32,21 @@ import { cacheDir } from "./store.ts";
 
 export type { ServerConnection, ServerJsonEntry };
 
+/**
+ * Bump when the SHAPE or the CONTENT RULES of a cached registry change, so an older
+ * cache is treated as a miss rather than consumed.
+ *
+ * 1 → 2 (2026-09-14): gateway servers stopped carrying the upstream URL and started
+ * carrying the loopback projection plus the local token header. A v1 cache either dials
+ * the upstream directly, bypassing the gateway, or carries a redacted placeholder the
+ * gateway answers with 401 — and both look like a transport bug rather than a stale
+ * cache. Reading the file's own version is the only way to tell them apart.
+ */
+export const REGISTRY_SCHEMA = 2;
+
 export interface Registry extends ListJsonOutput {
     fetchedAt: string;
+    schema?: number;
 }
 
 export interface ToolInfo {
@@ -117,7 +132,7 @@ export async function loadRegistry(options: LoadRegistryOptions = {}): Promise<R
         // An empty servers array is a valid cached result (the ListJsonOutput
         // contract says so); requiring length would rescan every provider on
         // every command on a machine with no MCP servers.
-        if (cached && Array.isArray(cached.servers)) {
+        if (cached && Array.isArray(cached.servers) && cached.schema === REGISTRY_SCHEMA) {
             // Permission repair is a mutation, so the read-only (`persist:
             // false`) path reports it via doctor instead of doing it. On the
             // normal path an unverifiable cache is treated as a miss.
@@ -127,8 +142,17 @@ export async function loadRegistry(options: LoadRegistryOptions = {}): Promise<R
         }
     }
 
-    const payload = await buildListJson(defaultProviders());
-    const registry: Registry = { ...payload, fetchedAt: new Date().toISOString() };
+    // internal: the definitions built from this payload are DIALLED, so they need the
+    // live gateway token. The CLI's `--json` gets a redacted copy instead.
+    //
+    // mint only when we are also persisting. A read-only load is `tools scripts doctor`,
+    // which must not create a durable SecretStore entry just by looking; it reads the
+    // token if one exists and shows the redaction mark if not, and it dials nothing.
+    const payload = await buildListJson(defaultProviders(), {
+        internal: true,
+        mint: options.persist !== false,
+    });
+    const registry: Registry = { ...payload, fetchedAt: new Date().toISOString(), schema: REGISTRY_SCHEMA };
 
     if (options.persist !== false) {
         writeJson(registryCachePath(), registry);
@@ -198,9 +222,10 @@ export interface AuthProblem {
 }
 
 /**
- * Build mcporter definitions, attaching Claude Code's Bearer token to every
- * remote server it holds one for. Scripts are headless, so a remote server
- * without a header cannot authenticate at all.
+ * Build mcporter definitions.
+ *
+ * Gateway OAuth servers already carry the local header and loopback URL.
+ * Other remote servers may still attach a Claude Bearer as a last-resort.
  */
 export async function toServerDefinitions(
     registry: Registry,
@@ -211,11 +236,15 @@ export async function toServerDefinitions(
     const selected = enabledServers(registry).filter((s) => !wanted || wanted.has(s.name));
     const definitions: ServerDefinition[] = [];
     const authProblems: AuthProblem[] = [];
+    const unified = await readUnifiedConfig();
 
     for (const server of selected) {
         let headers: Record<string, string> | undefined;
+        const gateway = isGatewayOauth(unified.mcpServers[server.name]) || Boolean(server.auth?.gateway);
 
-        if (server.connection.url) {
+        if (gateway) {
+            headers = server.connection.headers;
+        } else if (server.connection.url) {
             const auth = await authFor(server.connection.url, { refresh: options.refreshAuth });
             headers = auth.headers;
 

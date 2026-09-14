@@ -116,6 +116,7 @@ export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceC
     };
 }
 
+/** The access token only. Use pollDeviceTokenResponse when you need its expiry. */
 export async function pollDeviceToken(args: {
     config: DeviceFlowConfig;
     deviceCode: string;
@@ -124,6 +125,22 @@ export async function pollDeviceToken(args: {
     callbacks?: DeviceFlowCallbacks;
     signal?: AbortSignal;
 }): Promise<string> {
+    return (await pollDeviceTokenResponse(args)).access_token;
+}
+
+/**
+ * The full token response. `args.expiresIn` is the device_code deadline and bounds the
+ * POLLING only; the returned `expires_in` is the access token's own lifetime, and a
+ * caller that stores the former as the latter marks a live token expired within minutes.
+ */
+export async function pollDeviceTokenResponse(args: {
+    config: DeviceFlowConfig;
+    deviceCode: string;
+    intervalSeconds: number;
+    expiresIn: number;
+    callbacks?: DeviceFlowCallbacks;
+    signal?: AbortSignal;
+}): Promise<DeviceTokenSuccess> {
     const { config, deviceCode, intervalSeconds, expiresIn, signal } = args;
     const deadline = Date.now() + expiresIn * 1000;
     let intervalMs = Math.max(1000, Math.floor(intervalSeconds * 1000));
@@ -152,7 +169,25 @@ export async function pollDeviceToken(args: {
         });
 
         if (raw && typeof raw === "object" && typeof (raw as DeviceTokenSuccess).access_token === "string") {
-            return (raw as DeviceTokenSuccess).access_token;
+            // Validate the fields the caller will USE, not just the one that proves this
+            // is a success response. A non-number expires_in reached loginMcpServer and
+            // was persisted as `Date.now() + NaN`, i.e. an expiry that never compares true.
+            const token = raw as Record<string, unknown>;
+            const expiresIn = token.expires_in;
+            const refreshToken = token.refresh_token;
+
+            if (
+                expiresIn !== undefined &&
+                (typeof expiresIn !== "number" || !Number.isFinite(expiresIn) || expiresIn <= 0)
+            ) {
+                throw new Error("Invalid device token response: expires_in is not a positive number");
+            }
+
+            if (refreshToken !== undefined && typeof refreshToken !== "string") {
+                throw new Error("Invalid device token response: refresh_token is not a string");
+            }
+
+            return token as unknown as DeviceTokenSuccess;
         }
 
         if (raw && typeof raw === "object" && typeof (raw as DeviceTokenError).error === "string") {

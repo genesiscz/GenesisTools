@@ -16,6 +16,9 @@
  * fires them concurrently over the already-open session instead, which is the
  * only lever left.
  */
+import { gatewayBaseUrl, gatewayListen } from "@app/mcp-manager/lib/auth/project.ts";
+import { ensureGatewayUp } from "@app/mcp-manager/lib/gateway/ensure.ts";
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -77,6 +80,22 @@ export async function createKit(options: KitOptions = {}): Promise<Kit> {
     const { definitions, authProblems } = await toServerDefinitions(registry, options.servers, {
         refreshAuth: options.refresh,
     });
+
+    // Match the CONFIGURED listener, not the literal 127.0.0.1. A gateway.listen.host of
+    // `localhost` matched nothing here and the gateway never started; any unrelated
+    // loopback MCP server matched and made createKit throw when the port was busy.
+    const unified = await readUnifiedConfig();
+    const listen = gatewayListen(unified);
+    // Compare ORIGINS, not raw hostname and port. Those two fields disagree with
+    // themselves across equivalent spellings: an IPv6 host arrives bracketed in
+    // `url.hostname` but bare in the config, and `url.port` is "" when the URL uses the
+    // scheme's default port, so `Number("")` is 0 and never matches.
+    const gatewayOrigin = new URL(gatewayBaseUrl(listen)).origin;
+    const needsGateway = definitions.some((d) => d.command.kind === "http" && d.command.url.origin === gatewayOrigin);
+
+    if (needsGateway) {
+        await ensureGatewayUp(unified);
+    }
 
     // A stale token surfaces downstream as a 405 from the legacy SSE fallback,
     // which reads like a transport bug. Say the real thing once, up front, on

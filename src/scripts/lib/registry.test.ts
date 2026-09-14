@@ -1,5 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { enabledServers, type Registry, type ServerJsonEntry, toServerDefinition } from "./registry.ts";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import {
+    enabledServers,
+    loadRegistry,
+    REGISTRY_SCHEMA,
+    type Registry,
+    type ServerJsonEntry,
+    toServerDefinition,
+} from "./registry.ts";
 
 function server(partial: Partial<ServerJsonEntry> & { name: string }): ServerJsonEntry {
     return { enabled: true, status: "enabled", providers: [], connection: { type: "stdio", command: "x" }, ...partial };
@@ -54,5 +67,63 @@ describe("enabledServers", () => {
         };
 
         expect(enabledServers(registry).map((s) => s.name)).toEqual(["on"]);
+    });
+});
+
+describe("registry cache versioning", () => {
+    /**
+     * A cache written before gateway servers existed holds the UPSTREAM url, or a
+     * redacted placeholder header. Consumed on a cache hit, createKit either dials the
+     * upstream directly — bypassing the gateway that holds the token — or sends `•••`
+     * and gets a 401. Both read as a transport bug rather than a stale file, which is
+     * why the file has to say which rules it was written under.
+     */
+    it("treats a cache without the current schema as a miss", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-registry-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+
+        try {
+            // A sentinel name no provider config on any machine can produce, so its
+            // absence after the load proves the stale file was NOT returned. Asserting
+            // on a real server name would fail for the wrong reason: the rebuild reads
+            // the machine's actual provider configs, which legitimately contain them.
+            const stale: Registry = {
+                servers: [
+                    {
+                        name: "stale-cache-sentinel-do-not-use",
+                        enabled: true,
+                        status: "enabled",
+                        providers: [],
+                        connection: { type: "http", url: "https://stale.invalid/mcp" },
+                    },
+                ],
+                providersScanned: [],
+                providersFailed: [],
+                fetchedAt: new Date().toISOString(),
+            };
+            const cacheHome = join(home, ".genesis-tools", "scripts", "cache");
+            mkdirSync(cacheHome, { recursive: true, mode: 0o700 });
+            atomicWriteFileSync(
+                join(cacheHome, "registry.json"),
+                `${SafeJSON.stringify(stale, { strict: true }, 2)}\n`,
+                {
+                    mode: 0o600,
+                }
+            );
+
+            // persist:false so this stays a read and cannot mint a gateway token.
+            const loaded = await loadRegistry({ persist: false });
+
+            // Rebuilt from the providers, so it carries the current schema and NOT the
+            // sentinel that only the stale file contained.
+            expect(loaded.schema).toBe(REGISTRY_SCHEMA);
+            expect(loaded.servers.some((s) => s.name === "stale-cache-sentinel-do-not-use")).toBe(false);
+        } finally {
+            env.testing.unset("GENESIS_TOOLS_HOME");
+        }
+    });
+
+    it("pins the current schema number so a shape change has to bump it deliberately", () => {
+        expect(REGISTRY_SCHEMA).toBe(2);
     });
 });
