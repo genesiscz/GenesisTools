@@ -5,12 +5,13 @@
   // under tsc in a fresh worktree (resolves fine in a full install). The build
   // gate must validate SHIPPED code; test types are the test runner's job.
   //
-  // vite.config.ts is excluded for the same reason. It carries the vitest `test`
-  // block, which vite's own defineConfig overloads do not model, and the obvious
-  // fix (importing defineConfig from "vitest/config") is worse here: vitest@3
-  // bundles vite@7 types while this app is on vite@8, so the two Plugin types
-  // collide. The config is still typechecked by the editor tsconfig, and vite
-  // executes it on every dev/build/test run, so a real break cannot hide.
+  // vite.config.ts is INCLUDED here (it used to be excluded): vite's own
+  // `UserConfig` has no `test` key, and importing `defineConfig` from
+  // "vitest/config" to get one is worse — vitest@3 bundles vite@7 types while
+  // this app is on vite@8, so the `plugins` array's `Plugin` type collides.
+  // vite.config.ts now declares a local structural augmentation of vite's
+  // `UserConfig.test` for exactly the fields it sets, so the file typechecks
+  // under both this config and the editor one without touching the import.
   "extends": "./tsconfig.json",
-  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "vite.config.ts"]
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"]
 }

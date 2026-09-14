@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { skip } from "@genesiscz/utils/test/skip";
 import { parseCodesignInfo, pickCodesignIdentity, stampInfoPlist } from "./app";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
@@ -126,7 +127,10 @@ describe("stampInfoPlist", () => {
     });
 });
 
-describe("launchdJobsOutsideApp", () => {
+// macOS only: launchdJobsOutsideApp reads each plist through `plutil` (report.ts:80), a binary that
+// ships with macOS and exists nowhere else. On Linux every plist reads back as zero ProgramArguments,
+// so a wrapped job looks bare and an escaped launcher path never matches.
+describe.skipIf(skip.unlessMac)("launchdJobsOutsideApp", () => {
     /** A real plist, since the scan reads ProgramArguments through `plutil` rather than the text. */
     function writePlist(dir: string, label: string, programArguments: string[], extra = ""): void {
         const args = programArguments.map((arg) => `    <string>${arg.replace(/&/g, "&amp;")}</string>`).join("\n");

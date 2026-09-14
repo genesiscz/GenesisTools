@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { skip } from "@genesiscz/utils/test/skip";
 import {
     GENESIS_APP_BUNDLE_ID,
     genesisAppLauncher,
@@ -23,7 +24,11 @@ function homeWithLauncher(): { home: string; launcher: string } {
 
 const clean = { GENESIS_TOOLS_APP_BUNDLE_ID: undefined, GENESIS_TOOLS_NO_APP: undefined };
 
-describe("launchdProgramArgumentsXml", () => {
+// macOS only, and all of it: installedGenesisAppLauncher() returns null on any other platform
+// (genesis-app.ts:56), so every case below — including the ones that expect NO launcher — would
+// pass for the platform check rather than for the behaviour they name. A vacuous pass is worse
+// than a skip, because it reads as coverage the suite does not have.
+describe.skipIf(skip.unlessMac)("launchdProgramArgumentsXml", () => {
     it("prepends the launcher when it exists and escapes XML", async () => {
         const { home, launcher } = homeWithLauncher();
         await env.testing.withOverrides({ ...clean, GENESIS_TOOLS_HOME: home }, () => {
@@ -48,7 +53,7 @@ describe("launchdProgramArgumentsXml", () => {
     });
 });
 
-describe("launchdPlistNeedsGenesisApp", () => {
+describe.skipIf(skip.unlessMac)("launchdPlistNeedsGenesisApp", () => {
     it("is true only for an existing plist that lacks the launcher while the launcher exists", async () => {
         const { home, launcher } = homeWithLauncher();
         const bare = join(home, "bare.plist");
@@ -77,7 +82,7 @@ describe("launchdPlistNeedsGenesisApp", () => {
     });
 });
 
-describe("writing a plist while running under the app", () => {
+describe.skipIf(skip.unlessMac)("writing a plist while running under the app", () => {
     // Regression: `tools` runs every command through the launcher, so the writer always saw
     // isRunningUnderGenesisApp() === true. Asking the spawn-time question there produced plists
     // with the bare command and made the migration detector answer "nothing to migrate", which

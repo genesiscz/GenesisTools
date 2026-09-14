@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { ccusagePath, skip } from "@genesiscz/utils/test/skip";
 import { isolateAgentHomeEnv } from "../drivers/test-env";
 
 isolateAgentHomeEnv();
@@ -94,17 +95,29 @@ function tokenFields(row: Record<string, unknown>): Record<string, number> {
     };
 }
 
-describe("ccusage JSON parity on a fixture HOME", () => {
+/**
+ * The oracle binary, narrowed. Never throws while the suite carries its gate: `skip.unlessCcusage`
+ * is this same lookup, so a run that reaches here has one. The throw stays as the honest failure
+ * if the gate is ever dropped.
+ */
+function ccusageBinary(): string {
+    if (!ccusagePath) {
+        throw new Error("ccusage binary is required for the parity spawn");
+    }
+
+    return ccusagePath;
+}
+
+// `ccusage` is a developer install, not a dependency of this repo, so the Linux CI runners have
+// none and all three cases threw before asserting anything. Gated rather than deleted: on a box
+// that has the oracle, the parity it pins is the whole point of the file.
+describe.skipIf(skip.unlessCcusage)("ccusage JSON parity on a fixture HOME", () => {
     it("daily grouping keys and token fields match ccusage --json --offline", async () => {
         const home = writeFixtureHome();
         const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, TZ: "UTC" };
         delete env.CLAUDE_CONFIG_DIR;
         const since = ["--since", "20260601", "--until", "20260601"];
-        const ccusageBin = Bun.which("ccusage");
-
-        if (!ccusageBin) {
-            throw new Error("ccusage binary is required for the parity spawn");
-        }
+        const ccusageBin = ccusageBinary();
 
         const cc = await spawnJson(
             [ccusageBin, "claude", "daily", "--json", "--offline", "--timezone", "UTC", ...since],
@@ -139,11 +152,7 @@ describe("ccusage JSON parity on a fixture HOME", () => {
         const home = writeFixtureHome();
         const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, TZ: "UTC" };
         delete env.CLAUDE_CONFIG_DIR;
-        const ccusageBin = Bun.which("ccusage");
-
-        if (!ccusageBin) {
-            throw new Error("ccusage binary is required for the parity spawn");
-        }
+        const ccusageBin = ccusageBinary();
 
         // ccusage `claude session --since/--until` drops this fixture even
         // though `claude daily` with the same window keeps it. Compare the
@@ -160,11 +169,7 @@ describe("ccusage JSON parity on a fixture HOME", () => {
         const home = writeFixtureHome();
         const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, TZ: "UTC" };
         delete env.CLAUDE_CONFIG_DIR;
-        const ccusageBin = Bun.which("ccusage");
-
-        if (!ccusageBin) {
-            throw new Error("ccusage binary is required for the parity spawn");
-        }
+        const ccusageBin = ccusageBinary();
 
         const cc = await spawnJson(
             [

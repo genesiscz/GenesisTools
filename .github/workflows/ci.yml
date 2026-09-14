@@ -29,14 +29,20 @@ jobs:
           # referenced as ${{ matrix.testTimeout }} (a plain matrix int IS
           # valid in step-level timeout-minutes; only non-matrix contexts /
           # raw ternaries are rejected there).
-          # ubuntu: the full suite plus its serial phase finishes in 205-215 s on the
-          # 4-vCPU runner (2026-09-09, runs 34386793154 and 34387174349, measured after the
-          # spotify CLI test stopped spawning 75 bun processes), so 4m keeps ~30 s of
-          # margin and the completion-marker guard still rejects a real hang. The
+          # ubuntu: the full suite plus its serial phase finished in 205-215 s on the
+          # 4-vCPU runner when this budget was written (2026-09-09, runs 34386793154 and
+          # 34387174349), so 4m left ~30 s of margin. The suite has since outgrown it. The
+          # six runs up to 2026-09-14 took 241, 243, 244, 246, 252 and 253 s, every one
+          # over the 240 s budget. GitHub's timeout poll carries a few seconds of slop, so
+          # 241-246 s survived while 252-253 s were killed: the same tree passed or failed
+          # by luck. A kill surfaces as the completion-marker guard below reporting a HANG,
+          # which is what it looked like on run 34839337972, so the misleading signal is
+          # the budget, not a stall. 5m puts ~47 s of margin over the slowest measured run
+          # and keeps that guard meaningful. The
           # task/tests integration lane is gated out of the default suite (see
           # package.json `test`) and run on demand via `bun run test:task`, so it is not
           # part of this step's budget. windows med 136s / healthy ~150s -> 7m.
-          inc='{"os":"ubuntu-latest","testTimeout":4}'
+          inc='{"os":"ubuntu-latest","testTimeout":5}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
@@ -94,8 +100,8 @@ jobs:
       # The hosted images ship no ripgrep (actions/runner-images#12179, closed
       # NOT_PLANNED) and the history search, the shell-quirks extractor and the
       # fable enumerator shell out to it. A prebuilt release binary lands on
-      # PATH in a few seconds; no apt, no sudo. Same version the vendored
-      # fallback in src/utils/ripgrep.ts carries, so both paths behave alike.
+      # PATH in a few seconds; no apt, no sudo. PATH is now the only source
+      # (src/utils/ripgrep.ts), so dropping this step turns ripgrep.test.ts red.
       - name: Install ripgrep
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:

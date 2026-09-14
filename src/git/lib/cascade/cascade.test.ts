@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createGit, listWorktrees } from "@genesiscz/utils/git";
@@ -16,6 +16,15 @@ import {
 } from "./execute";
 import { detectChildren, orderChildren } from "./plan";
 import { loadState, statePath } from "./state";
+
+/**
+ * Every case here drives real `git` processes, and three of them add a cold `bun run` of the CLI on
+ * top. On a quiet runner the slowest sits near 2 s, but under the 16-way parallel suite the same
+ * cases measured 5.02 s and 5.14 s and the 5 s default reported them as failures on two consecutive
+ * CI runs. The budget covers process startup under load; it changes no assertion and no deadline any
+ * test asserts on.
+ */
+setDefaultTimeout(20_000);
 
 const repos: TestRepo[] = [];
 

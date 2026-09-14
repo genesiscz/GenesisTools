@@ -45,6 +45,24 @@ export const isLinux = process.platform === "linux";
 export const isCI = flag("CI");
 export const isInteractiveTTY = !!process.stdin.isTTY;
 
+/**
+ * The zsh interpreter on PATH, or null when the machine has none.
+ *
+ * macOS always ships one at /bin/zsh; the Linux CI runners install none. A test that
+ * hardcodes "/bin/zsh" therefore throws ENOENT out of Bun.spawn on Linux, before any
+ * assertion runs, so the suite reports a stack trace instead of a verdict.
+ */
+export const zshPath = Bun.which("zsh");
+
+/**
+ * The `ccusage` CLI on PATH, or null when the machine has none.
+ *
+ * The ai-spend parity suite spawns it as the oracle it compares against. It is a developer
+ * install (`bun add -g ccusage`), not a dependency of this repo, so the Linux CI runners have
+ * none and every parity case threw "ccusage binary is required for the parity spawn".
+ */
+export const ccusagePath = Bun.which("ccusage");
+
 /** Opt-in switches (false unless the matching env var is set). */
 export const optIn = {
     network: flag("RUN_NETWORK_TESTS"),
@@ -142,6 +160,10 @@ export const skip = {
     unlessMac: !isMac,
     /** Skip unless an interactive TTY is attached. */
     unlessInteractive: !isInteractiveTTY,
+    /** Skip unless a zsh interpreter is on PATH (macOS has one, the Linux CI runners do not). */
+    unlessZsh: zshPath === null,
+    /** Skip unless the `ccusage` CLI is on PATH — the oracle the ai-spend parity suite compares against. */
+    unlessCcusage: ccusagePath === null,
     /** Skip in CI. */
     inCI: isCI,
     /** Skip unless RUN_NETWORK_TESTS is set. */

@@ -35,7 +35,6 @@
         "lint:rules": "bun scripts/ci/lint-rules.ts"
     },
     "devDependencies": {
-        "@anthropic-ai/claude-code": "2.1.45",
         "@biomejs/biome": "2.5.11",
         "@modelcontextprotocol/codemod": "2.0.0",
         "@playwright/test": "1.62.1",

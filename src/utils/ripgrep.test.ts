@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { ripgrepBinary, vendoredRipgrep } from "./ripgrep";
+import { ripgrepBinary } from "./ripgrep";
 
 describe("ripgrepBinary", () => {
-    test("always resolves in this repo: PATH or the vendored claude-code copy", async () => {
+    test("resolves the rg on PATH, and it really runs", async () => {
+        // CI installs ripgrep before the suite (.github/workflows/ci.yml). A machine without it
+        // should fail here loudly rather than let callers degrade to a bare "rg" that is not there.
         const rg = ripgrepBinary();
         expect(rg).not.toBeNull();
 
@@ -15,13 +14,7 @@ describe("ripgrepBinary", () => {
         expect(text).toStartWith("ripgrep ");
     });
 
-    test("the vendored fallback points at a real file for this platform", () => {
-        const vendored = vendoredRipgrep();
-        expect(vendored).not.toBeNull();
-        expect(vendored).toContain(join("vendor", "ripgrep", `${process.arch}-${process.platform}`));
-    });
-
-    test("a root without node_modules yields null instead of a dead path", () => {
-        expect(vendoredRipgrep(mkdtempSync(join(tmpdir(), "rg-root-")))).toBeNull();
-    });
+    // There is deliberately no "returns null when rg is absent" control: `Bun.which` reads the
+    // process's real PATH and ignores a mutated `process.env.PATH`, so such a test would pass for
+    // the wrong reason or not at all. The null branch is Bun's contract, not this module's.
 });

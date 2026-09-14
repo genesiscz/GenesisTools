@@ -4,8 +4,19 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
 import { renderCaptureShell } from "@app/cmux/lib/capture-shell";
+import { skip, zshPath } from "@genesiscz/utils/test/skip";
 
-test("zsh records a short-lived command before execution and preserves its exit status", async () => {
+/**
+ * Every test here drives a real zsh, because zsh hook semantics are what is under test.
+ * The interpreter is resolved through PATH instead of hardcoded at /bin/zsh: that path
+ * exists on macOS but not on the Linux CI runners, where Bun.spawn threw ENOENT and turned
+ * seven real assertions into seven stack traces. On a machine with no zsh at all the tests
+ * skip, and bun prints one `(skip)` line each, so the gap is visible rather than silent.
+ */
+const ZSH = zshPath ?? "/bin/zsh";
+const zshTest = test.skipIf(skip.unlessZsh);
+
+zshTest("zsh records a short-lived command before execution and preserves its exit status", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-shell-test-"));
     const hook = join(directory, "hook.zsh");
     await Bun.write(
@@ -16,7 +27,7 @@ test("zsh records a short-lived command before execution and preserves its exit 
             directory,
         })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -39,7 +50,7 @@ test("zsh records a short-lived command before execution and preserves its exit 
     });
 });
 
-test("the journal exists before a short-lived command can observe the filesystem", async () => {
+zshTest("the journal exists before a short-lived command can observe the filesystem", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-before-exec-test-"));
     const hook = join(directory, "hook.zsh");
     await Bun.write(
@@ -50,7 +61,7 @@ test("the journal exists before a short-lived command can observe the filesystem
             directory,
         })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -70,7 +81,7 @@ test("the journal exists before a short-lived command can observe the filesystem
     expect(output).toContain("CAPTURED_BEFORE_EXEC");
 });
 
-test("reserved restore setup leaves the last genuine command and its completion status intact", async () => {
+zshTest("reserved restore setup leaves the last genuine command and its completion status intact", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-restore-exclusion-"));
     const hook = join(directory, "hook.zsh");
     await Bun.write(
@@ -81,7 +92,7 @@ test("reserved restore setup leaves the last genuine command and its completion 
             directory,
         })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -106,7 +117,7 @@ test("reserved restore setup leaves the last genuine command and its completion 
     });
 });
 
-test("a user function with a similar name is still captured", async () => {
+zshTest("a user function with a similar name is still captured", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-restore-exclusion-control-"));
     const hook = join(directory, "hook.zsh");
     await Bun.write(
@@ -117,7 +128,7 @@ test("a user function with a similar name is still captured", async () => {
             directory,
         })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -140,14 +151,14 @@ test("a user function with a similar name is still captured", async () => {
     );
 });
 
-test("the hook captures with no Bun or recorder executable in its command path", async () => {
+zshTest("the hook captures with no Bun or recorder executable in its command path", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-shell-no-bun-"));
     const hook = join(directory, "hook.zsh");
     await Bun.write(
         hook,
         renderCaptureShell({ directory, bunPath: "/missing-bun", recorderPath: "/missing-recorder" })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -169,11 +180,11 @@ test("the hook captures with no Bun or recorder executable in its command path",
     );
 });
 
-test("the lightweight shell spool rotates within two bounded generations", async () => {
+zshTest("the lightweight shell spool rotates within two bounded generations", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-shell-rotate-"));
     const hook = join(directory, "hook.zsh");
     await Bun.write(hook, renderCaptureShell({ directory }));
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -192,7 +203,7 @@ test("the lightweight shell spool rotates within two bounded generations", async
 
 // PR #374 review: the record kept the preexec cwd, so after a completed `cd` the
 // snapshot restored the directory the cd left, not the one it entered.
-test("a completed cd records the directory the shell ended in, not the one it started in", async () => {
+zshTest("a completed cd records the directory the shell ended in, not the one it started in", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-cwd-after-cd-"));
     const launchDir = realpathSync(mkdtempSync(join(tmpdir(), "cmux-cwd-launch-")));
     const target = realpathSync(mkdtempSync(join(tmpdir(), "cmux-cwd-target-")));
@@ -205,7 +216,7 @@ test("a completed cd records the directory the shell ended in, not the one it st
             directory,
         })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         cwd: launchDir,
         stdin: "pipe",
         stdout: "pipe",

@@ -136,6 +136,16 @@ export class TestRepo {
         const repo = new TestRepo(dir, root, TEST_REPO_EPOCH);
         await repo.git(["init", "-q", "-b", opts.branch ?? "master"]);
 
+        // The identity and the signing switch have to live in the repo's OWN config, not only in
+        // hermeticGitEnv(): these fixtures exist to drive the production git executor, which spawns
+        // git with the ambient environment and therefore reads the machine's global ~/.gitconfig.
+        // A developer box hides the gap behind its own identity; a runner has none, so every commit
+        // the code under test makes died with "Committer identity unknown", `git rebase` stopped
+        // mid-way, and the cascade suite read the halted rebase as a merge conflict.
+        await repo.git(["config", "user.name", "Test"]);
+        await repo.git(["config", "user.email", "test@example.com"]);
+        await repo.git(["config", "commit.gpgsign", "false"]);
+
         if (opts.seed !== false) {
             await repo.commit({ file: "README.md", content: "seed\n", message: "seed" });
         }

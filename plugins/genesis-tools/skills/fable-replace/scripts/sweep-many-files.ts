@@ -194,6 +194,26 @@ export const looksGenerated = (file: string): string | null => {
 const SCRIPT_EXT_RE = /\.(m|c)?(ts|js)x?$/;
 
 /**
+ * Which Bun loader parses this path.
+ *
+ * Everything non-JSX used to be checked as TypeScript, so a sweep could insert a
+ * type annotation into a `.js` file and pass the syntax check, and a `.ts` renamed
+ * to `.js` kept its annotations while the message claimed the destination language
+ * had been checked (PR #368 review t6). `.mjs`/`.cjs` are JavaScript, `.mts`/`.cts`
+ * are TypeScript, and the trailing `x` is what selects the JSX-capable loader.
+ */
+const loaderFor = (file: string): "ts" | "tsx" | "js" | "jsx" | null => {
+    const match = /\.(?:m|c)?(ts|js)(x?)$/.exec(file);
+    if (match === null) {
+        return null;
+    }
+    if (match[1] === "js") {
+        return match[2] === "x" ? "jsx" : "js";
+    }
+    return match[2] === "x" ? "tsx" : "ts";
+};
+
+/**
  * Did the ops turn parseable source into unparseable source? A post-condition is a
  * substring test and cannot see structure, so a dropped brace passes `expectAfter`
  * and still breaks the file. This catches that before anything is written.
@@ -201,7 +221,8 @@ const SCRIPT_EXT_RE = /\.(m|c)?(ts|js)x?$/;
  * or is not a script, or Bun's transpiler is unavailable).
  */
 const brokeSyntax = (file: string, before: string, after: string): string | null => {
-    if (!SCRIPT_EXT_RE.test(file) || before === after) {
+    const loader = loaderFor(file);
+    if (loader === null || before === after) {
         return null;
     }
     const Transpiler = (
@@ -210,7 +231,7 @@ const brokeSyntax = (file: string, before: string, after: string): string | null
     if (Transpiler === undefined) {
         return null;
     }
-    const tp = new Transpiler({ loader: file.endsWith("x") ? "tsx" : "ts" });
+    const tp = new Transpiler({ loader });
     try {
         tp.scan(before);
     } catch {

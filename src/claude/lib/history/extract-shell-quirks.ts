@@ -392,7 +392,7 @@ function hasRipgrep(): boolean {
         ripgrepPresent = ripgrepBinary() !== null;
 
         if (!ripgrepPresent) {
-            logger.info("extractShellQuirks: no ripgrep on PATH or vendored — falling back to the in-process scan");
+            logger.info("extractShellQuirks: no ripgrep on PATH — falling back to the in-process scan");
         }
     }
 

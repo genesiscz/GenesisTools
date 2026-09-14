@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { shellSingleQuote } from "./shell-quote";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import {
     buildTeammateWrapperScript,
     installTeammateWrapper,
@@ -101,18 +101,30 @@ describe("resolveClaudeBinaryForTeammates", () => {
         expect(resolveClaudeBinaryForTeammates()).toBe(usable);
     });
 
-    test("returns an absolute path whenever anything resolves at all", () => {
+    test("finds a claude that only PATH knows about and returns its absolute realpath", () => {
+        const bin = installClaudeAt("path-only", "bin");
+        env.testing.set("PATH", join(home, "path-only", "bin"));
+
         const resolved = resolveClaudeBinaryForTeammates();
 
+        expect(resolved).toBe(bin);
         expect(resolved.startsWith("/")).toBe(true);
-        expect(resolved).not.toBe("claude");
     });
 
     /**
-     * The last-resort branch, reachable only through the injected lookup:
-     * `Bun.which("claude")` finds this repo's own
-     * `node_modules/@anthropic-ai/claude-code` no matter what PATH says, so the
-     * real candidate list can never come back empty from inside the repo.
+     * The proof that the PATH isolation above is real. This used to assert the opposite
+     * (`not.toBe("claude")`) and passed only because the resolver answered from the developer's own
+     * machine; on a runner with no `claude` anywhere it failed. Both halves — the empty home and the
+     * empty PATH — now genuinely hold, so the honest answer here is the bare name.
+     */
+    test("falls back to the bare name when the isolated home and PATH have none", () => {
+        expect(resolveClaudeBinaryForTeammates()).toBe("claude");
+    });
+
+    /**
+     * The last-resort branch, reached through the injected lookup: on a machine with Claude Code
+     * installed the real candidate list never comes back empty, so the injection is what makes the
+     * empty case testable at all.
      */
     test("falls back to the bare name when every candidate misses", () => {
         expect(resolveClaudeBinaryForTeammates(() => [])).toBe("claude");
@@ -176,7 +188,7 @@ describe("buildTeammateWrapperScript", () => {
             env: { ...AUTH, oauthToken: "tok'; rm -rf /; echo '" },
         });
 
-        expect(script).toContain(`export CLAUDE_CODE_OAUTH_TOKEN=${shellSingleQuote("tok'; rm -rf /; echo '")}`);
+        expect(script).toContain(`export CLAUDE_CODE_OAUTH_TOKEN=${shellQuote("tok'; rm -rf /; echo '")}`);
         expect(script).not.toContain("rm -rf /; echo ''\n");
     });
 

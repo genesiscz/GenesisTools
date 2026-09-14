@@ -23,6 +23,17 @@ import {
 import { loadCapturedCommands } from "@app/cmux/lib/capture-journal";
 import { buildOfflinePanes } from "@app/cmux/lib/offline-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { skip, zshPath } from "@genesiscz/utils/test/skip";
+
+/**
+ * Two of the tests below drive a real zsh, because what they check is that the installed hook
+ * behaves inside one. The interpreter is resolved through PATH rather than hardcoded at
+ * /bin/zsh, which exists on macOS but not on the Linux CI runners, where Bun.spawn threw ENOENT
+ * before either test could assert anything. Only those two are gated; the other fifteen never
+ * start a shell and keep running everywhere.
+ */
+const ZSH = zshPath ?? "/bin/zsh";
+const zshTest = test.skipIf(skip.unlessZsh);
 
 test("installation is idempotent and uninstall preserves unrelated rc bytes and journal data", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-install-home-"));
@@ -52,7 +63,7 @@ test("status on an unconfigured home does not create files", () => {
     expect(readdirSync(home)).toEqual([]);
 });
 
-test("installed recorder survives removal of its source checkout entrypoint and runs from tmp", async () => {
+zshTest("installed recorder survives removal of its source checkout entrypoint and runs from tmp", async () => {
     const directory = mkdtempSync(join(tmpdir(), "cmux-install-relocate-"));
     const source = join(directory, "checkout");
     const home = join(directory, "home");
@@ -96,7 +107,7 @@ test("installed recorder survives removal of its source checkout entrypoint and 
             "44444444-4444-4444-8444-444444444444"
         )?.command
     ).toBe("printf direct-runtime");
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         cwd: tmpdir(),
         stdin: "pipe",
         stdout: "pipe",
@@ -273,7 +284,7 @@ test("an rc edit during bundling cannot publish a new runtime link", async () =>
     }
 });
 
-test("commands-only shell startup associates identity for recovery after runtime IDs change", async () => {
+zshTest("commands-only shell startup associates identity for recovery after runtime IDs change", async () => {
     const home = mkdtempSync(join(tmpdir(), "cmux-no-screens-identity-"));
     const runtimeId = "11111111-1111-4111-8111-111111111111";
     const stableId = "22222222-2222-4222-8222-222222222222";
@@ -297,7 +308,7 @@ test("commands-only shell startup associates identity for recovery after runtime
             ],
         })
     );
-    const proc = Bun.spawn(["/bin/zsh", "-dfi"], {
+    const proc = Bun.spawn([ZSH, "-dfi"], {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",

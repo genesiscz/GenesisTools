@@ -3392,6 +3392,73 @@ console.log("review round 10 (PR #371)");
     );
 }
 
+// ── review round 10 (PR #368, eve): the syntax check picks its loader from the destination extension ──
+console.log("review round 10 (PR #368)");
+{
+    /** The first post-condition failure of a refused batch, or "" when it was accepted. */
+    const refusalOf = async (edits: Parameters<typeof run>[0]["edits"]): Promise<string> => {
+        try {
+            await run({ edits, verbose: false });
+            return "";
+        } catch (err) {
+            return err instanceof FableReplaceError
+                ? (err.report?.files[0]?.postConditionFailures[0] ?? err.message)
+                : String(err);
+        }
+    };
+
+    const typed = write("typed.ts", "export const a: number = 1;\n");
+    const typedRename = await refusalOf([{ file: typed, renameTo: f("typed.js") }]);
+    check(
+        "a .ts carrying type annotations cannot be renamed to .js",
+        typedRename.includes("does not parse as .js") && fs.existsSync(typed) && !fs.existsSync(f("typed.js")),
+        typedRename
+    );
+
+    const plain = write("plain-ts.ts", "export const a = 1;\n");
+    const plainRename = await refusalOf([{ file: plain, renameTo: f("plain-ts.js") }]);
+    check(
+        "NEGATIVE CONTROL: a .ts with no TypeScript syntax still renames to .js",
+        plainRename === "" && fs.existsSync(f("plain-ts.js")),
+        plainRename
+    );
+
+    /** The same annotation, offered to one file per language below. */
+    const annotate = [{ find: "const a = 1", replace: "const a: number = 1" }];
+
+    const js = write("edit-me.js", "export const a = 1;\n");
+    const jsEdit = await refusalOf([{ file: js, ops: annotate }]);
+    check(
+        "an edit that puts a type annotation into a .js file is refused",
+        jsEdit.includes("unparseable") && fs.readFileSync(js, "utf8") === "export const a = 1;\n",
+        jsEdit
+    );
+
+    const ts = write("edit-me.ts", "export const a = 1;\n");
+    const tsEdit = await refusalOf([{ file: ts, ops: annotate }]);
+    check(
+        "NEGATIVE CONTROL: the same annotation is fine in a .ts file",
+        tsEdit === "" && fs.readFileSync(ts, "utf8") === "export const a: number = 1;\n",
+        tsEdit
+    );
+
+    const mjs = write("mod.mjs", "export const a = 1;\n");
+    const mjsEdit = await refusalOf([{ file: mjs, ops: annotate }]);
+    check(
+        "an .mjs is JavaScript too, not TypeScript with a longer extension",
+        mjsEdit.includes("unparseable") && fs.readFileSync(mjs, "utf8") === "export const a = 1;\n",
+        mjsEdit
+    );
+
+    const jsx = write("view.jsx", "export const v = 1;\n");
+    const jsxEdit = await refusalOf([{ file: jsx, ops: [{ find: "const v = 1", replace: "const v = <div />" }] }]);
+    check(
+        "NEGATIVE CONTROL: .jsx still parses JSX after the loader change",
+        jsxEdit === "" && fs.readFileSync(jsx, "utf8") === "export const v = <div />;\n",
+        jsxEdit
+    );
+}
+
 // ── verdict ─────────────────────────────────────────────────────────────────
 fs.rmSync(tmp, { recursive: true, force: true });
 fs.rmSync(hermeticRoot, { recursive: true, force: true });
