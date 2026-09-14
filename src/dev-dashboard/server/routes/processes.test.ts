@@ -121,7 +121,7 @@ describe("processesRoutes", () => {
      * pid-1 case green and turns the mismatch case below red.
      */
     it.skipIf(skip.onWindows)("POST kill refuses a live pid whose command does not match", async () => {
-        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const child = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
         try {
             const def = findRoute("POST", "/api/processes/kill");
@@ -146,7 +146,7 @@ describe("processesRoutes", () => {
      * bug it fixed, so prove a MATCHING command still reaches `process.kill`.
      */
     it.skipIf(skip.onWindows)("POST kill signals a live pid whose command matches", async () => {
-        const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+        const child = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
 
         try {
             const def = findRoute("POST", "/api/processes/kill");
