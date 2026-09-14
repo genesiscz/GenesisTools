@@ -154,31 +154,101 @@ export function buildFrameParts<T>(opts: TableSelectOptions<T>): FrameParts {
     return { widths, rows, rowsFocused, details, detailHeight, detailWidth, hasBadges };
 }
 
+export interface FrameSize {
+    columns: number;
+    rows: number;
+}
+
+/** The live terminal, with the defaults a pipe reports nothing for. */
+export function terminalSize(): FrameSize {
+    // `||`, not `??`: a TTY reporting a 0x0 winsize keeps `columns === 0` under `??`, and every
+    // frame line is then truncated to a single `…`. `search-multiselect.ts`, the shape this file
+    // follows, uses `||` and is immune.
+    return { columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
+}
+
+/** Which slice of the option list to draw, so `cursor` is always inside it. */
+function windowAround(count: number, cursor: number, capacity: number): { start: number; end: number } {
+    if (capacity >= count) {
+        return { start: 0, end: count };
+    }
+
+    const start = Math.max(0, Math.min(cursor - Math.floor(capacity / 2), count - capacity));
+
+    return { start, end: start + capacity };
+}
+
 /**
  * Pure frame renderer: question, fixed-height detail zone that follows the
  * focused row, header row, then aligned table rows (which never wrap or
  * move). Extracted from the prompt for testability.
+ *
+ * 🛑 Two hard limits, both about the redraw arithmetic. A prompt that redraws itself clears
+ * the number of lines it wrote, so no line may WRAP (a wrapped line is two physical rows
+ * counted as one) and the frame may never be TALLER than the screen (a scrolled frame cannot
+ * be cleared). Breaking either leaves the old frame on screen with the new one stacked under
+ * it: the arrow keys still work, but the copy the user is reading never changes, so the
+ * prompt reads as frozen.
+ *
+ * Observed 2026-09-14 on `--resume dashboard`. The detail zone carries `Source file:` with a
+ * whole absolute transcript path, which wraps on any terminal narrower than about 130 columns.
+ * `search-multiselect.ts` clamped both limits already; this renderer clamped neither.
  */
-export function renderFrame<T>(opts: TableSelectOptions<T>, parts: FrameParts, state: string, cursor: number): string {
+export function renderFrame<T>(
+    opts: TableSelectOptions<T>,
+    parts: FrameParts,
+    state: string,
+    cursor: number,
+    size: FrameSize = terminalSize()
+): string {
     const { widths, rows, rowsFocused, details, detailHeight, detailWidth, hasBadges } = parts;
     const hint = opts.hint ? ` ${pc.dim(opts.hint)}` : "";
     const title = `${pc.gray("│")}\n${S_ACTIVE}  ${opts.message}${hint}`;
+    const paint = (text: string) =>
+        text
+            .split("\n")
+            .map((line) => truncateVisible(line, Math.max(1, size.columns - 1)))
+            .join("\n");
+    // "Never taller than the screen" is a contract of the FRAME, not of the active-picker path
+    // alone: the submit and cancel states are three physical lines each and used to return
+    // straight out of `paint()`, skipping the clamp below entirely.
+    const clampHeight = (text: string) =>
+        text
+            .split("\n")
+            .slice(0, Math.max(1, size.rows - 1))
+            .join("\n");
 
     if (state === "submit") {
         const row = opts.rows[cursor];
         const submitted = opts.formatSubmitted
             ? opts.formatSubmitted(row)
             : stripAnsi(row.cells[0] ?? String(row.value));
-        return `${title.replace(S_ACTIVE, S_SUBMIT)}\n${BAR}  ${pc.dim(submitted)}`;
+        return clampHeight(paint(`${title.replace(S_ACTIVE, S_SUBMIT)}\n${BAR}  ${pc.dim(submitted)}`));
     }
 
     if (state === "cancel") {
-        return `${title.replace(S_ACTIVE, S_CANCEL)}\n${BAR}  ${pc.strikethrough(pc.dim("cancelled"))}`;
+        return clampHeight(
+            paint(`${title.replace(S_ACTIVE, S_CANCEL)}\n${BAR}  ${pc.strikethrough(pc.dim("cancelled"))}`)
+        );
     }
 
+    // Two title lines, the header row, and the closing bar.
+    const chrome = 4;
+    const budget = Math.max(4, size.rows - 1);
+    // The option list is the point of the prompt, so the detail zone is what yields on a short
+    // screen: a frame with nothing left to pick from is worse than one with no detail.
+    let detailRows = detailHeight > 0 ? detailHeight + 1 : 0;
+
+    if (budget - chrome - detailRows < 3) {
+        detailRows = 0;
+    }
+
+    const capacity = Math.max(1, budget - chrome - detailRows);
+    const hidden = capacity < opts.rows.length;
+    const view = windowAround(opts.rows.length, cursor, hidden ? Math.max(1, capacity - 1) : capacity);
     const lines: string[] = [title];
 
-    if (detailHeight > 0) {
+    if (detailRows > 0) {
         const detail = details[cursor];
         for (const [i, line] of detail.entries()) {
             const gutter = i === 0 ? "┌" : i === detail.length - 1 ? "└" : "│";
@@ -192,15 +262,28 @@ export function renderFrame<T>(opts: TableSelectOptions<T>, parts: FrameParts, s
     const header = opts.columns.map((col, i) => padVisible(col.label, widths[i], col.align ?? "left")).join(GAP);
     lines.push(`${BAR}  ${" ".repeat(rowPrefixWidth)}${pc.dim(header)}`);
 
-    for (const [i, row] of opts.rows.entries()) {
+    for (let i = view.start; i < view.end; i++) {
+        const row = opts.rows[i];
         const focused = i === cursor;
         const pointer = focused ? pc.cyan("❯") : " ";
         const badge = hasBadges ? `${row.badge ?? " "} ` : "";
         lines.push(`${BAR}  ${pointer} ${badge}${focused ? rowsFocused[i] : rows[i]}`);
     }
 
+    if (hidden) {
+        const above = view.start;
+        const below = opts.rows.length - view.end;
+        const more = [above > 0 ? `↑ ${above} more` : "", below > 0 ? `↓ ${below} more` : ""].filter(Boolean);
+        lines.push(`${BAR}  ${pc.dim(more.join("  "))}`);
+    }
+
     lines.push(BAR_END);
-    return lines.join("\n");
+
+    // The budget floor and the minimum frame shape together still produce 6 lines on a 1-row
+    // screen, so the "never taller than the screen" contract needed a final clamp rather than a
+    // careful budget. Counted in PHYSICAL lines, because a single entry may carry its own
+    // newline, and it is physical rows that scroll the old frame out of reach of the redraw.
+    return clampHeight(paint(lines.join("\n")));
 }
 
 /**
@@ -213,7 +296,9 @@ export async function tableSelect<T>(opts: TableSelectOptions<T>): Promise<T | n
         options: opts.rows.map((row) => ({ value: row.value })),
         initialValue: opts.initialValue ?? opts.rows[0]?.value,
         render() {
-            return renderFrame(opts, parts, this.state, this.cursor);
+            // Read the size per FRAME, never once up front: a resize mid-prompt is exactly
+            // when a line that used to fit starts wrapping, which is what this guards.
+            return renderFrame(opts, parts, this.state, this.cursor, terminalSize());
         },
     });
 
