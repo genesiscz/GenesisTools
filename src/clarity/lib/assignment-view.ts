@@ -94,9 +94,12 @@ export async function buildAssignmentView(date: string): Promise<AssignmentView>
     const workItemApi = new Api(requireAdoConfig());
     const chains = await walkAncestorsBatched({
         ids: [...minutesByWorkItem.keys()],
-        maxDepth: 3,
         fetchMany: async (ids) => {
-            const items = await workItemApi.getWorkItems(ids);
+            // `comments` defaults to true, and that costs one HTTP request PER work item on top of
+            // the batched fields call, at every level of the climb. Only the title, the type and
+            // the parent are read below, so the comments were fetched and thrown away. Removing the
+            // depth cap is what made it worth naming: the walk now runs to the root.
+            const items = await workItemApi.getWorkItems(ids, { comments: false });
             const nodes = new Map<number, WorkItemNode>();
 
             for (const [id, item] of items) {

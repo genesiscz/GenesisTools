@@ -71,6 +71,18 @@ A recommendation may come only from an ADO id found in the Clarity task name, ma
 work item or one of its ancestors. Project rules such as "an Incident goes to Incidenty_Opex" are
 the operator's judgement and deliberately live outside this tool.
 
+**The ancestor walk behind that match is unbounded, and must stay unbounded.** It used to stop
+after three ancestors. Because the id match is the only evidence-based routing here, an ancestor
+one level past the ceiling does not shorten the answer, it erases it: the RECOMMENDED column prints
+`—` and the work item looks like one with no rule-based home at all. The case that exposed it was a
+five-level chain (task, user story, feature, umbrella feature, epic) whose epic named the Clarity
+task four ancestors up, and the mapping had to be made by hand. Chains gain a level whenever an
+umbrella Feature is inserted, so a cap silently drops another work item each time that happens.
+
+Depth is close to free here: `walkAncestorsBatched` spends one request per tree LEVEL shared by
+every work item of the month, not one per ancestor, and its `attempted` set ends a cyclic chain. See
+`src/azure-devops/README.md` for the walk itself.
+
 ---
 
 ## How it works

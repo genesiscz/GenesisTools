@@ -383,10 +383,15 @@ export class Storage {
         } catch (error) {
             // "Not cached" and "cached but unreadable" are the same answer to the
             // caller, so the difference has to live in the log or it lives nowhere.
+            // The path and the parse message are the whole triage line. Passing `err` to the
+            // console channel printed the parser's own ~20-line stack for EVERY bad file, which
+            // buried the command's real output, so the stack goes to debug: the log file always
+            // has it, the console only under -v.
+            const reason = error instanceof Error ? error.message : String(error);
             logger.warn(
-                { err: error, filePath },
-                "[storage] cache file exists but could not be read; treating as absent"
+                `[storage] cache file exists but could not be read; treating as absent: ${filePath} (${reason})`
             );
+            logger.debug({ err: error, filePath }, "[storage] cache file parse failure");
             return null;
         }
     }

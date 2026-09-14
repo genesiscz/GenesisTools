@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { type WorkItemNode, walkAncestorsBatched } from "@app/azure-devops/lib/ancestors";
 import { clarityTasksByAdoId, recommendClarityTask } from "@app/clarity/lib/recommend";
 import type { ClarityTask } from "@app/clarity/lib/types";
 
@@ -121,5 +122,59 @@ describe("clarityTasksByAdoId boundary", () => {
         const byId = clarityTasksByAdoId([task(700012, "Rollup for investment P100001_Sample_EXT")]);
 
         expect([...byId.keys()]).toEqual([]);
+    });
+});
+
+// The chain that exposed the ceiling: task, story, feature, umbrella feature, epic. The epic is
+// the level that names a Clarity task, and it sits four ancestors above the work item.
+const DEEP_TREE: Record<number, WorkItemNode> = {
+    570001: { id: 570001, title: "FE analýza - leaf task", type: "Task", parent: 570002 },
+    570002: { id: 570002, title: "Sample story", type: "User Story", parent: 570003 },
+    570003: { id: 570003, title: "Sample feature", type: "Feature", parent: 570004 },
+    570004: { id: 570004, title: "Sample umbrella feature", type: "Feature", parent: 410001 },
+    580001: { id: 580001, title: "Sibling task", type: "Task", parent: 570002 },
+    590001: { id: 590001, title: "Cousin task", type: "Task", parent: 570003 },
+    410001: { id: 410001, title: "Sample epic", type: "Epic" },
+};
+
+function deepFetcher() {
+    const batches: number[][] = [];
+
+    return {
+        batches,
+        fetchMany: async (ids: number[]): Promise<Map<number, WorkItemNode>> => {
+            batches.push([...ids]);
+
+            return new Map(ids.filter((id) => DEEP_TREE[id]).map((id) => [id, DEEP_TREE[id]]));
+        },
+    };
+}
+
+describe("recommendation through the ancestor walk", () => {
+    test("finds the match four ancestors up when the walk is unbounded", async () => {
+        const { fetchMany } = deepFetcher();
+
+        const chains = await walkAncestorsBatched({ fetchMany, ids: [570001] });
+        const result = recommendClarityTask({ chain: chains.get(570001) ?? [], tasks: TASKS });
+
+        expect(result?.task.taskId).toBe(700002);
+        expect(result?.matched.id).toBe(410001);
+    });
+
+    test("finds nothing when the walk is capped at three, which is the bug the cap caused", async () => {
+        const { fetchMany } = deepFetcher();
+
+        const chains = await walkAncestorsBatched({ fetchMany, ids: [570001], maxDepth: 3 });
+        const result = recommendClarityTask({ chain: chains.get(570001) ?? [], tasks: TASKS });
+
+        expect(result).toBeUndefined();
+    });
+
+    test("still costs one fetch per tree level, not one per ancestor", async () => {
+        const { batches, fetchMany } = deepFetcher();
+
+        await walkAncestorsBatched({ fetchMany, ids: [570001, 580001, 590001] });
+
+        expect(batches).toEqual([[570001, 580001, 590001], [570002, 570003], [570004], [410001]]);
     });
 });
