@@ -93,9 +93,14 @@ function sseHeaders(): Record<string, string> {
 
 /**
  * `POST /v1/messages/count_tokens`. Claude Code calls this before every turn to
- * draw its context meter, and a 404 there makes the session look broken. No
- * upstream in this proxy exposes a token counter, so this is the same ~4 chars
- * per token heuristic the usage estimator already uses.
+ * draw its context meter, and a 404 there makes the session look broken. This answers with the
+ * same ~4 chars per token heuristic the usage estimator already uses.
+ *
+ * ⚠️ A heuristic by CHOICE, not for lack of an upstream: the anthropic-subscription provider
+ * already posts to `api.anthropic.com/v1/messages`, and that host exposes a real
+ * `/v1/messages/count_tokens`. Proxying to it would cost a network round trip on every turn
+ * and has not been tested against a subscription OAuth grant. Estimate first, measure if the
+ * meter is ever observed to be wrong.
  */
 export function countAnthropicInputTokens(bodyText: string): number {
     const sink: string[] = [];
