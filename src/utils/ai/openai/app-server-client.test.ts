@@ -216,3 +216,22 @@ describe("AppServerClient", () => {
         await client.close();
     });
 });
+
+test("a wedged stdin never blocks the app-server from being killed", async () => {
+    const harness = createProcessHarness();
+    let killed: string | undefined;
+    const wedged: AppServerProcess = {
+        ...harness.process,
+        stdin: { ...harness.process.stdin, end: () => new Promise<number>(() => {}) },
+        kill(signal) {
+            killed = String(signal ?? "SIGTERM");
+            harness.process.kill(signal);
+        },
+    };
+    const client = new AppServerClient(wedged, {});
+
+    await client.close();
+
+    expect(killed).toBe("SIGTERM");
+    expect(await wedged.exited).toBe(0);
+});

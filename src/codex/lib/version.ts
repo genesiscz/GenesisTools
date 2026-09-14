@@ -1,8 +1,9 @@
+import { resolveCodexBinary } from "@genesiscz/utils/ai/openai/codex-binary";
 import { env } from "@genesiscz/utils/env";
 
 export async function detectCodexVersion(): Promise<string> {
     const proc = Bun.spawn({
-        cmd: ["codex", "--version"],
+        cmd: [resolveCodexBinary(), "--version"],
         env: env.getProcessEnv(),
         stdin: "ignore",
         stdout: "pipe",
