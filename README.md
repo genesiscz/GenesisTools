@@ -218,7 +218,7 @@ is large, and as skills they would load into sessions that never needed them.
 | `summarize` | Summarize a Claude Code session into learnings, a postmortem, a changelog, or onboarding docs. |
 | `task` | Run long-lived interactive commands (dev servers, Metro, Vite) with PTY capture and an agent-friendly log tail. |
 | `timely` | Turn a day of Timely auto-tracked memories into time-log entries via a plan/apply workflow. |
-| `todo` | Task tracking for the current session through `tools todo`. |
+| `todo` | Project-scoped task tracking through `tools todo`, including timed todos synced to Apple Calendar. |
 | `typescript-error-fixer` | Fix TypeScript compile errors and eliminate `any`, one agent per file. |
 | `wrap-up` | Write the state doc that lets a fresh agent resume cold: an Obsidian wrap-up or a repo handoff. |
 
@@ -380,7 +380,7 @@ onto the merged base first, then optionally deletes the head branch.
 | [`timely`](src/timely/README.md) | Timely time tracking: OAuth login, accounts and projects, events, auto-tracked memories, monthly exports. | `login` `status` `accounts` `projects` `events` `memories` `create` `export-month` `cache` |
 | [`clarity`](src/clarity/README.md) | CA PPM Clarity timesheet management, filled from Azure DevOps time logs and Timely activity. | `configure` `timesheet` `fill` `link-workitems` `ui` |
 | [`timer`](src/timer/README.md) | Focus timer with live countdown, background mode, Pomodoro cycles, and completion hooks. | `list` `cancel` |
-| [`todo`](src/todo/README.md) | Task tracking for AI-assisted sessions, backed by SQLite, with a full status lifecycle. | `add` `list` `show` `start` `block` `complete` `reopen` `edit` `search` `sync` `export` `import` |
+| [`todo`](src/todo/README.md) | Project-scoped task tracking for AI-assisted sessions, stored as JSON, with git-context capture and Apple Calendar / Reminders sync. | `add` `list` `show` `start` `block` `complete` `reopen` `edit` `search` `sync` `export` `import` |
 
 ### Web dashboards and data
 

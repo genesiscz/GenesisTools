@@ -101,9 +101,56 @@ async function getAvailableTools(srcDir) {
     return tools.sort(); // Return sorted list
 }
 
+/**
+ * Names that read like tools but are subcommands of one.
+ *
+ * `tools calendar --help` answered "Tool not found: calendar" while the
+ * CHANGELOG advertised that exact command, so an agent looking for the calendar
+ * had nothing to follow (observed 2026-09-09). The short form is made real here
+ * rather than corrected in every document that already uses it.
+ */
+const TOOL_ALIASES = new Map([
+    ["calendar", ["macos", "calendar"]],
+    ["reminders", ["macos", "reminders"]],
+]);
+
+/**
+ * An alias only applies while no REAL tool answers to that name.
+ *
+ * A Map, not an object literal: a plain-object lookup resolves inherited keys, so
+ * `tools constructor` returned `Object` and died on `alias.slice` before it could
+ * reach the "Tool not found" path.
+ */
+function resolveToolAlias(scriptId, srcDir) {
+    const alias = TOOL_ALIASES.get(scriptId);
+
+    if (!alias) {
+        return null;
+    }
+
+    const existsAsTool =
+        INDEX_FILE_NAMES.some((indexFile) => existsSync(join(srcDir, scriptId, indexFile))) ||
+        SCRIPT_EXTENSIONS.some((ext) => existsSync(join(srcDir, `${scriptId}${ext}`)));
+
+    if (existsAsTool) {
+        return null;
+    }
+
+    return { tool: alias[0], prefixArgs: alias.slice(1) };
+}
+
 async function executeTool(scriptId, scriptArgs) {
     const workspaceRoot = resolve(__dirname); // Assumes the script is run from the root
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
+
+    const alias = resolveToolAlias(scriptId, srcDir);
+
+    if (alias) {
+        const full = [alias.tool, ...alias.prefixArgs].join(" ");
+        console.error(`note: \`tools ${scriptId}\` is an alias for \`tools ${full}\``);
+        await executeTool(alias.tool, [...alias.prefixArgs, ...scriptArgs]);
+        return;
+    }
 
     // Potential paths
     const pathAsIs = join(srcDir, scriptId); // Handles cases where extension is already included by user
@@ -355,6 +402,10 @@ async function main() {
 }
 
 main().catch((err) => {
-    logger.error("\n✖ An unexpected error occurred in the main execution:", err);
+    // pino drops a trailing argument when the message has no placeholder, so the
+    // old `(message, err)` shape printed a bare "ERROR:" line with the cause
+    // missing — verified 2026-09-14 against a real TypeError. The object shape
+    // prints type, message and stack, which is the whole point of this handler.
+    logger.error({ err }, "unexpected error in the main execution");
     process.exit(1);
 });
