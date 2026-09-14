@@ -1,23 +1,32 @@
-import { findProjectRoot } from "@app/todo/lib/context";
-import { TodoStore } from "@app/todo/lib/store";
+import {
+    PROJECT_OPTION_DESCRIPTION,
+    reportMissingTodo,
+    resolveProjectRoot,
+    storeForProject,
+} from "@app/todo/lib/project";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+import pc from "picocolors";
 
 export function createRemoveCommand(): Command {
     return new Command("remove")
         .alias("rm")
         .description("Remove a todo")
         .argument("<id>", "Todo ID")
+        .option("--project <path>", PROJECT_OPTION_DESCRIPTION)
         .option("-y, --yes", "Skip confirmation (required in non-interactive mode)")
         .action(async (id, opts) => {
-            const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
-            const store = TodoStore.forProject(projectRoot);
+            const projectRoot = resolveProjectRoot(opts.project);
+            const store = storeForProject(opts.project);
             const existing = await store.get(id);
 
             if (!existing) {
-                out.error(`Todo not found: ${id}`);
+                const missing = await reportMissingTodo(id, projectRoot);
+
+                out.error(pc.red(missing.message));
+
                 process.exit(1);
             }
 

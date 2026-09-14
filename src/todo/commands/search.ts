@@ -1,5 +1,5 @@
-import { findProjectRoot } from "@app/todo/lib/context";
 import { formatTodoList } from "@app/todo/lib/format";
+import { PROJECT_OPTION_DESCRIPTION, storeForProject } from "@app/todo/lib/project";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo } from "@app/todo/lib/types";
 import { isInteractive } from "@genesiscz/utils/cli";
@@ -19,6 +19,7 @@ export function createSearchCommand(): Command {
         .description("Search todos by text")
         .argument("<query>", "Search query")
         .option("--all", "Search across all projects")
+        .option("--project <path>", PROJECT_OPTION_DESCRIPTION)
         .addOption(new Option("-f, --format <format>", "Output format").choices(["ai", "json", "md", "table"]))
         .option("--colors", "Force colorized output even in non-TTY")
         .action(async (query, opts) => {
@@ -27,9 +28,7 @@ export function createSearchCommand(): Command {
             if (opts.all) {
                 todos = await TodoStore.listAll({ search: query });
             } else {
-                const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
-                const store = TodoStore.forProject(projectRoot);
-                todos = await store.search(query);
+                todos = await storeForProject(opts.project).search(query);
             }
 
             const format = resolveFormat(opts.format);

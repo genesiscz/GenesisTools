@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { findProjectRoot } from "@app/todo/lib/context";
+import { PROJECT_OPTION_DESCRIPTION, storeForProject } from "@app/todo/lib/project";
 import { TodoStore } from "@app/todo/lib/store";
 import type { Todo } from "@app/todo/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -42,6 +42,7 @@ export function createExportCommand(): Command {
     return new Command("export")
         .description("Export todos as JSON")
         .option("--all", "Export across all projects")
+        .option("--project <path>", PROJECT_OPTION_DESCRIPTION)
         .option("-o, --output <file>", "Write to file instead of stdout")
         .action(async (opts) => {
             let todos: Todo[];
@@ -49,9 +50,7 @@ export function createExportCommand(): Command {
             if (opts.all) {
                 todos = await TodoStore.listAll();
             } else {
-                const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
-                const store = TodoStore.forProject(projectRoot);
-                todos = await store.list();
+                todos = await storeForProject(opts.project).list();
             }
 
             const output = SafeJSON.stringify(todos, null, 2);
@@ -70,7 +69,7 @@ export function createImportCommand(): Command {
     return new Command("import")
         .description("Import todos from a JSON file")
         .argument("<file>", "JSON file to import")
-        .option("--project <path>", "Override project root")
+        .option("--project <path>", PROJECT_OPTION_DESCRIPTION)
         .action(async (file, opts) => {
             const filePath = resolve(file);
 
@@ -90,11 +89,7 @@ export function createImportCommand(): Command {
             }
 
             const todos = validateTodos(parsed);
-            const projectRoot = opts.project
-                ? resolve(opts.project)
-                : (findProjectRoot(process.cwd()) ?? process.cwd());
-            const store = TodoStore.forProject(projectRoot);
-            const count = await store.bulkImport(todos);
+            const count = await storeForProject(opts.project).bulkImport(todos);
 
             out.println(`Imported ${count} todo(s)`);
         });

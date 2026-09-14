@@ -1,5 +1,6 @@
-import { findProjectRoot, resolveSessionOption } from "@app/todo/lib/context";
+import { resolveSessionOption } from "@app/todo/lib/context";
 import { formatTodoList } from "@app/todo/lib/format";
+import { PROJECT_OPTION_DESCRIPTION, storeForProject } from "@app/todo/lib/project";
 import { TodoStore } from "@app/todo/lib/store";
 import type { OutputFormat, Todo, TodoFilters, TodoPriority, TodoStatus } from "@app/todo/lib/types";
 import { isInteractive, parseVariadic } from "@genesiscz/utils/cli";
@@ -21,6 +22,7 @@ export function createListCommand(): Command {
         .alias("ls")
         .description("List todos")
         .option("--all", "List across all projects")
+        .option("--project <path>", PROJECT_OPTION_DESCRIPTION)
         .option("--status <statuses>", "Filter by status (comma-separated)")
         .option("--priority <priorities>", "Filter by priority (comma-separated)")
         .option("--tag <tags>", "Filter by tags (comma-separated)")
@@ -54,9 +56,7 @@ export function createListCommand(): Command {
             if (opts.all) {
                 todos = await TodoStore.listAll(filters);
             } else {
-                const projectRoot = findProjectRoot(process.cwd()) ?? process.cwd();
-                const store = TodoStore.forProject(projectRoot);
-                todos = await store.list(filters);
+                todos = await storeForProject(opts.project).list(filters);
             }
 
             const format = resolveFormat(opts.format);

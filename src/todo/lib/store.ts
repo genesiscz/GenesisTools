@@ -3,11 +3,21 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:f
 import { basename, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { nanoid } from "nanoid";
 import { captureContext } from "./context";
 import { parseReminders } from "./reminders";
 import type { AddTodoInput, ProjectMeta, Todo, TodoFilters } from "./types";
+
+/**
+ * Agents fire many `tools todo add` calls at once, and each one is a separate
+ * process. The default 5s budget is sized for a single config edit; a burst of
+ * parallel adds queues on a 50ms poll, so a wide fan-out needs more room than
+ * that. The work inside the lock is one read plus two atomic writes, so a wait
+ * this long only ever means "many writers", never "slow writer".
+ */
+const STORE_LOCK_TIMEOUT_MS = 30_000;
 
 function projectHash(projectRoot: string): string {
     return createHash("sha256").update(projectRoot).digest("hex").slice(0, 12);
@@ -56,6 +66,7 @@ export class TodoStore {
     private todosPath: string;
     private metaPath: string;
     private attachmentsDir: string;
+    private lockPath: string;
 
     private constructor(projectRoot: string, storageRoot: string) {
         this.projectRoot = projectRoot;
@@ -64,6 +75,7 @@ export class TodoStore {
         this.todosPath = join(this.projectDir, "todos.json");
         this.metaPath = join(this.projectDir, "meta.json");
         this.attachmentsDir = join(this.projectDir, "attachments");
+        this.lockPath = join(this.projectDir, "todos.json.lock");
     }
 
     static forProject(projectRoot: string, options?: { storageRoot?: string }): TodoStore {
@@ -99,6 +111,35 @@ export class TodoStore {
         };
 
         atomicWriteFileSync(this.metaPath, SafeJSON.stringify(meta, null, 2));
+    }
+
+    /** The project this store is bound to — commands print it when an id lives elsewhere. */
+    getProjectRoot(): string {
+        return this.projectRoot;
+    }
+
+    /**
+     * The ONE read-modify-write path. Every mutation re-reads the file under an
+     * exclusive lock, so a writer never persists a list it read before another
+     * writer's commit. Anything slow (git context capture, attachment copies,
+     * markdown reads) must happen BEFORE the call, so the critical section stays
+     * one read and two atomic writes.
+     */
+    private async mutate<T>(apply: (todos: Todo[]) => { todos: Todo[]; result: T }): Promise<T> {
+        this.ensureDir();
+
+        return withFileLock(
+            this.lockPath,
+            async () => {
+                const current = await this.readTodos();
+                const { todos, result } = apply(current);
+                this.writeTodos(todos);
+                this.writeMeta(todos);
+
+                return result;
+            },
+            STORE_LOCK_TIMEOUT_MS
+        );
     }
 
     async add(input: AddTodoInput): Promise<Todo> {
@@ -143,10 +184,7 @@ export class TodoStore {
             at: input.at,
         };
 
-        const todos = await this.readTodos();
-        todos.push(todo);
-        this.writeTodos(todos);
-        this.writeMeta(todos);
+        await this.mutate((todos) => ({ todos: [...todos, todo], result: undefined }));
 
         return todo;
     }
@@ -166,38 +204,64 @@ export class TodoStore {
         return todos.find((t) => t.id === id) ?? null;
     }
 
+    /**
+     * Patch a todo from the row as it is AT WRITE TIME, inside the lock.
+     *
+     * `update` takes a patch built before the lock was taken, which is fine for
+     * a field the caller owns outright. A caller that spent seconds in a
+     * platform call first (EventKit) must not write a whole array it derived
+     * from a snapshot, or it silently drops what another writer added while it
+     * waited. `derive` sees the current row instead.
+     *
+     * `derive` runs while the lock is held, so it must be a pure computation on
+     * the row it is given. It must never call back into the store: the lock is
+     * not re-entrant, so a nested mutation waits on its own holder and fails
+     * with `LockTimeoutError` after the full budget.
+     */
+    async updateWith(id: string, derive: (current: Todo) => Partial<Todo>): Promise<Todo> {
+        return this.mutate((todos) => {
+            const index = todos.findIndex((t) => t.id === id);
+
+            if (index === -1) {
+                throw new Error(`Todo not found: ${id}`);
+            }
+
+            const existing = todos[index];
+            const patch = derive(existing);
+            const updated: Todo = {
+                ...existing,
+                ...patch,
+                id: existing.id,
+                context: {
+                    ...existing.context,
+                    ...patch.context,
+                    updatedAt: new Date().toISOString(),
+                },
+            };
+
+            const next = [...todos];
+            next[index] = updated;
+
+            return { todos: next, result: updated };
+        });
+    }
+
     async update(id: string, patch: Partial<Todo>): Promise<Todo> {
-        const todos = await this.readTodos();
-        const index = todos.findIndex((t) => t.id === id);
-
-        if (index === -1) {
-            throw new Error(`Todo not found: ${id}`);
-        }
-
-        const existing = todos[index];
-        const updated: Todo = {
-            ...existing,
-            ...patch,
-            id: existing.id,
-            context: {
-                ...existing.context,
-                ...patch.context,
-                updatedAt: new Date().toISOString(),
-            },
-        };
-
-        todos[index] = updated;
-        this.writeTodos(todos);
-        this.writeMeta(todos);
-
-        return updated;
+        return this.updateWith(id, () => patch);
     }
 
     async remove(id: string): Promise<boolean> {
-        const todos = await this.readTodos();
-        const filtered = todos.filter((t) => t.id !== id);
+        const removed = await this.mutate((todos) => {
+            const filtered = todos.filter((t) => t.id !== id);
 
-        if (filtered.length === todos.length) {
+            if (filtered.length === todos.length) {
+                return { todos, result: false };
+            }
+
+            return { todos: filtered, result: true };
+        });
+
+        if (!removed) {
             return false;
         }
 
@@ -206,9 +270,6 @@ export class TodoStore {
         if (existsSync(todoAttachDir)) {
             rmSync(todoAttachDir, { recursive: true, force: true });
         }
-
-        this.writeTodos(filtered);
-        this.writeMeta(filtered);
 
         return true;
     }
@@ -227,18 +288,16 @@ export class TodoStore {
     }
 
     async bulkImport(incoming: Todo[]): Promise<number> {
-        const todos = await this.readTodos();
-        const existingIds = new Set(todos.map((t) => t.id));
-        const toImport = incoming.filter((t) => !existingIds.has(t.id));
+        return this.mutate((todos) => {
+            const existingIds = new Set(todos.map((t) => t.id));
+            const toImport = incoming.filter((t) => !existingIds.has(t.id));
 
-        if (toImport.length === 0) {
-            return 0;
-        }
+            if (toImport.length === 0) {
+                return { todos, result: 0 };
+            }
 
-        todos.push(...toImport);
-        this.writeTodos(todos);
-        this.writeMeta(todos);
-        return toImport.length;
+            return { todos: [...todos, ...toImport], result: toImport.length };
+        });
     }
 
     static async listAllProjects(storageRoot?: string): Promise<ProjectMeta[]> {
@@ -268,6 +327,54 @@ export class TodoStore {
         }
 
         return projects;
+    }
+
+    /**
+     * Locate a todo by id across EVERY project store.
+     *
+     * The store directory is a hash of the project root, so an id created under
+     * one project is simply absent from another cwd. Commands use this to name
+     * the project that holds the id, instead of printing a bare "Todo not found"
+     * that reads as "this id does not exist".
+     */
+    static async findTodo(id: string, storageRoot?: string): Promise<{ todo: Todo; projectRoot: string } | null> {
+        const root = storageRoot ?? defaultStorageRoot();
+        const projectsDir = join(root, "projects");
+
+        if (!existsSync(projectsDir)) {
+            return null;
+        }
+
+        for (const entry of readdirSync(projectsDir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+
+            const todosPath = join(projectsDir, entry.name, "todos.json");
+
+            if (!existsSync(todosPath)) {
+                continue;
+            }
+
+            const todos = SafeJSON.parse(await Bun.file(todosPath).text()) as Todo[];
+            const todo = todos.find((t) => t.id === id);
+
+            if (!todo) {
+                continue;
+            }
+
+            const metaPath = join(projectsDir, entry.name, "meta.json");
+            let projectRoot = todo.context?.projectRoot ?? "";
+
+            if (existsSync(metaPath)) {
+                const meta = SafeJSON.parse(await Bun.file(metaPath).text()) as ProjectMeta;
+                projectRoot = meta.projectRoot;
+            }
+
+            return { todo, projectRoot };
+        }
+
+        return null;
     }
 
     static async listAll(filters?: TodoFilters, storageRoot?: string): Promise<Todo[]> {

@@ -14,6 +14,12 @@ function formatLinkCompact(link: TodoLink): string {
 }
 
 function formatReminderCompact(reminder: TodoReminder): string {
+    // An entry that exists only to hold a Reminders identifier carries no time,
+    // so printing `at` verbatim produced a leading empty field.
+    if (!reminder.at) {
+        return reminder.label ?? "untimed";
+    }
+
     return reminder.label ? `${reminder.at} (${reminder.label})` : reminder.at;
 }
 

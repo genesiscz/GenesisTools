@@ -189,3 +189,16 @@ describe("formatTodoList", () => {
         expect(formatTodoList([], "table")).toContain("No todos");
     });
 });
+
+describe("an untimed reminder entry", () => {
+    it("prints its label instead of an empty time field", () => {
+        const todo = makeTodo({
+            reminders: [{ at: "", label: "reminders item", synced: "reminders", syncId: "REM-1" }],
+        });
+
+        const md = formatTodo(todo, "md");
+
+        expect(md).toContain("Reminders: reminders item");
+        expect(md).not.toContain("Reminders:  (");
+    });
+});

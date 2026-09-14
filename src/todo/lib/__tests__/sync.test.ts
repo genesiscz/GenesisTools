@@ -1,10 +1,14 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
 import { DarwinkitCrashError, MacReminders } from "@genesiscz/utils/macos/apple-reminders";
-import type { TodoStore } from "../store";
-import { countSynced, describeSyncFailures, type SyncResult, syncSucceeded, syncTodo } from "../sync";
+import { countSynced, describeSyncFailures, type SyncResult, type SyncStore, syncSucceeded, syncTodo } from "../sync";
 import type { Todo } from "../types";
 
+/**
+ * No `as Todo`: the cast used to hide a fixture that carried top-level
+ * `createdAt` / `updatedAt` (which `Todo` does not have) and omitted `context`
+ * (which it requires).
+ */
 function makeTodo(overrides?: Partial<Todo>): Todo {
     return {
         id: "TODO-001",
@@ -18,29 +22,30 @@ function makeTodo(overrides?: Partial<Todo>): Todo {
         at: undefined,
         attachments: [],
         sessionId: undefined,
-        createdAt: "2026-04-25T00:00:00.000Z",
-        updatedAt: "2026-04-25T00:00:00.000Z",
+        context: {
+            cwd: "/tmp/fixture-project",
+            projectRoot: "/tmp/fixture-project",
+            hostname: "fixture-host",
+            createdAt: "2026-04-25T00:00:00.000Z",
+            updatedAt: "2026-04-25T00:00:00.000Z",
+        },
         ...overrides,
-    } as Todo;
+    };
 }
 
-function makeFakeStore(): TodoStore {
-    const updates: Array<{ id: string; patch: unknown }> = [];
-
-    const fake = {
-        update: async (id: string, patch: unknown) => {
-            updates.push({ id, patch });
-            return makeTodo({ id });
+/** Implements `SyncStore` exactly, so a change to that contract fails to compile here. */
+function makeFakeStore(): SyncStore {
+    return {
+        updateWith: async (id, derive) => {
+            const current = makeTodo({ id });
+            return { ...current, ...derive(current), id: current.id };
         },
-        _updates: updates,
     };
-
-    return fake as unknown as TodoStore;
 }
 
 describe("syncSucceeded / countSynced / describeSyncFailures", () => {
     it("reports success when all branches ok", () => {
-        const r: SyncResult = { calendar: { ok: true }, reminders: { ok: true } };
+        const r: SyncResult = { calendar: { ok: true, id: "EVT-1" }, reminders: { ok: true, id: "REM-1" } };
         expect(syncSucceeded(r)).toBe(true);
         expect(countSynced(r)).toBe(2);
         expect(describeSyncFailures(r)).toEqual([]);
@@ -48,7 +53,7 @@ describe("syncSucceeded / countSynced / describeSyncFailures", () => {
 
     it("reports failure when one target failed", () => {
         const r: SyncResult = {
-            calendar: { ok: true },
+            calendar: { ok: true, id: "EVT-1" },
             reminders: { ok: false, error: new Error("boom") },
         };
         expect(syncSucceeded(r)).toBe(false);
@@ -57,7 +62,7 @@ describe("syncSucceeded / countSynced / describeSyncFailures", () => {
     });
 
     it("does not count alreadySynced as a fresh sync", () => {
-        const r: SyncResult = { reminders: { ok: true, alreadySynced: true } };
+        const r: SyncResult = { reminders: { ok: true, alreadySynced: true, id: "REM-PREV" } };
         expect(syncSucceeded(r)).toBe(true);
         expect(countSynced(r)).toBe(0);
     });
