@@ -22,6 +22,7 @@ import { QaSaveToObsidianDialog } from "@/components/QaSaveToObsidianDialog";
 import { QA_SCROLL_NAV_OFFSET_PX, QaScrollNav } from "@/components/QaScrollNav";
 import { QaSearchBox } from "@/components/QaSearchBox";
 import { QaSectionHeading } from "@/components/QaSectionHeading";
+import { QaSessionActions } from "@/components/QaSessionActions";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
 import { useQaStream } from "@/hooks/useQaStream";
@@ -312,6 +313,7 @@ const QaCard = memo(function QaCard({
                     </button>
                 ) : null}
                 <QaCopyButtons entry={entry} onSaveToObsidian={openSave} />
+                <QaSessionActions sessionId={entry.sessionId} />
                 {!unread && readAt != null ? <QaReadTime readAt={readAt} /> : null}
                 <QaRecencyTime ts={entry.ts} />
             </div>

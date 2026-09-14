@@ -85,6 +85,7 @@ export const paths = {
     cmuxRemoveSession: () => "/api/cmux/remove-session",
     cmuxAttach: () => "/api/cmux/attach",
     cmuxRename: () => "/api/cmux/rename",
+    cmuxFocusSession: () => "/api/cmux/focus-session",
     // ai accounts (multi-provider). Paths come from AI_ACCOUNTS_API so the UI,
     // the server and these builders can never disagree on a string.
     aiAccounts: () => AI_ACCOUNTS_API.accounts,

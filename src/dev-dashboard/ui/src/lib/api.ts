@@ -17,6 +17,7 @@ import type {
 import type { SavedCommand, SavedCommandInput } from "@app/dev-dashboard/lib/commands/types";
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/types";
+import type { FocusSessionResult } from "@app/dev-dashboard/lib/session-focus";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -149,6 +150,25 @@ export const cmuxApi = {
             method: "POST",
             body: SafeJSON.stringify(body),
         }),
+    /**
+     * Focus the cmux pane a session lives in. A miss answers 409 with the SAME
+     * body shape as a hit, so this reads the body on both and never throws for
+     * "no pane" — the card renders the reason instead of losing it to an error.
+     */
+    focusSession: async (sessionId: string): Promise<FocusSessionResult> => {
+        const res = await fetch("/api/cmux/focus-session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ sessionId }),
+        });
+        const text = await res.text();
+
+        try {
+            return SafeJSON.parse(text, { strict: true }) as FocusSessionResult;
+        } catch {
+            return { ok: false, error: `focus failed (${res.status})`, remedy: "Check the dashboard server log." };
+        }
+    },
 };
 
 export const obsidianApi = {
