@@ -1,12 +1,31 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildWatchdogScript } from "@genesiscz/utils/bun/orphan-worker-guard";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { skip } from "@genesiscz/utils/test/skip";
 
 const guardPath = join(import.meta.dir, "orphan-worker-guard.ts");
+
+/**
+ * The same `ps -o lstart=` reading the guard itself does, including the whitespace
+ * normalisation — the shell side collapses the column's padding, so a value trimmed any
+ * other way never compares equal and the kill silently never fires.
+ */
+function startedAtForTest(pid: number): string | null {
+    try {
+        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", env: process.env })
+            .replace(/\s+/g, " ")
+            .trim();
+
+        return started.length > 0 ? started : null;
+    } catch {
+        return null;
+    }
+}
 
 /**
  * Probe children load modules by absolute path for the same reason `guardPath`
@@ -347,4 +366,79 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
         const stopped = await waitUntil(() => !watchdogRunning(child.pid), 15_000);
         expect(stopped).toBe(true);
     }, 30_000);
+
+    /**
+     * The other half of the identity rule, raised by CodeRabbit on PR #392.
+     *
+     * `kill -0 "$parent"` proves only that the NUMBER is occupied. When the original parent
+     * exits and the kernel reissues its pid — about three minutes on macOS at the 400-800
+     * pids/second this guard exists for — the probe keeps succeeding against a stranger, the
+     * watchdog concludes "parent still alive", and the worker it was installed to reap is
+     * left running forever. That is a leak rather than a wrong kill, so it fails in the safe
+     * direction, but it defeats the guard in exactly the scenario that motivated it.
+     *
+     * Simulated by handing the script a parent that is genuinely alive together with the
+     * start time of a DIFFERENT process, which is precisely what a recycled pid looks like.
+     */
+    test("a recycled parent pid counts as parent loss, not as a live parent", async () => {
+        const parent = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const self = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        leftovers.push(parent.pid, self.pid);
+
+        const selfStart = startedAtForTest(self.pid);
+        expect(selfStart).not.toBeNull();
+
+        const watchdog = Bun.spawn(
+            [
+                "/bin/sh",
+                "-c",
+                buildWatchdogScript({
+                    parentPid: parent.pid,
+                    selfPid: self.pid,
+                    selfStart: String(selfStart),
+                    // Alive, but not the process the guard was installed under.
+                    parentStart: "Thu Jan  1 00:00:00 1970",
+                }),
+            ],
+            { env: process.env, stdout: "ignore", stderr: "ignore" }
+        );
+        leftovers.push(watchdog.pid);
+
+        const reaped = await waitUntil(() => !isProcessAlive(self.pid), 20_000);
+        expect(reaped).toBe(true);
+    }, 40_000);
+
+    /**
+     * The negative control for the case above. A parent whose start time MATCHES is the
+     * ordinary healthy state, and the worker must be left strictly alone — a guard that
+     * reaped live workers would be far worse than the leak it fixes.
+     */
+    test("a parent whose start time still matches leaves the worker alone", async () => {
+        const parent = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const self = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        leftovers.push(parent.pid, self.pid);
+
+        const selfStart = startedAtForTest(self.pid);
+        const parentStart = startedAtForTest(parent.pid);
+        expect(parentStart).not.toBeNull();
+
+        const watchdog = Bun.spawn(
+            [
+                "/bin/sh",
+                "-c",
+                buildWatchdogScript({
+                    parentPid: parent.pid,
+                    selfPid: self.pid,
+                    selfStart: String(selfStart),
+                    parentStart: String(parentStart),
+                }),
+            ],
+            { env: process.env, stdout: "ignore", stderr: "ignore" }
+        );
+        leftovers.push(watchdog.pid);
+
+        // Two poll intervals with margin: if it were going to misfire, it would have.
+        await Bun.sleep(12_000);
+        expect(isProcessAlive(self.pid)).toBe(true);
+    }, 40_000);
 });

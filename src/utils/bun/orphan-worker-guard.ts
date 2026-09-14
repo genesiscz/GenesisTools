@@ -125,6 +125,53 @@ function startedAt(pid: number): string | null {
     }
 }
 
+/**
+ * The watchdog's `/bin/sh` program, as text.
+ *
+ * Exported so the identity checks can be tested directly. Driving them through
+ * `installOrphanWorkerGuard` means orphaning a real parent, which a test can only do to
+ * itself, so the two recycled-pid branches had no coverage while they were inline.
+ *
+ * @internal
+ */
+export function buildWatchdogScript(args: {
+    parentPid: number;
+    selfPid: number;
+    selfStart: string;
+    parentStart: string;
+}): string {
+    return [
+        `parent=${args.parentPid}`,
+        `self=${args.selfPid}`,
+        `selfstart=${shQuote(args.selfStart)}`,
+        `parentstart=${shQuote(args.parentStart)}`,
+        "while :; do",
+        '  if ! kill -0 "$self"; then',
+        "    exit 0",
+        "  fi",
+        // Identity, not liveness, on the PARENT too. `kill -0 "$parent"` proves only that the
+        // NUMBER is occupied, so once the original parent exits and the kernel reissues its pid
+        // — about three minutes at the 400-800 pids/second this guard exists for — the probe
+        // keeps succeeding against a stranger and the watchdog waits forever for a parent that
+        // died long ago. The worker it was installed to reap is then never reaped, which is the
+        // precise failure this guard exists to prevent. An empty reading means the pid is gone
+        // and subsumes `kill -0`; a different reading means it belongs to someone else. Both are
+        // parent loss.
+        `  pnow=$(ps -o lstart= -p "$parent" 2>/dev/null | awk '{$1=$1;print}')`,
+        '  if [ -z "$pnow" ] || [ "$pnow" != "$parentstart" ]; then',
+        // pid-verified: `ps -o lstart=` is re-read here and compared against the value
+        // captured at install time, so a recycled pid fails the check and is spared.
+        `    now=$(ps -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
+        '    if [ -n "$now" ] && [ "$now" = "$selfstart" ]; then',
+        '      kill -KILL "$self"',
+        "    fi",
+        "    exit 0",
+        "  fi",
+        `  sleep ${POLL_SECONDS}`,
+        "done",
+    ].join("\n");
+}
+
 function rememberWatchdog(notePath: string, watchdogPid: number): void {
     try {
         writeFileSync(notePath, String(watchdogPid), { mode: 0o600 });
@@ -201,33 +248,17 @@ export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid
         return;
     }
 
-    const proc = spawn(
-        "/bin/sh",
-        [
-            "-c",
-            [
-                `parent=${parentPid}`,
-                `self=${selfPid}`,
-                `selfstart=${shQuote(selfStart)}`,
-                "while :; do",
-                '  if ! kill -0 "$self"; then',
-                "    exit 0",
-                "  fi",
-                '  if ! kill -0 "$parent"; then',
-                // pid-verified: `ps -o lstart=` is re-read here and compared against the value
-                // captured at install time, so a recycled pid fails the check and is spared.
-                `    now=$(ps -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
-                '    if [ -n "$now" ] && [ "$now" = "$selfstart" ]; then',
-                '      kill -KILL "$self"',
-                "    fi",
-                "    exit 0",
-                "  fi",
-                `  sleep ${POLL_SECONDS}`,
-                "done",
-            ].join("\n"),
-        ],
-        { stdio: "ignore" }
-    );
+    const parentStart = startedAt(parentPid);
+
+    if (!parentStart) {
+        // The parent is already gone, so there is no identity to compare against on any later
+        // poll. Same rule as `selfStart` above: without a verifiable premise, schedule nothing.
+        return;
+    }
+
+    const proc = spawn("/bin/sh", ["-c", buildWatchdogScript({ parentPid, selfPid, selfStart, parentStart })], {
+        stdio: "ignore",
+    });
 
     proc.unref();
 
