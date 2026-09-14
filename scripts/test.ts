@@ -235,6 +235,16 @@ const DEFAULT_EXCLUDES = [
     "**/task/tests/**",
     "**/*.e2e.test.ts",
     "**/matrix-e2e.test.ts",
+    // Playwright and WDIO own `*.spec.ts`; bun's discovery does not. Collecting one errors
+    // with "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
+    // `this.skip`, which reads as a suite failure and is green under its own runner. The
+    // `**/dev-dashboard/**` and `**/dashboard/**` excludes already hide most of them, but
+    // an explicit path argument bypasses those, so passing `src/dev-dashboard/` collected 4.
+    // Verified 2026-09-15: all 39 `*.spec.ts` files in the repo belong to Playwright or
+    // WDIO and NONE imports `bun:test` (checked with a positive control on two real bun
+    // tests, because the first attempt at that check was itself broken and returned 0 for
+    // both).
+    "**/*.spec.ts",
 ];
 
 /**
@@ -442,8 +452,20 @@ if (profileIndex !== -1) {
     finish(await runProfile(jobs, roots));
 }
 
+/**
+ * Excludes that hold even for an explicit path argument.
+ *
+ * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
+ * run the dev-dashboard tree on purpose. But a `*.spec.ts` can never be a bun test in this
+ * repo, so collecting one is always a mistake rather than a choice: bun errors with
+ * "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
+ * `this.skip`, and that reads as a suite failure for a file that is green under its own
+ * runner. Verified 2026-09-15: 39 `*.spec.ts` files, NONE importing `bun:test`.
+ */
+const ALWAYS_EXCLUDES = ["**/*.spec.ts"];
+
 if (hasExplicitPaths) {
-    finish(await runBunTest(args));
+    finish(await runBunTest([...args, ...ALWAYS_EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`)]));
 }
 
 const parallelExit = await runBunTest([

@@ -85,10 +85,27 @@ describe("processesRoutes", () => {
         expect(body.ok).toBe(false);
     });
 
-    it("POST kill with a guarded pid (1) returns 200 { ok:false } (never throws)", async () => {
+    it("POST kill without a command returns 400 — the command guard refuses before any signal", async () => {
         const def = findRoute("POST", "/api/processes/kill");
         const { status, body } = asJson(await def.handler(makeCtx({ body: { pid: 1 } })));
 
+        // `command` is REQUIRED, not optional: it is the only thing standing between this
+        // route and "SIGTERM whatever number you post at me", because a pid can be reissued
+        // between the table render and the click. This test used to assert 200 here, which
+        // pinned the contract from BEFORE that guard existed.
+        expect(status).toBe(400);
+        expect(body.ok).toBe(false);
+        expect(String(body.error)).toContain("command");
+    });
+
+    it("POST kill with a guarded pid (1) and a command returns 200 { ok:false } (never throws)", async () => {
+        const def = findRoute("POST", "/api/processes/kill");
+        const { status, body } = asJson(
+            await def.handler(makeCtx({ body: { pid: 1, command: "definitely-not-this-process" } }))
+        );
+
+        // pid 1 is launchd. The command will not match, so the monitor refuses the kill and
+        // the route answers ok:false rather than throwing — which is what the name claims.
         expect(status).toBe(200);
         expect(body.ok).toBe(false);
     });
