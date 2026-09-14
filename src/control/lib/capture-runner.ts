@@ -99,6 +99,16 @@ export function normalizePlan(plan: Plan): Plan {
     return plan;
 }
 
+/**
+ * A plan's `capture.duration` is SECONDS, but peekaboo reads a BARE `--duration` as
+ * MILLISECONDS ("Duration; bare values are milliseconds" in `capture live --help`), so
+ * forwarding it raw asked for a 2 ms recording when the plan said 2 s. The suffix states
+ * the unit at the boundary instead of depending on either side's default.
+ */
+export function peekabooDurationArg(seconds: number): string {
+    return `${seconds}s`;
+}
+
 export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     normalizePlan(plan);
     const cap = plan.capture;
@@ -131,8 +141,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         }
     }
 
-    // Peekaboo 4 reads a bare duration as milliseconds; the plan declares seconds.
-    const args = ["capture", "live", "--mode", cap.mode, "--duration", `${cap.duration}s`, "--json"];
+    const args = ["capture", "live", "--mode", cap.mode, "--duration", peekabooDurationArg(cap.duration), "--json"];
     if (cap.screenIndex !== undefined) {
         args.push("--screen-index", String(cap.screenIndex));
     }
@@ -408,12 +417,12 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     }
 
     // Bounded exit wait: peekaboo occasionally hangs after (or instead of)
-    // finishing. The live observation behind this note was a `--duration 2` run,
-    // which asked peekaboo for 2 MILLISECONDS, not the 2 seconds the note claimed:
-    // that label was this file's own unit bug read back. The hang itself was real —
-    // the process was still alive minutes later, wedging the whole CG capture stack
-    // for every later run (CGDisplayCreateImage returned nil). Never leave a zombie
-    // behind.
+    // finishing — observed live with a duration-2 capture still alive minutes
+    // later, wedging the whole CG capture stack for every later run
+    // (CGDisplayCreateImage returned nil). Never leave a zombie behind.
+    // That observation predates peekabooDurationArg, so the request was really
+    // 2 ms; the hang may well have been the unit bug. Keep the guard anyway —
+    // a wedged CG stack costs every later capture, and it is cheap insurance.
     const exitGraceMs = 30_000;
     const exitedInTime = await Promise.race([
         proc.exited.then(() => true),

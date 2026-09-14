@@ -24,6 +24,7 @@
         "dev:reas-dashboard": "bun --bun vite dev --strictPort -c src/Internal/commands/reas/ui/vite.config.ts",
         "clear-cache": "bun src/utils/clearCache.ts",
         "build:native": "cd native/ax-tool && swift build -c release",
+        "test:native": "cd native/ax-tool && swift test",
         "build:app": "bun run src/macos/index.ts permissions build",
         "build:app-icon": "swift src/macos/GenesisTools/scripts/build-icon.swift",
         "test": "bun scripts/test.ts --parallel",
