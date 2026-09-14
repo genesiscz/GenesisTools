@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -160,16 +161,50 @@ export async function collectTtyLaunchCommands(): Promise<Map<string, string>> {
 export interface SurfaceSessionInfo {
     sessionId: string;
     account?: string;
+    /**
+     * Which agent this id belongs to. The cmux hook is shared, so the journal holds Codex and
+     * Grok records too. A record with no `provider` predates the tag; it counts as Claude's
+     * only when the id has Claude's own UUIDv4 shape (see `untaggedProvider`).
+     *
+     * 🛑 Load-bearing, not decoration: the replay path turns this id into a launch command, and
+     * assuming "claude" replayed a Codex thread id as `claude -r <codex uuid>` — a session
+     * Claude has never seen. That is the same defect the comment at `snapshot.ts` already
+     * described for Grok, arriving through the journal instead of a tab title.
+     */
+    provider: AccountProviderAlias;
 }
 
-/** surface uuid (CMUX_SURFACE_ID) → newest known claude session + account. */
+const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Which agent PROBABLY wrote a journal record that predates the provider tag.
+ *
+ * ⚠️ A heuristic, not a proof, and the last resort: the pin journal is consulted first
+ * because it names the provider outright. Claude Code writes a UUIDv4 and the other two
+ * normally write a UUIDv7, which is what lets the v7 records be dropped instead of typed
+ * into `claude --resume`. The converse does NOT hold. A read-only count of the shared
+ * history index on 2026-09-14 found 4 Codex and 6 Grok sessions with v4-shaped ids
+ * (pre-switchover Codex rollouts from 2025/09, and Grok worktree/subagent sessions), and
+ * this rule claims every one of them for Claude. None is in the cmux journal today, and
+ * `MAX_AGE_MS` keeps ordinary reads inside the tagged era, but `loadSurfaceSessions({
+ * beforeMs })` walks the journal historically and can still reach one.
+ *
+ * Which of the two v7 agents wrote a record cannot be proven from the id either, so a v7
+ * id with no pin is dropped rather than guessed: the pane then falls back to its captured
+ * command instead of resuming a session that belongs to another agent.
+ */
+function untaggedProvider(sessionId: string): AccountProviderAlias | undefined {
+    return CLAUDE_SESSION_ID.test(sessionId) ? "claude" : undefined;
+}
+
+/** surface uuid (CMUX_SURFACE_ID) → newest known agent session + account. */
 export async function loadSurfaceSessions(
-    options: { beforeMs?: number } = {}
+    options: { beforeMs?: number; refsPath?: string; pinsPath?: string } = {}
 ): Promise<Map<string, SurfaceSessionInfo>> {
-    const out = new Map<string, { sessionId: string; account?: string; at: number }>();
+    const out = new Map<string, { sessionId: string; account?: string; provider: AccountProviderAlias; at: number }>();
     try {
-        const refs = loadAllSessionCmuxRefs(undefined, options);
-        const pins = await loadPins({ readOnly: true });
+        const refs = loadAllSessionCmuxRefs(options.refsPath, options);
+        const pins = await loadPins({ readOnly: true, path: options.pinsPath });
 
         for (const entry of refs.values()) {
             if (!entry.surfaceId) {
@@ -179,9 +214,27 @@ export async function loadSurfaceSessions(
             if (existing && existing.at >= (entry.at ?? 0)) {
                 continue;
             }
+
+            // The pin journal outranks the id shape. It is written per session by the same
+            // SessionStart hook and names the provider outright, so it settles the ids the
+            // v4/v7 habit gets wrong — the Codex rollouts from before its id switchover, and
+            // Grok's worktree sessions, all of which are v4-shaped.
+            const pin = pins.get(entry.sessionId);
+            const provider = entry.provider ?? pin?.provider ?? untaggedProvider(entry.sessionId);
+            if (!provider) {
+                logger.debug(
+                    { sessionId: entry.sessionId, surfaceId: entry.surfaceId },
+                    "[command-capture] untagged cmux ref with a non-Claude session id and no pin — skipped"
+                );
+                continue;
+            }
+
             out.set(entry.surfaceId, {
                 sessionId: entry.sessionId,
-                account: pins.get(entry.sessionId)?.account ?? undefined,
+                // Only this agent's own pin: an untagged pin is Claude's, and reading it for a
+                // Codex surface would attach a Claude account to a Codex session.
+                account: (pin?.provider ?? "claude") === provider ? (pin?.account ?? undefined) : undefined,
+                provider,
                 at: entry.at ?? 0,
             });
         }
@@ -189,7 +242,7 @@ export async function loadSurfaceSessions(
         logger.warn({ error }, "[command-capture] session refs/pins unavailable");
     }
 
-    return new Map([...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account }]));
+    return new Map([...out].map(([k, v]) => [k, { sessionId: v.sessionId, account: v.account, provider: v.provider }]));
 }
 
 /** session id → pinned account, for ids the process table (not the journal) supplied. */
@@ -340,7 +393,7 @@ export function isAgentLauncher(command: string): boolean {
     );
 }
 
-export function agentKindFromLauncher(command: string): "claude" | "grok" | "codex" | undefined {
+export function agentKindFromLauncher(command: string): AccountProviderAlias | undefined {
     const trimmed = command.trim();
     if (GROK_LAUNCHER.test(trimmed)) {
         return "grok";
@@ -642,6 +695,54 @@ export function resumeTargetFromCommand(command: string): string | undefined {
     }
 
     return match.value.replace(/"/g, "");
+}
+
+/**
+ * The resume target a launcher will SEARCH for rather than replay verbatim.
+ *
+ * `tools cc run --resume <query>` runs a local search whose top match can be
+ * another session, so `resumeTargetFromCommand` refuses to call it a pinned id.
+ * It is still not a cold start, and a drift line that says the pane opens a NEW
+ * session is wrong about it.
+ */
+export function resumeQueryFromCommand(command: string): string | undefined {
+    const original = command.trim();
+    const kind = agentKindFromLauncher(original);
+
+    if (!kind || kind === "codex" || resumeTargetFromCommand(original)) {
+        return undefined;
+    }
+
+    const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
+
+    return match?.value?.replace(/"/g, "");
+}
+
+/**
+ * The resume flag a launcher carries with NO value, which opens its own session picker.
+ *
+ * Neither a cold start nor a query: the pane reopens whatever the user picks. Without this
+ * the restore drift told the user a bare `--resume` starts a NEW session, which is the one
+ * thing that line exists to say and the one thing it got wrong.
+ *
+ * Returns the spelling the command used (`-r`, `--resume`, or codex's `resume` subcommand),
+ * so the drift can quote what is actually on the tty.
+ */
+export function bareResumeFlag(command: string): string | undefined {
+    const original = command.trim();
+    const kind = agentKindFromLauncher(original);
+
+    if (!kind || resumeTargetFromCommand(original) || resumeQueryFromCommand(original)) {
+        return undefined;
+    }
+
+    if (kind === "codex") {
+        return tokenizeCommand(original)[1]?.value === "resume" ? "resume" : undefined;
+    }
+
+    const match = findResumeFlag(original, kind === "grok" ? ["-r", "--resume"] : ["--resume"]);
+
+    return match && match.value === undefined ? match.flag : undefined;
 }
 
 /** Offset just past a top-level `--` separator, or undefined when there is none. */

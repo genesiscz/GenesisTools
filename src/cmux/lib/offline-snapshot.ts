@@ -5,6 +5,7 @@ import {
     replayCommandForSurface,
 } from "@app/cmux/lib/agent-replay";
 import {
+    type AutosavePanel,
     type AutosaveSession,
     type AutosaveWorkspace,
     flattenLayout,
@@ -25,6 +26,7 @@ import { loadSavedScreens, preferredScreenText, type SavedSurfaceScreen } from "
 import { lastCommandFromCapture } from "@app/cmux/lib/shell-probe";
 import type { Pane, Profile, Surface, Window, Workspace } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -40,6 +42,41 @@ import { logger } from "@genesiscz/utils/logger";
 
 const DEFAULT_CELL_WIDTH_PX = 8;
 const DEFAULT_CELL_HEIGHT_PX = 17;
+
+interface NativeResumeRecord {
+    kind: AccountProviderAlias;
+    sessionId: string;
+    /** argv of the launch that owns the id, for rebuilding the command when no capture exists. */
+    launchArgs: string[];
+}
+
+/**
+ * The ONE autosave record that names both the agent and the session to resume.
+ *
+ * 🛑 `terminal.agent.sessionId` is optional, so reading the kind off `agent` and the id off
+ * `resumeBinding` through two independent `??` chains let the pair disagree: a claude `agent`
+ * with no session id beside a codex `resumeBinding` emitted `claude --resume <codex uuid>`,
+ * a session claude has never seen. That is the exact defect `SurfaceSessionInfo.provider`
+ * warns about, arriving through the autosave file instead of the journal. The kind, the id
+ * and the argv all come from whichever record actually carries an id.
+ */
+function nativeResumeRecord(panel: AutosavePanel): NativeResumeRecord | undefined {
+    const agent = panel.terminal?.agent;
+    const binding = panel.terminal?.resumeBinding;
+
+    if (agent?.sessionId) {
+        return { kind: agent.kind, sessionId: agent.sessionId, launchArgs: agent.launchCommand?.arguments ?? [] };
+    }
+
+    if (binding?.checkpointId) {
+        // A binding records no argv, so the command is rebuilt from the launcher name alone.
+        // The agent's argv belongs to the agent, and splicing it here is how the two halves
+        // got mixed in the first place.
+        return { kind: binding.kind, sessionId: binding.checkpointId, launchArgs: [] };
+    }
+
+    return undefined;
+}
 
 export interface OfflineCaptureDeps {
     ttyCommands: Map<string, string>;
@@ -192,6 +229,11 @@ export function buildOfflinePanes(
             const cwd = captured?.cwd ?? panelWorkingDirectory(panel) ?? workspace.currentDirectory;
 
             if (captured && !isAgentLauncher(captured.command)) {
+                // A pane that ran an agent and then went back to a shell still
+                // carries its resume binding. The captured command wins, because it
+                // is what the pane last did, but the binding is named so a thread is
+                // never dropped in silence.
+                const bound = nativeResumeRecord(panel);
                 surfaces.push({
                     type: "terminal",
                     title: panel.title ?? "",
@@ -201,16 +243,25 @@ export function buildOfflinePanes(
                     command_source: "shell-journal",
                     drift: [
                         `exact command recovered from shell journal (${captured.phase}${captured.exitStatus !== undefined ? `, exit ${captured.exitStatus}` : ""})`,
+                        ...(bound
+                            ? [
+                                  `cmux also holds a ${bound.kind} resume binding here (${bound.sessionId}); the captured command won`,
+                              ]
+                            : []),
                     ],
                 });
                 continue;
             }
             const agent = panel.terminal?.agent;
             const binding = panel.terminal?.resumeBinding;
-            const nativeKind = agent?.kind ?? binding?.kind;
-            const nativeSessionId = agent?.sessionId ?? binding?.checkpointId;
-            const launchArgs = agent?.launchCommand?.arguments ?? [];
-            const headless = launchArgs.some((arg) =>
+            const native = nativeResumeRecord(panel);
+            const nativeKind = native?.kind;
+            const nativeSessionId = native?.sessionId;
+            const launchArgs = native?.launchArgs ?? [];
+            // Headless is a property of the PANE, so it is read from the agent record even when
+            // the id came from the binding: a `-p` run must never be restored as an interactive
+            // resume, whichever record names the session.
+            const headless = (agent?.launchCommand?.arguments ?? []).some((arg) =>
                 ["-p", "--prompt", "--prompt-file", "--output-format"].includes(arg)
             );
             if (
@@ -240,13 +291,13 @@ export function buildOfflinePanes(
                 });
                 continue;
             }
-            // Always "claude": the surface-session journal only records Claude
-            // sessions, so typing the kind from the tab title turned a claude
-            // uuid into a `grok -r` argument on any pane whose title ends in
-            // the word "grok".
+            // The kind comes from the journal RECORD, never the tab title: typing it from the
+            // title turned a claude uuid into a `grok -r` argument on any pane whose title
+            // ends in the word "grok". It is not always "claude" either — the SessionStart
+            // hook is shared, so Codex sessions are in this journal too.
             const preferred: ReplayCatalogSession | undefined = session
                 ? {
-                      kind: "claude",
+                      kind: session.provider,
                       sessionId: session.sessionId,
                       cwd: cwd ?? "",
                       title: panel.title ?? "",

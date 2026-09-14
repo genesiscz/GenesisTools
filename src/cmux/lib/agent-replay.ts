@@ -3,8 +3,10 @@ import { loadPins } from "@app/claude/lib/cmux/pins";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import {
     agentKindFromLauncher,
+    bareResumeFlag,
     deriveReplayCommand,
     isAgentLauncher,
+    resumeQueryFromCommand,
     resumeTargetFromCommand,
 } from "@app/cmux/lib/command-capture";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
@@ -86,22 +88,22 @@ export function titleMatchKeys(title: string, kind: AgentKind): string[] {
     return [...new Set(keys)];
 }
 
-function sessionMatchesKey(session: ReplayCatalogSession, key: string): boolean {
+/** Strong evidence: the tab title IS the session's generated title, whole or truncated. */
+function titleMatchesKey(session: ReplayCatalogSession, key: string): boolean {
     const title = session.title.trim().toLowerCase();
+
     if (!key) {
         return false;
     }
 
-    if (title === key) {
-        return true;
-    }
+    return title === key || (key.length >= 12 && title.startsWith(key));
+}
 
-    if (key.length >= 12 && title.startsWith(key)) {
-        return true;
-    }
-
+/** Weak evidence: the tab title reads like the opening words of the first prompt. */
+function promptMatchesKey(session: ReplayCatalogSession, key: string): boolean {
     const prompt = session.prompt?.toLowerCase() ?? "";
-    if (!prompt) {
+
+    if (!key || !prompt) {
         return false;
     }
 
@@ -154,6 +156,21 @@ export function matchCodexSession(
     return matchAgentSession("codex", title, cwd, sessions);
 }
 
+/**
+ * Title evidence outranks prompt evidence, and the pane's own directory
+ * outranks both.
+ *
+ * Title and prompt used to share one candidate pool, so three sessions whose
+ * FIRST PROMPT happened to contain "native oauth" out-voted the one session
+ * whose title was exactly the tab's, and `pickUnique` reported "ambiguous" for a
+ * session it had already found. Tiering answers from the exact title and never
+ * reaches the prompt guess.
+ *
+ * The cwd fallback stays OUTSIDE that tier loop on purpose. Running it per tier
+ * put "a title match in any directory" above "a prompt match in this pane's own
+ * directory", and the restored pane then resumed a conversation from another
+ * project.
+ */
 function matchAgentSession(
     kind: AgentKind,
     title: string,
@@ -168,16 +185,24 @@ function matchAgentSession(
     const pool = sessions.filter((session) => session.kind === kind);
     const inCwd = cwd ? pool.filter((session) => session.cwd === cwd) : pool;
 
-    for (const key of keys) {
-        const local = pickUnique(inCwd.filter((session) => sessionMatchesKey(session, key)));
-        if (local) {
-            return local;
+    const tiers = [titleMatchesKey, promptMatchesKey];
+
+    for (const matches of tiers) {
+        for (const key of keys) {
+            const local = pickUnique(inCwd.filter((session) => matches(session, key)));
+            if (local) {
+                return local;
+            }
         }
     }
 
-    if (cwd) {
+    if (!cwd) {
+        return undefined;
+    }
+
+    for (const matches of tiers) {
         for (const key of keys) {
-            const global = pickUnique(pool.filter((session) => sessionMatchesKey(session, key)));
+            const global = pickUnique(pool.filter((session) => matches(session, key)));
             if (global) {
                 return global;
             }
@@ -260,10 +285,22 @@ export function replayCommandForSurface(
     if (!hit) {
         if (original && kind) {
             // Say it, do not hide it: replaying a bare launcher opens a NEW
-            // session and paints the old screen over it.
+            // session and paints the old screen over it. Two launchers are not
+            // cold starts and must not be described as one: a resume QUERY
+            // reopens a session, just not a provably correct one, and a bare
+            // resume flag opens the agent's own picker.
+            const query = resumeQueryFromCommand(original);
+            const picker = bareResumeFlag(original);
+
             return {
                 command: original,
-                drift: [`no ${kind} session id resolved for this pane; restore starts a NEW ${kind} session`],
+                drift: [
+                    query
+                        ? `no ${kind} session id resolved; the command resumes the query "${query}", whose top match can be another session`
+                        : picker
+                          ? `no ${kind} session id resolved; the command's bare ${picker} opens ${kind}'s own session picker`
+                          : `no ${kind} session id resolved for this pane; restore starts a NEW ${kind} session`,
+                ],
             };
         }
 
@@ -375,8 +412,75 @@ interface ResumeClaim {
     surface: TerminalSurface;
 }
 
+/**
+ * The tab title IS this session's generated title. Strong enough to overrule a
+ * binding the app wrote down itself.
+ */
 function titleNamesSession(surface: TerminalSurface, session: ReplayCatalogSession): boolean {
-    return titleMatchKeys(surface.title, session.kind).some((key) => sessionMatchesKey(session, key));
+    return titleMatchKeys(surface.title, session.kind).some((key) => titleMatchesKey(session, key));
+}
+
+/**
+ * The tab title reads like the opening words of this session's FIRST PROMPT.
+ *
+ * Weaker, and deliberately kept out of `correctNativeResumeBindings`: a guess must
+ * not retarget a recorded id. `dedupeResumeTargets` asks a different question —
+ * of N panes already claiming ONE id, which one owns it — and there prompt
+ * evidence is often the only evidence there is, because an agent that has not
+ * summarised a conversation yet stores the session id as its title.
+ */
+function promptNamesSession(surface: TerminalSurface, session: ReplayCatalogSession): boolean {
+    return titleMatchKeys(surface.title, session.kind).some((key) => promptMatchesKey(session, key));
+}
+
+/**
+ * cmux's own autosave is not per-pane for grok. In the 2026-09-12 session file
+ * FIVE tabs carried the id 01a08678… and four more carried 01a0912b…, although
+ * every one of those tab titles named a different conversation in grok's index.
+ * Restoring that resumes one thread in five panes and loses the other four.
+ *
+ * A tab title is the session's own generated summary, so when it names another
+ * session the title wins. Only title evidence may override a recorded binding:
+ * a prompt match is a guess, and a guess must not retarget an id the app wrote
+ * down itself.
+ */
+export function correctNativeResumeBindings(profile: Profile, catalog: ReplayCatalog): Profile {
+    return mapTerminalSurfaces(profile, (surface) => {
+        const binding = surface.resume;
+        const command = surface.command?.trim();
+
+        if (!binding || !command) {
+            return surface;
+        }
+
+        const hit = matchAgentSession(binding.kind, surface.title, surface.cwd, catalog.sessions);
+
+        if (!hit || hit.sessionId === binding.sessionId || !titleNamesSession(surface, hit)) {
+            return surface;
+        }
+
+        // The account follows the session, not the pane: retargeting to another
+        // session under the launcher's old account relaunches it as the wrong
+        // identity, and swallowing the earlier drift hid the
+        // "no account recorded" warning that says so.
+        const derived = deriveReplayCommand({
+            original: command,
+            sessionId: hit.sessionId,
+            account: hit.account ?? undefined,
+        });
+
+        return {
+            ...surface,
+            command: derived.command,
+            command_original: surface.command_original ?? command,
+            resume: { kind: binding.kind, sessionId: hit.sessionId },
+            drift: [
+                ...(surface.drift ?? []),
+                ...derived.drift,
+                `autosave named ${binding.kind} ${binding.sessionId} here, but the tab title is session ${hit.sessionId}; used the title`,
+            ],
+        };
+    });
 }
 
 /**
@@ -412,9 +516,15 @@ export function dedupeResumeTargets(profile: Profile, catalog: ReplayCatalog): P
 
         const [kind, sessionId] = key.split(":") as [AgentKind, string];
         const session = catalog.sessions.find((entry) => entry.kind === kind && entry.sessionId === sessionId);
+        // Title first, prompt second, traversal order last. Title-only would hand
+        // the session to an unrelated pane whenever the agent has not summarised
+        // the conversation yet, which is exactly the shared-autosave-id case this
+        // function exists for.
         const winner =
-            (session ? claimants.find((claim) => titleNamesSession(claim.surface, session)) : undefined) ??
-            claimants[0];
+            (session
+                ? (claimants.find((claim) => titleNamesSession(claim.surface, session)) ??
+                  claimants.find((claim) => promptNamesSession(claim.surface, session)))
+                : undefined) ?? claimants[0];
 
         for (const claim of claimants) {
             if (claim !== winner) {
@@ -568,5 +678,7 @@ export async function loadReplayCatalog(profile: Profile, options: { cached?: bo
 
 export async function prepareProfileForRestore(profile: Profile, options: { cached?: boolean } = {}): Promise<Profile> {
     const catalog = await loadReplayCatalog(profile, options);
-    return dedupeResumeTargets(withInferredReplayCommands(profile, catalog), catalog);
+    const corrected = correctNativeResumeBindings(profile, catalog);
+
+    return dedupeResumeTargets(withInferredReplayCommands(corrected, catalog), catalog);
 }

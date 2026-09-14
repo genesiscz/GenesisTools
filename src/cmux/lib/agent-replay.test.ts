@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    correctNativeResumeBindings,
     dedupeResumeTargets,
     inferLauncherFromTitle,
     matchGrokSession,
@@ -435,6 +436,29 @@ describe("dedupeResumeTargets", () => {
         ]);
     });
 
+    // This caller asks a different question from `correctNativeResumeBindings`:
+    // not "may a guess retarget a recorded id" but "of N panes claiming ONE id,
+    // which one owns it". A grok session grok has not summarised yet carries its
+    // own id as its title, so the first prompt is the only evidence there is.
+    test("a session with no generated title is kept by the pane its first prompt names", () => {
+        const shared = "01a08678-e1c3-71a0-81b2-09aa5bf07a02";
+        const profile = profileWith([
+            terminal("some unrelated tab - grok", { command: `grok -r ${shared}` }),
+            terminal("apify enablement and usage costs - grok", { command: `grok -r ${shared}` }),
+        ]);
+        const session = grokSession({
+            sessionId: shared,
+            title: "01a08678",
+            prompt: "apify enablement and usage costs, how much do they run to",
+        });
+
+        const [loser, winner] = terminals(dedupeResumeTargets(profile, catalog([session])));
+
+        expect(winner.command).toBe(`grok -r ${shared}`);
+        expect(winner.drift).toBeUndefined();
+        expect(loser.command).toBeUndefined();
+    });
+
     test("with no title evidence the first claimant wins", () => {
         const profile = profileWith([
             terminal("✳ first", { command: `grok -r ${GROK_ID}` }),
@@ -476,5 +500,216 @@ describe("an agent launcher with no resolvable session says so", () => {
         const prepared = withInferredReplayCommands(profileWith([surface]), catalog([]));
         const [pane] = prepared.windows[0].workspaces[0].panes[0].surfaces;
         expect(pane.type === "terminal" ? pane.drift : undefined).toEqual(resolved.drift);
+    });
+
+    // A bare `--resume` is neither a cold start nor a query: it opens the
+    // launcher's own picker. Calling it a NEW session is wrong about the one
+    // thing the line exists to say.
+    test("a bare resume flag is reported as the interactive picker, not a new session", () => {
+        const surface = terminal("✳ GenesisTools azure-devops port", {
+            command: "claude --resume",
+            command_source: "shell-journal",
+        });
+
+        expect(replayCommandForSurface(surface, catalog([])).drift).toEqual([
+            "no claude session id resolved; the command's bare --resume opens claude's own session picker",
+        ]);
+    });
+
+    test("a bare grok -r is reported the same way", () => {
+        const surface = terminal("some tab - grok", { command: "grok -r", command_source: "shell-journal" });
+
+        expect(replayCommandForSurface(surface, catalog([])).drift).toEqual([
+            "no grok session id resolved; the command's bare -r opens grok's own session picker",
+        ]);
+    });
+
+    test("a launcher with no resume flag at all still reports a new session", () => {
+        const surface = terminal("some tab - grok", { command: "grok", command_source: "shell-journal" });
+
+        expect(replayCommandForSurface(surface, catalog([])).drift).toEqual([
+            "no grok session id resolved for this pane; restore starts a NEW grok session",
+        ]);
+    });
+});
+describe("title evidence outranks prompt evidence", () => {
+    // 2026-09-12: the tab "Native MCP OAuth gateway, Rohlik login p… - grok"
+    // matched its own session by title AND three spec sessions whose first
+    // prompt contained "native oauth". One pool, four hits, `pickUnique` said
+    // ambiguous, and the pane restored with no resume command at all.
+    test("an exact title wins over sessions that only share two prompt words", () => {
+        const wanted = grokSession({
+            sessionId: "01a08678-e1c3-71a0-81b2-09aa5bf07a02",
+            title: "Native MCP OAuth gateway, Rohlik login proven",
+        });
+        const noise = ["a", "b", "c"].map((suffix) =>
+            grokSession({
+                sessionId: `01a08b2b-2eeb-7ff1-a9a6-66${suffix}0000000`,
+                title: `SPEC ${suffix.toUpperCase()} mcporter native OAuth wrap`,
+                prompt: "You are writing a native oauth spec only. Do not implement code.",
+            })
+        );
+
+        const hit = matchGrokSession("Native MCP OAuth gateway, Rohlik login p… - grok", "/Users/me/Projects/shop", [
+            ...noise,
+            wanted,
+        ]);
+
+        expect(hit?.sessionId).toBe("01a08678-e1c3-71a0-81b2-09aa5bf07a02");
+    });
+
+    // The tier loop must not also demote cwd. A pane's own directory is stronger
+    // evidence than a title match in some other project, so the global fallback
+    // runs only after BOTH local tiers have failed.
+    test("a same-directory prompt match beats a foreign-directory title match", () => {
+        const here = grokSession({
+            sessionId: "01a00000-0000-7000-8000-000000000001",
+            cwd: "/Users/me/Projects/app",
+            title: "01a00000",
+            prompt: "fix the login redirect loop in the gateway",
+        });
+        const elsewhere = grokSession({
+            sessionId: "01a00000-0000-7000-8000-000000000002",
+            cwd: "/Users/me/Projects/other",
+            title: "fix the login redirect loop",
+        });
+
+        const hit = matchGrokSession("fix the login redirect loop - grok", "/Users/me/Projects/app", [here, elsewhere]);
+
+        expect(hit?.sessionId).toBe("01a00000-0000-7000-8000-000000000001");
+    });
+
+    // The negative control for the tier: with nothing in the pane's own
+    // directory the global pool still answers, so the reorder above did not
+    // switch the fallback off.
+    test("a foreign-directory title match still wins when the pane's own directory has nothing", () => {
+        const elsewhere = grokSession({
+            sessionId: "01a00000-0000-7000-8000-000000000002",
+            cwd: "/Users/me/Projects/other",
+            title: "fix the login redirect loop",
+        });
+
+        const hit = matchGrokSession("fix the login redirect loop - grok", "/Users/me/Projects/app", [elsewhere]);
+
+        expect(hit?.sessionId).toBe("01a00000-0000-7000-8000-000000000002");
+    });
+});
+
+describe("correctNativeResumeBindings", () => {
+    // cmux's autosave is not per-pane for grok: the 2026-09-12 session file gave
+    // FIVE tabs the id 01a08678… and four more 01a0912b…, although every title
+    // named a different conversation. Restoring that resumed one thread in five
+    // panes and lost the other four.
+    const autosaved = "01a08678-e1c3-71a0-81b2-09aa5bf07a02";
+    const real = "01a085f1-ac0b-7433-b01f-5f4fd4308fb9";
+
+    function bound(title: string, sessionId: string): TerminalSurface {
+        return terminal(title, {
+            command: `grok -r ${sessionId}`,
+            command_source: "offline",
+            resume: { kind: "grok", sessionId },
+            drift: ["resume target recovered from cmux autosave (grok)"],
+        });
+    }
+
+    function first(profile: Profile): TerminalSurface {
+        const surface = profile.windows[0].workspaces[0].panes[0].surfaces[0];
+        if (surface.type !== "terminal") {
+            throw new Error("expected a terminal surface");
+        }
+
+        return surface;
+    }
+
+    test("a shared autosave id is retargeted to the session the tab title names", () => {
+        const surface = bound("Apify MCP enablement and usage costs - grok", autosaved);
+        const sessions = [
+            grokSession({ sessionId: real, title: "Apify MCP enablement and usage costs" }),
+            grokSession({ sessionId: autosaved, title: "Native MCP OAuth gateway, Rohlik login proven" }),
+        ];
+
+        const corrected = first(correctNativeResumeBindings(profileWith([surface]), catalog(sessions)));
+
+        expect(corrected.command).toBe(`grok -r ${real}`);
+        expect(corrected.resume).toEqual({ kind: "grok", sessionId: real });
+        expect(corrected.command_original).toBe(`grok -r ${autosaved}`);
+        // The correction is APPENDED. Replacing the array threw away every
+        // warning the earlier passes wrote, including "no account recorded".
+        expect(corrected.drift).toEqual([
+            "resume target recovered from cmux autosave (grok)",
+            `resume target "${autosaved}" replaced with the session that was active here`,
+            `autosave named grok ${autosaved} here, but the tab title is session ${real}; used the title`,
+        ]);
+    });
+
+    // A retarget changes WHICH session the pane resumes, so the account must
+    // follow it. Without `hit.account` the pane relaunched the new session under
+    // the old launcher, and the "no account recorded" warning that says so was
+    // then discarded with the rest of the drift.
+    test("a claude retarget carries the new session's account", () => {
+        const a = "aaaaaaaa-1111-4111-8111-111111111111";
+        const b = "bbbbbbbb-2222-4222-8222-222222222222";
+        const surface = terminal("✳ Rewrite the invoice collector", {
+            cwd: "/Users/me/Projects/App",
+            command: `tools cc run -- --resume ${a}`,
+            command_source: "offline",
+            resume: { kind: "claude", sessionId: a },
+            drift: ["resume target recovered from cmux autosave (claude)"],
+        });
+        const sessions = [
+            claudeSession({ sessionId: a, title: "something else entirely", account: "work" }),
+            claudeSession({ sessionId: b, title: "rewrite the invoice collector", account: "personal" }),
+        ];
+
+        const corrected = first(correctNativeResumeBindings(profileWith([surface]), catalog(sessions)));
+
+        expect(corrected.command).toBe(`tools cc run personal -- --resume ${b}`);
+        expect(corrected.resume).toEqual({ kind: "claude", sessionId: b });
+        expect(corrected.drift).toContain(
+            `autosave named claude ${a} here, but the tab title is session ${b}; used the title`
+        );
+        expect(corrected.drift).toContain("resume target recovered from cmux autosave (claude)");
+    });
+
+    test("a retarget to an account-less session keeps the 'cc run will ask' warning", () => {
+        const a = "aaaaaaaa-1111-4111-8111-111111111111";
+        const b = "bbbbbbbb-2222-4222-8222-222222222222";
+        const surface = terminal("✳ Rewrite the invoice collector", {
+            cwd: "/Users/me/Projects/App",
+            command: `tools cc run -- --resume ${a}`,
+            command_source: "offline",
+            resume: { kind: "claude", sessionId: a },
+        });
+        const sessions = [
+            claudeSession({ sessionId: a, title: "something else entirely", account: "work" }),
+            claudeSession({ sessionId: b, title: "rewrite the invoice collector", account: null }),
+        ];
+
+        const corrected = first(correctNativeResumeBindings(profileWith([surface]), catalog(sessions)));
+
+        expect(corrected.command).toBe(`tools cc run -- --resume ${b}`);
+        expect(corrected.drift).toContain("no account recorded for this session — cc run will ask for one");
+    });
+
+    test("a binding the title agrees with is left exactly as it was", () => {
+        const surface = bound("Native MCP OAuth gateway, Rohlik login p… - grok", autosaved);
+        const sessions = [
+            grokSession({ sessionId: autosaved, title: "Native MCP OAuth gateway, Rohlik login proven" }),
+        ];
+
+        expect(first(correctNativeResumeBindings(profileWith([surface]), catalog(sessions)))).toEqual(surface);
+    });
+
+    test("a prompt-only match may not retarget a recorded binding", () => {
+        const surface = bound("Apify MCP enablement and usage costs - grok", autosaved);
+        const sessions = [
+            grokSession({
+                sessionId: real,
+                title: "01a085f1",
+                prompt: "apify mcp enablement question, how much does it cost",
+            }),
+        ];
+
+        expect(first(correctNativeResumeBindings(profileWith([surface]), catalog(sessions)))).toEqual(surface);
     });
 });

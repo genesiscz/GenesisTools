@@ -86,7 +86,13 @@ export function capturedCommandsByPanelId(
 export async function buildCommandCaptureContext(options: { commands?: boolean } = {}): Promise<CommandCaptureContext> {
     const [tty, surfaceSessions] =
         options.commands === false
-            ? [{ launchCommands: new Map<string, string>(), claudeSessions: new Map<string, string>() }, new Map()]
+            ? [
+                  { launchCommands: new Map<string, string>(), claudeSessions: new Map<string, string>() },
+                  // Annotated, not bare: an untyped `new Map()` widens the destructured binding to
+                  // `Map<any, any>`, which is how a writer below came to omit a REQUIRED field with
+                  // a clean typecheck.
+                  new Map<string, SurfaceSessionInfo>(),
+              ]
             : await Promise.all([collectTtyCapture(), loadSurfaceSessions()]);
     const ttyCommands = tty.launchCommands;
     const argvAccounts = await loadPinnedAccounts(tty.claudeSessions.values());
@@ -147,7 +153,17 @@ export async function buildCommandCaptureContext(options: { commands?: boolean }
                 if (argvSession && argvSession !== surfaceSession?.sessionId) {
                     surfaceSessions.set(id.toLowerCase(), {
                         sessionId: argvSession,
-                        account: argvAccounts.get(argvSession) ?? surfaceSession?.account,
+                        // `claudeSessions` only ever holds ids read off a `claude … --resume <uuid>`
+                        // argv, so the provider is known. Leaving it undefined made the replay path
+                        // drop this entry at its `preferred?.kind === kind` gate and fall back to the
+                        // fuzzy title match this branch exists to beat.
+                        provider: "claude",
+                        // Only a Claude account may attach to a Claude session id. A nested codex or
+                        // grok run started from this pane leaves its own record on the surface, and
+                        // an ungated fallback relaunched the pane under that other agent's account.
+                        account:
+                            argvAccounts.get(argvSession) ??
+                            (surfaceSession?.provider === "claude" ? surfaceSession.account : undefined),
                     });
                 }
             }
@@ -511,13 +527,16 @@ export function buildTerminalSurfaceSnapshot(input: {
         capture && entry.id
             ? (capture.surfaceSessions.get(id ?? entry.id) ?? capture.surfaceSessions.get(entry.id))
             : undefined;
-    // Always "claude": this id comes from the Claude cmux-refs journal and
-    // nowhere else. Typing it from the tab title made any pane whose title ends
-    // in the word "grok" (including a shell in a directory named grok) replay
-    // `grok -r <claude uuid>`, a session grok has never seen.
+    // The kind comes from the journal RECORD, never from the tab title: typing it from the
+    // title made any pane whose title ends in the word "grok" (including a shell in a
+    // directory named grok) replay `grok -r <claude uuid>`, a session grok has never seen.
+    //
+    // 🛑 It is not always "claude" either. The SessionStart hook is shared, so Codex sessions
+    // write to this journal too; hardcoding the kind replayed a Codex thread id as
+    // `claude -r <codex uuid>` — the same defect from the other direction.
     const preferred: ReplayCatalogSession | undefined = session
         ? {
-              kind: "claude",
+              kind: session.provider,
               sessionId: session.sessionId,
               cwd: cwd ?? "",
               title,

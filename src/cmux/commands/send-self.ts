@@ -1,8 +1,8 @@
-import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { resolveCmuxPath, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { Command } from "commander";
 
@@ -51,6 +51,47 @@ async function sendTmux(pane: string, text: string, enter: boolean, enterDelayMs
     await runTmuxSendKeys([tmux, "send-keys", "-t", pane, "Enter"], "tmux send-keys Enter");
 }
 
+/**
+ * If this process is told to die between the text and the Enter, the Enter still goes out.
+ * Observed 2026-09-10 17:39: a detached `send-self '/compact'` logged its `send` and never
+ * its `send-key enter`; the text sat unsubmitted in the prompt and the compaction never
+ * ran. Who sent the signal is unknown (the day log has no trace), so the handler records
+ * the signal and finishes the job synchronously on the way out.
+ */
+function enterOnSignal(where: readonly string[]): () => void {
+    const signals = ["SIGTERM", "SIGHUP", "SIGINT"] as const;
+    const handler = (signal: string) => {
+        logger.warn(
+            { pid: process.pid, signal },
+            "[cmux send-self] signalled between text and Enter; sending Enter now"
+        );
+        // The resolved binary, not a bare `cmux`: the detached `nohup zsh -c` this rescue
+        // exists for runs with a minimal PATH, where a bare name is exactly what fails.
+        const rescue = Bun.spawnSync([resolveCmuxPath(), "send-key", ...where, "enter"], {
+            stdio: ["ignore", "ignore", "pipe"],
+        });
+
+        if (rescue.exitCode !== 0) {
+            logger.error(
+                { pid: process.pid, exitCode: rescue.exitCode, stderr: rescue.stderr.toString().trim() },
+                "[cmux send-self] rescue Enter failed"
+            );
+        }
+
+        process.exit(1);
+    };
+
+    for (const signal of signals) {
+        process.on(signal, handler);
+    }
+
+    return () => {
+        for (const signal of signals) {
+            process.off(signal, handler);
+        }
+    };
+}
+
 async function sendCmux(
     workspaceId: string | undefined,
     surfaceId: string,
@@ -59,14 +100,35 @@ async function sendCmux(
     enterDelayMs: number
 ): Promise<void> {
     const where = surfaceTargetArgs(surfaceId, workspaceId);
+    // Never log `text` itself. This types arbitrary content into a terminal — a prompt,
+    // a pasted command, a token being echoed into a login flow — and logger always
+    // writes the day-stamped plaintext file, at every level. The length plus the enter
+    // flag is what the triage actually needs: the 2026-09-10 failure was a `send` with
+    // no matching `send-key enter`, which this still shows. A bare slash command is
+    // named in full because it cannot be a credential and it is the case being debugged.
+    const command = /^\/[a-z][a-z-]{0,31}$/.test(text) ? text : undefined;
+    logger.info(
+        { pid: process.pid, surfaceId, textLength: text.length, command, enter, enterDelayMs },
+        "[cmux send-self] sending text"
+    );
     await runCmuxOk(["send", ...where, text]);
 
     if (!enter) {
         return;
     }
 
-    await Bun.sleep(enterDelayMs);
-    await runCmuxOk(["send-key", ...where, "enter"]);
+    const release = enterOnSignal(where);
+
+    try {
+        if (enterDelayMs > 0) {
+            await Bun.sleep(enterDelayMs);
+        }
+
+        await runCmuxOk(["send-key", ...where, "enter"]);
+        logger.info({ pid: process.pid, surfaceId }, "[cmux send-self] Enter sent");
+    } finally {
+        release();
+    }
 }
 
 export function registerSendSelfCommand(program: Command): void {
@@ -76,7 +138,11 @@ export function registerSendSelfCommand(program: Command): void {
             "Type text into the terminal surface this process is running in, then press Enter. " +
                 "To fire later, put the sleep in the calling shell: a long-lived bun process is killed at an agent turn boundary."
         )
-        .option("--enter-delay <ms>", "Wait this long between the text and Enter", "500")
+        .option(
+            "--enter-delay <ms>",
+            "Wait this long between the text and Enter (0: back-to-back, which cmux and tmux both accept)",
+            "0"
+        )
         .option("--no-enter", "Send the text only, leave it unsubmitted at the prompt")
         .option("--target <auto|tmux|cmux>", "Force a transport instead of auto-detecting", "auto")
         .option("--dry-run", "Print the resolved target and exit without sending")

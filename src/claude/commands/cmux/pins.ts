@@ -11,15 +11,37 @@ export interface PinsOptions {
 }
 
 /**
- * Show the account pins collected so far.
+ * Why this listing is empty.
  *
  * The pins come from the `record-session-account` SessionStart hook that ships with the
- * genesis-tools PLUGIN, so an empty journal is a plugin problem, not a config one — which
- * is what the footer says when there is nothing to show.
+ * genesis-tools PLUGIN, so an EMPTY JOURNAL is a plugin problem. A journal that holds only
+ * Codex and Grok records is not: the hook ran, this view just filters to Claude. Testing the
+ * FILTERED size told the second user to go and fix a working plugin.
  */
+export function emptyPinsNote(totalRecords: number): string {
+    if (totalRecords > 0) {
+        return (
+            `  The journal holds ${totalRecords} pin${totalRecords === 1 ? "" : "s"}, none of them a Claude session.\n` +
+            "  Codex and Grok write into this same journal; this view shows Claude's only."
+        );
+    }
+
+    return (
+        "  Pins are written by the genesis-tools plugin's SessionStart hook.\n" +
+        "  If it is installed, only sessions started AFTER it landed have pins;\n" +
+        "  plugin edits need a push plus /plugin update before they take effect."
+    );
+}
+
+/** Show the account pins collected so far. */
 export async function pinsCommand(opts: PinsOptions): Promise<void> {
     // A command whose name says it shows things must not rewrite the journal it reads.
-    const pins = await loadPins({ readOnly: true });
+    // Codex and Grok write into this same journal now, and this is the one consumer that
+    // ENUMERATES it rather than keying by a Claude session id. Unfiltered, their sessions printed
+    // under "Claude session pins" with `account: null` rendered as `keychain` — a Claude-only
+    // auth concept that means nothing for either.
+    const all = await loadPins({ readOnly: true });
+    const pins = new Map([...all].filter(([, pin]) => (pin.provider ?? "claude") === "claude"));
     const limit = positiveIntFlag(opts.limit, "--limit");
     const recent = [...pins.values()].sort((a, b) => b.at - a.at).slice(0, limit);
 
@@ -31,13 +53,7 @@ export async function pinsCommand(opts: PinsOptions): Promise<void> {
     if (pins.size === 0) {
         out.printlnErr(pc.yellow("No session pins recorded yet."));
         out.printlnErr(pc.dim(`  Journal: ${pinsPath()}`));
-        out.printlnErr(
-            pc.dim(
-                "  Pins are written by the genesis-tools plugin's SessionStart hook.\n" +
-                    "  If it is installed, only sessions started AFTER it landed have pins;\n" +
-                    "  plugin edits need a push plus /plugin update before they take effect."
-            )
-        );
+        out.printlnErr(pc.dim(emptyPinsNote(all.size)));
         return;
     }
 

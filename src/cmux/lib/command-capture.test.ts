@@ -9,9 +9,12 @@ import {
     deriveReplayCommand,
     discoverCcRunAliases,
     isAgentLauncher,
+    loadSurfaceSessions,
+    resumeQueryFromCommand,
     resumeTargetFromCommand,
     setCcRunAliases,
 } from "@app/cmux/lib/command-capture";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 beforeAll(() => {
     setCcRunAliases(["cr"]);
@@ -410,5 +413,115 @@ describe("claudeSessionFromArgv", () => {
     test("only a claude process counts", () => {
         expect(claudeSessionFromArgv(`bun tools claude mcp --resume ${id}`)).toBeUndefined();
         expect(claudeSessionFromArgv(`grok -r ${id}`)).toBeUndefined();
+    });
+});
+describe("resumeQueryFromCommand", () => {
+    test("names the query a cc run launcher will search for", () => {
+        expect(resumeQueryFromCommand("tools claude run foltyn --resume astra")).toBe("astra");
+        expect(resumeQueryFromCommand("cr bfbc --resume report")).toBe("report");
+    });
+
+    test("a pinned id and a cold start are not queries", () => {
+        const id = "f2f57edd-be32-4dae-be97-3fc3923afca9";
+        expect(resumeQueryFromCommand(`cr bfbc -- --resume ${id}`)).toBeUndefined();
+        expect(resumeQueryFromCommand("cr bfbc")).toBeUndefined();
+        expect(resumeQueryFromCommand("ncdu /tmp")).toBeUndefined();
+    });
+});
+
+describe("loadSurfaceSessions", () => {
+    // The cmux SessionStart hook is shared by all three agents but only started
+    // tagging its records in 2026-09: 3723 of the 3725 lines on this machine are
+    // untagged, 29 of them Codex rollouts. Reading those as Claude is what types
+    // a Codex thread id into `claude --resume`.
+    function line(sessionId: string, surfaceId: string, provider?: string): string {
+        return SafeJSON.stringify({
+            sessionId,
+            ...(provider ? { provider } : {}),
+            workspaceId: null,
+            surfaceId,
+            workspaceRef: null,
+            paneRef: null,
+            surfaceRef: null,
+            windowRef: null,
+            tmuxPane: null,
+            cwd: null,
+            at: Date.now(),
+        });
+    }
+
+    function pinLine(sessionId: string, provider?: string): string {
+        return SafeJSON.stringify({
+            sessionId,
+            ...(provider ? { provider } : {}),
+            account: null,
+            model: null,
+            cwd: "/tmp",
+            workspaceId: null,
+            source: "hook",
+            at: Date.now(),
+        });
+    }
+
+    test("an untagged record counts as Claude's only with Claude's UUIDv4 shape", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "cmux-refs-"));
+        const refsPath = join(dir, "cmux-refs.jsonl");
+        const pinsPath = join(dir, "session-pins.jsonl");
+        writeFileSync(
+            refsPath,
+            [
+                line("6bdfb457-cee9-4202-8105-21be8a801757", "surface-v4"),
+                line("01a08283-d374-7ab3-bcc5-72f83340a153", "surface-v7"),
+                line("01a08207-a472-7061-ae94-8dfc9f0ad887", "surface-tagged", "codex"),
+            ].join("\n")
+        );
+        // Hermetic: without its own pin journal this read reached the developer's
+        // real `~/.genesis-tools/claude-code/session-pins.jsonl`.
+        writeFileSync(pinsPath, "");
+
+        const sessions = await loadSurfaceSessions({ refsPath, pinsPath });
+
+        // The negative control: an ordinary Claude record and a tagged Codex
+        // record both still resolve, so the guard did not disable the journal.
+        expect(sessions.get("surface-v4")).toMatchObject({
+            provider: "claude",
+            sessionId: "6bdfb457-cee9-4202-8105-21be8a801757",
+        });
+        expect(sessions.get("surface-tagged")).toMatchObject({
+            provider: "codex",
+            sessionId: "01a08207-a472-7061-ae94-8dfc9f0ad887",
+        });
+        expect(sessions.has("surface-v7")).toBe(false);
+    });
+
+    // The v4 shape is Claude's habit, not a law. The shared index holds 4 Codex
+    // and 6 Grok sessions with v4-shaped ids, and the id alone cannot tell them
+    // apart. The pin journal can: it is written per session by the same hook and
+    // names the provider outright.
+    test("a pin that names another agent overrules the id shape", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "cmux-refs-"));
+        const refsPath = join(dir, "cmux-refs.jsonl");
+        const pinsPath = join(dir, "session-pins.jsonl");
+        writeFileSync(
+            refsPath,
+            [
+                line("751f3deb-2215-4040-8947-9b2000dd22b7", "surface-grok-v4"),
+                line("6bdfb457-cee9-4202-8105-21be8a801757", "surface-claude-v4"),
+            ].join("\n")
+        );
+        writeFileSync(
+            pinsPath,
+            [
+                pinLine("751f3deb-2215-4040-8947-9b2000dd22b7", "grok"),
+                // The negative control: an untagged pin is Claude's own, so the
+                // Claude record must still resolve.
+                pinLine("6bdfb457-cee9-4202-8105-21be8a801757"),
+            ].join("\n")
+        );
+
+        const sessions = await loadSurfaceSessions({ refsPath, pinsPath });
+
+        expect(sessions.get("surface-grok-v4")).toMatchObject({ provider: "grok" });
+        expect(sessions.get("surface-claude-v4")).toMatchObject({ provider: "claude" });
     });
 });

@@ -60,7 +60,10 @@ describe("buildOfflinePanes", () => {
         const panes = buildOfflinePanes(ws, FRAME, {
             ttyCommands: new Map(),
             surfaceSessions: new Map([
-                ["stable-a", { sessionId: "11111111-aaaa-bbbb-cccc-222222222222", account: "work" }],
+                [
+                    "stable-a",
+                    { sessionId: "11111111-aaaa-bbbb-cccc-222222222222", account: "work", provider: "claude" as const },
+                ],
             ]),
         });
         expect(panes[0].surfaces[0]).toMatchObject({
@@ -131,6 +134,70 @@ describe("buildOfflinePanes", () => {
             buildOfflinePanes(ws, FRAME, { ttyCommands: new Map(), surfaceSessions: new Map() })[0].surfaces[0]
         ).toMatchObject({ command: "codex resume 11111111-aaaa-bbbb-cccc-222222222222" });
     });
+
+    // `agent.sessionId` is optional, so reading the KIND off `agent` and the ID
+    // off `resumeBinding` through two independent `??` chains let the pair
+    // disagree. The pane then replayed `claude --resume <codex uuid>`, a session
+    // claude has never seen. One record answers both halves.
+    test("an agent record with no session id never lends its kind to another agent's id", () => {
+        const ws = workspaceFixture();
+        ws.panels[0] = {
+            id: "a",
+            type: "terminal",
+            title: "Refactor the billing ledger - codex",
+            directory: "/tmp/project",
+            terminal: {
+                agent: { kind: "claude", launchCommand: { arguments: ["claude"] } },
+                resumeBinding: { kind: "codex", checkpointId: "01a0924a-a987-75c2-8e3a-cca2e774c3d9" },
+            },
+        };
+
+        const surface = buildOfflinePanes(ws, FRAME, { ttyCommands: new Map(), surfaceSessions: new Map() })[0]
+            .surfaces[0];
+
+        expect(surface).toMatchObject({
+            command: "codex resume 01a0924a-a987-75c2-8e3a-cca2e774c3d9",
+            resume: { kind: "codex", sessionId: "01a0924a-a987-75c2-8e3a-cca2e774c3d9" },
+        });
+    });
+
+    // Same pairing defect, message-only: the drift named the agent's kind beside
+    // the binding's id.
+    test("the shell-journal drift names the kind that owns the id it prints", () => {
+        const ws = workspaceFixture();
+        ws.panels[0] = {
+            id: "a",
+            type: "terminal",
+            title: "Refactor the billing ledger - codex",
+            directory: "/tmp/project",
+            terminal: {
+                agent: { kind: "claude", launchCommand: { arguments: ["claude"] } },
+                resumeBinding: { kind: "codex", checkpointId: "01a0924a-a987-75c2-8e3a-cca2e774c3d9" },
+            },
+        };
+
+        const surface = buildOfflinePanes(ws, FRAME, {
+            ttyCommands: new Map(),
+            surfaceSessions: new Map(),
+            surfaceCommands: new Map([
+                [
+                    "a",
+                    {
+                        version: 1 as const,
+                        surfaceId: "aaaaaaaa-1111-4111-8111-111111111111",
+                        command: "vim notes.md",
+                        cwd: "/tmp/project",
+                        phase: "completed" as const,
+                        atMs: 1,
+                    },
+                ],
+            ]),
+        })[0].surfaces[0];
+
+        expect(surface.type === "terminal" && surface.drift).toContain(
+            "cmux also holds a codex resume binding here (01a0924a-a987-75c2-8e3a-cca2e774c3d9); the captured command won"
+        );
+    });
     test("groups tabs per pane, keeps selection, joins commands via tty and enriches claude launchers", () => {
         const ws = workspaceFixture();
         const panes = buildOfflinePanes(ws, FRAME, {
@@ -140,8 +207,14 @@ describe("buildOfflinePanes", () => {
                 ["ttys003", "tools cc run work --resume old-name"],
             ]),
             surfaceSessions: new Map([
-                ["a", { sessionId: "11111111-aaaa-bbbb-cccc-222222222222", account: "work" }],
-                ["d", { sessionId: "33333333-aaaa-bbbb-cccc-444444444444", account: "work" }],
+                [
+                    "a",
+                    { sessionId: "11111111-aaaa-bbbb-cccc-222222222222", account: "work", provider: "claude" as const },
+                ],
+                [
+                    "d",
+                    { sessionId: "33333333-aaaa-bbbb-cccc-444444444444", account: "work", provider: "claude" as const },
+                ],
             ]),
         });
 
@@ -347,5 +420,53 @@ describe("buildOfflinePanes screen capture", () => {
         });
 
         expect(panes[0].surfaces[0].type === "terminal" && panes[0].surfaces[0].screen).toMatchObject({ rows: 2 });
+    });
+});
+
+describe("a surface running a non-claude agent replays with that agent's launcher", () => {
+    /**
+     * The SessionStart hook is shared, so codex sessions are in the cmux-refs journal. The
+     * kind used to be hardcoded "claude", which replayed a codex thread as `claude -r <codex
+     * uuid>` — a session claude has never seen, and the exact failure the tab-title heuristic
+     * was replaced to prevent, arriving from the other direction.
+     */
+    function codexPane(provider: "claude" | "codex") {
+        const ws = workspaceFixture();
+        ws.panels[0] = {
+            id: "a",
+            stableSurfaceId: "stable-a",
+            type: "terminal",
+            title: "probe",
+            ttyName: "ttys001",
+            terminal: { workingDirectory: "/tmp/project" },
+        };
+
+        return buildOfflinePanes(ws, FRAME, {
+            ttyCommands: new Map([["ttys001", "codex"]]),
+            surfaceSessions: new Map([
+                ["stable-a", { sessionId: "01a0862a-1cc3-7643-b2b9-2a06424f5276", account: "cdx-work", provider }],
+            ]),
+        })[0].surfaces[0];
+    }
+
+    /** The replay command of a terminal surface; a browser surface has none. */
+    function commandOf(provider: "claude" | "codex"): string {
+        const surface = codexPane(provider);
+
+        return surface.type === "terminal" ? (surface.command ?? "") : "";
+    }
+
+    test("a codex pane whose journal record says codex resumes through the codex launcher", () => {
+        const command = commandOf("codex");
+
+        expect(command).toContain("codex");
+        expect(command).toContain("01a0862a-1cc3-7643-b2b9-2a06424f5276");
+        expect(command).not.toMatch(/\bclaude\b/);
+    });
+
+    test("a mismatched record is refused rather than typed into the wrong launcher", () => {
+        // Same codex pane, but the journal record claims claude. Refusing beats resuming a
+        // claude id in codex or a codex id in claude.
+        expect(commandOf("claude")).not.toContain("01a0862a-1cc3-7643-b2b9-2a06424f5276");
     });
 });
