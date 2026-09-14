@@ -156,14 +156,13 @@ jobs:
           GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD: "1"
         run: |
           set -o pipefail
-          # EXPERIMENT, 2026-09-15: `--parallel` defaults to the core count, so this runner
-          # uses 4 workers. Measured from CI's own numbers, 41% of the run is NOT test
-          # execution — (650 s of summed per-test time + 1272 files x X) / 4 = 276 s gives
-          # X = 357 ms per file of module evaluation before a file asserts anything. If any
-          # part of that is latency rather than CPU, oversubscribing overlaps it. Three runs
-          # at 4 workers on this tree measured 276.7, 273.3 and 274.2 s; this is the arm to
-          # compare against them. Revert to `bun run test` if it does not beat that.
-          bun scripts/test.ts --parallel=6 2>&1 | tee "test-${{ runner.os }}.log"
+          # `--parallel` with no number, i.e. one worker per core, and that is measured rather
+          # than assumed. About 40% of this step is NOT test execution: from CI's own numbers,
+          # (508 s of summed per-test time + 1272 files x X) / 4 = 229 s gives X = 363 ms per
+          # FILE of module evaluation before it asserts anything. Oversubscribing would only
+          # help if that were latency. It is not: the same tree measured 229.4 s at 4 workers
+          # and 233.4 s at 6 (runs 34910083066 and 34910148128). Do not try 8.
+          bun run test 2>&1 | tee "test-${{ runner.os }}.log"
 
       # 🛑 The test step is `continue-on-error: true`, so a failing test does NOT fail the
       # job and `conclusion: success` does NOT mean the tests passed. Through the whole

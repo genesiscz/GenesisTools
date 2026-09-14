@@ -102,6 +102,22 @@ pass and 103 `expect()` calls unchanged.**
 Look for: a helper that shells out inside a loop, a fixture rebuilt per test that could be
 built per file, a CLI invoked to read something a file already holds.
 
+`TestRepo` now caches two levels of this, and both are available to any suite:
+`TestRepo.create()` copies a pristine repository, and `TestRepo.fromScenario(name, setup)`
+copies a whole SETUP. `merged.test.ts` gave 11 of its 31 repositories the same two-commit
+feature branch and `cascade.test.ts` opened 6 cases with the same parent/c1/c2 stack, at 8
+and 16 git processes every time. **merged 13.56 s -> 8.40 s and 1359 -> 948 spawns, cascade
+8.87 s -> 5.57 s, with 33/14 tests and 103/88 `expect()` calls unchanged.**
+
+**`test.concurrent` is NOT a general answer here, and that is measured.** Overlapping
+`capture-install.test.ts`'s sixteen cold CLI spawns took it from 5.40 s to 1.11 s on a
+16-core developer machine and turned it RED on CI: "cmux refuses an unconfirmed rc edit"
+timed out at 5368 ms against the 5000 ms default (run 34908819029). The ubuntu runner has
+**four** vCPUs and `--parallel` already uses all of them, so a file has no spare parallelism
+to claim — it only takes it from its neighbours. Reserve `concurrent` for tests that WAIT on
+something outside the CPU, which is why `mcp-doctor/unknown-tool.contract.test.ts` keeps it:
+its seven cases each wait on a separate server's startup handshake.
+
 ### 3. An on-demand package install inside a test
 
 `ensurePackages()` prompts before installing, and `promptInstall()` returns `"accept"`
@@ -134,6 +150,15 @@ the whole overlap, so the summed metric counts the same seconds once per test.
 `src/mcp-doctor/unknown-tool.contract.test.ts` sums to 19.7 s on CI and measures 2.2 s of real
 wall time. The guard exempts such files by reading their source, so a file that later drops
 `.concurrent` is guarded again with no list to maintain.
+
+A third trap, and the reason `scripts/ci/test-runtime-guard.ts` resets attribution on
+`##[endgroup]`: bun's GitHub reporter opens a group per file, but the run does not end there.
+The failure summary reprints every failing test with no header, and `scripts/test.ts` then
+starts a second bun process for the load-sensitive files whose output carries no groups at
+all. Attributing on the header alone glues all of that onto whichever file printed last —
+`legacy-cache.test.ts` read as 23.49 s over 85 tests when it has 17 tests and costs 2.67 s,
+and the 85 names belonged to watcher, disk-usage and capture-install. Any hand-rolled `awk`
+over that log has the same bug.
 
 Two more traps, both of which produced wrong conclusions while this was being written:
 
