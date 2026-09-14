@@ -219,14 +219,6 @@ const LOAD_SENSITIVE_FILES = [
 ];
 
 /**
- * Excluded from every full run unless targeted explicitly. These lived only in
- * package.json's `test` script for a long time, which meant a direct
- * `bun scripts/test.ts` (agents do this constantly) silently INCLUDED them —
- * and the e2e suites among them spawn real servers: every such run leaked two
- * orphaned dev-dashboard agents, dozens accumulated over days. The wrapper is
- * the single entrypoint, so the excludes live here.
- */
-/**
  * Excludes that hold even for an explicit path argument.
  *
  * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
@@ -241,6 +233,14 @@ const LOAD_SENSITIVE_FILES = [
  */
 const ALWAYS_EXCLUDES = ["**/*.spec.ts"];
 
+/**
+ * Excluded from every full run unless targeted explicitly. These lived only in
+ * package.json's `test` script for a long time, which meant a direct
+ * `bun scripts/test.ts` (agents do this constantly) silently INCLUDED them —
+ * and the e2e suites among them spawn real servers: every such run leaked two
+ * orphaned dev-dashboard agents, dozens accumulated over days. The wrapper is
+ * the single entrypoint, so the excludes live here.
+ */
 const DEFAULT_EXCLUDES = [
     "**/dashboard/**",
     "**/dev-dashboard/**",
