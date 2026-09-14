@@ -595,29 +595,46 @@ export class Api {
         for (let i = 0; i < ids.length; i += concurrency) {
             const batch = ids.slice(i, i + concurrency);
             const promises = batch.map(async (id) => {
-                const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
-                const commentsData = await this.get<{
-                    comments: Array<{
-                        id: number;
-                        createdBy: { displayName: string };
-                        createdDate: string;
-                        text: string;
-                    }>;
-                }>(commentsUrl, `comments for #${id}`);
+                try {
+                    const commentsUrl = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
+                    const commentsData = await this.get<{
+                        comments: Array<{
+                            id: number;
+                            createdBy: { displayName: string };
+                            createdDate: string;
+                            text: string;
+                        }>;
+                    }>(commentsUrl, `comments for #${id}`);
 
-                const comments: Comment[] = (commentsData.comments || []).map((c) => ({
-                    id: c.id,
-                    author: c.createdBy?.displayName,
-                    date: c.createdDate,
-                    text: c.text,
-                }));
-                return { id, comments };
+                    const comments: Comment[] = (commentsData.comments || []).map((c) => ({
+                        id: c.id,
+                        author: c.createdBy?.displayName,
+                        date: c.createdDate,
+                        text: c.text,
+                    }));
+                    return { id, comments };
+                } catch (error) {
+                    // One unreadable item used to reject the whole Promise.all and take the command
+                    // down with it. A deleted or permission-restricted work item is a normal answer
+                    // from a candidate list nobody vetted, so it drops out and the rest survives.
+                    // A missing id here is a FAILED fetch, not a comment-less item. The one-shot
+                    // mentions search treats it as "no comments" for that run, which is fine since
+                    // nothing is cached; history-activity's persistent cache route does NOT write
+                    // `comments: []` for a missing id, so the failure is retried instead of being
+                    // stamped as verified-empty for the whole TTL.
+                    logger.warn(`[api] Failed to fetch comments for #${id}: ${error}`);
+                    return null;
+                }
             });
 
             const results = await Promise.all(promises);
-            for (const { id, comments } of results) {
-                result.set(id, comments);
-                logger.debug(`[api] Work item #${id} has ${comments.length} comments`);
+            for (const entry of results) {
+                if (!entry) {
+                    continue;
+                }
+
+                result.set(entry.id, entry.comments);
+                logger.debug(`[api] Work item #${entry.id} has ${entry.comments.length} comments`);
             }
         }
 

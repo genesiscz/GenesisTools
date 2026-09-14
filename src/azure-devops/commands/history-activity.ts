@@ -16,13 +16,24 @@ import {
     storage,
     updateWorkItemCacheSection,
 } from "@app/azure-devops/cache";
-import { buildWorkItemHistory, resolveUser, userMatches } from "@app/azure-devops/history";
+import { buildWorkItemHistory, userMatches } from "@app/azure-devops/history";
+import {
+    groupEventsByDay,
+    isInvertedWindow,
+    localDay,
+    parseDayBoundary,
+    realDayCount,
+    resolveUpdateDate,
+    UNDATED_DAY,
+    withinDayWindow,
+} from "@app/azure-devops/lib/activity-days";
+import { type RequestedUser, resolveRequestedUser } from "@app/azure-devops/lib/current-user";
+import { stripCommentHtml } from "@app/azure-devops/lib/mentions";
 import type { Comment, IdentityRef, WorkItemUpdate } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import { escapeWiqlValue } from "@app/azure-devops/wiql-builder";
 import * as p from "@clack/prompts";
 import { suggestCommand } from "@genesiscz/utils/cli";
-import { formatDateTime } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
@@ -71,7 +82,7 @@ const NOISE_FIELDS = new Set([
 function extractEventsFromUpdate(update: WorkItemUpdate, workItemId: number, title: string): ActivityEvent[] {
     const events: ActivityEvent[] = [];
     const fields = update.fields ?? {};
-    const date = update.revisedDate;
+    const date = resolveUpdateDate(update);
 
     // Rev 1 = item creation
     if (update.rev === 1 && fields["System.Id"]) {
@@ -115,10 +126,10 @@ function extractEventsFromUpdate(update: WorkItemUpdate, workItemId: number, tit
 
 /** Convert a Comment into an ActivityEvent */
 function commentToEvent(comment: Comment, workItemId: number, title: string): ActivityEvent {
-    const plainText = comment.text
-        .replace(/<[^>]+>/g, "")
-        .replace(/&nbsp;/g, " ")
-        .trim();
+    // Stripping tags without leaving a space turned `<td>A</td><td>B</td>` into `AB`.
+    // `stripCommentHtml` is the one that knows a block boundary is also a word boundary, and it
+    // decodes the remaining entities on the way.
+    const plainText = stripCommentHtml(comment.text);
     const preview = plainText.length > 80 ? `${plainText.slice(0, 77)}...` : plainText;
     return { date: comment.date, workItemId, title, type: "comment", description: preview };
 }
@@ -178,11 +189,11 @@ async function scanCachedActivity(
                 continue;
             }
 
-            const updateDate = new Date(update.revisedDate);
-            if (fromDate && updateDate < fromDate) {
-                continue;
-            }
-            if (toDate && updateDate > toDate) {
+            // The same sentinel that used to become a `9999-01-01` day row also sailed through
+            // this window: year 9999 is never before --from, so every latest revision matched
+            // whatever window was asked for. An update whose moment cannot be recovered at all
+            // does the same thing through Invalid Date, so the window check owns both cases.
+            if (!withinDayWindow(resolveUpdateDate(update), fromDate, toDate)) {
                 continue;
             }
 
@@ -200,11 +211,7 @@ async function scanCachedActivity(
                     continue;
                 }
 
-                const commentDate = new Date(comment.date);
-                if (fromDate && commentDate < fromDate) {
-                    continue;
-                }
-                if (toDate && commentDate > toDate) {
+                if (!withinDayWindow(comment.date, fromDate, toDate)) {
                     continue;
                 }
 
@@ -236,11 +243,15 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
     const userValue = isMeMacro ? "@Me" : `'${escapeWiqlValue(userName)}'`;
 
     let wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.ChangedBy] = ${userValue}`;
+    // The bounds carry their time, for the reason `findMentions` names: a bare `YYYY-MM-DD` means
+    // MIDNIGHT to WIQL, so `<= '<to>'` dropped everything changed on the --to day. The day part
+    // alone was also the wrong day, because these bounds are local moments and `toISOString()`
+    // reports them in UTC.
     if (fromDate) {
-        wiql += ` AND [System.ChangedDate] >= '${fromDate.toISOString().slice(0, 10)}'`;
+        wiql += ` AND [System.ChangedDate] >= '${fromDate.toISOString()}'`;
     }
     if (toDate) {
-        wiql += ` AND [System.ChangedDate] <= '${toDate.toISOString().slice(0, 10)}'`;
+        wiql += ` AND [System.ChangedDate] <= '${toDate.toISOString()}'`;
     }
     wiql += " ORDER BY [System.ChangedDate] DESC";
 
@@ -282,12 +293,11 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
     for (const [id, itemComments] of comments) {
         await updateWorkItemCacheSection(id, { comments: itemComments });
     }
-    // Mark items not returned by batchGetComments as having no comments
-    for (const id of needSync) {
-        if (!comments.has(id)) {
-            await updateWorkItemCacheSection(id, { comments: [] });
-        }
-    }
+    // An id missing from the map means its fetch FAILED: a work item with no comments still lands
+    // there, carrying an empty array. Writing `comments: []` for a failure stamped
+    // `commentsFetchedAt` with it, so one 403 on a restricted item was cached as "this item has no
+    // comments" and `isCommentsFresh` suppressed the retry for seven days. `batchGetComments` logs
+    // each failure; leaving the section unwritten is what lets the next run try again.
 
     return needSync;
 }
@@ -312,42 +322,24 @@ async function fetchMissingComments(api: Api, matchedItemIds: number[]): Promise
     for (const [id, itemComments] of comments) {
         await updateWorkItemCacheSection(id, { comments: itemComments });
     }
-    // Mark items not returned by batchGetComments as having no comments
-    for (const id of needComments) {
-        if (!comments.has(id)) {
-            await updateWorkItemCacheSection(id, { comments: [] });
-        }
-    }
+    // Same as in `discoverAndSync`: a missing id is a FAILED fetch, never a comment-less item, so
+    // caching an empty array for it would hide the item for the whole 7-day TTL.
 
-    return needComments.length;
+    // The count is what was actually fetched, not what was asked for, so the caller does not
+    // re-scan the cache for comments that never arrived.
+    return comments.size;
 }
 
 // ============= Output Formatters =============
 
 function formatTime(isoDate: string): string {
     const d = new Date(isoDate);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
 
-function getDayName(dateStr: string): string {
-    return formatDateTime(dateStr, { absolute: "weekday" });
-}
-
-function groupByDay(events: ActivityEvent[]): ActivityDay[] {
-    const sorted = [...events].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-    const dayMap = new Map<string, ActivityEvent[]>();
-    for (const event of sorted) {
-        const dayKey = event.date.slice(0, 10);
-        if (!dayMap.has(dayKey)) {
-            dayMap.set(dayKey, []);
-        }
-        dayMap.get(dayKey)?.push(event);
+    if (Number.isNaN(d.getTime())) {
+        return "--:--";
     }
 
-    return Array.from(dayMap.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, dayEvents]) => ({ date, dayName: getDayName(date), events: dayEvents }));
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 const TYPE_ICONS: Record<ActivityEvent["type"], string> = {
@@ -429,8 +421,13 @@ function printSummary(days: ActivityDay[]): void {
 
     const totalEvents = days.reduce((sum, d) => sum + d.events.length, 0);
     const allItems = new Set(days.flatMap((d) => d.events.map((e) => e.workItemId)));
+    const dayCount = realDayCount(days);
+    const undated = days.find((d) => d.date === UNDATED_DAY)?.events.length ?? 0;
+    const undatedNote = undated > 0 ? `, plus ${undated} undated` : "";
     out.println();
-    out.println(pc.dim(`Total: ${totalEvents} actions across ${allItems.size} work items over ${days.length} days`));
+    out.println(
+        pc.dim(`Total: ${totalEvents} actions across ${allItems.size} work items over ${dayCount} days${undatedNote}`)
+    );
 }
 
 function printJson(days: ActivityDay[]): void {
@@ -443,6 +440,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     const config = requireConfig();
     const api = new Api(config);
     const userName = options.user ?? "@me";
+    const isMeRequest = userName.toLowerCase() === "@me";
     const output = options.format ?? "timeline";
     const includeComments = options.includeComments !== false;
 
@@ -453,46 +451,44 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     }
 
     // Resolve @me to actual user name for local matching
-    let resolvedUserName = userName;
-    if (userName.toLowerCase() === "@me") {
-        const members = await api.getTeamMembers();
-        const { $ } = await import("bun");
-        let azUser: string;
-        try {
-            const azResult = await $`az account show --query user.name -o tsv`.quiet();
-            if (azResult.exitCode !== 0) {
-                throw new Error(`exit code ${azResult.exitCode}`);
-            }
-            azUser = azResult.text().trim();
-        } catch {
-            p.log.error("Failed to resolve @me — is Azure CLI installed and logged in? (az login)");
-            process.exit(1);
-        }
-        if (!azUser) {
-            p.log.error("Azure CLI returned empty user name. Run `az login` first.");
-            process.exit(1);
-        }
-        const resolved = resolveUser(azUser, members);
-        resolvedUserName = resolved?.displayName ?? azUser;
+    let requested: RequestedUser;
+
+    try {
+        requested = await resolveRequestedUser({ user: userName, teamMembers: () => api.getTeamMembers() });
+    } catch (err) {
+        p.log.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
     }
+
+    const resolvedUserName = requested.name;
     p.log.info(`User: ${pc.bold(resolvedUserName)}`);
 
     // Parse date range
-    const fromDate = options.from ? new Date(options.from) : undefined;
-    const toDate = options.to
-        ? (() => {
-              const d = new Date(options.to!);
-              if (options.to?.length <= 10) {
-                  d.setHours(23, 59, 59, 999);
-              }
-              return d;
-          })()
-        : undefined;
+    const fromDate = options.from ? parseDayBoundary(options.from) : undefined;
+    const toDate = options.to ? parseDayBoundary(options.to, { endOfDay: true }) : undefined;
 
-    const dateRangeStr = [
-        fromDate ? fromDate.toISOString().slice(0, 10) : "beginning",
-        toDate ? toDate.toISOString().slice(0, 10) : "now",
-    ].join(" → ");
+    // `dateRangeStr` below calls `toISOString()`, which THROWS a RangeError on an Invalid Date, so
+    // an unparseable bound has to be reported here or it surfaces as a stack trace. `history
+    // mentions` already guarded this; this command never did.
+    if (fromDate && Number.isNaN(fromDate.getTime())) {
+        p.log.error(`Invalid --from '${options.from}': expected a date such as 2026-09-07`);
+        process.exit(1);
+    }
+
+    if (toDate && Number.isNaN(toDate.getTime())) {
+        p.log.error(`Invalid --to '${options.to}': expected a date such as 2026-09-14`);
+        process.exit(1);
+    }
+
+    if (isInvertedWindow(fromDate, toDate)) {
+        p.log.error(`--to '${options.to}' is before --from '${options.from}', so the window matches nothing.`);
+        process.exit(1);
+    }
+
+    // Not `toISOString()`: these are LOCAL moments, so its UTC day is the day either side of the
+    // one that was typed. Verified under TZ=Europe/Prague (--from read a day early) and
+    // TZ=America/Chicago (--to read a day late).
+    const dateRangeStr = [fromDate ? localDay(fromDate) : "beginning", toDate ? localDay(toDate) : "now"].join(" → ");
     p.log.info(`Date range: ${pc.bold(dateRangeStr)}`);
 
     // Step 1: Discover uncached items (optional, requires --from)
@@ -501,9 +497,23 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
             p.log.error("--discover requires --from to limit the WIQL query scope. Add e.g. --from 2026-01-01");
             process.exit(1);
         }
+        if (!requested.verified) {
+            // The local scan below matches fuzzily and is unaffected. This query does not:
+            // `[System.ChangedBy]` is an exact identity, so an unconfirmed spelling returns
+            // nothing and would read as "you changed nothing that month".
+            p.log.warn(
+                `The team roster did not confirm '${resolvedUserName}', and --discover matches ` +
+                    `[System.ChangedBy] exactly, so a different spelling returns nothing.`
+            );
+        }
+
         const spinner = p.spinner();
         spinner.start("Discovering work items changed by user...");
-        const newIds = await discoverAndSync(api, userName, fromDate, toDate);
+        // The WIQL matches on the NAME, so discovery needs the same spelling the local scan uses:
+        // the one the roster returned. `@me` is the exception, because it becomes the `@Me` macro
+        // rather than a name. Passing the raw `--user` searched Azure DevOps for a spelling the
+        // roster had already corrected, so `--discover` found nothing while the scan found plenty.
+        const newIds = await discoverAndSync(api, isMeRequest ? userName : resolvedUserName, fromDate, toDate);
         spinner.stop(
             newIds.length > 0
                 ? `Discovered and synced ${newIds.length} new work items`
@@ -547,7 +557,7 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     }
 
     // Step 4: Group and output
-    const days = groupByDay(events);
+    const days = groupEventsByDay(events);
 
     switch (output) {
         case "timeline":

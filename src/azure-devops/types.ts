@@ -90,6 +90,41 @@ export interface ParsedRelations {
     other: string[];
 }
 
+// ============= Work Item Tree Types =============
+
+/**
+ * One work item and the items it links to. Recursive by type, flat by construction: the entries in
+ * `parent`, `children` and `related` carry their own fields with empty link arrays, so the shape is
+ * one level deep and cannot loop. `parent` is the whole chain up to the root, nearest first.
+ */
+export interface AdoTaskSimple {
+    adoID: number;
+    title: string;
+    assignedTo: string | null;
+    type: string;
+    parent: AdoTaskSimple[];
+    children: AdoTaskSimple[];
+    related: AdoTaskSimple[];
+    createdAt: string | null;
+    updatedAt: string | null;
+}
+
+/** One work item as the tree builder consumes it: its own fields plus the ids it points at. */
+export interface WorkItemLinks {
+    id: number;
+    title: string;
+    type: string;
+    assignedTo: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+    parentId?: number;
+    childIds: number[];
+    relatedIds: number[];
+}
+
+/** The link neighbourhood cached per work item, so a repeated `tree` call costs no HTTP call. */
+export type WorkItemLinksSection = Omit<WorkItemLinks, "id">;
+
 // ============= Attachment Types =============
 
 export interface AttachmentInfo {
@@ -143,6 +178,7 @@ export interface WorkItemCacheMeta {
     fieldsFetchedAt: string;
     historyFetchedAt?: string;
     commentsFetchedAt?: string;
+    linksFetchedAt?: string;
 }
 
 /** History section stored inside WorkItemCache */
@@ -169,6 +205,7 @@ export interface WorkItemCache {
     taskFolder?: boolean;
     history?: WorkItemHistorySection;
     comments?: Comment[];
+    links?: WorkItemLinksSection;
 }
 
 export interface QueryCache {

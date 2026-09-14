@@ -24,9 +24,10 @@ export function parseRelations(relations: Relation[]): ParsedRelations {
             result.parent = id;
         } else if (rel.rel === "System.LinkTypes.Hierarchy-Forward") {
             result.children.push(id);
-        } else if (rel.rel.includes("Related")) {
-            result.related.push(id);
         } else {
+            // Every non-hierarchy work-item link counts as related: Related, Duplicate,
+            // Predecessor/Successor and the rest. The `includes("Related")` test that used to sit
+            // here selected the same branch as its own `else`, so it never changed an answer.
             result.related.push(id);
         }
     }

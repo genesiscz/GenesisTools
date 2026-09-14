@@ -12,6 +12,7 @@ import type {
     TimeType,
     WorkItemCache,
     WorkItemHistorySection,
+    WorkItemLinksSection,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
 import { WORKITEM_CACHE_VERSION } from "@app/azure-devops/types";
@@ -119,6 +120,7 @@ export async function updateWorkItemCacheSection(
     update: {
         history?: WorkItemHistorySection;
         comments?: Comment[];
+        links?: WorkItemLinksSection;
     }
 ): Promise<void> {
     await storage.ensureDirs();
@@ -151,6 +153,10 @@ export async function updateWorkItemCacheSection(
             base.comments = update.comments;
             base.cache.commentsFetchedAt = now;
         }
+        if (update.links !== undefined) {
+            base.links = update.links;
+            base.cache.linksFetchedAt = now;
+        }
 
         return base;
     });
@@ -172,6 +178,18 @@ export function isCommentsFresh(cache: WorkItemCache): boolean {
         return false;
     }
     return Date.now() - new Date(fetchedAt).getTime() < SECTION_TTL_MS;
+}
+
+/**
+ * Check if a workitem's link section is fresh. Links follow the short fields window rather than the
+ * 7-day section TTL, because adding a child changes the answer and nothing else invalidates it.
+ */
+export function isLinksFresh(cache: WorkItemCache): boolean {
+    const fetchedAt = cache.cache?.linksFetchedAt;
+    if (!fetchedAt) {
+        return false;
+    }
+    return Date.now() - new Date(fetchedAt).getTime() < WORKITEM_FRESHNESS_MINUTES * 60_000;
 }
 
 /**

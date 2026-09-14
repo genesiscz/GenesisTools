@@ -5,6 +5,7 @@
  * work item update data, plus fuzzy user matching with Czech diacritics support.
  */
 
+import { isSentinelDate } from "@app/azure-devops/lib/activity-days";
 import type {
     AssignmentPeriod,
     IdentityRef,
@@ -82,12 +83,9 @@ export function resolveUser(query: string, members: IdentityRef[]): IdentityRef 
     return fuzzyMatch ?? null;
 }
 
-/** Sentinel date used by Azure DevOps for the latest revision's revisedDate */
-const SENTINEL_DATE_PREFIX = "9999";
-
 /** Clamp sentinel dates (9999-01-01) to current time */
 function sanitizeDate(date: string): string {
-    return date.startsWith(SENTINEL_DATE_PREFIX) ? new Date().toISOString() : date;
+    return isSentinelDate(date) ? new Date().toISOString() : date;
 }
 
 function computeDurationMinutes(start: string, end: string): number {

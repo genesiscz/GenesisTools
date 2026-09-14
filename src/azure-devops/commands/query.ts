@@ -6,6 +6,7 @@
 
 import { Api } from "@app/azure-devops/api";
 import { CACHE_TTL, formatJSON, loadGlobalCache, saveGlobalCache, storage } from "@app/azure-devops/cache";
+import { looksLikeWiql } from "@app/azure-devops/lib/wiql-input";
 import type {
     AttachmentFilter,
     AzureConfig,
@@ -118,6 +119,22 @@ function formatMD(items: WorkItem[]): string {
  * Supports: URL, GUID, or query name (with fuzzy matching)
  */
 async function resolveQueryId(input: string, api: Api, config: AzureConfig): Promise<string> {
+    // The guard sits here rather than at the call site because everything that reaches fuzzy name
+    // matching comes through this function. Matching never refuses: it returns the best-scoring
+    // saved query, so a WIQL string comes back as somebody else's rows and reads like an answer.
+    if (looksLikeWiql(input)) {
+        throw new Error(
+            [
+                "This input looks like a WIQL statement, and `query` does not run WIQL.",
+                "`query` resolves a SAVED query by name, id or URL; passing WIQL would fuzzy-match it",
+                "against query names and return an unrelated query's rows.",
+                "",
+                "  Search history server-side:  tools azure-devops history search --wiql --assigned-to <name>",
+                '  Where you were mentioned:    tools azure-devops history mentions --user "<name>" --from <date>',
+            ].join("\n")
+        );
+    }
+
     // If it looks like a GUID or URL, use extractQueryId
     if (isQueryIdOrUrl(input)) {
         return extractQueryId(input);

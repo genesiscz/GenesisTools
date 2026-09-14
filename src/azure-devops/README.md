@@ -142,6 +142,119 @@ A saved query whose stored WIQL calls `@currentIteration` cannot be run from the
 
 `tools azure-devops iterations -f json` emits `{ source, iterations }` with the same `source` shape.
 
+## `history mentions` — where was I named
+
+```bash
+# Comments naming you, last 7 days
+tools azure-devops history mentions
+
+# Somebody else, explicit window, machine-readable
+tools azure-devops history mentions --user "Surname Firstname" --from 2026-09-07 -o json
+```
+
+Answers "where was I mentioned in comments", which nothing else here could. `history search` looks
+at assignment and state history and has no comment predicate; `history activity --user X` lists what
+X *did*, and being named by somebody else is not an action by X.
+
+**It is a two-pass search, and the second pass is not optional.** Pass one asks WIQL for candidates:
+
+```sql
+SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.History] CONTAINS '<surname>'
+  AND [System.ChangedDate] >= '<from>'
+```
+
+The search is scoped to the configured project, like every other query this tool builds. A bare
+`--from` / `--to` date means that calendar day in YOUR timezone, both ends inclusive.
+
+`System.History CONTAINS` hits the history INDEX, which also matches a field change made by that
+person and older comments still in the item's history. On the run this was built against, pass one
+returned 40 work items and only 9 carried a comment in the window that named the user: single-pass
+would have been 77% false positives. Pass two therefore fetches each candidate's comments, strips
+the HTML and keeps the comments written inside the window whose text names the person.
+
+Both numbers are reported, never just the survivors, so you can see how much the index over-matched:
+`11 mention(s) in 9 work item(s) · 40 index candidate(s), 31 of them index-only`. The JSON form
+carries the same thing as `candidates: { count, ids }` beside `mentions`.
+
+**Pass two costs one HTTP request per candidate**, so the command refuses rather than starting a run
+it cannot finish: past 500 candidates it stops and names the count, and `--max-candidates <n>` raises
+the ceiling. Truncating the list instead would drop real mentions and still print a confident total,
+which is the failure this search exists to end. The search term is a single word off the display
+name, so a common given name over a wide window is exactly how the ceiling gets hit; narrow the
+window with `--from` / `--to` first.
+
+`--user` is resolved through the team roster first, so `Novakova Tereza` typed without diacritics
+becomes the roster's own spelling before anything searches for it. A name the roster does not
+recognise, or any name when the roster cannot be reached, is used exactly as typed, and the command
+says so: the history index holds names as written, so a different spelling finds nothing and a
+silent zero would read as "nobody ever named you".
+
+`@me`, the default, asks the Azure CLI for the signed-in account and then goes through the same
+roster. It does NOT degrade to that account name when the roster is unreachable, because an address
+is not a name: `userMatches` compares display names and `[System.History] CONTAINS` holds them as
+written, so searching for an address answers zero either way. It stops and tells you to pass
+`--user "<Surname Firstname>"` instead.
+
+Two details that are easy to get wrong:
+
+- The WIQL term is the RAW surname of the RESOLVED name, diacritics included, because the index
+  holds the name as written. Stripping accents there loses every hit.
+- Comment text is normalized as TEXT, not as a display name. Running a name normalizer over prose
+  deletes bracketed spans, and a mention written inside a parenthesis then disappears with them.
+
+## Ancestor walk and `tree`
+
+```bash
+# Climb the parent chain to the root
+tools azure-devops ancestors <id>
+
+# Cap the climb when you only want the near neighbourhood
+tools azure-devops ancestors <id> --depth 2
+
+# Parents, children and related items of one work item
+tools azure-devops tree <id>
+tools azure-devops tree <id> --format json
+```
+
+**The walk is unbounded by default, and that is a correctness property rather than a tuning knob.**
+It used to stop after three ancestors. Clarity routes a work item to a Clarity task by taking the
+first ancestor whose id appears in a Clarity task name, and that id match is the only evidence-based
+routing Clarity has; every other rule is operator judgement. An ancestor one level past a numeric
+ceiling is therefore not "a slightly shorter answer", it is reported as **no recommendation at all**,
+and the work gets routed by guesswork instead.
+
+The chain that exposed it was five levels deep: task, user story, feature, umbrella feature, epic.
+The epic was the level naming the Clarity task, four ancestors above the work item, so the old
+depth-3 default dropped exactly the level that mattered. Chains grow a level whenever someone
+inserts an umbrella Feature, so a cap silently loses another work item every time the hierarchy
+deepens. `--depth <n>` still caps the climb for anyone who wants one; nothing caps it by default.
+
+Both walk functions (`walkAncestors`, `walkAncestorsBatched` in `lib/ancestors.ts`) keep a set of
+the ids they already asked for, so an unbounded walk ends on a cyclic parent chain instead of
+looping. `walkAncestorsBatched` costs one request per tree LEVEL rather than one per ancestor, so
+climbing to the root is close to free.
+
+`tree <id>` returns the whole neighbourhood of one work item as an `AdoTaskSimple`:
+
+```jsonc
+{
+  "adoID": 0, "title": "", "assignedTo": null, "type": "",
+  "parent": [],   // the chain to the root, nearest ancestor first
+  "children": [], // every hierarchy child
+  "related": [],  // every non-hierarchy link
+  "createdAt": null, "updatedAt": null
+}
+```
+
+Every entry inside `parent`, `children` and `related` is itself an `AdoTaskSimple` carrying its own
+`adoID`, `title`, `assignedTo` and `type`, with empty link arrays, so the shape is one level deep
+and cannot loop. Link data is cached per work item alongside the fields cache, so a repeated `tree`
+of the same id within the five-minute freshness window makes no HTTP call. Adding a child changes
+the answer and nothing else invalidates it, so the window is deliberately short rather than the
+seven-day section TTL. `--force` refetches, exactly as it does for `workitem`.
+
 ## CLI Usage
 
 ### Basic Examples
@@ -217,6 +330,9 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 | `--create`     | Create new work items (interactive or from template) |
 | `iterations`   | List the project's sprints (alias `sprints`)      |
 | `sprint`       | List the work items of one sprint              |
+| `history mentions` | Comments that named a user, in a date window |
+| `ancestors`    | Walk a work item's parent chain up to the root  |
+| `tree`         | Parents, children and related items of one work item |
 
 ### Options
 

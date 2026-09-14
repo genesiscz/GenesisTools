@@ -8,12 +8,16 @@ export interface WorkItemNode {
 /**
  * Walk a work item's parent chain upwards. Stops at the first item without a parent, at
  * `maxDepth` ancestors above the starting item, or when the chain cycles back on itself.
- * Each work item is fetched exactly once.
+ *
+ * The walk is unbounded by default. A numeric ceiling is a correctness bug rather than a tuning
+ * knob: the id-match tier is the only evidence-based Clarity routing, and an ancestor one level
+ * past the ceiling is reported as no match at all. The `seen` set below ends a cyclic chain, so
+ * an unbounded walk still terminates. Each work item is fetched exactly once.
  */
 export async function walkAncestors({
     fetch,
     id,
-    maxDepth = 3,
+    maxDepth = Number.POSITIVE_INFINITY,
 }: {
     fetch: (id: number) => Promise<WorkItemNode | null>;
     id: number;
@@ -41,11 +45,15 @@ export async function walkAncestors({
 /**
  * Walk many parent chains at once, one fetch per tree LEVEL instead of one per ancestor.
  * A month of ~13 work items costs about 4 calls rather than 50. Each work item is requested once.
+ *
+ * Unbounded by default, for the reason on `walkAncestors`. Depth costs one fetch per extra LEVEL
+ * shared by every chain, not one per ancestor, so climbing to the root is close to free. The
+ * `attempted` set ends a cyclic chain.
  */
 export async function walkAncestorsBatched({
     fetchMany,
     ids,
-    maxDepth = 3,
+    maxDepth = Number.POSITIVE_INFINITY,
 }: {
     fetchMany: (ids: number[]) => Promise<Map<number, WorkItemNode>>;
     ids: number[];

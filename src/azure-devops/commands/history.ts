@@ -17,6 +17,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 
 import { type ActivityOptions, handleHistoryActivity } from "./history-activity";
+import { handleHistoryMentions, type MentionsOptions } from "./history-mentions";
 import { handleHistorySearch, type SearchOptions } from "./history-search";
 import { handleHistorySync } from "./history-sync";
 
@@ -375,6 +376,29 @@ export function registerHistoryCommand(program: Command): void {
                 options.to = options.until;
             }
             return handleHistorySearch(options);
+        });
+
+    history
+        .command("mentions")
+        .description("Find comments that named a user, inside a date window")
+        .option("--user <name>", "User to search for (default: @me)")
+        .option("--from <date>", "From date (ISO format, default: 7 days ago)")
+        .option("--since <date>", "Alias for --from")
+        .option("--to <date>", "To date (ISO format)")
+        .option("--until <date>", "Alias for --to")
+        .option(
+            "--max-candidates <n>",
+            "Refuse when the history index returns more candidates than this, since pass two reads each one (default: 500)"
+        )
+        .option("-o, --output <format>", "Output format (table, json)", "table")
+        .action((options: MentionsOptions & { since?: string; until?: string }) => {
+            if (options.since && !options.from) {
+                options.from = options.since;
+            }
+            if (options.until && !options.to) {
+                options.to = options.until;
+            }
+            return handleHistoryMentions(options);
         });
 
     history

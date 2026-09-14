@@ -10,6 +10,14 @@ const TREE: Record<number, WorkItemNode> = {
     300001: { id: 300001, title: "Feature", type: "Feature", parent: 400001 },
     400001: { id: 400001, title: "Epic", type: "Epic" },
     500001: { id: 500001, title: "Orphan", type: "Bug" },
+    110001: { id: 110001, title: "Deep leaf", type: "Task", parent: 110002 },
+    110002: { id: 110002, title: "Deep story", type: "User Story", parent: 110003 },
+    110003: { id: 110003, title: "Deep feature", type: "Feature", parent: 110004 },
+    110004: { id: 110004, title: "Deep umbrella feature", type: "Feature", parent: 110005 },
+    110005: { id: 110005, title: "Deep epic", type: "Epic" },
+    600001: { id: 600001, title: "Cycle a", type: "Task", parent: 600002 },
+    600002: { id: 600002, title: "Cycle b", type: "Task", parent: 600001 },
+    610001: { id: 610001, title: "Its own parent", type: "Task", parent: 610001 },
 };
 
 function batchFetcher() {
@@ -90,5 +98,31 @@ describe("walkAncestorsBatched", () => {
         const chains = await walkAncestorsBatched({ fetchMany, ids: [100001], maxDepth: 1 });
 
         expect(chains.get(100001)?.map((n) => n.id)).toEqual([100001, 200001]);
+    });
+
+    test("climbs to the root when no depth is given, past the old ceiling of three", async () => {
+        const { fetchMany } = batchFetcher();
+
+        const chains = await walkAncestorsBatched({ fetchMany, ids: [110001] });
+
+        expect(chains.get(110001)?.map((n) => n.id)).toEqual([110001, 110002, 110003, 110004, 110005]);
+    });
+
+    test("stops on a work item that is its own parent", async () => {
+        const { batches, fetchMany } = batchFetcher();
+
+        const chains = await walkAncestorsBatched({ fetchMany, ids: [610001] });
+
+        expect(chains.get(610001)?.map((n) => n.id)).toEqual([610001]);
+        expect(batches).toEqual([[610001]]);
+    });
+
+    test("stops instead of looping on a cyclic chain when no depth is given", async () => {
+        const { batches, fetchMany } = batchFetcher();
+
+        const chains = await walkAncestorsBatched({ fetchMany, ids: [600001] });
+
+        expect(chains.get(600001)?.map((n) => n.id)).toEqual([600001, 600002]);
+        expect(batches.flat()).toEqual([600001, 600002]);
     });
 });
