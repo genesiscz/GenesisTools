@@ -44,6 +44,14 @@ export function isLongLivedProxiedStream(pathname: string): boolean {
     ) {
         return true;
     }
+
+    // A pending-ask waiter blocks for its own budget (120s by default), which is far past the
+    // 15s upstream deadline; without this the proxy aborts the wait and the caller reads it as
+    // the question having failed.
+    if (pathname.startsWith("/api/qa/pending/") && pathname.endsWith("/wait")) {
+        return true;
+    }
+
     return pathname.startsWith("/api/boards/") && pathname.endsWith("/events");
 }
 

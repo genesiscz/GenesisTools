@@ -1,10 +1,19 @@
 import type { HandoffStreamFrame } from "@app/dev-dashboard/lib/handoff-types";
+import type { AskForm, PendingEventKind } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { useEffect, useRef } from "react";
 
 export type QaStreamQaFrame = { type: "qa"; id: string } & Record<string, unknown>;
 
-export type QaStreamFrame = QaStreamQaFrame | HandoffStreamFrame;
+export interface QaStreamPendingFrame {
+    type: "pending";
+    ev: PendingEventKind;
+    id: string;
+    ts?: number;
+    form: AskForm;
+}
+
+export type QaStreamFrame = QaStreamQaFrame | HandoffStreamFrame | QaStreamPendingFrame;
 
 type FrameHandler = (frame: QaStreamFrame) => void;
 type StatusHandler = (down: boolean) => void;
@@ -35,7 +44,7 @@ function ensureSharedSource(): void {
         try {
             const frame = SafeJSON.parse(ev.data, { strict: true }) as QaStreamFrame;
 
-            if (frame.type !== "qa" && frame.type !== "handoff") {
+            if (frame.type !== "qa" && frame.type !== "handoff" && frame.type !== "pending") {
                 return;
             }
 
@@ -62,7 +71,7 @@ function releaseSharedSource(): void {
 
 /**
  * One shared EventSource to `/api/qa/stream`. Consumers filter by `frame.type`.
- * Multiplexes QA + handoff (D7); midnight-safe on the server.
+ * Multiplexes QA + handoff + pending ask forms (D7); midnight-safe on the server.
  */
 export function useQaStream(
     onFrame: (frame: QaStreamFrame) => void,

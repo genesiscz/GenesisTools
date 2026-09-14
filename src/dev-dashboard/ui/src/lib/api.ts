@@ -17,8 +17,10 @@ import type {
 import type { SavedCommand, SavedCommandInput } from "@app/dev-dashboard/lib/commands/types";
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/types";
+import type { FocusSessionResult } from "@app/dev-dashboard/lib/session-focus";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { TmuxScrollState } from "@genesiscz/utils/tmux/sessions";
 
@@ -149,7 +151,81 @@ export const cmuxApi = {
             method: "POST",
             body: SafeJSON.stringify(body),
         }),
+    /**
+     * Focus the cmux pane a session lives in. A miss answers 409 with the SAME
+     * body shape as a hit, so this reads the body on both and never throws for
+     * "no pane" — the card renders the reason instead of losing it to an error.
+     */
+    focusSession: async (sessionId: string): Promise<FocusSessionResult> => {
+        let res: Response;
+
+        try {
+            res = await fetch("/api/cmux/focus-session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: SafeJSON.stringify({ sessionId }),
+            });
+        } catch (err) {
+            // fetch REJECTS when the dashboard is unreachable, and the caller only has a
+            // `finally`, so this used to surface as an unhandled rejection and a silent button.
+            return {
+                ok: false,
+                error: `focus request failed: ${err instanceof Error ? err.message : String(err)}`,
+                remedy: "Check that the dashboard server is still running.",
+            };
+        }
+
+        let text: string;
+
+        try {
+            // The body arrives AFTER the headers, so a connection dropped mid-transfer rejects
+            // HERE, not at the fetch above. Outside the guard that is the same silent button the
+            // catch above exists to prevent, because the caller has a `finally` and no `catch`.
+            text = await res.text();
+        } catch (err) {
+            return {
+                ok: false,
+                error: `focus response was cut off: ${err instanceof Error ? err.message : String(err)}`,
+                remedy: "Check that the dashboard server is still running.",
+            };
+        }
+
+        try {
+            return SafeJSON.parse(text, { strict: true }) as FocusSessionResult;
+        } catch {
+            return { ok: false, error: `focus failed (${res.status})`, remedy: "Check the dashboard server log." };
+        }
+    },
 };
+
+export const qaPendingApi = {
+    list: () => jsonFetch<{ forms: AskForm[] }>("/api/qa/pending"),
+    get: (id: string) => jsonFetch<{ form: AskForm }>(`/api/qa/pending/${encodeURIComponent(id)}`),
+    cancel: (id: string) =>
+        jsonFetch<{ form: AskForm }>(`/api/qa/pending/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    /**
+     * Submit an answer. A 400 carries `{ code: "incomplete", missing: [...] }`, which the card
+     * renders inline, so this reads the body on failure instead of throwing the reason away.
+     */
+    answer: async (id: string, answers: AskAnswer[]): Promise<AnswerResponse> => {
+        const res = await fetch(`/api/qa/pending/${encodeURIComponent(id)}/answer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ answers }),
+        });
+        const text = await res.text();
+
+        try {
+            return SafeJSON.parse(text, { strict: true }) as AnswerResponse;
+        } catch {
+            return { ok: false, code: "not_found", error: `answer failed (${res.status})` };
+        }
+    },
+};
+
+export type AnswerResponse =
+    | { ok: true; form: AskForm; entryId: string }
+    | { ok: false; code: "not_found" | "not_pending" | "incomplete"; error: string; missing?: string[] };
 
 export const obsidianApi = {
     tree: () => jsonFetch<{ entries: VaultEntry[] }>("/api/obsidian/tree"),

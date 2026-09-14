@@ -4,6 +4,7 @@ import { enrichPanesWithTtyd, resolveTtydForCmuxSurface } from "@app/dev-dashboa
 import { getCachedSnapshot, markClientSeen } from "@app/dev-dashboard/lib/cmux/poller";
 import { removeTmuxSessionFromCmux } from "@app/dev-dashboard/lib/cmux/remove-session";
 import { sendTmuxSessionToCmux } from "@app/dev-dashboard/lib/cmux/send-session";
+import { focusSessionPane } from "@app/dev-dashboard/lib/session-focus";
 import { listTtyd, renameTtyd } from "@app/dev-dashboard/lib/ttyd/manager";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
@@ -145,6 +146,22 @@ export function cmuxRoutes(): RouteDef[] {
                     }
 
                     return { kind: "json", status: 200, body: { ok: true } };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "POST",
+            pattern: "/api/cmux/focus-session",
+            handler: async (ctx) => {
+                try {
+                    const body = await ctx.readJson<{ sessionId?: string }>();
+                    const result = await focusSessionPane(body.sessionId ?? "");
+
+                    // A miss is a normal answer, not a server fault: the card must stay usable and
+                    // show the reason inline. 409 keeps it distinguishable from a 500.
+                    return { kind: "json", status: result.ok ? 200 : 409, body: result };
                 } catch (err) {
                     return errorResult(err);
                 }

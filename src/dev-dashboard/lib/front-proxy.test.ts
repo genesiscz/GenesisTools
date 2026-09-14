@@ -148,6 +148,10 @@ describe("isLongLivedProxiedStream", () => {
         expect(isLongLivedProxiedStream("/api/ports/classify")).toBe(true);
         expect(isLongLivedProxiedStream("/api/live")).toBe(true);
         expect(isLongLivedProxiedStream("/api/ports")).toBe(false);
+        // A pending-ask waiter outlives the 15s upstream deadline; its siblings do not.
+        expect(isLongLivedProxiedStream("/api/qa/pending/ask_5f1c/wait")).toBe(true);
+        expect(isLongLivedProxiedStream("/api/qa/pending/ask_5f1c/answer")).toBe(false);
+        expect(isLongLivedProxiedStream("/api/qa/pending")).toBe(false);
     });
 
     test("every longLived route in the router is exempt, and so is the preview reload stream", () => {
