@@ -10,7 +10,8 @@ import { dirname, join } from "node:path";
 import { Api } from "@app/azure-devops/api";
 import { formatJSON, loadWorkItemCache, saveWorkItemCache, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
 import { downloadAttachments } from "@app/azure-devops/commands/attachments";
-import { downloadInlineImages, extractInlineImageUrls, rewriteImageUrls } from "@app/azure-devops/inline-images";
+import { downloadInlineImages, extractInlineImageUrls } from "@app/azure-devops/inline-images";
+import { formatWorkItemMarkdown } from "@app/azure-devops/lib/work-item-markdown";
 import type {
     AttachmentFilter,
     AttachmentInfo,
@@ -180,77 +181,6 @@ function formatWorkItemAI(
     }
 
     return { text: lines.join("\n"), truncated };
-}
-
-function generateWorkItemMarkdown(item: WorkItemFull, imageMap?: Map<string, string>): string {
-    const lines: string[] = [];
-
-    lines.push(`# #${item.id}: ${item.title}`);
-    lines.push("");
-    lines.push("## Details");
-    lines.push("");
-    lines.push(`| Field | Value |`);
-    lines.push(`|-------|-------|`);
-    lines.push(`| State | ${item.state} |`);
-    lines.push(`| Severity | ${item.severity || "N/A"} |`);
-    lines.push(`| Assignee | ${item.assignee || "Unassigned"} |`);
-    lines.push(`| Tags | ${item.tags || "None"} |`);
-    lines.push(
-        `| Created | ${item.created ? new Date(item.created).toLocaleString() : "N/A"} by ${item.createdBy || "Unknown"} |`
-    );
-    lines.push(`| Last Changed | ${item.changed ? new Date(item.changed).toLocaleString() : "N/A"} |`);
-    lines.push(`| URL | ${item.url} |`);
-
-    if (item.description) {
-        lines.push("");
-        lines.push("## Description");
-        lines.push("");
-        const descHtml = imageMap ? rewriteImageUrls(item.description, imageMap) : item.description;
-        lines.push(htmlToMarkdown(descHtml));
-    }
-
-    if (item.relations && item.relations.length > 0) {
-        const parsed = parseRelations(item.relations);
-        lines.push("");
-        lines.push("## Related Items");
-        lines.push("");
-        if (parsed.parent) {
-            lines.push(`- **Parent**: #${parsed.parent}`);
-        }
-        if (parsed.children.length > 0) {
-            lines.push(`- **Children**: ${parsed.children.map((id) => `#${id}`).join(", ")}`);
-        }
-        if (parsed.related.length > 0) {
-            lines.push(`- **Related**: ${parsed.related.map((id) => `#${id}`).join(", ")}`);
-        }
-    }
-
-    // Attachments listing in markdown
-    const attachments = parseAttachments(item.relations ?? []);
-    if (attachments.length > 0) {
-        lines.push("");
-        lines.push("## Attachments");
-        lines.push("");
-        for (const att of attachments) {
-            const date = att.createdDate ? new Date(att.createdDate).toLocaleDateString() : "";
-            lines.push(`- ${att.filename} (${formatBytes(att.size)}${date ? `, ${date}` : ""})`);
-        }
-    }
-
-    if (item.comments.length > 0) {
-        lines.push("");
-        lines.push(`## Comments (${item.comments.length})`);
-        lines.push("");
-        for (const comment of item.comments) {
-            lines.push(`### ${comment.author} - ${new Date(comment.date).toLocaleString()}`);
-            lines.push("");
-            const commentHtml = imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text;
-            lines.push(htmlToMarkdown(commentHtml));
-            lines.push("");
-        }
-    }
-
-    return lines.join("\n");
 }
 
 // ============= Main Handler =============
@@ -458,7 +388,7 @@ export async function handleWorkItem(
         writeFileSync(jsonPath, SafeJSON.stringify(item, null, 2));
         const imageMap = inlineImageMaps.get(id);
         logger.debug(`[workitem] #${id} saving MD: ${mdPath}`);
-        writeFileSync(mdPath, generateWorkItemMarkdown(item, imageMap));
+        writeFileSync(mdPath, formatWorkItemMarkdown(item, imageMap));
 
         logger.debug(`[workitem] #${id} updating workitem cache`);
         const now = new Date().toISOString();
@@ -495,7 +425,7 @@ export async function handleWorkItem(
 
             const settings = settingsMap.get(id)!;
             const mdPath = getTaskFilePath(id, item.title, "md", settings.category, settings.taskFolder);
-            writeFileSync(mdPath, generateWorkItemMarkdown(item, imageMap));
+            writeFileSync(mdPath, formatWorkItemMarkdown(item, imageMap));
             log(`   Regenerated markdown for #${id} with ${imageMap.size} inline image(s)`);
         }
     }
@@ -552,9 +482,7 @@ export async function handleWorkItem(
                 break;
             }
             case "md":
-                out.println(
-                    `# ${item.title}\n\n${item.description || "No description"}\n\n## Comments\n${item.comments.map((c) => `- **${c.author}**: ${c.text}`).join("\n")}`
-                );
+                out.println(formatWorkItemMarkdown(item, inlineImageMaps.get(item.id)));
                 break;
             case "json":
                 out.println(formatJSON(item));
