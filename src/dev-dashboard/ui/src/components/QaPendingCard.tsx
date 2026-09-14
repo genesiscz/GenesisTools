@@ -127,9 +127,9 @@ export function QaPendingCard({ form, pinned }: { form: AskForm; pinned?: boolea
                 <div key={item.id} className="flex flex-col gap-2" data-testid={`qa-question-${item.id}`}>
                     <QaSectionHeading label="Question" />
                     {item.required ? null : <span className="text-[10px] text-[var(--dd-text-muted)]">optional</span>}
+                    {/* Same sanitized markdown renderer the history cards use. */}
                     <article
                         className="dd-qa-section-body dd-markdown font-medium leading-relaxed text-[var(--dd-text-primary)]"
-                        // biome-ignore lint/security/noDangerouslySetInnerHtml: the same sanitized markdown renderer the history cards use
                         dangerouslySetInnerHTML={{ __html: promptHtml[item.id] }}
                     />
                     {item.choices?.length ? (
