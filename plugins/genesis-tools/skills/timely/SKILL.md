@@ -53,9 +53,14 @@ Look at the summary the tool printed for:
 
 State your splits in chat — group memory IDs into time-block buckets per intended project. Be explicit so the user can correct you before you Edit.
 
-### Step 3 — Fill in `events[]` with the Edit tool
+### Step 3 — Fill in `events[]` with your file-edit tool
 
-Use the `Edit` tool to replace `"events": []` in the plan JSON file with your filled events. **Don't use shell scripts** — the Edit tool is the right primitive.
+Replace `"events": []` in the plan JSON file with your filled events, using whatever your
+harness calls a targeted edit: `Edit` in Claude Code, `search_replace` in Grok, `apply_patch`
+run through `exec` in Codex (see `references/harness-tools.md` in this plugin). **Don't
+hand-roll a shell rewrite of the file** (`sed`, a `python` replace, a heredoc that rewrites the
+whole document) — a targeted replace is the right primitive, and a whole-file rewrite loses the
+parts you did not mean to touch.
 
 Multiple events per day are fine — each gets its own project + note + memory_ids subset. Example:
 
@@ -84,7 +89,7 @@ Multiple events per day are fine — each gets its own project + note + memory_i
 
 ### Step 4 — Verify the file
 
-The Edit tool already wrote the changes. No additional save step needed. If you're worried, `Read` the relevant slice of the file to confirm.
+The edit already wrote the changes. No additional save step is needed. If you're worried, read the relevant slice of the file back to confirm.
 
 ### Step 5 — Dry-run
 

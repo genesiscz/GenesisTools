@@ -11,7 +11,7 @@ This file answers two questions: **who does it**, and **is it ready to leave**. 
 |---|---|
 | Codex / GPT-6 Astra / GPT-5.6 Sol, Terra, Luna | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
 | Grok / grok-4.x | Read `references/grok.md` — never hand-roll a bare `grok -p` (isolation and safety flags are non-obvious) |
-| sonnet / opus / fable, in this session | `Agent` tool with `model:`, or `Workflow` for fan-out — **the default for Claude work** |
+| sonnet / opus / fable, in this session | `Agent` tool with `model:`, or `Workflow` for fan-out — **the default for Claude work**. ⚠️ Both are Claude Code tools: from Codex use `spawn_agent` / `followup_task`, from Grok use `tools claude exec -a <account>` (`references/claude.md`) |
 | Claude on a **different account**, or a headless `claude -p` run | Read `references/claude.md` — `tools claude exec -a <account>`, never interactive `tools claude run` |
 
 The reference files sit next to this one, at `${CLAUDE_PLUGIN_ROOT}/skills/handoff-to/references/`. Claude Code substitutes that placeholder at load time; it is not a shell variable. If you see it unsubstituted, build the path from the "Base directory for this skill" line printed when this skill loaded. If both fail, Read `plugins/genesis-tools/skills/handoff-to/references/<backend>.md` in the GenesisTools repo.

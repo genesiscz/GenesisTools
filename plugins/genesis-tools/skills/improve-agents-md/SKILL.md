@@ -37,7 +37,16 @@ Record the full set that exists. This set drives both the battery and the clean-
 
 ### 0b. Which files does the CURRENT harness actually LOAD?
 
-**Do not assume.** Support changes between versions. First read the version:
+**Do not assume, and start by identifying WHICH harness you are.** This section's version probe
+and support table are Claude Code's. Running `claude --version` from a Codex or Grok session
+reads a binary that is not hosting you, and answers a different question than the heading asks.
+Codex loads `~/.codex/AGENTS.md` plus the nearest `AGENTS.md` per directory; Grok loads its own
+home instruction file plus `AGENTS.md`. Probe the harness that is actually running you, and
+extend the hide-list in the clean-run step below to match — the list there covers Claude's files
+and the repo `AGENTS.md` only, so a "clean run" claimed from Codex or Grok with a home
+instruction file still loaded is unproven.
+
+First read the version:
 
 ```bash
 claude --version   # or: ~/.bun/bin/claude --version

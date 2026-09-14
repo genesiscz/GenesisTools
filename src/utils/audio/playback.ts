@@ -26,7 +26,8 @@ export interface PlayOptions {
     /**
      * Playback speed multiplier (1.0 = original). Implemented via ffmpeg's `atempo` filter, which
      * preserves pitch — no chipmunk effect. ffmpeg auto-chains `atempo` for ratios outside its
-     * single-instance 0.5..2.0 range. Ignored on the afplay fallback path (no equivalent knob).
+     * single-instance 0.5..2.0 range. The afplay fallback ignores it: afplay has `--rate`, but it
+     * shifts pitch with speed, and a chipmunk voice is worse than playing at 1.0.
      */
     tempo?: number;
     wait?: boolean;

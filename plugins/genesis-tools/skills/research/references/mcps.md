@@ -23,6 +23,8 @@ Default to **Skip** if the run is small, low-stakes, or the user typed "quick"/"
 
 Each entry below has the install command and the **mcpServers** snippet for `~/.claude.json` (or run `tools mcp-manager show <name>` in this repo to see how it's configured locally). The user pastes the snippet under `mcpServers` in their Claude config, or uses `claude mcp add` per the [Claude Code MCP docs](https://docs.claude.com/en/docs/claude-code/mcp).
 
+⚠️ **Hand the user the file THEIR harness reads.** Claude Code: `~/.claude.json` or `claude mcp add`. Codex: `~/.codex/config.toml`. Grok: `~/.grok/config.toml` or `grok mcp add`. A `~/.claude.json` snippet given to a Codex or Grok user edits a file their agent never opens, and the tools never appear.
+
 ### jina (web search + URL read)
 
 Tools used by this skill: `mcp__jina__search_web`, `mcp__jina__read_url`, `mcp__jina__parallel_read_url`.
@@ -149,7 +151,7 @@ Config snippet:
 
 ## After install
 
-Once the user finishes adding the MCP and restarts Claude Code, the new tools appear under `mcp__<server>__*`. The skill should re-check availability before relying on the new server in the same run — if the user installed mid-run without a restart, the tools are still unavailable; treat as Skip and note in Gaps.
+Once the user finishes adding the MCP and restarts their agent (Claude Code, Codex or Grok — each reads its own config file, see above), the new tools appear under `mcp__<server>__*`. The skill should re-check availability before relying on the new server in the same run — if the user installed mid-run without a restart, the tools are still unavailable; treat as Skip and note in Gaps.
 
 ## Sister skills (optional, ship in same plugin)
 

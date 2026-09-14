@@ -108,7 +108,7 @@ We support two prompt libraries. Choose based on your needs:
 |----------|---------|-----|
 | **New tools** (preferred) | `@clack/prompts` | Beautiful UI, built-in spinners, structured logging |
 | Multi-step wizards | `@clack/prompts` | `p.intro()`, `p.outro()`, `p.spinner()` for flow |
-| Need `editor` prompt | `@inquirer/prompts` | No clack equivalent for multiline editor |
+| Need `editor` prompt | `p.editor()` from `@genesiscz/utils/prompts/p` | Clack backend spawns `$EDITOR` on a temp file (`clack-backend.ts:173`) |
 | Modifying existing tool | Keep current library | Don't mix libraries in same file |
 
 **Full guide:** See `docs/prompts-and-colors.md` for comprehensive documentation.

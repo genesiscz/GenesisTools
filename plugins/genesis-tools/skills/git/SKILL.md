@@ -70,6 +70,11 @@ the closest merge-base) and say so; they never silently assume `master`.
 
 ## Scripts
 
+The harness substitutes `${CLAUDE_PLUGIN_ROOT}` at load time. If a command below still shows
+the literal placeholder, do NOT run it — a shell expands it to nothing and `bun
+"/skills/git/scripts/…"` fails. Build the path from the "Base directory for this skill" line
+printed when this skill loaded (the plugin root is that directory minus `skills/git`).
+
 - `bun "${CLAUDE_PLUGIN_ROOT}/skills/git/scripts/resolve-hunks.ts" <file> theirs|ours [hunk-index …]`
   resolves every conflict block in one file to a side, with listed hunks flipped; the
   non-conflict regions survive. Refuses to write while a marker would remain.

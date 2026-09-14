@@ -95,3 +95,5 @@ If `tools` command is not found after installation:
 ## Install Session Tracking Hook (Optional)
 
 To enable file tracking for "commit only Claude's changes", merge the hooks from the plugin's `hooks/hooks.json` into `~/.claude/settings.json`.
+
+⚠️ **Only when the plugin is NOT installed.** An installed plugin already supplies its own hooks in every harness that loads it — Claude Code, Codex (`codex plugin add`) and Grok (`[plugins].paths`) — so this step is redundant there, and `~/.claude/settings.json` is a file Codex and Grok never read. Check `claude plugin list` / `codex plugin list` / `grok plugin list` first.

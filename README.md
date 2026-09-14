@@ -292,7 +292,7 @@ that tool's own `README.md`, which you can also print in the terminal with
 |------|--------------|-----------------|
 | [`ai`](src/ai/README.md) | Unified AI toolkit: translate, summarize, classify, generate images, manage accounts and models. | `translate` `summarize` `image` `classify` `models` `config` |
 | [`ai-proxy`](src/ai-proxy/README.md) | OpenAI-compatible local proxy in front of Grok, GitHub Copilot, and other providers, with a client ledger. | `up` `down` `serve` `status` `models` `calls` `clients` `usage` `link` `config` |
-| [`ai-spend`](src/ai-spend/README.md) | Claude Code token and cost analytics across every local session. | `summary` `sessions` `today` |
+| [`ai-spend`](src/ai-spend/README.md) | Token and cost analytics across every local Claude Code, Codex and Grok session, reported per source. | `summary` `sessions` `today` `daily` `weekly` `monthly` `series` `monitor` `blocks` `statusline` |
 | [`ask`](src/ask/README.md) | Multi-provider LLM chat, one-shot or interactive, with optional audio input via `--sst`. | flags only (`-m`, `-p`, `-f`, `-o`) |
 | [`usage`](src/usage/README.md) | Token and cost analytics for `ask`, by provider, model, and day. | flags only (`--days`, `--provider`, `--format`) |
 | [`say`](src/say/README.md) | Text to speech with pluggable backends (macOS, xAI Grok, OpenAI) and per-app config profiles. | `voices` `models` `config` |

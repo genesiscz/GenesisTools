@@ -9,6 +9,13 @@ Dispatcher for internet research. Main Claude stays in charge: classifies the qu
 
 The skill is **tolerant of missing MCPs**: if a preferred MCP isn't installed, the agent uses what's available, the gap is recorded in `Confidence & Gaps`, and the user is offered a one-time install path (see "MCP availability" below).
 
+⚠️ **Written with Claude Code's tool names; this plugin is installed verbatim by Codex and Grok.**
+All three have subagents and a structured user question — only the names differ
+(`references/harness-tools.md` in this plugin). What does NOT port is the named Claude
+`subagent_type`s (`general-purpose`, `gt:explore`) and the Claude model pins: pass the agent
+brief as a prompt, and read "haiku" as "a cheap model". The RESEARCH contract — source minimums,
+per-category coverage, citations, `Confidence & Gaps` — holds unchanged on all three.
+
 ## When to use
 
 - "research X", "look up X online"
@@ -58,7 +65,7 @@ Always record what was missing and what substitution was used in `Confidence & G
 
 ### Offer install (at most once per run)
 
-If a missing MCP would materially improve the run AND the user didn't say "quick"/"temporary"/"just tell me", call `AskUserQuestion` ONCE before dispatch:
+If a missing MCP would materially improve the run AND the user didn't say "quick"/"temporary"/"just tell me", ask ONCE before dispatch (`AskUserQuestion`, `request_user_input_async` or `ask_user_question`, whichever your harness has):
 
 - **Question:** "I'd dispatch this with `<MCP-name>` for `<one-line value-add>`, but it's not installed. Want install instructions, or proceed without?"
 - **Options:** `Install now`, `Skip and proceed`, `Don't ask again this run`.
@@ -66,7 +73,7 @@ If a missing MCP would materially improve the run AND the user didn't say "quick
 If the user picks **Install now**, read `references/mcps.md` from this skill directory and output:
 1. The `bun add --global <package>` command (if local) or "no install — hosted HTTP MCP" (if remote).
 2. The exact `mcpServers` JSON snippet for the user to paste into their Claude config (or the equivalent `claude mcp add` one-liner).
-3. Note that the user must restart Claude Code for the new server to become callable, and the skill will proceed without it for THIS run.
+3. Note that the user must restart their agent for the new server to become callable (Claude Code and Codex reload MCP config on restart; Grok re-reads `~/.grok/config.toml` on start too), and the skill will proceed without it for THIS run.
 
 The skill does **not** execute install commands itself. The user runs the install. The skill then proceeds with whatever is currently available.
 

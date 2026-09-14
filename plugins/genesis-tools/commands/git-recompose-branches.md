@@ -26,7 +26,13 @@ group with `git cherry-pick -x`, and prove the groups together equal the source.
 
 ## Process
 
-1. Read `${CLAUDE_PLUGIN_ROOT}/skills/git/references/recompose-branches.md` in full.
+1. Read `${CLAUDE_PLUGIN_ROOT}/skills/git/references/recompose-branches.md` in full. The
+   harness substitutes that placeholder at load time; if you see it literally, build the path
+   from the "Base directory for this skill" line printed when this loaded rather than passing
+   it to a shell, which would expand it to nothing. If both fail, read
+   `plugins/genesis-tools/skills/git/references/recompose-branches.md` in the GenesisTools repo.
+   🛑 Do not improvise these phases from memory — this splits a branch, and a wrong move loses
+   commits.
 2. Analyse and classify the commits (IN / OUTSIDE / MIXED), write the table to
    `.claude/work/<source>-commits.md`, and ask how MIXED commits should be handled.
 3. Build each group branch from the base with `--no-track`, cherry-pick in order, and for a
