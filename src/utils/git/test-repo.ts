@@ -133,7 +133,7 @@ export interface WorktreeAddOptions {
  * paths. The FIRST repo of each shape still runs the real commands, so the template can
  * never drift from them.
  */
-const repoTemplates = new Map<string, string>();
+const repoTemplates = new Map<string, { path: string; epoch: number }>();
 let templateRoot: string | null = null;
 
 function templateCacheDir(): string {
@@ -185,6 +185,7 @@ function looseHeadSha(cwd: string): string | null {
  * and by the gt:git eval fixtures, so every scenario is built the same way.
  */
 export class TestRepo {
+    /** Read by `fromScenario` to record where a cached setup left the epoch ladder. */
     private nextEpoch: number;
 
     private constructor(
@@ -206,10 +207,12 @@ export class TestRepo {
         const template = repoTemplates.get(shape);
 
         if (template !== undefined) {
-            cpSync(template, dir, { recursive: true });
-            // The seed commit consumes one tick, so a copy must resume where the real
-            // build left off or two repos of the same shape would disagree on dates.
-            return new TestRepo(dir, root, seeded ? TEST_REPO_EPOCH + 10 : TEST_REPO_EPOCH);
+            cpSync(template.path, dir, { recursive: true });
+            // A copy resumes on the epoch the real build ended on, or two repos of the same
+            // shape would disagree on dates. The seed commit alone consumes one tick; a
+            // scenario consumes as many as its setup made commits, which is why the number is
+            // recorded rather than recomputed.
+            return new TestRepo(dir, root, template.epoch);
         }
 
         mkdirSync(dir);
@@ -240,7 +243,45 @@ export class TestRepo {
         // sanitised prefix is kept so a leftover directory still says which shape it holds.
         const cached = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
         cpSync(dir, cached, { recursive: true });
-        repoTemplates.set(shape, cached);
+        repoTemplates.set(shape, { path: cached, epoch: repo.nextEpoch });
+
+        return repo;
+    }
+
+    /**
+     * A repository whose SETUP is also built once per process and copied after that.
+     *
+     * `create()` caches the pristine repo; this caches a whole scenario on top of it. In
+     * merged.test.ts, 26 of 31 repositories were immediately given the same two-commit feature
+     * branch, and that helper alone costs eight git processes (checkout -b, two commits at
+     * three processes each, checkout back) — 208 of the file's 1008 spawns, rebuilt identically
+     * every time. The bytes are deterministic for the same reason `create()`'s are: fixed
+     * content, fixed identity and a fixed epoch ladder.
+     *
+     * `name` must describe everything `setup` does, because it is the cache key. Two different
+     * setups under one name would hand the second caller the first one's repository.
+     */
+    static async fromScenario(
+        name: string,
+        setup: (repo: TestRepo) => Promise<void>,
+        opts: TestRepoOptions = {}
+    ): Promise<TestRepo> {
+        const shape = `scenario:${name}::${opts.branch ?? "master"}::${opts.seed !== false}`;
+        const cached = repoTemplates.get(shape);
+
+        if (cached !== undefined) {
+            const root = realpathSync(mkdtempSync(join(tmpdir(), opts.prefix ?? "gt-repo-")));
+            const dir = join(root, "repo");
+            cpSync(cached.path, dir, { recursive: true });
+
+            return new TestRepo(dir, root, cached.epoch);
+        }
+
+        const repo = await TestRepo.create(opts);
+        await setup(repo);
+        const stored = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
+        cpSync(repo.dir, stored, { recursive: true });
+        repoTemplates.set(shape, { path: stored, epoch: repo.nextEpoch });
 
         return repo;
     }

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { analyze } from "./test-runtime-guard";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { analyze, sourceIsConcurrent } from "./test-runtime-guard";
 
 /** A GitHub Actions log line carries a BOM, a job/step prefix, a timestamp and ANSI. */
 function ciLine(text: string): string {
@@ -82,9 +85,83 @@ describe("analyze", () => {
         expect(analyze("Ran 1 tests across 1 files. [105.00ms]").totalSeconds).toBeCloseTo(0.105, 3);
     });
 
+    test("a group terminator ends attribution, so the failure summary is not glued onto the last file", () => {
+        // The real shape of CI run 34908819029: a file's group closes, then bun reprints its
+        // failures with no header, then the serial phase runs with no groups at all. Without a
+        // terminator all of that landed on legacy-cache.test.ts — 85 tests and 23.49 s for a
+        // file that has 17 tests and costs 2.67 s.
+        const report = analyze(
+            [
+                "src/fast/thing.test.ts:",
+                "(pass) quick > one [3.00ms]",
+                "##[endgroup]",
+                "",
+                "(fail) some other file > a slow case reprinted in the summary [30000.00ms]",
+                "Ran 2 tests across 2 files. [1.00s]",
+                "(pass) serial phase > a case with no group at all [9000.00ms]",
+            ].join("\n")
+        );
+
+        expect(report.ranked).toEqual([{ file: "src/fast/thing.test.ts", ms: 3, tests: 1 }]);
+    });
+
+    test("::endgroup:: ends a block too, since a raw step log is not post-processed", () => {
+        const report = analyze(
+            [
+                "src/fast/thing.test.ts:",
+                "(pass) quick > one [3.00ms]",
+                "::endgroup::",
+                "(fail) stray > not this file's [50000.00ms]",
+            ].join("\n")
+        );
+
+        expect(report.ranked).toEqual([{ file: "src/fast/thing.test.ts", ms: 3, tests: 1 }]);
+    });
+
+    test("a suite total closes the block AND is still read as the total", () => {
+        const report = analyze(
+            ["src/fast/thing.test.ts:", "(pass) quick > one [3.00ms]", "Ran 1 test across 1 file. [2.00s]"].join("\n")
+        );
+
+        expect(report.totalSeconds).toBe(2);
+        expect(report.ranked).toEqual([{ file: "src/fast/thing.test.ts", ms: 3, tests: 1 }]);
+    });
+
     test("a fail line counts toward its file, so a slow failing test cannot hide", () => {
         const report = analyze(["src/slow/thing.test.ts:", "(fail) waits > broken and slow [30000.00ms]"].join("\n"));
 
         expect(report.ranked[0]).toEqual({ file: "src/slow/thing.test.ts", ms: 30000, tests: 1 });
+    });
+});
+
+describe("sourceIsConcurrent", () => {
+    function withSource(body: string): boolean {
+        const dir = mkdtempSync(join(tmpdir(), "runtime-guard-src-"));
+        writeFileSync(join(dir, "probe.test.ts"), body);
+
+        return sourceIsConcurrent("probe.test.ts", dir);
+    }
+
+    test.each([
+        ['test.concurrent("a", () => {});', true],
+        ['describe.concurrent("a", () => {});', true],
+        ['it.concurrent("a", () => {});', true],
+        ['test.concurrent.each([1])("a", () => {});', true],
+        ['    test.concurrent("indented", () => {});', true],
+    ])("a real call site earns the exemption: %s", (source, expected) => {
+        expect(withSource(source)).toBe(expected);
+    });
+
+    test.each([
+        ['// explains why this file is NOT test.concurrent\ntest("a", () => {});', false],
+        ['/** Overlapping them with `test.concurrent` turned it red on CI. */\ntest("a", () => {});', false],
+        ['const label = "test.concurrent";\ntest("a", () => {});', false],
+        ['test("a", () => {});', false],
+    ])("a mention in prose or a string does NOT: %s", (source, expected) => {
+        expect(withSource(source)).toBe(expected);
+    });
+
+    test("a file the checkout does not have is guarded rather than exempted", () => {
+        expect(sourceIsConcurrent("nope/missing.test.ts", tmpdir())).toBe(false);
     });
 });

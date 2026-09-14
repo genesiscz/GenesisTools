@@ -42,10 +42,29 @@ const DEFAULT_CEILING_MS = 20_000;
 const DEFAULT_WARN_TOTAL_S = 240;
 
 const FILE_HEADER = /^((?:src|scripts|apps|plugins|native|DevDashboard)\/.*\.test\.tsx?):$/;
+/**
+ * Where a file's block ENDS, and the difference between a guard and a liar.
+ *
+ * bun's GitHub reporter opens a group per file and closes it, but the run does not end there:
+ * the failure summary reprints every failing test with no header, and `scripts/test.ts` then
+ * starts a SECOND bun process for the load-sensitive files whose output carries no groups at
+ * all. Attributing on the header alone glued all of that onto whichever file happened to print
+ * last. Measured on CI run 34908819029: legacy-cache.test.ts was reported at 23.49 s over 85
+ * tests when it has 17 tests and costs 2.67 s, and the 85 names were watcher, disk-usage and
+ * capture-install cases. The guard would have sent someone to optimise an innocent file.
+ */
+const BLOCK_END = /^(?:##\[endgroup\]|::endgroup::|Ran \d+ tests? across \d+ files?\.)/;
 const TEST_LINE = /^\((pass|fail)\)/;
 const BRACKET_MS = /\[(\d+(?:\.\d+)?)ms\]$/;
-const SUITE_TOTAL = /^Ran \d+ tests across \d+ files\. \[(\d+(?:\.\d+)?)(ms|s)\]$/;
-const CONCURRENT = /\b(?:describe|test|it)\.concurrent\b/;
+// `tests?` and `files?`: bun says "Ran 1 test across 1 file." in the singular, and a regex that
+// only knew the plural read a one-file phase as having no total at all.
+const SUITE_TOTAL = /^Ran \d+ tests? across \d+ files?\. \[(\d+(?:\.\d+)?)(ms|s)\]$/;
+/**
+ * A CALL SITE, not a mention. The trailing `(` matters: this very repo has a file whose comment
+ * explains why it is NOT `test.concurrent`, and a word-boundary match handed it the exemption —
+ * the guard then excused a 29.9 s file for a property its source denies having.
+ */
+const CONCURRENT = /(?:^|[\s;}])(?:describe|test|it)\.concurrent[.(]/m;
 
 export interface GuardReport {
     /** Summed per-test ms per file, highest first. */
@@ -89,6 +108,12 @@ export function analyze(
         if (header) {
             current = header[1];
             continue;
+        }
+
+        if (BLOCK_END.test(line)) {
+            current = null;
+            // Not `continue`: the suite total below is one of the lines that closes a block,
+            // and it still has to be read.
         }
 
         const total = SUITE_TOTAL.exec(line);

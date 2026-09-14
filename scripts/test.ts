@@ -491,6 +491,8 @@ const parallelExit = await runBunTest([
     ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
 ]);
 process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
-const serialExit = await runBunTest([...args.filter((arg) => arg !== "--parallel"), ...LOAD_SENSITIVE_FILES]);
+// `startsWith`, not equality: bun also accepts `--parallel=N`, and an exact match would let
+// that form through into the phase whose whole purpose is to run these files serially.
+const serialExit = await runBunTest([...args.filter((arg) => !arg.startsWith("--parallel")), ...LOAD_SENSITIVE_FILES]);
 
 finish(parallelExit !== 0 ? parallelExit : serialExit);

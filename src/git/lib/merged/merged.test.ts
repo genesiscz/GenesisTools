@@ -22,6 +22,19 @@ async function repo(): Promise<TestRepo> {
     return r;
 }
 
+/**
+ * A repository that already carries the default two-commit `feat/x`, built once per process.
+ *
+ * Eleven cases wanted exactly this, and `feature()` costs eight git processes every time
+ * (checkout -b, two commits at add/commit/rev-parse each, checkout back). The bytes are
+ * deterministic, so the eleventh copy is the same repository the first one built.
+ */
+async function repoWithFeature(): Promise<TestRepo> {
+    const r = await TestRepo.fromScenario("merged:feat/x", (target) => feature(target), { prefix: "gt-merged-" });
+    repos.push(r);
+    return r;
+}
+
 async function ctxFor(r: TestRepo, baseRef = "master"): Promise<CollectContext> {
     return {
         repoRoot: r.dir,
@@ -62,8 +75,7 @@ describe("verdict ladder", () => {
     });
 
     it("MERGED by ancestor after a fast-forward merge, EMPTY when sitting exactly on the base", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.git(["merge", "-q", "--ff-only", "feat/x"]);
         const atBase = await collectRefReport(await ctxFor(r), "feat/x");
         expect(atBase).toMatchObject({ verdict: "EMPTY", how: "-", ahead: 0 });
@@ -74,8 +86,7 @@ describe("verdict ladder", () => {
     });
 
     it("MERGED by cherry when the commits were cherry-picked with new shas", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.commit({ file: "m.txt", content: "master moved\n", message: "master moves" });
         await r.git(["cherry-pick", "master..feat/x"], { epoch: r.tick() });
         const report = await collectRefReport(await ctxFor(r), "feat/x");
@@ -83,8 +94,7 @@ describe("verdict ladder", () => {
     });
 
     it("MERGED by content after a squash merge, even once master moved on", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.squashMerge("feat/x");
         await r.commit({ file: "m.txt", content: "master moved\n", message: "master moves" });
 
@@ -176,8 +186,7 @@ describe("verdict ladder", () => {
     });
 
     it("does not penalise a branch far behind the base", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.squashMerge("feat/x");
 
         for (let i = 0; i < 30; i++) {
@@ -201,8 +210,7 @@ describe("verdict ladder", () => {
     });
 
     it("judges a worktree by path, detached or on a branch, and counts dirt", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.squashMerge("feat/x");
         const detached = await r.worktreeAdd({ name: "wt-detached", ref: "feat/x", detach: true });
         const onBranch = await r.worktreeAdd({ name: "wt-branch", ref: "feat/x" });
@@ -218,8 +226,7 @@ describe("verdict ladder", () => {
     });
 
     it("reports upstream, unpushed and gone", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.addOrigin(["feat/x"]);
         await r.checkout("feat/x");
         await r.commit({ file: "c.txt", content: "c\n", message: "local only" });
@@ -278,8 +285,7 @@ describe("verdict ladder", () => {
 
 describe("listAllRefs", () => {
     it("lists every local branch except the base and master/main, plus detached worktrees", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.branch("main");
         const detached = await r.worktreeAdd({ name: "wt-detached", ref: "feat/x", detach: true });
         await r.worktreeAdd({ name: "wt-branch", ref: "feat/x" });
@@ -320,8 +326,7 @@ describe("prune", () => {
     });
 
     it("removes a merged branch and its worktree, warning about an older remote copy", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.addOrigin(["feat/x"]);
         await r.checkout("feat/x");
         await r.commit({ file: "c.txt", content: "c\n", message: "more" });
@@ -487,8 +492,7 @@ describe("prune", () => {
     });
 
     it("refuses to force-remove a worktree holding real edits, but clears deletion debris", async () => {
-        const r = await repo();
-        await feature(r);
+        const r = await repoWithFeature();
         await r.squashMerge("feat/x");
         const wt = await r.worktreeAdd({ name: "wt-x", ref: "feat/x" });
         const ctx = await pruneCtxFor(r);
@@ -650,8 +654,7 @@ describe("review round 1", () => {
 
 describe("judge round 1", () => {
     it("keeps the remote when the PR lookup fails, and says so", async () => {
-        const r = await repo();
-        await feature(r, "feat/x");
+        const r = await repoWithFeature();
         await r.addOrigin(["feat/x"]);
         await r.squashMerge("feat/x");
         const driver: OriginDriver = {
@@ -680,8 +683,7 @@ describe("judge round 1", () => {
     });
 
     it("--prune --yes on an inferred base proceeds but names the inference", async () => {
-        const r = await repo();
-        await feature(r, "feat/x");
+        const r = await repoWithFeature();
         await r.squashMerge("feat/x");
         const proc = Bun.spawn(
             ["bun", join(import.meta.dir, "../../index.ts"), "merged", "--prune", "feat/x", "--yes", "-C", r.dir],
