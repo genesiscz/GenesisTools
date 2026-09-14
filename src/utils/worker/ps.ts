@@ -83,3 +83,37 @@ export async function runningTurnPids(sessionMarker: string, binaryPattern: RegE
 
     return matches;
 }
+
+export interface SignalRunningTurnsResult {
+    /** Pids the signal actually reached. */
+    signalled: number[];
+    /** A pid that could not be signalled, and why (`ESRCH`: already gone; anything else: e.g. `EPERM`). */
+    skipped: { pid: number; code: string }[];
+}
+
+/**
+ * Signal every pid in the list, one at a time, never stopping at the first failure.
+ *
+ * `process.kill` throws for a pid that exited between the `ps` read and the call. A plain loop
+ * that lets that propagate abandons every LATER pid unsignalled and hands the caller a raw
+ * stack trace instead of an answer it can report accurately.
+ */
+export function signalRunningTurns(targets: RunningTurn[], signal: NodeJS.Signals): SignalRunningTurnsResult {
+    const signalled: number[] = [];
+    const skipped: { pid: number; code: string }[] = [];
+
+    // `targets` comes from `runningTurnPids`, which matched each pid's live `ps` command line
+    // against the session marker and the binary before returning it; a recycled pid does not
+    // carry that marker.
+    for (const target of targets) {
+        try {
+            // pid-verified: matched above, by runningTurnPids
+            process.kill(target.pid, signal);
+            signalled.push(target.pid);
+        } catch (err) {
+            skipped.push({ pid: target.pid, code: (err as { code?: string }).code ?? "UNKNOWN" });
+        }
+    }
+
+    return { signalled, skipped };
+}

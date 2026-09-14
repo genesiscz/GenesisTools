@@ -5,7 +5,7 @@ Drive xAI's `grok` CLI as an isolated headless worker. This is the grok counterp
 ## Commands
 
 ```bash
-tools grok run --name fix-auth --cwd /abs/project --prompt-file /tmp/brief.md [--readonly] [--model grok-4.6] [--auth api-key] [--no-skills] [--no-rules]
+tools grok spawn --name fix-auth --cwd /abs/project --prompt-file /tmp/brief.md [--readonly] [--model grok-4.6] [--auth api-key] [--no-skills] [--no-rules]
 tools grok run --resume                  # native Grok resumes its most recent session
 tools grok run --resume "auth callback"  # indexed search by id, title, or transcript
 tools grok resume [query]                # alias of TUI resume
@@ -13,12 +13,16 @@ tools grok history [query] [--all] [--format json] [-i]
 tools grok steer --name fix-auth --prompt "Now fix the second bug; still do not touch tests" [--no-skills] [--skills]
 tools grok read --name fix-auth [--turn 2] [--format compact|json|jsonl|events|raw] [--thoughts none|short|full]
 tools grok tail --name fix-auth [--format compact]   # follow the running turn; stops when the turn ends
-tools grok sessions
+tools grok status --name fix-auth                    # one session; omit --name to list every session
+tools grok stop --name fix-auth                      # kill the running turn (alias: interrupt)
+tools grok sessions [--json]
+tools grok who [--json]                              # live grok processes and the account each one bills
 
 tools grok login [name]                      # browser OIDC login (PKCE) stored in the vault, no Grok CLI needed
 tools grok login [name] --home ~/.grok       # the same login written into that GROK_HOME's auth.json instead
 tools grok login [name] --auth-file <path>   # bind a credential file that already exists; the only headless door
 tools grok usage [--json] [--range 24h]      # the shared usage dashboard pinned to this provider
+tools grok warmup [name...] [--all] [--json] # one tiny request per account to start its session timer (shared with tools ai warmup)
 ```
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider grok` and `tools ai usage --provider grok`. `login` drives xAI's own OIDC provider in the browser, so every form of it except `--auth-file` on an existing file needs a TTY. `usage` reports the subscription allowance as percentage windows over the rolling period, plus pay-as-you-go money when the account has any.
@@ -56,7 +60,7 @@ worker isolation remains controlled by the worker launcher below.
 
 ## What the harness bakes in
 
-- **Isolation is per surface, and the surfaces are ON by default.** Workers get `GROK_HOME=~/.genesis-tools/grok/worker-home`, with hooks, MCP servers and session pickup from `~/.claude` switched off unconditionally (side effects and credentials). Your personal skills (`~/.agents/skills`, `~/.claude/skills`) and rules (`~/.claude` rules and `CLAUDE.md`) load unless you pass `--no-skills` / `--no-rules`; the choice is stored in the session meta and a steer without the flags keeps it. `~/.agents/skills` has no environment toggle in grok, so `--no-skills` is a property of the worker HOME: a session started with it runs in `~/.genesis-tools/grok/worker-home-noskills`, whose `config.toml` carries a marked `[skills] ignore` block, while the default home never does. Two shared homes with one fixed policy each means parallel sessions with opposite choices never rewrite the file under each other; a `steer --skills` on such a session flips only the `~/.claude` tier (the home cannot change mid-session, grok keys sessions by cwd inside it). A caller-chosen `--worker-home` follows the session's own choice. Every turn also carries the shared worker contract as `--rules` (`src/utils/worker/contract.ts`: checkpoints, the `RESULT/AT/CHANGED/VERIFY/OPEN` report shape, and a note that interactive rituals such as `tools say` do not apply to a worker). `--worker-home` overrides the home for parallel or test runs. It does **not** move the session records: those stay under `~/.genesis-tools/grok/sessions/` so `tools grok sessions` can list every worker, so two runs sharing a `--name` share one record whatever their home. Project-local config in the target repo (`CLAUDE.md`, a `.grok/` directory) still loads — `GROK_HOME` redirects user state only.
+- **Isolation is per surface, and the surfaces are ON by default.** Workers get `GROK_HOME=~/.genesis-tools/grok/worker-home`, with hooks, MCP servers and session pickup from `~/.claude` switched off unconditionally (side effects and credentials). Your personal skills (`~/.agents/skills`, `~/.claude/skills`) and rules (`~/.claude` rules and `CLAUDE.md`) load unless you pass `--no-skills` / `--no-rules`; the choice is stored in the session meta and a steer without the flags keeps it. `~/.agents/skills` has no environment toggle in grok, so `--no-skills` is a property of the worker HOME: a session started with it runs in `~/.genesis-tools/grok/worker-home-noskills`, whose `config.toml` carries a marked `[skills] ignore` block, while the default home never does. Two shared homes with one fixed policy each means parallel sessions with opposite choices never rewrite the file under each other; a `steer --skills` on such a session flips only the `~/.claude` tier (the home cannot change mid-session, grok keys sessions by cwd inside it). A caller-chosen `--worker-home` follows the session's own choice. Every turn also carries the shared worker contract as `--rules` (`src/utils/worker/contract.ts`: checkpoints, the `RESULT/AT/CHANGED/VERIFY/OPEN` report shape, and a note that interactive rituals such as `tools say` do not apply to a worker). `--worker-home` overrides the home for parallel or test runs. It does **not** move the session records: those stay under `~/.genesis-tools/grok/sessions/` so `tools grok sessions` can list every worker, so two runs sharing a `--name` share one record whatever their home. `tools grok run --name` is the worker's older spelling and still routes to `spawn`. Project-local config in the target repo (`CLAUDE.md`, a `.grok/` directory) still loads — `GROK_HOME` redirects user state only.
 - **Two session stores.** `tools grok history` / `run --resume` list TUI dirs under `~/.grok/sessions` (and the worker-home copy of that layout). `tools grok sessions` lists headless workers under `~/.genesis-tools/grok/sessions/<name>.meta.json`. Those are not the same inventory.
 - **TUI resume is not the worker.** Bare `--resume` on `run` launches native `grok --resume` in your normal environment. A query selects an indexed session and launches `grok -r <id>` with that session's `GROK_HOME`, so a worker-home result is not looked up in a different personal home. Neither calls `runSession` or mutates the parent environment. Worker mode still needs `--name` and `--cwd` with `--resume` absent.
 - **Session bookkeeping.** The worker uuid and cwd are stored in `~/.genesis-tools/grok/sessions/<name>.meta.json`; `steer` resumes with the identical `--cwd` automatically (grok keys sessions by cwd).

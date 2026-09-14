@@ -22,6 +22,19 @@ describe("WORKER_CAPABILITIES", () => {
         expect(WORKER_CAPABILITIES.claude.steering).toBe("between-turns");
     });
 
+    test("a backend that cannot pin an account says so, with the reason the CLI prints", () => {
+        // Grok identifies a login by an auth FILE, never by a name, so `--account` could only
+        // ever be a silent no-op there. The matrix carries the refusal text itself, so the
+        // hidden flag's description, the driver's throw and the legacy door all quote one string.
+        expect(WORKER_CAPABILITIES.grok.accountUnsupported).toContain("auth FILE");
+        expect(WORKER_CAPABILITIES.grok.accountUnsupported).toContain("GROK_AUTH_PATH");
+        expect(WORKER_CAPABILITIES.grok.accountRequired).toBe(false);
+
+        // The two backends that DO pin an account must not claim otherwise.
+        expect(WORKER_CAPABILITIES.claude.accountUnsupported).toBeUndefined();
+        expect(WORKER_CAPABILITIES.codex.accountUnsupported).toBeUndefined();
+    });
+
     test("absent verbs carry a reason", () => {
         for (const capabilities of Object.values(WORKER_CAPABILITIES)) {
             for (const [verb, reason] of Object.entries(capabilities.absentVerbs)) {

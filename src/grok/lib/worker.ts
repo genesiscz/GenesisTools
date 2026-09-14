@@ -1,10 +1,11 @@
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHomeFor, managedHomeSkillsPolicy } from "@genesiscz/utils/grok/worker-paths";
 import { logger } from "@genesiscz/utils/logger";
+import { accountPinRefusal } from "@genesiscz/utils/worker/capabilities";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
 import {
     DEFAULT_SURFACES,
@@ -13,6 +14,7 @@ import {
     surfacesFromFlags,
     type WorkerSurfaces,
 } from "@genesiscz/utils/worker/isolation";
+import { printWorkerTurn, type WorkerTurnReport } from "@genesiscz/utils/worker/turn-report";
 import { turnErrPath, turnLogPath } from "./paths";
 import { type GrokSessionMeta, GrokSessionStore } from "./store";
 import { type GrokTurnSummary, parseTurnLog } from "./stream";
@@ -70,6 +72,11 @@ export interface RunSessionOptions {
     workerHome?: string;
     auth?: GrokAuthMode;
     surfaces?: WorkerSurfaces;
+    /**
+     * Present only so it can be REFUSED. Grok has no account to pin, and both spawn doors pass
+     * whatever the user named here so the single guard below sees it.
+     */
+    account?: string;
 }
 
 export interface SteerSessionOptions {
@@ -363,6 +370,27 @@ async function runTurn(
     return { meta: updated, turn, summary, exitCode, stderr, logPath, errPath, worktree };
 }
 
+/**
+ * The session's sandbox, verified before the name is claimed.
+ *
+ * `--cwd` is mandatory on grok because the cwd IS the jail, so every invocation now types the
+ * path. An unchecked typo only failed inside `Bun.spawn` with a bare ENOENT, long after
+ * `createMeta` had reserved the name, which burned the name for a session that never started.
+ */
+export function resolveWorkerCwd(requested: string): string {
+    const cwd = resolve(requested);
+
+    if (!existsSync(cwd)) {
+        throw new Error(`--cwd ${cwd} does not exist. Name a directory the worker can run in.`);
+    }
+
+    if (!statSync(cwd).isDirectory()) {
+        throw new Error(`--cwd ${cwd} is not a directory.`);
+    }
+
+    return cwd;
+}
+
 export async function runSession(options: RunSessionOptions): Promise<TurnResult> {
     const store = new GrokSessionStore();
     // Everything that can fail deterministically has to fail BEFORE the claim.
@@ -370,13 +398,26 @@ export async function runSession(options: RunSessionOptions): Promise<TurnResult
     // leaves valid metadata for a session that never started: the next `run`
     // is rejected as already existing, and `steer` names a session id whose
     // first turn was never launched (PR #330 review).
+    //
+    // 🛑 The account refusal lives HERE, above the consuming call, not in one door. Grok has TWO
+    // spawn doors — `tools grok spawn` through the driver and the legacy `tools grok run --name`
+    // through the launcher — and a guard in the driver alone left the second one accepting an
+    // account (an invented one included) and billing whatever GROK_AUTH_PATH / XAI_API_KEY
+    // resolved to, which is the metered-key surprise the refusal exists to prevent.
+    const refusal = options.account === undefined ? undefined : accountPinRefusal("grok", options.account);
+
+    if (refusal) {
+        throw new Error(refusal);
+    }
+
     const promptArguments = promptArgs(options);
+    const cwd = resolveWorkerCwd(options.cwd);
     resolveGrokBinary();
 
     const meta: GrokSessionMeta = {
         name: options.name,
         sessionId: crypto.randomUUID(),
-        cwd: resolve(options.cwd),
+        cwd,
         workerHome: options.workerHome
             ? resolve(options.workerHome)
             : defaultWorkerHomeFor((options.surfaces ?? DEFAULT_SURFACES).skills),
@@ -414,4 +455,28 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
             : { ...(readOnly === meta.readOnly ? {} : { readOnly }), ...(surfacesChanged ? { surfaces } : {}) };
 
     return runTurn(store, { ...meta, readOnly, surfaces }, meta.turns + 1, args, modeChange);
+}
+
+/** The turn report a finished grok turn renders as, for the shared worker verbs. */
+export function grokTurnReport(result: TurnResult): WorkerTurnReport {
+    return {
+        backend: "grok",
+        name: result.meta.name,
+        turn: result.turn,
+        ended: result.summary.ended,
+        exitCode: result.exitCode,
+        report: result.summary.report,
+        stderr: result.stderr,
+        errPath: result.errPath,
+        toolCalls: result.summary.toolCalls,
+        // A read-only turn changes nothing by design; a replay has no snapshot to compare.
+        worktree:
+            result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
+        logPath: result.logPath,
+        transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+    };
+}
+
+export function printTurn(result: TurnResult): void {
+    printWorkerTurn(grokTurnReport(result));
 }

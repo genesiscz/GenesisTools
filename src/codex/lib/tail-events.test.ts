@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { planFollowRead, takeCompleteLines } from "./tail";
+import { planFollowRead, takeCompleteLines } from "./tail-events";
 
 describe("takeCompleteLines", () => {
     // The regression: a size snapshot cut a record in half, the half failed to

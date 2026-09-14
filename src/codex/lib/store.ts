@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { existsSync, readFileSync } from "node:fs";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { sessionEventsPath, sessionMetaPath, sessionsDir } from "./paths";
 
 const log = logger.child({ component: "codex:store" });
@@ -26,6 +25,25 @@ export interface CodexSessionMeta {
     accountName?: string;
     name: string;
     daemonPid: number;
+    /**
+     * The process that CLAIMED this name, held only between the claim and the daemon's first
+     * `writeMeta`.
+     *
+     * In that window `daemonPid` is still 0, and `isProcessAlive` rejects any pid `<= 0`, so a
+     * concurrent `spawn --name x` read the fresh claim as DEAD and overwrote it — the exact race
+     * the O_EXCL claim was added to close. Both fields are cleared once the real pid is recorded.
+     */
+    claimedByPid?: number;
+    /** When {@link claimedByPid} staked the name, so an abandoned claim cannot hold it forever. */
+    claimedAt?: string;
+    /**
+     * {@link claimedByPid}'s own command line, read when the claim was staked.
+     *
+     * A pid alone cannot tell "the process that claimed this name" from "an unrelated program the
+     * kernel gave that number to". Absent on records written before this field existed, and on
+     * platforms whose command line cannot be read — both then fall back to liveness alone.
+     */
+    claimedCommand?: string;
     appServerPid?: number;
     threadId?: string;
     activeTurnId?: string;
@@ -72,51 +90,54 @@ export function deriveSessionStatus(meta: CodexSessionMeta, now = Date.now(), st
     return "running";
 }
 
-export class CodexSessionStore {
+function isNonEmpty(value: unknown): value is string {
+    return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * The first field that would make the record unusable, or null.
+ *
+ * Deliberately shorter than the grok and claude lists: a codex session is driven through its
+ * daemon, so `cwd` and the name are the only two fields every verb needs before it can talk to
+ * it. Anything stricter would hide a live session whose daemon is the authority on its state.
+ */
+function firstInvalidField(meta: Partial<CodexSessionMeta> | null | undefined): string | null {
+    if (!isNonEmpty(meta?.name)) {
+        return "name";
+    }
+
+    if (!isNonEmpty(meta?.cwd)) {
+        return "cwd";
+    }
+
+    return null;
+}
+
+/**
+ * This was a third hand-written copy of the shared store, and in copying it lost `createMeta`'s
+ * O_EXCL claim: two concurrent spawns of one name both saw the name as free, both started a
+ * daemon, and the second overwrote the first's record, leaving the first daemon's pid
+ * unreachable. The event log on top is a genuine codex need, not drift, so it stays here.
+ */
+export class CodexSessionStore extends WorkerMetaStore<CodexSessionMeta> {
     private readonly lastEventSeq = new Map<string, number>();
 
+    constructor() {
+        super({
+            dir: sessionsDir,
+            metaPath: sessionMetaPath,
+            firstInvalidField,
+            label: "codex session",
+            title: "Codex session",
+            existsMessage: (name) =>
+                `Codex session '${name}' already exists. Use 'tools codex steer --name ${name}' or pick a new name.`,
+            log,
+        });
+    }
+
+    /** Kept for callers that predate the shared store. */
     ensureSessionsDir(): string {
-        const path = sessionsDir();
-        mkdirSync(path, { recursive: true });
-        return path;
-    }
-
-    async readMeta(name: string): Promise<CodexSessionMeta | null> {
-        const path = sessionMetaPath(name);
-        if (!existsSync(path)) {
-            return null;
-        }
-
-        try {
-            return SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as CodexSessionMeta;
-        } catch (err) {
-            log.warn({ err, path, name }, "failed to read codex session metadata");
-            return null;
-        }
-    }
-
-    writeMeta(meta: CodexSessionMeta): void {
-        this.ensureSessionsDir();
-        atomicWriteFileSync(sessionMetaPath(meta.name), SafeJSON.stringify(meta, null, 2));
-    }
-
-    async updateMeta(name: string, update: Partial<CodexSessionMeta>): Promise<CodexSessionMeta> {
-        const current = await this.readMeta(name);
-        if (!current) {
-            throw new Error(`Codex session not found: ${name}`);
-        }
-
-        const next = { ...current, ...update };
-        this.writeMeta(next);
-        return next;
-    }
-
-    async listNames(): Promise<string[]> {
-        const dir = this.ensureSessionsDir();
-        return readdirSync(dir)
-            .filter((file) => file.endsWith(".meta.json"))
-            .map((file) => file.slice(0, -".meta.json".length))
-            .sort();
+        return this.ensureDir();
     }
 
     appendEvent(name: string, event: Omit<CodexEventRecord, "seq" | "ts">): CodexEventRecord {

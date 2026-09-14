@@ -7,8 +7,10 @@ description: "CLAUDE ONLY, and only inside a handoff-to run. Picks the channel f
 
 > **🛑 Codex must never invoke this skill.** These plugin hooks and skills are portable, so a
 > Codex CLI or Codex Desktop session can see this file. It still does not apply. Codex has no
-> `Monitor` tool, so the receive-and-wake strategies below have no implementation there, and a
-> Codex worker that loads this reaches for a bus it cannot subscribe to. A Codex worker that is
+> `Monitor` tool, so it has no NONBLOCKING receive: the table below offers it only `login
+> --once`, which blocks the turn, and a protocol whose whole point is talking WHILE you work
+> cannot be built on that. (Reachable in blocking mode is not the same as workable — do not
+> read the ban as "the bus is unreachable from Codex".) A Codex worker that is
 > part of a swarm gets what it needs from the brief that `tools codex` and `gt:handoff-to` build
 > for it. Use the native Codex collaboration tools instead.
 >
@@ -276,7 +278,7 @@ On exit (signal, cap, or crash), the tool prints a `tools agents login ...` resu
 The CLI auto-detects the session in this order:
 
 1. `--session <id>` explicit
-2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok run` — the parent saying which swarm to join)
+2. `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION` (set by `tools codex spawn` / `tools grok spawn` — the parent saying which swarm to join)
 3. The host session id: `$CLAUDE_CODE_SESSION_ID`, `$CODEX_THREAD_ID`, `$GROK_SESSION_ID`, `$COPILOT_AGENT_SESSION_ID`. When several are set (a worker inherits its parent's), the one whose swarm ALREADY EXISTS wins, so a worker joins its parent instead of starting an orphan swarm. If none exists, the first present id creates one.
 4. Single session active (feed touched) in the last 60 seconds
 5. Otherwise: a friendly error asking for `--session` or one of those env vars

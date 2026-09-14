@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -24,6 +24,41 @@ describe("runSession claims a name only once it can start", () => {
 
             expect(existsSync(sessionMetaPath("reviewer"))).toBe(false);
             expect(new GrokSessionStore().readMeta("reviewer")).toBeNull();
+        });
+    });
+
+    test("a --cwd that does not exist fails without claiming the name", async () => {
+        // `--cwd` is mandatory on grok (the cwd IS the sandbox), so every invocation now types
+        // the path. An unchecked typo reached `Bun.spawn`, which throws ENOENT AFTER `createMeta`
+        // has reserved the name: the session never starts and the name is burned for good.
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-claim-cwd-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            await expect(
+                runSession({
+                    name: "typo",
+                    cwd: join(tmpdir(), "gt-grok-definitely-not-here-xyz"),
+                    prompt: "do the thing",
+                    readOnly: false,
+                })
+            ).rejects.toThrow(/does not exist/);
+
+            expect(existsSync(sessionMetaPath("typo"))).toBe(false);
+            expect(new GrokSessionStore().readMeta("typo")).toBeNull();
+        });
+    });
+
+    test("a --cwd that is a FILE is refused too, because grok chdirs into it", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-grok-claim-file-"));
+        const file = join(home, "brief.md");
+        writeFileSync(file, "not a directory");
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            await expect(
+                runSession({ name: "afile", cwd: file, prompt: "do the thing", readOnly: false })
+            ).rejects.toThrow(/not a directory/);
+
+            expect(new GrokSessionStore().readMeta("afile")).toBeNull();
         });
     });
 });

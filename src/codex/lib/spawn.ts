@@ -5,9 +5,10 @@ import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { WorkerNameTakenError } from "@genesiscz/utils/worker/meta-store";
 import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { computerUseOverrides } from "./computer-use";
@@ -68,7 +69,7 @@ export function resolveWritePolicy(
  * block respawn forever with "already active" — verify the command line
  * matches the `bun daemon.ts --name <name>` shape before trusting it.
  */
-function isCodexDaemonPid(pid: number, name: string): boolean {
+export function isCodexDaemonPid(pid: number, name: string): boolean {
     const identity = classifyPid(
         pid,
         (command) => command.includes(`--name ${name}`) && (command.includes("daemon") || command.includes("codex"))
@@ -85,6 +86,102 @@ function isCodexDaemonPid(pid: number, name: string): boolean {
     return identity.status === "live" || identity.status === "unverified";
 }
 
+/** How long a claim with no daemon pid yet may hold the name before it reads as abandoned. */
+const CLAIM_GRACE_MS = 30_000;
+
+/**
+ * True while the claiming process still holds a name whose daemon has not started yet.
+ *
+ * Between `claimSessionName` and the `writeMeta` that records the real pid, `daemonPid` is 0,
+ * which `classifyPid` calls "dead". Without this the window is readable as a free name and a
+ * concurrent spawn overwrites the claim, stranding the first daemon with nothing pointing at it.
+ * The age bound means a process killed inside the window cannot hold the name forever.
+ */
+export function claimIsLive(meta: CodexSessionMeta): boolean {
+    if (meta.daemonPid > 0 || meta.status !== "starting" || !meta.claimedByPid) {
+        return false;
+    }
+
+    const age = Date.now() - new Date(meta.claimedAt ?? 0).getTime();
+
+    if (age < 0 || age >= CLAIM_GRACE_MS) {
+        return false;
+    }
+
+    // The same pid-reuse problem `isCodexDaemonPid` was written for: liveness alone let a
+    // recycled claimant pid hold the name for the whole grace window. `claimedCommand` is the
+    // claimant's own command line, so a mismatch is a different program and the name is free.
+    // A record without it, or a platform that cannot read a command line, classifies as
+    // "unverified" and keeps the old liveness-only answer.
+    const identity = classifyPid(meta.claimedByPid, meta.claimedCommand);
+
+    return identity.status !== "dead" && identity.status !== "foreign";
+}
+
+/** A record whose daemon is still the live owner of the name. */
+export function isActiveCodexSession(meta: CodexSessionMeta, name: string): boolean {
+    if (meta.status === "closed" || meta.status === "failed") {
+        return false;
+    }
+
+    return claimIsLive(meta) || isCodexDaemonPid(meta.daemonPid, name);
+}
+
+/**
+ * Who holds the name, for the "already active" error.
+ *
+ * In the claim window `daemonPid` is 0 by construction, so naming it printed
+ * `already active (pid 0)` — a pid that cannot exist, while the one identity that mattered went
+ * unmentioned.
+ */
+function activeHolder(meta: CodexSessionMeta): string {
+    if (meta.daemonPid > 0) {
+        return `pid ${meta.daemonPid}`;
+    }
+
+    return `claimed by pid ${meta.claimedByPid}, starting`;
+}
+
+/**
+ * Claim the session name, or say who holds it.
+ *
+ * The claim is one O_EXCL syscall. The read-then-write pair this replaced let two concurrent
+ * `tools codex spawn --name x` both see the name as free, both start a daemon, and the second
+ * overwrite the first's record — the first daemon then ran with nothing pointing at its pid.
+ * Reclaiming a name whose session is closed, failed or whose daemon is gone still goes through
+ * a write, so two simultaneous reclaims of one DEAD name remain last-writer-wins.
+ */
+export function claimSessionName(store: CodexSessionStore, meta: CodexSessionMeta): CodexSessionMeta {
+    // Stamped HERE rather than by the caller, so the record that reaches the store always carries
+    // the claim — the fields and the O_EXCL write are one unit, and a test can drive both at once.
+    const command = readProcessCommand(process.pid);
+    const claimed: CodexSessionMeta = {
+        ...meta,
+        claimedByPid: process.pid,
+        claimedAt: new Date().toISOString(),
+        ...(command ? { claimedCommand: command } : {}),
+    };
+
+    try {
+        store.createMeta(claimed);
+        return claimed;
+    } catch (err) {
+        if (!(err instanceof WorkerNameTakenError)) {
+            throw err;
+        }
+    }
+
+    const current = store.readMeta(claimed.name);
+
+    if (current && isActiveCodexSession(current, claimed.name)) {
+        throw new Error(`Codex session "${claimed.name}" is already active (${activeHolder(current)})`);
+    }
+
+    store.writeMeta(claimed);
+
+    return claimed;
+}
+
 export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSessionMeta> {
     const account = options.account
         ? await CodexAccountBinding.create(options.account, { allowRefresh: true })
@@ -92,13 +189,9 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
     await account?.tokens();
     const store = new CodexSessionStore();
     const existing = await store.readMeta(options.name);
-    if (
-        existing &&
-        existing.status !== "closed" &&
-        existing.status !== "failed" &&
-        isCodexDaemonPid(existing.daemonPid, options.name)
-    ) {
-        throw new Error(`Codex session "${options.name}" is already active (pid ${existing.daemonPid})`);
+
+    if (existing && isActiveCodexSession(existing, options.name)) {
+        throw new Error(`Codex session "${options.name}" is already active (${activeHolder(existing)})`);
     }
 
     // Any host session works as the parent swarm, not just Claude Code — grok and
@@ -168,7 +261,7 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         codexVersion,
         pendingApprovals: {},
     };
-    store.writeMeta(meta);
+    claimSessionName(store, meta);
 
     const proc = (() => {
         try {
@@ -189,6 +282,10 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSes
         }
     })();
     proc.unref();
+    // The real pid supersedes the claim, and `meta` never carried the claim fields —
+    // `claimSessionName` stamped them onto its own copy. Writing this one back drops them, which
+    // is the point: keeping them would hold the name on the claimant's liveness after the daemon
+    // it started had exited.
     store.writeMeta({ ...meta, daemonPid: proc.pid });
 
     const deadline = Date.now() + 15_000;

@@ -7,7 +7,9 @@
  * a missing capability is declared, never emulated or silently degraded.
  */
 
-export type WorkerBackend = "codex" | "grok" | "claude";
+import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+
+export type WorkerBackend = AccountProviderAlias;
 
 export interface WorkerCapabilities {
     /** Mid-turn approval channel (pause + approve/deny) or none at all. */
@@ -22,10 +24,25 @@ export interface WorkerCapabilities {
     steering: "mid-turn" | "between-turns";
     /** Whether a credential/account must be named explicitly at spawn. */
     accountRequired: boolean;
+    /**
+     * Set when the backend cannot pin an account AT ALL, carrying the reason and the fix.
+     *
+     * `accountRequired: false` used to cover two different worlds: codex, where `--account` is
+     * optional and honoured, and grok, where it could only ever be a silent no-op. Every door
+     * quotes this one string, so the hidden flag's description and the refusal cannot drift.
+     */
+    accountUnsupported?: string;
     /** Verbs the GenesisTools CLI exposes for this backend. */
     verbs: string[];
     /** Verbs deliberately absent, with the reason. */
     absentVerbs: Record<string, string>;
+}
+
+/** The sentence a backend that cannot pin an account answers `--account <name>` with. */
+export function accountPinRefusal(backend: WorkerBackend, account: string): string | undefined {
+    const reason = WORKER_CAPABILITIES[backend].accountUnsupported;
+
+    return reason === undefined ? undefined : `--account ${account} cannot be honoured: ${reason}`;
 }
 
 export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
@@ -60,7 +77,9 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
         structuredOutput: ["streaming-json (flat NDJSON)"],
         steering: "between-turns",
         accountRequired: false,
-        verbs: ["run", "steer", "read", "tail", "status", "stop", "sessions"],
+        accountUnsupported:
+            "grok pins an auth FILE, not an account, so the flag would silently do nothing. Pass --auth subscription and point GROK_AUTH_PATH at that account's auth.json (references/grok.md).",
+        verbs: ["spawn", "steer", "read", "tail", "status", "stop", "interrupt", "sessions"],
         absentVerbs: {
             approve: "grok has no approval channel (approvals: none) — the cwd jail and the brief are the only brakes",
             deny: "grok has no approval channel (approvals: none)",
@@ -80,6 +99,7 @@ export const WORKER_CAPABILITIES: Record<WorkerBackend, WorkerCapabilities> = {
             "worker tail",
             "worker status",
             "worker stop",
+            "worker interrupt",
             "worker sessions",
         ],
         absentVerbs: {

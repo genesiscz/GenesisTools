@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { matchRunningTurnLine, runningTurnPids } from "./ps";
+import { matchRunningTurnLine, runningTurnPids, signalRunningTurns } from "./ps";
 
 const UUID = "9f1c2b34-5d6e-47a8-9012-3456789abcde";
 
@@ -68,5 +68,30 @@ describe("matchRunningTurnLine", () => {
 describe("runningTurnPids", () => {
     test("refuses a marker too short to identify a session", async () => {
         expect(await runningTurnPids("abc", /grok/)).toEqual([]);
+    });
+});
+
+describe("signalRunningTurns", () => {
+    test("one pid that already exited does not end the sweep", () => {
+        // `process.kill` throws ESRCH for a turn that ended between the `ps` read and the signal.
+        // Letting that propagate left every LATER pid in the list running while the caller still
+        // printed its "stopped the running turn" confirmation.
+        const gone = 999_991;
+        const result = signalRunningTurns(
+            [
+                { pid: gone, command: "/Users/x/.grok/bin/grok -p --session-id ..." },
+                { pid: process.pid, command: "this test process" },
+            ],
+            // SIGCONT on ourselves is a no-op under the default disposition; SIGTERM would end the
+            // test runner, which proves nothing.
+            "SIGCONT"
+        );
+
+        expect(result.signalled).toEqual([process.pid]);
+        expect(result.skipped).toEqual([{ pid: gone, code: "ESRCH" }]);
+    });
+
+    test("an empty list signals nothing and says so", () => {
+        expect(signalRunningTurns([], "SIGCONT")).toEqual({ signalled: [], skipped: [] });
     });
 });

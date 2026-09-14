@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { shellSingleQuote } from "@app/claude/lib/shell-quote";
 import { env } from "@genesiscz/utils/env";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { spawnWorker, turnArgs } from "./worker";
 
 describe("turnArgs", () => {
@@ -69,7 +69,7 @@ describe.skipIf(process.platform === "win32")("spawnWorker delivers the prompt o
         const fake = join(bin, "claude");
         writeFileSync(
             fake,
-            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellSingleQuote(argvPath)}\ncat > ${shellSingleQuote(stdinPath)}\n`,
+            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argvPath)}\ncat > ${shellQuote(stdinPath)}\n`,
             { mode: 0o755 }
         );
         chmodSync(fake, 0o755);
