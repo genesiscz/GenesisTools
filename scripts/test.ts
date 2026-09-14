@@ -226,6 +226,21 @@ const LOAD_SENSITIVE_FILES = [
  * orphaned dev-dashboard agents, dozens accumulated over days. The wrapper is
  * the single entrypoint, so the excludes live here.
  */
+/**
+ * Excludes that hold even for an explicit path argument.
+ *
+ * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
+ * run the dev-dashboard tree on purpose. But a `*.spec.ts` can never be a bun test in this
+ * repo, so collecting one is always a mistake rather than a choice: bun errors with
+ * "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
+ * `this.skip`, and that reads as a suite failure for a file that is green under its own
+ * runner. Verified 2026-09-15: 39 `*.spec.ts` files, NONE importing `bun:test`.
+ *
+ * Declared once and spread into `DEFAULT_EXCLUDES` below, so the default run and the
+ * explicit-path run can never disagree about it.
+ */
+const ALWAYS_EXCLUDES = ["**/*.spec.ts"];
+
 const DEFAULT_EXCLUDES = [
     "**/dashboard/**",
     "**/dev-dashboard/**",
@@ -244,7 +259,7 @@ const DEFAULT_EXCLUDES = [
     // WDIO and NONE imports `bun:test` (checked with a positive control on two real bun
     // tests, because the first attempt at that check was itself broken and returned 0 for
     // both).
-    "**/*.spec.ts",
+    ...ALWAYS_EXCLUDES,
 ];
 
 /**
@@ -465,18 +480,6 @@ if (profileIndex !== -1) {
     const { jobs, roots } = profileArgs(args, Math.min(8, cpus().length));
     finish(await runProfile(jobs, roots));
 }
-
-/**
- * Excludes that hold even for an explicit path argument.
- *
- * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
- * run the dev-dashboard tree on purpose. But a `*.spec.ts` can never be a bun test in this
- * repo, so collecting one is always a mistake rather than a choice: bun errors with
- * "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
- * `this.skip`, and that reads as a suite failure for a file that is green under its own
- * runner. Verified 2026-09-15: 39 `*.spec.ts` files, NONE importing `bun:test`.
- */
-const ALWAYS_EXCLUDES = ["**/*.spec.ts"];
 
 if (hasExplicitPaths) {
     finish(await runBunTest([...args, ...ALWAYS_EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`)]));
