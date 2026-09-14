@@ -1,12 +1,14 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
+import { registerAskCommand } from "./commands/ask";
 import { registerConfigCommand } from "./commands/config";
 import { registerLogCommand } from "./commands/log";
 import { registerRecordCommand } from "./commands/record";
 import { registerTailCommand } from "./commands/tail";
 
 const program = new Command();
-program.name("question").description("Capture & review Q→A fired at agents mid-session");
+program.name("question").description("Ask the user a blocking question, and capture & review Q→A mid-session");
+registerAskCommand(program);
 registerRecordCommand(program);
 registerLogCommand(program);
 registerTailCommand(program);
