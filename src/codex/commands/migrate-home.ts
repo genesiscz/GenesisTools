@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { expandTilde } from "@genesiscz/utils/paths";
+import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
 import * as p from "@genesiscz/utils/prompts/p";
 import {
     createBoxTable,
@@ -49,6 +50,29 @@ function busyCell(busy: BusyReport): string {
     }
 
     return formatDotStatus("warn", "unknown");
+}
+
+/**
+ * State databases that REFUSED a name write, which is a failure and must not exit 0.
+ *
+ * Deliberately excludes `stateSkippedBusy`: a database a live Codex holds is skipped on purpose,
+ * the rollout copy beside it still succeeded, and the remedy is printed. That is a normal outcome,
+ * not an error.
+ */
+function failedNameWrites(report: MigrateHomeReport): number {
+    return report.sessionNames.reduce((total, names) => total + names.stateFailed, 0);
+}
+
+/**
+ * The exit code, set at EVERY door this command can leave through.
+ *
+ * Written once per report instead of once per branch: the first version of the check sat below
+ * the early return that ends an applied or non-interactive run, so `--apply` printed
+ * "1 state database(s) refused the write" and still exited 0, and only `--json` and the
+ * interactive confirm ever reached it.
+ */
+function markExitCode(report: MigrateHomeReport): void {
+    process.exitCode = report.refusals.length > 0 || failedNameWrites(report) > 0 ? 1 : 0;
 }
 
 function renderReport(report: MigrateHomeReport): void {
@@ -129,10 +153,54 @@ function renderReport(report: MigrateHomeReport): void {
         }
     }
 
-    if (report.backups.sessions || report.backups.globalState) {
+    // A run whose only outcome was "skipped, the database is busy" or "the write failed" used to
+    // match none of these and print nothing at all, which reads exactly like "nothing needed
+    // naming". Both now keep the section on screen.
+    const carried = report.sessionNames.filter(
+        (names) => names.added > 0 || names.stateAdded > 0 || names.stateSkippedBusy > 0 || names.stateFailed > 0
+    );
+
+    if (carried.length > 0) {
+        renderCliSection("Thread names");
+
+        for (const names of carried) {
+            // `names.written` answers "did this source's carry write anything", which a run whose
+            // only outcome was a busy skip or a refused write answers with `false` — and labelling
+            // that "(dry run)" under an "applied" header contradicts the very rows below it. The
+            // run's own mode is the honest source for the label.
+            const dry = report.applied ? "" : pc.dim(" (dry run)");
+            renderCliKeyRow("source", names.home, 18);
+            renderCliKeyRow("session index", `${names.added} name(s)${dry}`, 18);
+            renderCliKeyRow("codex state", `${names.stateAdded} thread(s) named${dry}`, 18);
+
+            if (names.stateSkippedBusy > 0) {
+                renderCliKeyRow(
+                    "skipped (busy)",
+                    pc.yellow(
+                        `${names.stateSkippedBusy} state database(s) a live process holds — close Codex on the destination and rerun; the carry is idempotent`
+                    ),
+                    18
+                );
+            }
+
+            if (names.stateFailed > 0) {
+                renderCliKeyRow("failed", pc.red(`${names.stateFailed} state database(s) refused the write`), 18);
+            }
+        }
+    }
+
+    if (report.backups.sessions || report.backups.globalState || report.backups.state?.length) {
         renderCliSection("Backups");
         renderCliKeyRow("sessions", report.backups.sessions ?? "—", 14);
         renderCliKeyRow("desktop state", report.backups.globalState ?? "—", 14);
+
+        // The thread-name merge writes into these, and the README sends the reader here for the
+        // rollback path. Rendering only the two rows above meant a run whose ONLY backup was a
+        // state database printed no Backups section at all.
+        for (const path of report.backups.state ?? []) {
+            renderCliKeyRow("codex state", path, 14);
+        }
+
         renderCliKeyRow("source", "untouched; the copy never unlinks", 14);
     }
 
@@ -163,10 +231,15 @@ function renderReport(report: MigrateHomeReport): void {
     renderCliKeyRow("provenance", report.provenanceNote, 12);
 }
 
-/** The prompts this command asks. Injected so the order of the questions is testable. */
+/** The prompts this command asks, and the one probe a test must not run for real. */
 export interface MigrateHomeInteraction {
     interactive(): boolean;
     confirm(options: { message: string; initialValue: boolean; danger?: boolean }): Promise<boolean>;
+    /**
+     * Injected by tests. The real probe spawns `lsof`, which takes seconds under a parallel suite
+     * and timed the question-order test out at exactly its 5 s budget while passing on its own.
+     */
+    inspectOpenFiles?: (query: OpenFilesQuery) => OpenFilesResult;
 }
 
 const terminalInteraction: MigrateHomeInteraction = {
@@ -181,7 +254,11 @@ export async function runMigrateHome(
     const destination = expandTilde(options.to ?? join(homedir(), ".codex"));
     const from = homeList(options.from);
     const interactive = interaction.interactive();
-    const base: MigrateHomeOptions = { from: from.length > 0 ? from : undefined, to: destination };
+    const base: MigrateHomeOptions = {
+        from: from.length > 0 ? from : undefined,
+        to: destination,
+        inspectOpenFiles: interaction.inspectOpenFiles,
+    };
 
     let desktop = options.desktop === true;
     let archiveSource = options.archiveSource === true;
@@ -224,23 +301,39 @@ export async function runMigrateHome(
 
     if (options.json) {
         out.result(report);
-        process.exitCode = report.refusals.length > 0 ? 1 : 0;
+        markExitCode(report);
         return;
     }
 
     renderReport(report);
+    markExitCode(report);
 
     if (report.refusals.length > 0) {
-        process.exitCode = 1;
         return;
     }
 
-    if (report.applied || report.totals.toCopy === 0 || !interactive) {
+    // Copying rollouts is not the only work this command does. Gating on `toCopy` alone meant the
+    // ORDINARY second run — rollouts already in the destination, the source having since named
+    // them — printed the pending names and then exited without offering to write them. A
+    // confirmed `--desktop` merge was stranded the same way.
+    const pendingNames = report.sessionNames.reduce((total, names) => total + names.added + names.stateAdded, 0);
+    const pendingDesktop = report.desktop.reduce(
+        (total, desktop) => total + desktop.projectsAdded.length + desktop.assignmentsAdded,
+        0
+    );
+
+    if (report.applied || !interactive || (report.totals.toCopy === 0 && pendingNames === 0 && pendingDesktop === 0)) {
         return;
     }
 
+    const work = [
+        report.totals.toCopy > 0 ? `copy ${report.totals.toCopy} rollout(s)` : "",
+        pendingNames > 0 ? `carry ${pendingNames} name(s)` : "",
+        pendingDesktop > 0 ? `merge ${pendingDesktop} desktop entr(ies)` : "",
+    ].filter(Boolean);
+    const sentence = work.join(", ");
     const proceed = await interaction.confirm({
-        message: `Copy ${report.totals.toCopy} rollout(s) into ${report.destination} now?`,
+        message: `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)} into ${report.destination} now?`,
         initialValue: false,
         danger: true,
     });
@@ -255,9 +348,9 @@ export async function runMigrateHome(
     renderReport(report);
     log.info({ totals: report.totals, applied: report.applied }, "migrate-home finished");
 
-    if (report.refusals.length > 0) {
-        process.exitCode = 1;
-    }
+    // A state database that refused the write leaves `stateAdded` at 0, which is indistinguishable
+    // from "nothing needed naming" unless the exit code says otherwise.
+    markExitCode(report);
 }
 
 export function registerMigrateHomeCommand(program: Command): void {
@@ -273,5 +366,7 @@ export function registerMigrateHomeCommand(program: Command): void {
         .option("--desktop", "Also merge .codex-global-state.json projects and thread assignments")
         .option("--archive-source", "Rename each source sessions/ to sessions.migrated-<stamp> after a verified copy")
         .option("--json", "Emit the machine-readable report")
-        .action(runMigrateHome);
+        // Commander calls the handler with (options, command), and a bare `runMigrateHome` took
+        // that Command as its `interaction`, so every CLI run died on `interaction.interactive`.
+        .action((options: MigrateHomeCliOptions) => runMigrateHome(options));
 }
