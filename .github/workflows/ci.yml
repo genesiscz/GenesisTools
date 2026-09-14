@@ -145,6 +145,15 @@ jobs:
           # vs 34371404874/34371445859; reverting the toon bump changed nothing).
           # A CI VM is discarded after the job, so there is no orphan to guard against.
           GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS: "1"
+          # DevDashboard ships its own runners (bun for the mobile units, WDIO for
+          # the Appium specs, vitest for the cloud). bun's discovery swallows all
+          # three, so the 34 WDIO/Playwright specs error on an undefined `this.skip`
+          # and the cloud files cannot load better-sqlite3. Those phantoms are cheap;
+          # the 97 files together are not — they took the ubuntu job from 218.83s to
+          # 250.07s against a 4-minute budget, and a job killed by the budget writes
+          # no `[test] suite complete` marker, which is the only thing that reddens
+          # this workflow. The tree runs locally and under its own runners.
+          GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD: "1"
         run: |
           set -o pipefail
           bun run test 2>&1 | tee "test-${{ runner.os }}.log"
@@ -303,6 +312,51 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dashboard-web
+
+      # DevDashboard is the same gap src/dashboard had, one level worse: the
+      # step above sets GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD=1, so the whole
+      # tree this branch adds is excluded from the discovery suite. That is
+      # correct there — bun's discovery swallows the cloud's vitest files and
+      # the WDIO specs, and the 97 files cost the ubuntu job 31s against a
+      # 4-minute budget — but it left the new auth/billing/store guarantees
+      # with no CI coverage at all. These steps give them their own runners
+      # instead, the same shape as the three src/dashboard steps above.
+      # Measured locally: shared 11 tests/16ms, cloud vitest 39 tests/2.0s,
+      # mobile 282 tests/14.7s. Cheap because each suite runs under the
+      # runner it was written for.
+      # ⚠️ test:dd-mobile is `bun test src/`, deliberately serial. The mobile
+      # tree deadlocks under scripts/test.ts --parallel (prints the 16x banner,
+      # never writes `[test] suite complete`); do not "optimize" it onto the
+      # parallel runner.
+      - name: Install DevDashboard cloud (frozen lockfile)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: bun run install:dd-cloud
+
+      - name: TypeScript check (DevDashboard cloud)
+        if: runner.os == 'Linux'
+        timeout-minutes: 3
+        run: bun run typecheck:dd-cloud
+
+      - name: Tests (DevDashboard cloud — shared + vitest)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: bun run test:dd-cloud
+
+      - name: Install DevDashboard mobile (frozen lockfile)
+        if: runner.os == 'Linux'
+        timeout-minutes: 8
+        run: bun run install:dd-mobile
+
+      - name: TypeScript check (DevDashboard mobile)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: bun run typecheck:dd-mobile
+
+      - name: Tests (DevDashboard mobile — unit, serial)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: bun run test:dd-mobile
 
       - name: TypeScript check
         if: runner.os == 'Linux'
