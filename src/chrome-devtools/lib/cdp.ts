@@ -51,7 +51,10 @@ export class Conn {
         this.ws = new WebSocket(wsUrl);
         this.ready = new Promise((resolve, reject) => {
             this.ws.onopen = () => resolve();
-            this.ws.onerror = (e) => reject(e);
+            // A raw ErrorEvent reaches callers as "[object Event]" once they stringify
+            // it, so the one thing that went wrong — the socket never opened — is the
+            // one thing the message does not say.
+            this.ws.onerror = () => reject(new Error(`CDP socket did not open: ${wsUrl}`));
         });
         this.closed = new Promise((resolve) => {
             const finish = () => {
@@ -370,16 +373,42 @@ export interface CdpProbe {
     pages: { title?: string; url: string }[];
 }
 
+/**
+ * `/json/version` only: is this port answering at all, and as what?
+ *
+ * Separate from `probe()` because the two questions have different failure modes. A
+ * stalled `/json/list` says nothing about whether the browser is up, and a caller that
+ * only needs "is it alive" must not be told "no" because the tab list timed out.
+ */
+export async function browserVersion(port: number, opts: { signal?: AbortSignal } = {}): Promise<string | null> {
+    try {
+        const r = await fetch(`http://127.0.0.1:${port}/json/version`, {
+            signal: opts.signal ?? AbortSignal.timeout(1200),
+        });
+        const v = (await r.json()) as { Browser?: string };
+
+        return v.Browser ?? "unknown";
+    } catch (err) {
+        log.debug({ err, port }, "/json/version did not answer on this port");
+
+        return null;
+    }
+}
+
 /** Is this port a live CDP endpoint, and what is open on it? null when nothing answers. */
 export async function probe(port: number): Promise<CdpProbe | null> {
+    const browser = await browserVersion(port);
+
+    if (browser === null) {
+        return null;
+    }
+
     try {
-        const r = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1200) });
-        const v = (await r.json()) as { Browser?: string };
         // The list fetch needs its own timeout: /json/version answering while
         // /json/list stalls would otherwise hang every inventory-based command.
         const list = (await targets(port, { signal: AbortSignal.timeout(1200) })).filter((t) => t.type === "page");
 
-        return { port, browser: v.Browser ?? "unknown", pages: list };
+        return { port, browser, pages: list };
     } catch (err) {
         log.debug({ err, port }, "CDP probe found nothing on this port");
 

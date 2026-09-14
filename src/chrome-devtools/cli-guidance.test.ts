@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { captureDir } from "./lib/paths.ts";
 
 /** The junior-proof CLI contract: every wrong invocation teaches the right one. */
@@ -119,6 +120,28 @@ describe("scaffold CLI", () => {
     });
 });
 
+describe("net-panel CLI", () => {
+    test("refuses to guess which panel when --match is absent", async () => {
+        const r = run(["net-panel", "--port", String(await findFreePort())]);
+        expect(r.code).toBe(1);
+        expect(r.text).toContain("net-panel needs --match");
+        expect(r.text).toContain("targets");
+    });
+
+    test("a dead endpoint is named, not dumped as a CDP stack trace", async () => {
+        // A port the OS just reported free, rather than a constant that some other
+        // parallel test or stray listener could be answering /json/list on.
+        const port = await findFreePort();
+        const r = run(["net-panel", "--port", String(port), "--match", "example.com"]);
+
+        expect(r.code).toBe(1);
+        expect(r.text).toContain(`nothing is answering CDP on port ${port}`);
+        expect(r.text).toContain("read at browser STARTUP");
+        // The raw failure used to reach the user as a cdp.ts frame.
+        expect(r.text).not.toContain("lib/cdp.ts:");
+    });
+});
+
 describe("help completeness", () => {
     // Per-verb markers: a flag or guidance line that only that verb's help
     // carries — a length check would pass on any truncated or generic help.
@@ -130,15 +153,21 @@ describe("help completeness", () => {
         scaffold: ["--recipe <recipe>", "Recipes"],
         mcp: ["take_snapshot", "Examples:"],
         attach: ["read at browser STARTUP", "--port <n>"],
+        "net-panel": ["panel NetworkLog", "--full-urls", "resolved by TITLE"],
+        restart: ["--profile-directory <dir>", "beforeunload", "--force"],
     };
 
-    test("every verb's --help carries its own flags and guidance", () => {
-        for (const [verb, markers] of Object.entries(HELP_MARKERS)) {
-            const r = run([verb, "--help"]);
-            expect(r.code).toBe(0);
-            for (const marker of markers) {
-                expect(r.text).toContain(marker);
-            }
+    // One `bun index.ts <verb> --help` spawn costs ~0.5s. Looping every verb inside a
+    // SINGLE test made the case cost grow with the verb count, so each added verb walked
+    // it closer to the 5s default. One test per verb is one spawn per case instead, so
+    // the budget stops depending on how many verbs the tool has.
+    const HELP_CASES: [verb: string, markers: string[]][] = Object.entries(HELP_MARKERS);
+
+    test.each(HELP_CASES)("%s --help carries its own flags and guidance", (verb, markers) => {
+        const r = run([verb, "--help"]);
+        expect(r.code).toBe(0);
+        for (const marker of markers) {
+            expect(r.text).toContain(marker);
         }
     });
 });

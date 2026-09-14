@@ -30,10 +30,23 @@ export const COLD_PROFILE_TIMEOUT_MS = 30_000;
 /** Chromium launch flags. Exported for tests: the --user-data-dir rule is what keeps `open` off the real profile. */
 export function launchArgs(
     port: number,
-    opts: { fresh?: boolean; extension?: string; userDataDir?: string; disposableProfile?: boolean }
+    opts: {
+        fresh?: boolean;
+        extension?: string;
+        userDataDir?: string;
+        disposableProfile?: boolean;
+        profileDirectory?: string;
+    }
 ): string[] {
     const args = [`--remote-debugging-port=${port}`, "--no-first-run", "--no-default-browser-check"];
     const explicitDir = opts.userDataDir !== undefined;
+
+    if (opts.profileDirectory) {
+        // Naming the profile is what keeps the "Who's using …?" picker shut on a
+        // multi-profile browser. It selects a directory INSIDE the user-data-dir,
+        // so it composes with every other profile flag rather than replacing one.
+        args.push(`--profile-directory=${opts.profileDirectory}`);
+    }
 
     if (opts.fresh || opts.extension || explicitDir) {
         args.push(`--user-data-dir=${opts.userDataDir ?? freshProfileDir(port)}`);
@@ -102,6 +115,8 @@ export interface LaunchCdpOpts {
      * a directory the launcher did not create is assumed to hold credentials.
      */
     disposableProfile?: boolean;
+    /** Profile dir inside the user-data-dir, e.g. "Default" / "Profile 1". Keeps the profile picker shut. */
+    profileDirectory?: string;
     timeoutMs?: number;
     /** Own the browser's stdio and write it here. Required to get a pid back, and to see WHY a launch failed. */
     logPath?: string;
@@ -164,6 +179,7 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
         extension: opts.extension,
         userDataDir: opts.userDataDir,
         disposableProfile: opts.disposableProfile,
+        profileDirectory: opts.profileDirectory,
     });
     const url = opts.url ?? "about:blank";
     let pid: number | null = null;

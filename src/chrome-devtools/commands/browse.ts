@@ -1,9 +1,19 @@
 /** open / restart / targets — getting a CDP endpoint to exist, on any platform. */
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { makeMatcher, targets } from "../lib/cdp.ts";
+import { browserVersion, makeMatcher, targets } from "../lib/cdp.ts";
 import { CdpLaunchError, launchCdpBrowser } from "../lib/launch.ts";
 import { BROWSER_APPS, BROWSERS, browserById, listRunningBrowsers, quitBrowser } from "../lib/resolve-attach.ts";
+import {
+    formatVerification,
+    isSafeProfileDirectory,
+    QUIT_DEADLINE_MS,
+    QUIT_NOTICE_EVERY_MS,
+    resolveLastUsedProfile,
+    restartSucceeded,
+    slowQuitNote,
+    verifyRestart,
+} from "../lib/restart.ts";
 import { portOf, resolvePort, suggest, withPort } from "./shared.ts";
 
 /**
@@ -119,7 +129,28 @@ export function registerBrowse(program: Command): void {
         .argument("[url]", "url to open after relaunch", "about:blank")
         .option("--browser <name>", BROWSER_IDS, "chrome")
         .option("--force", "if quit sticks, force-kill (ask the user first)")
-        .action(async (url: string, opts: OpenOpts & { force?: boolean }) => {
+        .option(
+            "--profile-directory <dir>",
+            "relaunch into this profile dir (default: the browser's own profile.last_used, which keeps the \"Who's using …?\" picker shut)"
+        )
+        .addHelpText(
+            "after",
+            `
+A slow quit is NOT a failed quit. A page with a beforeunload handler makes the
+browser ask the user to confirm before it closes, which can hold the process for
+tens of seconds. This verb polls for real exit for ${Math.round(QUIT_DEADLINE_MS / 1000)}s and only then
+mentions --force, because force-killing a browser that is already shutting down
+cleanly is what costs you session restore.
+
+On a multi-profile browser the relaunch would otherwise open the profile picker
+("Who's using …?"). The profile is read from the browser's own Local State and
+passed as --profile-directory, so no picker appears and no Accessibility grant
+is needed. If one appears anyway it is reported with a dismissal command.
+
+Every run ends with a verification block: whether the port answers CDP, how many
+page targets exist, and whether a picker is still open.`
+        )
+        .action(async (url: string, opts: OpenOpts & { force?: boolean; profileDirectory?: string }) => {
             const { id, name } = browserDefOf(opts.browser);
             const def = browserById(id);
             const port = portOf(opts);
@@ -129,17 +160,69 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
+            if (opts.profileDirectory !== undefined && !isSafeProfileDirectory(opts.profileDirectory)) {
+                out.log.error(
+                    `--profile-directory '${opts.profileDirectory}' is not a plain profile directory name (e.g. Default, "Profile 1").`
+                );
+                process.exit(1);
+            }
+
+            const profile = opts.profileDirectory
+                ? { directory: opts.profileDirectory, reason: null }
+                : resolveLastUsedProfile({ browser: id });
+
+            if (profile.directory) {
+                out.log.info(`profile: ${profile.directory} (no picker will open)`);
+            } else {
+                out.log.info(
+                    `profile: not resolved (${profile.reason}) — a multi-profile ${name} may show its picker after relaunch.`
+                );
+            }
+
             out.log.info(`quitting ${name} (tabs come back via session restore)...`);
-            const q = await quitBrowser({ app: name, browser: def, force: opts.force === true });
+            const quitStartedAt = Date.now();
+            const q = await quitBrowser({
+                app: name,
+                browser: def,
+                force: opts.force === true,
+                // A single short check is what reported a healthy beforeunload quit
+                // as a failure, and then recommended kill -KILL on it.
+                timeoutMs: QUIT_DEADLINE_MS,
+                noticeEveryMs: QUIT_NOTICE_EVERY_MS,
+                onWaiting: (elapsedMs) => out.log.info(`  ${slowQuitNote(elapsedMs)}`),
+            });
 
             if (!q.exited) {
-                out.log.error(`${name} is still running. Re-run with --force to force-kill.`);
+                const waited = Math.round((Date.now() - quitStartedAt) / 1000);
+                out.log.error(`${name} is STILL running ${waited}s after the quit request.`);
+
+                if (q.usedForce) {
+                    // kill -KILL already went out, so telling the operator to try --force
+                    // would name the remedy they just used. Nothing here is an ordinary quit.
+                    out.log.info(
+                        "  kill -KILL was already sent and the process is still listed, which is not a quit problem — a process is normally unkillable only while stuck in the kernel."
+                    );
+                    out.log.info(`  see what is left: pgrep -fl '${name}'`);
+                } else {
+                    out.log.info(
+                        "  Past this deadline a beforeunload prompt is probably waiting for a click. Look at the browser and answer it — that is the non-destructive fix."
+                    );
+                    out.log.info(
+                        `  Only if there is no prompt: ${suggest(["restart", "--browser", id, "--port", String(port), "--force"])}   # kill -KILL, costs session restore`
+                    );
+                }
+
                 process.exit(1);
             }
 
             let result: { browser: string; pages: number };
             try {
-                result = await launchCdpBrowser({ port, browser: id, url });
+                result = await launchCdpBrowser({
+                    port,
+                    browser: id,
+                    url,
+                    profileDirectory: profile.directory ?? undefined,
+                });
             } catch (err) {
                 if (!(err instanceof CdpLaunchError)) {
                     throw err;
@@ -160,8 +243,16 @@ export function registerBrowse(program: Command): void {
             }
 
             out.log.info(`up: ${result.browser} on ${port} (${result.pages} pages)`);
+
+            // Read-only end-state check. Before this, proving a restart had worked
+            // meant running curl /json/version and an AppleScript window walk by hand.
+            const verification = await verifyRestart({ port, version: browserVersion, targets });
+            for (const line of formatVerification(verification, { appName: name })) {
+                out.log.info(line);
+            }
+
             out.log.info(`  next: ${suggest(["attach", "--port", String(port)])}`);
-            process.exit(0);
+            process.exit(restartSucceeded(verification) ? 0 : 1);
         });
 
     withPort(program.command("targets"))

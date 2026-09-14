@@ -33,6 +33,20 @@ describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", (
     });
 });
 
+describe("launchArgs — --profile-directory", () => {
+    test("names the profile so a multi-profile browser opens no picker", () => {
+        const args = launchArgs(9222, { profileDirectory: "Profile 1" });
+        expect(args).toContain("--profile-directory=Profile 1");
+        // It selects a profile INSIDE the real user-data-dir, so it must not drag
+        // the launch off the user's own profile the way --fresh does.
+        expect(args.some((a) => a.startsWith("--user-data-dir"))).toBe(false);
+    });
+
+    test("is absent unless asked for, so `open` keeps its previous behaviour", () => {
+        expect(launchArgs(9222, {}).some((a) => a.startsWith("--profile-directory"))).toBe(false);
+    });
+});
+
 describe("launchArgs — an explicit profile dir", () => {
     test("isolates using the dir given instead of /tmp/cdp-profile-<port>", () => {
         const args = launchArgs(9333, { userDataDir: "/tmp/genesis-yt-devtools-chrome-abc", extension: "/dist/ext" });

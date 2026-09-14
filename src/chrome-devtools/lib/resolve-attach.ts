@@ -441,10 +441,20 @@ export async function quitBrowser(opts: {
     exec?: ExecFn;
     sleep?: (ms: number) => Promise<void>;
     platform?: Platform;
+    /**
+     * Called while the process is still alive, at most once per `noticeEveryMs`.
+     * A quit held open by a beforeunload prompt can run to tens of seconds, and a
+     * silent terminal for that long reads as a hang.
+     */
+    onWaiting?: (elapsedMs: number) => void;
+    noticeEveryMs?: number;
+    /** Injectable clock, so a deadline test does not have to burn the deadline in real seconds. */
+    now?: () => number;
 }): Promise<{ exited: boolean; usedForce: boolean }> {
     const exec = opts.exec ?? defaultExec;
     const platform = opts.platform ?? currentPlatform();
     const sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const now = opts.now ?? Date.now;
     const timeoutMs = opts.timeoutMs ?? 15000;
 
     const linuxBins = opts.browser?.linuxBins ?? [];
@@ -480,10 +490,19 @@ export async function quitBrowser(opts: {
         exec(["osascript", "-e", `quit app "${opts.app}"`]);
     }
 
-    const until = Date.now() + timeoutMs;
-    while (Date.now() < until) {
+    const startedAt = now();
+    const until = startedAt + timeoutMs;
+    const noticeEveryMs = opts.noticeEveryMs ?? 8000;
+    let nextNoticeAt = startedAt + noticeEveryMs;
+
+    while (now() < until) {
         if (dead()) {
             return { exited: true, usedForce: false };
+        }
+
+        if (opts.onWaiting && now() >= nextNoticeAt) {
+            opts.onWaiting(now() - startedAt);
+            nextNoticeAt = now() + noticeEveryMs;
         }
 
         await sleep(250);
@@ -508,8 +527,8 @@ export async function quitBrowser(opts: {
         }
     }
 
-    const forceUntil = Date.now() + 5000;
-    while (Date.now() < forceUntil) {
+    const forceUntil = now() + 5000;
+    while (now() < forceUntil) {
         if (dead()) {
             return { exited: true, usedForce: true };
         }

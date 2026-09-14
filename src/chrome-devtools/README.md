@@ -40,7 +40,7 @@ tools chrome-devtools status            # who records what, at what CPU cost
 writes under `%TEMP%` instead, and every command it PRINTS (attach guidance, doctor
 fixes, `--help` examples) already carries the right path for the running platform.
 
-## The mental model: one engine, two views
+## The mental model: one engine, two views, plus a log it does not own
 
 | Piece | What it is |
 |---|---|
@@ -49,6 +49,55 @@ fixes, `--help` examples) already carries the right path for the running platfor
 | `har` | The retroactive view. Builds a DevTools-grade HAR 1.2 from the buffer (`--last 30m`), or records a live window on one tab (`--now --reload`, with bodies). |
 
 The old skill's `watch` verb is gone; invoking it explains the split.
+
+### The third network log: `net-panel`
+
+A request lives in whichever log was already collecting when it happened, and nothing
+backfills. The recorder buffer and the MCP attach log are both *ours*; the third belongs to
+the user's own open Network tab and neither of the other two can reach it.
+
+| Log | Verb | Covers | Blind to |
+|---|---|---|---|
+| Recorder buffer | `har --last 30m` | since **this tool's** recorder started, all tabs, rolling 4 h | anything before `attach` ran |
+| MCP attach log | `mcp <tool>` / `list_network_requests` | since **that MCP session** attached, in its own browser | the user's browser; anything before its attach |
+| Panel `NetworkLog` | `net-panel` | what the user's **own open Network tab** is showing, back to when they opened it with Preserve log | anything with DevTools closed; headers and bodies (never collected) |
+
+The symptom that names the third one: their Network tab lists hundreds of rows while the MCP
+list returns empty, or `har` dumps only the last minute. Observed live at **631** rows.
+
+```bash
+tools chrome-devtools net-panel --match app.example.com            # histograms + document hops
+tools chrome-devtools net-panel --match app.example.com -o /tmp/panel.har
+```
+
+`--match` names the **inspected tab**, or the inspector itself (`--match 'DevTools - <host><path>'`).
+Every open inspector reports the same `devtools://` url, so the window **title** is the only
+discriminator; an ambiguous match refuses and lists the candidates with a `--match` that names
+one, rather than reading a different tab's log. Read-only: one `Runtime.evaluate` against the
+frontend, no reload, no navigate, no `Network.enable`. Summary urls are cut to origin+pathname,
+and the `-o` HAR carries no headers, cookies or POST bodies by construction — the eval never
+collects them.
+
+### `restart`, end to end
+
+`restart` quits the app, waits for the process to really be gone, then relaunches with the
+flag. Three behaviours worth knowing:
+
+- **A slow quit is not a failed quit.** A `beforeunload` handler makes the browser ask the
+  user before closing, which can hold it for tens of seconds. The verb polls for real exit for
+  45 s and says why it is waiting; only past that does it mention `--force` (`kill -KILL`,
+  which costs session restore). If it is still waiting, answer the prompt in the browser.
+- **No profile picker.** `profile.last_used` is read from the browser's own `Local State` and
+  passed as `--profile-directory`, so a multi-profile browser does not stop at "Who's using …?".
+  Override with `--profile-directory 'Profile 1'`. A name that is not on disk is refused, since
+  the browser would silently create a new empty profile.
+- **It verifies its own end state.** Every run prints CDP reachability, the page-target count
+  and picker status. A picker still open, or a tab list that did not answer, exits non-zero —
+  an unverified restart is not a successful one.
+
+`targets` lists that same page-target count on demand — one line per tab (id, title, url),
+`--match <substr|/regex/>` to narrow it, `--all` to include workers/iframes/extension pages,
+`--json` for the raw `/json/list` entries. Useful on its own to find a tab id before `attach`.
 
 ### The buffer
 
@@ -133,6 +182,9 @@ browser): `.claude/work/research/2026-08-26-CdpNativeHarExport.md`.
 - Do not `cat`/`jq` a `.har` — `tools har-analyzer load` it.
 - A HAR of a login flow contains the plaintext password and live session tokens. `--sanitize`
   before it leaves the machine.
+- Do not "clear site data" to fix a cookie/session poison — it destroys the evidence and the
+  user's logins along with it. `rm-cookie --name <n> --domain <d>` deletes the one cookie that
+  is actually wrong.
 
 ## Benchmark
 

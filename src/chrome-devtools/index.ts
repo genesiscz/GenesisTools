@@ -8,6 +8,7 @@
  *   record       the capture engine (one per port, rolling 4h buffer)
  *   follow       live view over the buffer (channels + Monitor hints)
  *   har          DevTools-grade HAR — retroactive from the buffer, or a live window
+ *   net-panel    the OPEN DevTools Network panel's own log (what Preserve log collected)
  *   status       recorders, CPU/memory, buffers, endpoints
  *   doctor       read-only diagnosis · cleanup — the mutating counterpart
  *   cookies, console, eval, nav, shot, grid, trace, targets, rm-cookie
@@ -23,6 +24,7 @@ import { registerDoctor } from "./commands/doctor.ts";
 import { registerFollow } from "./commands/follow.ts";
 import { registerHar } from "./commands/har.ts";
 import { registerInspect } from "./commands/inspect.ts";
+import { registerNetPanel } from "./commands/net-panel.ts";
 import { registerRecord, registerWatchTombstone } from "./commands/record.ts";
 import { registerScripting } from "./commands/scripting.ts";
 import { registerStatus } from "./commands/status.ts";
@@ -54,6 +56,7 @@ registerRecord(program);
 registerWatchTombstone(program);
 registerFollow(program);
 registerHar(program);
+registerNetPanel(program);
 registerStatus(program);
 registerDoctor(program);
 registerCleanup(program);
