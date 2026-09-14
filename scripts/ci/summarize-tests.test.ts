@@ -140,6 +140,39 @@ describe.skipIf(skip.onWindows)("summarize-tests.sh", () => {
         expect(out).toContain("`2` `(pass)` lines");
     });
 
+    /**
+     * `head` closes the pipe once it has 40 lines, which hands `sort` an EPIPE. Under
+     * `pipefail` that becomes the pipeline's status. This is not hypothetical in this
+     * workflow: the neighbouring "Slowest test files" step went red on its first real run
+     * (34373807424) for exactly this, and carries a comment saying so.
+     */
+    test("more than 40 distinct failures truncates the list instead of aborting", async () => {
+        const many = Array.from({ length: 57 }, (_, i) => `(fail) suite > case ${i} [1.00ms]`);
+        const { code, out } = await summarize(["(pass) alpha > adds [1.00ms]", ...many].join("\n"));
+
+        expect(code).toBe(0);
+        expect(out).toContain("57 FAILING TESTS");
+        expect(out).toContain("_(showing 40 of 57)_");
+        expect(out).toContain("`57` raw, `57` distinct");
+    });
+
+    /**
+     * The volume that actually fires it. `head` closing after 40 lines only hands `sort` an
+     * EPIPE once the remaining output no longer fits the 64 KB pipe buffer, so a few dozen
+     * short failures pass either way — 57 of them did, with the guard removed. This is the
+     * same defect that reddened the neighbouring "Slowest test files" step on its first real
+     * run (34373807424), which is why that step carries a `no head after sort` comment.
+     */
+    test("a failure list far past the pipe buffer still truncates instead of aborting", async () => {
+        const padding = "x".repeat(120);
+        const many = Array.from({ length: 4000 }, (_, i) => `(fail) suite > case ${i} ${padding} [1.00ms]`);
+        const { code, out } = await summarize(["(pass) alpha > adds [1.00ms]", ...many].join("\n"));
+
+        expect(code).toBe(0);
+        expect(out).toContain("4000 FAILING TESTS");
+        expect(out).toContain("_(showing 40 of 4000)_");
+    });
+
     test("the step outcomes are echoed verbatim", async () => {
         const { out } = await summarize(GREEN_LOG);
 

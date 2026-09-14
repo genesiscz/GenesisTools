@@ -64,9 +64,12 @@ elif [ "$UNIQUE" -gt 0 ]; then
     echo "\`${PASSES}\` \`(pass)\` lines confirm the log is readable."
     echo ""
     echo '```'
-    # `|| true` because `head` closes the pipe once it has 40 lines, which hands `sort`
-    # an EPIPE. Under `pipefail` that is the pipeline's status, so a run with more than
-    # 40 distinct failures would abort here — the same defect class, one branch over.
+    # `|| true` because `head` closes the pipe once it has 40 lines, which hands `sort` an
+    # EPIPE. Under `pipefail` that becomes the pipeline's status and `-e` aborts the step.
+    # It needs VOLUME, not just 41 failures: the remaining lines have to outgrow the 64 KB
+    # pipe buffer before `sort` blocks on a closed reader. Measured 2026-09-15 — 57 short
+    # lines pass unguarded, 4,000 padded ones exit 141 (SIGPIPE). The neighbouring
+    # "Slowest test files" step hit the same thing on its first real run (34373807424).
     { fail_lines | sed 's/ \[[0-9.]*ms\]$//' | sort -u | head -40; } || true
     echo '```'
 

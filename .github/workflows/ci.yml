@@ -170,8 +170,14 @@ jobs:
       # assignment, wrote nothing, and reddened the job on a PASSING suite. The
       # `LOG UNREADABLE` branch was unreachable for the same reason. See
       # `scripts/ci/summarize-tests.test.ts`, which drives all five input classes.
+      #
+      # `continue-on-error` for the same reason the "Slowest test files" step below carries
+      # it: a SUMMARY must never fail the job. A suite that cannot terminate is already
+      # caught by the `[test] suite complete` step, which is deliberately not
+      # continue-on-error, so nothing is lost by making this one unable to redden a run.
       - name: Summarize results
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
           bash scripts/ci/summarize-tests.sh \
