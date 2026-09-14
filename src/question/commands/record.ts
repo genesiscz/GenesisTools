@@ -4,10 +4,11 @@ import { recordAnswer } from "../lib/record";
 import type { QaTag } from "../lib/types";
 
 export function registerRecordCommand(program: Command): void {
+    // No `answer` alias: that verb now answers a PENDING form (`tools question answer <id>`),
+    // matching `genesis qa answer`. Nothing referenced the alias — the skill calls `record`.
     program
         .command("record")
-        .alias("answer")
-        .description("Record a Q→A entry (used by the question_answer MCP tool / scripts)")
+        .description("Record a Q→A entry after the fact (used by the question_answer MCP tool / scripts)")
         .requiredOption("--q <question>", "the question")
         .option("--a <answer>", "the answer (markdown)")
         .option("--a-file <path>", "read answer from file")

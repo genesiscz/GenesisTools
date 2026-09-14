@@ -5,14 +5,24 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface QuestionConfig {
-    sinks: { obsidian: boolean; sound: boolean; notify: boolean };
+    sinks: {
+        obsidian: boolean;
+        sound: boolean;
+        notify: boolean;
+        /**
+         * Banner for a NEW pending ask form. Separate from `notify`, and on by default:
+         * `notify` governs the after-the-fact Q→A firehose, while a pending form means an
+         * agent is blocked until it is answered, so silence there is a hang.
+         */
+        notifyPending?: boolean;
+    };
     obsidianPathTemplate: string;
     sound?: SoundChoice; // Phase 2
     soundVolume?: number; // Phase 2, 0..1
 }
 
 const DEFAULT: QuestionConfig = {
-    sinks: { obsidian: true, sound: false, notify: false },
+    sinks: { obsidian: true, sound: false, notify: false, notifyPending: true },
     obsidianPathTemplate: "{project}/Questions/{date}.md",
     sound: { kind: "bundled", name: "switch.wav" },
     soundVolume: 0.6,

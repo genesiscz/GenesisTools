@@ -1,5 +1,6 @@
 export type QaTag = "question" | "action" | "directive";
-export type QaSource = "question" | "mcp" | "skill" | "cli";
+/** `ask` marks an entry that came from answering a blocking pending form, not a log-after call. */
+export type QaSource = "question" | "mcp" | "skill" | "cli" | "ask";
 export type QaAgent = "claude-code" | "codex" | "grok" | "copilot" | "unknown";
 export interface QaRef {
     type: "commit" | "file" | "url" | "plan";

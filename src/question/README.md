@@ -1,8 +1,13 @@
 # tools question
 
-> **Capture and review the questions fired at agents mid-session, with their answers.**
+> **Ask the user a blocking question, and capture the questions fired at agents mid-session with their answers.**
 
-A substantive answer given halfway through a long session is lost in scrollback within an hour. This is the sink that keeps it: a local store of question and answer pairs, written by an agent as it works and readable afterward.
+Two directions, one store:
+
+1. **Ask** — the agent posts a question and waits. The form shows up on the dashboard `/qa` Pending section, raises a notification, and releases the agent when it is answered. `ask`, `wait`, `poll`, `answer`, `cancel`.
+2. **Log** — the agent records a question it already answered itself, so a substantive answer given halfway through a long session is not lost in scrollback within an hour. `record`, `log`, `tail`.
+
+Answering a pending form also writes a normal log entry, so `/qa` shows one list rather than two. Wire contract for other clients: `docs/qa-pending-contract.md`.
 
 ---
 
@@ -10,10 +15,49 @@ A substantive answer given halfway through a long session is lost in scrollback 
 
 | Command | Description |
 |---------|-------------|
-| `record` (alias `answer`) | Record a question and answer pair. Used by the `question_answer` MCP tool and by scripts. |
+| `ask` (alias `post`) | Ask the user a question and leave it pending until they answer |
+| `wait <id>` | Block until a pending form is answered, cancelled or times out |
+| `poll [ids…]` | Show pending forms, or the status of the ids you name |
+| `answer <id>` | Answer a pending form from the terminal |
+| `cancel <id>` | Withdraw a pending form; a blocked waiter is released as cancelled |
+| `record` | Record a question and answer pair after the fact. Used by the `question_answer` MCP tool and by scripts. |
 | `log` | Show recorded pairs, oldest first, last N entries |
 | `tail` (alias `answers`) | Live feed of pairs as they are recorded, with a backlog |
 | `config` | Read or update the sink config: sound, notify, Obsidian template |
+
+### Asking
+
+```bash
+tools question ask -q "Ship the PR?" --choices yes,no          # prints the form, returns at once
+tools question ask -q "Ship?" --choices yes,no --wait          # block until answered
+tools question ask --json '[{"promptMarkdown":"Target?","choices":["staging","prod"]},{"promptMarkdown":"Notes?"}]'
+tools question poll                                            # what is still waiting
+tools question answer ask_5f1c… --choice yes
+tools question cancel ask_5f1c…
+```
+
+`--wait` exits `0` answered, `1` not_found, `2` timeout, `3` cancelled, `4` budget exhausted, so a script can branch on the outcome. `budget_exhausted` means your own wait ran out while the form is still pending; the form is alive and you may wait again. `not_found` means no form carries that id, so waiting again will not help.
+
+A partial submit is never stored: `answer` refuses a form that still has a required item blank. Answer a multi-item form in one call:
+
+```bash
+tools question answer ask_5f1c… --json '[{"itemId":"q1","freeText":"staging"},{"itemId":"q2","freeText":"after the migration"}]'
+```
+
+| Flag | Description |
+|------|-------------|
+| `-q, --q <question>` | The question, markdown allowed |
+| `--choices <list>` | Comma-separated choice labels |
+| `--multiple` | Allow more than one choice |
+| `--no-free-text` | Do not offer a free-text box |
+| `--file-tags` | Allow `@file` tags, resolved against the form cwd |
+| `--image-paste` | Allow pasted images |
+| `--optional` | The item may be left blank |
+| `--json <items>` | Multi-question form as a JSON array of items |
+| `--timeout <ms>` | Auto-retire the form after this long |
+| `--wait` / `--wait-timeout <ms>` | Block, and for how long (default 120000) |
+| `--source <name>` / `--session <id>` | Who is asking, and the session to attribute the answer to |
+| `--no-notify` | Do not raise a notification for this form |
 
 ## Quick start
 

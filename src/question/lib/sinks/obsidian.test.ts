@@ -36,9 +36,9 @@ const cfg = {
 };
 
 describe("obsidianSink", () => {
-    it("appends a full markdown entry under {project}/Questions/{date}.md", () => {
+    it("appends a full markdown entry under {project}/Questions/{date}.md", async () => {
         const vault = mkdtempSync(join(tmpdir(), "vault-"));
-        emitObsidian(entry, cfg, vault);
+        await emitObsidian(entry, cfg, vault);
         const d = new Date(entry.ts);
         const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         const file = join(vault, "GenesisTools", "Questions", `${day}.md`);
@@ -52,7 +52,19 @@ describe("obsidianSink", () => {
         expect(md).toContain("claude-code");
     });
 
-    it("throws SinkError with a remedy when no vault resolvable", () => {
-        expect(() => emitObsidian(entry, cfg, null)).toThrow(SinkError);
+    it("throws SinkError with a remedy when no vault resolvable", async () => {
+        await expect(emitObsidian(entry, cfg, null)).rejects.toThrow(SinkError);
+    });
+
+    it("writes off the event loop, so the fan-out timeout can actually bound it", async () => {
+        // `runFanOut` races `emit` against a timer. A SYNCHRONOUS write finishes before the race
+        // is armed, so the timer is decorative — and a blocked vault volume then outlives the
+        // answer claim. Returning a thenable is what makes that budget real.
+        const vault = mkdtempSync(join(tmpdir(), "vault-"));
+        const pending = emitObsidian(entry, cfg, vault);
+
+        expect(typeof (pending as Promise<void>).then).toBe("function");
+
+        await pending;
     });
 });
