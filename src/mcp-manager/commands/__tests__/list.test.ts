@@ -4,6 +4,7 @@ import { listServers } from "@app/mcp-manager/commands/list.js";
 import type { MCPServerInfo } from "@app/mcp-manager/utils/providers/types.js";
 import { logger, out } from "@genesiscz/utils/logger";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { REDACTED } from "../../lib/auth/constants.ts";
 import { MockMCPProvider } from "./test-utils.js";
 
 setupStorageSandbox();
@@ -189,7 +190,7 @@ describe("listServers --json", () => {
         expect(payload.servers[0].connection).toEqual({
             type: "http",
             url: "https://example.com/mcp",
-            headers: { Authorization: "Bearer x" },
+            headers: { Authorization: REDACTED },
         });
         expect(payload.servers[1].connection).toEqual({
             type: "stdio",
@@ -199,6 +200,25 @@ describe("listServers --json", () => {
         });
         expect(payload.providersScanned).toEqual(["claude"]);
         expect(payload.providersFailed).toEqual([]);
+    });
+
+    it("keeps live connection headers for an internal caller that is about to dial", async () => {
+        mockProvider.listServersResult = [
+            {
+                name: "http-server",
+                config: { url: "https://example.com/mcp", headers: { Authorization: "Bearer x" } },
+                enabled: true,
+                provider: "claude",
+            },
+        ];
+
+        const payload = await jsonOutput([mockProvider], { internal: true });
+
+        expect(payload.servers[0].connection).toEqual({
+            type: "http",
+            url: "https://example.com/mcp",
+            headers: { Authorization: "Bearer x" },
+        });
     });
 
     it("reports the enabled provider's config when instances disagree", async () => {

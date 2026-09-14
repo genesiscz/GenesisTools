@@ -1,6 +1,13 @@
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, MCPServerInfo, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
+import { REDACTED } from "../lib/auth/constants.ts";
+import { GATEWAY_CLIENT_TOKEN_PATH } from "../lib/auth/paths.ts";
+import { isGatewayOauth, serverAuth } from "../lib/auth/policy.ts";
+import { gatewayListen, projectServerForHarness } from "../lib/auth/project.ts";
+import { redactHeaderValues } from "../lib/auth/redact.ts";
+import { ensureGatewayClientToken, readSecret } from "../lib/auth/secrets.ts";
 
 /**
  * Options for {@link listServers}. `json` switches the output MODE, not just the
@@ -12,6 +19,21 @@ export interface ListOptions {
     json?: boolean;
     /** With --json, only include servers enabled in at least one provider. */
     enabledOnly?: boolean;
+    /**
+     * In-process caller that will USE the connection, so it needs the real gateway
+     * token. Off for every user-facing path: the `--json` payload goes to stdout, gets
+     * piped and pasted, and must not carry a live credential. `tools scripts` passes
+     * it; the CLI never does.
+     */
+    internal?: boolean;
+    /**
+     * Allow MINTING a gateway token when none exists. Separate from `internal` on
+     * purpose: `ensureGatewayClientToken()` writes a durable SecretStore entry, and
+     * `tools scripts doctor` reaches this code through a `persist: false` registry load
+     * while advertising itself as read-only. A diagnostic reads the token; only a
+     * caller that is about to dial may create one.
+     */
+    mint?: boolean;
 }
 
 /** One provider's view of a server. */
@@ -53,6 +75,9 @@ export interface ServerJsonEntry {
     providers: ServerProviderEntry[];
     /** Transport details taken from the winning config (see {@link pickConfig}). */
     connection: ServerConnection;
+    /** Unified-config upstream resource, when this server is gateway-projected. */
+    upstream?: { url: string };
+    auth?: { kind: string; gateway: boolean };
 }
 
 /**
@@ -164,9 +189,20 @@ async function collect(providers: MCPProvider[]): Promise<{
  * Build the registry payload of `list --json` without printing it. This is the
  * programmatic entrypoint `tools scripts` consumes to construct mcporter
  * ServerDefinitions in-process instead of spawning `tools mcp-manager`.
+ *
+ * The gateway header's VALUE depends on `options.internal`. Off (the CLI default) it is
+ * the redaction mark, because this payload is printed to stdout; on, it is the live
+ * local token, because the caller is about to dial the connection it describes.
  */
 export async function buildListJson(providers: MCPProvider[], options: ListOptions = {}): Promise<ListJsonOutput> {
     const { byName, scanned, failed } = await collect(providers);
+    const unified = await readUnifiedConfig();
+    const listen = gatewayListen(unified);
+    // `?? ""` was the other half of the original bug: a public payload got a real token,
+    // and an internal one got an empty header that the gateway answers with 401.
+    const localToken = options.internal
+        ? ((options.mint ? await ensureGatewayClientToken() : await readSecret(GATEWAY_CLIENT_TOKEN_PATH)) ?? REDACTED)
+        : REDACTED;
     const servers: ServerJsonEntry[] = [];
 
     for (const [name, instances] of byName.entries()) {
@@ -177,12 +213,38 @@ export async function buildListJson(providers: MCPProvider[], options: ListOptio
             continue;
         }
 
+        const unifiedServer = unified.mcpServers[name];
+        let connection = toConnection(pickConfig(instances));
+        // A non-gateway server's own `headers` can carry a credential the user configured for
+        // it directly (an Authorization bearer, an API key), and this payload is printed to
+        // stdout for the public --json path. Only an internal caller about to dial the
+        // connection gets the live values; the gateway branch below handles its own header
+        // (`localToken`) the same way.
+        if (!options.internal && connection.headers) {
+            connection = { ...connection, headers: redactHeaderValues(connection.headers) };
+        }
+        let upstream: { url: string } | undefined;
+        let auth: ServerJsonEntry["auth"];
+
+        if (unifiedServer && isGatewayOauth(unifiedServer)) {
+            const projected = projectServerForHarness(name, unifiedServer, {
+                provider: "claude",
+                localToken,
+                listen,
+            });
+            connection = toConnection(projected);
+            upstream = unifiedServer.url ? { url: unifiedServer.url } : undefined;
+            auth = { kind: serverAuth(unifiedServer)?.kind ?? "oauth", gateway: true };
+        }
+
         servers.push({
             name,
             enabled: enabledCount > 0,
             status,
             providers: instances.map((i) => ({ provider: i.provider, enabled: i.enabled })),
-            connection: toConnection(pickConfig(instances)),
+            connection,
+            ...(upstream ? { upstream } : {}),
+            ...(auth ? { auth } : {}),
         });
     }
 
@@ -193,9 +255,11 @@ export async function buildListJson(providers: MCPProvider[], options: ListOptio
 /**
  * List all MCP servers across all providers.
  *
- * With `--json` this becomes the programmatic registry other tools read (the
- * mcp-scripting skill builds mcporter ServerDefinitions straight from it), so
- * the JSON carries connection details the human listing never printed.
+ * With `--json` this becomes the programmatic registry other tools read, so the JSON
+ * carries connection details the human listing never printed. Credentials are not among
+ * them: the gateway header comes out redacted here. A caller that needs to DIAL these
+ * servers imports buildListJson with `internal: true`, the way src/scripts/lib/registry
+ * does, rather than parsing this stdout.
  */
 export async function listServers(providers: MCPProvider[], options: ListOptions = {}): Promise<void> {
     if (options.json) {

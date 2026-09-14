@@ -2,6 +2,7 @@ import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import chalk from "chalk";
+import { redactMcpValue } from "../lib/auth/redact.ts";
 
 /**
  * Show the full configuration of an MCP server
@@ -29,7 +30,7 @@ export async function showServerConfig(serverName: string, providers: MCPProvide
     out.println(`\nConfiguration for '${serverName}':\n`);
     for (const { provider, config } of configs) {
         out.println(`${chalk.bold(provider)}:`);
-        out.println(SafeJSON.stringify(config, null, 2));
+        out.println(SafeJSON.stringify(redactMcpValue(config), null, 2));
         out.println("");
     }
 }

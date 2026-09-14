@@ -7,6 +7,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import chalk from "chalk";
+import { isGatewayOauth } from "../lib/auth/policy.ts";
+import { gatewayListen, isGatewayProjection, restoreProjectedServer } from "../lib/auth/project.ts";
 
 export interface SyncFromOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode
@@ -197,6 +199,12 @@ export async function syncFromProviders(providers: MCPProvider[], options: SyncF
                 }
 
                 if (existingConfig) {
+                    const listen = gatewayListen(unifiedConfig);
+
+                    if (isGatewayOauth(existingConfig) && isGatewayProjection(serverConfig, listen, serverName)) {
+                        restoreProjectedServer(serverConfig, existingConfig);
+                    }
+
                     // Preserve _meta from existing config
                     const preservedMeta = existingConfig._meta || { enabled: {} };
 

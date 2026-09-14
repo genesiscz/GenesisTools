@@ -78,6 +78,23 @@ describe("syncServers", () => {
         expect(mockProvider.syncServersCalls.length).toBe(0);
     });
 
+    it("creates a missing grok config when -p grok is explicit", async () => {
+        const mockConfig = createMockUnifiedConfig();
+        mockProvider = new MockMCPProvider("grok", "/mock/grok.toml");
+        mockProvider.configExistsResult = false;
+        mockProvider.getServerConfigResult = null;
+        spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
+        spyOn(configUtils, "stripMeta").mockImplementation((config) => {
+            const { _meta, ...rest } = config;
+            return rest;
+        });
+        spyOn(logger, "info");
+
+        await syncServers([mockProvider], { provider: "grok" });
+
+        expect(mockProvider.syncServersCalls.length).toBe(1);
+    });
+
     it("should return early if no servers in config", async () => {
         const emptyConfig = { mcpServers: {} };
 
