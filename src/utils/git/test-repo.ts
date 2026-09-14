@@ -230,7 +230,15 @@ export class TestRepo {
             await repo.commit({ file: "README.md", content: "seed\n", message: "seed" });
         }
 
-        const cached = join(templateCacheDir(), shape.replace(/[^a-z0-9]+/gi, "-"));
+        // 🛑 A unique directory per template, never a name derived from the shape alone. The
+        // old derivation collapsed every non-alphanumeric run to "-", so `feature/a::true` and
+        // `feature-a::true` named ONE directory. `repoTemplates` keys on the full shape, so the
+        // second branch missed the cache, rebuilt, and copied itself over the first branch's
+        // template. git writes its object files read-only (0444), so that second copy did not
+        // even silently win the race — it threw EACCES out of `TestRepo.create` and took the
+        // whole suite with it. The Map is the index; this name only has to be unique, and the
+        // sanitised prefix is kept so a leftover directory still says which shape it holds.
+        const cached = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
         cpSync(dir, cached, { recursive: true });
         repoTemplates.set(shape, cached);
 
