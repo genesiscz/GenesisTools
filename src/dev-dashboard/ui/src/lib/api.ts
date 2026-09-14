@@ -258,7 +258,11 @@ export const processesApi = {
     // `command` is what the table showed for this pid. The server re-reads the
     // pid's live command and refuses the kill on a mismatch, so a pid the kernel
     // reissued between render and click cannot be signalled.
-    kill: (pid: number, command?: string) =>
+    //
+    // REQUIRED, matching the route and `contract/client.ts`. It was optional here until
+    // 2026-09-15, which let `kill(pid)` compile into a request the server always answers
+    // 400 — `SafeJSON.stringify` drops an undefined value, so the key never even arrived.
+    kill: (pid: number, command: string) =>
         jsonFetch<{ ok: boolean }>("/api/processes/kill", {
             method: "POST",
             body: SafeJSON.stringify({ pid, command }),
