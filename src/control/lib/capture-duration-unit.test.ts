@@ -34,10 +34,20 @@ mock.module("./peekaboo", () => ({
 
 const { runCapturePlan } = await import("./capture-runner");
 
-/** The argv `runCapturePlan` hands to peekaboo for a plan of `duration` seconds. */
+/**
+ * The argv `runCapturePlan` hands to peekaboo for a plan of `duration` seconds.
+ *
+ * `backend: "peekaboo"` is REQUIRED, not decoration: the native ScreenCaptureKit recorder is
+ * the default now, and its own `--duration` is seconds, so a default-backend plan never
+ * reaches the peekaboo boundary this file exists to pin. Asking for peekaboo explicitly keeps
+ * the assertion about the boundary rather than about which backend happens to be default.
+ */
 async function peekabooArgv(duration: number): Promise<string[]> {
     captured.length = 0;
-    const plan: Plan = { capture: { mode: "region", region: "0,0,2,2", duration }, actions: [] };
+    const plan: Plan = {
+        capture: { mode: "region", region: "0,0,2,2", duration, backend: "peekaboo" },
+        actions: [],
+    };
     await expect(runCapturePlan(plan)).rejects.toThrow(STUB_STOP);
     expect(captured).toHaveLength(1);
     return captured[0];
@@ -47,7 +57,10 @@ describe("capture duration crosses the peekaboo boundary in peekaboo's unit", ()
     test("a 9 second plan asks peekaboo for 9s, never a bare 9", async () => {
         const argv = await peekabooArgv(9);
 
-        expect(argv.slice(0, 7)).toEqual(["capture", "live", "--mode", "region", "--duration", "9s", "--json"]);
+        // argv[0] is the binary name: the native backend falls back to peekaboo by swapping
+        // the attempt, so every recorder now names the binary that actually ran.
+        expect(argv[0]).toBe("peekaboo");
+        expect(argv.slice(1, 7)).toEqual(["capture", "live", "--mode", "region", "--duration", "9s"]);
 
         const value = argv[argv.indexOf("--duration") + 1];
         expect(value).toBe("9s");
