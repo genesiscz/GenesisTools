@@ -20,7 +20,7 @@ interface Props {
 export function TtydCloseDialog({ open, sessionLabel, onOpenChange, onKeep, onKill, pending }: Props) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="dd-panel max-w-md border-white/10 bg-[#050505]/95">
+            <DialogContent className="dd-panel max-w-md border-[var(--dd-border)] bg-[#050505]/95">
                 <DialogHeader>
                     <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
                         Close terminal

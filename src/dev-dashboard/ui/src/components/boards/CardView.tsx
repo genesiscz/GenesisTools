@@ -385,7 +385,9 @@ export function CardView({
                 {author ? <span className="absolute right-2 bottom-1 text-[9px] opacity-70">{author}</span> : null}
             </>,
             {
-                className: `rounded-md p-2.5 whitespace-pre-wrap text-neutral-900 ${ring}`,
+                // The note paints its own light background (`color`, default #f7d774), so this text
+                // stays dark independently of the dark dashboard theme — a token would make it vanish.
+                className: `rounded-md p-2.5 whitespace-pre-wrap text-neutral-900 ${ring}`, // allow-palette
                 bodyStyle: { background: color },
             }
         );

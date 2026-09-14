@@ -28,7 +28,7 @@ function Column({ title, children, delayMs }: { title: string; children: ReactNo
             className="flex min-h-[280px] flex-1 flex-col animate-in fade-in slide-in-from-bottom-3 fill-mode-both duration-700"
             style={{ animationDelay: `${delayMs}ms` }}
         >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">{title}</p>
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">{title}</p>
             <BezelCard className="flex min-h-0 flex-1 flex-col" innerClassName="flex min-h-0 flex-1 flex-col p-1.5">
                 <div className="h-64 space-y-1 overflow-y-auto">{children}</div>
             </BezelCard>
@@ -61,7 +61,7 @@ function PickButton({
                     ? "bg-[var(--dd-accent-from)]/15 text-[var(--dd-accent-from)] ring-1 ring-[var(--dd-accent-from)]/40"
                     : accent
                       ? "text-[var(--dd-accent-from)]/80 hover:bg-[var(--dd-accent-from)]/10 hover:text-[var(--dd-accent-from)]"
-                      : "text-[var(--dd-text-secondary)] hover:bg-white/5 hover:text-[var(--dd-text-primary)]",
+                      : "text-[var(--dd-text-secondary)] hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-text-primary)]",
             ].join(" ")}
         >
             {children}

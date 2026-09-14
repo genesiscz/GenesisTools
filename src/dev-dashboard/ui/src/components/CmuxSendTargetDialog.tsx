@@ -123,7 +123,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                     <GlassDialogHeader className="shrink-0 space-y-2 text-left">
                         <GlassDialogEyebrow>Send to cmux</GlassDialogEyebrow>
                         <GlassDialogTitle className="font-mono text-lg">Port tmux session</GlassDialogTitle>
-                        <GlassDialogDescription className="flex flex-wrap items-center gap-2 font-mono text-xs text-zinc-400">
+                        <GlassDialogDescription className="flex flex-wrap items-center gap-2 font-mono text-xs text-[var(--dd-text-secondary)]">
                             <TmuxSessionNameLabel>Session</TmuxSessionNameLabel>
                             <TmuxSessionName
                                 name={sessionName}
@@ -135,7 +135,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                                 }}
                             />
                             {inCmux ? (
-                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-500">
+                                <span className="rounded-full border border-[var(--dd-border)] bg-[var(--dd-bg-hover)] px-2 py-0.5 text-[10px] text-[var(--dd-text-muted)]">
                                     already in cmux
                                 </span>
                             ) : null}
@@ -156,26 +156,26 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                                     <Sparkles size={16} />
                                 </span>
                                 <span className="min-w-0 flex-1">
-                                    <span className="block font-mono text-sm font-semibold text-zinc-100">
+                                    <span className="block font-mono text-sm font-semibold text-[var(--dd-text-primary)]">
                                         {DEV_DASHBOARD_WORKSPACE} workspace
                                     </span>
-                                    <span className="block text-[11px] text-zinc-500">
+                                    <span className="block text-[11px] text-[var(--dd-text-muted)]">
                                         New split · canonical handoff target
                                     </span>
                                 </span>
-                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-px">
+                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--dd-bg-hover-strong)] transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-px">
                                     <ArrowUpRight size={14} />
                                 </span>
                             </span>
                         </BezelCard>
 
-                        <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+                        <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
                             or choose destination
                         </p>
 
                         <div className="min-h-[320px] flex-1">
                             {isLoading ? (
-                                <div className="flex h-full min-h-[320px] items-center justify-center font-mono text-sm text-zinc-500">
+                                <div className="flex h-full min-h-[320px] items-center justify-center font-mono text-sm text-[var(--dd-text-muted)]">
                                     Loading layout…
                                 </div>
                             ) : isError || !layout?.available ? (
@@ -238,7 +238,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                                 size="sm"
                                 disabled={removeFromCmux.isPending}
                                 onClick={() => removeFromCmux.mutate()}
-                                className="mr-auto font-mono text-[11px] text-zinc-500 hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300"
+                                className="mr-auto font-mono text-[11px] text-[var(--dd-text-muted)] hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300"
                             >
                                 Remove from cmux
                             </Button>

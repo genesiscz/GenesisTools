@@ -108,7 +108,7 @@ export function TtydPasteDialog({ open, onOpenChange, onSubmit }: Props) {
                             <ClipboardPaste size={16} className="text-emerald-400" />
                             Paste &amp; send
                         </GlassDialogTitle>
-                        <GlassDialogDescription className="font-mono text-xs text-zinc-400">
+                        <GlassDialogDescription className="font-mono text-xs text-[var(--dd-text-secondary)]">
                             Tap Paste from clipboard (Safari shows a confirm), or long-press the box → Paste. Then Send.
                         </GlassDialogDescription>
                     </GlassDialogHeader>

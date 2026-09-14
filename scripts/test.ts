@@ -179,6 +179,12 @@ function reportGates(): void {
     }
 
     process.stderr.write(`\x1b[90m[test] e2e suites are excluded from this run — use \`bun run test:e2e\`\x1b[0m\n`);
+
+    if (skipDevDashboard()) {
+        process.stderr.write(
+            `\x1b[90m[test] DevDashboard is excluded (GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD) — run it with \`bun scripts/test.ts DevDashboard/mobile/src\` (serial; the suite hangs under --parallel)\x1b[0m\n`
+        );
+    }
 }
 
 reportGates();
@@ -230,6 +236,45 @@ const DEFAULT_EXCLUDES = [
     "**/*.e2e.test.ts",
     "**/matrix-e2e.test.ts",
 ];
+
+/**
+ * DevDashboard is a sub-project carrying three test runners of its own: bun for
+ * the mobile unit suites, WDIO for the Appium specs, vitest for the cloud. bun's
+ * discovery picks up all three, so the 34 WDIO and Playwright specs error on an
+ * undefined `this.skip` and the cloud files cannot load `better-sqlite3` — 30
+ * phantom failures that are green under their own runners.
+ *
+ * Those phantoms are cheap (~1.4s). The real cost is the 55 mobile unit files
+ * (~15s locally), and together the tree adds 97 files and ~31s to the ubuntu
+ * job — against a 4-minute budget that master already fills to 218.83s. A job
+ * killed by that budget writes no `[test] suite complete` marker, which is the
+ * ONE thing that turns this workflow red, so the whole run fails without a
+ * single test having failed.
+ *
+ * CI therefore sets the variable below and skips the tree. Nothing changes
+ * locally: a targeted run ignores every exclude, so the mobile suites stay one
+ * command away.
+ *
+ * ⚠️ That command is `bun scripts/test.ts DevDashboard/mobile/src`, NOT
+ * `bun run test …`. The npm script hardcodes `--parallel`, and this suite
+ * deadlocks under the 16x parallel run: it prints the `16x PARALLEL` banner and
+ * then never writes a `[test] suite complete` marker. Measured on this machine —
+ * serial 282 pass in 14.3s, parallel still hung at a 75s cap, while `--parallel`
+ * on a non-DevDashboard path finishes normally, so it is this tree that breaks
+ * parallel mode rather than parallel mode being broken. Root cause is not pinned
+ * (RN/expo module init across 16 concurrent processes is the suspect) and is
+ * tracked separately; until it is, recommending the parallel form sends the
+ * reader into a hang.
+ */
+const DEVDASHBOARD_EXCLUDES = ["**/DevDashboard/**"];
+
+function skipDevDashboard(): boolean {
+    const value = process.env.GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD;
+
+    return value != null && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+}
+
+const EXCLUDES = skipDevDashboard() ? [...DEFAULT_EXCLUDES, ...DEVDASHBOARD_EXCLUDES] : DEFAULT_EXCLUDES;
 
 // Force NODE_ENV=test even when the caller's shell exports something else:
 // two of the keychain safety layers (os-keyring's under-test block and the
@@ -309,7 +354,7 @@ async function discoverTestFiles(roots: string[]): Promise<string[]> {
         for await (const file of glob.scan({ cwd: join(ROOT, root), dot: false })) {
             const relative = root === "." ? file : join(root, file);
 
-            if (relative.includes("node_modules/") || matchesAny(relative, DEFAULT_EXCLUDES)) {
+            if (relative.includes("node_modules/") || matchesAny(relative, EXCLUDES)) {
                 continue;
             }
 
@@ -403,7 +448,7 @@ if (hasExplicitPaths) {
 
 const parallelExit = await runBunTest([
     ...args,
-    ...DEFAULT_EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`),
+    ...EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`),
     ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
 ]);
 process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createDashboardClient, type EventSourceLike } from "@app/dev-dashboard/contract/client";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 describe("createDashboardClient", () => {
     it("GETs pulse with the auth header and parses JSON", async () => {
@@ -26,6 +27,43 @@ describe("createDashboardClient", () => {
         const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
 
         await expect(client.system.pulse()).rejects.toThrow(/500/);
+    });
+
+    // The server skips the cmux-layout RPC unless `?include=cmux` is present, and answers with
+    // `cmuxSurfaces: []` / `inCmux: false`. Contract callers that render those fields must be able
+    // to ask for them; without the flag the default stays on the cheap path.
+    it("tmux.sessions asks for cmux enrichment only when told to", async () => {
+        const urls: string[] = [];
+        const fetchImpl = (async (url: string | URL | Request) => {
+            urls.push(String(url));
+
+            return new Response('{"sessions":[]}', {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            });
+        }) as unknown as typeof fetch;
+
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
+        await client.tmux.sessions();
+        await client.tmux.sessions({ includeCmux: true });
+
+        expect(urls).toEqual(["http://h/api/tmux/sessions", "http://h/api/tmux/sessions?include=cmux"]);
+    });
+
+    // POST /api/processes/kill fails closed without `command` (400, no signal sent). A contract
+    // client that posts only the pid can never kill anything.
+    it("processes.kill posts the expected command alongside the pid", async () => {
+        let sentBody = "";
+        const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+            sentBody = typeof init?.body === "string" ? init.body : "";
+
+            return new Response('{"ok":true}', { status: 200, headers: { "content-type": "application/json" } });
+        }) as unknown as typeof fetch;
+
+        const client = createDashboardClient({ baseUrl: "http://h", fetch: fetchImpl });
+        await client.processes.kill(4821, "node");
+
+        expect(SafeJSON.parse(sentBody, { strict: true })).toEqual({ pid: 4821, command: "node" });
     });
 
     it("presets.* hit the right paths/methods and parse JSON", async () => {

@@ -29,7 +29,7 @@ interface Props {
 
 function sendToCmuxButtonClass(inCmux: boolean): string {
     if (inCmux) {
-        return "font-mono text-[11px] border-white/15 bg-white/5 text-zinc-400 hover:border-white/25 hover:bg-white/10 hover:text-zinc-200";
+        return "font-mono text-[11px] border-[var(--dd-border)] bg-[var(--dd-bg-hover)] text-[var(--dd-text-secondary)] hover:border-[var(--dd-border-strong)] hover:bg-[var(--dd-bg-hover-strong)] hover:text-[var(--dd-text-primary)]";
     }
 
     return "font-mono text-[11px]";
@@ -88,7 +88,7 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
                         <GlassDialogHeader>
                             <GlassDialogEyebrow>Session hub</GlassDialogEyebrow>
                             <GlassDialogTitle className="font-mono text-lg">Tmux sessions</GlassDialogTitle>
-                            <GlassDialogDescription className="font-mono text-xs text-zinc-400">
+                            <GlassDialogDescription className="font-mono text-xs text-[var(--dd-text-secondary)]">
                                 Same names as the terminal tabs — rename once, tmux + ttyd both update. Attach in ttyd
                                 or send to cmux.
                             </GlassDialogDescription>
@@ -96,13 +96,15 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
 
                         <GlassDialogScroll className="space-y-2">
                             {isLoading ? (
-                                <p className="py-6 text-center font-mono text-sm text-zinc-500">Loading…</p>
+                                <p className="py-6 text-center font-mono text-sm text-[var(--dd-text-muted)]">
+                                    Loading…
+                                </p>
                             ) : isError ? (
                                 <p className="py-6 text-center font-mono text-sm text-rose-400">
                                     {error instanceof Error ? error.message : String(error)}
                                 </p>
                             ) : sessions.length === 0 ? (
-                                <p className="py-6 text-center font-mono text-sm text-zinc-500">
+                                <p className="py-6 text-center font-mono text-sm text-[var(--dd-text-muted)]">
                                     No tmux sessions. Run <code className="text-emerald-400">tools tmux create</code> or
                                     start a ttyd terminal.
                                 </p>
@@ -208,7 +210,7 @@ function SessionRow({
                         <Terminal size={14} className="mt-1 shrink-0 text-emerald-400" />
                         <TmuxSessionName name={session.name} size="md" onRenamed={onRenamed} />
                     </div>
-                    <p className="font-mono text-[10px] text-zinc-500">
+                    <p className="font-mono text-[10px] text-[var(--dd-text-muted)]">
                         {session.windows} window(s) · {session.attached} attached
                         {alreadyInTtyd
                             ? ` · ttyd ${
@@ -227,9 +229,9 @@ function SessionRow({
                         </p>
                     ) : null}
                     {shortCwd || lastCommand ? (
-                        <p className="truncate font-mono text-[10px] text-zinc-400" title={cwd}>
+                        <p className="truncate font-mono text-[10px] text-[var(--dd-text-secondary)]" title={cwd}>
                             {lastCommand ? <span className="text-amber-400/90">{lastCommand}</span> : null}
-                            {lastCommand && shortCwd ? <span className="text-zinc-600"> · </span> : null}
+                            {lastCommand && shortCwd ? <span className="text-[var(--dd-text-muted)]"> · </span> : null}
                             {shortCwd ? <span>{shortCwd}</span> : null}
                         </p>
                     ) : null}
@@ -240,7 +242,7 @@ function SessionRow({
                         variant="outline"
                         disabled={attachPending}
                         onClick={onAttach}
-                        className="font-mono text-[11px] text-zinc-400 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-zinc-100"
+                        className="font-mono text-[11px] text-[var(--dd-text-secondary)] transition-colors hover:border-[var(--dd-border-strong)] hover:bg-[var(--dd-bg-hover-strong)] hover:text-[var(--dd-text-primary)]"
                     >
                         <Monitor size={12} /> {alreadyInTtyd ? "Open in ttyd" : "Attach in ttyd"}
                     </Button>
@@ -250,7 +252,7 @@ function SessionRow({
                             variant="outline"
                             disabled={detachPending}
                             onClick={onDetach}
-                            className="font-mono text-[11px] text-zinc-500 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-zinc-200"
+                            className="font-mono text-[11px] text-[var(--dd-text-muted)] transition-colors hover:border-[var(--dd-border-strong)] hover:bg-[var(--dd-bg-hover-strong)] hover:text-[var(--dd-text-primary)]"
                         >
                             <Unlink size={12} /> Detach from ttyd
                         </Button>
@@ -269,7 +271,7 @@ function SessionRow({
                             variant="outline"
                             disabled={removePending}
                             onClick={onRemove}
-                            className="font-mono text-[11px] text-zinc-500 transition-colors hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300"
+                            className="font-mono text-[11px] text-[var(--dd-text-muted)] transition-colors hover:border-rose-400/30 hover:bg-rose-400/10 hover:text-rose-300"
                         >
                             Remove from cmux
                         </Button>

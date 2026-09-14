@@ -45,7 +45,7 @@ export function QaScrollNav({
                                 <button
                                     type="button"
                                     onClick={() => jumpTo(e.id)}
-                                    className="flex w-full items-start gap-2 border-b border-[var(--dd-border)]/50 px-3 py-1.5 text-left text-xs hover:bg-white/5"
+                                    className="flex w-full items-start gap-2 border-b border-[var(--dd-border)]/50 px-3 py-1.5 text-left text-xs hover:bg-[var(--dd-bg-hover)]"
                                 >
                                     <span
                                         className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${TAG_DOT[e.tag] ?? TAG_DOT.question} ${unread ? "ring-2 ring-emerald-400/60" : ""}`}

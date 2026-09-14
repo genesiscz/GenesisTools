@@ -2,7 +2,12 @@
     --dd-bg-base: #0c0e10;
     --dd-bg-panel: #101316;
     --dd-bg-hover: rgba(255, 255, 255, 0.05);
+    /* The second, stronger hover step (pressed rows, icon wells), one notch above --dd-bg-hover. */
+    --dd-bg-hover-strong: rgba(255, 255, 255, 0.1);
     --dd-border: #1e2428;
+    /* Hover/active border. Lighter than --dd-border on purpose: the base border is opaque and
+       darker than the surface, so reusing it on hover would remove the affordance rather than add one. */
+    --dd-border-strong: rgba(255, 255, 255, 0.2);
     --dd-grid: rgba(52, 211, 153, 0.04);
     --dd-accent-from: #34d399;
     --dd-accent-to: #2dd4bf;

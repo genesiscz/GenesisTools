@@ -130,7 +130,7 @@ export function TmuxSessionName({ name, editable = true, size = "sm", className 
                     setDraft(currentName);
                     setEditing(true);
                 }}
-                className="shrink-0 rounded-md p-1 text-[var(--dd-text-muted)] transition-colors hover:bg-white/5 hover:text-[var(--dd-accent-from)]"
+                className="shrink-0 rounded-md p-1 text-[var(--dd-text-muted)] transition-colors hover:bg-[var(--dd-bg-hover)] hover:text-[var(--dd-accent-from)]"
                 aria-label="Rename session (tmux + ttyd)"
                 title="Renames the tmux session and the ttyd tab together"
             >
