@@ -163,54 +163,23 @@ jobs:
       # 2026-09-14 campaign every PR read "all checks green" while master itself carried 31
       # failures, because the count lived only in the raw log. This step puts it where a
       # reader sees it without opening anything.
+      # 🛑 The rendering is a SCRIPT, not inline shell, because shell inside YAML cannot be
+      # tested and the first version of this logic was wrong on the path that matters most.
+      # It aborted under the `-eo pipefail` that GitHub applies to `shell: bash`: `grep`
+      # exits 1 when a green log has no `(fail)` lines, so the step died at its first
+      # assignment, wrote nothing, and reddened the job on a PASSING suite. The
+      # `LOG UNREADABLE` branch was unreachable for the same reason. See
+      # `scripts/ci/summarize-tests.test.ts`, which drives all five input classes.
       - name: Summarize results
         if: always()
         shell: bash
         run: |
-          LOG="test-${{ runner.os }}.log"
-          # 🛑 Count with `grep | wc -l`, never `grep -c`. On a file with no match `grep -c`
-          # prints 0 AND exits 1, so a `|| echo 0` fallback appends a SECOND zero: the variable
-          # becomes "0\n0", `[ -eq 0 ]` errors with "integer expected", and an empty log then
-          # falls through to the success branch. That is precisely the false green this step
-          # exists to prevent, and it was caught by testing this logic against an empty file.
-          FAILS=$(grep '(fail)' "$LOG" 2>/dev/null | wc -l | tr -d ' ')
-          # Deduplicate: bun prints each failing test twice, inline and again in the summary.
-          UNIQUE=$(grep '(fail)' "$LOG" 2>/dev/null | sed 's/ \[[0-9.]*ms\]$//' | sort -u | wc -l | tr -d ' ')
-          # The positive control. A log that aged out, or was never written, reports zero
-          # failures AND zero passes — indistinguishable from a clean run without this check.
-          PASSES=$(grep '(pass)' "$LOG" 2>/dev/null | wc -l | tr -d ' ')
-          {
-            echo "## ${{ runner.os }} — test discovery"
-            echo ""
-            if [ "$PASSES" -eq 0 ]; then
-              echo "### ⚠️ LOG UNREADABLE — this result means nothing"
-              echo ""
-              echo "Zero \`(pass)\` lines, so the log is missing or truncated. A zero failure"
-              echo "count here is the instrument failing, not the suite passing."
-            elif [ "$UNIQUE" -gt 0 ]; then
-              echo "### 🛑 ${UNIQUE} FAILING TESTS (the job is still green — that is on purpose)"
-              echo ""
-              echo "\`${PASSES}\` \`(pass)\` lines confirm the log is readable."
-              echo ""
-              echo '```'
-              grep '(fail)' "$LOG" | sed 's/ \[[0-9.]*ms\]$//' | sort -u | head -40
-              echo '```'
-              if [ "$UNIQUE" -gt 40 ]; then echo "_(showing 40 of ${UNIQUE})_"; fi
-            else
-              echo "### ✅ 0 failing tests — \`${PASSES}\` \`(pass)\` lines, log readable"
-            fi
-            echo ""
-            echo "- install step outcome: \`${{ steps.install.outcome }}\`"
-            echo "- tests step outcome: \`${{ steps.tests.outcome }}\`"
-            echo "- \`(fail)\` lines: \`${FAILS}\` raw, \`${UNIQUE}\` distinct"
-            echo ""
-            echo '<details><summary>Last 60 lines of test log</summary>'
-            echo ""
-            echo '```'
-            tail -n 60 "test-${{ runner.os }}.log" 2>/dev/null || echo "(no test log)"
-            echo '```'
-            echo '</details>'
-          } >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/ci/summarize-tests.sh \
+            "test-${{ runner.os }}.log" \
+            "${{ runner.os }}" \
+            "${{ steps.install.outcome }}" \
+            "${{ steps.tests.outcome }}" \
+            >> "$GITHUB_STEP_SUMMARY"
 
       # bun prints `(pass) name [N ms]` under a `path.test.ts:` header on the
       # runner (it does not locally), so the log already holds per-test timings.
