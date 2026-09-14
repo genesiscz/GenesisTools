@@ -25,7 +25,14 @@ fi
 # Probe PCRE support by reading STDERR ONLY. Matching lines go to stdout and
 # must never be inspected: an earlier version grepped the matches themselves for
 # the word "invalid", hit a source line containing it, and declared PCRE broken.
-pcre_err=$(git grep -P -q -e 'x\d' -- . 2>&1 >/dev/null) || true
+#
+# The pathspec is ONE file, not `.`, and that is a measured difference rather than tidiness:
+# git rejects a bad `-P` while parsing options, before it walks any path, so a one-file probe
+# answers the same question. Over the whole tree this was a full PCRE scan on every guard
+# invocation — 239-317 ms each, and ai-credentials-guard.test.ts alone sources it twelve
+# times. Scoped: 28-30 ms. The negative control still fires: with a malformed pattern this
+# prints `fatal: -e option, '(': missing closing parenthesis` from the one-file form too.
+pcre_err=$(git grep -P -q -e 'x\d' -- scripts/ci/require-grep.sh 2>&1 >/dev/null) || true
 if [ -n "$pcre_err" ]; then
     echo "::error:: \`git grep -P\` is unusable here, so the guard patterns cannot be evaluated: ${pcre_err}"
     echo "::error:: Every \`if git grep -P …\` below would error out and read as \"no matches\" — a silent pass."
