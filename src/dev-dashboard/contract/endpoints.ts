@@ -168,6 +168,11 @@ export const paths = {
     qaSound: (id: string) => `/api/qa/sound${qs({ id })}`,
     qaConfig: () => "/api/qa/config",
     qaSaveToObsidian: () => "/api/qa/save-to-obsidian",
+    // pending ask forms (blocking questions) — also the surface Genesis.app consumes
+    qaPending: (ids?: string[]) => `/api/qa/pending${qs({ ids: list(ids) })}`,
+    qaPendingOne: (id: string) => `/api/qa/pending/${encodeURIComponent(id)}`,
+    qaPendingAnswer: (id: string) => `/api/qa/pending/${encodeURIComponent(id)}/answer`,
+    qaPendingWait: (id: string) => `/api/qa/pending/${encodeURIComponent(id)}/wait`,
     // attention
     attention: () => "/api/attention",
     // todos

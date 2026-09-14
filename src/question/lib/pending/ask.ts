@@ -78,13 +78,19 @@ export async function postAskForm(input: CreateAskFormInput, deps: AskDeps = {})
     const wantsNotify = deps.notify ?? loadConfig().sinks.notifyPending !== false;
 
     if (wantsNotify) {
-        // dispatchNotification self-gates per channel and never throws.
-        await dispatchNotification({
-            app: "question",
-            title: "A question is waiting for you",
-            message: summarizeForm(form),
-            open: await buildQaDeepLink(form.id),
-        });
+        try {
+            await dispatchNotification({
+                app: "question",
+                title: "A question is waiting for you",
+                message: summarizeForm(form),
+                open: await buildQaDeepLink(form.id),
+            });
+        } catch (err) {
+            // The form is already persisted, so a banner that cannot be delivered must never
+            // lose the question. It is still visible on /qa and to every poller. The host-effect
+            // guard under `bun test` throws here, and so can a misconfigured notify channel.
+            log.warn({ err, id: form.id }, "could not notify about a new pending form; the form itself is fine");
+        }
     }
 
     return form;

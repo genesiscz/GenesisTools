@@ -53,4 +53,50 @@ describe.if(optIn.e2e)("genesis-tools MCP server (stdio e2e)", () => {
 
         await client.close();
     }, 15000);
+
+    it("advertises question_post and creates a pending form over JSON-RPC", async () => {
+        // A scratch GENESIS_TOOLS_HOME keeps the form out of the real qa.db.
+        const home = mkdtempSync(join(tmpdir(), "qa-e2e-home-"));
+        const cfgPath = join(mkdtempSync(join(tmpdir(), "qa-e2e-cfg-")), "config.json");
+        writeFileSync(
+            cfgPath,
+            SafeJSON.stringify({
+                sinks: { obsidian: false, sound: false, notify: false, notifyPending: false },
+                obsidianPathTemplate: "",
+            })
+        );
+        const transport = new StdioClientTransport({
+            command: process.execPath,
+            args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
+            env: {
+                ...env.getProcessEnv(),
+                CLAUDE_CODE_SESSION_ID: "e2e-sess",
+                CLAUDECODE: "1",
+                GENESIS_TOOLS_HOME: home,
+                QUESTION_LOG_BASE: join(home, "qa-log"),
+                QUESTION_CONFIG_PATH: cfgPath,
+            },
+        });
+        const client = new Client({ name: "e2e", version: "1.0.0" });
+        await client.connect(transport);
+
+        const names = (await client.listTools()).tools.map((t) => t.name);
+        expect(names).toContain("question_post");
+        expect(names).toContain("question_wait");
+        // The log-after-the-fact tool survives alongside the blocking ask surface.
+        expect(names).toContain("question_answer");
+
+        const posted = await client.callTool({
+            name: "question_post",
+            arguments: { question: "does the ask path work?", choices: ["yes", "no"], projectPath: home },
+        });
+        const postedText = (posted.content as { type: string; text: string }[])[0].text;
+        expect(postedText).toContain("[pending]");
+
+        const polled = await client.callTool({ name: "question_poll", arguments: {} });
+        const polledText = (polled.content as { type: string; text: string }[])[0].text;
+        expect(polledText).toContain("does the ask path work?");
+
+        await client.close();
+    }, 20000);
 });

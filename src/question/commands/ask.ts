@@ -234,7 +234,7 @@ export function registerAskCommand(program: Command): void {
 
             for (const [id, form] of Object.entries(forms)) {
                 if (!form) {
-                    out.println(`${pc.red("×")} ${id} ${pc.dim("unknown")}`);
+                    out.println(`${pc.red("✖")} ${id} ${pc.dim("unknown")}`);
                     continue;
                 }
 
@@ -295,7 +295,7 @@ export function registerAskCommand(program: Command): void {
                 if (opts.format === "json") {
                     out.result(SafeJSON.stringify({ form: outcome.form, entryId: outcome.entryId }, null, 2));
                 } else {
-                    out.printlnErr(`${pc.green("√")} answered ${id} ${pc.dim(`(logged as ${outcome.entryId})`)}`);
+                    out.printlnErr(`${pc.green("✔")} answered ${id} ${pc.dim(`(logged as ${outcome.entryId})`)}`);
                     renderForm(outcome.form);
                 }
 
@@ -318,7 +318,7 @@ export function registerAskCommand(program: Command): void {
             if (opts.format === "json") {
                 out.result(SafeJSON.stringify({ form }, null, 2));
             } else {
-                out.printlnErr(`${pc.green("√")} cancelled ${id}`);
+                out.printlnErr(`${pc.green("✔")} cancelled ${id}`);
             }
 
             process.exit(0);

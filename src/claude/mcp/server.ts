@@ -74,6 +74,28 @@ import {
     handleHandoffPost,
 } from "./tools/handoff";
 import { handleQuestionAnswer, QUESTION_ANSWER_INPUT_SCHEMA, type QuestionAnswerArgs } from "./tools/question-answer";
+import {
+    handleQuestionCancel,
+    handleQuestionPoll,
+    handleQuestionPost,
+    handleQuestionRespond,
+    handleQuestionWait,
+    QUESTION_CANCEL_DESCRIPTION,
+    QUESTION_CANCEL_INPUT_SCHEMA,
+    QUESTION_POLL_DESCRIPTION,
+    QUESTION_POLL_INPUT_SCHEMA,
+    QUESTION_POST_DESCRIPTION,
+    QUESTION_POST_INPUT_SCHEMA,
+    QUESTION_RESPOND_DESCRIPTION,
+    QUESTION_RESPOND_INPUT_SCHEMA,
+    QUESTION_WAIT_DESCRIPTION,
+    QUESTION_WAIT_INPUT_SCHEMA,
+    type QuestionCancelArgs,
+    type QuestionPollArgs,
+    type QuestionPostArgs,
+    type QuestionRespondArgs,
+    type QuestionWaitArgs,
+} from "./tools/question-post";
 
 const log = logger.child({ component: "claude:mcp" });
 
@@ -85,7 +107,19 @@ const QUESTION_ANSWER_DESCRIPTION =
     'mid-session. Not for routine task instructions you simply execute or pure acknowledgements ("ok", "thanks").';
 
 const SERVER_INSTRUCTIONS =
-    "Genesis Tools — question/answer capture server.\n\n" +
+    "Genesis Tools — question/answer server. TWO question surfaces, opposite directions:\n\n" +
+    "1. ASK THE USER (blocking, they answer): `question_post` creates a PENDING form — a question you " +
+    "need decided before you can continue. It lands on the dev-dashboard /qa Pending section and raises a " +
+    "notification. Default is NON-BLOCKING: you get a form id immediately and collect the answer with " +
+    "`question_wait` (returns waiter: answered | timeout | cancelled | budget_exhausted) or `question_poll` " +
+    "(no ids = everything still pending). `question_cancel` withdraws a form you no longer need. " +
+    "`question_respond` submits an answer — the USER normally does that on the dashboard, so use it only " +
+    "for automation or to relay an answer they gave you elsewhere; never invent one. Pass `wait: true` on " +
+    "question_post only when you genuinely cannot proceed, because a blocking-by-default ask hangs agent " +
+    "loops. Same surface from the CLI: `tools question ask|wait|poll|answer|cancel` (the CLI `answer` verb " +
+    "is `question_respond` here). Answering a form ALSO writes it into the Q→A history below, so /qa stays " +
+    "one list.\n\n" +
+    "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
     "WHEN TO USE THE question_answer TOOL:\n" +
     '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
     'you choose X over Y"), design/architecture decisions, "how does Y work", tradeoff explanations.\n' +
@@ -168,6 +202,31 @@ function buildToolRegistry(): Record<string, ToolEntry> {
                 const r = await handleQuestionAnswer(args as unknown as QuestionAnswerArgs);
                 return r.summary;
             },
+        },
+        question_post: {
+            description: QUESTION_POST_DESCRIPTION,
+            inputSchema: QUESTION_POST_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleQuestionPost(args as unknown as QuestionPostArgs),
+        },
+        question_wait: {
+            description: QUESTION_WAIT_DESCRIPTION,
+            inputSchema: QUESTION_WAIT_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleQuestionWait(args as unknown as QuestionWaitArgs),
+        },
+        question_poll: {
+            description: QUESTION_POLL_DESCRIPTION,
+            inputSchema: QUESTION_POLL_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleQuestionPoll(args as unknown as QuestionPollArgs),
+        },
+        question_respond: {
+            description: QUESTION_RESPOND_DESCRIPTION,
+            inputSchema: QUESTION_RESPOND_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleQuestionRespond(args as unknown as QuestionRespondArgs),
+        },
+        question_cancel: {
+            description: QUESTION_CANCEL_DESCRIPTION,
+            inputSchema: QUESTION_CANCEL_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleQuestionCancel(args as unknown as QuestionCancelArgs),
         },
         handoff_post: {
             description: HANDOFF_POST_DESCRIPTION,
@@ -431,6 +490,10 @@ function buildToolRegistry(): Record<string, ToolEntry> {
 /** Known capability names, keyed to the tool-name prefix that identifies membership. */
 const CAPABILITY_PREFIXES: Record<string, string> = {
     question_answer: "question_answer",
+    // The blocking ask surface. Its tool names deliberately avoid the `question_answer`
+    // prefix (hence `question_respond`, not `question_answer_form`), so enabling one
+    // capability can never drag the other in through a prefix match.
+    question_ask: "question_",
     boards: "boards_",
     handoff: "handoff_",
     annotate: "annotate_",

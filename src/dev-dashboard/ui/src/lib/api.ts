@@ -20,6 +20,7 @@ import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/t
 import type { FocusSessionResult } from "@app/dev-dashboard/lib/session-focus";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { TmuxScrollState } from "@genesiscz/utils/tmux/sessions";
 
@@ -170,6 +171,35 @@ export const cmuxApi = {
         }
     },
 };
+
+export const qaPendingApi = {
+    list: () => jsonFetch<{ forms: AskForm[] }>("/api/qa/pending"),
+    get: (id: string) => jsonFetch<{ form: AskForm }>(`/api/qa/pending/${encodeURIComponent(id)}`),
+    cancel: (id: string) =>
+        jsonFetch<{ form: AskForm }>(`/api/qa/pending/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    /**
+     * Submit an answer. A 400 carries `{ code: "incomplete", missing: [...] }`, which the card
+     * renders inline, so this reads the body on failure instead of throwing the reason away.
+     */
+    answer: async (id: string, answers: AskAnswer[]): Promise<AnswerResponse> => {
+        const res = await fetch(`/api/qa/pending/${encodeURIComponent(id)}/answer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: SafeJSON.stringify({ answers }),
+        });
+        const text = await res.text();
+
+        try {
+            return SafeJSON.parse(text, { strict: true }) as AnswerResponse;
+        } catch {
+            return { ok: false, code: "not_found", error: `answer failed (${res.status})` };
+        }
+    },
+};
+
+export type AnswerResponse =
+    | { ok: true; form: AskForm; entryId: string }
+    | { ok: false; code: "not_found" | "not_pending" | "incomplete"; error: string; missing?: string[] };
 
 export const obsidianApi = {
     tree: () => jsonFetch<{ entries: VaultEntry[] }>("/api/obsidian/tree"),

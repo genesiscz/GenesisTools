@@ -2,11 +2,22 @@ import { getConfig } from "@app/dev-dashboard/config";
 import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
 import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
 import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
+import { createPendingStream } from "@app/dev-dashboard/lib/qa-pending-sse";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { errorResult } from "@app/dev-dashboard/server/routes/error";
 import type { RouteDef } from "@app/dev-dashboard/server/types";
 import { defaultDbPath } from "@app/question/commands/log";
+import {
+    answerAskForm,
+    cancelAskForm,
+    getAskForm,
+    listPendingForms,
+    pollAskForms,
+    postAskForm,
+    waitForAskForm,
+} from "@app/question/lib/pending/ask";
+import { type AskAnswer, type CreateAskFormInput, DEFAULT_WAIT_BUDGET_MS } from "@app/question/lib/pending/types";
 import {
     getEntryById,
     markEntriesRead,
@@ -129,7 +140,16 @@ export function qaRoutes(): RouteDef[] {
             handler: () => ({
                 kind: "sse",
                 start: (emit) => {
-                    emit.comment(" qa+handoff multiplexed stream open");
+                    emit.comment(" qa+handoff+pending multiplexed stream open");
+
+                    // Snapshot first: a client that connects while forms are already waiting
+                    // must see them without a reload, exactly like the Genesis stream.
+                    for (const form of listPendingForms()) {
+                        emit.data(
+                            SafeJSON.stringify({ type: "pending", ev: "created", id: form.id, form }, { strict: true })
+                        );
+                    }
+
                     const qaStream = createQaStream((entry) =>
                         emit.data(SafeJSON.stringify({ type: "qa", ...enrichQaEntry(entry) }, { strict: true }))
                     );
@@ -141,6 +161,14 @@ export function qaRoutes(): RouteDef[] {
                             )
                         )
                     );
+                    const pendingStream = createPendingStream((event) =>
+                        emit.data(
+                            SafeJSON.stringify(
+                                { type: "pending", ev: event.ev, id: event.id, ts: event.ts, form: event.form },
+                                { strict: true }
+                            )
+                        )
+                    );
                     const keepAlive = setInterval(() => emit.comment(" ping"), 12_000);
 
                     return {
@@ -148,10 +176,129 @@ export function qaRoutes(): RouteDef[] {
                             clearInterval(keepAlive);
                             qaStream.close();
                             handoffStream.close();
+                            pendingStream.close();
                         },
                     };
                 },
             }),
+        },
+        {
+            method: "GET",
+            pattern: "/api/qa/pending",
+            handler: (ctx) => {
+                try {
+                    const ids = ctx.query.get("ids");
+
+                    if (ids) {
+                        const wanted = ids
+                            .split(",")
+                            .map((id) => id.trim())
+                            .filter((id) => id.length > 0);
+
+                        return { kind: "json", status: 200, body: { forms: pollAskForms(wanted) } };
+                    }
+
+                    return { kind: "json", status: 200, body: { forms: listPendingForms() } };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "POST",
+            pattern: "/api/qa/pending",
+            handler: async (ctx) => {
+                try {
+                    const body = await ctx.readJson<CreateAskFormInput>();
+
+                    if (!Array.isArray(body.items) || body.items.length === 0) {
+                        return { kind: "json", status: 400, body: { error: "items[] is required" } };
+                    }
+
+                    const form = await postAskForm({ ...body, projectPath: body.projectPath || process.cwd() });
+
+                    return { kind: "json", status: 201, body: { form } };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "GET",
+            pattern: "/api/qa/pending/:id",
+            handler: (ctx) => {
+                try {
+                    const form = getAskForm(ctx.params.id);
+
+                    if (!form) {
+                        return { kind: "json", status: 404, body: { error: `unknown form: ${ctx.params.id}` } };
+                    }
+
+                    return { kind: "json", status: 200, body: { form } };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "DELETE",
+            pattern: "/api/qa/pending/:id",
+            handler: (ctx) => {
+                try {
+                    const form = cancelAskForm(ctx.params.id);
+
+                    if (!form) {
+                        return { kind: "json", status: 404, body: { error: "not found, or already resolved" } };
+                    }
+
+                    return { kind: "json", status: 200, body: { form } };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "POST",
+            pattern: "/api/qa/pending/:id/answer",
+            handler: async (ctx) => {
+                try {
+                    const body = await ctx.readJson<{ answers?: AskAnswer[] }>();
+                    const outcome = await answerAskForm(ctx.params.id, body.answers ?? []);
+
+                    if (!outcome.ok) {
+                        // `incomplete` is the client's mistake (400); the others mean the form is
+                        // gone or already resolved (404) — the same split Genesis' routes use.
+                        const status = outcome.code === "incomplete" ? 400 : 404;
+
+                        return { kind: "json", status, body: outcome };
+                    }
+
+                    return { kind: "json", status: 200, body: outcome };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
+        },
+        {
+            method: "POST",
+            pattern: "/api/qa/pending/:id/wait",
+            longLived: true,
+            handler: async (ctx) => {
+                try {
+                    const body = await ctx
+                        .readJson<{ timeoutMs?: number }>()
+                        .catch(() => ({}) as { timeoutMs?: number });
+                    const result = await waitForAskForm(ctx.params.id, body.timeoutMs ?? DEFAULT_WAIT_BUDGET_MS);
+
+                    if (!result.form) {
+                        return { kind: "json", status: 404, body: { error: `unknown form: ${ctx.params.id}` } };
+                    }
+
+                    return { kind: "json", status: 200, body: result };
+                } catch (err) {
+                    return errorResult(err);
+                }
+            },
         },
         {
             method: "POST",

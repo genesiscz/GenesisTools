@@ -16,6 +16,7 @@ import { truncateMiddle } from "@/components/handoff/handoff-format";
 import { useHandoffList } from "@/components/handoff/useHandoffApi";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
+import { QaPendingCard } from "@/components/QaPendingCard";
 import { QaReadTime } from "@/components/QaReadTime";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
 import { QaSaveToObsidianDialog } from "@/components/QaSaveToObsidianDialog";
@@ -25,7 +26,9 @@ import { QaSectionHeading } from "@/components/QaSectionHeading";
 import { QaSessionActions } from "@/components/QaSessionActions";
 import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
+import { usePendingForms } from "@/hooks/usePendingForms";
 import { useQaStream } from "@/hooks/useQaStream";
+import { qaPendingApi } from "@/lib/api";
 import { prependQaLiveEntry } from "./qa-live-cap";
 
 const READ_PERSIST_DEBOUNCE_MS = 400;
@@ -421,8 +424,9 @@ export function QaRoute() {
 
 function QaFeed() {
     const urlPinnedId = useMemo(() => new URLSearchParams(window.location.search).get("id"), []);
-    const [pinnedId] = useState<string | null>(urlPinnedId);
+    const [pinnedId, setPinnedId] = useState<string | null>(urlPinnedId);
     const logQuery = useQuery({ queryKey: ["qa-log"], queryFn: fetchQaLog, retry: false });
+    const pending = usePendingForms();
     const [live, setLive] = useState<QaRow[]>([]);
     const [sseDown, setSseDown] = useState(false);
     const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set());
@@ -656,18 +660,48 @@ function QaFeed() {
     const showScrollNav = scrollY >= QA_SCROLL_NAV_OFFSET_PX && displayEntries.length > 0;
 
     useEffect(() => {
-        if (!pinnedId || logQuery.isLoading || logQuery.isError) {
+        // The notification for a pending form deep-links to the FORM id. Clicking it after the
+        // form was answered must still land somewhere, so follow the form's `entryId` into
+        // history rather than pinning an id no card carries.
+        if (!pinnedId?.startsWith("ask_") || pending.forms.some((form) => form.id === pinnedId)) {
             return;
         }
 
-        const el = document.querySelector(`[data-qa-id="${pinnedId}"]`);
+        let cancelled = false;
+        qaPendingApi
+            .get(pinnedId)
+            .then(({ form }) => {
+                if (!cancelled && form.entryId) {
+                    setPinnedId(form.entryId);
+                }
+            })
+            .catch((err: unknown) => {
+                console.debug("qa: could not resolve a pending deep link", err);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [pinnedId, pending.forms]);
+
+    useEffect(() => {
+        if (!pinnedId || logQuery.isLoading) {
+            return;
+        }
+
+        // `?id=` addresses BOTH surfaces: a pending form and a history entry share the id
+        // space, and a form links to the entry it produced, so the same link keeps working
+        // after it is answered. Pending wins while the form is still waiting.
+        const el =
+            document.querySelector(`[data-qa-pending-id="${pinnedId}"]`) ??
+            document.querySelector(`[data-qa-id="${pinnedId}"]`);
 
         if (el) {
             el.scrollIntoView({ behavior: "smooth", block: "start" });
         }
-    }, [pinnedId, displayEntries.length, logQuery.isLoading, logQuery.isError]);
+    }, [pinnedId, displayEntries.length, pending.forms.length, logQuery.isLoading]);
 
-    if (logQuery.isError) {
+    if (logQuery.isError && pending.forms.length === 0) {
         return (
             <div className="dd-panel flex h-[calc(100vh-2rem)] flex-col items-center justify-center gap-2 text-center">
                 <p className="text-lg font-bold text-[#f87171]">Failed to load Q&amp;A</p>
@@ -686,6 +720,18 @@ function QaFeed() {
                 search={<QaSearchBox value={query} onChange={setQuery} />}
                 viewToggle={<QaSourceToggle mode={viewMode} onChange={setViewMode} />}
             />
+
+            {pending.forms.length > 0 ? (
+                <section className="flex flex-col gap-3" data-testid="qa-pending-section">
+                    <h2 className="font-mono text-xs tracking-wider text-[var(--dd-text-muted)] uppercase">
+                        Waiting for you
+                        <span className="dd-accent-text ml-1.5">{pending.forms.length}</span>
+                    </h2>
+                    {pending.forms.map((form) => (
+                        <QaPendingCard key={form.id} form={form} pinned={form.id === pinnedId} />
+                    ))}
+                </section>
+            ) : null}
 
             {logQuery.isLoading ? (
                 <div className="dd-panel py-8 text-center text-sm text-[var(--dd-text-muted)]">Loading Q&amp;A…</div>
