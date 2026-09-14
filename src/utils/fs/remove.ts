@@ -24,7 +24,7 @@ function errCode(err: unknown): string | undefined {
  *
  * Best-effort by design: after exhausting retries it returns instead of
  * throwing. A leftover temp file is harmless — the age-gated
- * `test-cleanup-preload` reaps stale ones — whereas a throw out of a test
+ * the per-process temp root reaps stale ones — whereas a throw out of a test
  * `afterEach` fails an otherwise-passing test. First attempt is instant on
  * macOS/Linux (no lock), so this is a no-op cost off Windows.
  *

@@ -8,6 +8,12 @@ import { env } from "@genesiscz/utils/env";
  * Give every test process its own temp root, and remove it when the run is green.
  *
  * 799 call sites in the suite do `mkdtempSync(join(tmpdir(), "<prefix>-"))` and most never
+ * 🛑 preload-test-sandbox.ts DEPENDS on this file running first: it creates its
+ * `gt-test-home-*` root with a bare `mkdtempSync(join(tmpdir(), ...))` and has no cleanup of
+ * its own, so it self-cleans ONLY because the TMPDIR redirect below has already happened.
+ * Keep this entry ABOVE it in `bunfig.toml`. Measured 2026-09-15: reordering leaks one home
+ * directory per test file into the real temp folder, never removed.
+ *
  * remove the dir. Measured 2026-09-07 15:05: 17,949 entries and 1.45 GB in the per-user
  * temp folder, 4,880 of them `gt-test-home-*` from the sandbox preload alone, 6,568
  * distinct prefixes in all, growing by about 1,100 entries per ten minutes while agents
