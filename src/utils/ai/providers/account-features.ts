@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { AccountEntry } from "../config/schema";
+import type { AccountProviderAlias } from "./alias-list";
 
 /**
  * Account lifecycle and quota features of a provider plugin: login flows, home discovery,
@@ -196,7 +197,7 @@ export interface SpendScope {
     /** Roots on disk that belong to this account. */
     transcriptRoots: string[];
     /** Source id for ai-spend. */
-    source: "claude" | "codex" | "grok";
+    source: AccountProviderAlias;
 }
 
 /**
@@ -308,9 +309,26 @@ export interface AccountUsageFeature {
     missingCredential?(account: AccountEntry): MissingCredential | undefined;
 }
 
+export interface WarmupContext {
+    /** The provider-neutral warmup: one minimal chat turn through the facade. */
+    generic(): Promise<void>;
+}
+
+export interface WarmupOutcome {
+    /** Which route sent the request, for the CLI's hint column (`oauth`, `login-long`, ...). */
+    via: string;
+}
+
 export interface AccountFeatures {
     /** Vocabulary the generic TUI and dashboard need without knowing the provider. */
     readonly presentation: AccountPresentation;
+
+    /**
+     * Start the account's session timer with one throwaway request. Absent means the
+     * shared chat turn is enough; anthropic declares one to fall back to its long-lived
+     * token when the OAuth grant is dead.
+     */
+    warmup?(account: AccountEntry, ctx: WarmupContext): Promise<WarmupOutcome>;
 
     /** Interactive first login or re-login. Absent means "run the vendor CLI"; no plugin is absent today. */
     login?(ctx: AccountFlowContext): Promise<LoginOutcome>;

@@ -1,10 +1,5 @@
 import type { AccountUsage, UsageResponse } from "@app/claude/lib/usage/api";
-import {
-    longLivedTokenUsable,
-    sendLongLivedInferencePing,
-    type TokenVerdict,
-} from "@genesiscz/utils/claude/token-verify";
-import type { AIAccountTokens } from "@genesiscz/utils/config/ai.types";
+import { warmupAccounts } from "@genesiscz/utils/ai/warmup";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -57,12 +52,6 @@ export type WarmupSendResult = {
     via?: WarmupVia;
 };
 
-export type SendWarmupOptions = {
-    loadTokens?: (accountName: string) => Promise<AIAccountTokens | undefined>;
-    sendOAuth?: (accountName: string) => Promise<void>;
-    sendLongLived?: (token: string) => Promise<TokenVerdict>;
-};
-
 export function formatWarmupViaHint(via?: WarmupVia): string {
     if (via !== "login-long") {
         return "";
@@ -71,121 +60,23 @@ export function formatWarmupViaHint(via?: WarmupVia): string {
     return " used login-long token";
 }
 
-function isOAuthAuthFailure(err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
-
-    return /invalid_grant|Token expired|Invalid bearer token|unauthorized|\b401\b/i.test(msg);
-}
-
-function hasOAuthCredentials(tokens: AIAccountTokens | undefined): boolean {
-    if (!tokens) {
-        // Unknown account: let the OAuth path raise the not-found error.
-        return true;
-    }
-
-    return Boolean(tokens.accessToken || tokens.refreshToken || tokens.authFile);
-}
-
-function hasNoCredentials(tokens: AIAccountTokens): boolean {
-    return !tokens.accessToken && !tokens.refreshToken && !tokens.longLivedToken && !tokens.authFile;
-}
-
-function longLivedSucceeded(verdict: TokenVerdict): boolean {
-    return verdict === "ok" || verdict === "limited";
-}
-
-async function defaultLoadTokens(accountName: string): Promise<AIAccountTokens | undefined> {
-    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-    const aiConfig = await AIConfig.load();
-    return aiConfig.getAccount(accountName)?.tokens;
-}
-
-async function defaultSendOAuth(accountName: string): Promise<void> {
-    const { AIAccount } = await import("@genesiscz/utils/ai/AIAccount");
-    const { ChatEngine } = await import("@ask/chat/ChatEngine");
-    const { AnthropicModelCategory } = await import("@genesiscz/utils/ask/providers/ModelResolver");
-
-    const account = AIAccount.chooseClaude(accountName);
-    await ChatEngine.oneShot({
-        account,
-        model: AnthropicModelCategory.Haiku,
-        message: "hi",
-        maxTokens: 5,
+/**
+ * The daemon's per-account send, now the shared warmup in `@genesiscz/utils/ai/warmup`:
+ * the same chat turn `tools ai|claude|codex|grok warmup` send, with anthropic's
+ * long-lived fallback living on the plugin. Never throws: the rule loop records
+ * success or failure per account and moves on.
+ */
+export async function sendWarmupMessage(accountName: string): Promise<WarmupSendResult> {
+    const [result] = await warmupAccounts({ provider: "anthropic-sub", names: [accountName] }).catch((err: unknown) => {
+        logger.warn({ account: accountName, err }, "[warmup] account lookup failed");
+        return [];
     });
-}
 
-async function warmupViaLongLived(
-    accountName: string,
-    token: string,
-    sendLongLived: (token: string) => Promise<TokenVerdict>,
-    oauthErr?: unknown
-): Promise<WarmupSendResult> {
-    const verdict = await sendLongLived(token);
-
-    if (longLivedSucceeded(verdict)) {
-        logger.info(`Warmup for "${accountName}" used login-long token`);
-        return { success: true, via: "login-long" };
-    }
-
-    const oauthPart = oauthErr ? `oauth: ${oauthErr}; ` : "";
-    logger.warn(`Warmup message failed for "${accountName}": ${oauthPart}login-long: ${verdict}`);
-    return { success: false };
-}
-
-export async function sendWarmupMessage(
-    accountName: string,
-    options: SendWarmupOptions = {}
-): Promise<WarmupSendResult> {
-    const loadTokens = options.loadTokens ?? defaultLoadTokens;
-    const sendOAuth = options.sendOAuth ?? defaultSendOAuth;
-    const sendLongLived = options.sendLongLived ?? sendLongLivedInferencePing;
-
-    let tokens: Awaited<ReturnType<typeof loadTokens>>;
-    try {
-        tokens = await loadTokens(accountName);
-    } catch (err) {
-        logger.warn(`Warmup message failed for "${accountName}": ${err}`);
+    if (!result?.ok) {
         return { success: false };
     }
 
-    // Fail fast on credential-less entries (e.g. an aborted login left an
-    // account with empty tokens) instead of spinning through token-refresh
-    // retries and an API call that can only return "Invalid bearer token".
-    if (tokens && hasNoCredentials(tokens)) {
-        logger.warn(
-            `Warmup skipped for "${accountName}": no credentials stored. Run: tools claude login ${accountName}`
-        );
-        return { success: false };
-    }
-
-    const canLongLived = tokens ? longLivedTokenUsable(tokens) : false;
-
-    if (hasOAuthCredentials(tokens)) {
-        try {
-            await sendOAuth(accountName);
-            return { success: true, via: "oauth" };
-        } catch (err) {
-            if (isOAuthAuthFailure(err) && canLongLived && tokens?.longLivedToken) {
-                logger.info(`Warmup OAuth failed for "${accountName}" (${err}); trying login-long token`);
-                return warmupViaLongLived(accountName, tokens.longLivedToken, sendLongLived, err);
-            }
-
-            const loginLongHint =
-                isOAuthAuthFailure(err) && !canLongLived
-                    ? `. Or attach a long-lived token: tools claude login-long ${accountName}`
-                    : "";
-            logger.warn(`Warmup message failed for "${accountName}": ${err}${loginLongHint}`);
-            return { success: false };
-        }
-    }
-
-    if (canLongLived && tokens?.longLivedToken) {
-        logger.info(`Warmup for "${accountName}": no OAuth pair, using login-long token`);
-        return warmupViaLongLived(accountName, tokens.longLivedToken, sendLongLived);
-    }
-
-    logger.warn(`Warmup skipped for "${accountName}": no credentials stored. Run: tools claude login ${accountName}`);
-    return { success: false };
+    return { success: true, ...(result.via === "login-long" ? { via: "login-long" as const } : {}) };
 }
 
 /**

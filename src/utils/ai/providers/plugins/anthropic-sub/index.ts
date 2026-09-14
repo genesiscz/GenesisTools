@@ -9,6 +9,7 @@ import { anthropicLoginLong } from "./login-long";
 import { anthropicLoginSecondary } from "./login-secondary";
 import { anthropicSpendScope } from "./spend";
 import { anthropicUsage } from "./usage";
+import { anthropicWarmup } from "./warmup";
 
 /**
  * Claude Max/Pro subscription.
@@ -80,6 +81,7 @@ export const anthropicSubPlugin: ProviderPlugin = {
         loginLong: anthropicLoginLong,
         loginSecondary: anthropicLoginSecondary,
         usage: anthropicUsage,
+        warmup: anthropicWarmup,
 
         /**
          * Stored fields only, never a profile fetch. Resolving an access token to
