@@ -12,6 +12,7 @@
  */
 
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import type { CreateParserOptions, DriverLineParser } from "@genesiscz/utils/ai/usage/transcripts/types";
 
 export type {
@@ -21,9 +22,9 @@ export type {
 } from "@genesiscz/utils/ai/usage/transcripts/types";
 
 /** The agents `monitor` knows how to read. */
-export type AgentId = "claude" | "codex" | "grok";
+export type AgentId = AccountProviderAlias;
 
-export const AGENT_IDS: readonly AgentId[] = ["claude", "codex", "grok"];
+export const AGENT_IDS: readonly AgentId[] = ACCOUNT_PROVIDER_ALIASES;
 
 /**
  * The provider plugin that owns each agent's accounts.

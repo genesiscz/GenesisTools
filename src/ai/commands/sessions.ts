@@ -1,19 +1,18 @@
+import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
 import { DEFAULT_TURN_LIMIT, type TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
-const PROVIDERS = new Set<TranscriptProvider>(["claude", "grok", "codex"]);
-
 function parseProvider(value: string | undefined): TranscriptProvider | undefined {
     if (!value) {
         return undefined;
     }
-    if (!PROVIDERS.has(value as TranscriptProvider)) {
-        throw new Error(`--provider must be claude, grok, or codex (got "${value}")`);
+    if (!isAccountProviderAlias(value)) {
+        throw new Error(`--provider must be one of ${ACCOUNT_PROVIDER_ALIASES.join(", ")} (got "${value}")`);
     }
-    return value as TranscriptProvider;
+    return value;
 }
 
 export function registerSessionsCommands(program: Command): void {

@@ -1,4 +1,7 @@
+import { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias } from "./alias-list";
 import { registeredProviderIds, UnknownProviderError } from "./registry";
+
+export { ACCOUNT_PROVIDER_ALIASES, type AccountProviderAlias, isAccountProviderAlias } from "./alias-list";
 
 /**
  * CLI aliases for the subscription plugins that have account features (spec 2026-09-04,
@@ -12,11 +15,6 @@ export const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
     codex: "openai-sub",
     grok: "grok-sub",
 };
-
-/** Alias list in help order. */
-export const ACCOUNT_PROVIDER_ALIASES = ["claude", "codex", "grok"] as const;
-
-export type AccountProviderAlias = (typeof ACCOUNT_PROVIDER_ALIASES)[number];
 
 const ID_TO_ALIAS: Readonly<Record<string, AccountProviderAlias>> = Object.fromEntries(
     ACCOUNT_PROVIDER_ALIASES.map((alias) => [PROVIDER_ALIASES[alias], alias])
@@ -44,8 +42,4 @@ export function resolveProviderAlias(input: string): string {
 /** The alias for a plugin id, or the id itself when it has none. */
 export function providerAliasOf(pluginId: string): string {
     return ID_TO_ALIAS[pluginId] ?? pluginId;
-}
-
-export function isAccountProviderAlias(value: string): value is AccountProviderAlias {
-    return (ACCOUNT_PROVIDER_ALIASES as readonly string[]).includes(value);
 }
