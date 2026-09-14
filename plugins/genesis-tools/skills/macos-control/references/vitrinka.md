@@ -1,14 +1,26 @@
-# Vitrinka publishing (optional dependency)
+# Vitrinka publishing (optional)
 
-Board publishing for recordings — only when the user asks to share/annotate/discuss; never by default. Requires the `vitrinka` CLI + reachable server; everything else in this skill works without it.
+Board publishing for screenshots and recordings. Only when the user asks to share, annotate
+or discuss, never by default. It needs the `vitrinka` CLI and a reachable server. Native
+Computer Use, Peekaboo and `tools control` all work without it.
 
-## Division of labor
+Keep evidence local and view it yourself before publishing anything. Verify the image
+contains the intended app and window, and no unrelated personal UI. Preserve any redaction
+the user asked for.
 
-`vitrinka snap` is a single STILL per call (simctl/adb/`screencapture -x`/adopt-a-file) — NO video, multi-frame, or motion-diff capability. This skill owns MOTION; vitrinka owns publishing/annotation. For a single still that goes straight to a board, skip the capture runner entirely — `vitrinka snap` is the right tool (its `--region` takes global screen POINTS, not frame pixels — don't confuse with the runner's crop regions, which are FRAME retina pixels = points × scaleFactor).
+## Division of labour
+
+`vitrinka snap` takes a single STILL per call. It has no video, no multi-frame and no
+motion-diff capability. This skill owns motion; vitrinka owns publishing and annotation. For
+a single still that goes straight to a board, skip the capture runner entirely and use
+`vitrinka snap`.
+
+⚠️ `vitrinka snap --region` takes global screen POINTS. The capture runner's crop regions are
+FRAME pixels, which is points times the scale factor. Do not mix them.
 
 ## Direct publish from a capture plan
 
-The capture runner publishes itself — add to the plan:
+The capture runner can publish itself. Add to the plan:
 
 ```json
 "vitrinka": {
@@ -17,20 +29,30 @@ The capture runner publishes itself — add to the plan:
 }
 ```
 
-`include` is an additive filter (crops/strip still computed regardless); shot titles derive from crop labels/timestamps; the runner inits/adds/pushes the set and imports to the board itself, relaying server URLs in its output. **Dead-publish guard:** when motion actions fired but peekaboo kept ≤1 frame, publish is refused — fix the plan rather than passing `vitrinka.force`.
+`include` is an additive filter; crops and the strip are computed regardless. Shot titles
+derive from crop labels and timestamps. The runner inits, adds, pushes the set, imports to the
+board, and relays the server URLs in its output.
 
-## Manual publish (pick frames yourself)
+🛑 **Dead-publish guard:** when motion actions fired but the recorder kept one frame or fewer,
+publish is refused. Fix the plan. Never pass `vitrinka.force` to silence it. Uploading a
+picture does not validate the action that was meant to produce it.
+
+## Manual publish (pick the frames yourself)
 
 ```bash
-mkdir -p <root>/shots && cp <session>/keep-000{2,3,4}.png <root>/shots/   # frames that tell the story
+mkdir -p <root>/shots && cp <session>/keep-000{2,3,4}.png <root>/shots/
 cd <root>
 vitrinka remote-init --root . --project <p> --branch <b> --key <key>
 vitrinka add --root . --file shots/<frame>.png --surface web --route <r> \
   --label "T+1.1s" --title "<state>" --note "<what this frame proves>" --action "<edge to next>"
 vitrinka push --root . --title "<set title>"
-vitrinka board-from-set --root . --slug <board-slug> --btitle "<board title>"   # → prints the board URL
+vitrinka board-from-set --root . --slug <board-slug> --btitle "<board title>"
 ```
 
-Then one `compose_board` (MCP) batch for the findings section — callouts per finding + a decision callout with suggested fixes.
+Then one `compose_board` MCP batch for the findings section: a callout per finding, plus a
+decision callout with suggested fixes.
 
-**Relay only server-printed URLs** (`board-from-set` / `push` output or the MCP response `url` field) — never hand-construct one (hand-built paths omit the workspace segment).
+🛑 **Relay only server-printed URLs** (the `board-from-set` or `push` output, or the MCP
+response `url` field). Never hand-construct a board URL; a hand-built path omits the workspace
+segment. The runner's optional publishing fields are documented by
+`tools control capture --help`.
