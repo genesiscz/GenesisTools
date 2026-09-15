@@ -244,3 +244,6 @@ README.json-to-ts.md
 
 # Benchmark result rows carry real scan paths; keep them out of git
 scripts/benchmarks/**/*results*.jsonl
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

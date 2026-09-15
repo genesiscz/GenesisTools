@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -37,9 +37,14 @@ beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "scripts-journal-"));
 });
 
-afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
-});
+// No per-test `rm`: `preload-test-tmpdir.ts` points TMPDIR at one root per test process and
+// removes the whole tree in a global afterAll, so a recursive remove here deletes a subtree
+// that is about to be deleted anyway — 17 of them per run of this file. Isolation is
+// unchanged, because each test still gets its own `mkdtemp` directory.
+//
+// This was NOT what made the file take 45.8 s on CI run 35003930205 (2.10 s on another
+// runner, same tests). That was five lock-timeout FAILURES caused by a synchronous `ps`
+// spawn on every lock acquire, fixed at the root in src/utils/process-identity.ts.
 
 describe("journal round-trip", () => {
     it("upsert then read returns the entry; missing journal reads empty", async () => {

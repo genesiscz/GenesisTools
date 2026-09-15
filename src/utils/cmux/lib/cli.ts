@@ -62,8 +62,17 @@ export function resolveCmuxPath(): string {
  */
 export const DEFAULT_CMUX_TIMEOUT_MS = 30_000;
 
+/**
+ * How long a timed-out child gets to honour SIGTERM before SIGKILL.
+ *
+ * Tuning, not behaviour. A grandchild holds the pipe open, so the read only unblocks on the
+ * escalation, and cli.timeout.test.ts paid this grace three times over: 300 ms of timeout
+ * and 2000 ms of waiting, in a file that measured 7.03 s for three tests.
+ */
+export const DEFAULT_CMUX_KILL_GRACE_MS = 2000;
+
 /** Bounded unless the caller explicitly passes `timeoutMs: null`. */
-export type CmuxTimeoutOpt = { timeoutMs?: number | null };
+export type CmuxTimeoutOpt = { timeoutMs?: number | null; killGraceMs?: number };
 
 export async function runCmux(args: string[], opts: { json?: boolean } & CmuxTimeoutOpt = {}): Promise<CmuxRunResult> {
     // null is the explicit opt-out; undefined means "nobody thought about it",
@@ -92,7 +101,7 @@ export async function runCmux(args: string[], opts: { json?: boolean } & CmuxTim
             killTimer = setTimeout(() => {
                 proc.kill("SIGKILL");
                 giveUp();
-            }, 2000);
+            }, opts.killGraceMs ?? DEFAULT_CMUX_KILL_GRACE_MS);
         }, timeoutMs);
     }
 

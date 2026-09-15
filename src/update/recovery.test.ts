@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { cpSync, rmSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,9 +18,18 @@ async function scratch(): Promise<string> {
     return d;
 }
 
-/** A bare "remote" plus a clone of it, both with one commit. */
-async function repoPair(): Promise<{ remote: string; local: string }> {
-    const root = await scratch();
+/**
+ * A bare "remote" plus a clone of it, both with one commit.
+ *
+ * Built ONCE per process and copied after that. The ten git processes below took a median
+ * of 144 ms, and six tests each wanted their own pair; the copy takes 12 ms. The two
+ * `remote set-url` calls are load-bearing rather than tidiness: the template's clone
+ * recorded the TEMPLATE's absolute remote path, so without them every copy would push into
+ * one shared remote and the tests would quietly stop being independent.
+ */
+let repoPairTemplate: Promise<string> | null = null;
+
+async function buildRepoPair(root: string): Promise<void> {
     const remote = join(root, "remote.git");
     const work = join(root, "seed");
     const local = join(root, "local");
@@ -36,6 +46,25 @@ async function repoPair(): Promise<{ remote: string; local: string }> {
     await git(["clone", remote, local], root);
     await git(["config", "user.email", "t@example.com"], local);
     await git(["config", "user.name", "T"], local);
+}
+
+async function repoPair(): Promise<{ remote: string; local: string }> {
+    repoPairTemplate ??= (async () => {
+        const base = await mkdtemp(join(tmpdir(), "update-recovery-template-"));
+        await buildRepoPair(base);
+        process.on("exit", () => {
+            rmSync(base, { recursive: true, force: true });
+        });
+
+        return base;
+    })();
+
+    const root = await scratch();
+    const remote = join(root, "remote.git");
+    const local = join(root, "local");
+    cpSync(await repoPairTemplate, root, { recursive: true });
+    await git(["remote", "set-url", "origin", remote], join(root, "seed"));
+    await git(["remote", "set-url", "origin", remote], local);
 
     return { remote, local };
 }

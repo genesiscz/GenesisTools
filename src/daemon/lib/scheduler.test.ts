@@ -270,6 +270,9 @@ describe("runSchedulerLoop resilience (Jul 3/6 incident class)", () => {
             verifyOwnership: () => true,
             watchdogIntervalMs: 25,
             wedgeThresholdMs: 80,
+            // An empty task list makes getNextWakeupMs return 60 s, and wakefulSleep only
+            // re-reads shouldAbort between ticks, so the SIGINT below cost a full 2 s tick.
+            wakefulTickMs: 20,
             loadConfig: async () => ({ tasks: [] }),
             exit: (code) => {
                 codes.push(code);
@@ -287,6 +290,7 @@ describe("runSchedulerLoop resilience (Jul 3/6 incident class)", () => {
 
         const loop = runSchedulerLoop(logsBaseDir, {
             verifyOwnership: () => true,
+            wakefulTickMs: 20,
             loadConfig: async () => ({ tasks: [] }),
             exit: (code) => {
                 codes.push(code);

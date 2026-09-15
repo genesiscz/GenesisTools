@@ -40,6 +40,21 @@ async function repo(): Promise<TestRepo> {
     return r;
 }
 
+/**
+ * A repository that already carries the whole parent/c1/c2 stack, built once per process.
+ *
+ * `stack()` below is sixteen git processes, and six cases opened with exactly it. The bytes
+ * are deterministic — fixed content, fixed identity, a fixed epoch ladder — so every copy is
+ * the repository the first build produced, checked out on `feat/parent` the same way.
+ */
+async function repoWithStack(): Promise<TestRepo> {
+    const r = await TestRepo.fromScenario("cascade:parent-c1-c2", (target) => stack(target), {
+        prefix: "gt-cascade-",
+    });
+    repos.push(r);
+    return r;
+}
+
 const target = { ref: "master", source: "flag" as const, detail: "--onto" };
 
 async function plan(r: TestRepo, parent: string, childOverride?: string[]) {
@@ -98,8 +113,7 @@ describe("plan (pure)", () => {
 
 describe("cascade end to end", () => {
     it("rebases the parent and transplants both children by their own fork points", async () => {
-        const r = await repo();
-        await stack(r);
+        const r = await repoWithStack();
         const { plan: built, parentReport } = await plan(r, "feat/parent");
         expect(parentReport.verdict).toBe("UNMERGED");
         expect(built.parentRoute).toBe("rebase");
@@ -159,8 +173,7 @@ describe("cascade end to end", () => {
     });
 
     it("rebases a child checked out in another worktree inside that worktree", async () => {
-        const r = await repo();
-        await stack(r);
+        const r = await repoWithStack();
         const wt = await r.worktreeAdd({ name: "wt-c1", ref: "feat/c1" });
         const { plan: built } = await plan(r, "feat/parent");
         expect(built.children.find((c) => c.name === "feat/c1")?.worktree).toBe(wt);
@@ -178,8 +191,7 @@ describe("cascade end to end", () => {
     });
 
     it("leaves a merged parent alone and transplants its children straight onto the target", async () => {
-        const r = await repo();
-        await stack(r);
+        const r = await repoWithStack();
         await r.checkout("master");
         await r.squashMerge("feat/parent");
         await r.checkout("feat/parent");
@@ -322,8 +334,7 @@ describe("cascade end to end", () => {
     });
 
     it("--dry-run prints the plan from a dirty checkout and moves nothing", async () => {
-        const r = await repo();
-        await stack(r);
+        const r = await repoWithStack();
         r.write({ file: "scratch.txt", content: "uncommitted\n" });
         const before = await r.sha("feat/c1");
         const proc = Bun.spawn(
@@ -349,8 +360,7 @@ describe("cascade end to end", () => {
     });
 
     it("honours --child overrides and refuses unknown branches", async () => {
-        const r = await repo();
-        await stack(r);
+        const r = await repoWithStack();
         const { plan: built } = await plan(r, "feat/parent", ["feat/c2"]);
         expect(built.children.map((c) => c.name)).toEqual(["feat/c2"]);
         await expect(plan(r, "feat/parent", ["nope"])).rejects.toThrow(/does not exist/);
@@ -408,8 +418,7 @@ describe("review round 1", () => {
 
 describe("judge round 1", () => {
     it("leaves a zero-commit branch that merely points at an older parent commit alone", async () => {
-        const r = await repo();
-        await stack(r);
+        const r = await repoWithStack();
         await r.branch("parent-snapshot", "feat/parent~1");
         const snapshot = await r.sha("parent-snapshot");
         const { plan: built } = await plan(r, "feat/parent");

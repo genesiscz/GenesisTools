@@ -23,12 +23,25 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
+/**
+ * The device-code deadline, in seconds, and why it is this small.
+ *
+ * `pollDeviceTokenResponse` sleeps BEFORE its first request, for
+ * `min(max(1000ms, interval) * 1.2, time left on the deadline)`. `intervalSeconds: 0`
+ * therefore still waits out the 1000 ms floor times 1.2, and eight tests paid 1.2 s
+ * each: the file measured 9.75 s of which 9.6 s was that sleep. Capping the deadline
+ * caps the sleep instead, and the first iteration still runs to completion because
+ * `Date.now() < deadline` is only re-checked at the TOP of the loop — so every case
+ * below exercises the same sleep -> fetch -> validate path it always did.
+ */
+const DEADLINE_SECONDS = 0.05;
+
 function poll() {
     return pollDeviceTokenResponse({
         config,
         deviceCode: "dev-1",
         intervalSeconds: 0,
-        expiresIn: 5,
+        expiresIn: DEADLINE_SECONDS,
     });
 }
 

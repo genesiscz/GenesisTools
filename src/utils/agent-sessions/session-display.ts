@@ -40,6 +40,15 @@ const DETAIL_PROMPT_LINES = 6;
 const PROMPT_PREVIEW_LEN = 60;
 const AMBIGUOUS_ROWS_SHOWN = 20;
 
+/**
+ * The project as a human reads it. `project` stays the encoded transcript directory
+ * (`-Users-Martin-Projects-shop`) because scoping and query matching key on it, so every renderer
+ * goes through here instead of printing that field raw.
+ */
+export function displayProjectName(session: Pick<SessionDisplayItem, "project" | "projectName">): string {
+    return session.projectName || session.project;
+}
+
 /** An indexed session in the display shape; a search hit carries its matched snippet across. */
 export function toSessionDisplay(session: AgentSession | AgentSearchHit): SessionDisplayItem {
     const matchSnippet = "matchedText" in session ? session.matchedText : undefined;
@@ -88,7 +97,7 @@ export function printAmbiguousSessions(candidates: SessionDisplayItem[], shown =
             created ? formatClock(created, { date: "short" }) : "—",
             created ? formatRelativeTime(created) : "—",
             modified ? formatRelativeTime(modified) : "—",
-            truncateDisplay(candidate.projectName || candidate.project, 24),
+            truncateDisplay(displayProjectName(candidate), 24),
         ]);
     }
 
@@ -215,7 +224,7 @@ function wrapText(text: string, width: number, maxLines: number): string[] {
 function buildDetailLines(s: SessionDisplayItem): string[] {
     const header = [
         accent(s.sessionId.slice(0, 8)),
-        s.project ? pc.blue(s.project) : "",
+        s.project ? pc.blue(displayProjectName(s)) : "",
         s.source === "search" ? pc.yellow("[search]") : "",
     ]
         .filter(Boolean)
@@ -262,7 +271,9 @@ export function buildSessionTableOpts(
             const cells = [
                 truncateSession(s.name, NAME_COL_WIDTH),
                 s.branch ? pc.magenta(truncateSession(s.branch, 18)) : pc.dim("—"),
-                ...(hasMultipleProjects ? [s.project ? pc.blue(truncateSession(s.project, 14)) : pc.dim("—")] : []),
+                ...(hasMultipleProjects
+                    ? [s.project ? pc.blue(truncateSession(displayProjectName(s), 14)) : pc.dim("—")]
+                    : []),
                 formatSessionAge(s.modified),
             ];
 

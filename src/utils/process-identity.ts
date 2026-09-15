@@ -14,9 +14,27 @@ import { logger } from "@genesiscz/utils/logger";
  * signalling it ({@link classifyPid}).
  */
 
+/**
+ * Our own command line and start time never change for the life of the process, yet
+ * `buildPidRecord()` asked `ps` for both on EVERY lock acquire and pidfile write: two
+ * synchronous spawns, each blocking the event loop the lock HOLDER needs to finish and
+ * release. Counted with a `ps` shim on PATH: 143 spawns per run of
+ * src/scripts/lib/journal.test.ts, a 17-test file that only touches a temp directory. On a
+ * loaded 4-vCPU runner, where spawn is what degrades first, that pushed its 2 s
+ * serialisation test past the 5 s acquire timeout and turned five tests red (CI run
+ * 35003930205, same commit clean on another runner). A failed lookup is NOT cached, so a
+ * transient `ps` error still retries on the next call exactly as before.
+ */
+let ownCommand: string | null = null;
+let ownStartMs: number | null = null;
+
 export function readProcessCommand(pid: number): string | null {
     if (process.platform === "win32") {
         return null;
+    }
+
+    if (pid === process.pid && ownCommand !== null) {
+        return ownCommand;
     }
 
     try {
@@ -30,7 +48,13 @@ export function readProcessCommand(pid: number): string | null {
         }
 
         const command = proc.stdout.toString().trim();
-        return command.length > 0 ? command : null;
+        const result = command.length > 0 ? command : null;
+
+        if (pid === process.pid) {
+            ownCommand = result;
+        }
+
+        return result;
     } catch (err) {
         logger.debug({ err, pid }, "process-identity: ps lookup failed");
         return null;
@@ -54,6 +78,10 @@ export function processStartMs(pid: number): number | null {
         return null;
     }
 
+    if (pid === process.pid && ownStartMs !== null) {
+        return ownStartMs;
+    }
+
     try {
         const proc = Bun.spawnSync(["ps", "-p", String(pid), "-o", "etime="], { stdout: "pipe", stderr: "pipe" });
         const etime = proc.stdout.toString().trim();
@@ -66,8 +94,13 @@ export function processStartMs(pid: number): number | null {
         const [, days, hours, minutes, seconds] = match;
         const elapsedMs =
             (((Number(days ?? 0) * 24 + Number(hours ?? 0)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+        const startMs = Date.now() - elapsedMs;
 
-        return Date.now() - elapsedMs;
+        if (pid === process.pid) {
+            ownStartMs = startMs;
+        }
+
+        return startMs;
     } catch (err) {
         logger.debug({ err, pid }, "process-identity: ps etime lookup failed");
         return null;

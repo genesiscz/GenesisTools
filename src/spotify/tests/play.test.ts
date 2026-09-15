@@ -6,7 +6,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { playDir } from "@app/spotify/lib/paths";
 import { emptyReason } from "@app/spotify/lib/play/driver";
 import { appendJournal, clearJournal, journalPath, progressFor } from "@app/spotify/lib/play/journal";
@@ -25,8 +25,9 @@ import {
 } from "@app/spotify/lib/play/plan";
 import { SEED_SOURCES } from "@app/spotify/lib/play/seed";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { Command } from "commander";
+import { createSpotifyProgram } from "../index";
 
-const CLI = resolve(dirname(import.meta.dir), "index.ts");
 const root = mkdtempSync(join(tmpdir(), "spotify-play-test-"));
 
 afterAll(() => {
@@ -285,14 +286,21 @@ describe("plan new help text", () => {
     // arrives from the shared reporting options as "how many rows to print", which in this
     // command decides how many tracks are seeded. Nothing else in the option list carries a
     // count, so a reader who believes the text has no fallback.
+    // In process, like cli.test.ts: this used to spawn `bun index.ts play plan new --help`
+    // once per test, three cold starts for three string checks. Commander renders the same
+    // text from memory. Two of these went red at the 5 s test timeout on CI run 35003930205
+    // while the runner was starved by a spawn storm in another file; a help lookup that
+    // starts no process cannot be starved.
     const help = () => {
-        const p = Bun.spawnSync(["bun", CLI, "play", "plan", "new", "--help"], {
-            env: { ...process.env, NO_COLOR: "1" },
-            stdout: "pipe",
-            stderr: "pipe",
-        });
+        let node = createSpotifyProgram();
 
-        return new TextDecoder().decode(p.stdout) + new TextDecoder().decode(p.stderr);
+        for (const name of ["play", "plan", "new"]) {
+            const child: Command | undefined = node.commands.find((candidate) => candidate.name() === name);
+            expect(child, `no \`${name}\` command under \`${node.name()}\``).toBeDefined();
+            node = child as Command;
+        }
+
+        return node.helpInformation();
     };
 
     test("--top says it seeds tracks, not that it prints rows", () => {

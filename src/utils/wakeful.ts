@@ -4,6 +4,13 @@ export const WAKEFUL_TICK_MS = 2_000;
 export const WAKEFUL_JUMP_THRESHOLD_MS = WAKEFUL_TICK_MS * 5;
 
 export interface WakefulSleepOptions {
+    /**
+     * How often `shouldAbort` is re-read, in ms. Tuning, not behaviour: the tick exists so a
+     * dropped kqueue timer self-heals after wake, and a shorter one polls the same predicate
+     * more often rather than differently. The scheduler suites paid a whole 2 s tick per
+     * shutdown because `getNextWakeupMs` returns 60 s for an empty task list.
+     */
+    tickMs?: number;
     shouldAbort?: () => boolean;
     onWallClockJump?: (ctx: { elapsedMs: number; expectedMs: number }) => void;
     /** When true, timers do not keep the process alive (matches `setInterval().unref()`). */
@@ -29,6 +36,15 @@ export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions
     const unref = options.unref ?? false;
     const deadline = Date.now() + totalMs;
     let lastTickAt = Date.now();
+    // A boundary, because this is exported through @genesiscz/utils/async and the scheduler
+    // forwards a configured value into it. Zero or negative survives the Math.min below and turns
+    // the loop into an immediate-await spin until the deadline, which burns a core for the whole
+    // sleep. An unusable tick falls back to the default rather than being honoured.
+    const requestedTick = options.tickMs;
+    const tick =
+        requestedTick !== undefined && Number.isFinite(requestedTick) && requestedTick > 0
+            ? requestedTick
+            : WAKEFUL_TICK_MS;
 
     while (!shouldAbort()) {
         const remaining = deadline - Date.now();
@@ -37,7 +53,7 @@ export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions
             return;
         }
 
-        const tickMs = Math.min(WAKEFUL_TICK_MS, remaining);
+        const tickMs = Math.min(tick, remaining);
 
         if (unref) {
             await delayMs(tickMs, true);

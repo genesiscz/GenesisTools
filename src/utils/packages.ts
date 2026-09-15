@@ -92,6 +92,22 @@ export async function ensurePackages(packages: string[], options?: EnsurePackage
         return;
     }
 
+    // A test run must never `bun add` into the repo it is testing. promptInstall() returns
+    // "accept" whenever stdin is not a TTY, so under `bun test` this path installed silently:
+    // `chunker.test.ts` "extracts Python function and class definitions" was recorded at
+    // 9836 ms against a 5000 ms per-test timeout purely because @ast-grep/lang-python was
+    // absent from a worktree's partial node_modules and the assertion triggered a cold
+    // install. With every grammar declared in package.json the same test runs in ~4 ms.
+    // Returning rather than throwing keeps the failure where it belongs: the caller reports
+    // the capability as unavailable, instead of the suite mutating node_modules mid-run.
+    if (process.env.NODE_ENV === "test") {
+        logger.debug(
+            { packages: missing },
+            "ensurePackages: refusing to install under NODE_ENV=test — declare the package in package.json instead"
+        );
+        return;
+    }
+
     const label = options?.label ?? missing.join(", ");
     const silent = options?.silent ?? false;
 

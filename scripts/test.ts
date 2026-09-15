@@ -219,6 +219,21 @@ const LOAD_SENSITIVE_FILES = [
 ];
 
 /**
+ * Excludes that hold even for an explicit path argument.
+ *
+ * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
+ * run the dev-dashboard tree on purpose. But a `*.spec.ts` can never be a bun test in this
+ * repo, so collecting one is always a mistake rather than a choice: bun errors with
+ * "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
+ * `this.skip`, and that reads as a suite failure for a file that is green under its own
+ * runner. Verified 2026-09-15: 39 `*.spec.ts` files, NONE importing `bun:test`.
+ *
+ * Declared once and spread into `DEFAULT_EXCLUDES` below, so the default run and the
+ * explicit-path run can never disagree about it.
+ */
+const ALWAYS_EXCLUDES = ["**/*.spec.ts"];
+
+/**
  * Excluded from every full run unless targeted explicitly. These lived only in
  * package.json's `test` script for a long time, which meant a direct
  * `bun scripts/test.ts` (agents do this constantly) silently INCLUDED them —
@@ -235,6 +250,16 @@ const DEFAULT_EXCLUDES = [
     "**/task/tests/**",
     "**/*.e2e.test.ts",
     "**/matrix-e2e.test.ts",
+    // Playwright and WDIO own `*.spec.ts`; bun's discovery does not. Collecting one errors
+    // with "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
+    // `this.skip`, which reads as a suite failure and is green under its own runner. The
+    // `**/dev-dashboard/**` and `**/dashboard/**` excludes already hide most of them, but
+    // an explicit path argument bypasses those, so passing `src/dev-dashboard/` collected 4.
+    // Verified 2026-09-15: all 39 `*.spec.ts` files in the repo belong to Playwright or
+    // WDIO and NONE imports `bun:test` (checked with a positive control on two real bun
+    // tests, because the first attempt at that check was itself broken and returned 0 for
+    // both).
+    ...ALWAYS_EXCLUDES,
 ];
 
 /**
@@ -258,13 +283,51 @@ const DEFAULT_EXCLUDES = [
  * ⚠️ That command is `bun scripts/test.ts DevDashboard/mobile/src`, NOT
  * `bun run test …`. The npm script hardcodes `--parallel`, and this suite
  * deadlocks under the 16x parallel run: it prints the `16x PARALLEL` banner and
- * then never writes a `[test] suite complete` marker. Measured on this machine —
- * serial 282 pass in 14.3s, parallel still hung at a 75s cap, while `--parallel`
- * on a non-DevDashboard path finishes normally, so it is this tree that breaks
- * parallel mode rather than parallel mode being broken. Root cause is not pinned
- * (RN/expo module init across 16 concurrent processes is the suspect) and is
- * tracked separately; until it is, recommending the parallel form sends the
- * reader into a hang.
+ * then never writes a `[test] suite complete` marker.
+ *
+ * 🛑 ROOT CAUSE FOUND 2026-09-15, and the earlier guess here was WRONG. This text
+ * used to blame "RN/expo module init" and conclude "it is this tree that breaks
+ * parallel mode rather than parallel mode being broken". Both halves are false:
+ * `bun test --parallel=2` on two plain `src/utils/*.test.ts` files hangs 5/5 in a
+ * long-lived worktree, touching no RN, no expo and no WDIO.
+ *
+ * It is two upstream bugs in the bun this repo pins (1.3.13), both fixed in 1.4.1:
+ *   - TRIGGER: the test scanner leaks one directory fd per visited directory
+ *     (oven-sh/bun issue 39783, fixed by 40016). Past macOS OPEN_MAX (10240),
+ *     posix_spawn fails with EBADF. Reproduced here: a piped `Bun.spawnSync` is
+ *     correct 5/5 with the highest fd at 10233 and fails SILENTLY 5/5 at 10303.
+ *   - AMPLIFIER: the coordinator neither reports that failure nor caps retries
+ *     (issue 40782, fixed by 40784), so it respawns the slot forever.
+ * A worktree carrying a generated `ios/Pods` tree (2021 directories) crosses the
+ * fd ceiling; the main checkout does not, which is why only some checkouts bomb.
+ * ⚠️ 1.4.0 is NOT enough — it turns the hang into an EBADF fast-fail.
+ *
+ * 🛑 The `--config "$PWD/bunfig.toml"` workaround this text used to recommend is
+ * WITHDRAWN. It was a false positive, and it is worth recording how, because the
+ * shape repeats. bun documents the flag as `-c, --config=<val>`, so a SPACE form
+ * leaves the path behind as a positional test filter and `--config` itself takes no
+ * value. The measured run only passed because two real test paths were also on the
+ * command line; wiring the same flag into this runner, where the parallel phase
+ * passes no positional paths, left the bunfig path as the ONLY filter and the phase
+ * matched zero files. Re-measured 2026-09-15 in the `ios/Pods` worktree, two plain
+ * `src/utils/*.test.ts` files, `--parallel=2`, 45 s cap, three runs per arm:
+ *   bare                          hangs 3/3
+ *   `--config=<repo bunfig.toml>` hangs 3/3   (the documented form)
+ *   `--config=<empty file>`       hangs 3/3   (so it is not a preload)
+ *   orphan guard disabled         hangs 3/3   (so it is not the watchdog)
+ *   `--config <space> <path>`     passes 3/3  (the artifact above)
+ *   serial, no `--parallel`       passes 3/3
+ *
+ * The real fix is the runtime. Five runs per arm in the same worktree, then three
+ * more interleaved: bun 1.4.2 passes every run in 427-540 ms, bun 1.3.13 hangs
+ * every run.
+ *
+ * 🛑 CI moved to 1.4.2 (2026-09-15) but the REPO still supports 1.3.13, which is what
+ * developers run. So this stays a live local condition, not a closed bug: a green CI
+ * run says nothing about the checkout in front of you. If a directory-heavy worktree
+ * hangs under `--parallel`, run it serially rather than hunting a bug in the tests, and
+ * rely on the wall-clock tripwire below to end a stall in minutes instead of hours.
+ * Never reach for a 1.4-only API just because CI is green.
  */
 const DEVDASHBOARD_EXCLUDES = ["**/DevDashboard/**"];
 
@@ -284,14 +347,67 @@ const testEnv = { ...process.env, NODE_ENV: "test" };
 const args = process.argv.slice(2);
 const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
 
+/**
+ * Wall-clock ceiling for one `bun test` process.
+ *
+ * CI already tells a stall from a failure: its test step carries a timeout and
+ * the missing `[test] suite complete` marker turns the job red. Locally there
+ * was nothing, and on 2026-09-14 a coordinator sat at 94% CPU for 5 h 27 m
+ * before anyone noticed it (handoff h_bkfbdh03). This is the tripwire, not a fix:
+ * the cause is upstream and documented above, CI now runs a version that has the
+ * fix, and every developer still runs one that does not — so what this repo owns
+ * locally is noticing fast.
+ *
+ * Killing the coordinator is enough to end the whole run: the orphan-worker
+ * guard's watchdog kills each worker within POLL_SECONDS of its parent dying.
+ *
+ * Generous on purpose. The full suite is ~55 s on this machine and ~260 s on the
+ * runner, so fifteen minutes only ever fires on a real stall.
+ * `GENESIS_TOOLS_TEST_MAX_MINUTES` raises it, and 0 turns it off.
+ */
+const DEFAULT_MAX_MINUTES = 15;
+
+// Set once the tripwire has killed a phase, so finish() withholds the marker.
+let stalled = false;
+
+function maxRunMs(): number {
+    const raw = process.env.GENESIS_TOOLS_TEST_MAX_MINUTES;
+    const minutes = raw == null || raw === "" ? DEFAULT_MAX_MINUTES : Number(raw);
+
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        return 0;
+    }
+
+    return minutes * 60_000;
+}
+
 async function runBunTest(testArgs: string[]): Promise<number> {
     const proc = Bun.spawn(["bun", "test", ...testArgs], {
         cwd: ROOT,
         stdio: ["inherit", "inherit", "inherit"],
         env: testEnv,
     });
+    const ceiling = maxRunMs();
 
-    return await proc.exited;
+    if (ceiling === 0) {
+        return await proc.exited;
+    }
+
+    const tripwire = setTimeout(() => {
+        stalled = true;
+        process.stderr.write(
+            `\n\x1b[31m[test] 🛑 no exit after ${ceiling / 60_000} minute(s) — killing pid ${proc.pid}.\x1b[0m\n` +
+                `\x1b[31m[test] This is a STALL, not a test failure. See the bun parallel-hang note in scripts/test.ts.\x1b[0m\n` +
+                `\x1b[31m[test] Raise or disable it with GENESIS_TOOLS_TEST_MAX_MINUTES=<n> (0 = off).\x1b[0m\n`
+        );
+        proc.kill("SIGKILL");
+    }, ceiling);
+
+    try {
+        return await proc.exited;
+    } finally {
+        clearTimeout(tripwire);
+    }
 }
 
 /**
@@ -302,8 +418,17 @@ async function runBunTest(testArgs: string[]): Promise<number> {
  * phase). That line being present therefore proves only that one of them got
  * there — a stalled serial phase would still show a completed parallel one.
  * This marker is written after every phase has exited, and nowhere else.
+ *
+ * A phase the tripwire SIGKILLed did not finish, so it must not print the marker
+ * either. Without this check the tripwire would hand CI the exact false green the
+ * marker exists to prevent: a killed run reporting "suite complete".
  */
 function finish(code: number): never {
+    if (stalled) {
+        process.stderr.write(`[test] suite STALLED — killed by the wall-clock tripwire, no completion marker\n`);
+        process.exit(code);
+    }
+
     process.stderr.write(`[test] suite complete (exit ${code})\n`);
     process.exit(code);
 }
@@ -374,7 +499,12 @@ function countsIn(output: string): { pass: number; fail: number } {
 
 async function profileFile(file: string): Promise<ProfileRow> {
     const started = performance.now();
-    const proc = Bun.spawn(["bun", "test", file], { cwd: ROOT, stdout: "pipe", stderr: "pipe", env: testEnv });
+    const proc = Bun.spawn(["bun", "test", file], {
+        cwd: ROOT,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+    });
     const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
@@ -443,7 +573,7 @@ if (profileIndex !== -1) {
 }
 
 if (hasExplicitPaths) {
-    finish(await runBunTest(args));
+    finish(await runBunTest([...args, ...ALWAYS_EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`)]));
 }
 
 const parallelExit = await runBunTest([
@@ -452,6 +582,8 @@ const parallelExit = await runBunTest([
     ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
 ]);
 process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
-const serialExit = await runBunTest([...args.filter((arg) => arg !== "--parallel"), ...LOAD_SENSITIVE_FILES]);
+// `startsWith`, not equality: bun also accepts `--parallel=N`, and an exact match would let
+// that form through into the phase whose whole purpose is to run these files serially.
+const serialExit = await runBunTest([...args.filter((arg) => !arg.startsWith("--parallel")), ...LOAD_SENSITIVE_FILES]);
 
 finish(parallelExit !== 0 ? parallelExit : serialExit);

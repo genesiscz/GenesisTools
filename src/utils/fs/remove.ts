@@ -23,10 +23,11 @@ function errCode(err: unknown): string | undefined {
  * ourselves with `Bun.sleepSync`.
  *
  * Best-effort by design: after exhausting retries it returns instead of
- * throwing. A leftover temp file is harmless — the age-gated
- * `test-cleanup-preload` reaps stale ones — whereas a throw out of a test
- * `afterEach` fails an otherwise-passing test. First attempt is instant on
- * macOS/Linux (no lock), so this is a no-op cost off Windows.
+ * throwing. A leftover temp file is harmless — `preload-test-tmpdir.ts` removes
+ * the whole per-process temp root in a global `afterAll`, so anything still
+ * inside it goes with it — whereas a throw out of a test `afterEach` fails an
+ * otherwise-passing test. First attempt is instant on macOS/Linux (no lock), so
+ * this is a no-op cost off Windows.
  *
  * ALWAYS remove temp files/dirs in tests and tooling through this (or
  * {@link removeDbFile}) — never a bare `rmSync`/`unlinkSync`.

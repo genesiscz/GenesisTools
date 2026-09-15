@@ -173,8 +173,16 @@ export function _resetIndexerStorageForTesting(): void {
 
 /**
  * Every prefix or fixed name produced by a test or benchmark. Single source
- * of truth: tests register here and the run wipes any matching dirs from the
- * real homedir at startup AND afterAll, so a crashed run can never accumulate.
+ * of truth for the callers that sweep them.
+ *
+ * ⚠️ There is no longer a STARTUP sweep. `test-cleanup-preload.ts` ran
+ * `wipeAllTestIndexes(120_000)` from bunfig's `[test] preload` until 2026-09-15, when
+ * it was removed as a proven no-op: `preload-test-sandbox.ts` had already pointed
+ * `GENESIS_TOOLS_HOME` at a fresh per-process directory, so the sweep read an empty
+ * tree (`readdirSync` threw ENOENT and the call returned 0). A sandboxed test cannot
+ * write to the real homedir, so there is nothing there to reap. The remaining callers
+ * clean up after themselves: `store.vacuum.test.ts` in its `afterAll`, and
+ * `tools indexer benchmark` at the head of each run (`benchmark.ts`).
  *
  * Destructive: keep these prefixes narrow and collision-resistant. Do not add
  * generic names such as "test_" because users may have real indexes with those

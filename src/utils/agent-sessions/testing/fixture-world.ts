@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from "node:fs";
+import { cpSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -85,6 +85,43 @@ async function runGit(root: string, args: string[], environment?: Record<string,
     return stdout.trim();
 }
 
+/**
+ * The invented one-commit repository, built once per process and copied into every world.
+ *
+ * Building it costs SIX git processes (init, two config, add, commit, rev-parse) and a
+ * measured median of 77 ms, paid once per world; the five history suites create nineteen
+ * worlds between them. The bytes are deterministic — fixed content, fixed identity, fixed
+ * author and committer dates — so every world produced the same HEAD anyway, verified as
+ * `0ceb972d8ab57210cbc1ca58c4f08ece646c27f7` on three consecutive fresh worlds. Copying it
+ * costs no process and measures a median of 1 ms.
+ */
+let repositoryTemplate: Promise<{ path: string; head: string }> | null = null;
+
+function fixtureRepositoryTemplate(environment: Record<string, string>): Promise<{ path: string; head: string }> {
+    repositoryTemplate ??= (async () => {
+        const base = await mkdtemp(join(tmpdir(), "genesis-history-fixture-template-"));
+        const path = join(base, "invented-repository");
+        await mkdir(path, { recursive: true });
+        await writeFile(join(path, "fixture.txt"), "invented fixture repository\n", "utf8");
+        // The template's own hermetic config lives beside it, so nothing here reads the
+        // developer's global git config and no world's paths leak into the copied bytes.
+        const templateEnvironment = { ...environment, GIT_CONFIG_GLOBAL: join(base, "no-global-git-config") };
+        await runGit(path, ["init", "--quiet", "--initial-branch=main"], templateEnvironment);
+        await runGit(path, ["config", "core.hooksPath", "/dev/null"], templateEnvironment);
+        await runGit(path, ["config", "commit.gpgsign", "false"], templateEnvironment);
+        await runGit(path, ["add", "fixture.txt"], templateEnvironment);
+        await runGit(path, ["commit", "--quiet", "-m", "fixture baseline"], templateEnvironment);
+        const head = await runGit(path, ["rev-parse", "HEAD"], templateEnvironment);
+        process.on("exit", () => {
+            rmSync(base, { recursive: true, force: true });
+        });
+
+        return { path, head };
+    })();
+
+    return repositoryTemplate;
+}
+
 export async function createFixtureWorld(
     options: { baseDirectory?: string; now?: Date } = {}
 ): Promise<HistoryFixtureWorld> {
@@ -113,7 +150,6 @@ export async function createFixtureWorld(
         mkdir(dirname(databases.candidate), { recursive: true }),
         mkdir(git.root, { recursive: true }),
     ]);
-    await writeFile(join(git.root, "fixture.txt"), "invented fixture repository\n", "utf8");
     const gitEnvironment = {
         HOME: home,
         GIT_CONFIG_GLOBAL: join(root, "no-global-git-config"),
@@ -125,12 +161,9 @@ export async function createFixtureWorld(
         GIT_AUTHOR_DATE: FIXED_HISTORY_NOW,
         GIT_COMMITTER_DATE: FIXED_HISTORY_NOW,
     };
-    await runGit(git.root, ["init", "--quiet", "--initial-branch=main"], gitEnvironment);
-    await runGit(git.root, ["config", "core.hooksPath", "/dev/null"], gitEnvironment);
-    await runGit(git.root, ["config", "commit.gpgsign", "false"], gitEnvironment);
-    await runGit(git.root, ["add", "fixture.txt"], gitEnvironment);
-    await runGit(git.root, ["commit", "--quiet", "-m", "fixture baseline"], gitEnvironment);
-    git.head = await runGit(git.root, ["rev-parse", "HEAD"], gitEnvironment);
+    const template = await fixtureRepositoryTemplate(gitEnvironment);
+    cpSync(template.path, git.root, { recursive: true });
+    git.head = template.head;
 
     const environment = {
         HOME: home,

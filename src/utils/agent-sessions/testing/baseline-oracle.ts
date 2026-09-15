@@ -1,7 +1,8 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, symlink, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
@@ -439,6 +440,34 @@ async function verifyStoredMaterialization(options: {
     }
 }
 
+/**
+ * The materialized baseline, built once per process and copied into every later world.
+ *
+ * `checkout` is keyed on `world.root`, which is a fresh mkdtemp per test, so the
+ * already-materialized branch above never hit across tests and every one of them paid the
+ * whole `git archive` + `tar` + `bun build` chain: 295-736 ms each, four times over in one
+ * file. Measured after this cache: 7-13 ms plus an 11-27 ms copy.
+ *
+ * The per-world checkout stays, deliberately. One test damages its own bundle and expects
+ * "bundle hash mismatch", so a single shared directory would poison every later test. The
+ * template is only a source of bytes, never the directory anything runs from.
+ */
+let baselineTemplate: { checkout: string; archive: string } | null = null;
+
+function rememberBaselineTemplate(source: { checkout: string; archivePath: string }): void {
+    const base = mkdtempSync(join(tmpdir(), "genesis-baseline-template-"));
+    const checkout = join(base, "checkout");
+    const archive = join(base, "source.tar");
+    // The build unlinks its node_modules symlink before this point, so the tree copied here
+    // holds no dangling link.
+    cpSync(source.checkout, checkout, { recursive: true });
+    cpSync(source.archivePath, archive);
+    baselineTemplate = { checkout, archive };
+    process.on("exit", () => {
+        rmSync(base, { recursive: true, force: true });
+    });
+}
+
 async function materialize(options: {
     world: HistoryFixtureWorld;
     repositoryRoot: string;
@@ -458,6 +487,21 @@ async function materialize(options: {
 
     options.world.assertOwnedPath(checkout);
     options.world.assertOwnedPath(archivePath);
+
+    const template = baselineTemplate;
+
+    if (template !== null) {
+        cpSync(template.checkout, checkout, { recursive: true });
+        cpSync(template.archive, archivePath);
+        const manifest = SafeJSON.parse(await Bun.file(storedManifestPath).text(), {
+            strict: true,
+        }) as BaselineOracleManifest;
+        // Verified against the WORLD's copy, not the template's, so the corruption case in
+        // baseline-oracle.test.ts still detects a bundle it damaged after materialization.
+        await verifyStoredMaterialization({ checkout, archivePath, manifest });
+        return { checkout, manifest, elapsedMs: performance.now() - started };
+    }
+
     const archive = await spawnChecked({
         command: ["git", "archive", "--format=tar", BASELINE_REVISION, "--", ...ARCHIVE_PATHS],
         cwd: options.repositoryRoot,
@@ -510,6 +554,7 @@ async function materialize(options: {
         },
     };
     await Bun.write(storedManifestPath, SafeJSON.stringify(manifest));
+    rememberBaselineTemplate({ checkout, archivePath });
     return { checkout, manifest, elapsedMs: performance.now() - started };
 }
 
