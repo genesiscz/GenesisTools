@@ -41,7 +41,13 @@ jobs:
           # and keeps that guard meaningful. The
           # task/tests integration lane is gated out of the default suite (see
           # package.json `test`) and run on demand via `bun run test:task`, so it is not
-          # part of this step's budget. windows med 136s / healthy ~150s -> 7m.
+          # part of this step's budget.
+          # windows: the old note read "med 136s / healthy ~150s -> 7m" and is stale by an
+          # order of magnitude. Measured 2026-09-15 on three dispatched runs, the step is
+          # KILLED at 7m every time, on PR branches AND on master 8a85b394e (run
+          # 34913953290), having printed ~10.6k of ~11k pass lines. So it is a budget
+          # overrun, not a hang, and the completion-marker guard below was reporting the
+          # wrong cause. 11m covers the extrapolated ~7.5m and still catches a real stall.
           inc='{"os":"ubuntu-latest","testTimeout":5}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
@@ -49,7 +55,7 @@ jobs:
           labels_lc=$(printf '%s' "$PR_LABELS" | tr '[:upper:]' '[:lower:]')
           case "$title_lc" in *windows*) win=true ;; esac
           case "$labels_lc" in *windows*) win=true ;; esac
-          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":7}"; fi
+          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":11}"; fi
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
           echo "Selected matrix include: [$inc] (windows opted-in: $win)"
 
@@ -63,10 +69,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — must exceed the per-OS testTimeout (4m/7m) + cold
+    # Backstop only — must exceed the per-OS testTimeout (5m/11m) + cold
     # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
-    # logs fire first. Real worst case ~12m (windows cold); 15m has margin.
-    timeout-minutes: 15
+    # logs fire first. Real worst case ~16m (windows cold); 20m has margin.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -127,7 +133,7 @@ jobs:
       # Run the WHOLE suite. Discovery only — never fail the job here; the
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
-      # Tripwire: per-OS matrix.testTimeout (ubuntu 4m, windows 7m). A plain
+      # Tripwire: per-OS matrix.testTimeout (ubuntu 5m, windows 11m). A plain
       # matrix int IS valid in step-level timeout-minutes (matrix resolves at
       # job-expansion); only raw ternaries / non-matrix contexts are rejected.
       # On timeout the partial tee'd log still uploads (continue-on-error).
