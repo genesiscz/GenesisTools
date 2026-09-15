@@ -320,10 +320,14 @@ const DEFAULT_EXCLUDES = [
  *
  * The real fix is the runtime. Five runs per arm in the same worktree, then three
  * more interleaved: bun 1.4.2 passes every run in 427-540 ms, bun 1.3.13 hangs
- * every run. 🛑 The pin stays at 1.3.13 on Martin's call (2026-09-15) — this repo
- * must keep working on it — so treat the hang as a KNOWN condition of directory-heavy
- * worktrees, not as something to fix by moving everyone's runtime. Run such a tree
- * serially, and rely on the wall-clock tripwire below to end a stall in minutes.
+ * every run.
+ *
+ * 🛑 CI moved to 1.4.2 (2026-09-15) but the REPO still supports 1.3.13, which is what
+ * developers run. So this stays a live local condition, not a closed bug: a green CI
+ * run says nothing about the checkout in front of you. If a directory-heavy worktree
+ * hangs under `--parallel`, run it serially rather than hunting a bug in the tests, and
+ * rely on the wall-clock tripwire below to end a stall in minutes instead of hours.
+ * Never reach for a 1.4-only API just because CI is green.
  */
 const DEVDASHBOARD_EXCLUDES = ["**/DevDashboard/**"];
 
@@ -350,8 +354,9 @@ const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
  * the missing `[test] suite complete` marker turns the job red. Locally there
  * was nothing, and on 2026-09-14 a coordinator sat at 94% CPU for 5 h 27 m
  * before anyone noticed it (handoff h_bkfbdh03). This is the tripwire, not a fix:
- * the cause is upstream and documented above, and the pin deliberately stays on
- * the affected version, so what this repo owns is noticing fast.
+ * the cause is upstream and documented above, CI now runs a version that has the
+ * fix, and every developer still runs one that does not — so what this repo owns
+ * locally is noticing fast.
  *
  * Killing the coordinator is enough to end the whole run: the orphan-worker
  * guard's watchdog kills each worker within POLL_SECONDS of its parent dying.
