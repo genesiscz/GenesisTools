@@ -65,6 +65,16 @@ test("a picker row names the home and file a copy came from, and omits both when
     expect(without.rows[0].detail?.join("\n") ?? "").not.toContain("Source home");
 });
 
+test("the picker and its detail header print the friendly project name, never the encoded directory", () => {
+    const shop = toSessionDisplay(session({ project: "shop", projectDirectory: "-work-shop" }));
+    const other = toSessionDisplay(session({ project: "other", projectDirectory: "-work-other" }));
+    const row = buildSessionTableOpts([shop, other], { message: "pick" }).rows[0];
+    const rendered = [...row.cells, ...(row.detail ?? [])].join("\n");
+
+    expect(rendered).toContain("shop");
+    expect(rendered).not.toContain("-work-shop");
+});
+
 test("the picker gains a PROJECT column only when the candidates span several projects", () => {
     const shop = toSessionDisplay(session({ project: "shop", projectDirectory: "-work-shop" }));
     const other = toSessionDisplay(session({ project: "other", projectDirectory: "-work-other" }));
