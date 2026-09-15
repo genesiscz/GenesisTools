@@ -8,11 +8,20 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      windows:
+        description: "Also run the test suite on windows-latest (10-16 min on top)"
+        type: boolean
+        default: false
 
 jobs:
   # Decide which OSes the test matrix runs on.
   # ubuntu always; windows-latest only when the PR opts in via title/label
-  # containing "windows" (case-insensitive), or on manual workflow_dispatch.
+  # containing "windows" (case-insensitive), or on a manual workflow_dispatch
+  # whose `windows` input is ticked. A dispatch used to add windows
+  # unconditionally, so 17 verification dispatches on 2026-09-15 ran 17 windows
+  # jobs (~190 runner-minutes) that nobody had asked for. Off by default now;
+  # `gh workflow run ci.yml --ref <branch> -f windows=true` when you want it.
   setup:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -22,6 +31,7 @@ jobs:
       - id: decide
         env:
           EVENT: ${{ github.event_name }}
+          DISPATCH_WINDOWS: ${{ github.event.inputs.windows }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
@@ -57,7 +67,8 @@ jobs:
           # from one green run.
           inc='{"os":"ubuntu-latest","testTimeout":5}'
           win=false
-          if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
+          # A boolean input arrives as the string "true"/"false"; anything else is not a yes.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_WINDOWS" = "true" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
           labels_lc=$(printf '%s' "$PR_LABELS" | tr '[:upper:]' '[:lower:]')
           case "$title_lc" in *windows*) win=true ;; esac
