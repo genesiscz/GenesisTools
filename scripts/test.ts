@@ -302,8 +302,28 @@ const DEFAULT_EXCLUDES = [
  * fd ceiling; the main checkout does not, which is why only some checkouts bomb.
  * ⚠️ 1.4.0 is NOT enough — it turns the hang into an EBADF fast-fail.
  *
- * Workaround until the pin moves: `--config "$PWD/bunfig.toml"` passes 5/5, because
- * it cuts the fd count (lsof rows 14167 -> 196), NOT because it changes file order.
+ * 🛑 The `--config "$PWD/bunfig.toml"` workaround this text used to recommend is
+ * WITHDRAWN. It was a false positive, and it is worth recording how, because the
+ * shape repeats. bun documents the flag as `-c, --config=<val>`, so a SPACE form
+ * leaves the path behind as a positional test filter and `--config` itself takes no
+ * value. The measured run only passed because two real test paths were also on the
+ * command line; wiring the same flag into this runner, where the parallel phase
+ * passes no positional paths, left the bunfig path as the ONLY filter and the phase
+ * matched zero files. Re-measured 2026-09-15 in the `ios/Pods` worktree, two plain
+ * `src/utils/*.test.ts` files, `--parallel=2`, 45 s cap, three runs per arm:
+ *   bare                          hangs 3/3
+ *   `--config=<repo bunfig.toml>` hangs 3/3   (the documented form)
+ *   `--config=<empty file>`       hangs 3/3   (so it is not a preload)
+ *   orphan guard disabled         hangs 3/3   (so it is not the watchdog)
+ *   `--config <space> <path>`     passes 3/3  (the artifact above)
+ *   serial, no `--parallel`       passes 3/3
+ *
+ * The real fix is the runtime. Five runs per arm in the same worktree, then three
+ * more interleaved: bun 1.4.2 passes every run in 427-540 ms, bun 1.3.13 hangs
+ * every run. 🛑 The pin stays at 1.3.13 on Martin's call (2026-09-15) — this repo
+ * must keep working on it — so treat the hang as a KNOWN condition of directory-heavy
+ * worktrees, not as something to fix by moving everyone's runtime. Run such a tree
+ * serially, and rely on the wall-clock tripwire below to end a stall in minutes.
  */
 const DEVDASHBOARD_EXCLUDES = ["**/DevDashboard/**"];
 
@@ -323,14 +343,66 @@ const testEnv = { ...process.env, NODE_ENV: "test" };
 const args = process.argv.slice(2);
 const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
 
+/**
+ * Wall-clock ceiling for one `bun test` process.
+ *
+ * CI already tells a stall from a failure: its test step carries a timeout and
+ * the missing `[test] suite complete` marker turns the job red. Locally there
+ * was nothing, and on 2026-09-14 a coordinator sat at 94% CPU for 5 h 27 m
+ * before anyone noticed it (handoff h_bkfbdh03). This is the tripwire, not a fix:
+ * the cause is upstream and documented above, and the pin deliberately stays on
+ * the affected version, so what this repo owns is noticing fast.
+ *
+ * Killing the coordinator is enough to end the whole run: the orphan-worker
+ * guard's watchdog kills each worker within POLL_SECONDS of its parent dying.
+ *
+ * Generous on purpose. The full suite is ~55 s on this machine and ~260 s on the
+ * runner, so fifteen minutes only ever fires on a real stall.
+ * `GENESIS_TOOLS_TEST_MAX_MINUTES` raises it, and 0 turns it off.
+ */
+const DEFAULT_MAX_MINUTES = 15;
+
+// Set once the tripwire has killed a phase, so finish() withholds the marker.
+let stalled = false;
+
+function maxRunMs(): number {
+    const raw = process.env.GENESIS_TOOLS_TEST_MAX_MINUTES;
+    const minutes = raw == null || raw === "" ? DEFAULT_MAX_MINUTES : Number(raw);
+
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+        return 0;
+    }
+
+    return minutes * 60_000;
+}
+
 async function runBunTest(testArgs: string[]): Promise<number> {
     const proc = Bun.spawn(["bun", "test", ...testArgs], {
         cwd: ROOT,
         stdio: ["inherit", "inherit", "inherit"],
         env: testEnv,
     });
+    const ceiling = maxRunMs();
 
-    return await proc.exited;
+    if (ceiling === 0) {
+        return await proc.exited;
+    }
+
+    const tripwire = setTimeout(() => {
+        stalled = true;
+        process.stderr.write(
+            `\n\x1b[31m[test] 🛑 no exit after ${ceiling / 60_000} minute(s) — killing pid ${proc.pid}.\x1b[0m\n` +
+                `\x1b[31m[test] This is a STALL, not a test failure. See the bun parallel-hang note in scripts/test.ts.\x1b[0m\n` +
+                `\x1b[31m[test] Raise or disable it with GENESIS_TOOLS_TEST_MAX_MINUTES=<n> (0 = off).\x1b[0m\n`
+        );
+        proc.kill("SIGKILL");
+    }, ceiling);
+
+    try {
+        return await proc.exited;
+    } finally {
+        clearTimeout(tripwire);
+    }
 }
 
 /**
@@ -341,8 +413,17 @@ async function runBunTest(testArgs: string[]): Promise<number> {
  * phase). That line being present therefore proves only that one of them got
  * there — a stalled serial phase would still show a completed parallel one.
  * This marker is written after every phase has exited, and nowhere else.
+ *
+ * A phase the tripwire SIGKILLed did not finish, so it must not print the marker
+ * either. Without this check the tripwire would hand CI the exact false green the
+ * marker exists to prevent: a killed run reporting "suite complete".
  */
 function finish(code: number): never {
+    if (stalled) {
+        process.stderr.write(`[test] suite STALLED — killed by the wall-clock tripwire, no completion marker\n`);
+        process.exit(code);
+    }
+
     process.stderr.write(`[test] suite complete (exit ${code})\n`);
     process.exit(code);
 }
@@ -413,7 +494,12 @@ function countsIn(output: string): { pass: number; fail: number } {
 
 async function profileFile(file: string): Promise<ProfileRow> {
     const started = performance.now();
-    const proc = Bun.spawn(["bun", "test", file], { cwd: ROOT, stdout: "pipe", stderr: "pipe", env: testEnv });
+    const proc = Bun.spawn(["bun", "test", file], {
+        cwd: ROOT,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+    });
     const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),

@@ -60,7 +60,18 @@ const MIN_CEILING_MS = 20_000;
  */
 const DEFAULT_WARN_TOTAL_S = 240;
 
-const FILE_HEADER = /^((?:src|scripts|apps|plugins|native|DevDashboard)\/.*\.test\.tsx?):$/;
+/**
+ * The optional `::group::` is not cosmetic: bun moved the marker ONTO the header line.
+ *
+ * bun 1.3.13 printed the group marker and the path as two lines, so a bare `src/…test.ts:`
+ * opened the block. bun 1.4.2 prints one line, `::group::src/…test.ts:`. Measured on the
+ * 1.4.2 pin probe (run 34961144349): the log held 11,146 `(pass)` lines and ZERO lines this
+ * pattern matched, so no block ever opened and the guard counted nothing. It reported that
+ * instead of passing, which is the whole point of the zero-lines control below — but a guard
+ * that stops enforcing on a runtime upgrade should read both shapes rather than rely on its
+ * own alarm.
+ */
+const FILE_HEADER = /^(?:::group::)?((?:src|scripts|apps|plugins|native|DevDashboard)\/.*\.test\.tsx?):$/;
 /**
  * Where a file's block ENDS, and the difference between a guard and a liar.
  *

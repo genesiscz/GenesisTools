@@ -30,6 +30,23 @@ describe("analyze", () => {
         expect(analyze(FAST_FILE).ranked[0].tests).toBe(2);
     });
 
+    // bun 1.4.2 moved the group marker onto the header line. On the pin probe (CI run
+    // 34961144349) that turned an 11,146-test log into zero parsed tests.
+    test("reads bun 1.4's header, which carries the ::group:: marker on the same line", () => {
+        const log = [
+            "::group::src/fast/thing.test.ts:",
+            "(pass) quick > one [3.00ms]",
+            "::endgroup::",
+            "::group::src/slow/thing.test.ts:",
+            "(pass) waits > a very slow case [21000.00ms]",
+            "::endgroup::",
+        ].join("\n");
+        const report = analyze(log);
+
+        expect(report.testLines).toBe(2);
+        expect(report.ranked[0]).toEqual({ file: "src/slow/thing.test.ts", ms: 21000, tests: 1 });
+    });
+
     test("flags the file over the ceiling and leaves the one under it alone", () => {
         const report = analyze([FAST_FILE, SLOW_FILE].join("\n"), { ceilingMs: 20_000 });
 
