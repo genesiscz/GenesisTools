@@ -151,6 +151,14 @@ the whole overlap, so the summed metric counts the same seconds once per test.
 wall time. The guard exempts such files by reading their source, so a file that later drops
 `.concurrent` is guarded again with no list to maintain.
 
+The guard's ceiling is **6% of the run's own summed test time**, not a fixed number of
+seconds, and that is a measured decision. Three runs of the identical tree `e9a55d657`
+measured the step at 242.2 / 267.3 / 269.2 s and `merged.test.ts` inside them at 20.0 / 24.4 /
+26.5 s: GitHub's hosted runners vary by roughly 30%, so a fixed 25 s ceiling reddened one of
+the three for a reason that had nothing to do with the tests. A share cancels that, because a
+slow runner makes every file slow together. Checked against five real logs it resolves to
+28-34 s, and the top file sits at 3.8-4.7% of each run.
+
 A third trap, and the reason `scripts/ci/test-runtime-guard.ts` resets attribution on
 `##[endgroup]`: bun's GitHub reporter opens a group per file, but the run does not end there.
 The failure summary reprints every failing test with no header, and `scripts/test.ts` then
