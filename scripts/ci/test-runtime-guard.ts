@@ -32,15 +32,26 @@ import { resolve } from "node:path";
 import { stripAnsi } from "@genesiscz/utils/string";
 
 /**
- * Summed per-test milliseconds a single file may spend before the guard fails.
+ * The share of the run's OWN summed test time that one file may hold.
  *
- * Set from measurement, not from a round number. After the 2026-09-15 trim the slowest file
- * on ubuntu is merged.test.ts at 21.3 s (run 34910083066), followed by cascade at 15.6 s and
- * baseline-oracle at 13.8 s. 25 s therefore sits just above today's worst while still refusing
- * any file that grows past a twelfth of the 300 s step budget. Lower it as the top files come
- * down; never raise it to make a red run green, which is the failure this guard exists to stop.
+ * Relative, because an absolute ceiling measures the runner rather than the code. On three
+ * runs of the identical tree e9a55d657, merged.test.ts measured 20.0 s, 24.4 s and 26.5 s and
+ * the whole step measured 242.2 s, 267.3 s and 269.2 s — GitHub's hosted runners vary by about
+ * 30%, so a fixed 25 s ceiling reddened one of the three and passed the other two for reasons
+ * that had nothing to do with the tests. A share cancels that: when the runner is slow every
+ * file is slow together.
+ *
+ * 6% of the suite's summed per-test time. Today that is ~30 s against ~508 s summed, and the
+ * top three files sit at 5.2%, 3.1% and 2.7%. Lower it as they come down; never raise it to
+ * make a red run green, which is the failure this guard exists to stop.
  */
-const DEFAULT_CEILING_MS = 25_000;
+const DEFAULT_CEILING_SHARE = 0.06;
+
+/**
+ * The floor under that share, so a suite that shrinks does not tighten the ceiling to nothing
+ * and start failing on files nobody would call slow.
+ */
+const MIN_CEILING_MS = 20_000;
 
 /**
  * Suite total above which the run is reported as approaching its budget. A warning, never a
@@ -83,6 +94,10 @@ export interface GuardReport {
     exempt: Array<{ file: string; ms: number; tests: number }>;
     /** `(pass)`/`(fail)` lines parsed. Zero means the log is unreadable, not that the suite is fast. */
     testLines: number;
+    /** The ceiling the run resolved to, so the report can say what a file was measured against. */
+    ceilingMs: number;
+    /** Summed per-test ms across every file, which the relative ceiling is a share of. */
+    summedMs: number;
     /** The suite's own reported total, in seconds, when the log carries one. */
     totalSeconds: number | null;
 }
@@ -99,9 +114,8 @@ function clean(line: string): string {
 
 export function analyze(
     log: string,
-    options: { ceilingMs?: number; isConcurrent?: (file: string) => boolean } = {}
+    options: { ceilingShare?: number; ceilingMs?: number; isConcurrent?: (file: string) => boolean } = {}
 ): GuardReport {
-    const ceiling = options.ceilingMs ?? DEFAULT_CEILING_MS;
     const isConcurrent = options.isConcurrent ?? (() => false);
     const ms = new Map<string, number>();
     const tests = new Map<string, number>();
@@ -147,6 +161,11 @@ export function analyze(
     const ranked = [...ms.entries()]
         .map(([file, value]) => ({ file, ms: value, tests: tests.get(file) ?? 0 }))
         .sort((a, b) => b.ms - a.ms);
+    const summedMs = ranked.reduce((sum, row) => sum + row.ms, 0);
+    // An explicit --ceiling-ms still wins, so a bisect can pin one number; otherwise the
+    // ceiling is a share of what this same run measured.
+    const share = options.ceilingShare ?? DEFAULT_CEILING_SHARE;
+    const ceiling = options.ceilingMs ?? Math.max(MIN_CEILING_MS, Math.round(summedMs * share));
     const over = ranked.filter((row) => row.ms > ceiling);
 
     return {
@@ -155,6 +174,8 @@ export function analyze(
         exempt: over.filter((row) => isConcurrent(row.file)),
         testLines,
         totalSeconds,
+        ceilingMs: ceiling,
+        summedMs,
     };
 }
 
@@ -186,7 +207,7 @@ function main(argv: string[]): number {
 
     const ceilingIndex = argv.indexOf("--ceiling-ms");
     const requested = ceilingIndex === -1 ? Number.NaN : Number(argv[ceilingIndex + 1]);
-    const ceilingMs = Number.isFinite(requested) && requested > 0 ? requested : DEFAULT_CEILING_MS;
+    const ceilingMs = Number.isFinite(requested) && requested > 0 ? requested : undefined;
     const warnIndex = argv.indexOf("--warn-total-seconds");
     const requestedWarn = warnIndex === -1 ? Number.NaN : Number(argv[warnIndex + 1]);
     const warnTotal = Number.isFinite(requestedWarn) && requestedWarn > 0 ? requestedWarn : DEFAULT_WARN_TOTAL_S;
@@ -195,6 +216,11 @@ function main(argv: string[]): number {
         ceilingMs,
         isConcurrent: (file) => sourceIsConcurrent(file, root),
     });
+    const ceilingLabel =
+        `${(report.ceilingMs / 1000).toFixed(0)}s` +
+        (ceilingMs === undefined
+            ? ` (${(DEFAULT_CEILING_SHARE * 100).toFixed(0)}% of ${(report.summedMs / 1000).toFixed(0)}s summed)`
+            : " (fixed)");
 
     // The positive control, and the reason this is not `if (violations.length === 0) pass`.
     // A log that was truncated, never written, or written by a step that died reports zero
@@ -226,13 +252,13 @@ function main(argv: string[]): number {
         process.stderr.write(
             `test-runtime-guard: ${report.ranked.length} files, ${report.testLines} tests, ` +
                 `slowest ${(report.ranked[0].ms / 1000).toFixed(1)}s (${report.ranked[0].file}), ` +
-                `ceiling ${(ceilingMs / 1000).toFixed(0)}s — clean.\n`
+                `ceiling ${ceilingLabel} — clean.\n`
         );
         return 0;
     }
 
     process.stderr.write(
-        `::error::test-runtime-guard: ${report.violations.length} file(s) over the ${(ceilingMs / 1000).toFixed(0)}s ` +
+        `::error::test-runtime-guard: ${report.violations.length} file(s) over the ${ceilingLabel} ` +
             "per-file ceiling. Make the test cheap rather than raising the ceiling; the step budget is fixed.\n"
     );
 

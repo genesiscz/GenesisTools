@@ -134,6 +134,62 @@ describe("analyze", () => {
     });
 });
 
+describe("the ceiling is a share of the run, not a fixed number of seconds", () => {
+    /** `count` files of `each` ms, so the summed total and one file's share are both exact. */
+    function suite(count: number, each: number, hogMs: number): string {
+        const lines: string[] = [];
+
+        for (let i = 0; i < count; i++) {
+            lines.push(`src/f${i}/a.test.ts:`, `(pass) case [${each.toFixed(2)}ms]`, "##[endgroup]");
+        }
+
+        lines.push("src/hog/a.test.ts:", `(pass) hog [${hogMs.toFixed(2)}ms]`, "##[endgroup]");
+
+        return lines.join("\n");
+    }
+
+    test("the same code passes on a fast runner and on a 30% slower one", () => {
+        // The defect this replaces: merged.test.ts measured 20.0 s, 24.4 s and 26.5 s on three
+        // runs of the IDENTICAL tree e9a55d657, so a fixed 25 s ceiling reddened one of them.
+        const fast = analyze(suite(100, 5_000, 20_000));
+        const slow = analyze(suite(100, 6_500, 26_000));
+
+        expect(fast.violations).toEqual([]);
+        expect(slow.violations).toEqual([]);
+        // The ceiling moved with the runner; the verdict did not.
+        expect(slow.ceilingMs).toBeGreaterThan(fast.ceilingMs);
+    });
+
+    test("a file that really does take a bigger share is still caught on either runner", () => {
+        const fast = analyze(suite(100, 5_000, 60_000));
+        const slow = analyze(suite(100, 6_500, 78_000));
+
+        expect(fast.violations.map((row) => row.file)).toEqual(["src/hog/a.test.ts"]);
+        expect(slow.violations.map((row) => row.file)).toEqual(["src/hog/a.test.ts"]);
+    });
+
+    test("the floor stops a tiny suite from tightening the ceiling to nothing", () => {
+        // 6% of 10 s is 600 ms; without the floor a 1 s test would be a violation.
+        const report = analyze(suite(10, 1_000, 1_000));
+
+        expect(report.ceilingMs).toBe(20_000);
+        expect(report.violations).toEqual([]);
+    });
+
+    test("an explicit --ceiling-ms still wins, so one number can be pinned for a bisect", () => {
+        const report = analyze(suite(100, 5_000, 26_000), { ceilingMs: 25_000 });
+
+        expect(report.ceilingMs).toBe(25_000);
+        expect(report.violations.map((row) => row.file)).toEqual(["src/hog/a.test.ts"]);
+    });
+
+    test("summedMs is every file's time, which is what the share is taken of", () => {
+        const report = analyze(suite(4, 1_000, 2_000));
+
+        expect(report.summedMs).toBe(6_000);
+    });
+});
+
 describe("sourceIsConcurrent", () => {
     function withSource(body: string): boolean {
         const dir = mkdtempSync(join(tmpdir(), "runtime-guard-src-"));
