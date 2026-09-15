@@ -304,8 +304,8 @@ jobs:
       # A per-file runtime ceiling, so one slow test cannot eat the step budget unnoticed
       # again. The budget has now been raised twice (4m, then 5m) because the suite grew
       # into it, and a budget kill arrives disguised as the hang guard above. Linux only:
-      # the windows job runs the same files on a 7-minute budget and would only duplicate
-      # the finding.
+      # the windows job runs the same files (on its own, larger budget, see the matrix
+      # comment in `setup`) and would only duplicate the finding.
       #
       # 🛑 An exit code above 1 is a BROKEN SCAN, not a pass, and is handled here rather
       # than trusted: four guards in this repo have passed while enforcing nothing because
