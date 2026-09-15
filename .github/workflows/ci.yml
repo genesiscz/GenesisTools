@@ -309,6 +309,50 @@ jobs:
           fi
           exit "$code"
 
+
+  # Lint, typecheck, the repo guards and the sub-project suites, in their OWN job so they
+  # run CONCURRENTLY with the test matrix instead of queueing behind it.
+  #
+  # They used to be ubuntu-only steps at the tail of `test`, which meant the runner sat
+  # through the whole 266 s test step before starting ~150 s of checks that need none of its
+  # output. Measured on run 34964619758: test step 266 s, then TypeScript check 21 s, biome
+  # 18 s, the two DevDashboard suites 29 s, dashboard typecheck+vitest 26 s and the guards.
+  # Splitting them costs one extra checkout, setup-bun and install (~30 s, cache-warm) and
+  # removes about 150 s from the critical path.
+  #
+  # The original comment's intent is preserved and strengthened: these can no longer delay
+  # the test signal at all, because they are not in its job. Still NOT continue-on-error —
+  # a real lint or tsc failure must turn the run red. The per-step timeouts below are the
+  # same fail-fast tripwires, measured on 4-core GitHub runners.
+  checks:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      # Three guards shell out to it (logging, pid-safety, package boundaries), and the
+      # hosted image ships none.
+      - name: Install ripgrep
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        with:
+          tool: ripgrep@14.1.1
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        shell: bash
+        run: bun install --frozen-lockfile
       # Lint/typecheck — ubuntu only (redundant + slow on Windows), and only
       # after test discovery + Upload logs above, so they can't block the
       # test signal. NOT continue-on-error: a real lint/tsc failure should
@@ -325,17 +369,15 @@ jobs:
       # pull 350+ MiB and cost more than the linting it saves. Both commands
       # fall back to a full scan if the diff is unavailable for any reason.
       - name: Fetch PR base for changed-file linting
-        if: runner.os == 'Linux' && github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request'
         run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
 
       - name: Run Biome check + repo lint rules
-        if: runner.os == 'Linux'
         timeout-minutes: 3
         shell: bash
         run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha }}"
 
       - name: Run Biome check (src/claude-history-dashboard)
-        if: runner.os == 'Linux'
         timeout-minutes: 2
         run: bun run lint:dashboard
 
@@ -347,17 +389,14 @@ jobs:
       # it: the frozen install proves package.json and bun.lock agree, then the
       # app's own check-types and vitest run.
       - name: Install src/dashboard (frozen lockfile)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run install:dashboard-web
 
       - name: TypeScript check (src/dashboard/apps/web)
-        if: runner.os == 'Linux'
         timeout-minutes: 3
         run: bun run typecheck:dashboard-web
 
       - name: Vitest (src/dashboard/apps/web)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dashboard-web
 
@@ -377,57 +416,46 @@ jobs:
       # never writes `[test] suite complete`); do not "optimize" it onto the
       # parallel runner.
       - name: Install DevDashboard cloud (frozen lockfile)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run install:dd-cloud
 
       - name: TypeScript check (DevDashboard cloud)
-        if: runner.os == 'Linux'
         timeout-minutes: 3
         run: bun run typecheck:dd-cloud
 
       - name: Tests (DevDashboard cloud — shared + vitest)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dd-cloud
 
       - name: Install DevDashboard mobile (frozen lockfile)
-        if: runner.os == 'Linux'
         timeout-minutes: 8
         run: bun run install:dd-mobile
 
       - name: TypeScript check (DevDashboard mobile)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run typecheck:dd-mobile
 
       - name: Tests (DevDashboard mobile — unit, serial)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dd-mobile
 
       - name: TypeScript check
-        if: runner.os == 'Linux'
         timeout-minutes: 2
         run: bun run typecheck:all
 
       - name: Logging & output convention guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/logging-guard.sh
 
       - name: AI credential resolution guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/ai-credentials-guard.sh
 
       - name: PID recycling guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/pid-safety-guard.sh
 
       - name: Package boundary guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
@@ -435,6 +463,5 @@ jobs:
       # importing an entrypoint that runs the CLI on import. Cheap, and it fires
       # before the timeout does, so the failure names the cause.
       - name: Entrypoint import guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bun scripts/ci/entrypoint-import-guard.ts
