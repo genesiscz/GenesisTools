@@ -36,6 +36,15 @@ export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions
     const unref = options.unref ?? false;
     const deadline = Date.now() + totalMs;
     let lastTickAt = Date.now();
+    // A boundary, because this is exported through @genesiscz/utils/async and the scheduler
+    // forwards a configured value into it. Zero or negative survives the Math.min below and turns
+    // the loop into an immediate-await spin until the deadline, which burns a core for the whole
+    // sleep. An unusable tick falls back to the default rather than being honoured.
+    const requestedTick = options.tickMs;
+    const tick =
+        requestedTick !== undefined && Number.isFinite(requestedTick) && requestedTick > 0
+            ? requestedTick
+            : WAKEFUL_TICK_MS;
 
     while (!shouldAbort()) {
         const remaining = deadline - Date.now();
@@ -44,7 +53,7 @@ export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions
             return;
         }
 
-        const tickMs = Math.min(options.tickMs ?? WAKEFUL_TICK_MS, remaining);
+        const tickMs = Math.min(tick, remaining);
 
         if (unref) {
             await delayMs(tickMs, true);

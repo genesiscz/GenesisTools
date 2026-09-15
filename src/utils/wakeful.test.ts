@@ -23,6 +23,22 @@ describe("wakeful", () => {
         await sleepPromise;
     });
 
+    // shouldAbort runs once per loop iteration, so it counts them. A tick of 0 used to survive
+    // Math.min and spin thousands of immediate awaits until the deadline, burning a core.
+    test.each([0, -5, Number.NaN])("a tickMs of %p falls back to the default instead of spinning", async (tickMs) => {
+        let iterations = 0;
+
+        await wakefulSleep(60, {
+            tickMs,
+            shouldAbort: () => {
+                iterations++;
+                return false;
+            },
+        });
+
+        expect(iterations).toBeLessThan(5);
+    });
+
     test("startWakefulInterval fires tick and can be stopped", async () => {
         let ticks = 0;
         const handle = startWakefulInterval(30, () => {

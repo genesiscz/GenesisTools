@@ -237,4 +237,17 @@ describe("sourceIsConcurrent", () => {
     test("a file the checkout does not have is guarded rather than exempted", () => {
         expect(sourceIsConcurrent("nope/missing.test.ts", tmpdir())).toBe(false);
     });
+
+    // The exemption is per-FILE, so one concurrent call must not cover a sequential neighbour.
+    test("a MIXED file is not exempt, because the sequential test would bypass the ceiling", () => {
+        const source = ['test.concurrent("overlaps", () => {});', 'test("slow and sequential", () => {});'].join("\n");
+
+        expect(withSource(source)).toBe(false);
+    });
+
+    test("a concurrent suite wrapping plain inner tests stays exempt, since those do overlap", () => {
+        const source = ['describe.concurrent("suite", () => {', '    it("inner", () => {});', "});"].join("\n");
+
+        expect(withSource(source)).toBe(true);
+    });
 });

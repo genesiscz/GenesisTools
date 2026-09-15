@@ -401,6 +401,37 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
      * Simulated by handing the script a parent that is genuinely alive together with the
      * start time of a DIFFERENT process, which is precisely what a recycled pid looks like.
      */
+    // The interval is interpolated into /bin/sh and the script has no `set -e`, so `sleep 0`
+    // (succeeds, returns instantly) and `sleep NaN` (fails, loop continues anyway) both turn the
+    // watchdog into a busy loop on `ps` and `awk`.
+    test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+        "a pollSeconds of %p cannot reach the shell: the script sleeps the default instead",
+        (pollSeconds) => {
+            const script = buildWatchdogScript({
+                parentPid: 1,
+                selfPid: 2,
+                selfStart: "x",
+                parentStart: "y",
+                pollSeconds,
+            });
+
+            expect(script).toContain("sleep 5");
+            expect(script).not.toContain(`sleep ${pollSeconds}`);
+        }
+    );
+
+    test("a usable pollSeconds is still honoured", () => {
+        const script = buildWatchdogScript({
+            parentPid: 1,
+            selfPid: 2,
+            selfStart: "x",
+            parentStart: "y",
+            pollSeconds: 0.25,
+        });
+
+        expect(script).toContain("sleep 0.25");
+    });
+
     test("a recycled parent pid counts as parent loss, not as a live parent", async () => {
         const parent = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
         const self = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
@@ -441,6 +472,10 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
 
         const selfStart = startedAtForTest(self.pid);
         const parentStart = startedAtForTest(parent.pid);
+        // Both, not just the parent: a null selfStart becomes the literal string "null" below, and
+        // the live parent means the script exits before it ever compares the worker identity. The
+        // test would then pass with no worker fixture at all.
+        expect(selfStart).not.toBeNull();
         expect(parentStart).not.toBeNull();
 
         const watchdog = Bun.spawn(

@@ -126,6 +126,22 @@ function startedAt(pid: number): string | null {
 }
 
 /**
+ * The poll interval is interpolated straight into `/bin/sh`, so it is a boundary.
+ *
+ * The script has no `set -e`, so a `sleep` that rejects its argument does not stop the loop: it
+ * spins on `ps` and `awk` for the life of the worker. `sleep 0` is worse, because it succeeds and
+ * spins just as fast. Both are the CPU burn this guard exists to prevent, so an unusable value
+ * falls back to the default rather than being passed on.
+ */
+function pollInterval(seconds: number | undefined): number {
+    if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
+        return POLL_SECONDS;
+    }
+
+    return seconds;
+}
+
+/**
  * The watchdog's `/bin/sh` program, as text.
  *
  * Exported so the identity checks can be tested directly. Driving them through
@@ -169,7 +185,7 @@ export function buildWatchdogScript(args: {
         "    fi",
         "    exit 0",
         "  fi",
-        `  sleep ${args.pollSeconds ?? POLL_SECONDS}`,
+        `  sleep ${pollInterval(args.pollSeconds)}`,
         "done",
     ].join("\n");
 }

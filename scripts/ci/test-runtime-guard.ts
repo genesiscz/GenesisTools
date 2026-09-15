@@ -90,11 +90,18 @@ const BRACKET_MS = /\[(\d+(?:\.\d+)?)ms\]$/;
 // only knew the plural read a one-file phase as having no total at all.
 const SUITE_TOTAL = /^Ran \d+ tests? across \d+ files?\. \[(\d+(?:\.\d+)?)(ms|s)\]$/;
 /**
- * A CALL SITE, not a mention. The trailing `(` matters: this very repo has a file whose comment
- * explains why it is NOT `test.concurrent`, and a word-boundary match handed it the exemption —
- * the guard then excused a 29.9 s file for a property its source denies having.
+ * A CALL SITE, not a mention, anchored to the start of its own line.
+ *
+ * The trailing `(` matters: this very repo has a file whose comment explains why it is NOT
+ * `test.concurrent`, and a word-boundary match handed it the exemption — the guard then excused
+ * a 29.9 s file for a property its source denies having. Anchoring to `^\s*` covers the rest of
+ * that family for free: `const label = "test.concurrent";`, a `//` comment and a ` * ` jsdoc line
+ * all fail to match, because none of them BEGINS with the call.
+ *
+ * Group 1 is the leading indentation and group 2 the method chain, because the exemption rule
+ * below needs both.
  */
-const CONCURRENT = /(?:^|[\s;}])(?:describe|test|it)\.concurrent[.(]/m;
+const SUITE_CALL = /^([ \t]*)(?:describe|test|it)((?:\.[A-Za-z_$][\w$]*)*)\s*\(/gm;
 
 export interface GuardReport {
     /** Summed per-test ms per file, highest first. */
@@ -190,7 +197,41 @@ export function analyze(
     };
 }
 
-/** True when the file runs its tests concurrently, which makes the summed metric overcount. */
+/**
+ * Say which rule produced the ceiling, because two of the three read the same otherwise.
+ *
+ * The effective ceiling is `max(MIN_CEILING_MS, summed * share)`, so for any suite under about
+ * 333 s summed the FLOOR wins. Labelling that as "6% of 10s summed" states something false —
+ * 6% of 10 s is 0.6 s, not 20 s — and points whoever reads a failing run at the wrong number.
+ * Worst on the unreadable-log path, where it would read "20s (6% of 0s summed)".
+ */
+function describeCeiling(report: GuardReport, explicitMs: number | undefined): string {
+    if (explicitMs !== undefined) {
+        return "(fixed)";
+    }
+
+    const share = Math.round(report.summedMs * DEFAULT_CEILING_SHARE);
+
+    if (share <= MIN_CEILING_MS) {
+        return `(floor; ${(DEFAULT_CEILING_SHARE * 100).toFixed(0)}% of ${(report.summedMs / 1000).toFixed(0)}s summed would be ${(share / 1000).toFixed(1)}s)`;
+    }
+
+    return `(${(DEFAULT_CEILING_SHARE * 100).toFixed(0)}% of ${(report.summedMs / 1000).toFixed(0)}s summed)`;
+}
+
+/**
+ * True when the WHOLE file runs concurrently, which is what makes the summed metric overcount.
+ *
+ * "Any `.concurrent` anywhere" was too generous: one concurrent test beside one genuinely slow
+ * sequential test exempted the file total, so the slow test bypassed the ceiling entirely. The
+ * invariant is now per-file and explicit — **every call site at the file's OUTERMOST indentation
+ * must be `.concurrent`**.
+ *
+ * Outermost rather than column zero, because `describe.concurrent(…)` legitimately wraps plain
+ * `it(…)` calls and those inner tests DO run concurrently: the repo's own exempt file,
+ * src/mcp-doctor/unknown-tool.contract.test.ts, is exactly that shape. Judging the outer layer
+ * asks the right question — did the file opt the whole thing in, or only part of it.
+ */
 export function sourceIsConcurrent(file: string, root: string): boolean {
     const path = resolve(root, file);
 
@@ -199,7 +240,18 @@ export function sourceIsConcurrent(file: string, root: string): boolean {
         return false;
     }
 
-    return CONCURRENT.test(readFileSync(path, "utf8"));
+    const calls = [...readFileSync(path, "utf8").matchAll(SUITE_CALL)].map((match) => ({
+        indent: match[1].length,
+        chain: match[2],
+    }));
+
+    if (calls.length === 0) {
+        return false;
+    }
+
+    const outermost = Math.min(...calls.map((call) => call.indent));
+
+    return calls.filter((call) => call.indent === outermost).every((call) => call.chain.includes(".concurrent"));
 }
 
 function main(argv: string[]): number {
@@ -227,11 +279,7 @@ function main(argv: string[]): number {
         ceilingMs,
         isConcurrent: (file) => sourceIsConcurrent(file, root),
     });
-    const ceilingLabel =
-        `${(report.ceilingMs / 1000).toFixed(0)}s` +
-        (ceilingMs === undefined
-            ? ` (${(DEFAULT_CEILING_SHARE * 100).toFixed(0)}% of ${(report.summedMs / 1000).toFixed(0)}s summed)`
-            : " (fixed)");
+    const ceilingLabel = `${(report.ceilingMs / 1000).toFixed(0)}s ${describeCeiling(report, ceilingMs)}`;
 
     // The positive control, and the reason this is not `if (violations.length === 0) pass`.
     // A log that was truncated, never written, or written by a step that died reports zero
