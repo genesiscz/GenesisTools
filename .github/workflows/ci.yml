@@ -47,7 +47,14 @@ jobs:
           # KILLED at 7m every time, on PR branches AND on master 8a85b394e (run
           # 34913953290), having printed ~10.6k of ~11k pass lines. So it is a budget
           # overrun, not a hang, and the completion-marker guard below was reporting the
-          # wrong cause. 11m covers the extrapolated ~7.5m and still catches a real stall.
+          # wrong cause.
+          # ⚠️ 11m was then set from a SINGLE clean sample of 8m40s and was not enough: run
+          # 35000784853 ran the step 668s and was truncated at the budget anyway. Windows
+          # runners vary about 30% (the same spread the per-file ceiling in
+          # scripts/ci/test-runtime-guard.ts is a share for), so 520s and 668s+ are the same
+          # tree on two runners. 15m is set from the SLOW end plus margin, and still catches a
+          # real stall, because a hang does not finish at any budget. Do not re-derive this
+          # from one green run.
           inc='{"os":"ubuntu-latest","testTimeout":5}'
           win=false
           if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
@@ -55,24 +62,25 @@ jobs:
           labels_lc=$(printf '%s' "$PR_LABELS" | tr '[:upper:]' '[:lower:]')
           case "$title_lc" in *windows*) win=true ;; esac
           case "$labels_lc" in *windows*) win=true ;; esac
-          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":11}"; fi
+          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":15}"; fi
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
           echo "Selected matrix include: [$inc] (windows opted-in: $win)"
 
-  # Single job (no separate `check` runner — cheaper). Lint/typecheck run as
-  # ubuntu-only steps AFTER test discovery + Upload logs, so they can never
-  # block or delay the test signal — the test discovery step is
-  # continue-on-error and uploads its log before lint/tsc even start.
+  # The test matrix and nothing else. Lint, typecheck, the guards and the sub-project
+  # suites live in `checks` below and run alongside this job, so they cannot delay the
+  # test signal and this job's wall time is the suite's wall time.
   test:
     needs: setup
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — must exceed the per-OS testTimeout (5m/11m) + cold
-    # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
-    # logs fire first. Real worst case ~16m (windows cold); 20m has margin.
-    timeout-minutes: 20
+    # Backstop only — must exceed the per-OS testTimeout (5m/15m) + cold install
+    # (windows measured 204s cache + 53s install on run 35000784853) so the step
+    # tripwires and Upload logs fire first and name the real cause. Windows worst
+    # case is ~15m + ~5m of setup; 25m has margin. Lint and tsc are no longer in
+    # this job at all — see `checks`.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -133,7 +141,7 @@ jobs:
       # Run the WHOLE suite. Discovery only — never fail the job here; the
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
-      # Tripwire: per-OS matrix.testTimeout (ubuntu 5m, windows 11m). A plain
+      # Tripwire: per-OS matrix.testTimeout (ubuntu 5m, windows 15m). A plain
       # matrix int IS valid in step-level timeout-minutes (matrix resolves at
       # job-expansion); only raw ternaries / non-matrix contexts are rejected.
       # On timeout the partial tee'd log still uploads (continue-on-error).
