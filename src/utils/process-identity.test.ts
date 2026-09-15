@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { describe, expect, it, spyOn } from "bun:test";
+import { classifyPid, processStartMs, readProcessCommand } from "@genesiscz/utils/process-identity";
 
 /** Above macOS/Linux pid ceilings, so `kill(pid, 0)` is guaranteed ESRCH. */
 const NEVER_ALLOCATED_PID = 4_194_304;
@@ -56,5 +56,37 @@ describe("classifyPid", () => {
     it("reports dead for invalid pids", () => {
         expect(classifyPid(0).status).toBe("dead");
         expect(classifyPid(-5).status).toBe("dead");
+    });
+});
+
+describe("own-pid lookups are read once per process", () => {
+    // Regression for the spawn storm behind CI run 35003930205: `buildPidRecord()` asked `ps`
+    // for the current process's command AND start time on every lock acquire, 143 spawns per
+    // run of src/scripts/lib/journal.test.ts. Both values are constants for the process
+    // lifetime. The spy sits on the primitive that spends the resource, and the foreign-pid
+    // arm is the negative control proving the spy sees spawns and the cache is own-pid only.
+    it("readProcessCommand and processStartMs spawn `ps` at most once for process.pid", () => {
+        const spawnSync = spyOn(Bun, "spawnSync");
+
+        try {
+            readProcessCommand(process.pid);
+            processStartMs(process.pid);
+            const warm = spawnSync.mock.calls.length;
+
+            for (let i = 0; i < 10; i++) {
+                expect(readProcessCommand(process.pid)).not.toBeNull();
+                expect(processStartMs(process.pid)).not.toBeNull();
+            }
+
+            expect(spawnSync.mock.calls.length).toBe(warm);
+
+            // Negative control: a live pid that is not ours is still looked up every time.
+            const before = spawnSync.mock.calls.length;
+            readProcessCommand(process.ppid);
+            readProcessCommand(process.ppid);
+            expect(spawnSync.mock.calls.length).toBe(before + 2);
+        } finally {
+            spawnSync.mockRestore();
+        }
     });
 });
