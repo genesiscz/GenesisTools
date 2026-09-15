@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -37,9 +37,12 @@ beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "scripts-journal-"));
 });
 
-afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
-});
+// No per-test `rm`: `preload-test-tmpdir.ts` points TMPDIR at one root per test process and
+// removes the whole tree in a global afterAll, so a recursive remove here deletes a subtree
+// that is about to be deleted anyway — 17 of them per run of this file. That redundancy is
+// what made this the slowest file in the suite on an I/O-starved runner: 2.10 s on a quiet
+// one (CI run 34961144349) against 45.8 s on a contended one (35003930205), same 17 tests.
+// Isolation is unchanged, because each test still gets its own `mkdtemp` directory.
 
 describe("journal round-trip", () => {
     it("upsert then read returns the entry; missing journal reads empty", async () => {
