@@ -195,6 +195,11 @@ export class Pipeline {
             await this.pool?.stop();
             this.pool = null;
             this.inFlight.clear();
+            const requeued = this.db.markInterruptedJobsForRequeue();
+
+            if (requeued > 0) {
+                logger.info({ requeued }, "youtube pipeline requeued interrupted jobs on stop");
+            }
         }
 
         this.hotStage = null;

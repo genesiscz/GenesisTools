@@ -244,6 +244,30 @@ describe("Pipeline", () => {
         }
     });
 
+    it("requeues running jobs on stop so they are not stuck until the next start", async () => {
+        const { db, config, dir } = await makeFixture();
+        await config.update({ workers: { pollMs: 0, idleTeardownMs: 60_000 } });
+        const pipeline = new Pipeline(db, config, { pollMs: 0, handlers: makeHandlers() });
+
+        try {
+            await pipeline.start();
+            const { job } = db.enqueueJob({
+                targetKind: "video",
+                target: "abandoned-claim",
+                stages: ["metadata"],
+            });
+            expect(db.claimNextJob("external-worker")?.id).toBe(job.id);
+            expect(pipeline.getJob(job.id)?.status).toBe("running");
+            await pipeline.stop();
+            expect(pipeline.getJob(job.id)?.status).toBe("pending");
+            expect(pipeline.getJob(job.id)?.workerId).toBeNull();
+        } finally {
+            await pipeline.stop();
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("requeues interrupted jobs on start and can cancel jobs", async () => {
         const { db, config, dir } = await makeFixture();
         await config.update({ concurrency: { download: 1, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 } });
