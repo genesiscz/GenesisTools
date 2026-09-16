@@ -319,6 +319,43 @@ Two cleanly separated layers (the 2026-05 logger+out overhaul):
 - Migrations: `src/utils/database/migrations.ts` (`Migration`, `runMigrations()`, `Migrator`); applied IDs persist in `_migrations`; indexer applies `INDEXER_MIGRATIONS` on read-write opens.
 - DB test pattern: in-memory `new Database(":memory:")` in `*.test.ts` beside source. Full map: `src/utils/database/CLAUDE.md`.
 
+## 🛑 Changing Swift under `src/macos/GenesisTools/` — always `bun run app`
+
+`swift build` alone proves nothing: it writes `.build/`, and the thing answering on your Mac is the
+installed bundle at `~/Applications/GenesisTools.app`. **After ANY edit to `Sources/**` or
+`Info.plist`, run `bun run app`** (alias of `tools macos permissions build`). It builds, assembles,
+signs, atomically swaps the bundle, re-registers with Launch Services, and then reaps stale
+processes. `bun run app:status` prints what is installed and whether it is stale.
+
+**🛑 The reap is the part that matters, and it is why this is a rule rather than a suggestion.**
+macOS delivers a notification click to the bundle's ALREADY-RUNNING instance and only launches a
+fresh one when none exists. So a settings window or an `--rpc` process from an older build keeps
+receiving every click and answers with whatever code it was built from — silently, because it looks
+exactly like a working app. Observed 2026-09-16: a window instance started at 13:48 swallowed every
+click for the rest of the session while three separate "fixes" were written against a process that
+was never running them, and a hung `--rpc` process spun at 60% CPU for an hour doing the same. The
+reap now runs inside `buildApp()` (`src/macos/lib/permissions/app.ts`, `reapStaleAppFaces`), so every
+path gets it; it is proven to catch by planting a `--window` instance and rebuilding.
+
+⚠️ It kills **only** argument-less and flag-argument faces (`--window`, `--rpc`). It never touches
+`GenesisTools <program> [args...]`, which is the launcher running the user's real work — dev servers,
+editor sessions, long builds all run under it.
+
+**Before believing an app-face bug report, check what is actually running:**
+`ps -Ao pid,lstart,command | rg "MacOS/GenesisTools" | rg -v "gt-cc|gt-claude|bun "`. A bare entry
+with no program argument is a window instance, and its start time tells you which build it is.
+
+**Notifications specifically** (`src/macos/GenesisTools/Sources/Notify.swift`, reached from
+`src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then
+`GenesisTools --rpc '{"method":"notify.status"}'`. `alertStyle: banner` means macOS's "Temporary" —
+the banner fades in ~5 s, taking its buttons and attachment with it, and **code cannot change this**
+(`UNNotificationSettings.alertStyle` is read-only by design). The only fix is the user picking
+"Persistent" in System Settings, deep-linked by `notify.settings`. `timeSensitiveSetting:
+notSupported` is likewise permanent: the entitlement needs a provisioning profile a Developer ID
+signature cannot carry, so `ignoreDnD` is accepted and ignored. Click handling logs every launch and
+action to `~/.genesis-tools/app/notify-clicks.log` — read it before theorising, since a click runs in
+a process with no terminal and a dropped click is otherwise indistinguishable from no click at all.
+
 ## macOS privacy grants (TCC) live on GenesisTools.app
 
 `tools` runs every tool through `~/Applications/GenesisTools.app` (source `src/macos/GenesisTools/`, built by `tools macos permissions build`, signed with the first Developer ID or Apple Development identity on the machine, ad-hoc as a last resort; an ad-hoc build loses every grant on the next rebuild, and `tools macos permissions` says so). The launcher disclaims responsibility for itself, so macOS attributes Calendar, Reminders, Contacts, Full Disk Access, Accessibility and Automation to `com.genesiscz.genesistools`, not to the terminal. Consequences for agents:

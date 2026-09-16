@@ -31,6 +31,8 @@
         "clear-cache": "bun src/utils/clearCache.ts",
         "build:native": "cd native/ax-tool && swift build -c release",
         "test:native": "cd native/ax-tool && swift test",
+        "app": "bun run src/macos/index.ts permissions build",
+        "app:status": "bun run src/macos/index.ts permissions",
         "build:app": "bun run src/macos/index.ts permissions build",
         "build:app-icon": "swift src/macos/GenesisTools/scripts/build-icon.swift",
         "test": "bun scripts/test.ts --parallel",
