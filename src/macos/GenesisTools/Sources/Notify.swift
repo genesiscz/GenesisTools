@@ -401,6 +401,56 @@ private func remove(_ params: NotifyRemoveParams) {
     }
 }
 
+/// What macOS actually thinks of us. `notify.post` reporting success only means the request was
+/// accepted; a provisional or quiet authorization accepts it and then never shows a banner, which
+/// looks identical from the caller's side. This is the only way to tell those apart.
+private func status() {
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+        emitResult([
+            "authorization": describe(settings.authorizationStatus),
+            "alertSetting": describe(settings.alertSetting),
+            "alertStyle": describe(settings.alertStyle),
+            "soundSetting": describe(settings.soundSetting),
+            "badgeSetting": describe(settings.badgeSetting),
+            "notificationCenterSetting": describe(settings.notificationCenterSetting),
+            "lockScreenSetting": describe(settings.lockScreenSetting),
+            "criticalAlertSetting": describe(settings.criticalAlertSetting),
+            "timeSensitiveSetting": describe(settings.timeSensitiveSetting),
+            "bundleId": Bundle.main.bundleIdentifier ?? fallbackBundleId,
+            "bundlePath": Bundle.main.bundlePath,
+        ])
+    }
+}
+
+private func describe(_ value: UNAuthorizationStatus) -> String {
+    switch value {
+    case .notDetermined: return "notDetermined"
+    case .denied: return "denied"
+    case .authorized: return "authorized"
+    case .provisional: return "provisional"
+    case .ephemeral: return "ephemeral"
+    @unknown default: return "unknown(\(value.rawValue))"
+    }
+}
+
+private func describe(_ value: UNNotificationSetting) -> String {
+    switch value {
+    case .notSupported: return "notSupported"
+    case .disabled: return "disabled"
+    case .enabled: return "enabled"
+    @unknown default: return "unknown(\(value.rawValue))"
+    }
+}
+
+private func describe(_ value: UNAlertStyle) -> String {
+    switch value {
+    case .none: return "none"
+    case .banner: return "banner"
+    case .alert: return "alert"
+    @unknown default: return "unknown(\(value.rawValue))"
+    }
+}
+
 private func list() {
     UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
         let rows = delivered.map { notification -> [String: Any] in
@@ -430,7 +480,7 @@ private func list() {
 /// bump it: a client discovers those from `rpc.hello`'s method list instead.
 let rpcProtocolVersion = 1
 
-let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list"]
+let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status"]
 
 /// `GenesisTools --rpc '<json>'`, or `--rpc -` to read the request from stdin: run one method and
 /// exit with one JSON line on stdout.
@@ -490,6 +540,9 @@ func runRpc(_ arguments: [String]) -> Never {
 
     case "notify.list":
         list()
+
+    case "notify.status":
+        status()
 
     default:
         emitError(code: "method_unknown", message: "unknown method \(envelope.method)", exitCode: 69)
