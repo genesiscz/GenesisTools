@@ -1,4 +1,4 @@
-import { resumeCommandFor } from "@app/dev-dashboard/lib/session-focus";
+import { resumeCommandFor } from "@app/dev-dashboard/contract/session-resume";
 
 export type SessionActionName = "focus" | "cmux" | "copyId" | "copyResume";
 

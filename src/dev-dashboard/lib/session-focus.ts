@@ -109,8 +109,3 @@ export async function focusSessionPane(sessionId: string, deps: FocusSessionDeps
 
     return { ok: true, focused: payload.focused, activated: payload.activated === true };
 }
-
-/** The exact command Genesis' MonitorModel.resumeCommand builds, so both UIs copy one string. */
-export function resumeCommandFor(sessionId: string): string {
-    return `tools claude run --resume ${sessionId}`;
-}
