@@ -524,9 +524,13 @@ async function main(): Promise<void> {
     }
 }
 
-try {
-    await main();
-} catch (err) {
-    logger.error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+// Guarded so importing this module (a test, `tools ts imports analyze`) does not run the CLI:
+// unguarded, the import parsed an empty argv and cost 63 ms of commander work.
+if (import.meta.main) {
+    try {
+        await main();
+    } catch (err) {
+        logger.error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+    }
 }
