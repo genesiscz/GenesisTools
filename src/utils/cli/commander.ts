@@ -3,7 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import type { Command } from "commander";
-import { enhanceHelp, setSuggestCommandProgram } from "./executor";
+import { enhanceHelp, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
 // `logger` itself is intentionally NOT imported here — runTool only drives the
 // console gate / base binding via the setters above (importing the logger
 // value into commander.ts would risk a commander↔logger value cycle).
@@ -228,7 +228,10 @@ export async function runTool(
         addGlobalVerboseOption(program, { trace: opts.trace === true });
     }
 
-    program.showHelpAfterError(true);
+    // Every subcommand too, not just the root: a missing argument is raised by the subcommand, and
+    // Commander does not inherit this setting. Without the recursion `tools ts imports analyze`
+    // printed `error: missing required argument 'entry'` and nothing else.
+    showHelpAfterErrorDeep(program);
 
     if (opts.enhanceHelp) {
         enhanceHelp(program);

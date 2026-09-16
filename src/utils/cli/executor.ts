@@ -76,6 +76,22 @@ function wrapDescription(description: string, available: number): string[] {
     return lines;
 }
 
+/**
+ * Turn on `showHelpAfterError` for a command AND every subcommand under it.
+ *
+ * Commander does not inherit this setting: setting it on the root program only covers errors the
+ * root itself raises. A missing argument on a subcommand is raised by that subcommand, so without
+ * this the user gets a bare `error: missing required argument 'entry'` and no usage at all — which
+ * is exactly the moment help is worth most.
+ */
+export function showHelpAfterErrorDeep(cmd: Command): void {
+    cmd.showHelpAfterError(true);
+
+    for (const sub of cmd.commands as Command[]) {
+        showHelpAfterErrorDeep(sub);
+    }
+}
+
 export function enhanceHelp(cmd: Command): void {
     cmd.showHelpAfterError(true);
 
