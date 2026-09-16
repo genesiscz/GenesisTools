@@ -1,0 +1,19 @@
+{
+    "name": "polls-wakeful-wakeups",
+    "capturedAt": "2026-09-16T16:38:06.215Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        21.6669921875,
+        73.16357421875,
+        107.83251953125
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "wakeups": 3,
+        "wakeupsPerMinute": 29.99,
+        "wakeupsPerInterval": 5,
+        "tickInvocations": 1,
+        "cpuPercent": 0.12
+    },
+    "notes": "real startWakefulInterval, no-op tick, 6000 ms window, Bun.sleep intercepted | 3 runs, median | 18:38  up 4 days, 2 hrs, 35 users, load averages: 21.67 73.16 107.83"
+}

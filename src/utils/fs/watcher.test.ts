@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -419,5 +419,24 @@ describe("watchPath / waitForPath", () => {
         const aborted = waitForPath(join(tempDir, "never2.txt"), { signal: controller.signal });
         controller.abort();
         expect(await aborted).toBe(false);
+    });
+
+    test("waitForPath still sees the file when the directory watch is deaf, through its fallback poll", async () => {
+        // bun 1.3.13 on darwin: after the first FSWatcher.close() in a process, every fs.watch created
+        // afterwards delivers at most one event (measured 10/10 before any close, 1/10 after). That is
+        // what the codex daemon does once per control request, so without the poll its second wait
+        // sat out the whole timeout. The throwaway watcher below puts this process into that state
+        // where the defect exists; where it does not, the watch answers first and the test still holds.
+        const throwaway = watch(tempDir, () => {});
+        throwaway.close();
+
+        const target = join(tempDir, "deaf", "reply.json");
+        const startedAt = performance.now();
+        const arrival = waitForPath(target, { timeoutMs: 4000, pollMs: 40 });
+        await Bun.sleep(30);
+        atomicWrite(target, "landed");
+
+        expect(await arrival).toBe(true);
+        expect(performance.now() - startedAt).toBeLessThan(2000);
     });
 });

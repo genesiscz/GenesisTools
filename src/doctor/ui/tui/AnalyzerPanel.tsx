@@ -2,7 +2,7 @@
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { formatBytes } from "@app/doctor/lib/size";
 import type { EngineEvent, Finding } from "@app/doctor/lib/types";
-import { createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { THEME } from "./theme";
 
 interface AnalyzerPanelProps {
@@ -83,9 +83,31 @@ function truncate(value: string, max: number): string {
 export function AnalyzerPanel(props: AnalyzerPanelProps) {
     const state = createMemo(() => deriveState(props.events, props.analyzer.id));
 
+    // The spinner ticks ten times a second, and each tick re-renders this panel. It used to keep
+    // ticking after the analyzer reached done or error, so a finished doctor run repainted every
+    // panel forever while showing a frame nobody looks at. The timer now stops with the work.
     const [tick, setTick] = createSignal(0);
-    const interval = setInterval(() => setTick((current) => current + 1), 100);
-    onCleanup(() => clearInterval(interval));
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const stopSpinner = (): void => {
+        if (interval !== null) {
+            clearInterval(interval);
+            interval = null;
+        }
+    };
+
+    createEffect(() => {
+        const status = state().status;
+
+        if (status === "done" || status === "error") {
+            stopSpinner();
+            return;
+        }
+
+        if (interval === null) {
+            interval = setInterval(() => setTick((current) => current + 1), 100);
+        }
+    });
+    onCleanup(stopSpinner);
 
     const spinnerFrame = createMemo(() => SPINNER_FRAMES[tick() % SPINNER_FRAMES.length]);
 

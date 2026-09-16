@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -61,14 +62,15 @@ export async function waitForControlResponse(
     timeoutMs = 30_000
 ): Promise<ControlResponse> {
     const path = sessionResponsePath(name, requestId);
-    const deadline = Date.now() + timeoutMs;
+    // `respondToControl` creates this file with an atomic rename, which the parent directory sees
+    // as one event. `waitForPath` watches that directory, so the answer arrives when it is written
+    // rather than up to 20 ms later. It used to stat the path 50 times a second for as long as
+    // 30 seconds. The 250 ms poll behind the watch is not decoration: on bun 1.3.13 a watcher
+    // created after any earlier watcher was closed goes deaf, and this daemon closes one per request.
+    const appeared = await waitForPath(path, { timeoutMs, pollMs: 250 });
 
-    while (Date.now() < deadline) {
-        if (existsSync(path)) {
-            return SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ControlResponse;
-        }
-
-        await Bun.sleep(20);
+    if (appeared) {
+        return SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as ControlResponse;
     }
 
     throw new Error(`Timed out waiting for Codex session "${name}" to answer control request ${requestId}`);

@@ -239,11 +239,23 @@ export interface WatchPathOptions {
     debounceMs?: number;
 }
 
+const DEFAULT_WAIT_FOR_PATH_POLL_MS = 500;
+
 export interface WaitForPathOptions {
     /** Give up after this long. Default: no deadline. */
     timeoutMs?: number;
     /** Abort early; resolves `false` like a timeout. */
     signal?: AbortSignal;
+    /**
+     * Safety-net poll behind the directory watch, in ms. Default 500; 0 disables it.
+     *
+     * Measured on bun 1.3.13, darwin 25.3: after the first `FSWatcher.close()` in a process, every
+     * `fs.watch` created afterwards delivers at most one event (10/10 events before any close, 1/10
+     * after). A long-lived process that waits for files one after another therefore goes deaf on the
+     * second wait and sits out its whole timeout. Two `existsSync` calls a second heal that within
+     * half a second; the watch still answers first whenever it works.
+     */
+    pollMs?: number;
 }
 
 /**
@@ -348,10 +360,10 @@ export function watchPath(path: string, callback: WatcherCallback, opts?: WatchP
 }
 
 /**
- * Resolve `true` as soon as `path` exists, `false` on timeout or abort. Never throws, never polls:
- * one `watchPath` subscription plus one timer. The path existing before the call resolves at once;
- * a file landing between the existence check and the watch being armed is caught by a second
- * check after arming.
+ * Resolve `true` as soon as `path` exists, `false` on timeout or abort. Never throws: one `watchPath`
+ * subscription, one deadline timer and a slow existence poll behind the watch (see `pollMs`). The
+ * path existing before the call resolves at once; a file landing between the existence check and
+ * the watch being armed is caught by a second check after arming.
  */
 export async function waitForPath(path: string, opts?: WaitForPathOptions): Promise<boolean> {
     const resolvedPath = resolve(path);
@@ -380,6 +392,15 @@ export async function waitForPath(path: string, opts?: WaitForPathOptions): Prom
     }
 
     const timer = opts?.timeoutMs === undefined ? null : setTimeout(() => settle(false), opts.timeoutMs);
+    const pollMs = opts?.pollMs ?? DEFAULT_WAIT_FOR_PATH_POLL_MS;
+    const poll =
+        pollMs > 0
+            ? setInterval(() => {
+                  if (existsSync(resolvedPath)) {
+                      settle(true);
+                  }
+              }, pollMs)
+            : null;
     const onAbort = () => settle(false);
     opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -388,6 +409,10 @@ export async function waitForPath(path: string, opts?: WaitForPathOptions): Prom
     } finally {
         if (timer) {
             clearTimeout(timer);
+        }
+
+        if (poll) {
+            clearInterval(poll);
         }
 
         opts?.signal?.removeEventListener("abort", onAbort);

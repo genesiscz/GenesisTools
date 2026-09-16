@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { CodexAccountBinding } from "./lib/account";
@@ -11,7 +12,7 @@ import { AppServerClient, type RpcNotification, spawnAppServer } from "./lib/app
 import { computerUseOverrides } from "./lib/computer-use";
 import { readControlRequests, respondToControl } from "./lib/control-channel";
 import { buildAccountLaunchOptions } from "./lib/launch-options";
-import { sessionDaemonLogPath, sessionLaunchPath } from "./lib/paths";
+import { sessionControlPath, sessionDaemonLogPath, sessionLaunchPath } from "./lib/paths";
 import { CodexSessionRuntime } from "./lib/session";
 import type { LaunchConfig } from "./lib/spawn";
 import { CodexSessionStore } from "./lib/store";
@@ -168,9 +169,9 @@ async function run(): Promise<void> {
         }
 
         let lastControlSeq = 0;
-
-        while (!exiting) {
+        const drainControl = async (): Promise<{ done: boolean }> => {
             const requests = await readControlRequests(name, lastControlSeq);
+
             for (const request of requests) {
                 lastControlSeq = request.seq;
                 store.appendEvent(name, { source: "control", method: request.control.op, params: request.control });
@@ -192,10 +193,17 @@ async function run(): Promise<void> {
                 }
             }
 
-            if (!exiting) {
-                await Bun.sleep(50);
-            }
-        }
+            return { done: exiting };
+        };
+
+        // The daemon lives for hours. Re-reading the control file 20 times a second for all of it
+        // bought nothing: a request is a file append, which the watcher sees. The file is created
+        // empty first so `fs.watch` has something to attach to from the start; the one-second poll
+        // behind it is the safety net for an event the platform drops.
+        const controlPath = sessionControlPath(name);
+        mkdirSync(dirname(controlPath), { recursive: true });
+        appendFileSync(controlPath, "");
+        await watchFileFeed({ path: controlPath, onChange: drainControl, pollFallbackMs: 1000 });
     } catch (err) {
         log.error({ err, name }, "codex daemon failed");
         try {

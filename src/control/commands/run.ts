@@ -223,7 +223,7 @@ export function registerRunCommand(program: Command): void {
                     const t0w = performance.now();
                     const result =
                         cmd === "wait"
-                            ? waitFor({
+                            ? await waitFor({
                                   ...cond,
                                   timeout: typeof step.timeout === "number" ? step.timeout : 5000,
                                   interval: typeof step.interval === "number" ? step.interval : 200,

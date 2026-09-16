@@ -1,4 +1,8 @@
+import { deriveRegistry } from "@app/agents/lib/derived-registry";
+import { readFeed } from "@app/agents/lib/feed";
+import { sessionPaths } from "@app/agents/lib/paths";
 import { env } from "@genesiscz/utils/env";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { RpcNotification } from "./app-server-client";
@@ -285,26 +289,32 @@ export class CliAgentsTransport implements AgentsTransport {
             stdout: "ignore",
             stderr: "ignore",
         });
-        const deadline = Date.now() + 5_000;
+        // The registration this waits for is written to the session feed by the login child above.
+        // This used to spawn `tools agents discover` every 50 ms to read it, which is 16 whole Bun
+        // processes for one lookup; the same answer comes from the two functions that command is
+        // built on. Waking on the file rather than a timer also drops the wait from up to 50 ms to
+        // the write itself.
+        const paths = sessionPaths(session);
         let found: AgentRecord | undefined;
+        const lookUp = async (): Promise<{ done: boolean }> => {
+            const record = deriveRegistry(await readFeed(paths)).find(
+                (candidate) => candidate.agent_name === agentName && candidate.agent_id !== null
+            );
+
+            if (record?.agent_id) {
+                found = { agent_id: record.agent_id, agent_name: record.agent_name };
+            }
+
+            return { done: found !== undefined };
+        };
 
         try {
-            while (Date.now() < deadline) {
-                const stdout = await runAgentsCommand(["discover", "--session", session, "--format", "json"]);
-                const records = SafeJSON.parse(stdout, { strict: true });
-                if (!Array.isArray(records)) {
-                    throw new Error("tools agents discover returned a non-array response");
-                }
-
-                found = records.find(
-                    (record): record is AgentRecord =>
-                        isRecord(record) && record.agent_name === agentName && typeof record.agent_id === "string"
-                );
-                if (found) {
-                    break;
-                }
-
-                await Bun.sleep(50);
+            if (!(await lookUp()).done) {
+                await watchFileFeed({
+                    path: paths.feedPath,
+                    onChange: lookUp,
+                    deadlineAt: Date.now() + 5_000,
+                });
             }
         } finally {
             try {
