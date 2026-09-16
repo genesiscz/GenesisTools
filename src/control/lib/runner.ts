@@ -139,6 +139,12 @@ export interface AxRunBoundary {
 
 export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
 
+/** Argv the AX spawn will exec: launcher + binary + args when a launcher is installed. */
+export function axCommandLine(binary: string, args: readonly string[]): string[] {
+    const launcher = installedGenesisAppLauncher();
+    return launcher ? [launcher, binary, ...args] : [binary, ...args];
+}
+
 export const DEFAULT_AX_RUN_BOUNDARY: AxRunBoundary = {
     ensureBinary,
     spawn: ({ binary, args, timeoutMs, maxBufferBytes }) => {
@@ -152,9 +158,9 @@ export const DEFAULT_AX_RUN_BOUNDARY: AxRunBoundary = {
         // descendant chain: any session started through the launcher (a `gt-cc` Claude Code run, a
         // dashboard) therefore ran ax-tool unwrapped, every AX subcommand returned "no windows",
         // and that reads as a fact about the target app rather than a missing grant.
-        const launcher = installedGenesisAppLauncher();
-        const command = launcher ?? binary;
-        const commandArgs = launcher ? [binary, ...args] : args;
+        const argv = axCommandLine(binary, args);
+        const command = argv[0] ?? binary;
+        const commandArgs = argv.slice(1);
 
         const result = spawnSync(command, commandArgs, {
             timeout: timeoutMs,

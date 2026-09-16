@@ -1,10 +1,16 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { waitForPath } from "@genesiscz/utils/fs/watcher";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
-import { genesisAppRpc, isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
+import {
+    type GenesisAppRpcOutcome,
+    genesisAppRpc,
+    isGenesisAppRpcAvailable,
+    isNotifyPostResult,
+} from "@genesiscz/utils/macos/genesis-app-rpc";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -249,32 +255,40 @@ function sendViaOsascript(opts: NotificationOptions): void {
  * Returns the notification id, or null when the app could not take it and the chain should move on.
  */
 async function sendViaGenesisApp(opts: NotificationOptions): Promise<string | null> {
-    const outcome = await genesisAppRpc<{ id: string }>("notify.post", {
-        message: opts.message,
-        title: opts.title,
-        subtitle: opts.subtitle,
-        sound: opts.sound,
-        group: opts.group,
-        open: opts.open,
-        execute: opts.execute,
-        appIcon: opts.appIcon,
-        attachments: opts.attachments,
-        ignoreDnD: opts.ignoreDnD,
-        id: opts.id,
-        actions: opts.actions,
-    });
+    const outcome = await genesisAppRpc(
+        "notify.post",
+        {
+            message: opts.message,
+            title: opts.title,
+            subtitle: opts.subtitle,
+            sound: opts.sound,
+            group: opts.group,
+            open: opts.open,
+            execute: opts.execute,
+            appIcon: opts.appIcon,
+            attachments: opts.attachments,
+            ignoreDnD: opts.ignoreDnD,
+            id: opts.id,
+            actions: opts.actions,
+            replyDir: join(genesisAppDir(), "replies"),
+            genesisHome: env.tools.getHome(),
+        },
+        { isResult: isNotifyPostResult }
+    );
 
     if (outcome.ok) {
         return outcome.result.id;
     }
 
-    if (outcome.error.code === "denied") {
+    if (outcome.error.code === "denied" || outcome.error.code === "not_determined") {
         // Falling through means another bundle delivers instead, so the user still gets the banner
         // and never learns the grant is missing. That is the documented contract for this function,
         // so the warning is how the problem stays visible.
         logger.warn(
             { error: outcome.error },
-            "GenesisTools.app may not post notifications; grant it in System Settings > Notifications. Falling back to terminal-notifier."
+            outcome.error.code === "not_determined"
+                ? "GenesisTools.app has never been granted notifications; run tools notify authorize. Falling back to terminal-notifier."
+                : "GenesisTools.app may not post notifications; grant it in System Settings > Notifications. Falling back to terminal-notifier."
         );
     }
 
@@ -433,9 +447,10 @@ export async function readNotificationReply(
  * which was pressed. Resolves null on timeout, on a dismissed notification, or when the app is
  * unavailable — an unanswered question is a normal outcome, not an error.
  *
- * ⚠️ The wait is event-driven (`fs.watch` on the reply directory), never a poll. The answer arrives
- * minutes later from a process macOS launches, so a polling loop here would spin for the entire
- * time the user is thinking. See the busy-wait section in CLAUDE.md.
+ * ⚠️ The wait uses `watchFileFeed` (directory/file watch plus a poll fallback). bun 1.3.13 goes
+ * deaf after the first `FSWatcher.close()` in a process; a watch without a poll sits out the
+ * full timeout even though the user answered. The answer arrives from a process macOS launches,
+ * minutes later, so this must not spin a tight loop while they think.
  */
 export async function askNotification(
     opts: NotificationOptions,
@@ -450,21 +465,16 @@ export async function askNotification(
 
     const timeoutMs = waitOpts.timeoutMs ?? 5 * 60_000;
     const replyPath = join(genesisAppDir(), "replies", `${posted.id}.json`);
-    await waitForFile(replyPath, timeoutMs);
+    mkdirSync(dirname(replyPath), { recursive: true });
+    await watchFileFeed({
+        path: replyPath,
+        deadlineAt: Date.now() + timeoutMs,
+        debounceMs: 0,
+        pollFallbackMs: 500,
+        onChange: () => (existsSync(replyPath) ? { done: true } : undefined),
+    });
 
     return readNotificationReply(posted.id, { consume: true });
-}
-
-/**
- * Resolve once `path` exists, or when the deadline passes. Never throws, never spins.
- *
- * `waitForPath` arms a `node:fs` watch on the parent directory (about 0.5 ms) instead of loading
- * the `@parcel/watcher` addon (5 to 8 ms plus a subscribe) to wait for one file, and the directory
- * watch survives the app's write-temp-then-rename, which a file-bound watcher does not. There is no
- * debounce: a human answer should not sit in a buffer.
- */
-async function waitForFile(path: string, timeoutMs: number): Promise<void> {
-    await waitForPath(path, { timeoutMs });
 }
 
 /**
@@ -487,4 +497,236 @@ export async function sendNotification(opts: NotificationOptions): Promise<void>
             logger.debug("tools say failed for notification TTS");
         }
     }
+}
+
+export interface NotificationCenterStatus {
+    authorization: string;
+    alertSetting: string;
+    alertStyle: string;
+    soundSetting: string;
+    badgeSetting: string;
+    notificationCenterSetting: string;
+    lockScreenSetting: string;
+    criticalAlertSetting: string;
+    timeSensitiveSetting: string;
+    bundleId: string;
+    bundlePath: string;
+    temporary: boolean;
+    settingsUrl: string;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNotificationCenterStatus(value: unknown): value is NotificationCenterStatus {
+    return isObject(value) && typeof value.authorization === "string" && typeof value.temporary === "boolean";
+}
+
+export async function notificationStatus(): Promise<GenesisAppRpcOutcome<NotificationCenterStatus>> {
+    return genesisAppRpc("notify.status", undefined, { isResult: isNotificationCenterStatus });
+}
+
+export async function authorizeNotifications(): Promise<GenesisAppRpcOutcome<Record<string, unknown>>> {
+    return genesisAppRpc("notify.authorize", undefined, { timeoutMs: 120_000 });
+}
+
+export async function openNotificationSettings(): Promise<GenesisAppRpcOutcome<{ opened: string }>> {
+    return genesisAppRpc("notify.settings", undefined, {
+        isResult: (value: unknown): value is { opened: string } => isObject(value) && typeof value.opened === "string",
+    });
+}
+
+function optionalString(value: unknown): string | undefined {
+    return typeof value === "string" ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+    return typeof value === "boolean" ? value : undefined;
+}
+
+function parseStringArray(value: unknown, field: string): string[] | { error: string } | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+        return { error: `${field} must be an array of strings` };
+    }
+
+    return value;
+}
+
+function parseActions(value: unknown): NotificationAction[] | { error: string } | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (!Array.isArray(value)) {
+        return { error: "--payload.actions must be an array" };
+    }
+
+    const actions: NotificationAction[] = [];
+
+    for (const item of value) {
+        if (!isObject(item) || typeof item.id !== "string" || typeof item.title !== "string") {
+            return { error: "--payload.actions[] needs string id and title" };
+        }
+
+        const action: NotificationAction = { id: item.id, title: item.title };
+        const open = optionalString(item.open);
+
+        if (open !== undefined) {
+            action.open = open;
+        }
+
+        const execute = optionalString(item.execute);
+
+        if (execute !== undefined) {
+            action.execute = execute;
+        }
+
+        const destructive = optionalBoolean(item.destructive);
+
+        if (destructive !== undefined) {
+            action.destructive = destructive;
+        }
+
+        if (item.input !== undefined) {
+            if (!isObject(item.input)) {
+                return { error: "--payload.actions[].input must be an object" };
+            }
+
+            action.input = {
+                buttonTitle: optionalString(item.input.buttonTitle),
+                placeholder: optionalString(item.input.placeholder),
+            };
+        }
+
+        actions.push(action);
+    }
+
+    return actions;
+}
+
+function parsePreferred(value: unknown): NotificationBackend | { error: string } | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (
+        value === NotificationBackend.GenesisApp ||
+        value === NotificationBackend.TerminalNotifier ||
+        value === NotificationBackend.Osascript
+    ) {
+        return value;
+    }
+
+    return { error: "--payload.preferred must be genesis-app, terminal-notifier, or osascript" };
+}
+
+/** Narrow untrusted `--payload` JSON to {@link NotificationOptions} without a cast. */
+export function parseNotificationOptions(
+    value: unknown
+): { ok: true; value: NotificationOptions } | { ok: false; error: string } {
+    if (!isObject(value)) {
+        return { ok: false, error: "--payload must be a JSON object" };
+    }
+
+    if (typeof value.message !== "string" || value.message.length === 0) {
+        return { ok: false, error: "--payload needs at least a `message` field" };
+    }
+
+    const actions = parseActions(value.actions);
+
+    if (actions && "error" in actions) {
+        return { ok: false, error: actions.error };
+    }
+
+    const attachments = parseStringArray(value.attachments, "--payload.attachments");
+
+    if (attachments && "error" in attachments) {
+        return { ok: false, error: attachments.error };
+    }
+
+    const preferred = parsePreferred(value.preferred);
+
+    if (preferred && typeof preferred === "object" && "error" in preferred) {
+        return { ok: false, error: preferred.error };
+    }
+
+    const options: NotificationOptions = { message: value.message };
+    const title = optionalString(value.title);
+
+    if (title !== undefined) {
+        options.title = title;
+    }
+
+    const subtitle = optionalString(value.subtitle);
+
+    if (subtitle !== undefined) {
+        options.subtitle = subtitle;
+    }
+
+    const sound = optionalString(value.sound);
+
+    if (sound !== undefined) {
+        options.sound = sound;
+    }
+
+    const group = optionalString(value.group);
+
+    if (group !== undefined) {
+        options.group = group;
+    }
+
+    const open = optionalString(value.open);
+
+    if (open !== undefined) {
+        options.open = open;
+    }
+
+    const execute = optionalString(value.execute);
+
+    if (execute !== undefined) {
+        options.execute = execute;
+    }
+
+    const appIcon = optionalString(value.appIcon);
+
+    if (appIcon !== undefined) {
+        options.appIcon = appIcon;
+    }
+
+    const id = optionalString(value.id);
+
+    if (id !== undefined) {
+        options.id = id;
+    }
+
+    const ignoreDnD = optionalBoolean(value.ignoreDnD);
+
+    if (ignoreDnD !== undefined) {
+        options.ignoreDnD = ignoreDnD;
+    }
+
+    const say = optionalBoolean(value.say);
+
+    if (say !== undefined) {
+        options.say = say;
+    }
+
+    if (Array.isArray(actions)) {
+        options.actions = actions;
+    }
+
+    if (Array.isArray(attachments)) {
+        options.attachments = attachments;
+    }
+
+    if (typeof preferred === "string") {
+        options.preferred = preferred;
+    }
+
+    return { ok: true, value: options };
 }

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
-import { parseCodesignInfo, pickCodesignIdentity, stampInfoPlist } from "./app";
+import { parseCodesignInfo, pickCodesignIdentity, staleAppFacePids, stampInfoPlist } from "./app";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
@@ -105,6 +105,28 @@ describe("grantsFor", () => {
     it("says not asked yet when no row exists", () => {
         const grants = grantsFor("com.other", user, user, [calendar]);
         expect(grants[0]).toMatchObject({ granted: false, label: "not asked yet" });
+    });
+});
+
+describe("staleAppFacePids", () => {
+    const launcher = "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
+
+    it("kills the settings window, --rpc, and --window, and leaves the launcher alone", () => {
+        const stdout = [
+            `  111 ${launcher}`,
+            `  222 ${launcher} --rpc '{"method":"notify.post"}'`,
+            `  333 ${launcher} --window`,
+            `  444 ${launcher} /opt/homebrew/bin/bun tools foo`,
+            "  555 /usr/bin/osascript -e hi",
+            `  666 ${launcher} --notify`,
+        ].join("\n");
+
+        expect(staleAppFacePids(stdout, launcher)).toEqual(["111", "222", "333", "666"]);
+    });
+
+    it("ignores unrelated processes and empty listings", () => {
+        expect(staleAppFacePids("", launcher)).toEqual([]);
+        expect(staleAppFacePids("  1 /sbin/launchd", launcher)).toEqual([]);
     });
 });
 

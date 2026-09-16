@@ -398,11 +398,49 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     }
 
     step("reap stale app-face processes");
-    reapStaleAppFaces(step);
+    await reapStaleAppFaces(step);
 
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
     return { bundlePath, identity, signature, manifest };
+}
+
+const STALE_FACE_TERM_GRACE_MS = 500;
+
+/** Classify `ps -Ao pid=,args=` lines. Exported so the window / `--rpc` / launcher split is tested. */
+export function staleAppFacePids(psStdout: string, launcherPath: string): string[] {
+    const stale: string[] = [];
+
+    for (const line of psStdout.split("\n")) {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+        if (!match) {
+            continue;
+        }
+
+        const command = match[2];
+        if (!command.startsWith(launcherPath)) {
+            continue;
+        }
+
+        const rest = command.slice(launcherPath.length).trim();
+
+        // "" is the settings window; a leading dash is --rpc / --window / --notify. Anything else
+        // starts with a program path, which means it is the launcher and must be left alone.
+        if (rest === "" || rest.startsWith("-")) {
+            stale.push(match[1]);
+        }
+    }
+
+    return stale;
+}
+
+function pidIsAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -418,8 +456,10 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
  * ⚠️ Only argument-less and flag-argument faces are killed. `GenesisTools <program> [args...]` is
  * the LAUNCHER running somebody's actual work (a dev server, an editor session, a long build), and
  * killing those would take the user's tools down with the rebuild.
+ *
+ * SIGTERM first, then SIGKILL for anyone still alive after {@link STALE_FACE_TERM_GRACE_MS}.
  */
-function reapStaleAppFaces(step: (message: string) => void): void {
+async function reapStaleAppFaces(step: (message: string) => void): Promise<void> {
     const launcher = join(genesisAppBundlePath(), "Contents", "MacOS", GENESIS_APP_NAME);
     const listing = run(["ps", "-Ao", "pid=,args="]);
 
@@ -428,29 +468,37 @@ function reapStaleAppFaces(step: (message: string) => void): void {
         return;
     }
 
-    const stale: string[] = [];
-
-    for (const line of listing.stdout.split("\n")) {
-        const match = line.trim().match(/^(\d+)\s+(.*)$/);
-
-        if (!match || !match[2].startsWith(launcher)) {
-            continue;
-        }
-
-        const rest = match[2].slice(launcher.length).trim();
-
-        // "" is the settings window; a leading dash is --rpc / --window / --notify. Anything else
-        // starts with a program path, which means it is the launcher and must be left alone.
-        if (rest === "" || rest.startsWith("-")) {
-            stale.push(match[1]);
-        }
-    }
+    const stale = staleAppFacePids(listing.stdout, launcher);
 
     if (stale.length === 0) {
         return;
     }
 
     step(`killing ${stale.length} stale app-face process(es): ${stale.join(" ")}`);
-    run(["kill", ...stale]);
-    logger.info({ pids: stale }, "reaped GenesisTools app-face processes from the replaced bundle");
+
+    for (const pid of stale) {
+        try {
+            process.kill(Number(pid), "SIGTERM");
+        } catch (err) {
+            logger.debug({ err, pid }, "stale app-face already gone at SIGTERM");
+        }
+    }
+
+    await Bun.sleep(STALE_FACE_TERM_GRACE_MS);
+
+    const survivors = stale.filter((pid) => pidIsAlive(Number(pid)));
+
+    for (const pid of survivors) {
+        try {
+            process.kill(Number(pid), "SIGKILL");
+            logger.info({ pid }, "escalated stale app-face to SIGKILL");
+        } catch (err) {
+            logger.debug({ err, pid }, "stale app-face already gone at SIGKILL");
+        }
+    }
+
+    logger.info(
+        { pids: stale, killed: survivors.length },
+        "reaped GenesisTools app-face processes from the replaced bundle"
+    );
 }

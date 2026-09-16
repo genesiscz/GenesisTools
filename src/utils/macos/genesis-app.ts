@@ -69,11 +69,13 @@ export function genesisAppLauncher(): string | null {
 }
 
 /**
- * Put the launcher in front of a command that will be executed later, by launchd.
+ * Put the launcher in front of a command so AX/Automation run as GenesisTools.app.
  *
- * Uses the installed launcher rather than `genesisAppLauncher()`: `tools` itself runs under the
- * app, so asking the spawn-time question here wrote plists with the bare command and silently
- * disabled the whole feature.
+ * Uses the installed launcher rather than `genesisAppLauncher()`. The latter returns null when
+ * THIS process already runs under the app, assuming responsibility is inherited. That holds for
+ * file and Calendar grants; it does not hold reliably for Accessibility and Automation down a
+ * long descendant chain. Always re-entering through the launcher is the wrap every immediate
+ * spawn (peekaboo, osascript, ax-tool) and every later launchd execution should use.
  */
 export function wrapWithGenesisApp(command: readonly string[]): string[] {
     const launcher = installedGenesisAppLauncher();

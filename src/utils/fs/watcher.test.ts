@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
+import { watchFileFeed } from "./file-feed-watcher";
 import {
     createWatcher,
     isTransientError,
@@ -439,4 +440,30 @@ describe("watchPath / waitForPath", () => {
         expect(await arrival).toBe(true);
         expect(performance.now() - startedAt).toBeLessThan(2000);
     });
+});
+
+describe("watchFileFeed", () => {
+    test(
+        "still sees a file created after fs.watch has already been closed once in this process",
+        async () => {
+            const path = join(tempDir, "reply.json");
+            const deaf = watch(tempDir);
+            deaf.close();
+
+            void Bun.sleep(200).then(() => Bun.write(path, '{"ok":true}'));
+
+            const started = Date.now();
+            await watchFileFeed({
+                path,
+                deadlineAt: Date.now() + 2_000,
+                debounceMs: 0,
+                pollFallbackMs: 100,
+                onChange: () => (existsSync(path) ? { done: true } : undefined),
+            });
+
+            expect(existsSync(path)).toBe(true);
+            expect(Date.now() - started).toBeLessThan(1_500);
+        },
+        { timeout: 15_000 }
+    );
 });

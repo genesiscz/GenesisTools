@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { type AxRunBoundary, DEFAULT_AX_RUN_BOUNDARY, runAxWithBoundary } from "./runner";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { skip } from "@genesiscz/utils/test/skip";
+import { type AxRunBoundary, axCommandLine, DEFAULT_AX_RUN_BOUNDARY, runAxWithBoundary } from "./runner";
 
 test("a build failure never reaches the native spawn boundary", () => {
     let spawnCalls = 0;
@@ -190,6 +195,44 @@ test("an exit with no stdout surfaces trimmed stderr", () => {
     };
 
     expect(runAxWithBoundary({ args: ["see"], boundary })).toEqual({ ok: false, error: "fixture stderr" });
+});
+
+test.skipIf(skip.unlessMac)("axCommandLine prepends the installed launcher, not the spawn-time one", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-ax-home-"));
+    const dir = join(home, "Applications", "GenesisTools.app", "Contents", "MacOS");
+    mkdirSync(dir, { recursive: true });
+    const launcher = join(dir, "GenesisTools");
+    writeFileSync(launcher, "");
+
+    await env.testing.withOverrides(
+        {
+            GENESIS_TOOLS_APP_BUNDLE_ID: "com.genesiscz.genesistools",
+            GENESIS_TOOLS_NO_APP: undefined,
+            GENESIS_TOOLS_HOME: home,
+        },
+        () => {
+            expect(axCommandLine("/fixture/ax-tool", ["see", "--app", "Fixture"])).toEqual([
+                launcher,
+                "/fixture/ax-tool",
+                "see",
+                "--app",
+                "Fixture",
+            ]);
+        }
+    );
+});
+
+test.skipIf(skip.unlessMac)("axCommandLine stays bare when no launcher is installed", async () => {
+    await env.testing.withOverrides(
+        {
+            GENESIS_TOOLS_APP_BUNDLE_ID: undefined,
+            GENESIS_TOOLS_NO_APP: undefined,
+            GENESIS_TOOLS_HOME: "/nonexistent",
+        },
+        () => {
+            expect(axCommandLine("/fixture/ax-tool", ["see"])).toEqual(["/fixture/ax-tool", "see"]);
+        }
+    );
 });
 
 test("a native error message survives a nonzero exit", () => {

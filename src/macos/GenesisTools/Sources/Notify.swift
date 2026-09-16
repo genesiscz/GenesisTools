@@ -59,6 +59,12 @@ struct NotifyPostParams: Decodable {
     /// already-delivered notification in place. Generated when absent, and always returned.
     var id: String?
     var actions: [NotifyAction]?
+    /// Absolute directory the click handler writes the reply into. Stamped by the poster so a
+    /// Launch Services relaunch, which does not inherit `GENESIS_TOOLS_HOME`, still writes where
+    /// the waiter is looking.
+    var replyDir: String?
+    /// Home the click-launched `execute` should see as `GENESIS_TOOLS_HOME`.
+    var genesisHome: String?
 }
 
 struct NotifyReplyParams: Decodable {
@@ -169,7 +175,17 @@ func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMu
         routes[action.id] = route(open: action.open, execute: action.execute)
     }
 
-    content.userInfo = ["routes": routes.filter { !$0.value.isEmpty }]
+    var userInfo: [String: Any] = [
+        "replyDir": resolvedReplyDir(params),
+        "genesisHome": resolvedGenesisHome(params),
+    ]
+    let filteredRoutes = routes.filter { !$0.value.isEmpty }
+
+    if !filteredRoutes.isEmpty {
+        userInfo["routes"] = filteredRoutes
+    }
+
+    content.userInfo = userInfo
 
     // Best effort only. Punching through a Focus mode needs the time-sensitive entitlement, which a
     // Developer ID signature cannot carry, so this degrades to a normal banner rather than failing.
@@ -186,15 +202,9 @@ func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMu
     }
 
     if let actions = params.actions, !actions.isEmpty {
-        // One category per notification, named after it, so two notifications posted with different
-        // buttons cannot overwrite each other's set.
-        let category = UNNotificationCategory(
-            identifier: identifier,
-            actions: actions.map(buildAction),
-            intentIdentifiers: [],
-            options: []
-        )
-        UNUserNotificationCenter.current().setNotificationCategories([category])
+        // Category registration happens in `post()`, as a union with whatever is already
+        // registered. `setNotificationCategories` replaces the entire set, so doing it here
+        // with `[one]` would wipe every other notification's buttons.
         content.categoryIdentifier = identifier
     }
 
@@ -271,15 +281,38 @@ func notificationReplyDir() -> String {
     (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app/replies")
 }
 
-/// Must agree with `env.tools.getHome()` on the TypeScript side, or the CLI watches one directory
-/// while the app writes to another and every answer is silently lost.
+/// Fallback when a click arrives without a stamped home in `userInfo` (an old notification,
+/// or a raw `--rpc` that omitted `genesisHome`). Prefers `GENESIS_TOOLS_HOME` when this
+/// process inherited it — the `--rpc` poster does; a Launch Services relaunch does not.
 func genesisHome() -> String {
     let override = ProcessInfo.processInfo.environment["GENESIS_TOOLS_HOME"]
     return override?.isEmpty == false ? override! : NSHomeDirectory()
 }
 
-private func writeReply(notificationId: String, actionId: String, text: String?) {
-    let dir = notificationReplyDir()
+private func resolvedReplyDir(_ params: NotifyPostParams) -> String {
+    if let replyDir = params.replyDir, !replyDir.isEmpty {
+        return replyDir
+    }
+
+    return notificationReplyDir()
+}
+
+private func resolvedGenesisHome(_ params: NotifyPostParams) -> String {
+    if let home = params.genesisHome, !home.isEmpty {
+        return home
+    }
+
+    return genesisHome()
+}
+
+private func writeReply(notificationId: String, actionId: String, text: String?, userInfo: [AnyHashable: Any]) {
+    let dir: String
+    if let stamped = userInfo["replyDir"] as? String, !stamped.isEmpty {
+        dir = stamped
+    } else {
+        dir = notificationReplyDir()
+    }
+
     let path = (dir as NSString).appendingPathComponent("\(notificationId).json")
 
     var payload: [String: Any] = [
@@ -350,10 +383,30 @@ func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) 
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = ["-c", execute]
 
+        if let home = userInfo["genesisHome"] as? String, !home.isEmpty {
+            var environment = ProcessInfo.processInfo.environment
+            environment["GENESIS_TOOLS_HOME"] = home
+            task.environment = environment
+        }
+
         do {
-            try task.run()
-            task.waitUntilExit()
-            logClick("execute finished status=\(task.terminationStatus)")
+            let group = DispatchGroup()
+            group.enter()
+            task.terminationHandler = { _ in group.leave() }
+
+            do {
+                try task.run()
+            } catch {
+                group.leave()
+                throw error
+            }
+
+            if group.wait(timeout: .now() + 30) == .timedOut {
+                task.terminate()
+                logClick("execute timed out after 30s; killed")
+            } else {
+                logClick("execute finished status=\(task.terminationStatus)")
+            }
         } catch {
             logClick("execute failed: \(error.localizedDescription)")
         }
@@ -396,7 +449,7 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
 
         // Every response leaves a reply file, not just a typed one, so a caller can await a plain
         // button press exactly as it awaits an answer.
-        writeReply(notificationId: notificationId, actionId: actionIdentifier, text: typed)
+        writeReply(notificationId: notificationId, actionId: actionIdentifier, text: typed, userInfo: userInfo)
 
         DispatchQueue.global(qos: .userInitiated).async {
             performClickAction(userInfo: userInfo, actionIdentifier: actionIdentifier)
@@ -430,36 +483,58 @@ private func post(_ params: NotifyPostParams) {
     let identifier = params.id ?? UUID().uuidString
     let center = UNUserNotificationCenter.current()
 
-    center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-        if let error {
+    center.getNotificationSettings { settings in
+        switch settings.authorizationStatus {
+        case .notDetermined:
             emitError(
-                code: "internal",
-                message: "authorization request failed: \(error.localizedDescription)",
-                exitCode: 70
+                code: "not_determined",
+                message: "notifications have never been granted; run tools notify authorize",
+                exitCode: 77
             )
-        }
-
-        guard granted else {
+        case .denied:
             let bundleId = Bundle.main.bundleIdentifier ?? fallbackBundleId
             emitError(
                 code: "denied",
                 message: "notifications are not allowed for \(bundleId); open System Settings > Notifications",
                 exitCode: 77
             )
-        }
+        default:
+            let request = UNNotificationRequest(
+                identifier: identifier,
+                content: notificationContent(params, identifier: identifier),
+                trigger: nil
+            )
+            let add = {
+                center.add(request) { addError in
+                    if let addError {
+                        emitError(
+                            code: "internal",
+                            message: "could not post: \(addError.localizedDescription)",
+                            exitCode: 70
+                        )
+                    }
 
-        let request = UNNotificationRequest(
-            identifier: identifier,
-            content: notificationContent(params, identifier: identifier),
-            trigger: nil
-        )
-
-        center.add(request) { addError in
-            if let addError {
-                emitError(code: "internal", message: "could not post: \(addError.localizedDescription)", exitCode: 70)
+                    emitResult(["id": identifier])
+                }
             }
 
-            emitResult(["id": identifier])
+            guard let actions = params.actions, !actions.isEmpty else {
+                add()
+                return
+            }
+
+            let category = UNNotificationCategory(
+                identifier: identifier,
+                actions: actions.map(buildAction),
+                intentIdentifiers: [],
+                options: []
+            )
+            center.getNotificationCategories { existing in
+                var next = existing.filter { $0.identifier != identifier }
+                next.insert(category)
+                center.setNotificationCategories(next)
+                add()
+            }
         }
     }
 }
@@ -528,9 +603,9 @@ private func openSettings() {
 
 /// Ask macOS for notification permission and WAIT for the answer.
 ///
-/// `notify.post` also calls `requestAuthorization`, but that process exits a few hundred
-/// milliseconds later, which is not long enough for a user to answer a prompt. This one holds the
-/// run loop open until the callback fires, so the prompt can actually be answered.
+/// `notify.post` does not prompt: the 8s RPC deadline cannot survive a human clicking Allow, so
+/// a still-`notDetermined` grant fails with `not_determined` and names `tools notify authorize`.
+/// This is the method that holds the run loop open until the callback fires.
 ///
 /// ⚠️ macOS shows the prompt only while the status is `notDetermined`. Once it is `authorized` or
 /// `denied` the call returns immediately with no UI, and the only way to change the answer is

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { logger, out } from "@genesiscz/utils/logger";
-import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import { installedGenesisAppLauncher, wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import type { Command } from "commander";
 
 /**
@@ -60,9 +60,9 @@ export function registerOsascriptCommand(program: Command): void {
                 args.push("-e", source);
             }
 
-            const launcher = installedGenesisAppLauncher();
+            const command = wrapWithGenesisApp(["/usr/bin/osascript", ...args]);
 
-            if (!launcher) {
+            if (!installedGenesisAppLauncher()) {
                 // Honest degradation: still run it, but say plainly that the grants in play are the
                 // terminal's, because that is the difference between a -1743 and a result.
                 logger.warn(
@@ -70,8 +70,7 @@ export function registerOsascriptCommand(program: Command): void {
                 );
             }
 
-            const command = launcher ? [launcher, "/usr/bin/osascript", ...args] : ["/usr/bin/osascript", ...args];
-            logger.debug({ viaApp: Boolean(launcher), argc: args.length }, "running osascript");
+            logger.debug({ viaApp: command[0] !== "/usr/bin/osascript", argc: args.length }, "running osascript");
 
             const proc = Bun.spawn(command, { stdout: "pipe", stderr: "pipe", stdin: "ignore" });
             const timer = setTimeout(() => proc.kill(), Number(options.timeout) * 1000);

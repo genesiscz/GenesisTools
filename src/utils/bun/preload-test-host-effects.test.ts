@@ -3,7 +3,7 @@ import { Browser } from "@genesiscz/utils/browser";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard";
 import { fullDiskAccessSubject, requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import { escapeJxa, runJxa } from "@genesiscz/utils/macos/jxa";
-import { NotificationBackend, sendNotification } from "@genesiscz/utils/macos/notifications";
+import { authorizeNotifications, NotificationBackend, sendNotification } from "@genesiscz/utils/macos/notifications";
 import { settings } from "@genesiscz/utils/macos/system-settings";
 import {
     dispatchNotification,
@@ -98,6 +98,10 @@ describe("host-effect preload", () => {
 
         test("sendNotification rejects instead of raising a banner", async () => {
             await expect(sendNotification({ message: "hi" })).rejects.toThrow(/sendNotification is blocked/);
+        });
+
+        test("authorizeNotifications rejects instead of raising the grant prompt", async () => {
+            await expect(authorizeNotifications()).rejects.toThrow(/authorizeNotifications is blocked/);
         });
 
         test("NEGATIVE CONTROL: the notification backends are still exported", () => {

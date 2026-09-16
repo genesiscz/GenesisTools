@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isGenesisAppRpcAvailable, parseReply } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { isGenesisAppRpcAvailable, isNotifyPostResult, parseReply } from "@genesiscz/utils/macos/genesis-app-rpc";
+import { parseNotificationOptions } from "@genesiscz/utils/macos/notifications";
 
 describe("parseReply", () => {
     test("unwraps a success envelope", () => {
@@ -42,6 +43,49 @@ describe("parseReply", () => {
         const outcome = parseReply("notify.post", '{"ok":false}', 70, "boom");
 
         expect(!outcome.ok && outcome.error.code).toBe("handshake");
+    });
+
+    test("a success envelope without a result is a handshake failure", () => {
+        const outcome = parseReply("notify.post", '{"ok":true}', 0, "");
+
+        expect(!outcome.ok && outcome.error.code).toBe("handshake");
+    });
+
+    test("notify.post rejects a result whose id is not a non-empty string", () => {
+        const truncated = parseReply("notify.post", '{"ok":true,"result":{"id":1}}', 0, "", isNotifyPostResult);
+        const empty = parseReply("notify.post", '{"ok":true,"result":{"id":""}}', 0, "", isNotifyPostResult);
+        const ok = parseReply("notify.post", '{"ok":true,"result":{"id":"abc"}}', 0, "", isNotifyPostResult);
+
+        expect(!truncated.ok && truncated.error.code).toBe("handshake");
+        expect(!empty.ok && empty.error.code).toBe("handshake");
+        expect(ok.ok && ok.result.id).toBe("abc");
+    });
+});
+
+describe("parseNotificationOptions", () => {
+    test("rejects a payload without a string message", () => {
+        expect(parseNotificationOptions({ id: "x" }).ok).toBe(false);
+        expect(parseNotificationOptions("hello").ok).toBe(false);
+        expect(parseNotificationOptions({ message: 1 }).ok).toBe(false);
+    });
+
+    test("accepts a message and optional fields without a cast", () => {
+        const parsed = parseNotificationOptions({
+            message: "Ship it?",
+            title: "GenesisTools",
+            id: "ask-1",
+            actions: [{ id: "yes", title: "Yes" }],
+        });
+
+        expect(parsed.ok).toBe(true);
+
+        if (!parsed.ok) {
+            throw new Error("expected ok");
+        }
+
+        expect(parsed.value.message).toBe("Ship it?");
+        expect(parsed.value.id).toBe("ask-1");
+        expect(parsed.value.actions).toEqual([{ id: "yes", title: "Yes" }]);
     });
 });
 
