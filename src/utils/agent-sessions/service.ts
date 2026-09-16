@@ -363,6 +363,10 @@ export class HistoryService {
             project: filters.project,
             signal: filters.signal,
         };
+        // Read BEFORE the walk: `synchronizeHistory` reuses this walk for its write pass only
+        // when `begin` claims exactly one more than this, which proves no other writer
+        // reserved a generation in between.
+        const discoveryGeneration = this.options.repository.generation(this.options.providerId);
         const discovery = await this.options.reader.discover(this.options.roots, scope);
         const candidates = await historyCandidates({ sources: discovery.sources, filters: { signal: filters.signal } });
         // A windowed listing refreshes the window and its top-up only; everything older is read
@@ -377,6 +381,7 @@ export class HistoryService {
         return synchronizeHistory({
             ...this.options,
             discovery,
+            discoveryGeneration,
             scope,
             signal: filters.signal,
             metadataSources: new Set(selected.map((candidate) => candidate.source.filePath)),
@@ -638,6 +643,8 @@ export class HistoryService {
         }
 
         const scope = { agentsOnly: filters.agentsOnly, excludeAgents: filters.excludeAgents, signal: filters.signal };
+        // Read BEFORE the walk; see `refreshListing`.
+        const discoveryGeneration = this.options.repository.generation(this.options.providerId);
         const discovery = await reader.discover(this.options.roots, scope);
         const rawCandidates = metadataOnly
             ? undefined
@@ -652,6 +659,7 @@ export class HistoryService {
             signal: filters.signal,
             scope,
             discovery,
+            discoveryGeneration,
             metadataSources: contentCandidates
                 ? new Set(contentCandidates.map((candidate) => candidate.source.filePath))
                 : undefined,

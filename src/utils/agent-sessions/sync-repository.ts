@@ -16,6 +16,22 @@ export class HistorySyncRepository {
         return this.db.transaction(operation).immediate();
     }
 
+    /**
+     * The generation the NEXT `begin` will claim minus one, i.e. the last one claimed.
+     *
+     * A caller that discovers before calling `synchronizeHistory` reads this first. If
+     * `begin` then returns exactly this plus one, no other writer reserved a generation in
+     * between, so the caller's walk is as current as a fresh one and the second walk is
+     * skipped. Any other value means a concurrent writer, and the full walk runs.
+     */
+    generation(providerId: string): number {
+        const key = SafeJSON.stringify(["history", providerId, "generation"]);
+
+        return Number(
+            this.db.query<{ value: string }, [string]>("SELECT value FROM cache_meta WHERE key=?").get(key)?.value ?? 0
+        );
+    }
+
     begin(options: { providerId: string; roots: string[] }): number {
         return this.transaction(() => {
             const key = SafeJSON.stringify(["history", options.providerId, "generation"]);

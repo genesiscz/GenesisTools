@@ -223,3 +223,73 @@ test("an unchanged optimistic sync leaves total_changes and the WAL untouched", 
         value.database.close();
     }
 });
+
+test("the caller's walk is reused for the write pass when no other writer reserved a generation", async () => {
+    const value = fixture();
+    try {
+        await synchronizeHistory({
+            providerId: PROVIDER,
+            reader: value.reader,
+            repository: value.repository,
+            roots: [value.root],
+        });
+
+        value.state.version = "two";
+        writeFileSync(value.filePath, "version-two-with-a-different-size");
+
+        // What `refreshListing` does: read the generation, walk once, hand both over.
+        const discoveryGeneration = value.repository.generation(PROVIDER);
+        const discovery = await value.reader.discover([value.root], {});
+        const discoveriesBefore = value.state.discoveryCount;
+
+        const result = await synchronizeHistory({
+            providerId: PROVIDER,
+            reader: value.reader,
+            repository: value.repository,
+            roots: [value.root],
+            discovery,
+            discoveryGeneration,
+        });
+
+        expect(value.state.discoveryCount - discoveriesBefore).toBe(0);
+        expect(result.report).toMatchObject({ parsed: 1, removed: 0 });
+        expect(result.sources[0]?.metadataFingerprint).toBe("two");
+    } finally {
+        value.database.close();
+    }
+});
+
+test("a concurrent writer's generation forces the full walk, so a stale caller list is corrected", async () => {
+    const value = fixture();
+    try {
+        await synchronizeHistory({
+            providerId: PROVIDER,
+            reader: value.reader,
+            repository: value.repository,
+            roots: [value.root],
+        });
+
+        const discoveryGeneration = value.repository.generation(PROVIDER);
+        const stale = { sources: [value.source("one")], issues: [], completeRoots: [value.root] };
+
+        // Another writer reserves a generation between the caller's walk and this sync.
+        value.repository.begin({ providerId: PROVIDER, roots: [value.root] });
+        value.state.version = "two";
+        writeFileSync(value.filePath, "version-two-with-a-different-size");
+        const discoveriesBefore = value.state.discoveryCount;
+
+        const result = await synchronizeHistory({
+            providerId: PROVIDER,
+            reader: value.reader,
+            repository: value.repository,
+            roots: [value.root],
+            discovery: stale,
+            discoveryGeneration,
+        });
+
+        expect(value.state.discoveryCount - discoveriesBefore).toBe(1);
+        expect(result.sources[0]?.metadataFingerprint).toBe("two");
+    } finally {
+        value.database.close();
+    }
+});
