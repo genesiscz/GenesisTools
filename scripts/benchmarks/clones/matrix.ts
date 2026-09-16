@@ -253,6 +253,18 @@ function cases(): Case[] {
     add("macos.reclaim.presets.list", "macos", "-", ["macos", "clones", "reclaim", "presets", "list"]);
     add("macos.config.list", "macos", "-", ["macos", "clones", "config", "--list"]);
 
+    // Help and the unknown-subcommand path. A matrix of verbs alone cannot see
+    // a command that stopped being registered, or one that moved in the
+    // listing: both still exit 0 with correct-looking output. Lazy registration
+    // reordered `permissions` in `macos --help` and nothing here caught it.
+    add("help.du", "du", "-", ["du", "--help"]);
+    add("help.du.clonesize", "du", "-", ["du", "clonesize", "--help"]);
+    add("help.du.partners", "du", "-", ["du", PARTNERS_VERB, "--help"]);
+    add("help.macos", "macos", "-", ["macos", "--help"]);
+    add("help.macos.clones", "macos", "-", ["macos", "clones", "--help"]);
+    add("help.macos.clones.reclaim", "macos", "-", ["macos", "clones", "reclaim", "--help"]);
+    add("help.macos.unknown", "macos", "-", ["macos", "no-such-subcommand"]);
+
     return list;
 }
 
