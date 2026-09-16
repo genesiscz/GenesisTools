@@ -144,6 +144,20 @@ tools ai usage daemon register|unregister|status
 
 `daemon register` owns the single `ai-usage-poll` task and removes the old claude-only `claude-usage-poll` on the way through. Running it once is the whole migration. `tools claude daemon` is an alias for the same three subcommands.
 
+### `ai usage sessions`: one list across Claude, Codex and Grok
+
+```bash
+tools ai usage sessions [--provider claude|codex|grok] [--hours 24] [--min 10] [--limit 50] [--json] [--fresh]
+```
+
+Computing the list walks every native session home and stats about 12,000 files, which costs ~1.8 s of CPU. Genesis.app asks for the same list every 35 seconds, so `--json` reads a resident answer at `~/.genesis-tools/ai/usage-sessions.json` when it is under 90 seconds old and answers the same query: **0.22 s of CPU instead of 1.8 s**, with byte-identical rows.
+
+The `ai-usage-poll` tick recomputes that file once a minute, so a poller on any cadence finds it warm. The tick refreshes only the query the CLI last asked for, and only while something has asked within the hour, so an idle machine pays nothing.
+
+- The payload carries `fetchedAt` (when the rows were computed, not when you asked) and `cached: true|false`, so a consumer can judge the age itself.
+- `--fresh` recomputes and rewrites the file.
+- The human table is never served from the cache.
+
 ## `ai warmup`: start a session timer on every account
 
 One tiny request per account (five output tokens, on the smallest model where the provider lets a ChatGPT-style account pick one; codex accounts reject a pinned slug, so they use the account's default model), so a rolling window starts now instead of on the first real call. The selection, the send and the report live in `@genesiscz/utils/ai/warmup`; `tools claude warmup`, `tools codex warmup` and `tools grok warmup` are the same command pinned to one provider, and the usage daemon's scheduled warmups call the same function.
