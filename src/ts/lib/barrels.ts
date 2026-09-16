@@ -94,6 +94,12 @@ function targetsFor(graph: ImportGraph, barrel: GraphNode, names: string[]): Map
         }
     }
 
+    const starNames = new Map<string, Set<string>>();
+
+    for (const target of stars) {
+        starNames.set(target, exportNamesOf(graph, target, 0, new Set()));
+    }
+
     for (const name of names) {
         if (parsed.exportNames.has(name)) {
             result.set(name, undefined);
@@ -107,7 +113,7 @@ function targetsFor(graph: ImportGraph, barrel: GraphNode, names: string[]): Map
             continue;
         }
 
-        const star = stars.find((target) => exportNamesOf(graph, target, 0, new Set()).has(name));
+        const star = stars.find((target) => starNames.get(target)?.has(name));
         result.set(name, star);
     }
 
