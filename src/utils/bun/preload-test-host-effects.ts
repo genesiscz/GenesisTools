@@ -1,6 +1,7 @@
 import { mock } from "bun:test";
 import { Browser } from "@genesiscz/utils/browser";
 import * as fullDiskAccess from "@genesiscz/utils/macos/full-disk-access";
+import * as genesisAppRpc from "@genesiscz/utils/macos/genesis-app-rpc";
 import * as jxa from "@genesiscz/utils/macos/jxa";
 import * as macosNotifications from "@genesiscz/utils/macos/notifications";
 import { settings as macosSettings } from "@genesiscz/utils/macos/system-settings";
@@ -106,6 +107,7 @@ function installHostEffectGuards(): void {
     // recurse forever — the run hangs rather than failing, which is the worst
     // way to learn this. Copying first makes the order impossible to get wrong.
     const realJxa = { ...jxa };
+    const realGenesisAppRpc = { ...genesisAppRpc };
     const realMacosNotifications = { ...macosNotifications };
     const realNotifications = { ...notifications };
     const realFullDiskAccess = { ...fullDiskAccess };
@@ -153,6 +155,18 @@ function installHostEffectGuards(): void {
     mock.module("@genesiscz/utils/macos/notifications", () => ({
         ...realMacosNotifications,
         sendNotification: blockedAsync("sendNotification", "Assert the notification payload instead of delivering it."),
+        postNotification: blockedAsync("postNotification", "Assert the notification payload instead of delivering it."),
+        // These reach GenesisTools.app, which mutates Notification Center for the whole user
+        // session. A test that removes "its own" notification would clear the user's real ones.
+        removeNotifications: blockedAsync("removeNotifications", "Assert the removal target instead of running it."),
+        listNotifications: blockedAsync("listNotifications", "Fake the delivered list; do not read the real one."),
+    }));
+
+    mock.module("@genesiscz/utils/macos/genesis-app-rpc", () => ({
+        ...realGenesisAppRpc,
+        // Spawns the signed app bundle, so a test reaching this acts as the user's TCC identity.
+        genesisAppRpc: blockedAsync("genesisAppRpc", "Assert the request instead of running it in the app."),
+        genesisAppHello: blockedAsync("genesisAppHello", "Return a fake capability list instead."),
     }));
 
     // A plain object, so the same assignment trick as the Browser class works
