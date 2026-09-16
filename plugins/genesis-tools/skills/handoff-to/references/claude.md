@@ -8,11 +8,11 @@ There are two ways to hand work to a Claude model, and they are not interchangea
 
 | You want | Use | Why |
 |---|---|---|
-| A subagent inside this session | `Agent` tool with `model: "sonnet" \| "opus" \| "fable"` | Cheapest, keeps the harness, shares this session's account |
-| Fan-out across many subagents | `Workflow` | Same account, deterministic orchestration |
-| A worker on a **different account**, or a headless `claude -p` run | **this file** | Separate billing identity, separate context, survives this session |
+| A Claude subagent inside Claude Code | `Agent` tool with `model: "sonnet" \| "opus" \| "fable"` | Cheapest there, keeps the Claude harness, shares that session's account |
+| Claude Code fan-out across many Claude subagents | `Workflow` | Same account, deterministic orchestration |
+| Claude execution from Codex, on a **different account**, or as headless `claude -p` | **this file** | A separate Claude process with explicit model and account; a native Codex GPT subagent may drive it |
 
-**Default to the `Agent` tool.** Reach for `tools claude exec` only when the point is the *account* or the *separate process*: spreading usage across accounts, running under a subscription this session is not on, or launching a long headless run that must not consume this session's context.
+**When Claude Code is the host, default to its `Agent` tool.** Reach for the worker layer when the point is the *account* or the *separate process*: spreading usage across accounts, running under a subscription this session is not on, launching a long headless run, or executing Claude from a Codex host. Codex `spawn_agent` selects a native Codex GPT model; it cannot select Claude. It can instead create the driver that controls the separate Claude worker below.
 
 ## The worker layer — use this, not a hand-rolled `claude -p`
 
@@ -145,7 +145,14 @@ Never trust the self-report. Run the verification command yourself, read `git di
 
 ## Driver mode
 
-For a long multi-turn Claude handoff, spawn a `genesis-tools:agent-driver` subagent with `BACKEND: claude` and an `ACCOUNT:` line so the run's output stays out of this session. The driver runs the `tools claude worker spawn/steer/read/status` loop — the session id and account pinning are the worker layer's job now, not a shell recipe's. Confirm the account each turn (`worker status` prints it) rather than assuming it stuck.
+For a long multi-turn Claude handoff, give one native host subagent ownership of the `tools claude worker spawn/steer/read/status` loop.
+
+- In Claude Code, use a `genesis-tools:agent-driver` subagent with `BACKEND: claude` and an `ACCOUNT:` line.
+- In Codex, use a native GPT subagent as the driver. Its GPT model governs orchestration judgment only; the separate Claude process executes the task, and `tools claude worker spawn -m <model>` chooses that Claude model. Coordinate the driver through Codex native collaboration. Do not ask it to invoke `agents-talk` or run Claude Code's `Monitor`.
+
+Give either driver the worker name, account, cwd, brief file, Claude model, verification command, scope, and escalation boundary. The worker layer owns the session id and re-pins the account on every turn. Confirm the recorded account and model rather than assuming either stuck.
+
+Treat `tools claude worker status` and `read` as authoritative over the driver's prose. If the driver goes idle, omits a verdict, or reports stale state, inspect the process metadata and transcript before waiting or launching a duplicate worker.
 
 ## Human interactive history and resume
 

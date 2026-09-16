@@ -11,12 +11,12 @@ This file answers two questions: **who does it**, and **is it ready to leave**. 
 |---|---|
 | Codex / GPT-6 Astra / GPT-5.6 Sol, Terra, Luna | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
 | Grok / grok-4.x | Read `references/grok.md` — never hand-roll a bare `grok -p` (isolation and safety flags are non-obvious) |
-| sonnet / opus / fable, in this session | `Agent` tool with `model:`, or `Workflow` for fan-out — **the default for Claude work**. ⚠️ Both are Claude Code tools: from Codex use `spawn_agent` / `followup_task`, from Grok use `tools claude exec -a <account>` (`references/claude.md`) |
-| Claude on a **different account**, or a headless `claude -p` run | Read `references/claude.md` — `tools claude exec -a <account>`, never interactive `tools claude run` |
+| sonnet / opus / fable executed inside Claude Code | `Agent` with `model:`, or `Workflow` for fan-out — **the default when Claude Code is the host** |
+| Claude executed from Codex, on a **different account**, or as headless `claude -p` | Read `references/claude.md` — a native Codex GPT subagent may drive `tools claude worker`, but `spawn_agent` itself does not select a Claude model |
 
 The reference files sit next to this one, at `${CLAUDE_PLUGIN_ROOT}/skills/handoff-to/references/`. Claude Code substitutes that placeholder at load time; it is not a shell variable. If you see it unsubstituted, build the path from the "Base directory for this skill" line printed when this skill loaded. If both fail, Read `plugins/genesis-tools/skills/handoff-to/references/<backend>.md` in the GenesisTools repo.
 
-⚠️ **Picking Claude does not automatically mean `references/claude.md`.** A subagent via the `Agent` tool is cheaper and keeps the harness. Load that reference only when the point is the *account* (spreading usage, running under a subscription this session is not on) or the *separate process* (a long headless run that must not eat this session's context).
+⚠️ **Picking Claude does not automatically mean `references/claude.md` when Claude Code is the host.** Its `Agent` tool keeps the native harness. From Codex, however, native `spawn_agent` selects a Codex model; to execute Claude, use the separate process in `references/claude.md`. The native Codex subagent can still be the driver that spawns, steers, reads, and checks that Claude worker.
 
 ## Model rankings
 
@@ -47,7 +47,7 @@ How to apply:
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
 - Claude plan/implementation reviews: fable-5-1 (fable-5 is the same tier) or opus-5. Codex code-review workers use gpt-5.6-sol unless the user requests another model.
 - Never Haiku for work that ships (thin wrapper/relay agents are fine).
-- GPT-6 Astra and GPT-5.6 Sol/Terra/Luna use native subagent tools when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol, Terra and Luna; see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use `Agent`/`Workflow`, or `tools claude exec` for another account (`references/claude.md`).
+- GPT-6 Astra and GPT-5.6 Sol/Terra/Luna use native Codex collaboration when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol, Terra and Luna; see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use Claude Code's `Agent`/`Workflow`, or the separate process in `references/claude.md`. A native Codex GPT subagent can drive that process, but remains the driver rather than the Claude execution model.
 - **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.
 - Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals, so route work needing supervised writes in a live checkout to Codex instead.
 
@@ -113,18 +113,23 @@ So when you route a review:
 
 Per-backend spawn flags live in the reference files. Do not invent a deny+writable-root hybrid for a vault write.
 
-## Driver-model choice (when the route is Codex or Grok)
+## Driver versus execution model
 
-The driver is the Claude subagent that owns the worker session (`genesis-tools:agent-driver`).
+The **driver** owns the worker lifecycle: spawn, steer, read, status, approvals, and final verification. The **execution model** does the delegated task. Choose them separately.
 
-- **sonnet** — default. The driver relays, watches, and approves inside declared bounds.
-- **opus** — when there is no committed plan, when architecture or interface shape is at stake, or when approvals will require real judgment about scope.
+- In Claude Code, a `genesis-tools:agent-driver` subagent normally drives external Codex, Grok, or Claude workers. Use sonnet by default; use opus when unplanned architecture or approval boundaries require more judgment.
+- In Codex, use native collaboration for Codex-native work. When the execution model must be Claude, a native Codex GPT subagent may be the driver for `tools claude worker`; its GPT model does not turn the worker into GPT, and `spawn_agent` does not select Claude.
+- External workers use the model flag of their own backend (`tools codex spawn --model`, `tools claude worker spawn -m`, or the Grok backend). That flag does not select the driver.
 
-⚠️ **Never block indefinitely on the driver's `VERDICT:`.** It has been observed ending a session without sending one, and relaying stale state after the work had finished. Poll the session yourself (`tools codex status` / `tools codex read`, or `tools grok sessions` / `tools grok read`) and treat that as the authority over the driver's prose. Details in the reference files.
+Treat process metadata and transcripts as authoritative over a driver's self-report. A driver has been observed omitting its final verdict and relaying stale state after work finished. Check `status` and `read` on the worker backend before waiting, retrying, or declaring completion.
 
 ## Never trust the self-report
 
 Whatever the worker says it did, re-run the verification command yourself and read the diff before integrating.
+
+## Experiment parity
+
+The worker harness injects a shared contract covering checkpoints, verification evidence, scope changes, and final report fields. That contract can materially change how an ordinary runtime behaves. When comparing models or runtimes, give each arm an equivalent contract, project configuration, sandbox, tools, and stopping rule—or state that the comparison measures the handoff harness as well as the model.
 
 ## Account and history boundaries
 

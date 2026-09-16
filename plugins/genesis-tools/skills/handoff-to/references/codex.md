@@ -14,26 +14,23 @@ depends on the selected account and backend. Verify the recorded model after dis
 do not treat a requested model or the parent's config as proof of what ran.
 Code-review workers should explicitly select Sol; `review_model` does not route arbitrary workers.
 
-## Modes
+## Choose the orchestration layer
 
-| Invocation | Who drives | Blocks the main turn? |
+`tools codex spawn` always starts an external Codex app-server worker. It does not create a native host subagent, and its `--model` flag selects the external worker rather than the driver.
+
+| Host and route | Driver | Execution model |
 |---|---|---|
-| default | a `genesis-tools:agent-driver` subagent, spawned in the background | no |
-| `--inline` | this session, via background Bash + Monitor | no |
-| `--inline --wait` | this session, blocking until `turn.completed` | yes |
+| Codex-native orchestration | The current Codex task using `spawn_agent`, `followup_task`, `send_message`, and the native wait/list tools | The Codex model selected by native collaboration |
+| Claude Code driving `tools codex` | The main Claude task or a `genesis-tools:agent-driver` subagent | The external Codex worker selected by `tools codex spawn --model` |
+| Codex driving `tools codex` for a named account or durable daemon | A native Codex GPT subagent | The separate external Codex worker selected by `--model` |
 
-**Default to the driver subagent.** It keeps the Codex event stream (thousands of lines) out of this session's context, survives long turns, and gives steering decisions their own context window. Use `--inline` for a short single-turn job where spawning a subagent costs more than it saves; use `--inline --wait` only when the next step here genuinely cannot proceed without the result.
+Prefer Codex-native collaboration when it provides the required model and account behavior. Use this CLI worker when you need its named-account binding, durable app-server session, explicit write policy, or transcript surface.
 
-## 1. Start the lead's bus listener
+The external worker auto-registers as `codex_<name>` and receives its exact `tools agents` send/receive commands through injected developer instructions. It must not invoke the `agents-talk` skill and must not try to run Claude Code's `Monitor`. The driver watches it through `tools codex status`, `read`, `tail`, and `steer`.
 
-Follow `genesis-tools:agents-talk`: run the login command under the harness monitor and consume its stdout stream. Do not redirect the inbox to a file and poll it. Reuse an already active login rather than registering a duplicate.
+Only a Claude Code orchestrator that relies on bus delivery should start the lead listener using `genesis-tools:agents-talk` and its supported background monitor. A Codex orchestrator uses native collaboration to coordinate its driver. In either host, `tools codex status` and `tools codex read` remain authoritative for the external process.
 
-```bash
-tools agents login --agent-main --agent-name lead \
-  --session <swarm-id> --kinds message,error,approval_request
-```
-
-## 2. Spawn
+## 1. Spawn
 
 ```bash
 tools codex spawn \
@@ -107,7 +104,7 @@ Worker records live in `~/.genesis-tools/codex/sessions/<name>.*` (event log, me
 
 The session auto-registers on the bus as `codex_<name>`. **Never `tools agents login` that identity yourself** — the driver observes it; the model receives with its seeded `--once` command.
 
-## 3. Checkpoint contract (state it in the brief, every time)
+## 2. Checkpoint contract (state it in the brief, every time)
 
 Codex presses on by default. The brief must say where it stops. The generic contract (ask before new files, dependencies, interface changes or git operations; stop after two failed verifies; paths character for character; the `RESULT/AT/CHANGED/VERIFY/OPEN` report lines; the bus commands) is injected by the harness (`src/utils/worker/contract.ts`, see § The worker's own instructions below), so the brief carries only the task-specific lines, filled in:
 
@@ -120,11 +117,11 @@ Codex presses on by default. The brief must say where it stops. The generic cont
 
 The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-502/-Users-Martin-Tresors-Projects-Contoso-example-app/<uuid>/scratchpad/report.md` and Codex echoed it back as `…/-Users-Martin-Tresors-Projects/Contoso-example-app/<uuid>/…`, substituting a `/` for a `-` mid-path. Harmless that time because the orchestrator used its own path; a human copy-pasting it lands nowhere.
 
-## 4. Watch and steer
+## 3. Watch and steer
 
 ```bash
 tools codex status  --name <task>
-tools codex tail    --name <task> --follow      # background + Monitor
+tools codex tail    --name <task> --follow      # follow the event stream; background with the host's supported mechanism
 tools codex read    --name <task>               # thread snapshot
 tools codex steer   --name <task> --prompt 'Focus on the auth path; do NOT refactor the router'
 tools codex interrupt --name <task>             # kill the current turn
@@ -140,7 +137,7 @@ tools codex sessions [--json]                   # every session, with its derive
 
 Repeat the negative constraints in every steering message — the correction is what the model attends to now.
 
-## 5. Approvals
+## 4. Approvals
 
 With `--write ask`, out-of-policy commands and file changes pause and arrive on the bus as `approval_request` messages to `lead`:
 
@@ -153,9 +150,9 @@ tools codex deny    --name <task> --request <id>
 
 Driver authority: **approve autonomously** only when the action is inside the declared writable roots and inside the declared task scope. **Escalate to the human** for anything that expands scope, adds a dependency, touches git history, or leaves the declared paths.
 
-Waking a possibly-idle peer needs both channels: `tools agents message ...` (durable payload) **then** a harness `SendMessage` nudge. Agents-channel traffic alone does not re-invoke an idle subagent.
+In Claude Code, waking an idle driver needs the durable bus payload plus its native `SendMessage` nudge. In Codex, use native `send_message` or `followup_task` for the driver; bus traffic from the external worker does not replace native driver coordination.
 
-## 6. 🛑 The driver's VERDICT is not guaranteed — never block on it alone
+## 5. 🛑 The driver's VERDICT is not guaranteed — never block on it alone
 
 `genesis-tools:agent-driver` is specified to end with a `VERDICT:` block. **It does not always send one.** Observed 2026-08-27: the orchestrator received three `idle_notification` messages (idleReason `available`, then `interrupted`, then `available`) and no VERDICT at all, while `tools codex status` showed the session flip `running → ready → closed`. Waiting for the VERDICT literally would have deadlocked the session.
 
@@ -168,7 +165,7 @@ tools codex read   --name <task>     # thread snapshot; the worker's final answe
 
 ⚠️ **Distrust driver relays that disagree with the session state.** In the same run the driver sent *"Still waiting on the Codex driver for the formal MR review verdict"* after the report had already landed, been saved, been verified and the session stopped. A second message carried an idle timestamp **earlier** than work already completed. An orchestrator that trusted those relays would have waited or paid for a duplicate run. `tools codex status` and `tools codex read` are the authority; the driver's prose is not.
 
-## 7. Verify, then integrate
+## 6. Verify, then integrate
 
 Never trust the worker's self-report. After the turn completes:
 
@@ -178,9 +175,9 @@ Never trust the worker's self-report. After the turn completes:
 
 Then `tools codex stop --name <task>`.
 
-## Spawning the driver
+## Spawning the driver from Claude Code
 
-After the brief is written and the lead listener from §1 is confirmed alive:
+After the brief is written and the lead listener is confirmed alive when bus delivery is in use:
 
 ```text
 Agent(
@@ -191,11 +188,13 @@ Agent(
 )
 ```
 
+From Codex, a native GPT subagent may own the same `tools codex spawn/steer/read/status` loop when a separate CLI worker is required. Give it the brief path, worker model and effort, account, write policy, scope, verification command, and escalation boundary. The native GPT model is the driver model; `tools codex spawn --model` remains the external worker model. Coordinate that driver through native collaboration rather than `agents-talk` or Claude's `Monitor`.
+
 ❗ **Do not pass `isolation: "worktree"` for a read-only reviewer.** It buys nothing (the worker cannot write anyway) and it can fail outright. Observed: the Agent call died with *"Cannot create worktree: `<repo>/.claude/worktrees` is a symlink"*, and retrying without isolation worked immediately. Reserve worktree isolation for writable workers running in parallel.
 
 ## The worker's own instructions are injected in code, not from this file
 
-`tools codex spawn` passes the worker's receiving-end contract as `developerInstructions` on `thread/start` (`src/codex/lib/session.ts`). Since 2026-09-04 that text is the ONE contract every backend injects, `buildWorkerContract()` in `src/utils/worker/contract.ts` (grok passes it as `--rules`, claude as `--append-system-prompt`); `buildAgentInstructions()` in `src/codex/lib/seed-instructions.ts` is codex's door onto it and adds the bus identity. It covers: how to message `lead` and check for steering with `--once` (only when the swarm is enabled; a `--no-agents` worker still gets the rest), honoring the **Stop and report** block, asking before new files or dependencies or git operations, pasting real verification output, and ending the final message with `RESULT: / AT: / CHANGED: / VERIFY: / OPEN:`. A read-only sandbox gets a variant telling it to narrate instead, because `tools agents` writes fail with EPERM there.
+`tools codex spawn` passes the worker's receiving-end contract as `developerInstructions` on `thread/start` (`src/codex/lib/session.ts`). Since 2026-09-04 that text is the ONE contract every backend injects, `buildWorkerContract()` in `src/utils/worker/contract.ts` (grok passes it as `--rules`, claude as `--append-system-prompt`); `buildAgentInstructions()` in `src/codex/lib/seed-instructions.ts` is codex's door onto it and adds the bus identity. It covers: how to message `lead` and check for steering with `--once` (only when the swarm is enabled; a `--no-agents` worker still gets the rest), honoring the **Stop and report** block, asking before new files or dependencies or git operations, pasting real verification output, and ending the final message with `RESULT: / AT: / CHANGED: / VERIFY: / OPEN:`. These are injected receiving-end commands, not an instruction to invoke the `agents-talk` skill or a Claude-only monitor. A read-only sandbox gets a variant telling it to narrate instead, because `tools agents` writes fail with EPERM there.
 
 So do **not** restate the receiving-end contract in your brief, and do not edit it here — edit `src/utils/worker/contract.ts`, which is covered by `contract.test.ts` and `seed-instructions.test.ts`.
 
