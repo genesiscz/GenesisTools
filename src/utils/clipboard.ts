@@ -1,11 +1,12 @@
 import { out } from "@genesiscz/utils/logger";
-import clipboardy from "clipboardy";
 import pc from "picocolors";
 
 export async function copyToClipboard(
     content: string,
     options: { silent?: boolean; label?: string } = {}
 ): Promise<void> {
+    // lazy: saves 32.8 ms cold import (tools ts imports lazy, 2026-09-16) — clipboardy ships platform binaries and most runs never touch the clipboard
+    const { default: clipboardy } = await import("clipboardy");
     await clipboardy.write(content);
 
     if (!options.silent) {
@@ -15,5 +16,7 @@ export async function copyToClipboard(
 }
 
 export async function readFromClipboard(): Promise<string> {
+    // lazy: saves 32.8 ms cold import (tools ts imports lazy, 2026-09-16) — same reason as copyToClipboard
+    const { default: clipboardy } = await import("clipboardy");
     return clipboardy.read();
 }

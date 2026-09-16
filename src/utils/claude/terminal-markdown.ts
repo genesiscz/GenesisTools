@@ -1,10 +1,20 @@
+import { createRequire } from "node:module";
 import chalk from "chalk";
-import { highlight } from "cli-highlight";
 import { marked, Renderer } from "marked";
+
+// lazy: saves 49.8 ms cold import (tools ts imports lazy, 2026-09-16) — cli-highlight loads every highlight.js
+// grammar, and `highlightCode` is sync (marked's renderer calls it), so this is a require, not an import
+const esmRequire = createRequire(import.meta.url);
+let highlighter: typeof import("cli-highlight") | undefined;
+
+function cliHighlight(): typeof import("cli-highlight") {
+    highlighter ??= esmRequire("cli-highlight") as typeof import("cli-highlight");
+    return highlighter;
+}
 
 export function highlightCode(code: string, lang?: string): string {
     try {
-        return highlight(code, {
+        return cliHighlight().highlight(code, {
             language: lang,
             ignoreIllegals: true,
         });

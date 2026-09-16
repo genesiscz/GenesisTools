@@ -4,7 +4,6 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import type { RolldownWatcher } from "rolldown";
 import type { InlineConfig } from "vite";
-import { build, loadConfigFromFile, mergeConfig, preview } from "vite";
 import { waitForUrlReady } from "../readiness";
 import type { DashboardBindHost } from "../types";
 import { DEFAULT_BIND_HOST } from "../viteSpawn";
@@ -52,6 +51,8 @@ async function buildOnceInChild(input: { viteConfigPath: string; outDir: string;
 }
 
 export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOptions): Promise<void> {
+    // lazy: saves 53.9 ms cold import (tools ts imports lazy, 2026-09-16) — vite is needed only by the process that serves, and every dashboard entry imports this module
+    const { build, loadConfigFromFile, mergeConfig, preview } = await import("vite");
     const configRoot = opts.configRoot ?? PROJECT_ROOT;
     const publicPort = await opts.resolvePublicPort();
     let internalPort = await opts.resolveInternalPort();
