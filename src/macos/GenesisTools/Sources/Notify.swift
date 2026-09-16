@@ -401,6 +401,24 @@ private func remove(_ params: NotifyRemoveParams) {
     }
 }
 
+/// Deep link to THIS app's own page in System Settings > Notifications. Verified working on
+/// macOS 26.3.1: it lands on the GenesisTools page, not the app list.
+///
+/// `alertStyle` is read-only in `UserNotifications`. An app cannot promote itself from a Temporary
+/// banner to a Persistent alert, by design, so handing the user this link is the only thing code
+/// can do about it. It lives here rather than in a caller so every door offers the same fix.
+let notificationSettingsUrl =
+    "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(fallbackBundleId)"
+
+private func openSettings() {
+    guard let url = URL(string: notificationSettingsUrl) else {
+        emitError(code: "internal", message: "could not build the settings url", exitCode: 70)
+    }
+
+    NSWorkspace.shared.open(url)
+    emitResult(["opened": notificationSettingsUrl])
+}
+
 /// Ask macOS for notification permission and WAIT for the answer.
 ///
 /// `notify.post` also calls `requestAuthorization`, but that process exits a few hundred
@@ -458,6 +476,10 @@ private func status() {
             "timeSensitiveSetting": describe(settings.timeSensitiveSetting),
             "bundleId": Bundle.main.bundleIdentifier ?? fallbackBundleId,
             "bundlePath": Bundle.main.bundlePath,
+            // "banner" is macOS's "Temporary": it fades after a few seconds, taking its buttons
+            // and its attachment with it. Callers that need a click need to know this up front.
+            "temporary": settings.alertStyle == .banner,
+            "settingsUrl": notificationSettingsUrl,
         ])
     }
 }
@@ -520,7 +542,7 @@ private func list() {
 /// bump it: a client discovers those from `rpc.hello`'s method list instead.
 let rpcProtocolVersion = 1
 
-let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize"]
+let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings"]
 
 /// `GenesisTools --rpc '<json>'`, or `--rpc -` to read the request from stdin: run one method and
 /// exit with one JSON line on stdout.
@@ -586,6 +608,9 @@ func runRpc(_ arguments: [String]) -> Never {
 
     case "notify.authorize":
         authorize(timeoutSeconds: 120)
+
+    case "notify.settings":
+        openSettings()
 
     default:
         emitError(code: "method_unknown", message: "unknown method \(envelope.method)", exitCode: 69)
