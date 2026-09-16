@@ -190,7 +190,9 @@ function readNameAndPassword(
 }
 
 export async function runWakeServer(opts: WakeServerOptions): Promise<void> {
-    const hostname = opts.hostname ?? "0.0.0.0";
+    // Loopback by default like every other listener in this repo; pass `hostname: "0.0.0.0"` to
+    // reach it from another device on the LAN.
+    const hostname = opts.hostname ?? "127.0.0.1";
     const broadcast = opts.broadcast ?? "255.255.255.255";
     const wolPort = opts.wolPort ?? DEFAULT_WOL_PORT;
     const token = opts.token;

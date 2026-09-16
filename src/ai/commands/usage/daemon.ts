@@ -122,7 +122,7 @@ export function registerUsageDaemonCommands(program: Command): void {
         // ranks accounts by, and a minute-old reading is already wrong after a
         // busy turn. Only HEALTHY accounts pay for it — lapsed and failing ones
         // are held back by the poll gate (src/utils/ai/usage-poll/poll-gate.ts).
-        .option("-i, --interval <interval>", "Polling interval", "every 30 seconds")
+        .option("-i, --interval <interval>", "Polling interval", "every 60 seconds")
         .option("--retention-days <days>", "Delete run logs older than N days (with --retention-min)", "3")
         .option("--retention-min <count>", "Always keep at least N newest run logs", "100")
         .action(async (opts: { interval: string; retentionDays: string; retentionMin: string }) => {

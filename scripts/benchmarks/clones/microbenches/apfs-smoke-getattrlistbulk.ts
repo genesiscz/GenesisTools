@@ -88,7 +88,7 @@ while (true) {
     totalSyscalls += 1;
     if (n < 0) {
         const errnoPtr = lib.symbols.__error();
-        const errno = errnoPtr ? read.i32(Number(errnoPtr)) : -1;
+        const errno = errnoPtr ? read.i32(errnoPtr) : -1;
         console.error(`getattrlistbulk failed, errno=${errno}`);
         lib.symbols.close(fd);
         process.exit(1);

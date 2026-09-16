@@ -123,6 +123,20 @@ async function main(): Promise<void> {
 
         db.pruneOlderThan(dashConfig.dataRetentionDays);
 
+        // Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a cold
+        // answer walks 3,796 directories and stats 12k files for 1.83 s of CPU. This tick is
+        // already awake, so it recomputes the last query the CLI asked for and the CLI reads
+        // the file. It does nothing until something has asked once, and stops an hour after
+        // the last ask, so an idle machine pays nothing.
+        try {
+            const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
+            const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
+            const outcome = await refreshSessionRowsCache(listAgentSessionRows);
+            logger.info(outcome, "[ai-usage] session rows cache");
+        } catch (err) {
+            logger.warn({ err }, "[ai-usage] session rows cache refresh failed");
+        }
+
         const errorCount = snapshots.filter((s) => s.error).length;
         logger.info(
             { accounts: snapshots.length, errorCount, duration_ms: Date.now() - startedAt },

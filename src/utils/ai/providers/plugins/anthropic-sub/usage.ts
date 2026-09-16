@@ -31,8 +31,13 @@ const SEVERITY_MAP: Record<Severity, LimitSeverity> = {
     critical: "critical",
 };
 
-/** Anthropic refreshes usage often and the daemon is the driver; keep the 30s default. */
-const MIN_INTERVAL_MS = 30_000;
+/**
+ * Floor between two live fetches of one account. The daemon is the only driver and the write-through
+ * cache is what every reader sees, so this is the real refresh rate. It was 30 s, the same as the
+ * daemon's tick, which meant twelve accounts were fetched on almost every tick: 890 runs a day at
+ * a 9.4 s median, about 12% of a core. Sixty seconds halves that with no reader able to tell.
+ */
+const MIN_INTERVAL_MS = 60_000;
 
 function labelFor(bucket: string, scopeModel: string | null): string {
     return BUCKET_LABELS[bucket] ?? (scopeModel ? `Weekly (${scopeModel})` : bucket);

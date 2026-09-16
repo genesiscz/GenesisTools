@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
 import { addGlobalVerboseOption } from "@genesiscz/utils/cli/commander";
+import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
@@ -8,35 +9,8 @@ import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { registerWarmupCommand } from "@app/ai/commands/warmup";
 import { Command } from "commander";
-import { registerCmuxCommand } from "./commands/cmux";
-import { registerCodeCommand } from "./commands/code";
-import { registerConfigCommand } from "./commands/config";
-import { registerDaemonCommand } from "./commands/daemon";
-import { registerDesktopCommand } from "./commands/desktop";
-import { registerDoctorCommand } from "./commands/doctor";
-import { registerExecCommand } from "./commands/exec";
-import { registerExportCommand } from "./commands/export";
-import { registerHistoryCommand } from "./commands/history";
-import { registerInfoCommand } from "./commands/info";
-import { registerLoginLongCommand } from "./commands/login-long";
-import { registerLoginSecondaryCommand } from "./commands/login-secondary";
-import { registerLogoutCommand } from "./commands/logout";
-import { registerMcpCommand } from "./commands/mcp";
-import { registerMemoryCommand } from "./commands/memory";
-import { registerMigrateCommand } from "./commands/migrate";
-import { registerResumeCommand } from "./commands/resume";
-import { registerRunCommand } from "./commands/run";
-import { registerSpendingCommand } from "./commands/spending";
-import { registerStartCommand } from "./commands/start";
-import { registerSummarizeCommand } from "./commands/summarize";
-import { registerTailCommand } from "./commands/tail";
-import { registerTeamsCommand } from "./commands/teams";
-import { registerTranscriptCommand } from "./commands/transcript";
-import { registerUsageCommand } from "./commands/usage";
-import { registerWhoCommand } from "./commands/who";
-import { registerWorkerCommand } from "./commands/worker";
+import { CLAUDE_REGISTRARS } from "./registrars";
 
 const program = new Command();
 
@@ -46,34 +20,7 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
-registerExportCommand(program);
-registerHistoryCommand(program);
-registerMemoryCommand(program);
-registerSummarizeCommand(program);
-registerDoctorCommand(program);
-registerExecCommand(program);
-registerResumeCommand(program);
-registerTailCommand(program);
-registerTranscriptCommand(program);
-registerDesktopCommand(program);
-registerUsageCommand(program);
-registerCodeCommand(program);
-registerInfoCommand(program);
-registerConfigCommand(program);
-registerDaemonCommand(program);
-registerMigrateCommand(program);
-registerWarmupCommand(program, { provider: "anthropic-sub", tool: "tools claude warmup" });
-registerMcpCommand(program);
-registerLoginLongCommand(program);
-registerLoginSecondaryCommand(program);
-registerLogoutCommand(program);
-registerSpendingCommand(program);
-registerStartCommand(program);
-registerRunCommand(program);
-registerTeamsCommand(program);
-registerCmuxCommand(program);
-registerWhoCommand(program);
-registerWorkerCommand(program);
+await registerRequestedTrees({ program, registrars: CLAUDE_REGISTRARS, requested: process.argv[2] });
 
 addGlobalVerboseOption(program);
 

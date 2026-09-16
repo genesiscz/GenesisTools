@@ -1,6 +1,6 @@
 ---
 name: fable-replace
-description: Verified, transactional find/replace for code and docs. Use INSTEAD of sed, perl, python s.replace() or repeated Edit calls whenever you change text in a file: one literal edit, a rename across 50 files, an insert under a line, a new file, a comment sweep. Every op is checked (a needle must match exactly as declared), the batch is all-or-nothing with a backup, and a MISS tells you which line to re-read. Triggers on "replace", "rename everywhere", "sweep", "batch edit", "mass replace", "insert after", "fable replace", and on any edit you were about to do with a shell one-liner.
+description: Verified, transactional find/replace for code and docs. Use INSTEAD of sed, perl, python s.replace() or repeated Edit calls whenever a change spans more than one file or more than one spot: a rename across 50 files, a comment sweep, several dependent edits in one file that must all land or none, an insert under a line, a new file. One isolated edit in one file you have just read is the Edit tool's job, not this one's. Every op is checked (a needle must match exactly as declared), the batch is all-or-nothing with a backup, and a MISS tells you which line to re-read. Triggers on "replace", "rename everywhere", "sweep", "batch edit", "mass replace", "insert after", "fable replace", and on any edit you were about to do with a shell one-liner.
 ---
 
 # fable-replace — verified editing, from a heredoc or a script

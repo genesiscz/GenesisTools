@@ -1,3 +1,4 @@
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { deriveRegistry } from "./derived-registry";
 import { readFeedSince, withFeedLock } from "./feed";
 import { ensureSessionDir, sessionPaths } from "./paths";
@@ -34,20 +35,32 @@ export async function sendRequest(options: {
         });
     });
 
-    const deadline = Date.now() + options.timeoutMs;
-    while (Date.now() < deadline) {
+    // The reply is appended to the feed by another process, so this waits on the file changing.
+    // It used to re-read and re-parse the WHOLE feed every 20 ms: on a 2000-event feed that was
+    // 44 reads a second and 26 MB/s of parsing, for the entire timeout, which defaults to 300 s.
+    let reply: MessageEvent | undefined;
+    const lookUp = async (): Promise<{ done: boolean }> => {
         const events = await readFeedSince(paths, request.seq);
-        const reply = events.find(
+        reply = events.find(
             (event): event is MessageEvent =>
                 event.type === "message" &&
                 event.in_reply_to === request.message_id &&
                 event.to_agent_ids.includes(request.from_agent_id)
         );
-        if (reply) {
-            return reply;
-        }
 
-        await Bun.sleep(20);
+        return { done: reply !== undefined };
+    };
+
+    if (!(await lookUp()).done) {
+        await watchFileFeed({
+            path: paths.feedPath,
+            onChange: lookUp,
+            deadlineAt: Date.now() + options.timeoutMs,
+        });
+    }
+
+    if (reply) {
+        return reply;
     }
 
     throw new Error(`agents request ${request.message_id} timed out after ${options.timeoutMs}ms`);

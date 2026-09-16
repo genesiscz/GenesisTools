@@ -1,5 +1,4 @@
 import { isInteractive } from "@genesiscz/utils/cli/is-interactive";
-import { checkbox, confirm, editor, input, number, password, search, select } from "@inquirer/prompts";
 import pc from "picocolors";
 
 import type { PromptBackend } from "./backend";
@@ -25,6 +24,9 @@ import type {
  * it's a PromptBackend implementation backed by @inquirer/prompts.
  */
 export type InquirerBackend = PromptBackend;
+
+// lazy: saves 12.1 ms cold import (tools ts imports lazy, 2026-09-16) — every tool installs this backend at start and prompts in a fraction of runs
+const prompts = () => import("@inquirer/prompts");
 
 function writeStderr(msg: string): void {
     process.stderr.write(`${msg}\n`);
@@ -57,6 +59,7 @@ const noopSpinner: Spinner = {
 
 async function textImpl(opts: TextOpts): Promise<string> {
     try {
+        const { input } = await prompts();
         const result = await input({
             message: opts.message,
             default: opts.initialValue,
@@ -78,6 +81,7 @@ async function confirmImpl(opts: ConfirmOpts): Promise<boolean> {
     try {
         const message = opts.danger ? pc.red(opts.message) : opts.message;
 
+        const { confirm } = await prompts();
         const result = await confirm({
             message,
             default: opts.initialValue,
@@ -93,6 +97,7 @@ async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
     const expected = opts.caseSensitive === false ? opts.phrase.toLowerCase() : opts.phrase;
 
     try {
+        const { input } = await prompts();
         const result = await input({
             message: `${opts.message} ${pc.dim(`(type "${opts.phrase}" to confirm)`)}`,
             validate: (value: string) => {
@@ -115,6 +120,7 @@ async function typedConfirmImpl(opts: TypedConfirmOpts): Promise<boolean> {
 
 async function selectImpl(opts: SelectOpts): Promise<SelectValue> {
     try {
+        const { select } = await prompts();
         const result = await select({
             message: opts.message,
             choices: opts.options.map((o) => ({
@@ -133,6 +139,7 @@ async function selectImpl(opts: SelectOpts): Promise<SelectValue> {
 
 async function multiselectImpl(opts: MultiSelectOpts): Promise<SelectValue[]> {
     try {
+        const { checkbox } = await prompts();
         const result = await checkbox({
             message: opts.message,
             choices: opts.options.map((o) => ({
@@ -151,6 +158,7 @@ async function multiselectImpl(opts: MultiSelectOpts): Promise<SelectValue[]> {
 
 async function passwordImpl(opts: PasswordOpts): Promise<string> {
     try {
+        const { password } = await prompts();
         const result = await password({
             message: opts.message,
             mask: "*",
@@ -177,6 +185,7 @@ async function searchImpl<T>(opts: SearchOpts<T>): Promise<T> {
     try {
         // PromptBackend.search uses { value, label, hint }; inquirer's source
         // callback shape is { value, name, description }. Adapt at the boundary.
+        const { search } = await prompts();
         const result = await search<T>({
             message: opts.message,
             source: async (term) => {
@@ -199,6 +208,7 @@ async function editorImpl(opts: EditorOpts): Promise<string> {
     }
 
     try {
+        const { editor } = await prompts();
         const result = await editor({
             message: opts.message,
             default: opts.initialValue,
@@ -224,6 +234,7 @@ async function numberImpl(opts: NumberOpts): Promise<number> {
         // Also wrap the required check: inquirer can return undefined if input
         // is empty AND no default — we require a value so the canonical return
         // type Promise<number> is honored.
+        const { number } = await prompts();
         const result = await number({
             message: opts.message,
             default: opts.initialValue,

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
 import {
     buildTmuxSpawnEnv,
@@ -403,6 +404,104 @@ describe("tmux sessions", () => {
 describe("tmux spawn wedge guard", () => {
     test("bounds every call and kills with SIGKILL", () => {
         expect(TMUX_SPAWN_GUARD).toEqual({ timeout: 10_000, killSignal: "SIGKILL" });
+    });
+
+    // Regression test: 2026-09-16 — three orphan `tmux list-sessions` clients sat at
+    // ~95% CPU for 28h after the feat-dev-dashboard-mobile parent died (PPID 1,
+    // stdout gone). Bun.spawn `{ timeout }` lives in the parent, so it dies with it.
+    test("SIGKILL of the parent still reaps a wedged list-sessions client", async () => {
+        const { chmodSync, mkdirSync, writeFileSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const { join } = await import("node:path");
+        const { isProcessAlive } = await import("@genesiscz/utils/process-alive");
+
+        const dir = join(tmpdir(), `tmux-orphan-${process.pid}-${Date.now()}`);
+        mkdirSync(dir, { recursive: true });
+        const pidfile = join(dir, "client.pid");
+        const spinner = join(dir, "tmux");
+        writeFileSync(
+            spinner,
+            `#!/bin/sh\nprintf '%s' "$$" > "${pidfile}"\ntrap '' TERM INT\nwhile true; do :; done\n`
+        );
+        chmodSync(spinner, 0o755);
+
+        const repoRoot = join(import.meta.dir, "../../..");
+        const parent = join(dir, "parent.ts");
+        writeFileSync(
+            parent,
+            `import { setTmuxBinForTests } from ${SafeJSON.stringify(`${repoRoot}/src/utils/tmux/bin.ts`)};\n` +
+                `import { listTmuxSessions } from ${SafeJSON.stringify(`${repoRoot}/src/utils/tmux/sessions.ts`)};\n` +
+                `setTmuxBinForTests(${SafeJSON.stringify(spinner)});\n` +
+                `void listTmuxSessions();\n` +
+                `await Bun.sleep(400);\n` +
+                `process.kill(process.pid, "SIGKILL");\n`
+        );
+
+        // `env` is required: without it Bun does not forward the test temp root (TMPDIR, set by the
+        // bun test preload) and the child writes into the real temp folder.
+        const child = Bun.spawn(["bun", "run", parent], {
+            cwd: repoRoot,
+            env: process.env,
+            stdout: "ignore",
+            stderr: "pipe",
+        });
+        const deadline = Date.now() + 3000;
+        let clientPid = 0;
+
+        while (Date.now() < deadline) {
+            try {
+                const raw = (await Bun.file(pidfile).text()).trim();
+                clientPid = Number.parseInt(raw, 10);
+
+                if (clientPid > 0 && isProcessAlive(clientPid)) {
+                    break;
+                }
+            } catch {
+                // pidfile not written yet
+            }
+
+            await Bun.sleep(50);
+        }
+
+        expect(clientPid).toBeGreaterThan(0);
+        await child.exited;
+
+        const reapUntil = Date.now() + 9000;
+
+        while (Date.now() < reapUntil && isProcessAlive(clientPid)) {
+            await Bun.sleep(100);
+        }
+
+        const stillAlive = isProcessAlive(clientPid);
+
+        if (stillAlive) {
+            process.kill(clientPid, "SIGKILL");
+        }
+
+        expect(stillAlive).toBe(false);
+    }, 20_000);
+
+    // Regression test: 2026-09-16 — dashboard polls overlapped, so three wedged
+    // list-sessions clients ran at once after the parent died.
+    test("overlapping listTmuxSessionActivePanes share one tmux spawn", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        let calls = 0;
+        setTmuxSpawnSyncForTests(async (cmd) => {
+            if (cmd.includes("list-sessions")) {
+                calls += 1;
+                await Bun.sleep(30);
+
+                return { exitCode: 0, stdout: rec("s|sh|title") };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        const [a, b] = await Promise.all([listTmuxSessionActivePanes(), listTmuxSessionActivePanes()]);
+
+        expect(calls).toBe(1);
+        expect(a.get("s")?.command).toBe("sh");
+        expect(b.get("s")?.command).toBe("sh");
     });
 
     test.each([["src/utils/tmux/sessions.ts"], ["src/utils/tmux/snapshot.ts"]])(

@@ -325,19 +325,45 @@ export class AppServerClient {
     }
 }
 
-export function spawnAppServer(options: {
+export interface SpawnAppServerOptions {
     cwd: string;
     home?: string;
     envOverrides?: Record<string, string>;
     /** Drop inherited credentials when a caller binds this process to an explicit account. */
     unsetEnv?: readonly string[];
     config?: string[];
-}): AppServerProcess {
-    const cmd = [resolveCodexBinary(), "app-server"];
+    /**
+     * Run the user's hooks without the persisted trust check. Codex skips, silently, any hook whose
+     * hash is not in `config.toml` `hooks.state`, and a headless worker has no prompt to answer, so a
+     * hooks.json edit turned every worker hook off (measured 2026-09-16: zero PreToolUse rows from
+     * `tools codex spawn`, 11/11 denials with the flag). cmux passes the same flag for the interactive
+     * TUI. Only for launches whose hook sources are the user's own.
+     */
+    bypassHookTrust?: boolean;
+}
+
+/** The argv `spawnAppServer` runs, kept pure so a test can read it without starting codex. */
+export function appServerCommand(
+    binary: string,
+    options: Pick<SpawnAppServerOptions, "config" | "bypassHookTrust">
+): string[] {
+    const cmd = [binary];
+
+    if (options.bypassHookTrust) {
+        cmd.push("--dangerously-bypass-hook-trust");
+    }
+
+    cmd.push("app-server");
 
     for (const config of options.config ?? []) {
         cmd.push("-c", config);
     }
+
+    return cmd;
+}
+
+export function spawnAppServer(options: SpawnAppServerOptions): AppServerProcess {
+    const cmd = appServerCommand(resolveCodexBinary(), options);
 
     const childEnv = { ...env.getProcessEnv(), ...options.envOverrides };
     for (const key of options.unsetEnv ?? []) {
