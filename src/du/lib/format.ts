@@ -130,6 +130,12 @@ export function renderHuman(r: ClonesizeResult, engine: Engine, elapsedMs?: numb
                 "(excludes per-file block slack)"
             )}`
         );
+        L.push(
+            `  ${pad("  ... tail-block slack", 26)} ${padStart(
+                humanBytes(r.unique_allocated_bytes - r.unique_bytes),
+                12
+            )}  ${pc.dim("(allocation rounding, not sharing)")}`
+        );
     }
     L.push(`  ${pad("Naive (what du reports)", 26)} ${padStart(humanBytes(r.naive_bytes), 12)}`);
     L.push(

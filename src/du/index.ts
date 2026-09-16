@@ -391,7 +391,11 @@ program
         // ---- cross-check: the two engines that matter (C-ffi vs Bun) ----
         const naiveMatch = cffi.result.naive_bytes === b.result.naive_bytes;
         const uniqueMatch = cffi.result.unique_bytes === b.result.unique_bytes;
-        const match = naiveMatch && uniqueMatch;
+        // Allocated unique is what `shared` is derived from, so the two engines
+        // must agree on it too, or the headline sharing figure silently drifts.
+        const allocMatch = cffi.result.unique_allocated_bytes === b.result.unique_allocated_bytes;
+        const sharedMatch = cffi.result.shared_bytes === b.result.shared_bytes;
+        const match = naiveMatch && uniqueMatch && allocMatch && sharedMatch;
 
         // ---- speed gap between engines (user wants a heads-up if C vs Bun > 20%) ----
         const gapPct = cffi.ms > 0 && b.ms > 0 ? (Math.abs(cffi.ms - b.ms) / Math.min(cffi.ms, b.ms)) * 100 : 0;
@@ -445,15 +449,22 @@ program
         out.println(
             pc.dim(
                 `  naive: du-style ${humanBytes(cffi.result.naive_bytes)} → real unique ${humanBytes(
-                    cffi.result.unique_bytes
-                )} (${cffi.result.shared_pct.toFixed(1)}% shared).`
+                    cffi.result.unique_allocated_bytes ?? cffi.result.unique_bytes
+                )} (${cffi.result.shared_pct.toFixed(1)}% shared, ${humanBytes(
+                    (cffi.result.unique_allocated_bytes ?? cffi.result.unique_bytes) - cffi.result.unique_bytes
+                )} tail slack).`
             )
         );
 
         out.println("");
         if (match) {
             out.println(pc.green(`  ✓ cross-check PASS — C (ffi) and Bun agree byte-for-byte`));
-            out.println(pc.dim(`    naive=${cffi.result.naive_bytes}  unique=${cffi.result.unique_bytes}`));
+            out.println(
+                pc.dim(
+                    `    naive=${cffi.result.naive_bytes}  unique=${cffi.result.unique_bytes}  ` +
+                        `allocated=${cffi.result.unique_allocated_bytes}  shared=${cffi.result.shared_bytes}`
+                )
+            );
         } else {
             out.println(pc.yellow(`  ⚠ cross-check DIFF (a live tree can change between runs):`));
             out.println(
@@ -464,6 +475,16 @@ program
             out.println(
                 pc.dim(
                     `    unique C=${cffi.result.unique_bytes} Bun=${b.result.unique_bytes} (${uniqueMatch ? "match" : "differ"})`
+                )
+            );
+            out.println(
+                pc.dim(
+                    `    alloc  C=${cffi.result.unique_allocated_bytes} Bun=${b.result.unique_allocated_bytes} (${allocMatch ? "match" : "differ"})`
+                )
+            );
+            out.println(
+                pc.dim(
+                    `    shared C=${cffi.result.shared_bytes} Bun=${b.result.shared_bytes} (${sharedMatch ? "match" : "differ"})`
                 )
             );
             out.println(pc.dim(`    Re-run on a quiesced/static tree for an exact byte match.`));
