@@ -13,7 +13,8 @@
  *       spawn: { cmd: buildViteDevCmd({ configPath, strictPort: true }), cwd: PROJECT_ROOT },
  *   // Or front-proxy dashboards: buildDashboardUiServerCmd({ serverScript, mode: "preview" })
  *   // and implement __ui-server with runDashboardPreviewUiServer() from ./preview
- *       bindHost: "127.0.0.1", // default; use "0.0.0.0" for LAN/tunnel (see dev-dashboard)
+ *       bindHost: "127.0.0.1", // default; "0.0.0.0" for LAN/tunnel (dev-dashboard is the one case);
+ *                              // ~/.genesis-tools/dashboards/<key>.config.json `bindHost` overrides it per machine
  *       readiness: { kind: "http" },
  *       openBrowser: { enabled: true },
  *       launchd: { available: true },
@@ -28,6 +29,7 @@ import { buildCommanderCommand } from "./commander";
 import {
     attach as attachLifecycle,
     buildLifecycleContext,
+    dev as devLifecycle,
     down as downLifecycle,
     install as installLifecycle,
     logs as logsLifecycle,
@@ -63,6 +65,7 @@ export {
     resolveDashboardBrowserUrl,
 } from "./access";
 export { dashboardUrlWithQuery } from "./lifecycle";
+export { staticBuildDir } from "./pidFile";
 export type {
     DashboardPreviewPublicProxy,
     DashboardPreviewUiOptions,
@@ -139,6 +142,9 @@ export function defineDashboardApp(config: DashboardAppConfig): DashboardApp {
         },
         restart(opts?: UpOptions): Promise<UpResult> {
             return restartLifecycle(ctx, opts);
+        },
+        dev(opts?: UpOptions): Promise<never> {
+            return devLifecycle(ctx, opts);
         },
         status(): Promise<StatusResult> {
             return statusLifecycle(ctx);

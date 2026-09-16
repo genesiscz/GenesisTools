@@ -23,6 +23,7 @@ import {
     openDashboardAccess,
     presentDashboardAccess,
     resolveDashboardAccessPresentation,
+    resolveDashboardBindHost,
     resolveDashboardBrowserUrl,
 } from "./access";
 import { spawnDetached } from "./detach";
@@ -33,6 +34,7 @@ import {
     isLaunchdInstalled,
     plistPath,
     refreshLaunchd,
+    startLaunchd,
     uninstallLaunchd,
 } from "./launchd";
 import { printDevServerBanner, readLogTail, resetLogFile } from "./logSession";
@@ -67,7 +69,6 @@ import type {
     UpOptions,
     UpResult,
 } from "./types";
-import { DEFAULT_BIND_HOST } from "./viteSpawn";
 
 export interface LifecycleContext {
     config: DashboardAppConfig;
@@ -99,13 +100,10 @@ function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined
     return {
         ...config.spawn.env,
         ...terminalLocaleEnvRecord(),
-        ...(config.type === "ui"
-            ? {
-                  FORCE_COLOR: "1",
-                  BROWSER: "none",
-                  DASHBOARD_BIND_HOST: config.bindHost ?? DEFAULT_BIND_HOST,
-              }
-            : {}),
+        // UI and server children alike read their listen address from here: loopback by
+        // default, the registry entry or the per-dashboard preferences file may widen it.
+        DASHBOARD_BIND_HOST: resolveDashboardBindHost(config),
+        ...(config.type === "ui" ? { FORCE_COLOR: "1", BROWSER: "none" } : {}),
     };
 }
 
@@ -192,7 +190,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
 
         if (config.type === "ui") {
             await Bun.sleep(400);
-            printDevServerBanner(ctx.logFile, port, { bindHost: config.bindHost });
+            printDevServerBanner(ctx.logFile, port, { bindHost: resolveDashboardBindHost(config) });
         }
     }
 
@@ -364,7 +362,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
 
         if (config.type === "ui") {
             await Bun.sleep(400);
-            printDevServerBanner(ctx.logFile, port, { bindHost: config.bindHost });
+            printDevServerBanner(ctx.logFile, port, { bindHost: resolveDashboardBindHost(config) });
         }
 
         if (config.type === "ui" && shouldOpenBrowser(config, opts)) {
@@ -557,6 +555,74 @@ export async function restart(ctx: LifecycleContext, opts: UpOptions = {}): Prom
     return up(ctx, opts);
 }
 
+/**
+ * Run `spawn.devCmd` in the foreground in place of whatever serves the port, and bring that back
+ * when the dev server exits: a launchd agent is booted out first and started again afterwards, a
+ * background instance is stopped and started again. Ctrl+C is the normal way out.
+ */
+export async function dev(ctx: LifecycleContext, opts: UpOptions = {}): Promise<never> {
+    const { config } = ctx;
+    const port = opts.port ?? ctx.port;
+    const devCmd = config.spawn.devCmd;
+
+    if (!devCmd) {
+        throw new Error(`${config.key} does not define a dev command.`);
+    }
+
+    const launchdManaged = Boolean(config.launchd?.available && isLaunchdInstalled(ctx.plistLabel));
+    const wasRunning = launchdManaged || (await status(ctx)).running;
+
+    if (wasRunning) {
+        await down(ctx, { force: true });
+        await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
+    }
+
+    const restore = async (): Promise<void> => {
+        if (launchdManaged) {
+            out.log.step(`Starting launchd agent ${ctx.plistLabel} again…`);
+            await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
+            await startLaunchd(ctx.plistLabel);
+            const ok = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
+
+            if (ok.ready) {
+                out.log.success(`${config.name ?? config.key} back on http://localhost:${port} · launchd`);
+            } else {
+                out.warn(
+                    `Launchd agent did not come back: ${ok.detail ?? "unknown"}\n  Check: launchctl print gui/$UID/${ctx.plistLabel}\n  Log: ${ctx.logFile}`
+                );
+            }
+
+            return;
+        }
+
+        if (wasRunning) {
+            await up(ctx, { port, open: false, skipInstallPrompt: true });
+        }
+    };
+
+    out.log.step(
+        `${config.name ?? config.key} dev server in the foreground; stop it to bring the installed server back.`
+    );
+    writePid(config.key, process.pid);
+    let exitCode = 1;
+
+    try {
+        exitCode = await spawnDashboard({
+            cmd: [...devCmd],
+            cwd: config.spawn.cwd,
+            env: {
+                ...spawnEnv(config),
+                ...(shouldOpenBrowser(config, opts) ? { DASHBOARD_OPEN_BROWSER: "1" } : {}),
+            },
+        });
+    } finally {
+        clearPid(config.key);
+        await restore();
+    }
+
+    process.exit(exitCode);
+}
+
 export async function status(ctx: LifecycleContext): Promise<StatusResult> {
     const { config, port } = ctx;
     const identity = classifyDashboardPid(config.key);
@@ -624,6 +690,7 @@ export async function printStatus(ctx: LifecycleContext): Promise<void> {
     const lines: string[] = [];
     lines.push(`${s.key} (${s.type}): ${s.running ? `running · pid ${s.pid}` : "not running"}`);
     lines.push(`  port: ${s.port}`);
+    lines.push(`  bind: ${resolveDashboardBindHost(ctx.config)}`);
     if (s.running && s.uptimeMs) {
         lines.push(`  uptime: ${formatDuration(s.uptimeMs)}`);
     }

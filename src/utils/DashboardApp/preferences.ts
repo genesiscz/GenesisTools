@@ -10,12 +10,18 @@ import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { configFilePath } from "./pidFile";
+import type { DashboardBindHost } from "./types";
 
 export interface DashboardPreferences {
     /** Did the user dismiss the launchd first-run prompt? */
     launchdPromptDismissed?: boolean;
     /** Did we successfully install the launchd plist for this app? */
     launchdInstalled?: boolean;
+    /**
+     * Listen address for this dashboard, overriding the registry entry. `"0.0.0.0"` opens one
+     * dashboard to the LAN (a tunnel, a phone) without a code change; `"127.0.0.1"` pins it back.
+     */
+    bindHost?: DashboardBindHost;
 }
 
 export function readPreferences(key: string): DashboardPreferences {

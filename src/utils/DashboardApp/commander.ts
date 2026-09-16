@@ -7,6 +7,7 @@
  *     up           --foreground --port <n> --force --no-open
  *     down         --force
  *     restart      (same flags as up)
+ *     dev          --port <n> --no-open (only if spawn.devCmd; foreground, the installed server comes back on exit)
  *     status
  *     attach       --lines <n>
  *     logs         --lines <n>
@@ -20,6 +21,7 @@
 import { Command } from "commander";
 import {
     attach,
+    dev,
     down,
     install,
     type LifecycleContext,
@@ -148,6 +150,19 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
     restartCmd.action(async (flags: UpFlags) => {
         await restart(ctx, toUpOptions(flags));
     });
+
+    // `dev` — the app's HMR server in place of the installed one, which comes back on exit.
+    if (config.spawn.devCmd) {
+        cmd.command("dev")
+            .description(
+                "Run the Vite dev server (HMR) in the foreground; the installed server comes back when it exits."
+            )
+            .option("-p, --port <n>", "override the default port")
+            .option("--no-open", "do not auto-open the browser")
+            .action(async (flags: { port?: string; open?: boolean }) => {
+                await dev(ctx, { port: flags.port ? parsePort(flags.port) : undefined, open: flags.open });
+            });
+    }
 
     // `status`
     cmd.command("status")

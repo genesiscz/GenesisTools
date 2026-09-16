@@ -7,6 +7,7 @@ import type { InlineConfig } from "vite";
 import { build, loadConfigFromFile, mergeConfig, preview } from "vite";
 import { waitForUrlReady } from "../readiness";
 import type { DashboardBindHost } from "../types";
+import { DEFAULT_BIND_HOST } from "../viteSpawn";
 import { openBrowserWhenDashboardEnv } from "./openBrowserWhenEnv";
 import { isPreviewRestarting, setPreviewRestarting } from "./restartState";
 import { watchPreviewServerFiles } from "./serverHot";
@@ -23,7 +24,31 @@ function resolveBindHost(opts: DashboardPreviewUiOptions): DashboardBindHost {
         return bindHost;
     }
 
-    return "0.0.0.0";
+    return DEFAULT_BIND_HOST;
+}
+
+const BUILD_ONCE_ENTRY = resolve(import.meta.dirname, "buildOnce.ts");
+
+/**
+ * The one-off build of the static mode runs in a child, so its working set never lands in the
+ * long-lived server. An in-process `build()` left the static server at the same 1 GB RSS as the
+ * watch build it replaced; the build's allocations stay mapped once the process has them.
+ */
+async function buildOnceInChild(input: { viteConfigPath: string; outDir: string; cwd: string }): Promise<void> {
+    const cmd = ["bun", BUILD_ONCE_ENTRY, "--config", input.viteConfigPath, "--out-dir", input.outDir];
+    logger.info({ cmd, cwd: input.cwd }, "static: building the UI once in a child process");
+    const child = Bun.spawn(cmd, {
+        cwd: input.cwd,
+        stdin: "ignore",
+        stdout: "inherit",
+        stderr: "inherit",
+        env: env.getProcessEnv(),
+    });
+    const code = await child.exited;
+
+    if (code !== 0) {
+        throw new Error(`vite build exited with code ${code}`);
+    }
 }
 
 export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOptions): Promise<void> {
@@ -32,13 +57,23 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
     let internalPort = await opts.resolveInternalPort();
     const url = opts.publicUrl?.(publicPort) ?? `http://localhost:${publicPort}`;
     const uiDir = opts.uiDir ?? resolve(opts.viteConfigPath, "..");
+    const isStatic = opts.serve === "static";
+    const staticOutDir = opts.staticOutDir;
+
+    if (isStatic && !staticOutDir) {
+        throw new Error(`${opts.toolLabel}: serve "static" needs staticOutDir`);
+    }
 
     if (opts.beforeListen) {
         await opts.beforeListen(publicPort);
     }
 
-    out.println(`Starting ${opts.toolLabel} preview at ${url} ...`);
-    out.println("(bundled UI — client rebuilds on save; API/middleware files restart preview automatically)\n");
+    out.println(`Starting ${opts.toolLabel} ${isStatic ? "static server" : "preview"} at ${url} ...`);
+    out.println(
+        isStatic
+            ? "(bundled UI, built once — restart the server to pick up changes)\n"
+            : "(bundled UI — client rebuilds on save; API/middleware files restart preview automatically)\n"
+    );
 
     const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, opts.viteConfigPath, configRoot);
 
@@ -53,7 +88,10 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
         root: loaded.config.root ?? uiDir,
         build: {
             ...loaded.config.build,
-            watch: {},
+            // Static: one build into an install-owned directory, so a watch build or a stray
+            // `vite build` emptying the repo's `dist` cannot pull the document root from under the
+            // running server. Preview: rolldown watch mode in the config's own outDir.
+            ...(isStatic ? { outDir: staticOutDir, emptyOutDir: true } : { watch: {} }),
         },
         preview: {
             ...loaded.config.preview,
@@ -190,47 +228,53 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
     });
 
     try {
-        out.println("Initial production build...");
-        const watcher = await build(viteConfig);
+        if (isStatic && staticOutDir) {
+            out.println(`Building the UI once into ${staticOutDir}...`);
+            await buildOnceInChild({ viteConfigPath: opts.viteConfigPath, outDir: staticOutDir, cwd: configRoot });
+            await startPreviewServer();
+        } else {
+            out.println("Initial production build...");
+            const watcher = await build(viteConfig);
 
-        if (!("on" in watcher)) {
-            throw new Error("Expected watch build to return a RolldownWatcher");
-        }
+            if (!("on" in watcher)) {
+                throw new Error("Expected watch build to return a RolldownWatcher");
+            }
 
-        buildWatcher = watcher;
-        const initialWatcher = buildWatcher;
+            buildWatcher = watcher;
+            const initialWatcher = buildWatcher;
 
-        await new Promise<void>((resolvePromise, reject) => {
-            initialWatcher.on("event", (event: { code: string; error?: Error }) => {
-                if (event.code === "END") {
-                    resolvePromise();
+            await new Promise<void>((resolvePromise, reject) => {
+                initialWatcher.on("event", (event: { code: string; error?: Error }) => {
+                    if (event.code === "END") {
+                        resolvePromise();
+                    }
+
+                    if (event.code === "ERROR") {
+                        reject(event.error ?? new Error("Initial preview build failed"));
+                    }
+                });
+            });
+
+            await startPreviewServer();
+
+            const activeWatcher = buildWatcher;
+
+            activeWatcher.on("event", (event: { code: string; error?: Error }) => {
+                if (event.code === "BUNDLE_END") {
+                    logger.info("preview: rebuild complete — reloading browsers");
+                    opts.onClientRebuild?.();
                 }
 
                 if (event.code === "ERROR") {
-                    reject(event.error ?? new Error("Initial preview build failed"));
+                    logger.error({ err: event.error }, "preview: rebuild failed");
                 }
             });
-        });
 
-        await startPreviewServer();
-
-        const activeWatcher = buildWatcher;
-
-        activeWatcher.on("event", (event: { code: string; error?: Error }) => {
-            if (event.code === "BUNDLE_END") {
-                logger.info("preview: rebuild complete — reloading browsers");
-                opts.onClientRebuild?.();
-            }
-
-            if (event.code === "ERROR") {
-                logger.error({ err: event.error }, "preview: rebuild failed");
-            }
-        });
-
-        stopServerWatch = watchPreviewServerFiles({
-            globs: opts.serverWatchGlobs,
-            onChange: restartPreviewForServerChange,
-        });
+            stopServerWatch = watchPreviewServerFiles({
+                globs: opts.serverWatchGlobs,
+                onChange: restartPreviewForServerChange,
+            });
+        }
 
         const bindHost = resolveBindHost(opts);
         const internalUrl = `http://127.0.0.1:${internalPort}/`;
@@ -253,12 +297,18 @@ export async function runDashboardPreviewUiServer(opts: DashboardPreviewUiOption
             publicProxy = proxy;
         }
 
-        logger.info({ publicPort, internalPort, uiDir }, `${opts.toolLabel} preview mode listening`);
-
-        out.log.success(`Preview ready at ${url}`);
-        out.println(
-            "Edit UI under ui/src — saves rebuild the bundle. Edit API/middleware — preview restarts automatically."
+        logger.info(
+            { publicPort, internalPort, uiDir, staticOutDir },
+            `${opts.toolLabel} ${isStatic ? "static" : "preview"} mode listening`
         );
+
+        out.log.success(`${isStatic ? "Static server" : "Preview"} ready at ${url}`);
+
+        if (!isStatic) {
+            out.println(
+                "Edit UI under ui/src — saves rebuild the bundle. Edit API/middleware — preview restarts automatically."
+            );
+        }
 
         await openBrowserWhenDashboardEnv(url);
 

@@ -3,8 +3,10 @@ import {
     defaultLanDashboardUrl,
     defaultLocalDashboardUrl,
     resolveDashboardAccessPresentation,
+    resolveDashboardBindHost,
     resolveDashboardBrowserUrl,
 } from "./access";
+import { writePreferences } from "./preferences";
 import type { DashboardAppConfig } from "./types";
 
 describe("DashboardApp access", () => {
@@ -73,5 +75,24 @@ describe("DashboardApp access", () => {
         } satisfies DashboardAppConfig;
 
         expect(resolveDashboardBrowserUrl(config, 7243)).toBe(defaultLanDashboardUrl(7243));
+    });
+
+    it("resolveDashboardBindHost defaults to loopback and lets the preferences file override the registry", () => {
+        const base = {
+            type: "server",
+            description: "test",
+            commandName: "serve",
+            port: 4242,
+            spawn: { cmd: ["true"] },
+        } as const;
+
+        expect(resolveDashboardBindHost({ ...base, key: "bind-default" })).toBe("127.0.0.1");
+        expect(resolveDashboardBindHost({ ...base, key: "bind-registry", bindHost: "0.0.0.0" })).toBe("0.0.0.0");
+
+        writePreferences("bind-widened", { bindHost: "0.0.0.0" });
+        expect(resolveDashboardBindHost({ ...base, key: "bind-widened" })).toBe("0.0.0.0");
+
+        writePreferences("bind-pinned", { bindHost: "127.0.0.1" });
+        expect(resolveDashboardBindHost({ ...base, key: "bind-pinned", bindHost: "0.0.0.0" })).toBe("127.0.0.1");
     });
 });

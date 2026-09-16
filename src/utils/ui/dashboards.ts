@@ -275,7 +275,6 @@ export const DASHBOARDS = {
         name: "Log Viewer (dbg + task)",
         description: "Unified live log dashboard for debugging-master and task sessions.",
         port: 7243,
-        bindHost: "0.0.0.0",
         strictPort: false,
         launch: "tools debugging-master dashboard serve",
         portOverride: { flag: "--port" },

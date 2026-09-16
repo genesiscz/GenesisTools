@@ -29,6 +29,14 @@ export interface DashboardPreviewUiOptions {
     onClientRebuild?: () => void;
     /** Paths that require restarting Vite preview, not just client rebuild. */
     serverWatchGlobs: string[];
+    /**
+     * `preview` (default) builds in watch mode and restarts on server-file saves. `static` builds
+     * once into `staticOutDir` and serves that until the process restarts: no rolldown watcher, no
+     * chokidar, the mode an installed agent runs.
+     */
+    serve?: "preview" | "static";
+    /** Build output for `serve: "static"`; keep it out of the repo's shared `dist`. */
+    staticOutDir?: string;
     resolveBindHost?: () => DashboardBindHost;
     publicUrl?: (publicPort: number) => string;
 }

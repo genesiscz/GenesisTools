@@ -5,22 +5,19 @@ Personal web dashboard for terminals (ttyd), cmux session viewing, and Obsidian 
 ## Run
 
 ```bash
-tools dev-dashboard ui up          # watch build + preview (default)
+tools dev-dashboard ui up          # build once, then serve (default; what `ui install` registers)
 tools dev-dashboard ui restart
 tools dev-dashboard ui up --foreground
+tools dev-dashboard ui dev         # Vite dev + HMR in the foreground; Ctrl+C brings the installed server back
 ```
 
-Default serve mode is **preview** (Vite `build --watch` + `vite preview`): a few bundled assets per load, much faster over the Cloudflare tunnel than per-module dev requests. Saves trigger a rebuild (~1s) and a full page reload (not HMR).
+Default serve mode is **static** (one Vite build into `~/.genesis-tools/dashboards/dev-dashboard.static/`, then `vite preview` behind the front proxy): a few bundled assets per load, much faster over the Cloudflare tunnel than per-module dev requests, and nothing watches anything while the server idles. Restart the server to pick up code changes.
 
-For Vite dev + HMR on localhost only:
+To work on the dashboard, run `ui dev`: it stops the installed server (launchd agent or background instance), runs Vite dev + HMR in the foreground, and starts the installed server again when you stop it. The older watch mode (`bun src/dev-dashboard/index.ts __ui-server` with no flag: `build --watch` + preview, rebuild and page reload on save) still exists for a plist installed before the static mode.
 
-```bash
-tools dev-dashboard ui up --dev --foreground
-```
+APIs (`/api/tmux/*`, Obsidian share, ttyd) behave the same in every mode. Harness config lives in `ui/app.ts` (`buildDashboardUiServerCmd` from `@genesiscz/utils/DashboardApp`). The serve loop itself is `runDashboardPreviewUiServer` in `@genesiscz/utils/DashboardApp/preview`; dev-dashboard only wires front-proxy, Reminders paths, and reload hooks in `lib/preview-ui-server.ts`.
 
-APIs (`/api/tmux/*`, Obsidian share, ttyd) behave the same in both modes. Harness config lives in `ui/app.ts` (`buildDashboardUiServerCmd` from `@genesiscz/utils/DashboardApp`). The preview loop itself is `runDashboardPreviewUiServer` in `@genesiscz/utils/DashboardApp/preview`; dev-dashboard only wires front-proxy, Reminders paths, and reload hooks in `lib/preview-ui-server.ts`.
-
-**Preview mode hot reload:** saves under `ui/src/` rebuild the client bundle (browser reload). Edits to `ui/vite-middleware.ts`, `lib/`, etc. restart the Vite preview subprocess automatically (~1s) — no full `ui restart` needed. Use `ui up --dev` only if you want Vite dev + HMR for the React app.
+**Listen address:** dev-dashboard is the one dashboard bound to `0.0.0.0` by default (tunnel, phones). `{ "bindHost": "127.0.0.1" }` in `~/.genesis-tools/dashboards/dev-dashboard.config.json` pins it to loopback; the same key opens any other dashboard to the LAN.
 
 Config is stored at `~/.genesis-tools/dev-dashboard/config.json`.
 

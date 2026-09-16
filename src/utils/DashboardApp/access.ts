@@ -3,6 +3,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { getLocalIpv4 } from "@genesiscz/utils/network";
 import { type QrOptions, renderQr } from "@genesiscz/utils/qr";
 import pc from "picocolors";
+import { readPreferences } from "./preferences";
 import { waitForUrlReady } from "./readiness";
 import type { DashboardAppConfig, DashboardBindHost, DashboardQrOption } from "./types";
 import { DEFAULT_BIND_HOST } from "./viteSpawn";
@@ -26,7 +27,18 @@ export function defaultLocalDashboardUrl(port: number, path = "/"): string {
     return `http://127.0.0.1:${port}${path}`;
 }
 
+/**
+ * Loopback unless the registry entry or the user's per-dashboard preferences say otherwise:
+ * `~/.genesis-tools/dashboards/<key>.config.json` with `{ "bindHost": "0.0.0.0" }` opens one
+ * dashboard to the LAN, `"127.0.0.1"` pins one back, and neither needs a code change.
+ */
 export function resolveDashboardBindHost(config: DashboardAppConfig): DashboardBindHost {
+    const preferred = readPreferences(config.key).bindHost;
+
+    if (preferred === "0.0.0.0" || preferred === "127.0.0.1") {
+        return preferred;
+    }
+
     return config.bindHost ?? DEFAULT_BIND_HOST;
 }
 

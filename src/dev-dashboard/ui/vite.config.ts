@@ -40,8 +40,6 @@ const config = createDashboardViteConfig({
     },
 });
 
-const distDir = resolve(__dirname, "dist");
-
 // Vite runs on a private port behind the Bun.serve front proxy. Tell the HMR
 // client to connect to the public port so the proxy can bridge the HMR socket
 // (Bun's node:http upgrade is broken; the proxy owns all WebSockets).
@@ -63,7 +61,11 @@ config.plugins = [
         configurePreviewServer(server) {
             attachDevDashboardMiddleware(server.middlewares);
             server.middlewares.use(createPreviewReloadSseMiddleware());
-            server.middlewares.use(createPreviewIndexInjectMiddleware(distDir));
+            // The built index lives wherever this run's build.outDir points: the repo `dist` for the
+            // watch build, the install-owned directory for the static server.
+            server.middlewares.use(
+                createPreviewIndexInjectMiddleware(resolve(server.config.root, server.config.build.outDir))
+            );
         },
     },
 ];
