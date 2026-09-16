@@ -86,6 +86,40 @@ function parseVkBlock(
     };
 }
 
+export function parseMfWorkbook(buffer: Uint8Array, municipality: string): MfRentalBenchmark[] {
+    const workbook = XLSX.read(buffer);
+    const sheetName = workbook.SheetNames.find((name) => name.includes("Cenov")) ?? workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    if (!sheet?.["!ref"]) {
+        throw new Error(`MF XLSX: sheet "${sheetName}" is empty or missing`);
+    }
+
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+    const municipalityLower = municipality.toLowerCase();
+    const results: MfRentalBenchmark[] = [];
+
+    for (let row = 1; row <= range.e.r; row++) {
+        const obec = cellString(sheet, row, COL_MUNICIPALITY);
+
+        if (obec.toLowerCase() !== municipalityLower) {
+            continue;
+        }
+
+        const cadastralUnit = cellString(sheet, row, COL_CADASTRAL);
+
+        for (let vkIndex = 0; vkIndex < 4; vkIndex++) {
+            const benchmark = parseVkBlock(sheet, row, vkIndex, cadastralUnit, obec);
+
+            if (benchmark.referencePrice > 0) {
+                results.push(benchmark);
+            }
+        }
+    }
+
+    return results;
+}
+
 export class MfRentalClient {
     private readonly apiClient = new ApiClient({
         loggerContext: { provider: "mf-rental" },
@@ -124,37 +158,7 @@ export class MfRentalClient {
 
     private async downloadAndParse(municipality: string, url: string): Promise<MfRentalBenchmark[]> {
         const buffer = await this.apiClient.getArrayBuffer(url);
-        const workbook = XLSX.read(new Uint8Array(buffer));
-        const sheetName = workbook.SheetNames.find((name) => name.includes("Cenov")) ?? workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-
-        if (!sheet?.["!ref"]) {
-            throw new Error(`MF XLSX: sheet "${sheetName}" is empty or missing`);
-        }
-
-        const range = XLSX.utils.decode_range(sheet["!ref"]);
-        const municipalityLower = municipality.toLowerCase();
-        const results: MfRentalBenchmark[] = [];
-
-        for (let row = 1; row <= range.e.r; row++) {
-            const obec = cellString(sheet, row, COL_MUNICIPALITY);
-
-            if (obec.toLowerCase() !== municipalityLower) {
-                continue;
-            }
-
-            const cadastralUnit = cellString(sheet, row, COL_CADASTRAL);
-
-            for (let vkIndex = 0; vkIndex < 4; vkIndex++) {
-                const benchmark = parseVkBlock(sheet, row, vkIndex, cadastralUnit, obec);
-
-                if (benchmark.referencePrice > 0) {
-                    results.push(benchmark);
-                }
-            }
-        }
-
-        return results;
+        return parseMfWorkbook(new Uint8Array(buffer), municipality);
     }
 
     async fetchRentalDataForDistrict(districtName: string, refresh = false): Promise<MfRentalBenchmark[]> {
