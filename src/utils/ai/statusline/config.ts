@@ -4,10 +4,14 @@ import { dirname, join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import type { StatuslineConfig } from "./types";
 
+/** Synthetic session id for preview/configure so a diagnostic never writes a live session file. */
+export const PREVIEW_SESSION_ID = "00000000-preview";
+
 /**
- * Defaults reproduce Martin's `~/.claude/statusline.sh` plus the graft wrapper around it,
+ * Defaults reproduce the previous shell statusline plus the graft wrapper around it,
  * so a fresh install renders the same line the shell script did.
  */
 export function defaultStatuslineConfig(): StatuslineConfig {
@@ -19,7 +23,7 @@ export function defaultStatuslineConfig(): StatuslineConfig {
         showDirty: false,
         modelStyle: "id",
         graft: { enabled: true, shim: join(homedir(), ".claude", "helpers", "graft-statusline.cjs"), ttlMs: 10_000 },
-        metricsPost: { enabled: true, url: "http://localhost:8765/statusline", timeoutMs: 300 },
+        metricsPost: { enabled: false, url: "http://localhost:8765/statusline", timeoutMs: 300 },
         gitTtlMs: 5_000,
         extends: null,
         fallbackColumns: 80,
@@ -62,4 +66,54 @@ export function mergeStatuslineConfig(base: StatuslineConfig, patch: Partial<Sta
         metricsPost: { ...base.metricsPost, ...patch.metricsPost },
         extends: patch.extends === undefined ? base.extends : patch.extends,
     };
+}
+
+/** Preview and configure must not write token deltas or POST the live payload. */
+export function previewRenderConfig(config: StatuslineConfig): StatuslineConfig {
+    return {
+        ...config,
+        showDelta: false,
+        metricsPost: { ...config.metricsPost, enabled: false },
+    };
+}
+
+/**
+ * Keep the host's previous statusline command when we replace one that is not ours.
+ * `install` persists this; the wizard must save the result, not the pre-install object.
+ */
+export function rememberPreviousCommand(
+    config: StatuslineConfig,
+    currentCommand: string | null,
+    ours: boolean
+): StatuslineConfig {
+    if (ours) {
+        return config;
+    }
+
+    return { ...config, previousCommand: currentCommand };
+}
+
+export function statuslineInstalledHotEntryPath(): string {
+    return aiDataDir("statusline", "run.ts");
+}
+
+export function isStatuslineInstallCommand(command: string | null): boolean {
+    return command !== null && (command.includes("statusline/run.ts") || command.includes("ai statusline run"));
+}
+
+export function formatStatuslineInstallCommand(opts: {
+    host: "claude" | "codex" | "grok";
+    viaTools: boolean;
+    bunPath?: string;
+    entryPath?: string;
+}): string {
+    if (opts.viaTools) {
+        return `tools ai statusline run --${opts.host}`;
+    }
+
+    return shellCommandLine([
+        opts.bunPath ?? process.execPath,
+        opts.entryPath ?? statuslineInstalledHotEntryPath(),
+        `--${opts.host}`,
+    ]);
 }

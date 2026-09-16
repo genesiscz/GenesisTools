@@ -79,7 +79,7 @@ export interface StatuslineConfig {
     graft: { enabled: boolean; shim: string; ttlMs: number };
     /** Post the raw payload to a local metrics sink, fire and forget. */
     metricsPost: { enabled: boolean; url: string; timeoutMs: number };
-    /** How long a git branch and dirty count may be reused before `git status` runs again. */
+    /** How long a git branch and dirty count may be reused before they are refreshed. */
     gitTtlMs: number;
     /** Wrap another statusline script: run it and place its lines before or after ours. */
     extends: StatuslineExtension | null;

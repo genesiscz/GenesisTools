@@ -1,11 +1,19 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { claudeCodeStatusline } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
+import { isolatedPreviewCache, type StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
 import {
+    formatStatuslineInstallCommand,
+    isStatuslineInstallCommand,
     loadStatuslineConfig,
+    PREVIEW_SESSION_ID,
+    previewRenderConfig,
+    rememberPreviousCommand,
     saveStatuslineConfig,
     statuslineConfigPath,
+    statuslineInstalledHotEntryPath,
 } from "@genesiscz/utils/ai/statusline/config";
 import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
 import type { StatuslineConfig, StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
@@ -54,17 +62,31 @@ function requireFeature(host: StatuslineHost): StatuslineFeature {
     return feature;
 }
 
+/** Copy a trampoline to a stable data-dir path so host settings never point at a worktree. */
+function writeHotEntryTrampoline(): string {
+    const dest = statuslineInstalledHotEntryPath();
+    mkdirSync(dirname(dest), { recursive: true });
+    const sourceUrl = pathToFileURL(RUN_ENTRY).href;
+    writeFileSync(
+        dest,
+        `#!/usr/bin/env bun\nconst { main } = await import(${SafeJSON.stringify(sourceUrl, { strict: true })});\nawait main(Bun.argv.slice(2));\n`
+    );
+
+    return dest;
+}
+
 /** The command `install` writes: the hot entry directly, or the ordinary door when asked. */
 function installCommand(host: StatuslineHost, viaTools: boolean): string {
-    if (viaTools) {
-        return `tools ai statusline run --${host}`;
-    }
-
-    return `${process.execPath} ${RUN_ENTRY} --${host}`;
+    return formatStatuslineInstallCommand({
+        host,
+        viaTools,
+        bunPath: process.execPath,
+        entryPath: statuslineInstalledHotEntryPath(),
+    });
 }
 
 function isOurs(command: string | null): boolean {
-    return command !== null && (command.includes("statusline/run.ts") || command.includes("ai statusline run"));
+    return isStatuslineInstallCommand(command);
 }
 
 /**
@@ -75,7 +97,6 @@ function samplePayload(cwd: string): Record<string, unknown> {
     const claudeDir = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
     const projectDir = join(claudeDir, "projects", cwd.replace(/\//g, "-"));
     let transcriptPath: string | null = null;
-    let sessionId = "00000000-preview";
 
     if (existsSync(projectDir)) {
         let newest = 0;
@@ -91,7 +112,6 @@ function samplePayload(cwd: string): Record<string, unknown> {
             if (mtime > newest) {
                 newest = mtime;
                 transcriptPath = path;
-                sessionId = name.replace(/\.jsonl$/, "");
             }
         }
     }
@@ -99,7 +119,7 @@ function samplePayload(cwd: string): Record<string, unknown> {
     return {
         workspace: { current_dir: cwd, project_dir: cwd },
         cwd,
-        session_id: sessionId,
+        session_id: PREVIEW_SESSION_ID,
         transcript_path: transcriptPath,
         model: { display_name: "Claude" },
         context_window: {
@@ -113,11 +133,16 @@ function samplePayload(cwd: string): Record<string, unknown> {
     };
 }
 
-async function previewLines(config: StatuslineConfig, feature: StatuslineFeature, columns: number): Promise<string[]> {
+async function previewLines(
+    config: StatuslineConfig,
+    feature: StatuslineFeature,
+    columns: number,
+    cache: StatuslineCache
+): Promise<string[]> {
     const result = await renderStatusline(samplePayload(process.cwd()), {
         feature,
-        config: { ...config, metricsPost: { ...config.metricsPost, enabled: false } },
-        cache: new StatuslineCache(),
+        config: previewRenderConfig(config),
+        cache,
         columns,
     });
 
@@ -126,10 +151,12 @@ async function previewLines(config: StatuslineConfig, feature: StatuslineFeature
 
 async function configureInteractively(host: StatuslineHost): Promise<void> {
     const feature = requireFeature(host);
+    const previewCache = isolatedPreviewCache();
+    const previewFeature = claudeCodeStatusline(previewCache);
     let config = await loadStatuslineConfig();
     const columns = process.stdout.columns ?? config.fallbackColumns;
     const showPreview = async () => {
-        const lines = await previewLines(config, feature, columns);
+        const lines = await previewLines(config, previewFeature, columns, previewCache);
         p.note(lines.join("\n") || "(nothing to show)", "preview");
     };
 
@@ -278,30 +305,39 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
                 continue;
             }
 
-            await installStatusline(host, false);
+            config = await installStatusline(host, false, config);
             p.note(`Installed. Run "tools ai statusline uninstall" to put the previous command back.`, "installed");
         }
     }
 }
 
-async function installStatusline(host: StatuslineHost, viaTools: boolean): Promise<void> {
+async function installStatusline(
+    host: StatuslineHost,
+    viaTools: boolean,
+    existing?: StatuslineConfig
+): Promise<StatuslineConfig> {
     const feature = requireFeature(host);
-    const config = await loadStatuslineConfig();
+    let config = existing ?? (await loadStatuslineConfig());
     const current = await feature.readInstalledCommand();
+
+    if (!viaTools) {
+        writeHotEntryTrampoline();
+    }
+
     const command = installCommand(host, viaTools);
 
     if (current === command) {
         out.log.info(`${feature.host} already runs ${command}`);
-        return;
+        return config;
     }
 
-    if (!isOurs(current)) {
-        await saveStatuslineConfig({ ...config, previousCommand: current });
-    }
-
+    config = rememberPreviousCommand(config, current, isOurs(current));
+    await saveStatuslineConfig(config);
     await feature.writeInstalledCommand(command);
     out.log.success(`${feature.host} statusline is now ${command}`);
     logger.info({ host, command, previous: current }, "statusline installed");
+
+    return config;
 }
 
 async function uninstallStatusline(host: StatuslineHost): Promise<void> {
@@ -332,7 +368,7 @@ async function showStatus(host: StatuslineHost): Promise<void> {
     out.println(`installed: ${installed ?? "(none)"}${isOurs(installed) ? "  (ours)" : ""}`);
     out.println(`previous:  ${config.previousCommand ?? "(none)"}`);
     out.println(`config:    ${statuslineConfigPath()}`);
-    out.println(`hot entry: ${RUN_ENTRY}`);
+    out.println(`hot entry: ${statuslineInstalledHotEntryPath()}`);
 }
 
 export function registerStatuslineCommands(program: Command): void {
@@ -354,14 +390,14 @@ export function registerStatuslineCommands(program: Command): void {
             .option("--timings", "print per-step timings to stderr")
     ).action(async (opts: HostFlags & { stdinFile?: string; columns?: string; timings?: boolean }) => {
         const columns = opts.columns === undefined ? undefined : Number.parseInt(opts.columns, 10);
-        const { lines, settled } = await runStatusline({
+        const { lines } = await runStatusline({
             host: hostFrom(opts),
             ...(opts.stdinFile === undefined ? {} : { stdinFile: opts.stdinFile }),
             ...(columns === undefined || Number.isNaN(columns) ? {} : { columns }),
             timings: opts.timings === true,
         });
         out.print(lines.join("\n"));
-        await settled;
+        await out.flush();
     });
 
     addHostFlags(
@@ -372,11 +408,18 @@ export function registerStatuslineCommands(program: Command): void {
             .option("--json", "print the lines and timings as JSON")
     ).action(async (opts: HostFlags & { plain?: boolean; json?: boolean }) => {
         const host = hostFrom(opts);
-        const feature = requireFeature(host);
+        const previewCache = isolatedPreviewCache();
+        const feature = featureFor(host, previewCache);
+
+        if (!feature) {
+            throw new Error(`${host} has no statusline hook yet; only Claude Code renders one today`);
+        }
+
         const config = await loadStatuslineConfig();
         const result = await renderStatusline(samplePayload(process.cwd()), {
             feature,
-            config: { ...config, metricsPost: { ...config.metricsPost, enabled: false } },
+            config: previewRenderConfig(config),
+            cache: previewCache,
         });
         const lines = opts.plain ? result.lines.map(stripAnsi) : result.lines;
 

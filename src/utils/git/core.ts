@@ -502,10 +502,11 @@ export function createGit(options?: GitOptions) {
          * listed individually. Runs with `GIT_OPTIONAL_LOCKS=0`, so a status
          * never takes the index lock or rewrites the index as a side effect.
          */
-        async status(opts: StatusArgs & { cwd?: string } = {}): Promise<StatusSummary> {
+        async status(opts: StatusArgs & { cwd?: string; timeout?: number } = {}): Promise<StatusSummary> {
             const res = await executor.exec(porcelain.status.args(opts), {
                 cwd: opts.cwd,
                 env: { GIT_OPTIONAL_LOCKS: "0" },
+                ...(opts.timeout === undefined ? {} : { timeout: opts.timeout }),
             });
 
             if (!res.success) {

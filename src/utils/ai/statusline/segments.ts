@@ -160,7 +160,8 @@ function pctColor(pct: number): string {
 /** `⚿ oli…son (U:39%;54%;F:12%) ⌁` with the same staleness marks as the script. */
 export function accountSegment(account: AccountSegmentData, now = Date.now()): string {
     const name = account.name;
-    const shortName = Array.from(name).length > 7 ? `${name.slice(0, 3)}…${name.slice(-3)}` : name;
+    const chars = Array.from(name);
+    const shortName = chars.length > 7 ? `${chars.slice(0, 3).join("")}…${chars.slice(-3).join("")}` : name;
     let usage = "";
 
     if (account.fiveHour !== null || account.sevenDay !== null) {

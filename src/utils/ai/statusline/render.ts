@@ -1,9 +1,11 @@
-import { existsSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { createGit } from "@genesiscz/utils/git/core";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { type CwdCacheEntry, StatuslineCache } from "./cache";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
+import { StatuslineCache } from "./cache";
 import { buildLine, terminalWidth } from "./layout";
 import {
     accountSegment,
@@ -32,10 +34,14 @@ export interface RenderDeps {
     now?: () => number;
 }
 
-interface GitInfo {
+export interface GitInfo {
     branch: string | null;
     dirty: number;
 }
+
+/** A hung `git status` must not freeze every Claude statusline on the machine. */
+const GIT_STATUS_TIMEOUT_MS = 5_000;
+const SPAWN_KILL_GRACE_MS = 250;
 
 export async function renderStatusline(raw: Record<string, unknown>, deps: RenderDeps): Promise<RenderResult> {
     const timings: RenderTimings = {};
@@ -120,7 +126,7 @@ export async function renderStatusline(raw: Record<string, unknown>, deps: Rende
     let settled: Promise<void> = Promise.resolve();
 
     if (config.metricsPost.enabled && payload.sessionId) {
-        // Bounded by `metricsPost.timeoutMs`; the old script backgrounded a curl per render for this.
+        // Bounded by `metricsPost.timeoutMs`. The hot entry must not await this before exit.
         settled = postMetrics(payload, config).catch((error) => {
             logger.debug({ err: error, url: config.metricsPost.url }, "statusline metrics post failed");
         });
@@ -141,26 +147,90 @@ function tokenDelta(cache: StatuslineCache, sessionId: string, usedTokens: numbe
     return delta;
 }
 
+interface GitLayout {
+    worktreeRoot: string;
+    gitDir: string;
+}
+
 /**
- * Branch and dirty count, reused for `gitTtlMs` unless `.git/HEAD` or the index changed. One
- * typed `git status --porcelain=v2 --branch` call replaces the script's `rev-parse` plus
- * `status --porcelain | wc -l`, and most renders make no git call at all.
+ * Walk up from `cwd` until `.git` is a directory or a `gitdir:` file (linked worktrees).
+ * Nested packages and worktrees both resolve; a missing `cwd/.git` is not "not a repo".
  */
-async function gitInfo(
+export function resolveGitLayout(cwd: string): GitLayout | null {
+    let dir = cwd;
+
+    for (;;) {
+        const candidate = join(dir, ".git");
+
+        if (existsSync(candidate)) {
+            try {
+                const st = statSync(candidate);
+
+                if (st.isDirectory()) {
+                    return { worktreeRoot: dir, gitDir: candidate };
+                }
+
+                if (st.isFile()) {
+                    const text = readFileSync(candidate, "utf8");
+                    const match = /^gitdir:\s*(.+)\s*$/m.exec(text);
+
+                    if (match?.[1]) {
+                        const gitDir = isAbsolute(match[1]) ? match[1] : resolve(dir, match[1]);
+
+                        if (existsSync(gitDir)) {
+                            return { worktreeRoot: dir, gitDir };
+                        }
+                    }
+                }
+            } catch (error) {
+                logger.debug({ err: error, candidate }, "statusline: .git unreadable");
+            }
+        }
+
+        const parent = dirname(dir);
+
+        if (parent === dir) {
+            return null;
+        }
+
+        dir = parent;
+    }
+}
+
+function branchFromHead(gitDir: string): string | null {
+    try {
+        const head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+        const ref = /^ref:\s+refs\/heads\/(.+)$/.exec(head);
+
+        return ref?.[1] ?? null;
+    } catch (error) {
+        logger.debug({ err: error, gitDir }, "statusline: HEAD unreadable");
+
+        return null;
+    }
+}
+
+/**
+ * Branch (and dirty count when asked). Default path is a HEAD file read: no `git status`,
+ * no work-tree walk. Porcelain runs only when `showDirty` is on. Cache is keyed on the
+ * worktree root so a nested cwd shares the branch with the repo.
+ */
+export async function gitInfo(
     cwd: string,
     config: StatuslineConfig,
     cache: StatuslineCache,
     now: () => number
 ): Promise<GitInfo | null> {
-    const gitDir = join(cwd, ".git");
+    const layout = resolveGitLayout(cwd);
 
-    if (!existsSync(gitDir)) {
+    if (!layout) {
         return null;
     }
 
+    const { worktreeRoot, gitDir } = layout;
     const headMtime = mtimeOf(join(gitDir, "HEAD"));
     const indexMtime = mtimeOf(join(gitDir, "index"));
-    const cached = cache.cwd(cwd);
+    const cached = cache.cwd(worktreeRoot);
 
     if (
         cached &&
@@ -171,24 +241,49 @@ async function gitInfo(
         return { branch: cached.branch, dirty: cached.dirty };
     }
 
-    try {
-        const status = await createGit({ cwd }).status({ cwd, untracked: "normal" });
-        const branch = status.branch?.head || null;
-        const entry: CwdCacheEntry = {
+    const branch = branchFromHead(gitDir);
+
+    if (!config.showDirty) {
+        cache.writeCwdPatch(worktreeRoot, {
             branch,
-            dirty: status.entries.length,
+            dirty: 0,
             at: now(),
             headMtime,
             indexMtime,
-            ...(cached?.graftLine === undefined ? {} : { graftLine: cached.graftLine, graftAt: cached.graftAt }),
-        };
-        cache.writeCwd(cwd, entry);
+        });
 
-        return { branch, dirty: entry.dirty };
+        return { branch, dirty: 0 };
+    }
+
+    try {
+        const status = await createGit({ cwd: worktreeRoot }).status({
+            cwd: worktreeRoot,
+            untracked: "normal",
+            timeout: GIT_STATUS_TIMEOUT_MS,
+        });
+        const head = status.branch?.head;
+        const statusBranch = head && head !== "HEAD" && head !== "(detached)" ? head : branch;
+        const dirty = status.entries.length;
+        cache.writeCwdPatch(worktreeRoot, {
+            branch: statusBranch,
+            dirty,
+            at: now(),
+            headMtime,
+            indexMtime,
+        });
+
+        return { branch: statusBranch, dirty };
     } catch (error) {
-        logger.debug({ err: error, cwd }, "statusline git status failed");
+        logger.debug({ err: error, cwd: worktreeRoot }, "statusline git status failed");
+        cache.writeCwdPatch(worktreeRoot, {
+            branch,
+            dirty: cached?.dirty ?? 0,
+            at: now(),
+            headMtime,
+            indexMtime,
+        });
 
-        return null;
+        return { branch, dirty: cached?.dirty ?? 0 };
     }
 }
 
@@ -213,8 +308,9 @@ async function graftLine(
     cache: StatuslineCache,
     now: () => number
 ): Promise<string> {
-    const dir = process.env.CLAUDE_PROJECT_DIR || payload.cwd;
-    const graph = join(process.env.GRAFT_DIR || join(dir, "graft"), ".graph", "wiring.json");
+    const processEnv = env.getProcessEnv();
+    const dir = processEnv.CLAUDE_PROJECT_DIR || payload.cwd;
+    const graph = join(processEnv.GRAFT_DIR || join(dir, "graft"), ".graph", "wiring.json");
 
     if (!existsSync(graph) || !existsSync(config.graft.shim)) {
         return "";
@@ -236,22 +332,14 @@ async function graftLine(
         stdin: new TextEncoder().encode(stringifyRaw(withoutContext)),
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
+        env: { ...processEnv, CLAUDE_PROJECT_DIR: dir },
     });
-    const killer = setTimeout(() => proc.kill(), 2_000);
-    const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    clearTimeout(killer);
+    const stdout = await readSpawnStdout(proc, 2_000);
     const line = stdout
         .split("\n")
         .filter((entry) => entry.trim() && !entry.includes("▸"))
         .join("\n");
-    const previous = cache.cwd(payload.cwd);
-    cache.writeCwd(payload.cwd, {
-        branch: previous?.branch ?? null,
-        dirty: previous?.dirty ?? 0,
-        at: previous?.at ?? 0,
-        headMtime: previous?.headMtime ?? 0,
-        indexMtime: previous?.indexMtime ?? 0,
+    cache.writeCwdPatch(payload.cwd, {
         graftLine: line,
         graftAt: now(),
     });
@@ -280,14 +368,38 @@ async function runExtension(payload: StatuslinePayload, config: StatuslineConfig
         stdin: new TextEncoder().encode(stringifyRaw(payload.raw)),
         stdout: "pipe",
         stderr: "pipe",
-        env: process.env,
+        env: env.getProcessEnv(),
     });
-    const killer = setTimeout(() => proc.kill(), extension.timeoutMs);
-    const [stdout] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    clearTimeout(killer);
+    const stdout = await readSpawnStdout(proc, extension.timeoutMs);
     const lines = stdout.split("\n").filter((entry) => entry.length > 0);
 
     return lines.length > 0 ? [{ position: extension.position, lines }] : [];
+}
+
+async function readSpawnStdout(proc: Bun.Subprocess, timeoutMs: number): Promise<string> {
+    const killer = setTimeout(() => {
+        void killWithEscalation(proc, { graceMs: SPAWN_KILL_GRACE_MS });
+    }, timeoutMs);
+
+    try {
+        const stream = proc.stdout;
+
+        if (!(stream instanceof ReadableStream)) {
+            await proc.exited;
+
+            return "";
+        }
+
+        const [stdout] = await Promise.all([new Response(stream).text(), proc.exited]);
+
+        return stdout;
+    } catch (error) {
+        logger.debug({ err: error }, "statusline: spawn stdout read failed");
+
+        return "";
+    } finally {
+        clearTimeout(killer);
+    }
 }
 
 async function postMetrics(payload: StatuslinePayload, config: StatuslineConfig): Promise<void> {

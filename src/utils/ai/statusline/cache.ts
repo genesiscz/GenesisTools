@@ -1,6 +1,7 @@
 import {
     existsSync,
     mkdirSync,
+    mkdtempSync,
     readdirSync,
     readFileSync,
     renameSync,
@@ -8,6 +9,7 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -74,6 +76,23 @@ export class StatuslineCache {
         this.write(this.cwdFile(cwd), entry);
     }
 
+    /**
+     * Merge fields into the cwd record. Git and graft share this file and run in the same
+     * `Promise.all`, so a full replace from either writer drops the other's result.
+     */
+    writeCwdPatch(cwd: string, patch: Partial<CwdCacheEntry>): void {
+        const previous = this.cwd(cwd);
+        this.write(this.cwdFile(cwd), {
+            branch: previous?.branch ?? null,
+            dirty: previous?.dirty ?? 0,
+            at: previous?.at ?? 0,
+            headMtime: previous?.headMtime ?? 0,
+            indexMtime: previous?.indexMtime ?? 0,
+            ...previous,
+            ...patch,
+        });
+    }
+
     /** A named scalar cache keyed by a source file's mtime, e.g. the host's autocompact flag. */
     keyed<T>(name: string, sourceMtime: number): T | null {
         const entry = this.read<{ mtime: number; value: T }>(join(this.dir, `${name}.json`));
@@ -138,4 +157,13 @@ export class StatuslineCache {
             logger.debug({ removed, dir: this.dir }, "statusline cache pruned old sessions");
         }
     }
+}
+
+/** A throwaway cache directory for `preview` / `configure`. Never the live session dir. */
+export function isolatedPreviewCacheDir(): string {
+    return mkdtempSync(join(tmpdir(), "statusline-preview-"));
+}
+
+export function isolatedPreviewCache(dir = isolatedPreviewCacheDir()): StatuslineCache {
+    return new StatuslineCache(dir);
 }

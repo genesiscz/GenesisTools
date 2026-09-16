@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { env } from "@genesiscz/utils/env";
 import { stripAnsi } from "@genesiscz/utils/string";
 
 /** Characters on screen, which is what `wc -m` counted in the shell version. */
@@ -39,7 +40,7 @@ export function terminalWidth(fallback: number): number {
         return process.stderr.columns;
     }
 
-    const fromEnv = Number.parseInt(process.env.COLUMNS ?? "", 10);
+    const fromEnv = Number.parseInt(env.get("COLUMNS") ?? "", 10);
 
     if (Number.isFinite(fromEnv) && fromEnv > 0) {
         return fromEnv;

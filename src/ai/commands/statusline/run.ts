@@ -8,6 +8,7 @@
  * and nothing else. `tools ai statusline run` is the same code behind the ordinary door.
  */
 import { claudeCodeStatusline } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
+import type { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
 import { loadStatuslineConfig } from "@genesiscz/utils/ai/statusline/config";
 import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
 import type { StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
@@ -30,8 +31,8 @@ export interface RunStatuslineOptions {
 }
 
 /** The host feature for a host, or null when that host has no statusline hook yet. */
-export function featureFor(host: StatuslineHost): StatuslineFeature | null {
-    return host === "claude" ? claudeCodeStatusline() : null;
+export function featureFor(host: StatuslineHost, cache?: StatuslineCache): StatuslineFeature | null {
+    return host === "claude" ? claudeCodeStatusline(cache) : null;
 }
 
 /** Render once and return the lines; the caller decides how to print and when to exit. */
@@ -71,7 +72,7 @@ async function readPayload(stdinFile?: string): Promise<Record<string, unknown>>
     return parsed as Record<string, unknown>;
 }
 
-function parseHostArgs(argv: string[]): RunStatuslineOptions {
+export function parseHostArgs(argv: string[]): RunStatuslineOptions {
     let host: StatuslineHost = "claude";
     let stdinFile: string | undefined;
     let columns: number | undefined;
@@ -99,16 +100,20 @@ function parseHostArgs(argv: string[]): RunStatuslineOptions {
     };
 }
 
-if (import.meta.main) {
-    const options = parseHostArgs(Bun.argv.slice(2));
+export async function main(argv: string[] = Bun.argv.slice(2)): Promise<void> {
+    const options = parseHostArgs(argv);
 
     try {
-        const { lines, settled } = await runStatusline(options);
+        const { lines } = await runStatusline(options);
         out.print(lines.join("\n"));
-        await settled;
+        await out.flush();
         process.exit(0);
     } catch (error) {
         logger.error({ err: error }, "statusline render failed");
         process.exit(1);
     }
+}
+
+if (import.meta.main) {
+    await main();
 }
