@@ -182,7 +182,7 @@ After the brief is written and the lead listener is confirmed alive when bus del
 ```text
 Agent(
   subagent_type: "genesis-tools:agent-driver",
-  model: "sonnet",              // "opus" per gt:handoff-to § Driver-model choice
+  model: "sonnet",              // "opus" per gt:handoff-to § Driver versus execution model
   run_in_background: true,
   prompt: "BACKEND: codex\nNAME: <task>\nCWD: <abs path>\nBRIEF_FILE: /tmp/codex-<task>-brief.md\nWRITE_POLICY: ask\nVERIFY_CMD: <command + expected output>\nSCOPE: <paths the worker may touch>\nESCALATE: <what must come back to the human>"
 )
