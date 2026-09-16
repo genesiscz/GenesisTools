@@ -185,3 +185,48 @@ describe("tsx and plain js", () => {
         expect(rules('const p = "/tmp/x";', "README.md")).toEqual([]);
     });
 });
+
+describe("no-sub-100ms-interval", () => {
+    test("flags a timer under 100 ms and leaves 100 ms and above alone", () => {
+        expect(rules("setInterval(tick, 50);")).toContain("no-sub-100ms-interval");
+        expect(rules("const t = setInterval(() => poll(), 20);")).toContain("no-sub-100ms-interval");
+        expect(rules("globalThis.setInterval(tick, 0);")).toContain("no-sub-100ms-interval");
+        expect(rules("setInterval(tick, 100);")).toEqual([]);
+        expect(rules("setInterval(tick, 2_000);")).toEqual([]);
+        expect(rules("setTimeout(tick, 20);")).toEqual([]);
+    });
+
+    test("a computed delay is not judged, and a suppression names the reason", () => {
+        expect(rules("setInterval(tick, opts.pollMs);")).toEqual([]);
+        expect(rules("// lint-rules-ignore: spinner frame rate\nsetInterval(spin, 80);")).toEqual([]);
+    });
+});
+
+describe("no-sync-poll-loop", () => {
+    test("flags sleepSync inside any loop, bare or on Bun", () => {
+        expect(rules("while (!done()) { Bun.sleepSync(50); }")).toContain("no-sync-poll-loop");
+        expect(rules("for (let i = 0; i < 5; i++) { sleepSync(50); }")).toContain("no-sync-poll-loop");
+        expect(rules("do { Bun.sleepSync(1); } while (busy());")).toContain("no-sync-poll-loop");
+        expect(rules("for (const step of steps) { run(step); if (gap) { Bun.sleepSync(gap); } }")).toContain(
+            "no-sync-poll-loop"
+        );
+    });
+
+    test("leaves a one-off sleepSync and an async loop alone", () => {
+        expect(rules("Bun.sleepSync(400);")).toEqual([]);
+        expect(rules("async function wait() { while (!done()) { await Bun.sleep(50); } }")).toEqual([]);
+        expect(rules("// lint-rules-ignore: bounded retry\nfor (;;) { Bun.sleepSync(5); }")).toEqual([]);
+    });
+});
+
+describe("swift-wait-without-timeout", () => {
+    const SWIFT = "native/x/Sources/main.swift";
+
+    test("flags a bare wait and accepts one with a timeout", () => {
+        expect(rules("let r = sem.wait()", SWIFT)).toContain("swift-wait-without-timeout");
+        expect(rules("group.wait( )", SWIFT)).toContain("swift-wait-without-timeout");
+        expect(rules("if done.wait(timeout: .now() + 10) == .timedOut {", SWIFT)).toEqual([]);
+        expect(rules("// sem.wait() would hang here", SWIFT)).toEqual([]);
+        expect(rules("// lint-rules-ignore: main thread must block\nsem.wait()", SWIFT)).toEqual([]);
+    });
+});

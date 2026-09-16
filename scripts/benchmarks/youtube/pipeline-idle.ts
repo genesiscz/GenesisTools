@@ -65,6 +65,7 @@ interface BurstSample {
     enqueueMs: number;
     firstStartMs: number;
     drainMs: number;
+    cpuTimeMs: number;
     cpuPercent: number;
     peakWorkers: number;
     peakWorkersSource: string;
@@ -239,6 +240,7 @@ async function measureBurst(pipeline: Pipeline, count: number): Promise<BurstSam
 
     const workerCount = workerCountReader(pipeline);
     let peakWorkers = workerCount.read();
+    // lint-rules-ignore: benchmark probe; 10 ms is the resolution the peak-worker count needs
     const sampler = setInterval(() => {
         peakWorkers = Math.max(peakWorkers, workerCount.read());
     }, 10);

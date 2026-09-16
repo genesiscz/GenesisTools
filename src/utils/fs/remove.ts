@@ -48,6 +48,7 @@ export function removeRecursive(path: string, maxAttempts = 20, delayMs = 25): v
                 return;
             }
 
+            // lint-rules-ignore: bounded retry after EBUSY/ENOTEMPTY; every caller is synchronous
             Bun.sleepSync(delayMs);
         }
     }

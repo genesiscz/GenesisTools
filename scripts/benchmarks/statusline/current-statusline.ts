@@ -97,11 +97,12 @@ interface RepoTarget {
     path: string;
 }
 
+const PROJECTS_DIR = join(homedir(), "Tresors", "Projects");
 const DEFAULT_REPOS: RepoTarget[] = [
-    { name: "GenesisTools", path: "/Users/Martin/Tresors/Projects/GenesisTools" },
-    { name: "GenesisClaude", path: "/Users/Martin/Tresors/Projects/GenesisClaude" },
-    { name: "col-fe", path: "/Users/Martin/Tresors/Projects/CEZ/col-fe" },
-    { name: "GenesisBrain", path: "/Users/Martin/Tresors/Projects/GenesisBrain" },
+    { name: "GenesisTools", path: join(PROJECTS_DIR, "GenesisTools") },
+    { name: "GenesisClaude", path: join(PROJECTS_DIR, "GenesisClaude") },
+    { name: "col-fe", path: join(PROJECTS_DIR, "CEZ", "col-fe") },
+    { name: "GenesisBrain", path: join(PROJECTS_DIR, "GenesisBrain") },
 ];
 
 interface TranscriptChoice {
