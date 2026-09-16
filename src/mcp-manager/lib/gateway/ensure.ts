@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { gatewayListen } from "../auth/project.ts";
 import { gatewayHealth } from "./health.ts";
 import { type GatewayHandle, startGatewayServer } from "./server.ts";
-import { startGatewayService } from "./service.ts";
+import { GATEWAY_LAUNCHD_LABEL, gatewayLogFile, isGatewayServiceInstalled, startGatewayService } from "./service.ts";
 
 /** Re-exported so every existing importer of the probe keeps its import path. */
 export { gatewayHealth };
@@ -46,14 +46,19 @@ async function startOnce(config: UnifiedMCPConfig, listen: { host: string; port:
         throw new Error(`port ${listen.port} is in use by another process. Run tools mcp-manager gateway status`);
     }
 
-    // A launchd agent outlives this process; the in-process listener below does not, and
-    // dies the moment the CLI that called us exits. Prefer the supervised one whenever
-    // the user installed it, and fall through when it is absent or does not come up, so
-    // a broken agent degrades to the old behaviour rather than failing the caller.
-    if (await startGatewayService(listen)) {
-        logger.info({ port: listen.port }, "mcp gateway started by its launchd agent");
+    // A launchd agent outlives this process; the in-process listener below does not.
+    // Once the user installed the agent it is the only starter — binding here would
+    // race KeepAlive on the same port.
+    if (isGatewayServiceInstalled()) {
+        if (await startGatewayService(listen)) {
+            logger.info({ port: listen.port }, "mcp gateway started by its launchd agent");
 
-        return;
+            return;
+        }
+
+        throw new Error(
+            `launchd agent ${GATEWAY_LAUNCHD_LABEL} is installed but /health is not ok. See ${gatewayLogFile()}`
+        );
     }
 
     const handle = await startGatewayServer(config, {

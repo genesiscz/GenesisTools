@@ -61,6 +61,15 @@ export async function gatewayStart(opts: { port?: string } = {}): Promise<void> 
         return;
     }
 
+    if (isGatewayServiceInstalled()) {
+        logger.error("a launchd agent owns this gateway; foreground start would race KeepAlive");
+        ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "up"] })}`);
+        ui.dim(`    log: ${gatewayLogFile()}`);
+        process.exitCode = 1;
+
+        return;
+    }
+
     const handle = await startGatewayServer(config, {
         hostname: listen.host,
         port,
@@ -85,6 +94,11 @@ export async function gatewayStart(opts: { port?: string } = {}): Promise<void> 
 }
 
 export async function gatewayStop(): Promise<void> {
+    if (isGatewayServiceInstalled()) {
+        ui.warn("a launchd agent owns this gateway — stopping this process does not unload it");
+        ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "uninstall"] })}`);
+    }
+
     // `started` is a module-level array in THIS process, so a fresh CLI invocation can
     // only ever stop a gateway it started itself. It printed "stopped" regardless,
     // which is the answer that made a wedged gateway look unfixable.
@@ -181,6 +195,10 @@ export async function gatewayInstall(): Promise<void> {
     }
 
     logger.error(`the agent is loaded but /health says ${health}`);
+    ui.dim(`    log: ${gatewayLogFile()}`);
+    await uninstallGatewayService();
+    ui.warn(`removed ${GATEWAY_LAUNCHD_LABEL} after a failed health check`);
+    ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "uninstall"] })}`);
     process.exitCode = 1;
 }
 

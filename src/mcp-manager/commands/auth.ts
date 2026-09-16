@@ -21,7 +21,7 @@ import { deleteServerTokens } from "../lib/auth/secrets.ts";
 import { deleteAuthStatus, readAuthStatus } from "../lib/auth/status.ts";
 import { accessTokenForRequest, peekAccessToken } from "../lib/auth/tokens.ts";
 import { ensureGatewayUp } from "../lib/gateway/ensure.ts";
-import { clearPendingLogin, type PendingLogin, writePendingLogin } from "../lib/gateway/login-state.ts";
+import { clearPendingLogin, writePendingLogin } from "../lib/gateway/login-state.ts";
 
 export async function authLogin(
     serverName: string | undefined,
@@ -80,8 +80,7 @@ export async function authLogin(
     // Recorded BEFORE discovery and registration, not when the URL appears: the gateway
     // decides whether to start a login by this record, and a request arriving during the
     // registration round trip would otherwise start a second one.
-    const pending: PendingLogin = { server: name, pid: process.pid, startedAt: Date.now() };
-    writePendingLogin(pending);
+    writePendingLogin({ server: name, pid: process.pid });
 
     try {
         const result = await loginMcpServer({
@@ -90,17 +89,19 @@ export async function authLogin(
             device: opts.device,
             clientName,
             onAuthorizationUrl: (url) => {
-                writePendingLogin({ ...pending, url });
+                writePendingLogin({ server: name, pid: process.pid, url });
             },
         });
         const current = config.mcpServers[name];
         setGlobalOptions({ yes: true });
         current.auth = {
+            ...current.auth,
             kind: "oauth",
             gateway: true,
             resource: result.resource,
             authorizationServer: result.issuer,
             tokenEndpoint: result.tokenEndpoint,
+            clientName,
         };
         await writeUnifiedConfig(config);
         await ensureGatewayUp(config);

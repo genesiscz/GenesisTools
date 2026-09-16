@@ -1,13 +1,14 @@
 /**
  * The real login the gateway starts when a server has no usable token.
  *
- * It runs as a DETACHED child (`tools mcp-manager auth login <server>` in its own
- * session), never inside the gateway. The gateway is a supervised service and restarts
- * whenever it crashes, is kickstarted after a code change, or KeepAlive respawns it; an
- * in-process login died with it, so an approval the user had just clicked landed on a
- * dead callback port with "connection refused". Observed 2026-09-16 18:4x. A child in
- * its own session survives every one of those, and the pending-login record it writes
- * lets the restarted gateway find it instead of opening a second browser window.
+ * It runs as a DETACHED child (`src/mcp-manager/index.ts auth login <server>` in its
+ * own session), never inside the gateway and never through the `tools` wrapper. The
+ * gateway is a supervised service and restarts whenever it crashes, is kickstarted
+ * after a code change, or KeepAlive respawns it; an in-process login died with it,
+ * so an approval the user had just clicked landed on a dead callback port with
+ * "connection refused". Observed 2026-09-16 18:4x. A child in its own session
+ * survives every one of those, and the pending-login record the parent writes with
+ * `child.pid` lets the restarted gateway find it instead of opening a second window.
  *
  * Kept out of server.ts so the request handler stays a request handler, and so the
  * launcher's guards can be tested without a browser, a vault or an authorization server.
@@ -15,38 +16,64 @@
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import { env } from "@genesiscz/utils/env";
+import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
-import { createLoginLauncher, type LoginLauncher } from "./auto-login.ts";
-import { readPendingLogin } from "./login-state.ts";
+import { serverAuth } from "../auth/policy.ts";
+import { autoLoginRefusal, createLoginLauncher, type LoginLauncher } from "./auto-login.ts";
+import { clearStalePendingLogin, pendingLoginPath, readPendingLogin, writePendingLogin } from "./login-state.ts";
 import { gatewayRepoRoot } from "./service.ts";
 
 /** How long the child may take to register a client and produce its URL. */
 const URL_WAIT_MS = 30_000;
-const URL_POLL_MS = 250;
 
 export function loginLogFile(server: string): string {
     return join(env.tools.getHome(), ".genesis-tools", "logs", `mcp-login-${encodeURIComponent(server)}.log`);
 }
 
+export function loginSpawnArgs(server: string, clientName?: string): string[] {
+    const args = [join(gatewayRepoRoot(), "src/mcp-manager/index.ts"), "auth", "login", server];
+
+    if (clientName) {
+        args.push("--client-name", clientName);
+    }
+
+    return args;
+}
+
 async function runLogin(server: string, report: (url: string) => void): Promise<void> {
+    const config = await readUnifiedConfig();
+    const unified = config.mcpServers[server];
+
+    if (!unified) {
+        throw new Error(`Unknown server '${server}'`);
+    }
+
+    const refusal = autoLoginRefusal(server, unified);
+
+    if (refusal) {
+        throw new Error(refusal);
+    }
+
+    const clientName = serverAuth(unified)?.clientName?.trim();
     const logFile = loginLogFile(server);
     mkdirSync(dirname(logFile), { recursive: true });
     const fd = openSync(logFile, "a");
-    // `bun` explicitly and the repo's entrypoint by absolute path, for the same reason the
-    // launchd plist does: this process may itself be running under launchd, with no
-    // shell and no `tools` on PATH.
-    const child = spawn(process.execPath, [join(gatewayRepoRoot(), "tools"), "mcp-manager", "auth", "login", server], {
+    const child = spawn(process.execPath, loginSpawnArgs(server, clientName), {
         cwd: gatewayRepoRoot(),
         detached: true,
         stdio: ["ignore", fd, fd],
-        // TOOLS_DETACHED tells the `tools` wrapper not to run its orphan watchdog,
-        // which SIGTERMs the tool two seconds after its parent dies. Without it the
-        // login died with every gateway restart, session or no session.
-        env: { ...process.env, TOOLS_DETACHED: "1" },
+        env: env.withoutProxy(),
     });
     closeSync(fd);
+
+    if (child.pid === undefined) {
+        throw new Error(`auth login ${server} spawned without a pid; see ${logFile}`);
+    }
+
+    writePendingLogin({ server, pid: child.pid });
     child.unref();
     logger.info({ server, pid: child.pid, logFile }, "gateway spawned a detached MCP login");
 
@@ -62,29 +89,44 @@ async function runLogin(server: string, report: (url: string) => void): Promise<
             reject(new Error(`auth login ${server} exited with ${signal ?? `code ${code}`}; see ${logFile}`));
         });
     });
-    // Surface a fast failure (bad server, DCR refused) through `exited` rather than as
-    // an unhandled rejection while the URL poll below is still running.
     let failure: unknown;
     exited.catch((error) => {
         failure = error;
     });
 
-    const deadline = Date.now() + URL_WAIT_MS;
-
-    while (Date.now() < deadline) {
-        const url = readPendingLogin(server)?.url;
-
-        if (url) {
-            report(url);
-            await notifyLoginUrl(server, url);
-            break;
+    const controller = new AbortController();
+    const abortWatch = (): void => {
+        if (!controller.signal.aborted) {
+            controller.abort();
         }
+    };
+    child.once("exit", abortWatch);
+    child.once("error", abortWatch);
 
-        if (failure) {
-            break;
-        }
+    try {
+        await watchFileFeed({
+            path: pendingLoginPath(server),
+            deadlineAt: Date.now() + URL_WAIT_MS,
+            signal: controller.signal,
+            onChange: async () => {
+                if (failure) {
+                    return { done: true };
+                }
 
-        await Bun.sleep(URL_POLL_MS);
+                const url = readPendingLogin(server)?.url;
+
+                if (url) {
+                    report(url);
+                    await notifyLoginUrl(server, url);
+
+                    return { done: true };
+                }
+            },
+        });
+    } finally {
+        child.off("exit", abortWatch);
+        child.off("error", abortWatch);
+        abortWatch();
     }
 
     await exited;
@@ -128,7 +170,11 @@ async function notifyLoginUrl(server: string, url: string): Promise<void> {
 export const gatewayLoginLauncher: LoginLauncher = createLoginLauncher({
     login: runLogin,
     notify: notifyLogin,
-    pending: (server) => readPendingLogin(server),
+    pending: (server) => {
+        clearStalePendingLogin(server);
+
+        return readPendingLogin(server);
+    },
     onError: (server, error) => {
         logger.warn({ server, error }, "gateway-initiated MCP login failed");
     },

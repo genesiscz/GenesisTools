@@ -4,7 +4,7 @@ import { presentAuthorizationUrl } from "@genesiscz/utils/ai/oauth/login-ui";
 import { generatePkcePair } from "@genesiscz/utils/ai/oauth/pkce";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { pollDeviceTokenResponse, startDeviceFlow } from "@genesiscz/utils/oauth/device-flow";
+import { deviceVerificationUrl, pollDeviceTokenResponse, startDeviceFlow } from "@genesiscz/utils/oauth/device-flow";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
 import { discoverMcp } from "./discovery.ts";
 import { mcpFetch, readJsonRecord } from "./fetch.ts";
@@ -248,7 +248,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
                 tokenUrl: as.token_endpoint,
             };
             const started = await startDeviceFlow(deviceConfig);
-            await options.onAuthorizationUrl?.(started.verification_uri);
+            await options.onAuthorizationUrl?.(deviceVerificationUrl(started));
             // `started.expires_in` is the device_code's lifetime and only bounds the
             // poll. The access token's own lifetime comes back with the token, and
             // storing the former as the latter expired a live token within minutes.

@@ -13,6 +13,10 @@
  *   cooldown    a FAILED login is not retried immediately, or a client that reconnects
  *               every second opens a browser tab every second
  */
+import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { serverAuth } from "../auth/policy.ts";
+import { oauthClientPresetFor } from "../auth/presets.ts";
+
 export type LoginRequestOutcome = "started" | "in-flight" | "cooling-down";
 
 export interface LoginLauncherDeps {
@@ -43,6 +47,26 @@ export interface LoginLauncher {
 }
 
 const DEFAULT_COOLDOWN_MS = 60_000;
+
+/**
+ * Auto-login cannot finish unattended when DCR needs an interactive client_name
+ * (Figma) and none is stored on the server. Callers must not claim a browser is opening.
+ */
+export function autoLoginRefusal(name: string, server: UnifiedMCPServerConfig): string | undefined {
+    const preset = oauthClientPresetFor(server.url ?? server.httpUrl);
+
+    if (!preset) {
+        return undefined;
+    }
+
+    const stored = serverAuth(server)?.clientName?.trim();
+
+    if (stored) {
+        return undefined;
+    }
+
+    return `${name} needs an interactive client_name. Run tools mcp-manager auth login ${name}`;
+}
 
 export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {
     const now = deps.now ?? Date.now;
@@ -83,6 +107,7 @@ export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {
                     await deps.notify(server);
                     await deps.login(server, (url) => authorizationUrls.set(server, url));
                     blockedUntil.delete(server);
+                    authorizationUrls.delete(server);
                 } catch (error) {
                     // A failed login starts the cooldown; a successful one does not, so a
                     // token that expires later can be renewed without waiting this out.

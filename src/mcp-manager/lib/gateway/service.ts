@@ -12,7 +12,8 @@
  * every request, so a config change needs no restart here and no reconnect in a harness
  * that is already connected.
  */
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import {
     installLaunchd,
     isLaunchdInstalled,
@@ -38,9 +39,25 @@ export function isGatewayServiceInstalled(): boolean {
     return isLaunchdInstalled(GATEWAY_LAUNCHD_LABEL);
 }
 
-/** This checkout's root, four levels up from lib/gateway. */
+/** This checkout's root, found by walking up until `tools` and `package.json` both exist. */
 export function gatewayRepoRoot(): string {
-    return resolve(import.meta.dir, "..", "..", "..", "..");
+    let dir = resolve(import.meta.dir);
+
+    for (let hop = 0; hop < 12; hop++) {
+        if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "tools"))) {
+            return dir;
+        }
+
+        const parent = dirname(dir);
+
+        if (parent === dir) {
+            break;
+        }
+
+        dir = parent;
+    }
+
+    throw new Error(`could not find the GenesisTools repo root from ${import.meta.dir}`);
 }
 
 /**
@@ -102,8 +119,9 @@ export async function waitForGatewayHealth(
 }
 
 /**
- * Bring the launchd-managed gateway up. Returns false when no agent is installed, so
- * the caller can fall back to an in-process listener instead of failing.
+ * Bring the launchd-managed gateway up. Returns false when no agent is installed, or
+ * when the agent is installed but `/health` is not ok. Callers that see an installed
+ * agent must not bind an in-process listener on the same port.
  */
 export async function startGatewayService(listen: { host: string; port: number }): Promise<boolean> {
     if (!isGatewayServiceInstalled()) {

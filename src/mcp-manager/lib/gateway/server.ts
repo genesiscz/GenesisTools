@@ -1,4 +1,4 @@
-import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
+import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
@@ -6,6 +6,7 @@ import { isGatewayOauth, serverAuth } from "../auth/policy.ts";
 import { gatewayBaseUrl, gatewayListen } from "../auth/project.ts";
 import { ensureGatewayClientToken } from "../auth/secrets.ts";
 import { accessTokenForRequest } from "../auth/tokens.ts";
+import { autoLoginRefusal, type LoginLauncher } from "./auto-login.ts";
 import { headersToClient, headersToUpstream, localTokenMatches, loopbackHostOk } from "./headers.ts";
 import { gatewayLoginLauncher } from "./login-runner.ts";
 
@@ -45,23 +46,33 @@ function jsonRpcError(message: string, status = 401): Response {
  * its own "Authenticate" button cannot use it here, because that button registers an
  * OAuth client against the GATEWAY's origin, which serves no metadata and answers 404.
  */
-function loginRequiredResponse(name: string): Response {
-    const outcome = gatewayLoginLauncher.request(name);
+function loginRequiredResponse(name: string, server: UnifiedMCPServerConfig, launcher: LoginLauncher): Response {
+    const refusal = autoLoginRefusal(name, server);
+
+    if (refusal) {
+        logger.info({ server: name }, "gateway skipped auto-login that cannot finish unattended");
+
+        return jsonRpcError(refusal);
+    }
+
+    const outcome = launcher.request(name);
     logger.info({ server: name, outcome }, "gateway requested an MCP login");
+
+    const url = launcher.authorizationUrl(name);
+    const link = url ? ` Reopen it here: ${url}` : "";
 
     if (outcome === "cooling-down") {
         return jsonRpcError(
-            `${name} needs a login and the last attempt failed. Run tools mcp-manager auth login ${name}`
+            `${name} needs a login and the last attempt failed. Run tools mcp-manager auth login ${name}${link}`
         );
     }
 
     const lead = outcome === "started" ? "a browser window is opening" : "a browser window is already open";
-    // Known only on a repeat request: the first one is answered before the login has
-    // built its URL. The notification carries the link in both cases.
-    const url = gatewayLoginLauncher.authorizationUrl(name);
-    const link = url ? ` Reopen it here: ${url}` : "";
+    // The first response is answered before the login has built its URL. A stale
+    // authorize link from a previous success must not be echoed here.
+    const startedLink = outcome === "started" ? "" : link;
 
-    return jsonRpcError(`${name} needs a login: ${lead}. Authorize it, then reconnect this server.${link}`);
+    return jsonRpcError(`${name} needs a login: ${lead}. Authorize it, then reconnect this server.${startedLink}`);
 }
 
 function serverNameFromPath(pathname: string): string | undefined {
@@ -89,11 +100,17 @@ export function isLoopbackBindHost(host: string): boolean {
 
 export async function startGatewayServer(
     config: UnifiedMCPConfig,
-    opts: { port?: number; hostname?: string; readConfig?: () => Promise<UnifiedMCPConfig> } = {}
+    opts: {
+        port?: number;
+        hostname?: string;
+        readConfig?: () => Promise<UnifiedMCPConfig>;
+        loginLauncher?: LoginLauncher;
+    } = {}
 ): Promise<GatewayHandle> {
     const listen = gatewayListen(config);
     const hostname = opts.hostname ?? listen.host;
     const port = opts.port ?? listen.port;
+    const launcher = opts.loginLauncher ?? gatewayLoginLauncher;
 
     // loopbackHostOk only inspects the request's Host header, which any LAN client can
     // forge. The bind address is the real boundary: a gateway.listen.host of 0.0.0.0
@@ -161,7 +178,7 @@ export async function startGatewayServer(
             const tokenEndpoint = auth?.tokenEndpoint;
 
             if (!tokenEndpoint) {
-                return loginRequiredResponse(name);
+                return loginRequiredResponse(name, unified, launcher);
             }
 
             let accessToken: string;
@@ -175,7 +192,7 @@ export async function startGatewayServer(
             } catch (error) {
                 logger.warn({ server: name, error }, "gateway could not obtain an upstream token");
 
-                return loginRequiredResponse(name);
+                return loginRequiredResponse(name, unified, launcher);
             }
 
             const upstream = new URL(upstreamUrl);
