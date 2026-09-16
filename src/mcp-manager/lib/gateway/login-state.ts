@@ -15,12 +15,15 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 
 export interface PendingLogin {
     server: string;
     pid: number;
     url?: string;
     startedAt: number;
+    /** Command line captured at write time so a recycled pid cannot look pending. */
+    command?: string;
 }
 
 export function pendingLoginDir(): string {
@@ -31,23 +34,11 @@ export function pendingLoginPath(server: string): string {
     return join(pendingLoginDir(), `${encodeURIComponent(server)}.json`);
 }
 
-export function pidAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-
-        return true;
-    } catch (error) {
-        // EPERM means the process exists but belongs to someone else. A login this user
-        // did not start cannot be one of ours, so it is not "pending" for our purposes.
-        logger.debug({ pid, error }, "pending-login pid is not alive");
-
-        return false;
-    }
-}
-
 export function writePendingLogin(state: PendingLogin): void {
     mkdirSync(pendingLoginDir(), { recursive: true });
-    writeFileSync(pendingLoginPath(state.server), SafeJSON.stringify(state, null, 2), { mode: 0o600 });
+    const command = state.command ?? readProcessCommand(state.pid) ?? undefined;
+    const record: PendingLogin = command === undefined ? state : { ...state, command };
+    writeFileSync(pendingLoginPath(state.server), SafeJSON.stringify(record, null, 2), { mode: 0o600 });
 }
 
 export function clearPendingLogin(server: string): void {
@@ -84,8 +75,12 @@ export function readPendingLogin(server: string): PendingLogin | undefined {
         return undefined;
     }
 
-    if (!pidAlive(parsed.pid)) {
-        logger.info({ server, pid: parsed.pid }, "pending-login process is gone; removing its record");
+    const identity = classifyPid(parsed.pid, parsed.command);
+    if (identity.status === "dead" || identity.status === "foreign") {
+        logger.info(
+            { server, pid: parsed.pid, status: identity.status },
+            "pending-login process is gone or recycled; removing its record"
+        );
         clearPendingLogin(server);
 
         return undefined;
@@ -105,6 +100,7 @@ function isPendingLogin(value: unknown): value is PendingLogin {
         typeof record.server === "string" &&
         typeof record.pid === "number" &&
         typeof record.startedAt === "number" &&
-        (record.url === undefined || typeof record.url === "string")
+        (record.url === undefined || typeof record.url === "string") &&
+        (record.command === undefined || typeof record.command === "string")
     );
 }

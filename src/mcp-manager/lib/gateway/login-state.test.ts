@@ -18,12 +18,14 @@ describe("pending-login records", () => {
             startedAt: 1_000,
         });
 
-        expect(readPendingLogin(SERVER)).toEqual({
+        const pending = readPendingLogin(SERVER);
+        expect(pending).toMatchObject({
             server: SERVER,
             pid: process.pid,
             url: "https://issuer.example/authorize?state=x",
             startedAt: 1_000,
         });
+        expect(typeof pending?.command).toBe("string");
     });
 
     test("no file means no pending login", () => {
