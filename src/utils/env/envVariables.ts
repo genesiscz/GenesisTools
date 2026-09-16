@@ -25,6 +25,8 @@ const GITHUB_TOKEN_KEYS = ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PERSONAL_ACCESS_T
 const INSTAGRAM_SESSION_KEYS = ["IG_SESSIONID", "INSTAGRAM_SESSIONID"] as const;
 const EDITOR_KEYS = ["VISUAL", "EDITOR"] as const;
 const LOCALE_PREFERENCE_KEYS = ["LC_TIME", "LANG", "LC_ALL"] as const;
+/** Same keys `~/.config/shell/pm-no-proxy.zsh` unsets. Bun snapshots these at process start. */
+const PROXY_ENV_KEYS = ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"] as const;
 
 function xaiApiKey(): string | undefined {
     return getFirstValue(XAI_API_KEYS);
@@ -45,6 +47,20 @@ export const env = {
 
     /** Shallow copy of process.env for child spawn inheritance and debug dumps. */
     getProcessEnv: snapshotEnv,
+
+    /**
+     * Spawn env with HTTP(S) proxy keys stripped. Grok's CLI wrapper sets a socks
+     * proxy that Bun rejects; the `tools` launcher and detached children share this.
+     */
+    withoutProxy(extra?: Record<string, string | undefined>): NodeJS.ProcessEnv {
+        const spawnEnv: NodeJS.ProcessEnv = { ...snapshotEnv(), ...extra };
+
+        for (const key of PROXY_ENV_KEYS) {
+            delete spawnEnv[key];
+        }
+
+        return spawnEnv;
+    },
 
     // ── Top-level shortcuts (most common) ──────────────────────────────────
     getXAIApiKey: xaiApiKey,

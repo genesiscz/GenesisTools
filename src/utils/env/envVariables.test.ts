@@ -71,6 +71,24 @@ describe("env", () => {
         expect(env.github.getCopilotTokenEnvKey()).toBe("COPILOT_GITHUB_TOKEN");
     });
 
+    it("withoutProxy strips proxy keys from the spawn env", () => {
+        const previous = env.get("HTTPS_PROXY");
+        env.testing.set("HTTPS_PROXY", "socks5h://127.0.0.1:9");
+
+        try {
+            const spawnEnv = env.withoutProxy({ INIT_CWD: "/tmp" });
+            expect(spawnEnv.HTTPS_PROXY).toBeUndefined();
+            expect(spawnEnv.https_proxy).toBeUndefined();
+            expect(spawnEnv.INIT_CWD).toBe("/tmp");
+        } finally {
+            if (previous === undefined) {
+                env.testing.unset("HTTPS_PROXY");
+            } else {
+                env.testing.set("HTTPS_PROXY", previous);
+            }
+        }
+    });
+
     it("resolves tools home with fallback to homedir", () => {
         const home = join(tmpdir(), "gt-home");
         env.testing.set("GENESIS_TOOLS_HOME", home);

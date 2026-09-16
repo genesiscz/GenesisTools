@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type {
     DeviceCodeResponse,
     DeviceFlowCallbacks,
@@ -82,6 +83,7 @@ export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceC
         },
         body: new URLSearchParams({
             client_id: config.clientId,
+            ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
             scope: config.scope,
         }),
     });
@@ -94,6 +96,7 @@ export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceC
     const device_code = record.device_code;
     const user_code = record.user_code;
     const verification_uri = record.verification_uri;
+    const verification_uri_complete = record.verification_uri_complete;
     const interval = record.interval;
     const expires_in = record.expires_in;
 
@@ -111,9 +114,29 @@ export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceC
         device_code,
         user_code,
         verification_uri,
+        ...(typeof verification_uri_complete === "string" ? { verification_uri_complete } : {}),
         interval,
         expires_in,
     };
+}
+
+/** The URL a human (or a pending-login record) should open, including the user code. */
+export function deviceVerificationUrl(started: DeviceCodeResponse): string {
+    if (started.verification_uri_complete) {
+        return started.verification_uri_complete;
+    }
+
+    try {
+        const url = new URL(started.verification_uri);
+        url.searchParams.set("user_code", started.user_code);
+
+        return url.toString();
+    } catch (error) {
+        logger.debug({ error, uri: started.verification_uri }, "device verification_uri was not a URL");
+        const join = started.verification_uri.includes("?") ? "&" : "?";
+
+        return `${started.verification_uri}${join}user_code=${encodeURIComponent(started.user_code)}`;
+    }
 }
 
 /** The access token only. Use pollDeviceTokenResponse when you need its expiry. */
@@ -163,6 +186,7 @@ export async function pollDeviceTokenResponse(args: {
             },
             body: new URLSearchParams({
                 client_id: config.clientId,
+                ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
                 device_code: deviceCode,
                 grant_type: "urn:ietf:params:oauth:grant-type:device_code",
             }),

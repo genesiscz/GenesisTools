@@ -2,12 +2,21 @@ export interface DeviceCodeResponse {
     device_code: string;
     user_code: string;
     verification_uri: string;
+    /** RFC 8628 optional URL that already embeds `user_code`. */
+    verification_uri_complete?: string;
     interval: number;
     expires_in: number;
 }
 
 export interface DeviceFlowConfig {
     clientId: string;
+    /**
+     * Set only when dynamic registration produced a CONFIDENTIAL client. An
+     * authorization server that registered the client with client_secret_post refuses
+     * both the device-authorization request and the token poll without it, with
+     * `invalid_client: Missing client_secret`.
+     */
+    clientSecret?: string;
     scope: string;
     deviceCodeUrl: string;
     tokenUrl: string;

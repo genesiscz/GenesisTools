@@ -2,52 +2,42 @@
  * The pending-login record: which process is holding an OAuth login open for a server,
  * and the URL the user has to visit.
  *
- * Written by `auth login` itself, so every login is visible here, whether a person typed
- * the command or the gateway spawned it. Read by the gateway before it starts a login,
- * which is what stops a RESTARTED gateway from opening a second browser window while the
- * first login is still waiting for its callback in a process that outlived the restart.
- *
- * A record whose pid is dead is stale, never authoritative: a login killed by SIGKILL
- * gets no chance to clear its own file.
+ * Written by the gateway parent at spawn (so a restart during child startup cannot
+ * open a second window) and by `auth login` itself. Identity is a real PidRecord:
+ * command line plus process start time, classified with inspectPidFile. Readers
+ * never delete; sweep stale files through {@link clearStalePendingLogin}.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { buildPidRecord, inspectPidFile, type PidRecord } from "@genesiscz/utils/process/pidfile";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { mcpManagerDir } from "../auth/paths.ts";
 
 export interface PendingLogin {
     server: string;
-    pid: number;
     url?: string;
-    startedAt: number;
+    identity: PidRecord;
 }
 
 export function pendingLoginDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "mcp-manager", "logins");
+    return join(mcpManagerDir(), "logins");
 }
 
 export function pendingLoginPath(server: string): string {
     return join(pendingLoginDir(), `${encodeURIComponent(server)}.json`);
 }
 
-export function pidAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-
-        return true;
-    } catch (error) {
-        // EPERM means the process exists but belongs to someone else. A login this user
-        // did not start cannot be one of ours, so it is not "pending" for our purposes.
-        logger.debug({ pid, error }, "pending-login pid is not alive");
-
-        return false;
-    }
-}
-
-export function writePendingLogin(state: PendingLogin): void {
-    mkdirSync(pendingLoginDir(), { recursive: true });
-    writeFileSync(pendingLoginPath(state.server), SafeJSON.stringify(state, null, 2), { mode: 0o600 });
+export function writePendingLogin(state: { server: string; url?: string; pid?: number }): void {
+    mkdirSync(pendingLoginDir(), { recursive: true, mode: 0o700 });
+    const identity = buildPidRecord(state.pid);
+    const record = {
+        server: state.server,
+        ...(state.url === undefined ? {} : { url: state.url }),
+        ...identity,
+    };
+    atomicWriteFileSync(pendingLoginPath(state.server), `${SafeJSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 }
 
 export function clearPendingLogin(server: string): void {
@@ -58,53 +48,80 @@ export function clearPendingLogin(server: string): void {
     }
 }
 
-/** The live record, or undefined. A stale record (dead pid, unreadable file) is removed. */
-export function readPendingLogin(server: string): PendingLogin | undefined {
+/**
+ * Remove a pending-login file whose pid is gone, foreign, or whose payload is unusable.
+ * Named so a `read*` cannot be mistaken for a diagnostic that mutates durable state.
+ */
+export function clearStalePendingLogin(server: string): boolean {
     const path = pendingLoginPath(server);
 
     if (!existsSync(path)) {
-        return undefined;
-    }
-
-    let parsed: unknown;
-
-    try {
-        parsed = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
-    } catch (error) {
-        logger.warn({ path, error }, "pending-login file is unreadable; removing it");
-        clearPendingLogin(server);
-
-        return undefined;
-    }
-
-    if (!isPendingLogin(parsed) || parsed.server !== server) {
-        logger.warn({ path }, "pending-login file has the wrong shape; removing it");
-        clearPendingLogin(server);
-
-        return undefined;
-    }
-
-    if (!pidAlive(parsed.pid)) {
-        logger.info({ server, pid: parsed.pid }, "pending-login process is gone; removing its record");
-        clearPendingLogin(server);
-
-        return undefined;
-    }
-
-    return parsed;
-}
-
-function isPendingLogin(value: unknown): value is PendingLogin {
-    if (!value || typeof value !== "object") {
         return false;
     }
 
-    const record = value as Record<string, unknown>;
+    const state = inspectPidFile(path);
 
-    return (
-        typeof record.server === "string" &&
-        typeof record.pid === "number" &&
-        typeof record.startedAt === "number" &&
-        (record.url === undefined || typeof record.url === "string")
+    if (state.status === "live" || state.status === "unverified") {
+        const payload = readPendingPayload(path);
+
+        if (payload?.server === server) {
+            return false;
+        }
+    }
+
+    logger.info(
+        { server, status: state.status, pid: "pid" in state ? state.pid : undefined },
+        "pending-login record is stale; removing it"
     );
+    clearPendingLogin(server);
+
+    return true;
+}
+
+/** The live record, or undefined. Does not delete; call {@link clearStalePendingLogin} to sweep. */
+export function readPendingLogin(server: string): PendingLogin | undefined {
+    const path = pendingLoginPath(server);
+    const state = inspectPidFile(path);
+
+    if (state.status !== "live" && state.status !== "unverified") {
+        return undefined;
+    }
+
+    const payload = readPendingPayload(path);
+
+    if (!payload || payload.server !== server) {
+        return undefined;
+    }
+
+    return {
+        server: payload.server,
+        url: payload.url,
+        identity: state.record,
+    };
+}
+
+function readPendingPayload(path: string): { server: string; url?: string } | undefined {
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+
+        if (!parsed || typeof parsed !== "object") {
+            return undefined;
+        }
+
+        const record = parsed as Record<string, unknown>;
+
+        if (typeof record.server !== "string") {
+            return undefined;
+        }
+
+        if (record.url !== undefined && typeof record.url !== "string") {
+            return undefined;
+        }
+
+        return { server: record.server, url: record.url };
+    } catch (error) {
+        logger.debug({ path, error }, "pending-login file is unreadable");
+
+        return undefined;
+    }
 }

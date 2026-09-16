@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createLoginLauncher } from "./auto-login.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { autoLoginRefusal, createLoginLauncher } from "./auto-login.ts";
+import { loginSpawnArgs } from "./login-runner.ts";
+import { gatewayRepoRoot } from "./service.ts";
 
 /** Resolve on the next macrotask, so an un-awaited launcher body has run to completion. */
 function settle(): Promise<void> {
@@ -84,10 +88,12 @@ describe("the gateway starts one login per server", () => {
 });
 
 describe("the authorization URL stays reachable", () => {
-    test("the launcher keeps the URL the login reported", async () => {
+    test("the URL is visible while the login is in flight and gone after success", async () => {
+        const gate = deferred<void>();
         const launcher = createLoginLauncher({
             login: async (_server, report) => {
                 report("https://issuer.example/authorize?code_challenge=x");
+                await gate.promise;
             },
             notify: async () => undefined,
         });
@@ -98,6 +104,32 @@ describe("the authorization URL stays reachable", () => {
         await settle();
 
         expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/authorize?code_challenge=x");
+
+        gate.resolve();
+        await settle();
+
+        expect(launcher.authorizationUrl("wisprflow")).toBeUndefined();
+    });
+
+    test("a later request after success does not echo the spent authorize URL", async () => {
+        let reported = "https://issuer.example/authorize?old=1";
+        const launcher = createLoginLauncher({
+            login: async (_server, report) => {
+                if (reported) {
+                    report(reported);
+                }
+            },
+            notify: async () => undefined,
+        });
+
+        launcher.request("wisprflow");
+        await settle();
+        expect(launcher.authorizationUrl("wisprflow")).toBeUndefined();
+
+        reported = "";
+        expect(launcher.request("wisprflow")).toBe("started");
+        expect(launcher.authorizationUrl("wisprflow")).toBeUndefined();
+        await settle();
     });
 
     test("a login that failed after reporting still leaves the URL", async () => {
@@ -116,10 +148,12 @@ describe("the authorization URL stays reachable", () => {
         expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/authorize");
     });
 
-    test("each server keeps its own URL", async () => {
+    test("each server keeps its own URL while in flight", async () => {
+        const gate = deferred<void>();
         const launcher = createLoginLauncher({
             login: async (server, report) => {
                 report(`https://issuer.example/authorize?server=${server}`);
+                await gate.promise;
             },
             notify: async () => undefined,
         });
@@ -130,6 +164,8 @@ describe("the authorization URL stays reachable", () => {
 
         expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/authorize?server=wisprflow");
         expect(launcher.authorizationUrl("rohlik")).toBe("https://issuer.example/authorize?server=rohlik");
+        gate.resolve();
+        await settle();
     });
 });
 
@@ -236,5 +272,62 @@ describe("a failed login is not retried on every reconnect", () => {
         await settle();
 
         expect(calls).toBe(2);
+    });
+});
+
+describe("auto-login refuses a preset that needs an interactive client_name", () => {
+    test("Figma without a stored clientName is refused", () => {
+        const reason = autoLoginRefusal("design", {
+            type: "http",
+            url: "https://mcp.figma.com/mcp",
+            auth: { kind: "oauth", gateway: true },
+        });
+
+        expect(reason).toContain("interactive client_name");
+        expect(reason).toContain("auth login design");
+    });
+
+    test("Figma with a stored clientName can be launched", () => {
+        expect(
+            autoLoginRefusal("design", {
+                type: "http",
+                url: "https://mcp.figma.com/mcp",
+                auth: { kind: "oauth", gateway: true, clientName: "Claude Code (genesis-tools)" },
+            })
+        ).toBeUndefined();
+    });
+
+    test("a server without a preset is not refused", () => {
+        expect(
+            autoLoginRefusal("shop", {
+                type: "http",
+                url: "https://mcp.shop.example/mcp",
+                auth: { kind: "oauth", gateway: true },
+            })
+        ).toBeUndefined();
+    });
+});
+
+describe("the gateway spawns mcp-manager directly", () => {
+    test("login argv is the tool entrypoint, not the tools wrapper", () => {
+        const args = loginSpawnArgs("wisprflow");
+
+        expect(args[0]?.endsWith("src/mcp-manager/index.ts")).toBe(true);
+        expect(args.slice(1)).toEqual(["auth", "login", "wisprflow"]);
+        expect(args.includes("tools")).toBe(false);
+    });
+
+    test("a stored client_name is passed through", () => {
+        const args = loginSpawnArgs("design", "Claude Code (genesis-tools)");
+
+        expect(args.slice(-2)).toEqual(["--client-name", "Claude Code (genesis-tools)"]);
+    });
+
+    test("gatewayRepoRoot finds this checkout", () => {
+        const root = gatewayRepoRoot();
+
+        expect(existsSync(join(root, "package.json"))).toBe(true);
+        expect(existsSync(join(root, "tools"))).toBe(true);
+        expect(existsSync(join(root, "src/mcp-manager/index.ts"))).toBe(true);
     });
 });

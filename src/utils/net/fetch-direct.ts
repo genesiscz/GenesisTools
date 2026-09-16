@@ -9,7 +9,7 @@
  *
  * The real fix is spawn-time strip (same as ~/.config/shell/pm-no-proxy.zsh):
  *   - zsh: `bun() { env -u HTTPS_PROXY … command bun "$@"; }`
- *   - tools launcher: `envWithoutProxy()` when spawning tool children
+ *   - tools launcher: `env.withoutProxy()` when spawning tool children
  *
  * Call sites use this helper so intent is explicit. Once the process starts
  * without a socks proxy, plain `fetch` is fine.

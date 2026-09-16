@@ -481,15 +481,17 @@ run the OAuth login, open the browser and post a notification, then answer the c
 what is happening. One browser window per server, and a failed login waits 60 seconds before
 another attempt, so a reconnecting client cannot open a tab per retry.
 
-The login runs as a detached `tools mcp-manager auth login <server>` process, never inside
-the gateway, so a gateway restart (crash, KeepAlive respawn, `gateway up` after a code change)
-does not kill the callback listener your browser is about to return to. Every login records
-itself in `~/.genesis-tools/mcp-manager/logins/<server>.json` (pid and authorization URL);
-a restarted gateway reads that record and answers "already open" with the link instead of
+The login runs as a detached `src/mcp-manager/index.ts auth login <server>` process, never
+inside the gateway and never through the `tools` wrapper, so a gateway restart (crash,
+KeepAlive respawn, `gateway up` after a code change) does not kill the callback listener
+your browser is about to return to. The parent writes
+`~/.genesis-tools/mcp-manager/logins/<server>.json` with the child's pid immediately; a
+restarted gateway reads that record and answers "already open" with the link instead of
 starting a second login. The notification carries the same link, and clicking it reopens
-the page. The child sets `TOOLS_DETACHED=1`, which tells the `tools` wrapper to skip its
-orphan watchdog; without that the wrapper SIGTERMs the tool two seconds after its parent
-exits.
+the page. Servers that need an interactive `client_name` (Figma) are not auto-started:
+the 401 names `tools mcp-manager auth login <server>` instead of claiming a browser is
+opening. A successful interactive login stores `auth.clientName` so later gateway logins
+can pass `--client-name`.
 
 A harness's own "Authenticate" button cannot do this: it runs Dynamic Client Registration
 against the gateway's origin, which serves no OAuth metadata and answers 404. Claude Code

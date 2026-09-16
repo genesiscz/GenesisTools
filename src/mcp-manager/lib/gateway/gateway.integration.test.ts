@@ -9,6 +9,7 @@ import { _resetMasterKeyProviders, _setMasterKeyProvidersForTest } from "@genesi
 import { GATEWAY_HEADER } from "../auth/constants.ts";
 import { GATEWAY_CLIENT_TOKEN_PATH } from "../auth/paths.ts";
 import { writeServerTokens } from "../auth/secrets.ts";
+import { createLoginLauncher } from "./auto-login.ts";
 import { gatewayHealth } from "./ensure.ts";
 import { type GatewayHandle, isLoopbackBindHost, startGatewayServer } from "./server.ts";
 
@@ -361,5 +362,113 @@ describe("gatewayHealth", () => {
 
     test("the real gateway answers ok", async () => {
         expect(await gatewayHealth("127.0.0.1", gateway?.port ?? 0)).toBe("ok");
+    });
+
+    test("a 200 body that is not our JSON is a stranger, not down", async () => {
+        const html = disposable(
+            Bun.serve({
+                hostname: "127.0.0.1",
+                port: 0,
+                fetch: () => new Response("<html>ok</html>", { status: 200 }),
+            })
+        );
+
+        expect(await gatewayHealth("127.0.0.1", html.port ?? 0)).toBe("stranger");
+    });
+});
+
+describe("gateway auto-login", () => {
+    test("a missing upstream token starts one login and does not echo a URL on the first 401", async () => {
+        const logins: string[] = [];
+        let release!: () => void;
+        const hold = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const launcher = createLoginLauncher({
+            login: async (server, report) => {
+                logins.push(server);
+                report("https://issuer.example/authorize?state=new");
+                await hold;
+            },
+            notify: async () => undefined,
+        });
+        const handle = await startGatewayServer(
+            {
+                mcpServers: {
+                    shop: {
+                        type: "http",
+                        url: "https://mcp.shop.example/mcp",
+                        auth: {
+                            kind: "oauth",
+                            gateway: true,
+                            resource: "https://mcp.shop.example/mcp",
+                            tokenEndpoint: "http://127.0.0.1:9/token",
+                        },
+                    },
+                },
+            },
+            { hostname: "127.0.0.1", port: 0, loginLauncher: launcher }
+        );
+        cleanup.push(() => handle.stop());
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/shop`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+
+        expect(response.status).toBe(401);
+        const body = await response.text();
+        expect(body).toContain("a browser window is opening");
+        expect(body).not.toContain("https://issuer.example");
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(logins).toEqual(["shop"]);
+
+        const again = await fetch(`http://127.0.0.1:${handle.port}/mcp/shop`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+        const againBody = await again.text();
+        expect(againBody).toContain("already open");
+        expect(againBody).toContain("https://issuer.example/authorize?state=new");
+        expect(logins).toEqual(["shop"]);
+        release();
+    });
+
+    test("Figma without a stored client_name does not claim a browser is opening", async () => {
+        let calls = 0;
+        const launcher = createLoginLauncher({
+            login: async () => {
+                calls += 1;
+            },
+            notify: async () => undefined,
+        });
+        const handle = await startGatewayServer(
+            {
+                mcpServers: {
+                    design: {
+                        type: "http",
+                        url: "https://mcp.figma.com/mcp",
+                        auth: { kind: "oauth", gateway: true },
+                    },
+                },
+            },
+            { hostname: "127.0.0.1", port: 0, loginLauncher: launcher }
+        );
+        cleanup.push(() => handle.stop());
+
+        const response = await fetch(`http://127.0.0.1:${handle.port}/mcp/design`, {
+            method: "POST",
+            headers: { [GATEWAY_HEADER]: LOCAL },
+            body: "{}",
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(401);
+        expect(body).toContain("interactive client_name");
+        expect(body).not.toContain("browser window is opening");
+        expect(calls).toBe(0);
     });
 });
