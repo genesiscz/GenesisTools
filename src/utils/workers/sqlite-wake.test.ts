@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readDataVersion, watchSqliteChanges } from "./sqlite-wake";
@@ -43,12 +43,21 @@ describe("watchSqliteChanges", () => {
         } finally {
             stop();
             mine.close();
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 
     it("readDataVersion returns a number", () => {
         const db = new Database(":memory:");
         expect(typeof readDataVersion(db)).toBe("number");
+        db.close();
+    });
+
+    it("readDataVersion stays a number when the database uses safeIntegers", () => {
+        const db = new Database(":memory:", { safeIntegers: true });
+        const version = readDataVersion(db);
+        expect(typeof version).toBe("number");
+        expect(Number.isFinite(version)).toBe(true);
         db.close();
     });
 });

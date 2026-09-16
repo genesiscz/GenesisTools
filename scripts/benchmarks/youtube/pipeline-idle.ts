@@ -225,6 +225,7 @@ async function measureBurst(pipeline: Pipeline, count: number): Promise<BurstSam
         resolveDrain = resolve;
     });
 
+    let failed = 0;
     const countTerminal = (): void => {
         terminal += 1;
 
@@ -232,14 +233,17 @@ async function measureBurst(pipeline: Pipeline, count: number): Promise<BurstSam
             resolveDrain?.();
         }
     };
-    const offStarted = pipeline.on("job:started", () => {
-        firstStartAt ??= performance.now();
-    });
-    const offCompleted = pipeline.on("job:completed", countTerminal);
-    const offFailed = pipeline.on("job:failed", countTerminal);
-
     const workerCount = workerCountReader(pipeline);
     let peakWorkers = workerCount.read();
+    const offStarted = pipeline.on("job:started", () => {
+        firstStartAt ??= performance.now();
+        peakWorkers = Math.max(peakWorkers, workerCount.read());
+    });
+    const offCompleted = pipeline.on("job:completed", countTerminal);
+    const offFailed = pipeline.on("job:failed", () => {
+        failed += 1;
+        countTerminal();
+    });
     // lint-rules-ignore: benchmark probe; 10 ms is the resolution the peak-worker count needs
     const sampler = setInterval(() => {
         peakWorkers = Math.max(peakWorkers, workerCount.read());
@@ -283,6 +287,10 @@ async function measureBurst(pipeline: Pipeline, count: number): Promise<BurstSam
         throw new Error(
             `burst did not drain in ${DRAIN_TIMEOUT_MS} ms: ${terminal}/${count} jobs reached a terminal state`
         );
+    }
+
+    if (failed > 0) {
+        throw new Error(`burst completed with ${failed} failed job${failed === 1 ? "" : "s"}`);
     }
 
     const drainMs = drainEndedAt - enqueueEndedAt;
@@ -422,13 +430,19 @@ async function main(): Promise<void> {
     const burst = Number(values.burst);
     const runs = Number(values.runs);
 
-    if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(burst) || burst <= 0) {
-        out.printlnErr("--seconds and --burst must both be positive numbers.");
+    if (
+        !Number.isFinite(seconds) ||
+        seconds <= 0 ||
+        !Number.isFinite(burst) ||
+        burst <= 0 ||
+        !Number.isInteger(burst)
+    ) {
+        out.printlnErr("--seconds must be a positive number and --burst must be a positive whole number.");
         process.exitCode = 1;
         return;
     }
 
-    if (!Number.isFinite(runs) || runs < 1) {
+    if (!Number.isFinite(runs) || runs < 1 || !Number.isInteger(runs)) {
         out.printlnErr("--runs must be a positive whole number.");
         process.exitCode = 1;
         return;

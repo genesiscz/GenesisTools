@@ -82,9 +82,13 @@ export function watchSqliteChanges(db: Database, onChange: () => void, opts: { d
 /** Bumps whenever another connection commits; unchanged by this connection's own commits. */
 export function readDataVersion(db: Database): number | null {
     try {
-        const row = db.query<{ data_version: number }, []>("PRAGMA data_version").get();
+        const row = db.query<{ data_version: number | bigint }, []>("PRAGMA data_version").get();
 
-        return row ? row.data_version : null;
+        if (!row) {
+            return null;
+        }
+
+        return typeof row.data_version === "bigint" ? Number(row.data_version) : row.data_version;
     } catch (error) {
         logger.debug({ err: error }, "sqlite wake: PRAGMA data_version failed");
         return null;

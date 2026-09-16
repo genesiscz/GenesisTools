@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_FILENAME, DEFAULT_YOUTUBE_CONFIG, YoutubeConfig } from "@app/youtube/lib/config";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 let baseDir: string;
 
@@ -55,6 +56,22 @@ describe("YoutubeConfig", () => {
         all.concurrency.download = 99;
 
         expect((await cfg.get("concurrency")).download).toBe(DEFAULT_YOUTUBE_CONFIG.concurrency.download);
+    });
+
+    it("keeps pollMs 0 and replaces invalid worker timer fields with defaults", async () => {
+        const cfg = new YoutubeConfig({ baseDir });
+        await cfg.update({ workers: { pollMs: 0 } });
+        expect((await cfg.get("workers")).pollMs).toBe(0);
+
+        await Bun.write(
+            cfg.where(),
+            `${SafeJSON.stringify(
+                { workers: { pollMs: "fast", idleTeardownMs: 0, max: -1, spawnPolicy: "turbo" } },
+                { strict: true }
+            )}\n`
+        );
+        const fresh = new YoutubeConfig({ baseDir });
+        expect(await fresh.get("workers")).toEqual(DEFAULT_YOUTUBE_CONFIG.workers);
     });
 
     it("reset() persists defaults", async () => {

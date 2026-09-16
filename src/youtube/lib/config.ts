@@ -159,6 +159,15 @@ function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): Youtu
         logger.warn({ provider: patch.provider }, "youtube config: ignoring malformed 'provider' (expected an object)");
     }
 
+    const patchedWorkers =
+        patch.workers !== null && typeof patch.workers === "object" && !Array.isArray(patch.workers)
+            ? patch.workers
+            : undefined;
+
+    if (patch.workers !== undefined && patchedWorkers === undefined) {
+        logger.warn({ workers: patch.workers }, "youtube config: ignoring malformed 'workers' (expected an object)");
+    }
+
     return {
         ...base,
         ...patch,
@@ -172,8 +181,27 @@ function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): Youtu
         },
         freeTier: { ...base.freeTier, ...patch.freeTier },
         concurrency: { ...base.concurrency, ...patch.concurrency },
-        workers: { ...base.workers, ...patch.workers },
+        workers: sanitizeWorkers(base.workers, patchedWorkers),
         ttls: { ...base.ttls, ...patch.ttls },
         preferredLangs: patch.preferredLangs ?? base.preferredLangs,
+    };
+}
+
+function sanitizeWorkers(
+    base: YoutubeConfigShape["workers"],
+    patch: YoutubeConfigPatch["workers"]
+): YoutubeConfigShape["workers"] {
+    const merged = { ...base, ...patch };
+    const max = Number(merged.max);
+    const idleTeardownMs = Number(merged.idleTeardownMs);
+    const pollMs = Number(merged.pollMs);
+    const spawnPolicy =
+        merged.spawnPolicy === "burst" || merged.spawnPolicy === "one" ? merged.spawnPolicy : base.spawnPolicy;
+
+    return {
+        max: Number.isFinite(max) && max >= 0 ? Math.floor(max) : base.max,
+        spawnPolicy,
+        idleTeardownMs: Number.isFinite(idleTeardownMs) && idleTeardownMs > 0 ? idleTeardownMs : base.idleTeardownMs,
+        pollMs: Number.isFinite(pollMs) && pollMs >= 0 ? pollMs : base.pollMs,
     };
 }
