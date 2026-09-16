@@ -8,6 +8,7 @@ import {
     accountNameFromPsDump,
     claudeCodeStatusline,
     parseClaudeCodePayload,
+    parseInstalledCommand,
     resolveAccountName,
 } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
 import { env } from "@genesiscz/utils/env";
@@ -425,5 +426,15 @@ describe("account from env", () => {
         await env.testing.withOverrides({ TOOLS_CLAUDE_ACCOUNT: "work laptop" }, () => {
             expect(resolveAccountName(payload, cache, Date.now())).toBe("work laptop");
         });
+    });
+});
+
+describe("installed command settings", () => {
+    test("a missing statusLine is null; unreadable JSON is not treated as absent", () => {
+        expect(parseInstalledCommand("{}")).toBeNull();
+        expect(
+            parseInstalledCommand('{"statusLine":{"type":"command","command":"tools ai statusline run --claude"}}')
+        ).toBe("tools ai statusline run --claude");
+        expect(() => parseInstalledCommand("{")).toThrow(/unreadable JSON/);
     });
 });
