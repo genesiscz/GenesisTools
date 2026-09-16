@@ -25,11 +25,14 @@ import {
     configJson,
     disableServer,
     enableServer,
+    gatewayInstall,
     gatewayRotateClient,
     gatewayStart,
     gatewayStatus,
     gatewayStdio,
     gatewayStop,
+    gatewayUninstall,
+    gatewayUp,
     installServer,
     listServers,
     openConfig,
@@ -317,6 +320,27 @@ gateway.command("stop").action(async () => {
 gateway.command("status").action(async () => {
     await gatewayStatus();
 });
+
+gateway
+    .command("up")
+    .description("Start the launchd-supervised gateway and wait until it answers")
+    .action(async () => {
+        await gatewayUp();
+    });
+
+gateway
+    .command("install")
+    .description("Install the gateway as a launchd agent that survives reboots and crashes")
+    .action(async () => {
+        await gatewayInstall();
+    });
+
+gateway
+    .command("uninstall")
+    .description("Remove the launchd agent")
+    .action(async () => {
+        await gatewayUninstall();
+    });
 
 gateway.command("rotate-client").action(async () => {
     await gatewayRotateClient();

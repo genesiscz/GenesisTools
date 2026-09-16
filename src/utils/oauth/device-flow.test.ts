@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
-import { pollDeviceTokenResponse } from "./device-flow.ts";
+import { pollDeviceTokenResponse, startDeviceFlow } from "./device-flow.ts";
 
 const config: DeviceFlowConfig = {
     clientId: "client-1",
@@ -80,5 +80,73 @@ describe("pollDeviceTokenResponse validates what the caller will use", () => {
         answerToken({ access_token: "a1", refresh_token: 42 });
 
         await expect(poll()).rejects.toThrow(/refresh_token is not a string/);
+    });
+});
+
+describe("a confidential client sends its secret", () => {
+    /** Records the form body of the single request the call under test makes. */
+    function captureForm(body: unknown): { read: () => URLSearchParams | undefined } {
+        let seen: URLSearchParams | undefined;
+        globalThis.fetch = Object.assign(
+            async (_url: string | URL | Request, init?: RequestInit) => {
+                seen = new URLSearchParams(String(init?.body));
+
+                return Response.json(body);
+            },
+            {
+                preconnect: realFetch.preconnect,
+            }
+        );
+
+        return { read: () => seen };
+    }
+
+    test("startDeviceFlow posts client_secret when the client has one", async () => {
+        const capture = captureForm({
+            device_code: "dev-1",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://identity.example/activate",
+            interval: 5,
+            expires_in: 600,
+        });
+
+        await startDeviceFlow({ ...config, clientSecret: "s3cret" });
+
+        expect(capture.read()?.get("client_secret")).toBe("s3cret");
+    });
+
+    test("startDeviceFlow omits client_secret for a public client", async () => {
+        const capture = captureForm({
+            device_code: "dev-1",
+            user_code: "ABCD-EFGH",
+            verification_uri: "https://identity.example/activate",
+            interval: 5,
+            expires_in: 600,
+        });
+
+        await startDeviceFlow(config);
+
+        expect(capture.read()?.has("client_secret")).toBe(false);
+    });
+
+    test("the token poll posts client_secret when the client has one", async () => {
+        const capture = captureForm({ access_token: "a1", expires_in: 3600 });
+
+        await pollDeviceTokenResponse({
+            config: { ...config, clientSecret: "s3cret" },
+            deviceCode: "dev-1",
+            intervalSeconds: 0,
+            expiresIn: DEADLINE_SECONDS,
+        });
+
+        expect(capture.read()?.get("client_secret")).toBe("s3cret");
+    });
+
+    test("the token poll omits client_secret for a public client", async () => {
+        const capture = captureForm({ access_token: "a1", expires_in: 3600 });
+
+        await poll();
+
+        expect(capture.read()?.has("client_secret")).toBe(false);
     });
 });

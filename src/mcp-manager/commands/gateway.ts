@@ -7,6 +7,16 @@ import { gatewayListen } from "../lib/auth/project.ts";
 import { ensureGatewayClientToken, rotateGatewayClientToken } from "../lib/auth/secrets.ts";
 import { ensureGatewayUp, gatewayHealth, stopInProcessGateways } from "../lib/gateway/ensure.ts";
 import { startGatewayServer } from "../lib/gateway/server.ts";
+import {
+    GATEWAY_LAUNCHD_LABEL,
+    gatewayLogFile,
+    gatewayPlistPath,
+    installGatewayService,
+    isGatewayServiceInstalled,
+    startGatewayService,
+    uninstallGatewayService,
+    waitForGatewayHealth,
+} from "../lib/gateway/service.ts";
 import { runStdioHttpRelay } from "../lib/gateway/stdio-relay.ts";
 
 /** `undefined` means the caller passed something that is not a usable port. */
@@ -99,12 +109,93 @@ export async function gatewayStatus(): Promise<void> {
     const config = await readUnifiedConfig();
     const listen = gatewayListen(config);
     const health = await gatewayHealth(listen.host, listen.port);
+    const supervised = isGatewayServiceInstalled();
     ui.kv("listen", `${listen.host}:${listen.port}`);
     ui.kv("health", health);
+    ui.kv("service", supervised ? `launchd ${GATEWAY_LAUNCHD_LABEL}` : "none (dies with the CLI that started it)");
 
     if (health !== "ok") {
-        ui.dim(`    fix: ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "start"] })}`);
+        const fix = supervised ? ["gateway", "up"] : ["gateway", "install"];
+        ui.dim(`    fix: ${suggestCommand("tools mcp-manager", { replaceCommand: fix })}`);
     }
+}
+
+export async function gatewayUp(): Promise<void> {
+    const config = await readUnifiedConfig();
+    const listen = gatewayListen(config);
+    const health = await gatewayHealth(listen.host, listen.port);
+
+    if (health === "ok") {
+        ui.ok(`already listening on ${listen.host}:${listen.port}`);
+
+        return;
+    }
+
+    if (health === "stranger") {
+        logger.error(`port ${listen.port} is in use by another process`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    if (!isGatewayServiceInstalled()) {
+        logger.error("no launchd agent installed, so there is nothing to bring up in the background");
+        ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "install"] })}`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    if (await startGatewayService(listen)) {
+        ui.ok(`mcp gateway on http://${listen.host}:${listen.port}`);
+
+        return;
+    }
+
+    logger.error("the launchd agent was started but never answered /health");
+    ui.dim(`    log: ${gatewayLogFile()}`);
+    process.exitCode = 1;
+}
+
+export async function gatewayInstall(): Promise<void> {
+    if (process.platform !== "darwin") {
+        logger.error("the launchd agent is macOS only");
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const config = await readUnifiedConfig();
+    const listen = gatewayListen(config);
+    await installGatewayService();
+    ui.ok(`installed ${GATEWAY_LAUNCHD_LABEL}`);
+    ui.dim(`    plist ${gatewayPlistPath()}`);
+    ui.dim(`    log   ${gatewayLogFile()}`);
+
+    const health = await waitForGatewayHealth(listen);
+
+    if (health === "ok") {
+        ui.ok(`mcp gateway on http://${listen.host}:${listen.port}`);
+
+        return;
+    }
+
+    logger.error(`the agent is loaded but /health says ${health}`);
+    process.exitCode = 1;
+}
+
+export async function gatewayUninstall(): Promise<void> {
+    if (!isGatewayServiceInstalled()) {
+        ui.warn("no launchd agent installed");
+
+        return;
+    }
+
+    await uninstallGatewayService();
+    ui.ok(`removed ${GATEWAY_LAUNCHD_LABEL}`);
+    // Deliberately not "the gateway is stopped": launchctl unload ends the job, but a
+    // gateway someone started by hand in a terminal is a different process and survives.
+    ui.dim("    a gateway started by hand in a terminal is unaffected");
 }
 
 export async function gatewayRotateClient(): Promise<void> {

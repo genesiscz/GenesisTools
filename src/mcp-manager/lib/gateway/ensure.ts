@@ -1,8 +1,13 @@
 import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { logger } from "@genesiscz/utils/logger";
-import { gatewayBaseUrl, gatewayListen } from "../auth/project.ts";
+import { gatewayListen } from "../auth/project.ts";
+import { gatewayHealth } from "./health.ts";
 import { type GatewayHandle, startGatewayServer } from "./server.ts";
+import { startGatewayService } from "./service.ts";
+
+/** Re-exported so every existing importer of the probe keeps its import path. */
+export { gatewayHealth };
 
 const started: GatewayHandle[] = [];
 
@@ -12,29 +17,6 @@ const started: GatewayHandle[] = [];
  * which surfaces as an unrelated startup failure rather than as a race.
  */
 const starting = new Map<string, Promise<void>>();
-
-/** A probe that never returns is worse than one that says "down": every caller of
- * ensureGatewayUp blocks behind it, including createKit and `tools scripts doctor`.
- * A stranger holding the port can accept the connection and then say nothing. */
-const HEALTH_TIMEOUT_MS = 1500;
-
-export async function gatewayHealth(host: string, port: number): Promise<"ok" | "stranger" | "down"> {
-    try {
-        const response = await fetch(`${gatewayBaseUrl({ host, port })}/health`, {
-            signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
-        });
-
-        if (!response.ok) {
-            return "stranger";
-        }
-
-        const json = (await response.json()) as { service?: string };
-
-        return json.service === "mcp-gateway" ? "ok" : "stranger";
-    } catch {
-        return "down";
-    }
-}
 
 export async function ensureGatewayUp(config: UnifiedMCPConfig): Promise<void> {
     const listen = gatewayListen(config);
@@ -62,6 +44,16 @@ async function startOnce(config: UnifiedMCPConfig, listen: { host: string; port:
 
     if (health === "stranger") {
         throw new Error(`port ${listen.port} is in use by another process. Run tools mcp-manager gateway status`);
+    }
+
+    // A launchd agent outlives this process; the in-process listener below does not, and
+    // dies the moment the CLI that called us exits. Prefer the supervised one whenever
+    // the user installed it, and fall through when it is absent or does not come up, so
+    // a broken agent degrades to the old behaviour rather than failing the caller.
+    if (await startGatewayService(listen)) {
+        logger.info({ port: listen.port }, "mcp gateway started by its launchd agent");
+
+        return;
     }
 
     const handle = await startGatewayServer(config, {
