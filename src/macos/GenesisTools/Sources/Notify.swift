@@ -413,6 +413,10 @@ private func list() {
                 "message": content.body,
                 "group": content.threadIdentifier,
                 "deliveredAt": notification.date.timeIntervalSince1970,
+                // Reported so "the image did not show" can be told apart from "the image was never
+                // attached". Those have completely different causes and the banner looks the same.
+                "attachments": content.attachments.map { $0.url.lastPathComponent },
+                "actions": content.categoryIdentifier,
             ]
         }
 
