@@ -82,6 +82,7 @@ export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceC
         },
         body: new URLSearchParams({
             client_id: config.clientId,
+            ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
             scope: config.scope,
         }),
     });
@@ -163,6 +164,7 @@ export async function pollDeviceTokenResponse(args: {
             },
             body: new URLSearchParams({
                 client_id: config.clientId,
+                ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
                 device_code: deviceCode,
                 grant_type: "urn:ietf:params:oauth:grant-type:device_code",
             }),

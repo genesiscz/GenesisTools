@@ -303,6 +303,14 @@ test("a listing serves cached rows when another process holds the index", async 
         expect(await adapter.list({ all: true })).toHaveLength(1);
         HistoryDatabase.closeInstance();
 
+        // How long production waits for the lock is not what is under test; that it falls
+        // back to the cached row is. The adapter's own connection keeps the hardcoded
+        // `PRAGMA busy_timeout = 5000` from src/utils/database/base.ts, so this test spent
+        // the full five seconds waiting to lose a race it is designed to lose: 5357 ms
+        // before, 197 ms after. It must run BEFORE the blocker takes the lock, because
+        // afterwards this connection's own `PRAGMA journal_mode = WAL` is what blocks.
+        HistoryDatabase.getInstance().getDb().exec("PRAGMA busy_timeout = 150");
+
         // A second connection holds a write transaction for longer than the busy timeout.
         const blocker = new Database(historyDatabasePath());
         blocker.run("PRAGMA busy_timeout = 100");

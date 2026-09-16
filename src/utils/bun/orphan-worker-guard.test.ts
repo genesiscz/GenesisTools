@@ -1,12 +1,31 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildWatchdogScript } from "@genesiscz/utils/bun/orphan-worker-guard";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { skip } from "@genesiscz/utils/test/skip";
 
 const guardPath = join(import.meta.dir, "orphan-worker-guard.ts");
+
+/**
+ * The same `ps -o lstart=` reading the guard itself does, including the whitespace
+ * normalisation — the shell side collapses the column's padding, so a value trimmed any
+ * other way never compares equal and the kill silently never fires.
+ */
+function startedAtForTest(pid: number): string | null {
+    try {
+        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", env: process.env })
+            .replace(/\s+/g, " ")
+            .trim();
+
+        return started.length > 0 ? started : null;
+    } catch {
+        return null;
+    }
+}
 
 /**
  * Probe children load modules by absolute path for the same reason `guardPath`
@@ -59,7 +78,7 @@ async function spawnBusyChild(opts: { guard: boolean }): Promise<{ middlePid: nu
     const childSource = opts.guard
         ? `import { installOrphanWorkerGuard } from ${SafeJSON.stringify(guardPath)};
 import { writeFileSync } from "node:fs";
-installOrphanWorkerGuard();
+installOrphanWorkerGuard({ pollSeconds: 0.25 });
 writeFileSync(${SafeJSON.stringify(readyFile)}, "1");
 for (;;) {}`
         : `import { writeFileSync } from "node:fs";
@@ -144,6 +163,24 @@ function countOwnShells() {
             return parts.length >= 2 && Number(parts[0]) === process.pid && /sh$/.test(parts[1] ?? "");
         }).length;
 }
+
+/**
+ * Waits until at least \`min\` watchdog shells are visible to ps, then settles briefly.
+ *
+ * The four probes below used a flat 750 ms guess each. Polling for the shell to appear is
+ * both faster and stricter, and the trailing settle keeps the point of the probes intact:
+ * they count DUPLICATES, so a straggler second shell must still have time to show up before
+ * the count is taken.
+ */
+async function settleShells(min) {
+    const deadline = Date.now() + 5000;
+
+    while (countOwnShells() < min && Date.now() < deadline) {
+        await Bun.sleep(10);
+    }
+
+    await Bun.sleep(100);
+}
 `;
 
 /** Runs a generated script in its own process and returns what it wrote to the result file. */
@@ -197,7 +234,10 @@ describe.skipIf(skip.onWindows)("orphan isolate-worker guard", () => {
 
         const stillAlive = await waitUntil(() => !isProcessAlive(middlePid), 2_000);
         expect(stillAlive).toBe(true);
-        await Bun.sleep(1_500);
+        // The negative control, and it gets STRONGER rather than shorter: the guarded child
+        // now polls every 0.25 s, so 750 ms spans three poll intervals, where 1500 ms spanned
+        // less than a third of the five-second default.
+        await Bun.sleep(750);
         expect(isProcessAlive(childPid)).toBe(true);
     });
 
@@ -223,7 +263,7 @@ for (let i = 0; i < 10; i += 1) {
     installOrphanWorkerGuard();
 }
 
-await Bun.sleep(750);
+await settleShells(1);
 writeFileSync(RESULT_FILE, String(countOwnShells()));
 `);
 
@@ -241,7 +281,7 @@ writeFileSync(RESULT_FILE, String(countOwnShells()));
 import { isProcessAlive } from ${SafeJSON.stringify(processAlivePath)};
 
 installOrphanWorkerGuard();
-await Bun.sleep(750);
+await settleShells(1);
 const afterFirst = countOwnShells();
 
 // Anchored the same way watchdogRunning() is, above: an unanchored "self=" + pid would also
@@ -270,7 +310,7 @@ while (signalable() && Date.now() < deadline) {
 }
 
 installOrphanWorkerGuard();
-await Bun.sleep(750);
+await settleShells(1);
 writeFileSync(RESULT_FILE, afterFirst + "," + countOwnShells());
 `);
 
@@ -298,7 +338,7 @@ await Bun.sleep(200);
 writeFileSync(notePath, String(impostor.pid));
 
 installOrphanWorkerGuard();
-await Bun.sleep(750);
+await settleShells(1);
 writeFileSync(RESULT_FILE, String(countOwnShells()));
 impostor.kill("SIGKILL");
 `);
@@ -317,7 +357,7 @@ impostor.kill("SIGKILL");
             childFile,
             `import { existsSync, writeFileSync } from "node:fs";
 import { installOrphanWorkerGuard } from ${SafeJSON.stringify(guardPath)};
-installOrphanWorkerGuard();
+installOrphanWorkerGuard({ pollSeconds: 0.25 });
 writeFileSync(${SafeJSON.stringify(readyFile)}, "1");
 while (!existsSync(${SafeJSON.stringify(goFile)})) {
     await Bun.sleep(20);
@@ -347,4 +387,118 @@ while (!existsSync(${SafeJSON.stringify(goFile)})) {
         const stopped = await waitUntil(() => !watchdogRunning(child.pid), 15_000);
         expect(stopped).toBe(true);
     }, 30_000);
+
+    /**
+     * The other half of the identity rule, raised by CodeRabbit on PR #392.
+     *
+     * `kill -0 "$parent"` proves only that the NUMBER is occupied. When the original parent
+     * exits and the kernel reissues its pid — about three minutes on macOS at the 400-800
+     * pids/second this guard exists for — the probe keeps succeeding against a stranger, the
+     * watchdog concludes "parent still alive", and the worker it was installed to reap is
+     * left running forever. That is a leak rather than a wrong kill, so it fails in the safe
+     * direction, but it defeats the guard in exactly the scenario that motivated it.
+     *
+     * Simulated by handing the script a parent that is genuinely alive together with the
+     * start time of a DIFFERENT process, which is precisely what a recycled pid looks like.
+     */
+    // The interval is interpolated into /bin/sh and the script has no `set -e`, so `sleep 0`
+    // (succeeds, returns instantly) and `sleep NaN` (fails, loop continues anyway) both turn the
+    // watchdog into a busy loop on `ps` and `awk`.
+    test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+        "a pollSeconds of %p cannot reach the shell: the script sleeps the default instead",
+        (pollSeconds) => {
+            const script = buildWatchdogScript({
+                parentPid: 1,
+                selfPid: 2,
+                selfStart: "x",
+                parentStart: "y",
+                pollSeconds,
+            });
+
+            expect(script).toContain("sleep 5");
+            expect(script).not.toContain(`sleep ${pollSeconds}`);
+        }
+    );
+
+    test("a usable pollSeconds is still honoured", () => {
+        const script = buildWatchdogScript({
+            parentPid: 1,
+            selfPid: 2,
+            selfStart: "x",
+            parentStart: "y",
+            pollSeconds: 0.25,
+        });
+
+        expect(script).toContain("sleep 0.25");
+    });
+
+    test("a recycled parent pid counts as parent loss, not as a live parent", async () => {
+        const parent = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const self = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        leftovers.push(parent.pid, self.pid);
+
+        const selfStart = startedAtForTest(self.pid);
+        expect(selfStart).not.toBeNull();
+
+        const watchdog = Bun.spawn(
+            [
+                "/bin/sh",
+                "-c",
+                buildWatchdogScript({
+                    parentPid: parent.pid,
+                    selfPid: self.pid,
+                    selfStart: String(selfStart),
+                    // Alive, but not the process the guard was installed under.
+                    parentStart: "Thu Jan  1 00:00:00 1970",
+                }),
+            ],
+            { env: process.env, stdout: "ignore", stderr: "ignore" }
+        );
+        leftovers.push(watchdog.pid);
+
+        const reaped = await waitUntil(() => !isProcessAlive(self.pid), 20_000);
+        expect(reaped).toBe(true);
+    }, 40_000);
+
+    /**
+     * The negative control for the case above. A parent whose start time MATCHES is the
+     * ordinary healthy state, and the worker must be left strictly alone — a guard that
+     * reaped live workers would be far worse than the leak it fixes.
+     */
+    test("a parent whose start time still matches leaves the worker alone", async () => {
+        const parent = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        const self = Bun.spawn(["sleep", "60"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        leftovers.push(parent.pid, self.pid);
+
+        const selfStart = startedAtForTest(self.pid);
+        const parentStart = startedAtForTest(parent.pid);
+        // Both, not just the parent: a null selfStart becomes the literal string "null" below, and
+        // the live parent means the script exits before it ever compares the worker identity. The
+        // test would then pass with no worker fixture at all.
+        expect(selfStart).not.toBeNull();
+        expect(parentStart).not.toBeNull();
+
+        const watchdog = Bun.spawn(
+            [
+                "/bin/sh",
+                "-c",
+                buildWatchdogScript({
+                    parentPid: parent.pid,
+                    selfPid: self.pid,
+                    selfStart: String(selfStart),
+                    parentStart: String(parentStart),
+                    pollSeconds: 0.25,
+                }),
+            ],
+            { env: process.env, stdout: "ignore", stderr: "ignore" }
+        );
+        leftovers.push(watchdog.pid);
+
+        // THREE poll intervals with margin, where the five-second default bought two for
+        // 12 s. The window this test needs is measured in polls, not in seconds: a watchdog
+        // that was going to misfire does so on a poll, and shortening the interval gives it
+        // more chances to, not fewer. 12.09 s -> 0.8 s.
+        await Bun.sleep(750);
+        expect(isProcessAlive(self.pid)).toBe(true);
+    }, 40_000);
 });

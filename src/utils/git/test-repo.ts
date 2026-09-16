@@ -1,6 +1,16 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+    cpSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 
 /** Fixed wall-clock anchor so every committed date is deterministic across runs. */
@@ -112,11 +122,70 @@ export interface WorktreeAddOptions {
 }
 
 /**
+ * Pristine repositories built once per process and copied for every later `create()`.
+ *
+ * Building one costs SEVEN `git` processes (init, three `config`, then add/commit/rev-parse
+ * for the seed) and ~55 ms on an idle machine. `merged.test.ts` alone builds 39 of them
+ * inside 1359 total git spawns, and its whole runtime is spawn overhead: 1359 spawns at
+ * ~10 ms each accounted for 13.6 s of a 13.6 s file. Copying a directory instead costs no
+ * process at all, and the copy is byte-identical to what those seven commands produced —
+ * the epoch is fixed, the identity is fixed, and a fresh repo's `.git` holds no absolute
+ * paths. The FIRST repo of each shape still runs the real commands, so the template can
+ * never drift from them.
+ */
+const repoTemplates = new Map<string, { path: string; epoch: number }>();
+let templateRoot: string | null = null;
+
+function templateCacheDir(): string {
+    if (templateRoot === null) {
+        templateRoot = realpathSync(mkdtempSync(join(tmpdir(), "gt-repo-template-")));
+        const root = templateRoot;
+        process.on("exit", () => rmSync(root, { recursive: true, force: true }));
+    }
+
+    return templateRoot;
+}
+
+/**
+ * HEAD's sha read off the filesystem, or null when the layout is anything but the simple
+ * loose-ref case (a linked worktree's split gitdir, a packed ref, a detached HEAD file).
+ *
+ * `git rev-parse HEAD` after every commit was 172 of merged.test.ts's 1359 spawns. A freshly
+ * committed branch in a throwaway repo always has its loose ref on disk, so the common case
+ * needs no process; null sends the caller back to the real command, which is why this cannot
+ * answer differently from git rather than just faster.
+ */
+function looseHeadSha(cwd: string): string | null {
+    const dotGit = join(cwd, ".git");
+
+    if (!existsSync(dotGit) || !statSync(dotGit).isDirectory()) {
+        return null;
+    }
+
+    const head = readFileSync(join(dotGit, "HEAD"), "utf8").trim();
+
+    if (!head.startsWith("ref: ")) {
+        return /^[0-9a-f]{40}$/.test(head) ? head : null;
+    }
+
+    const loose = resolve(dotGit, head.slice("ref: ".length).trim());
+
+    if (!existsSync(loose)) {
+        return null;
+    }
+
+    const sha = readFileSync(loose, "utf8").trim();
+
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+/**
  * A throwaway repository under the OS temp dir with deterministic commit
  * dates. Shared by the `merged`, `rebase-cascade` and base-detection suites
  * and by the gt:git eval fixtures, so every scenario is built the same way.
  */
 export class TestRepo {
+    /** Read by `fromScenario` to record where a cached setup left the epoch ladder. */
     private nextEpoch: number;
 
     private constructor(
@@ -132,9 +201,23 @@ export class TestRepo {
     static async create(opts: TestRepoOptions = {}): Promise<TestRepo> {
         const root = realpathSync(mkdtempSync(join(tmpdir(), opts.prefix ?? "gt-repo-")));
         const dir = join(root, "repo");
+        const branch = opts.branch ?? "master";
+        const seeded = opts.seed !== false;
+        const shape = `${branch}::${seeded}`;
+        const template = repoTemplates.get(shape);
+
+        if (template !== undefined) {
+            cpSync(template.path, dir, { recursive: true });
+            // A copy resumes on the epoch the real build ended on, or two repos of the same
+            // shape would disagree on dates. The seed commit alone consumes one tick; a
+            // scenario consumes as many as its setup made commits, which is why the number is
+            // recorded rather than recomputed.
+            return new TestRepo(dir, root, template.epoch);
+        }
+
         mkdirSync(dir);
         const repo = new TestRepo(dir, root, TEST_REPO_EPOCH);
-        await repo.git(["init", "-q", "-b", opts.branch ?? "master"]);
+        await repo.git(["init", "-q", "-b", branch]);
 
         // The identity and the signing switch have to live in the repo's OWN config, not only in
         // hermeticGitEnv(): these fixtures exist to drive the production git executor, which spawns
@@ -146,9 +229,59 @@ export class TestRepo {
         await repo.git(["config", "user.email", "test@example.com"]);
         await repo.git(["config", "commit.gpgsign", "false"]);
 
-        if (opts.seed !== false) {
+        if (seeded) {
             await repo.commit({ file: "README.md", content: "seed\n", message: "seed" });
         }
+
+        // 🛑 A unique directory per template, never a name derived from the shape alone. The
+        // old derivation collapsed every non-alphanumeric run to "-", so `feature/a::true` and
+        // `feature-a::true` named ONE directory. `repoTemplates` keys on the full shape, so the
+        // second branch missed the cache, rebuilt, and copied itself over the first branch's
+        // template. git writes its object files read-only (0444), so that second copy did not
+        // even silently win the race — it threw EACCES out of `TestRepo.create` and took the
+        // whole suite with it. The Map is the index; this name only has to be unique, and the
+        // sanitised prefix is kept so a leftover directory still says which shape it holds.
+        const cached = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
+        cpSync(dir, cached, { recursive: true });
+        repoTemplates.set(shape, { path: cached, epoch: repo.nextEpoch });
+
+        return repo;
+    }
+
+    /**
+     * A repository whose SETUP is also built once per process and copied after that.
+     *
+     * `create()` caches the pristine repo; this caches a whole scenario on top of it. In
+     * merged.test.ts, 26 of 31 repositories were immediately given the same two-commit feature
+     * branch, and that helper alone costs eight git processes (checkout -b, two commits at
+     * three processes each, checkout back) — 208 of the file's 1008 spawns, rebuilt identically
+     * every time. The bytes are deterministic for the same reason `create()`'s are: fixed
+     * content, fixed identity and a fixed epoch ladder.
+     *
+     * `name` must describe everything `setup` does, because it is the cache key. Two different
+     * setups under one name would hand the second caller the first one's repository.
+     */
+    static async fromScenario(
+        name: string,
+        setup: (repo: TestRepo) => Promise<void>,
+        opts: TestRepoOptions = {}
+    ): Promise<TestRepo> {
+        const shape = `scenario:${name}::${opts.branch ?? "master"}::${opts.seed !== false}`;
+        const cached = repoTemplates.get(shape);
+
+        if (cached !== undefined) {
+            const root = realpathSync(mkdtempSync(join(tmpdir(), opts.prefix ?? "gt-repo-")));
+            const dir = join(root, "repo");
+            cpSync(cached.path, dir, { recursive: true });
+
+            return new TestRepo(dir, root, cached.epoch);
+        }
+
+        const repo = await TestRepo.create(opts);
+        await setup(repo);
+        const stored = join(mkdtempSync(join(templateCacheDir(), `${shape.replace(/[^a-z0-9]+/gi, "-")}-`)), "repo");
+        cpSync(repo.dir, stored, { recursive: true });
+        repoTemplates.set(shape, { path: stored, epoch: repo.nextEpoch });
 
         return repo;
     }
@@ -190,14 +323,19 @@ export class TestRepo {
 
         await this.git(["add", "--", ...Object.keys(files)], { cwd });
         await this.git(["commit", "-q", "-m", message], { cwd, epoch: this.tick() });
-        return this.git(["rev-parse", "HEAD"], { cwd });
+        return this.head(cwd);
     }
 
     /** Remove a tracked file and commit the deletion. */
     async commitDelete({ file, message, cwd = this.dir }: CommitDeleteOptions): Promise<string> {
         await this.git(["rm", "-q", "--", file], { cwd });
         await this.git(["commit", "-q", "-m", message ?? `delete ${file}`], { cwd, epoch: this.tick() });
-        return this.git(["rev-parse", "HEAD"], { cwd });
+        return this.head(cwd);
+    }
+
+    /** HEAD's sha, off the filesystem when the ref is loose and via git when it is not. */
+    private async head(cwd: string): Promise<string> {
+        return looseHeadSha(cwd) ?? (await this.git(["rev-parse", "HEAD"], { cwd }));
     }
 
     async checkout(ref: string, opts: { create?: boolean } = {}): Promise<void> {
@@ -210,7 +348,7 @@ export class TestRepo {
     }
 
     async sha(ref = "HEAD"): Promise<string> {
-        return this.git(["rev-parse", ref]);
+        return ref === "HEAD" ? this.head(this.dir) : this.git(["rev-parse", ref]);
     }
 
     async tree(ref = "HEAD"): Promise<string> {

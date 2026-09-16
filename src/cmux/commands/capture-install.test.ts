@@ -38,6 +38,18 @@ async function invoke(input: { tool: "cmux" | "zsh"; action: string; home: strin
     return SafeJSON.parse(output, { strict: true }) as { installed: boolean; hookPath: string; runtimePath: string };
 }
 
+/**
+ * Serial, and that is a measured decision rather than an oversight.
+ *
+ * The cost here is sixteen cold CLI subprocess spawns and nothing else: eight of
+ * src/cmux/index.ts and eight of src/zsh/index.ts, at about 600 ms each. Overlapping them
+ * with `test.concurrent` took the file from 5.40 s to 1.11 s on a 16-core developer machine
+ * — and turned it RED on the 4-vCPU ubuntu runner, where sixteen bun processes in flight have
+ * nowhere to run: "cmux refuses an unconfirmed rc edit" timed out at 5368 ms against the
+ * 5000 ms default (CI run 34908819029). A runner with four cores has no spare parallelism to
+ * sell, so the win never existed there. Raising the timeout would only hide contention this
+ * file creates for itself.
+ */
 test.each(["cmux", "zsh"] as const)(
     "%s installs the same capture feature that the other alias inspects and uninstalls",
     async (tool) => {

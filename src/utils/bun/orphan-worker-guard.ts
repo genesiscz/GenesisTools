@@ -88,6 +88,108 @@ function isOurWatchdog(pid: number, selfPid: number): boolean {
     }
 }
 
+/**
+ * Single-quote a value for `/bin/sh`.
+ *
+ * `SafeJSON` is the repo's rule everywhere else, but this file must stay importable by
+ * isolate workers and `/tmp` repro scripts with no `@genesiscz/*` alias graph, and a bare
+ * `JSON` is biome-restricted. The value here is a `ps` date string, so the only character
+ * that can break out is a quote; the standard `'\''` dance covers it regardless.
+ */
+function shQuote(value: string): string {
+    return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The process's start time, as `ps` reports it — the discriminator that separates "this pid"
+ * from "a pid the kernel reissued to someone else".
+ *
+ * A liveness probe cannot do this: `kill -0` succeeds for whoever holds the number now. At
+ * 400-800 pids/second the macOS pid space recycles in about three minutes, so liveness alone
+ * is not identity. Returns null when `ps` cannot answer, and the caller then declines to
+ * schedule a kill at all.
+ */
+function startedAt(pid: number): string | null {
+    try {
+        // Normalise whitespace the same way the shell side does. `ps -o lstart=` pads its
+        // column, so a raw `$(ps ...)` in sh keeps leading spaces that `.trim()` here would
+        // strip — the two strings then never match and the kill silently never fires. That
+        // exact mismatch turned the guard's own SIGKILL test red, which is how it was caught.
+        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" })
+            .replace(/\s+/g, " ")
+            .trim();
+
+        return started.length > 0 ? started : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The poll interval is interpolated straight into `/bin/sh`, so it is a boundary.
+ *
+ * The script has no `set -e`, so a `sleep` that rejects its argument does not stop the loop: it
+ * spins on `ps` and `awk` for the life of the worker. `sleep 0` is worse, because it succeeds and
+ * spins just as fast. Both are the CPU burn this guard exists to prevent, so an unusable value
+ * falls back to the default rather than being passed on.
+ */
+function pollInterval(seconds: number | undefined): number {
+    if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
+        return POLL_SECONDS;
+    }
+
+    return seconds;
+}
+
+/**
+ * The watchdog's `/bin/sh` program, as text.
+ *
+ * Exported so the identity checks can be tested directly. Driving them through
+ * `installOrphanWorkerGuard` means orphaning a real parent, which a test can only do to
+ * itself, so the two recycled-pid branches had no coverage while they were inline.
+ *
+ * @internal
+ */
+export function buildWatchdogScript(args: {
+    parentPid: number;
+    selfPid: number;
+    selfStart: string;
+    parentStart: string;
+    /** Seconds between polls; defaults to POLL_SECONDS. See installOrphanWorkerGuard. */
+    pollSeconds?: number;
+}): string {
+    return [
+        `parent=${args.parentPid}`,
+        `self=${args.selfPid}`,
+        `selfstart=${shQuote(args.selfStart)}`,
+        `parentstart=${shQuote(args.parentStart)}`,
+        "while :; do",
+        '  if ! kill -0 "$self"; then',
+        "    exit 0",
+        "  fi",
+        // Identity, not liveness, on the PARENT too. `kill -0 "$parent"` proves only that the
+        // NUMBER is occupied, so once the original parent exits and the kernel reissues its pid
+        // — about three minutes at the 400-800 pids/second this guard exists for — the probe
+        // keeps succeeding against a stranger and the watchdog waits forever for a parent that
+        // died long ago. The worker it was installed to reap is then never reaped, which is the
+        // precise failure this guard exists to prevent. An empty reading means the pid is gone
+        // and subsumes `kill -0`; a different reading means it belongs to someone else. Both are
+        // parent loss.
+        `  pnow=$(ps -o lstart= -p "$parent" 2>/dev/null | awk '{$1=$1;print}')`,
+        '  if [ -z "$pnow" ] || [ "$pnow" != "$parentstart" ]; then',
+        // pid-verified: `ps -o lstart=` is re-read here and compared against the value
+        // captured at install time, so a recycled pid fails the check and is spared.
+        `    now=$(ps -o lstart= -p "$self" 2>/dev/null | awk '{$1=$1;print}')`,
+        '    if [ -n "$now" ] && [ "$now" = "$selfstart" ]; then',
+        '      kill -KILL "$self"',
+        "    fi",
+        "    exit 0",
+        "  fi",
+        `  sleep ${pollInterval(args.pollSeconds)}`,
+        "done",
+    ].join("\n");
+}
+
 function rememberWatchdog(notePath: string, watchdogPid: number): void {
     try {
         writeFileSync(notePath, String(watchdogPid), { mode: 0o600 });
@@ -115,7 +217,17 @@ function rememberWatchdog(notePath: string, watchdogPid: number): void {
  * No `@genesiscz/*` imports: isolate workers and `/tmp` repro scripts must load this
  * file without the repo alias graph.
  */
-export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid?: number }): void {
+export function installOrphanWorkerGuard(options?: {
+    parentPid?: number;
+    selfPid?: number;
+    /**
+     * Seconds the watchdog sleeps between checks. Tuning, not behaviour: the guard's own
+     * tests must observe a real SIGKILL, and at the five-second default two of them waited
+     * out a whole poll, which was 10.5 s of a 15.7 s file. A shorter interval runs the same
+     * identity check more often rather than differently, so no test may assert on poll COUNT.
+     */
+    pollSeconds?: number;
+}): void {
     if (process.env.GENESIS_TOOLS_TEST_ALLOW_ORPHAN_WORKERS === "1") {
         return;
     }
@@ -147,26 +259,37 @@ export function installOrphanWorkerGuard(options?: { parentPid?: number; selfPid
     // `Bun.spawn` queues the fork on the event loop. A tight `for (;;)` after
     // install never ticks, so the helper would never start — the exact hang this
     // exists to stop. `child_process.spawn` forks before returning.
+    // 🛑 The kill below is identity-verified, not just liveness-verified. `kill -0` proves
+    // SOMETHING is alive at that number, never that it is still us. A `bun test --parallel`
+    // failure mode on bun 1.3.13 burns 400-800 pids/second, which recycles the macOS pid
+    // space in about three minutes, so a watchdog that outlived its worker and then fired on
+    // a bare `kill -0` would SIGKILL whatever unrelated program inherited the number.
+    //
+    // `ps -o lstart=` is the standard discriminator: a recycled pid has a different start
+    // time. It is captured HERE, at install, while the process is provably us, and compared
+    // immediately before the signal. If `ps` fails or the strings differ, the loop exits
+    // without signalling — refusing to kill is always safe, killing the wrong process is not.
+    const selfStart = startedAt(selfPid);
+
+    if (!selfStart) {
+        // No identity to verify against, so there is no safe kill to schedule.
+        return;
+    }
+
+    const parentStart = startedAt(parentPid);
+
+    if (!parentStart) {
+        // The parent is already gone, so there is no identity to compare against on any later
+        // poll. Same rule as `selfStart` above: without a verifiable premise, schedule nothing.
+        return;
+    }
+
     const proc = spawn(
         "/bin/sh",
-        [
-            "-c",
-            [
-                `parent=${parentPid}`,
-                `self=${selfPid}`,
-                "while :; do",
-                '  if ! kill -0 "$self"; then',
-                "    exit 0",
-                "  fi",
-                '  if ! kill -0 "$parent"; then',
-                '    kill -0 "$self" && kill -KILL "$self"',
-                "    exit 0",
-                "  fi",
-                `  sleep ${POLL_SECONDS}`,
-                "done",
-            ].join("\n"),
-        ],
-        { stdio: "ignore" }
+        ["-c", buildWatchdogScript({ parentPid, selfPid, selfStart, parentStart, pollSeconds: options?.pollSeconds })],
+        {
+            stdio: "ignore",
+        }
     );
 
     proc.unref();

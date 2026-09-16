@@ -190,6 +190,14 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
             // normal alive/dead check below.
         }
 
+        // Held by THIS process: a concurrent async caller on the same path. It is alive by
+        // definition and its PID cannot have been reissued, so the identity check below has
+        // nothing to verify. The spawn cost of that check for the own pid is documented at
+        // `readProcessCommand` in process-identity.ts, which is where it is fixed.
+        if (record.pid === process.pid) {
+            return false;
+        }
+
         // Identity, not just liveness: a holder that died and had its number
         // reissued would otherwise look alive forever, and every acquirer would
         // time out against a lock nobody holds.
