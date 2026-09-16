@@ -395,37 +395,90 @@ const PROBE_DIR = "/var/empty";
 
 let probeResult: boolean | null = null;
 
-/** Feature detection: returns true if the binding is loadable AND a probe
- *  call succeeds. Memoized — the answer cannot change within a process. */
+/** Why the fast path is off, when a non-ENOTSUP error disabled it. null while it is on. */
+export interface ProbeFailure {
+    errno: number | null;
+    message: string;
+    probeDir: string;
+}
+
+let probeFailure: ProbeFailure | null = null;
+let probeIter: (dir: string) => Iterable<unknown> = iterDir;
+
+/** The failure that switched every walk in this process to readdir+stat, or null. */
+export function getGetattrlistbulkProbeFailure(): ProbeFailure | null {
+    return probeFailure;
+}
+
+/** Test hook: forget the memoized answer and optionally replace the probe's directory iterator. */
+export function __resetGetattrlistbulkProbeForTests(iter?: (dir: string) => Iterable<unknown>): void {
+    probeResult = null;
+    probeFailure = null;
+    probeIter = iter ?? iterDir;
+}
+
+type ProbeOutcome = { kind: "ok" } | { kind: "unsupported" } | { kind: "error"; errno: number | null; message: string };
+
+/** Feature detection: true if the binding is loadable AND a probe call succeeds.
+ *  Memoized — ENOTSUP cannot change within a process. Any OTHER error is retried
+ *  once; a second failure still disables the fast path, but it is recorded in
+ *  `getGetattrlistbulkProbeFailure()` and warned about, because a transient
+ *  errno that silently turns every later walk into readdir+stat is not a
+ *  "feature missing", it is a run that got slower without saying so. */
 export function isGetattrlistbulkSupported(): boolean {
     if (probeResult !== null) {
         return probeResult;
     }
 
-    probeResult = probeSupport();
-    return probeResult;
-}
+    const first = probeSupport();
+    if (first.kind === "ok") {
+        probeResult = true;
+        return true;
+    }
 
-function probeSupport(): boolean {
-    const lib = getLibc();
-    if (!lib) {
+    if (first.kind === "unsupported") {
+        probeResult = false;
         return false;
     }
 
+    const second = probeSupport();
+    if (second.kind === "ok") {
+        log.debug({ errno: first.errno, probeDir: PROBE_DIR }, "getattrlistbulk probe failed once, then succeeded");
+        probeResult = true;
+        return true;
+    }
+
+    probeResult = false;
+    const failed = second.kind === "error" ? second : first;
+    probeFailure = { errno: failed.errno, message: failed.message, probeDir: PROBE_DIR };
+    log.warn(
+        { errno: failed.errno, probeDir: PROBE_DIR },
+        "getattrlistbulk probe failed twice with a non-ENOTSUP error; every directory walk in this process falls back to readdir+stat"
+    );
+    return false;
+}
+
+function probeSupport(): ProbeOutcome {
+    const lib = getLibc();
+    if (!lib) {
+        return { kind: "unsupported" };
+    }
+
     try {
-        for (const _e of iterDir(PROBE_DIR)) {
+        for (const _e of probeIter(PROBE_DIR)) {
             void _e;
-            return true;
+            return { kind: "ok" };
         }
 
         // Empty dir (the expected case for /var/empty) is still supported.
-        return true;
+        return { kind: "ok" };
     } catch (err) {
         if (err instanceof GetattrlistbulkUnsupportedError) {
-            return false;
+            return { kind: "unsupported" };
         }
 
+        const errno = typeof (err as { errno?: unknown }).errno === "number" ? (err as { errno: number }).errno : null;
         log.debug({ err }, "feature-detect probe failed");
-        return false;
+        return { kind: "error", errno, message: err instanceof Error ? err.message : String(err) };
     }
 }

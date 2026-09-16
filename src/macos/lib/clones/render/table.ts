@@ -1,4 +1,5 @@
 import { formatBytes } from "@genesiscz/utils/format";
+import { getGetattrlistbulkProbeFailure } from "@genesiscz/utils/macos/getattrlistbulk";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
@@ -248,6 +249,15 @@ export class TableRenderer implements CloneRenderer {
                         `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`
                 )
             );
+            const probe = getGetattrlistbulkProbeFailure();
+            if (probe) {
+                lines.push(
+                    pc.yellow(
+                        `note   fast directory walk was OFF for this run: getattrlistbulk probe on ${probe.probeDir} ` +
+                            `failed (errno=${probe.errno ?? "?"}); every walk used readdir+stat instead`
+                    )
+                );
+            }
             if (r.state === "applied") {
                 lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));
             }
