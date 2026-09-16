@@ -23,6 +23,12 @@ export interface LoginLauncherDeps {
      */
     login: (server: string, report: (url: string) => void) => Promise<unknown>;
     notify: (server: string) => Promise<void>;
+    /**
+     * A login held open by ANOTHER process, if any. The in-flight set above only knows
+     * logins this process started; a gateway that restarted while one was waiting for
+     * its browser callback would otherwise open a second window on the next request.
+     */
+    pending?: (server: string) => { url?: string } | undefined;
     onError?: (server: string, error: unknown) => void;
     now?: () => number;
     cooldownMs?: number;
@@ -47,9 +53,19 @@ export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {
 
     return {
         pending: (server) => inFlight.has(server),
-        authorizationUrl: (server) => authorizationUrls.get(server),
+        authorizationUrl: (server) => authorizationUrls.get(server) ?? deps.pending?.(server)?.url,
         request(server) {
             if (inFlight.has(server)) {
+                return "in-flight";
+            }
+
+            const elsewhere = deps.pending?.(server);
+
+            if (elsewhere) {
+                if (elsewhere.url) {
+                    authorizationUrls.set(server, elsewhere.url);
+                }
+
                 return "in-flight";
             }
 

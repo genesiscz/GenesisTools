@@ -133,6 +133,56 @@ describe("the authorization URL stays reachable", () => {
     });
 });
 
+describe("a login held by another process counts as in flight", () => {
+    test("no login starts while another process holds one, and its URL is exposed", async () => {
+        let calls = 0;
+        const launcher = createLoginLauncher({
+            login: async () => {
+                calls += 1;
+            },
+            notify: async () => undefined,
+            pending: () => ({ url: "https://issuer.example/authorize?held=elsewhere" }),
+        });
+
+        expect(launcher.request("wisprflow")).toBe("in-flight");
+        await settle();
+
+        expect(calls).toBe(0);
+        expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/authorize?held=elsewhere");
+    });
+
+    test("the URL of a login held elsewhere is readable before any request", () => {
+        const launcher = createLoginLauncher({
+            login: async () => undefined,
+            notify: async () => undefined,
+            pending: (server) => (server === "wisprflow" ? { url: "https://issuer.example/a" } : undefined),
+        });
+
+        expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/a");
+        expect(launcher.authorizationUrl("rohlik")).toBeUndefined();
+    });
+
+    test("a login starts normally once nothing is held elsewhere", async () => {
+        let held: { url?: string } | undefined = { url: "https://issuer.example/a" };
+        let calls = 0;
+        const launcher = createLoginLauncher({
+            login: async () => {
+                calls += 1;
+            },
+            notify: async () => undefined,
+            pending: () => held,
+        });
+
+        expect(launcher.request("wisprflow")).toBe("in-flight");
+
+        held = undefined;
+        expect(launcher.request("wisprflow")).toBe("started");
+        await settle();
+
+        expect(calls).toBe(1);
+    });
+});
+
 describe("a failed login is not retried on every reconnect", () => {
     test("the cooldown blocks the next request and expires on its own", async () => {
         let clock = 1_000;
