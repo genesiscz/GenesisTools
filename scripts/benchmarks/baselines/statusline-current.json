@@ -1,0 +1,42 @@
+{
+    "name": "statusline-current",
+    "capturedAt": "2026-09-16T16:13:03.231Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        50.0087890625,
+        74.10546875,
+        101.03125
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "GenesisTools.medianMs": 825.59,
+        "GenesisTools.meanMs": 889.54,
+        "GenesisTools.minMs": 784.53,
+        "GenesisTools.maxMs": 2023.48,
+        "GenesisTools.userMs": 659.46,
+        "GenesisTools.systemMs": 353.03,
+        "GenesisTools.childProcessesPerRender": 76,
+        "GenesisClaude.medianMs": 742.83,
+        "GenesisClaude.meanMs": 814.42,
+        "GenesisClaude.minMs": 700.42,
+        "GenesisClaude.maxMs": 1384.37,
+        "GenesisClaude.userMs": 605.12,
+        "GenesisClaude.systemMs": 268.81,
+        "GenesisClaude.childProcessesPerRender": 72,
+        "client-repo.medianMs": 882.88,
+        "client-repo.meanMs": 966.52,
+        "client-repo.minMs": 814.76,
+        "client-repo.maxMs": 2310.89,
+        "client-repo.userMs": 669.82,
+        "client-repo.systemMs": 449.37,
+        "client-repo.childProcessesPerRender": 76,
+        "vault.medianMs": 822.67,
+        "vault.meanMs": 892.51,
+        "vault.minMs": 748.86,
+        "vault.maxMs": 1553.24,
+        "vault.userMs": 660.37,
+        "vault.systemMs": 308.3,
+        "vault.childProcessesPerRender": 75
+    },
+    "notes": "100 runs over 4 interleaved rounds per repo, hyperfine --input, command \"bash /Users/Martin/.claude/helpers/statusline-graft.sh\". childProcessesPerRender counts external binary invocations via PATH wrappers and is a floor. Unshimmed: none."
+}

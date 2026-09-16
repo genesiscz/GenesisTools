@@ -75,6 +75,8 @@ export interface ProviderBinding {
     dispose?(): void;
 }
 
+import type { StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
+
 export interface HealthReport {
     ok: boolean;
     detail: string;
@@ -99,4 +101,10 @@ export interface ProviderPlugin {
     readonly accounts?: AccountFeatures;
     /** Native transcript discovery/reading/import, independent of account authentication. */
     readonly codingAgent?: NativeSessionReader<string>;
+    /**
+     * The coding agent's statusline, when the host has one (Claude Code today; Codex and Grok have
+     * no statusline hook yet). A member for the same reason `accounts` is: it is not a `Capability`
+     * a call could be routed by.
+     */
+    readonly statusline?: StatuslineFeature;
 }

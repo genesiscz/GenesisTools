@@ -27,6 +27,7 @@ import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
 import { runConfigTui } from "./commands/config/tui";
 import { registerSessionsCommands } from "./commands/sessions";
+import { registerStatuslineCommands } from "./commands/statusline";
 import { registerUsageDaemonCommands } from "./commands/usage/daemon";
 import { registerAiUsageCommand } from "./commands/usage/index";
 import { registerAiUsageSessionsCommand } from "./commands/usage/sessions";
@@ -580,6 +581,7 @@ registerAccountsCommands(program);
 registerAiProviderLoginCommands(program);
 registerConfigCommands(program);
 registerSessionsCommands(program);
+registerStatuslineCommands(program);
 
 // `tools ai usage` opens the dashboard across every provider that reports quota; its
 // `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).

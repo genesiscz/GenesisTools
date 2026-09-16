@@ -8,6 +8,7 @@ import { anthropicLogin } from "./login";
 import { anthropicLoginLong } from "./login-long";
 import { anthropicLoginSecondary } from "./login-secondary";
 import { anthropicSpendScope } from "./spend";
+import { claudeCodeStatusline } from "./statusline";
 import { anthropicUsage } from "./usage";
 import { anthropicWarmup } from "./warmup";
 
@@ -36,6 +37,7 @@ const presentation: AccountFeatures["presentation"] = {
 export const anthropicSubPlugin: ProviderPlugin = {
     id: "anthropic-sub",
     codingAgent: claudeHistoryReader,
+    statusline: claudeCodeStatusline(),
     kind: "subscription",
     capabilities: new Set(["chat", "summarize", "translate"]),
     credential: {
