@@ -422,6 +422,11 @@
             "types": "./wakeful.ts",
             "default": "./wakeful.ts"
         },
+        "./workers": {
+            "bun": "./workers/index.ts",
+            "types": "./workers/index.ts",
+            "default": "./workers/index.ts"
+        },
         "./worker/capabilities": {
             "bun": "./worker/capabilities.ts",
             "types": "./worker/capabilities.ts",
