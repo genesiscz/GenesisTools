@@ -3,6 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
+    argvWithChildDeadline,
     createTmuxSession,
     killTmuxSession,
     sessionExists,
@@ -83,7 +84,11 @@ async function spawnTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSp
 
     // TMUX_SPAWN_GUARD, not bare options: capture now runs from an HTTP handler, so an
     // unbounded spawn against a wedged tmux server leaves the request pending forever.
-    const proc = Bun.spawn(cmd, { cwd: opts?.cwd, stdio: ["ignore", "pipe", "pipe"], ...TMUX_SPAWN_GUARD });
+    const proc = Bun.spawn(argvWithChildDeadline(cmd), {
+        cwd: opts?.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        ...TMUX_SPAWN_GUARD,
+    });
     const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),

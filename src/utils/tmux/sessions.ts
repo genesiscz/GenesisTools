@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -108,8 +109,30 @@ const prof = profiler.scope("tmux");
  */
 export const TMUX_SPAWN_GUARD = { timeout: 10_000, killSignal: "SIGKILL" } as const;
 
+/**
+ * Deadline that lives IN the child tree. `TMUX_SPAWN_GUARD.timeout` is a Bun timer in
+ * the parent; if the parent is SIGKILL'd (dashboard restart, worktree agent death) the
+ * timer dies and a wedged `tmux list-sessions` is orphaned spinning at ~100% CPU.
+ * Perl stays alive as PPID-1 and SIGKILLs the real client. Shorter than the Bun
+ * timeout so the client is gone before Bun SIGKILLs Perl (which cannot reap on SIGKILL).
+ */
+export const TMUX_CHILD_DEADLINE_MS = 8_000;
+
+const PERL_WATCHDOG = "/usr/bin/perl";
+const PERL_WATCHDOG_SCRIPT =
+    'my $ms=shift @ARGV; my $sec=int(($ms+999)/1000); $sec=1 if $sec<1; my $pid=fork(); die "fork: $!\\n" unless defined $pid; if($pid==0){exec {$ARGV[0]} @ARGV; exit 127} $SIG{ALRM}=sub{kill 9,$pid; waitpid($pid,0); exit 124}; alarm $sec; waitpid($pid,0); my $sig=$?&127; exit $sig?128+$sig:($?>>8);';
+
+/** Prefix argv so a parent crash cannot leave a spinning tmux client. */
+export function argvWithChildDeadline(cmd: string[]): string[] {
+    if (cmd.length === 0 || !existsSync(PERL_WATCHDOG)) {
+        return cmd;
+    }
+
+    return [PERL_WATCHDOG, "-e", PERL_WATCHDOG_SCRIPT, "--", String(TMUX_CHILD_DEADLINE_MS), ...cmd];
+}
+
 const defaultSpawn: TmuxSpawnSync = async (cmd, opts) => {
-    const proc = Bun.spawn(cmd, {
+    const proc = Bun.spawn(argvWithChildDeadline(cmd), {
         cwd: opts?.cwd,
         env: buildTmuxSpawnEnv(),
         stdio: ["ignore", "pipe", "pipe"],
@@ -146,6 +169,7 @@ export function setTmuxSpawnSyncForTests(impl: TmuxSpawnSync | null): void {
     spawnImpl = impl ?? defaultSpawn;
     // The server-persist TTL latch must not leak across tests that swap impls.
     lastServerPersistAt = 0;
+    inflightActivePanes = null;
 }
 
 export async function ensureTmuxSessionEnvironment(sessionName: string): Promise<void> {
@@ -267,7 +291,21 @@ export interface TmuxActivePaneInfo {
  * existence checks against many names should reuse this ONE call instead of
  * issuing per-name `sessionExists` list-sessions storms.
  */
+let inflightActivePanes: Promise<Map<string, TmuxActivePaneInfo>> | null = null;
+
 export async function listTmuxSessionActivePanes(): Promise<Map<string, TmuxActivePaneInfo>> {
+    if (inflightActivePanes) {
+        return inflightActivePanes;
+    }
+
+    inflightActivePanes = listTmuxSessionActivePanesUncoalesced().finally(() => {
+        inflightActivePanes = null;
+    });
+
+    return inflightActivePanes;
+}
+
+async function listTmuxSessionActivePanesUncoalesced(): Promise<Map<string, TmuxActivePaneInfo>> {
     let tmuxBin: string;
 
     try {
