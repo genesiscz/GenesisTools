@@ -304,7 +304,7 @@ const SNIPPET_HITS_PER_FILE = 8;
  *   - the needle sits in a hex-and-dash run of 20 characters or more (a uuid, where the
  *     neighbour is a dash and the first test would pass).
  *
- * `!7404:`, `--resume 7404` and `col-fe-pr-7404-col-309257` all survive both, which is the
+ * `!7404:`, `--resume 7404` and `client-repo-pr-7404-ticket` all survive both, which is the
  * point: this demotes a hit, it never drops the session.
  */
 function hitIsIncidental(snippet: string, needle: string): boolean {
