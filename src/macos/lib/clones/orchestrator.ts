@@ -15,6 +15,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import { resolveKeepPartners, spawnCacheCommand } from "./keep-partners";
+import { clonesProfile } from "./profile";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
 const log = logger.child({ component: "clones:orchestrator" });
@@ -581,6 +582,15 @@ function sortTree(nodes: DirNode[], by: "overcount" | "real" | "du"): DirNode[] 
  * convention `allocated` already uses for this report.
  */
 function measureUniqueAllocated(roots: string[]): number | null {
+    const end = clonesProfile.start("measure.du-engine");
+    try {
+        return measureUniqueAllocatedInner(roots);
+    } finally {
+        end();
+    }
+}
+
+function measureUniqueAllocatedInner(roots: string[]): number | null {
     let total = 0;
     for (const root of roots) {
         try {

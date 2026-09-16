@@ -6,6 +6,7 @@
 // via the fcntl shim. Used by scan-worker.ts (one instance per Bun Worker).
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { profiler } from "@genesiscz/utils/profile";
 
 const VREG = 1;
 const VDIR = 2;
@@ -50,7 +51,19 @@ export interface ScanDirsResult {
 
 const MAX_GROUPS = 4096; // mirrors native/clonesize.c; BigInt mask has no 64-bit limit
 
+/** Per-worker walk timings. `PROFILE=du` includes this scope. */
+const ffiProfile = profiler.scope("du.ffi");
+
 export function scanDirs(input: ScanDirsInput): ScanDirsResult {
+    const endScan = ffiProfile.start("scanDirs");
+    try {
+        return scanDirsInner(input);
+    } finally {
+        endScan();
+    }
+}
+
+function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
     const { shim, root, dirs, recurse, groupIndex, ngroups, minBytes } = input;
     const excludeSet = new Set(input.excludes);
 

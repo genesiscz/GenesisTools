@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command, Option } from "commander";
 import pc from "picocolors";
@@ -16,6 +17,11 @@ import { detectWorktreeExcludes } from "./lib/worktrees";
 
 const program = new Command();
 const storage = new Storage("du");
+
+/** `PROFILE=du` turns on every phase this CLI times: the scan itself and the
+ *  engine's own sub-phases. Use it instead of wrapping the binary in `time`,
+ *  which can only ever report the total. */
+const duProfile = profiler.scope("du.cli");
 
 /**
  * Clone accounting needs APFS: the engines map physical extents through
@@ -73,16 +79,22 @@ function assertDir(dir: string): string {
 
 async function runScan(opts: ScanOptions, engine: Engine): Promise<{ result: ClonesizeResult; ms: number }> {
     const t0 = performance.now();
+    const end = duProfile.start(`scan.${engine}`);
     let result: ClonesizeResult;
-    if (engine === "bun") {
-        result = await scanWithBun(opts);
-    } else if (engine === "c") {
-        result = scanWithC(opts);
-    } else {
-        result = scanWithCFfi(opts);
+    try {
+        if (engine === "bun") {
+            result = await scanWithBun(opts);
+        } else if (engine === "c") {
+            result = scanWithC(opts);
+        } else {
+            result = scanWithCFfi(opts);
+        }
+    } finally {
+        end();
     }
 
     const ms = performance.now() - t0;
+    duProfile.summary(`du ${engine}`);
     return { result, ms };
 }
 
