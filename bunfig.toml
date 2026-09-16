@@ -30,7 +30,13 @@ preload = [
     # test file in the same worker had opened a Database first.
     "./src/utils/search/stores/sqlite-vec-preload.ts",
     # One temp root per test process, removed on a green exit, so fixtures that never clean
-    # up cannot fill the temp folder. Before the sandbox preload, whose home lands inside it.
+    # up cannot fill the temp folder.
+    #
+    # 🛑 THIS ORDER IS LOAD-BEARING. preload-test-sandbox.ts has no cleanup of its own; its
+    # gt-test-home-* directory survives only by landing inside the root this file redirects
+    # TMPDIR to. Measured 2026-09-15 by swapping the two lines: a two-file run leaked 2
+    # gt-test-home-* directories into the real temp folder (0 before), i.e. one per test file,
+    # never removed. Both files carry the same warning at their own end.
     "./src/utils/bun/preload-test-tmpdir.ts",
     "./src/utils/bun/preload-test-sandbox.ts",
     "./src/utils/bun/preload-test-keyring.ts",
@@ -38,5 +44,11 @@ preload = [
     # class-eval time and those paths must already point inside the sandbox.
     "./src/utils/bun/preload-test-host-effects.ts",
     "./src/utils/bun/preload-test-process-exit.ts",
-    "./src/indexer/lib/test-cleanup-preload.ts",
+    # test-cleanup-preload.ts was REMOVED 2026-09-15: the sandbox means it could never see
+    # anything. It wiped stale gt_*_test_ indexes from the user's real homedir, but it ran
+    # AFTER preload-test-sandbox.ts had already pointed GENESIS_TOOLS_HOME at a fresh
+    # per-process directory. Measured by instrumenting it: readdirSync THREW ENOENT and
+    # wipeAllTestIndexes(120_000) returned 0. The real homedir holds no gt_*_test_ entries
+    # either, because sandboxed tests never write there. wipeAllTestIndexes() itself stays —
+    # store.vacuum.test.ts calls it deliberately.
 ]

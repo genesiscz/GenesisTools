@@ -7,6 +7,16 @@ import { env } from "@genesiscz/utils/env";
 /**
  * Force every test process to use a throwaway `~/.genesis-tools` root.
  *
+ * 🛑 THIS FILE HAS NO CLEANUP OF ITS OWN, and that is load-bearing on bunfig ordering.
+ * The `gt-test-home-*` directory below is removed only because `tmpdir()` already resolves
+ * through the TMPDIR that `preload-test-tmpdir.ts` redirected EARLIER IN THE SAME ISOLATE,
+ * so it lands inside that file's per-process root and dies with it.
+ *
+ * Measured 2026-09-15: swapping the two entries in `bunfig.toml` leaks one `gt-test-home-*`
+ * directory per TEST FILE straight into the real temp folder (0 before the swap, 2 after a
+ * two-file run), which is roughly 1600 per full suite. `preload-test-tmpdir.ts` MUST stay
+ * above this file in `[test].preload`.
+ *
  * `Storage` resolves its root from `GENESIS_TOOLS_HOME || homedir()`, so any test
  * that touches config, caches or databases without setting that variable writes
  * to the user's REAL data. That is not theoretical: the AIConfig suite persisted
