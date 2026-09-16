@@ -8,11 +8,20 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      windows:
+        description: "Also run the test suite on windows-latest (10-16 min on top)"
+        type: boolean
+        default: false
 
 jobs:
   # Decide which OSes the test matrix runs on.
   # ubuntu always; windows-latest only when the PR opts in via title/label
-  # containing "windows" (case-insensitive), or on manual workflow_dispatch.
+  # containing "windows" (case-insensitive), or on a manual workflow_dispatch
+  # whose `windows` input is ticked. A dispatch used to add windows
+  # unconditionally, so 17 verification dispatches on 2026-09-15 ran 17 windows
+  # jobs (~190 runner-minutes) that nobody had asked for. Off by default now;
+  # `gh workflow run ci.yml --ref <branch> -f windows=true` when you want it.
   setup:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -22,6 +31,7 @@ jobs:
       - id: decide
         env:
           EVENT: ${{ github.event_name }}
+          DISPATCH_WINDOWS: ${{ github.event.inputs.windows }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
@@ -41,32 +51,47 @@ jobs:
           # and keeps that guard meaningful. The
           # task/tests integration lane is gated out of the default suite (see
           # package.json `test`) and run on demand via `bun run test:task`, so it is not
-          # part of this step's budget. windows med 136s / healthy ~150s -> 7m.
+          # part of this step's budget.
+          # windows: the old note read "med 136s / healthy ~150s -> 7m" and is stale by an
+          # order of magnitude. Measured 2026-09-15 on three dispatched runs, the step is
+          # KILLED at 7m every time, on PR branches AND on master 8a85b394e (run
+          # 34913953290), having printed ~10.6k of ~11k pass lines. So it is a budget
+          # overrun, not a hang, and the completion-marker guard below was reporting the
+          # wrong cause.
+          # ⚠️ 11m was then set from a SINGLE clean sample of 8m40s and was not enough: run
+          # 35000784853 ran the step 668s and was truncated at the budget anyway. Windows
+          # runners vary about 30% (the same spread the per-file ceiling in
+          # scripts/ci/test-runtime-guard.ts is a share for), so 520s and 668s+ are the same
+          # tree on two runners. 15m is set from the SLOW end plus margin, and still catches a
+          # real stall, because a hang does not finish at any budget. Do not re-derive this
+          # from one green run.
           inc='{"os":"ubuntu-latest","testTimeout":5}'
           win=false
-          if [ "$EVENT" = "workflow_dispatch" ]; then win=true; fi
+          # A boolean input arrives as the string "true"/"false"; anything else is not a yes.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_WINDOWS" = "true" ]; then win=true; fi
           title_lc=$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
           labels_lc=$(printf '%s' "$PR_LABELS" | tr '[:upper:]' '[:lower:]')
           case "$title_lc" in *windows*) win=true ;; esac
           case "$labels_lc" in *windows*) win=true ;; esac
-          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":7}"; fi
+          if [ "$win" = "true" ]; then inc="$inc, {\"os\":\"windows-latest\",\"testTimeout\":15}"; fi
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
           echo "Selected matrix include: [$inc] (windows opted-in: $win)"
 
-  # Single job (no separate `check` runner — cheaper). Lint/typecheck run as
-  # ubuntu-only steps AFTER test discovery + Upload logs, so they can never
-  # block or delay the test signal — the test discovery step is
-  # continue-on-error and uploads its log before lint/tsc even start.
+  # The test matrix and nothing else. Lint, typecheck, the guards and the sub-project
+  # suites live in `checks` below and run alongside this job, so they cannot delay the
+  # test signal and this job's wall time is the suite's wall time.
   test:
     needs: setup
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # Backstop only — must exceed the per-OS testTimeout (4m/7m) + cold
-    # install (windows ~237s) + ubuntu lint/tsc so step tripwires + Upload
-    # logs fire first. Real worst case ~12m (windows cold); 15m has margin.
-    timeout-minutes: 15
+    # Backstop only — must exceed the per-OS testTimeout (5m/15m) + cold install
+    # (windows measured 204s cache + 53s install on run 35000784853) so the step
+    # tripwires and Upload logs fire first and name the real cause. Windows worst
+    # case is ~15m + ~5m of setup; 25m has margin. Lint and tsc are no longer in
+    # this job at all — see `checks`.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -93,9 +118,18 @@ jobs:
           git cat-file -e "$rev^{commit}"
           echo "fetched baseline $rev"
 
+      # 🛑 1.4.2 here is a CI choice, not a repo-wide requirement: the code must keep working
+      # on 1.3.13, which is what developers run. Do not use a 1.4-only API because CI is green.
+      #
+      # Why it moved (measured 2026-09-15, same tree, same runner class): 1.3.13 leaks one
+      # directory fd per directory the test scanner visits (oven-sh/bun 39783, fixed by 40016),
+      # and past the fd ceiling every spawn slows down. The step ran 266 s on 1.3.13 and 90 s on
+      # 1.4.2 — ~75% of worker time was overhead rather than tests. ⚠️ 1.4.0 is NOT enough; it
+      # turns the resulting hang into an EBADF fast-fail. 1.4.1 is the first version with both
+      # fixes. See the block comment in scripts/test.ts for the local side of this.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.13"
+          bun-version: "1.4.2"
 
       # The hosted images ship no ripgrep (actions/runner-images#12179, closed
       # NOT_PLANNED) and the history search, the shell-quirks extractor and the
@@ -127,7 +161,7 @@ jobs:
       # Run the WHOLE suite. Discovery only — never fail the job here; the
       # signal is the log, not the exit code. bun test continues past failing
       # files, so one log = full failure inventory for this OS.
-      # Tripwire: per-OS matrix.testTimeout (ubuntu 4m, windows 7m). A plain
+      # Tripwire: per-OS matrix.testTimeout (ubuntu 5m, windows 15m). A plain
       # matrix int IS valid in step-level timeout-minutes (matrix resolves at
       # job-expansion); only raw ternaries / non-matrix contexts are rejected.
       # On timeout the partial tee'd log still uploads (continue-on-error).
@@ -156,25 +190,42 @@ jobs:
           GENESIS_TOOLS_TEST_SKIP_DEVDASHBOARD: "1"
         run: |
           set -o pipefail
+          # `--parallel` with no number, i.e. one worker per core, and that is measured rather
+          # than assumed. About 40% of this step is NOT test execution: from CI's own numbers,
+          # (508 s of summed per-test time + 1272 files x X) / 4 = 229 s gives X = 363 ms per
+          # FILE of module evaluation before it asserts anything. Oversubscribing would only
+          # help if that were latency. It is not: the same tree measured 229.4 s at 4 workers
+          # and 233.4 s at 6 (runs 34910083066 and 34910148128). Do not try 8.
           bun run test 2>&1 | tee "test-${{ runner.os }}.log"
 
+      # 🛑 The test step is `continue-on-error: true`, so a failing test does NOT fail the
+      # job and `conclusion: success` does NOT mean the tests passed. Through the whole
+      # 2026-09-14 campaign every PR read "all checks green" while master itself carried 31
+      # failures, because the count lived only in the raw log. This step puts it where a
+      # reader sees it without opening anything.
+      # 🛑 The rendering is a SCRIPT, not inline shell, because shell inside YAML cannot be
+      # tested and the first version of this logic was wrong on the path that matters most.
+      # It aborted under the `-eo pipefail` that GitHub applies to `shell: bash`: `grep`
+      # exits 1 when a green log has no `(fail)` lines, so the step died at its first
+      # assignment, wrote nothing, and reddened the job on a PASSING suite. The
+      # `LOG UNREADABLE` branch was unreachable for the same reason. See
+      # `scripts/ci/summarize-tests.test.ts`, which drives all five input classes.
+      #
+      # `continue-on-error` for the same reason the "Slowest test files" step below carries
+      # it: a SUMMARY must never fail the job. A suite that cannot terminate is already
+      # caught by the `[test] suite complete` step, which is deliberately not
+      # continue-on-error, so nothing is lost by making this one unable to redden a run.
       - name: Summarize results
         if: always()
+        continue-on-error: true
         shell: bash
         run: |
-          {
-            echo "## ${{ runner.os }} — test discovery"
-            echo ""
-            echo "- install step outcome: \`${{ steps.install.outcome }}\`"
-            echo "- tests step outcome: \`${{ steps.tests.outcome }}\`"
-            echo ""
-            echo '<details><summary>Last 60 lines of test log</summary>'
-            echo ""
-            echo '```'
-            tail -n 60 "test-${{ runner.os }}.log" 2>/dev/null || echo "(no test log)"
-            echo '```'
-            echo '</details>'
-          } >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/ci/summarize-tests.sh \
+            "test-${{ runner.os }}.log" \
+            "${{ runner.os }}" \
+            "${{ steps.install.outcome }}" \
+            "${{ steps.tests.outcome }}" \
+            >> "$GITHUB_STEP_SUMMARY"
 
       # bun prints `(pass) name [N ms]` under a `path.test.ts:` header on the
       # runner (it does not locally), so the log already holds per-test timings.
@@ -261,33 +312,103 @@ jobs:
 
           grep "$marker" "$log" | tail -n 1
 
-      # Lint/typecheck — ubuntu only (redundant + slow on Windows), and only
-      # after test discovery + Upload logs above, so they can't block the
-      # test signal. NOT continue-on-error: a real lint/tsc failure should
-      # still turn the run red (same signal the old separate `check` job
-      # gave), just without its own runner. Timeouts are fail-fast tripwires
-      # from real data (biome ~12s w/ GritQL plugins on 10 cores → expect
-      # ~30–45s on 4-core GH runners, dashboard ~1s, tsc ~8s) + headroom.
+      # A per-file runtime ceiling, so one slow test cannot eat the step budget unnoticed
+      # again. The budget has now been raised twice (4m, then 5m) because the suite grew
+      # into it, and a budget kill arrives disguised as the hang guard above. Linux only:
+      # the windows job runs the same files (on its own, larger budget, see the matrix
+      # comment in `setup`) and would only duplicate the finding.
+      #
+      # 🛑 An exit code above 1 is a BROKEN SCAN, not a pass, and is handled here rather
+      # than trusted: four guards in this repo have passed while enforcing nothing because
+      # the tool exited 127 and `if` read that as "no matches". The guard catches its own
+      # crashes and returns 1, so anything above 1 means it never even got that far.
+      - name: Per-file test runtime ceiling
+        if: always() && runner.os == 'Linux'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set +e
+          bun scripts/ci/test-runtime-guard.ts "test-${{ runner.os }}.log"
+          code=$?
+          set -e
+          if [ "$code" -gt 1 ]; then
+            echo "::error:: the runtime guard itself exited ${code}, so nothing was enforced. This is a broken scan, not a pass."
+            exit 1
+          fi
+          exit "$code"
+
+
+  # Lint, typecheck, the repo guards and the sub-project suites, in their OWN job so they
+  # run CONCURRENTLY with the test matrix instead of queueing behind it.
+  #
+  # They used to be ubuntu-only steps at the tail of `test`, which meant the runner sat
+  # through the whole 266 s test step before starting ~150 s of checks that need none of its
+  # output. Measured on run 34964619758: test step 266 s, then TypeScript check 21 s, biome
+  # 18 s, the two DevDashboard suites 29 s, dashboard typecheck+vitest 26 s and the guards.
+  # Splitting them costs one extra checkout, setup-bun and install (~30 s, cache-warm) and
+  # removes about 150 s from the critical path.
+  #
+  # The original comment's intent is preserved and strengthened: these can no longer delay
+  # the test signal at all, because they are not in its job. Still NOT continue-on-error —
+  # a real lint or tsc failure must turn the run red. The per-step timeouts below are the
+  # same fail-fast tripwires, measured on 4-core GitHub runners.
+  checks:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keep in step with the `test` job's pin; the reasoning lives there.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      # Three guards shell out to it (logging, pid-safety, package boundaries), and the
+      # hosted image ships none.
+      - name: Install ripgrep
+        uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
+        with:
+          tool: ripgrep@14.1.1
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        shell: bash
+        run: bun install --frozen-lockfile
+      # 🛑 These steps carry NO `if: runner.os == 'Linux'` and must not regain one. The guard
+      # was load-bearing while they lived in the `test` job, which has a Windows matrix leg;
+      # this job has no matrix and always runs on ubuntu, so the condition would be dead code
+      # that reads as though a Windows leg existed. There is likewise no test-discovery or
+      # Upload-logs step above them any more — see the job comment for why they moved.
+      #
+      # Timeouts are fail-fast tripwires from real data (biome ~12s w/ GritQL plugins on 10
+      # cores → expect ~30-45s on 4-core GH runners, dashboard ~1s, tsc ~8s) + headroom.
       # Split from the repo-rule checker so each has its own timing and tripwire.
       # `bun run lint` still runs both for humans; CI wants them separable,
       # because a combined number cannot say which half regressed.
       # Lint rules are per-file and syntactic, so on a PR only the diff needs
-      # checking — unlike the typecheck above, which must stay whole-tree. The
+      # checking — unlike the `TypeScript check` step further down, which must stay
+      # whole-tree because a type error travels across files a diff never names. The
       # base commit is fetched at depth 1 because a full-history checkout would
       # pull 350+ MiB and cost more than the linting it saves. Both commands
       # fall back to a full scan if the diff is unavailable for any reason.
       - name: Fetch PR base for changed-file linting
-        if: runner.os == 'Linux' && github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request'
         run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
 
       - name: Run Biome check + repo lint rules
-        if: runner.os == 'Linux'
         timeout-minutes: 3
         shell: bash
         run: bash scripts/ci/lint-changed.sh "${{ github.event.pull_request.base.sha }}"
 
       - name: Run Biome check (src/claude-history-dashboard)
-        if: runner.os == 'Linux'
         timeout-minutes: 2
         run: bun run lint:dashboard
 
@@ -299,17 +420,14 @@ jobs:
       # it: the frozen install proves package.json and bun.lock agree, then the
       # app's own check-types and vitest run.
       - name: Install src/dashboard (frozen lockfile)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run install:dashboard-web
 
       - name: TypeScript check (src/dashboard/apps/web)
-        if: runner.os == 'Linux'
         timeout-minutes: 3
         run: bun run typecheck:dashboard-web
 
       - name: Vitest (src/dashboard/apps/web)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dashboard-web
 
@@ -329,57 +447,46 @@ jobs:
       # never writes `[test] suite complete`); do not "optimize" it onto the
       # parallel runner.
       - name: Install DevDashboard cloud (frozen lockfile)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run install:dd-cloud
 
       - name: TypeScript check (DevDashboard cloud)
-        if: runner.os == 'Linux'
         timeout-minutes: 3
         run: bun run typecheck:dd-cloud
 
       - name: Tests (DevDashboard cloud — shared + vitest)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dd-cloud
 
       - name: Install DevDashboard mobile (frozen lockfile)
-        if: runner.os == 'Linux'
         timeout-minutes: 8
         run: bun run install:dd-mobile
 
       - name: TypeScript check (DevDashboard mobile)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run typecheck:dd-mobile
 
       - name: Tests (DevDashboard mobile — unit, serial)
-        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: bun run test:dd-mobile
 
       - name: TypeScript check
-        if: runner.os == 'Linux'
         timeout-minutes: 2
         run: bun run typecheck:all
 
       - name: Logging & output convention guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/logging-guard.sh
 
       - name: AI credential resolution guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/ai-credentials-guard.sh
 
       - name: PID recycling guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bash scripts/ci/pid-safety-guard.sh
 
       - name: Package boundary guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
@@ -387,6 +494,5 @@ jobs:
       # importing an entrypoint that runs the CLI on import. Cheap, and it fires
       # before the timeout does, so the failure names the cause.
       - name: Entrypoint import guard
-        if: runner.os == 'Linux'
         timeout-minutes: 1
         run: bun scripts/ci/entrypoint-import-guard.ts

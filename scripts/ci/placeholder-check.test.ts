@@ -54,7 +54,7 @@ async function run(
         await git(root, ["add", "-A"]);
     }
 
-    const env: Record<string, string> = { ...process.env };
+    const env: Record<string, string | undefined> = { ...process.env };
 
     if (markers === null) {
         // Point HOME at an empty directory so the default marker path cannot
