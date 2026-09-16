@@ -649,9 +649,20 @@ only). Plain verbs are auto-mapped inside a `capture{}` plan (`press`→`ax-pres
 
 ## Permissions
 
-Accessibility and Screen Recording, granted to GenesisTools.app rather than to the terminal.
-Check with `tools macos permissions`; it exits 1 while something is missing and names the
-pane to open. An empty result from a permission-gated command is never proof of empty data.
+Accessibility, Screen Recording and Automation, all granted to GenesisTools.app rather than to
+the terminal; `tools control` re-enters through the app launcher for `ax-tool`, `peekaboo`
+(local runtime) and `osascript`. Check with `tools control doctor`: three lines, each
+granted / denied / not determined, the identity that needs it, the pane to open; exits 1
+while something is missing. `tools control audit` adds which running apps carry
+`AXManualAccessibility` (control sets it on every `--app` call and never clears it) or
+`AXEnhancedUserInterface` (control never sets it), plus which binary each capability runs
+through. Both are read-only and never prompt.
+
+A missing Accessibility grant answers `{"reason":"accessibility-not-granted"}` naming
+GenesisTools.app and the pane, on every AX subcommand. `no windows for <app>` now means the
+query succeeded and the list was empty. DarwinKit is not in the path: a `darwinkit serve`
+process belongs to other tools. The Peekaboo bridge (`boo.peekaboo.mac`) is the one thing
+that keeps its own grants; `capture.noRemote: true` avoids it.
 
 ## Maintenance
 

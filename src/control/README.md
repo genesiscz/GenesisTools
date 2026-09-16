@@ -70,6 +70,8 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 
 | Command | Description |
 |---------|-------------|
+| `doctor` | Accessibility, Screen Recording and Automation as three lines, each granted / denied / not determined, with the identity that needs it (GenesisTools.app). Read-only; exits 1 while something is missing. |
+| `audit` | Which running apps carry `AXManualAccessibility` (control sets it) or `AXEnhancedUserInterface` (control never does), read live without touching them; every grant with its holder; which binary each capability runs through. `--json` for machines. |
 | `preflight` | Run this first. Screens, frontmost app, windows, elements by role, browser tab, suggested plan. |
 | `apps` | List running apps, the valid `--app` values |
 | `list` | List AX elements in an app: identifiers, roles, values |
@@ -192,9 +194,24 @@ Modes for `--record`:
 
 ## Permissions
 
-This tool needs macOS Accessibility permission for the process that runs it, and Screen Recording permission for the capture and screenshot paths. The native recorder (`ax-tool capture`) checks `CGPreflightScreenCaptureAccess` first and fails with a named error instead of an empty recording. A missing Accessibility permission usually presents as an empty element list rather than an error, so if `list` returns nothing for an app you can see, check permissions before debugging selectors.
+Every grant belongs to **GenesisTools.app** (`com.genesiscz.genesistools`), not to the terminal and not to a helper binary. `tools control` re-enters through the app launcher for every native spawn: `ax-tool` (Accessibility, Screen Recording), `peekaboo` in its local runtime, and `osascript` (Automation). Grant each pane once to GenesisTools and every terminal, editor and agent host shares it.
 
-⚠️ A runtime upgrade (a new `bun` or `node` binary) silently revokes previously granted permissions, because the grant is per-binary. Re-grant after upgrading.
+```bash
+tools control doctor            # three grants, three lines, exit 1 while one is missing
+tools control audit             # plus: which apps carry AXManualAccessibility / AXEnhancedUserInterface, and what runs through what
+tools macos permissions open --pane accessibility
+```
+
+A missing Accessibility grant is reported as a distinct error (`"reason": "accessibility-not-granted"`) naming GenesisTools.app and the pane. It is never reported as `no windows for <app>`: that message is reserved for a query that succeeded and returned an empty list. An app that does not answer the AX query at all gets its own message (`accessibility query failed ... kAXErrorCannotComplete`).
+
+Two things stay outside GenesisTools.app, and `audit` says so:
+
+- The Peekaboo **bridge** transport (the default when `capture.backend: "peekaboo"` runs without `noRemote`) is the Peekaboo.app daemon, `boo.peekaboo.mac`, and uses that app's own grants. Set `capture.noRemote: true` to stay on the local runtime, which the launcher covers.
+- A `darwinkit serve` process on the machine belongs to other tools (calendar, reminders, mail). `tools control` does not use DarwinKit for anything.
+
+⚠️ `tools control <anything> --app X` writes `AXManualAccessibility = true` into X, because Chromium and Electron build no AX tree until an assistive client asks. Nothing clears it; only relaunching X does. `AXEnhancedUserInterface` is deliberately never set (it changes AppKit layout), so when `audit` finds it on, another client set it.
+
+⚠️ If the launcher is off (`GENESIS_TOOLS_NO_APP=1`, or `tools macos permissions disable`), grants follow whatever process launched `tools`, and a runtime upgrade (a new `bun` binary) silently revokes them because that grant is per-binary. `doctor` names that process.
 
 ## Notes
 
