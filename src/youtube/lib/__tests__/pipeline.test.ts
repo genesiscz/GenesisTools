@@ -140,6 +140,110 @@ describe("Pipeline", () => {
         }
     });
 
+    it("clears the hot stage on stop and does not claim afterwards", async () => {
+        const { db, config, dir } = await makeFixture();
+        await config.update({
+            concurrency: { download: 1, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 },
+            workers: { pollMs: 0, idleTeardownMs: 60_000 },
+        });
+        const claimedTargets: string[] = [];
+        const originalClaim = db.claimNextJob.bind(db);
+        db.claimNextJob = ((workerId, opts) => {
+            const job = originalClaim(workerId, opts);
+
+            if (job) {
+                claimedTargets.push(job.target);
+            }
+
+            return job;
+        }) as YoutubeDatabase["claimNextJob"];
+        const pipeline = new Pipeline(db, config, {
+            pollMs: 0,
+            handlers: makeHandlers({
+                metadata: async (ctx) => {
+                    await waitForAbort(ctx.signal);
+                },
+            }),
+        });
+
+        try {
+            await pipeline.start();
+            const running = pipeline.enqueue({
+                targetKind: "video",
+                target: "hot-running",
+                stages: ["metadata"],
+            }).job!;
+            await waitFor(() => hotStageOf(pipeline) === "metadata");
+            expect(claimedTargets).toContain("hot-running");
+            await pipeline.stop();
+            expect(hotStageOf(pipeline)).toBeNull();
+            expect(pipeline.workerStats()).toMatchObject({ workers: 0, busy: 0 });
+            const leftover = pipeline.enqueue({
+                targetKind: "video",
+                target: "after-stop",
+                stages: ["metadata"],
+            }).job!;
+            await Bun.sleep(30);
+            expect(claimedTargets).not.toContain("after-stop");
+            expect(pipeline.getJob(leftover.id)?.status).toBe("pending");
+            expect(pipeline.getJob(running.id)?.status).not.toBe("pending");
+        } finally {
+            db.claimNextJob = originalClaim;
+            await pipeline.stop();
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("falls through to CLAIM_ORDER when the hot stage has capacity but nothing to claim", async () => {
+        const { db, config, dir } = await makeFixture();
+        await config.update({
+            concurrency: { download: 2, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 },
+            workers: { max: 2, pollMs: 0, idleTeardownMs: 60_000 },
+        });
+        let releaseMetadata!: () => void;
+        const metadataGate = new Promise<void>((resolve) => {
+            releaseMetadata = resolve;
+        });
+        const ran: string[] = [];
+        const pipeline = new Pipeline(db, config, {
+            pollMs: 0,
+            handlers: makeHandlers({
+                metadata: async (ctx) => {
+                    ran.push(`metadata:${ctx.job.target}`);
+                    await Promise.race([metadataGate, waitForAbort(ctx.signal)]);
+                },
+                summarize: async (ctx) => {
+                    ran.push(`summarize:${ctx.job.target}`);
+                },
+            }),
+        });
+
+        try {
+            await pipeline.start();
+            const metadataJob = pipeline.enqueue({
+                targetKind: "video",
+                target: "meta-hot",
+                stages: ["metadata"],
+            }).job!;
+            await waitFor(() => ran.includes("metadata:meta-hot"));
+            expect(hotStageOf(pipeline)).toBe("metadata");
+            const summarizeJob = pipeline.enqueue({
+                targetKind: "video",
+                target: "sum-later",
+                stages: ["summarize"],
+            }).job!;
+            releaseMetadata();
+            await waitFor(() => pipeline.getJob(summarizeJob.id)?.status === "completed");
+            expect(ran).toEqual(["metadata:meta-hot", "summarize:sum-later"]);
+            expect(pipeline.getJob(metadataJob.id)?.status).toBe("completed");
+        } finally {
+            await pipeline.stop();
+            db.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("requeues interrupted jobs on start and can cancel jobs", async () => {
         const { db, config, dir } = await makeFixture();
         await config.update({ concurrency: { download: 1, localTranscribe: 1, cloudTranscribe: 1, summarize: 1 } });
@@ -203,4 +307,19 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
 
         await new Promise((resolve) => setTimeout(resolve, 5));
     }
+}
+
+function hotStageOf(pipeline: Pipeline): JobStage | null {
+    return (pipeline as unknown as { hotStage: JobStage | null }).hotStage;
+}
+
+function waitForAbort(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+        if (signal.aborted) {
+            resolve();
+            return;
+        }
+
+        signal.addEventListener("abort", () => resolve(), { once: true });
+    });
 }

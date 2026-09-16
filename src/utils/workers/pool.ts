@@ -212,17 +212,18 @@ export class WorkerPool<T> {
         const hint = this.opts.pendingHint?.() ?? 1;
         // `want` is how many workers should be engaged in total: parked ones are woken first, then
         // the pool is topped up to `want` (never above `max`). Busy workers count as engaged, since
-        // they claim again as soon as their item finishes.
-        const want = Math.max(1, Math.min(hint, max));
-        let woken = 0;
+        // they claim again as soon as their item finishes. A hint of 0 is idle: do not spawn a
+        // tourist, the fallback poll heals a missed event.
+        const want = Math.min(Math.max(0, hint), max);
+        let need = Math.max(0, want - this.stats.busy);
 
         for (const worker of this.parked) {
-            if (woken >= want) {
+            if (need <= 0) {
                 break;
             }
 
             worker.wake(true);
-            woken++;
+            need--;
         }
 
         while (this.stats.workers < want) {
@@ -259,7 +260,7 @@ export class WorkerPool<T> {
         const ctx: WorkerContext = { workerId, signal: this.abort.signal };
 
         try {
-            while (!this.stopping) {
+            while (!this.stopping && !ctx.signal.aborted) {
                 let item: T | null = null;
                 let claimFailed = false;
                 const seenKick = this.kickSeq;
@@ -333,6 +334,13 @@ export class WorkerPool<T> {
         }
 
         if (this.opts.pendingHint && this.opts.pendingHint() <= 0) {
+            return;
+        }
+
+        // Called after a successful claim, before `busy++`. That claimant will run, so remaining
+        // capacity is `max - (busy + 1)`. Waking a parked worker past that is the same over-engage
+        // `scale()` used to do.
+        if (this.stats.busy + 1 >= this.currentMax()) {
             return;
         }
 

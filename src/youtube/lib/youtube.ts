@@ -394,7 +394,10 @@ export class Youtube {
 
     async dispose(): Promise<void> {
         await this._pipeline?.stop();
+        this._pipeline = undefined;
+        this._queue = undefined;
         this._db?.close();
+        this._db = undefined;
     }
 
     private createPipelineHandlers(): PipelineHandlerMap {
