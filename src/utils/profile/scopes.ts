@@ -22,6 +22,7 @@ export const PROFILER_SCOPE_NAMES = [
     "ttyd",
     "macos-mail",
     "chrome-devtools",
+    "ts",
 ] as const;
 
 export const PROFILING_DETAIL_VALUES = ["phases", "all"] as const;
