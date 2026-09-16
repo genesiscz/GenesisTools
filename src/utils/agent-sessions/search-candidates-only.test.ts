@@ -65,3 +65,63 @@ test("candidatesOnly answers a content query from the ripgrep gate and metadata,
         rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("a session that matches only inside a uuid sorts below one that matches in prose", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-candidates-identifier-"));
+    // The query appears in this session's own id and nowhere in what anyone wrote.
+    const identifier = "97404aaa-2222-4333-8444-000000000001";
+    const prose = "11111111-2222-4333-8444-000000000002";
+    session(root, identifier, "an unrelated conversation about nothing", 1_700_000_009_000);
+    session(root, prose, "ticket 7404 reconciled the invoice split", 1_700_000_001_000);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+    });
+
+    try {
+        const light = await service.search({ query: "7404", limit: 20, candidatesOnly: true });
+        const ids = light.results.map((result) => result.session.sessionId);
+
+        // The identifier-only session is newer, so mtime order alone would put it first.
+        expect(ids).toContain(prose);
+        expect(ids.indexOf(prose)).toBeLessThan(ids.indexOf(identifier));
+        expect(light.results[ids.indexOf(prose)]?.matchedText).toContain("ticket 7404");
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("a hit inside a longer number is incidental, so the session that names the ticket comes first", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-candidates-token-"));
+    const counter = "33333333-2222-4333-8444-000000000001";
+    const real = "44444444-2222-4333-8444-000000000002";
+    // The shape that put nine sessions above the eleven real ones: a running token counter.
+    session(root, counter, "<total_tokens>14997404 tokens left</total_tokens>", 1_700_000_009_000);
+    session(root, real, "MR !7404 is the saga to react-query migration", 1_700_000_001_000);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+    });
+
+    try {
+        const light = await service.search({ query: "7404", limit: 20, candidatesOnly: true });
+        const ids = light.results.map((result) => result.session.sessionId);
+
+        // Both still offered: ripgrep saw a bounded number of windows, so "no prose hit" is
+        // evidence and never proof.
+        expect(ids).toContain(counter);
+        expect(ids.indexOf(real)).toBeLessThan(ids.indexOf(counter));
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

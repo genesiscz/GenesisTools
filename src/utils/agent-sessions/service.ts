@@ -840,10 +840,26 @@ export class HistoryService {
                     query: filters.query,
                     signal: filters.signal,
                 });
+                const identifierOnly = new Set<string>();
 
                 for (const result of results) {
-                    result.matchedText = snippets.get(result.metadata.filePath);
+                    const snippet = snippets.get(result.metadata.filePath);
+                    result.matchedText = snippet?.text;
+
+                    if (snippet?.identifierOnly) {
+                        identifierOnly.add(result.metadata.filePath);
+                    }
                 }
+
+                // The candidate gate counts a hit inside a uuid or a commit hash the same as a
+                // hit in what the user wrote, so a short query like `7404` offered 20 sessions
+                // where 11 really mention it. These are not dropped — ripgrep saw at most
+                // SNIPPET_HITS_PER_FILE windows, so "no prose hit" is evidence, not proof — but
+                // they sort last, behind every session whose match is real text.
+                const prose = results.filter((result) => !identifierOnly.has(result.metadata.filePath));
+                const rest = results.filter((result) => identifierOnly.has(result.metadata.filePath));
+
+                return { results: [...prose, ...rest], issues };
             }
 
             return { results, issues };

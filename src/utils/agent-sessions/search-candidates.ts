@@ -283,32 +283,55 @@ export async function historyCandidates(options: {
 
 /** Characters kept on each side of the hit; the picker truncates further itself. */
 const SNIPPET_CONTEXT = 160;
-/** Hits per file ripgrep reports, so a hit inside a uuid or a hash can be passed over for a prose one. */
-const SNIPPET_HITS_PER_FILE = 3;
+/**
+ * Hits per file ripgrep reports, so a hit inside a uuid or a hash can be passed over for a
+ * prose one, and so "every hit in this file is an identifier" is a verdict with evidence
+ * behind it rather than a guess from three windows.
+ */
+const SNIPPET_HITS_PER_FILE = 8;
 
 /**
- * A short query such as `7404` also matches inside uuids and content hashes, and a raw JSONL
- * line is full of those. Prefer a window whose hit is not part of a long hex run.
+ * A hit that is part of a longer token, not the thing the user asked for.
+ *
+ * A short query such as `7404` matches inside uuids and content hashes, and a raw JSONL line
+ * is full of those. Measured on this machine, the loudest source was neither: it was
+ * `<total_tokens>14997404 tokens left</total_tokens>`, a running token counter in every
+ * transcript, plus base64 blobs and a stackoverflow id (`54407404`). All three share one
+ * shape — the needle sits INSIDE a longer alphanumeric run.
+ *
+ * So two tests, and either one is enough:
+ *   - a neighbouring character is alphanumeric (`14997404`, `7s7404Sj`);
+ *   - the needle sits in a hex-and-dash run of 20 characters or more (a uuid, where the
+ *     neighbour is a dash and the first test would pass).
+ *
+ * `!7404:`, `--resume 7404` and `col-fe-pr-7404-col-309257` all survive both, which is the
+ * point: this demotes a hit, it never drops the session.
  */
-function hitLooksLikeIdentifier(snippet: string, needle: string): boolean {
+function hitIsIncidental(snippet: string, needle: string): boolean {
     const at = snippet.toLowerCase().indexOf(needle.toLowerCase());
 
     if (at < 0) {
         return false;
     }
 
-    let start = at;
-    let end = at + needle.length;
+    const end = at + needle.length;
 
-    while (start > 0 && /[0-9a-f-]/i.test(snippet[start - 1] ?? "")) {
-        start--;
+    if (/[0-9a-z]/i.test(snippet[at - 1] ?? "") || /[0-9a-z]/i.test(snippet[end] ?? "")) {
+        return true;
     }
 
-    while (end < snippet.length && /[0-9a-f-]/i.test(snippet[end] ?? "")) {
-        end++;
+    let runStart = at;
+    let runEnd = end;
+
+    while (runStart > 0 && /[0-9a-f-]/i.test(snippet[runStart - 1] ?? "")) {
+        runStart--;
     }
 
-    return end - start >= 20;
+    while (runEnd < snippet.length && /[0-9a-f-]/i.test(snippet[runEnd] ?? "")) {
+        runEnd++;
+    }
+
+    return runEnd - runStart >= 20;
 }
 
 /** The raw window comes from a JSONL line: undo the JSON escapes and collapse whitespace. */
@@ -328,12 +351,23 @@ function decodeSnippet(raw: string): string {
  * the matched record's text, which meant parsing every record of every candidate (and running
  * the commit regexes on each) for a line the picker shows once.
  */
+export interface MatchSnippet {
+    /** The window around the best hit, ready for the picker. */
+    text: string;
+    /**
+     * Every hit ripgrep reported for this file sat inside a uuid, a hash or another long hex
+     * run. The file still matches the query, so it is never dropped; it sorts below the files
+     * whose match is real text.
+     */
+    identifierOnly: boolean;
+}
+
 export async function matchSnippets(options: {
     files: string[];
     query: string;
     signal?: AbortSignal;
-}): Promise<Map<string, string>> {
-    const snippets = new Map<string, string>();
+}): Promise<Map<string, MatchSnippet>> {
+    const snippets = new Map<string, MatchSnippet>();
     const needle = (options.query.match(/[a-z0-9_-]{3,}/gi) ?? []).sort((left, right) => right.length - left.length)[0];
     const binary = needle && options.files.length ? ripgrepBinary() : null;
 
@@ -379,8 +413,6 @@ export async function matchSnippets(options: {
             return snippets;
         }
 
-        const identifierHits = new Set<string>();
-
         for (const line of output.split("\n")) {
             const separator = line.indexOf("\0");
 
@@ -389,18 +421,14 @@ export async function matchSnippets(options: {
             }
 
             const path = line.slice(0, separator);
-            const snippet = decodeSnippet(line.slice(separator + 1));
-            const identifier = hitLooksLikeIdentifier(snippet, needle);
+            const text = decodeSnippet(line.slice(separator + 1));
+            const identifierOnly = hitIsIncidental(text, needle);
+            const kept = snippets.get(path);
 
-            // First prose hit wins; an identifier hit is kept only until a prose one appears.
-            if (!snippets.has(path) || (identifierHits.has(path) && !identifier)) {
-                snippets.set(path, snippet);
-
-                if (identifier) {
-                    identifierHits.add(path);
-                } else {
-                    identifierHits.delete(path);
-                }
+            // First prose hit wins; an identifier hit is kept only until a prose one appears,
+            // and `identifierOnly` stays true only while every hit seen was an identifier.
+            if (!kept || (kept.identifierOnly && !identifierOnly)) {
+                snippets.set(path, { text, identifierOnly });
             }
         }
     } finally {
