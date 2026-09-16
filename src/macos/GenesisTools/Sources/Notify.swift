@@ -40,6 +40,9 @@ struct NotifyPostParams: Decodable {
     var open: String?
     var execute: String?
     var appIcon: String?
+    /// Image, audio or video files shown with the banner. A thumbnail rides on the right of the
+    /// banner; expanding the notification shows the first one full size.
+    var attachments: [String]?
     var ignoreDnD: Bool?
     /// Supply one to make the notification addressable by `notify.remove`, or to replace an
     /// already-delivered notification in place. Generated when absent, and always returned.
@@ -132,12 +135,12 @@ func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMu
         content.interruptionLevel = .timeSensitive
     }
 
-    if let appIcon = params.appIcon, !appIcon.isEmpty {
-        let url = URL(fileURLWithPath: (appIcon as NSString).expandingTildeInPath)
-
-        if let attachment = try? UNNotificationAttachment(identifier: "appIcon", url: url, options: nil) {
-            content.attachments = [attachment]
-        }
+    // appIcon first, so it is the thumbnail on the banner. UNUserNotificationCenter has no way to
+    // replace the app icon itself (terminal-notifier's -appIcon meaning), so the closest honest
+    // mapping is to show the image as the notification's own artwork.
+    let files = [params.appIcon].compactMap { $0 } + (params.attachments ?? [])
+    content.attachments = files.enumerated().compactMap { index, path in
+        buildAttachment(path: path, index: index)
     }
 
     if let actions = params.actions, !actions.isEmpty {
@@ -168,6 +171,32 @@ private func route(open: String?, execute: String?) -> [String: String] {
     }
 
     return result
+}
+
+/// 🛑 `UNNotificationAttachment` MOVES the file at the url into the notification data store. Handing
+/// it the caller's own path deletes that file from where the caller left it. So every attachment is
+/// copied into a temp directory first and the copy is what gets consumed. The temp copy is the
+/// system's to delete once the notification goes away.
+private func buildAttachment(path: String, index: Int) -> UNNotificationAttachment? {
+    let source = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+
+    guard FileManager.default.fileExists(atPath: source.path) else {
+        logClick("attachment missing: \(source.path)")
+        return nil
+    }
+
+    let staging = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("genesis-notify-\(UUID().uuidString)", isDirectory: true)
+
+    do {
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let copy = staging.appendingPathComponent(source.lastPathComponent)
+        try FileManager.default.copyItem(at: source, to: copy)
+        return try UNNotificationAttachment(identifier: "attachment-\(index)", url: copy, options: nil)
+    } catch {
+        logClick("attachment failed for \(source.path): \(error.localizedDescription)")
+        return nil
+    }
 }
 
 private func buildAction(_ action: NotifyAction) -> UNNotificationAction {

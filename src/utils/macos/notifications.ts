@@ -15,6 +15,14 @@ export interface NotificationOptions {
     open?: string;
     execute?: string;
     appIcon?: string;
+    /**
+     * Image, audio or video files shown with the banner: a thumbnail on the right, and the first
+     * one full size when the notification is expanded. Paths, `~` allowed.
+     *
+     * `genesis-app` only. The other backends ignore it. The app copies each file before attaching
+     * it, because `UNNotificationAttachment` MOVES the file it is given out of its original place.
+     */
+    attachments?: string[];
     ignoreDnD?: boolean;
     say?: boolean;
     /**
@@ -230,6 +238,7 @@ async function sendViaGenesisApp(opts: NotificationOptions): Promise<string | nu
         open: opts.open,
         execute: opts.execute,
         appIcon: opts.appIcon,
+        attachments: opts.attachments,
         ignoreDnD: opts.ignoreDnD,
         id: opts.id,
         actions: opts.actions,
