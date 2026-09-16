@@ -1,12 +1,31 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseClaudeCodePayload } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
-import { StatuslineCache } from "./cache";
-import { defaultStatuslineConfig, mergeStatuslineConfig } from "./config";
+import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
+import {
+    accountFromPinJournal,
+    accountNameFromPsDump,
+    claudeCodeStatusline,
+    parseClaudeCodePayload,
+    resolveAccountName,
+} from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/statusline";
+import { env } from "@genesiscz/utils/env";
+import * as gitCore from "@genesiscz/utils/git/core";
+import { TestRepo } from "@genesiscz/utils/git/test-repo";
+import { isolatedPreviewCache, isolatedPreviewCacheDir, StatuslineCache } from "./cache";
+import {
+    defaultStatuslineConfig,
+    formatStatuslineInstallCommand,
+    loadStatuslineConfig,
+    mergeStatuslineConfig,
+    PREVIEW_SESSION_ID,
+    previewRenderConfig,
+    rememberPreviousCommand,
+    saveStatuslineConfig,
+} from "./config";
 import { buildLine, visibleWidth } from "./layout";
-import { renderStatusline } from "./render";
+import { gitInfo, renderStatusline } from "./render";
 import {
     ANSI,
     accountSegment,
@@ -61,10 +80,10 @@ describe("statusline segments reproduce the shell script", () => {
         expect(deltaSegment(-300)).toBe(` ${ANSI.red}-300${ANSI.reset}`);
 
         const fresh = accountSegment(
-            { name: "olivierson", fiveHour: 47, sevenDay: 28, sevenDayFable: 30, stale: false, fetchedAt: 1_000 },
+            { name: "abcdefghij", fiveHour: 47, sevenDay: 28, sevenDayFable: 30, stale: false, fetchedAt: 1_000 },
             1_000 + 60_000
         );
-        expect(fresh).toContain("⚿ oli…son");
+        expect(fresh).toContain("⚿ abc…hij");
         expect(fresh).toContain("47%");
         expect(fresh).toContain("F:");
         expect(fresh).not.toContain("⌁");
@@ -204,5 +223,207 @@ describe("dirty marker", () => {
     test("is off by default, because the shell script computes it and then wipes it", () => {
         expect(defaultStatuslineConfig().showDirty).toBe(false);
         expect(defaultStatuslineConfig().modelStyle).toBe("id");
+        expect(defaultStatuslineConfig().metricsPost.enabled).toBe(false);
+    });
+});
+
+describe("account truncation", () => {
+    test("slices by code point so a leading emoji is not split mid-surrogate", () => {
+        const rendered = accountSegment(
+            {
+                name: "😀abcdefgh",
+                fiveHour: 10,
+                sevenDay: 10,
+                sevenDayFable: null,
+                stale: false,
+                fetchedAt: 1_000,
+            },
+            1_000
+        );
+        expect(rendered).toContain("😀ab…fgh");
+    });
+});
+
+describe("cwd cache merge", () => {
+    test("parallel git and graft patches both survive", async () => {
+        const cache = new StatuslineCache(mkdtempSync(join(tmpdir(), "statusline-cwd-")));
+        const cwd = "/repo";
+
+        await Promise.all([
+            Promise.resolve().then(() =>
+                cache.writeCwdPatch(cwd, { branch: "feat", dirty: 0, at: 1, headMtime: 1, indexMtime: 1 })
+            ),
+            Promise.resolve().then(() => cache.writeCwdPatch(cwd, { graftLine: "graft-ok", graftAt: 2 })),
+        ]);
+
+        const entry = cache.cwd(cwd);
+        expect(entry?.branch).toBe("feat");
+        expect(entry?.graftLine).toBe("graft-ok");
+    });
+});
+
+describe("gitInfo", () => {
+    test("walks up from a subdirectory and does not call git status when showDirty is false", async () => {
+        const repo = await TestRepo.create({ branch: "feat-sl" });
+        mkdirSync(join(repo.dir, "packages", "nested"), { recursive: true });
+        const spy = spyOn(gitCore, "createGit");
+        const cache = new StatuslineCache(mkdtempSync(join(tmpdir(), "statusline-git-")));
+        const config = mergeStatuslineConfig(defaultStatuslineConfig(), {
+            showGit: true,
+            showDirty: false,
+            gitTtlMs: 0,
+        });
+
+        try {
+            const info = await gitInfo(join(repo.dir, "packages", "nested"), config, cache, () => Date.now());
+            expect(info?.branch).toBe("feat-sl");
+            expect(info?.dirty).toBe(0);
+            expect(spy).not.toHaveBeenCalled();
+        } finally {
+            spy.mockRestore();
+            repo.cleanup();
+        }
+    });
+
+    test("resolves a linked worktree whose .git is a file", async () => {
+        const repo = await TestRepo.create({ branch: "feat-sl" });
+        await repo.git(["branch", "wt-branch"]);
+        const worktree = await repo.worktreeAdd({ name: "wt", ref: "wt-branch" });
+        const spy = spyOn(gitCore, "createGit");
+        const cache = new StatuslineCache(mkdtempSync(join(tmpdir(), "statusline-wt-")));
+        const config = mergeStatuslineConfig(defaultStatuslineConfig(), { showDirty: false, gitTtlMs: 0 });
+
+        try {
+            const info = await gitInfo(worktree, config, cache, () => Date.now());
+            expect(info?.branch).toBe("wt-branch");
+            expect(spy).not.toHaveBeenCalled();
+        } finally {
+            spy.mockRestore();
+            repo.cleanup();
+        }
+    });
+
+    test("porcelain runs only when showDirty is on", async () => {
+        const repo = await TestRepo.create({ branch: "feat-sl" });
+        repo.write({ file: "dirty.txt", content: "x\n" });
+        const spy = spyOn(gitCore, "createGit");
+        const cache = new StatuslineCache(mkdtempSync(join(tmpdir(), "statusline-dirty-")));
+        const config = mergeStatuslineConfig(defaultStatuslineConfig(), { showDirty: true, gitTtlMs: 0 });
+
+        try {
+            const info = await gitInfo(repo.dir, config, cache, () => Date.now());
+            expect(spy).toHaveBeenCalled();
+            expect(info?.branch).toBe("feat-sl");
+            expect(info?.dirty).toBeGreaterThan(0);
+        } finally {
+            spy.mockRestore();
+            repo.cleanup();
+        }
+    });
+});
+
+describe("preview isolation", () => {
+    test("does not write session files under the live cache dir", async () => {
+        const liveDir = mkdtempSync(join(tmpdir(), "statusline-live-"));
+        const liveCache = new StatuslineCache(liveDir);
+        liveCache.writeSession("live-session", { prevTokens: 1 });
+        const previewDir = isolatedPreviewCacheDir();
+        const previewCache = isolatedPreviewCache(previewDir);
+        const feature = claudeCodeStatusline(previewCache);
+        const config = previewRenderConfig(
+            mergeStatuslineConfig(defaultStatuslineConfig(), {
+                showGit: false,
+                graft: { enabled: false, shim: "", ttlMs: 0 },
+            })
+        );
+
+        await renderStatusline(
+            {
+                workspace: { current_dir: "/tmp/proj", project_dir: "/tmp/proj" },
+                session_id: PREVIEW_SESSION_ID,
+                context_window: {
+                    context_window_size: 200_000,
+                    current_usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+                },
+            },
+            { feature, config, cache: previewCache, columns: 80 }
+        );
+
+        expect(previewDir).not.toBe(aiDataDir("statusline", "cache"));
+        expect(readdirSync(liveDir).filter((name) => name.startsWith("session-"))).toEqual([
+            "session-live-session.json",
+        ]);
+        expect(readdirSync(liveDir).some((name) => name.includes("preview"))).toBe(false);
+    });
+});
+
+describe("install previousCommand", () => {
+    test("wizard save keeps the uninstall backup install just wrote", async () => {
+        const path = join(mkdtempSync(join(tmpdir(), "statusline-cfg-")), "config.json");
+        const inMemory = defaultStatuslineConfig();
+        const afterInstall = rememberPreviousCommand(inMemory, "bash /old/statusline.sh", false);
+        await saveStatuslineConfig(afterInstall, path);
+        const loaded = await loadStatuslineConfig(path);
+        expect(loaded.previousCommand).toBe("bash /old/statusline.sh");
+
+        const savedFromWizard = rememberPreviousCommand(
+            { ...afterInstall, showDelta: false },
+            "tools ai statusline run --claude",
+            true
+        );
+        await saveStatuslineConfig(savedFromWizard, path);
+        expect((await loadStatuslineConfig(path)).previousCommand).toBe("bash /old/statusline.sh");
+    });
+
+    test("the direct install command quotes paths that contain spaces", () => {
+        const command = formatStatuslineInstallCommand({
+            host: "claude",
+            viaTools: false,
+            bunPath: "/opt/bun runtime/bun",
+            entryPath: "/tmp/My Tools/run.ts",
+        });
+        expect(command).toBe("'/opt/bun runtime/bun' '/tmp/My Tools/run.ts' '--claude'");
+        expect(formatStatuslineInstallCommand({ host: "claude", viaTools: true })).toBe(
+            "tools ai statusline run --claude"
+        );
+    });
+});
+
+describe("pin journal", () => {
+    test("skips a torn line and keeps the newest Claude account", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "statusline-pins-")), "session-pins.jsonl");
+        writeFileSync(
+            path,
+            [
+                '{"sessionId":"abc","account":"first","at":1}',
+                "{torn",
+                '{"sessionId":"abc","account":"work laptop","provider":"claude","at":2}',
+                '{"sessionId":"abc","account":"codex-acc","provider":"codex","at":3}',
+                "",
+            ].join("\n")
+        );
+        expect(accountFromPinJournal("abc", path)).toBe("work laptop");
+    });
+});
+
+describe("account from env", () => {
+    test("a name with a space survives the ps dump", () => {
+        expect(accountNameFromPsDump("claude TOOLS_CLAUDE_ACCOUNT=work laptop PATH=/usr/bin")).toBe("work laptop");
+    });
+
+    test("the live process env is read through the env facade", async () => {
+        const cache = new StatuslineCache(mkdtempSync(join(tmpdir(), "statusline-acct-")));
+        const payload = parseClaudeCodePayload({
+            workspace: { current_dir: "/tmp/proj" },
+            session_id: "sess-1",
+        });
+
+        if (!payload) {
+            throw new Error("expected a Claude Code payload");
+        }
+
+        await env.testing.withOverrides({ TOOLS_CLAUDE_ACCOUNT: "work laptop" }, () => {
+            expect(resolveAccountName(payload, cache, Date.now())).toBe("work laptop");
+        });
     });
 });

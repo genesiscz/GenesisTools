@@ -42,7 +42,7 @@
  * exact total. Read `writeShims` before changing any of it: the wrappers live
  * one per directory for a reason that cost this machine a fork bomb to learn.
  */
-import { chmodSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, loadavg } from "node:os";
 import { join } from "node:path";
 import { type BaselineMetrics, compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
@@ -57,8 +57,13 @@ const { log } = logger.scoped("bench-statusline");
 const BASELINE_NAME = "statusline-current";
 const WORK_DIR = join("/tmp", "statusline-bench");
 const SAMPLES_DIR = join(import.meta.dir, "samples");
-const TRANSCRIPT_DIR = join(homedir(), ".claude", "projects", "-Users-Martin-Tresors-Projects-GenesisTools");
 const DEFAULT_COMMAND = `bash ${join(homedir(), ".claude", "helpers", "statusline-graft.sh")}`;
+
+function defaultTranscriptDir(): string {
+    const claudeDir = env.paths.getClaudeConfigDir() ?? join(homedir(), ".claude");
+
+    return join(claudeDir, "projects", process.cwd().replace(/\//g, "-"));
+}
 
 /** A transcript untouched for this long belongs to a session that is not rendering a statusline. */
 const IDLE_MINUTES = 30;
@@ -98,12 +103,9 @@ interface RepoTarget {
     path: string;
 }
 
-const PROJECTS_DIR = join(homedir(), "Tresors", "Projects");
-
 /**
- * The two repos every clone has, plus whatever `STATUSLINE_BENCH_REPOS` names as
- * `name=path,name=path`. The baseline was recorded with `client-repo` (a large client
- * checkout) and `vault` (the notes vault) added that way; their real names stay out of git.
+ * This checkout plus whatever `STATUSLINE_BENCH_REPOS` names as `name=path,name=path`.
+ * Extra arms (a large client checkout, a notes vault) stay out of git.
  */
 function extraReposFromEnv(): RepoTarget[] {
     const raw = env.getProcessEnv().STATUSLINE_BENCH_REPOS ?? "";
@@ -118,11 +120,7 @@ function extraReposFromEnv(): RepoTarget[] {
         });
 }
 
-const DEFAULT_REPOS: RepoTarget[] = [
-    { name: "GenesisTools", path: join(PROJECTS_DIR, "GenesisTools") },
-    { name: "GenesisClaude", path: join(PROJECTS_DIR, "GenesisClaude") },
-    ...extraReposFromEnv(),
-];
+const DEFAULT_REPOS: RepoTarget[] = [{ name: "GenesisTools", path: process.cwd() }, ...extraReposFromEnv()];
 
 interface TranscriptChoice {
     path: string;
@@ -286,24 +284,34 @@ function pickTranscript(explicit: string | null): TranscriptChoice {
         return { path: explicit, sessionId, bytes: stat.size, idleMinutes, idle: idleMinutes >= IDLE_MINUTES };
     }
 
-    const candidates = readdirSync(TRANSCRIPT_DIR)
+    const transcriptDir = defaultTranscriptDir();
+    let names: string[] = [];
+
+    try {
+        names = readdirSync(transcriptDir);
+    } catch (err) {
+        log.debug({ err, transcriptDir }, "transcript dir is not readable");
+        throw new Error(`No transcripts under ${transcriptDir}; pass --transcript <path>.`);
+    }
+
+    const candidates = names
         .filter((name) => name.endsWith(".jsonl"))
         .map((name) => {
-            const path = join(TRANSCRIPT_DIR, name);
+            const path = join(transcriptDir, name);
             const stat = statSync(path);
             return { path, sessionId: name.replace(/\.jsonl$/, ""), bytes: stat.size, mtimeMs: stat.mtimeMs };
         })
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
 
     if (candidates.length === 0) {
-        throw new Error(`No transcripts under ${TRANSCRIPT_DIR}; pass --transcript <path>.`);
+        throw new Error(`No transcripts under ${transcriptDir}; pass --transcript <path>.`);
     }
 
     const idle = candidates.find((entry) => now - entry.mtimeMs >= IDLE_MINUTES * 60_000);
     const chosen = idle ?? candidates[0];
 
     if (chosen === undefined) {
-        throw new Error(`No transcripts under ${TRANSCRIPT_DIR}; pass --transcript <path>.`);
+        throw new Error(`No transcripts under ${transcriptDir}; pass --transcript <path>.`);
     }
 
     return {
@@ -346,7 +354,7 @@ function buildPayload(repo: RepoTarget, transcript: TranscriptChoice): string {
 function benchEnv(repo: RepoTarget, extra: Record<string, string> = {}): Record<string, string> {
     const base: Record<string, string> = {};
 
-    for (const [key, value] of Object.entries(process.env)) {
+    for (const [key, value] of Object.entries(env.getProcessEnv())) {
         if (value !== undefined) {
             base[key] = value;
         }
@@ -501,8 +509,7 @@ function writeShims(shimRoot: string, basePath: string): ShimSet {
             "",
         ].join("\n");
         const shimPath = join(own, name);
-        Bun.write(shimPath, script);
-        chmodSync(shimPath, 0o755);
+        writeFileSync(shimPath, script, { mode: 0o755 });
     }
 
     return { dirs, resolved, unresolved };
@@ -579,17 +586,28 @@ function redactAccount(text: string): string {
  * replacement cannot overwrite the very samples it is supposed to be compared
  * against.
  */
+function commandLabel(command: string): string {
+    if (command === DEFAULT_COMMAND) {
+        return "current";
+    }
+
+    if (command.includes("statusline/run.ts")) {
+        return "inprocess";
+    }
+
+    if (command.includes("ai statusline run")) {
+        return "via-tools";
+    }
+
+    return "alternative";
+}
+
 function samplePathFor(repo: RepoTarget, command: string): string {
     if (command === DEFAULT_COMMAND) {
         return join(SAMPLES_DIR, `${repo.name}.txt`);
     }
 
-    const slug =
-        command
-            .replace(/[^a-zA-Z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "")
-            .slice(0, 60) || "alternative";
-    return join(SAMPLES_DIR, `${repo.name}.${slug}.txt`);
+    return join(SAMPLES_DIR, `${repo.name}.${commandLabel(command)}.txt`);
 }
 
 async function captureSample(args: { command: string; payloadPath: string; repo: RepoTarget }): Promise<string> {
@@ -749,7 +767,7 @@ async function main(): Promise<void> {
         }
     }
 
-    const basePath = process.env.PATH ?? "";
+    const basePath = env.getProcessEnv().PATH ?? "";
     const shims = writeShims(join(WORK_DIR, "shims"), basePath);
     log.info({ resolved: shims.resolved.length, unresolved: shims.unresolved }, "spawn-counting wrappers written");
 

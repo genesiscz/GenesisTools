@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { accountEnvVar, accountFromEnv } from "@genesiscz/utils/ai/account-env";
 import { normalizeLimits } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
@@ -248,8 +249,8 @@ async function resolveSessionName(payload: StatuslinePayload, cache: StatuslineC
  * here. Failing that, the SessionStart hook's pin journal, then claude's own environment through
  * `ps eww`, cached per session because the answer cannot change while the session lives.
  */
-function resolveAccountName(payload: StatuslinePayload, cache: StatuslineCache, now: number): string | null {
-    const fromEnv = asString(process.env.TOOLS_CLAUDE_ACCOUNT);
+export function resolveAccountName(payload: StatuslinePayload, cache: StatuslineCache, now: number): string | null {
+    const fromEnv = asString(env.getProcessEnv()[accountEnvVar("claude")]);
 
     if (fromEnv) {
         return fromEnv;
@@ -275,9 +276,15 @@ function resolveAccountName(payload: StatuslinePayload, cache: StatuslineCache, 
     return found;
 }
 
-function accountFromPinJournal(sessionId: string): string | null {
-    const path = join(new Storage("claude-code").getBaseDir(), "session-pins.jsonl");
+function pinJournalPath(): string {
+    return join(new Storage("claude-code").getBaseDir(), "session-pins.jsonl");
+}
 
+/**
+ * Newest Claude pin for this session. Each line is parsed on its own: a torn append from a
+ * concurrent SessionStart must not drop the rest of the journal.
+ */
+export function accountFromPinJournal(sessionId: string, path = pinJournalPath()): string | null {
     if (!existsSync(path)) {
         return null;
     }
@@ -290,10 +297,14 @@ function accountFromPinJournal(sessionId: string): string | null {
                 continue;
             }
 
-            const pin = asRecord(SafeJSON.parse(line, { strict: true }));
+            try {
+                const pin = asRecord(SafeJSON.parse(line, { strict: true }));
 
-            if (pin && pin.sessionId === sessionId && (pin.provider === undefined || pin.provider === "claude")) {
-                account = asString(pin.account);
+                if (pin && pin.sessionId === sessionId && (pin.provider === undefined || pin.provider === "claude")) {
+                    account = asString(pin.account);
+                }
+            } catch (error) {
+                logger.debug({ err: error, path }, "statusline: skipping an unparseable pin journal line");
             }
         }
     } catch (error) {
@@ -303,16 +314,21 @@ function accountFromPinJournal(sessionId: string): string | null {
     return account;
 }
 
+/** One provider account out of a `ps eww` dump; names with spaces stay whole. */
+export function accountNameFromPsDump(dump: string): string | null {
+    return accountFromEnv(dump, "claude").account;
+}
+
 /** Walk up to six ancestors reading their environment; one `ps eww` per hop, once per session. */
 function accountFromAncestors(): string | null {
     let pid = process.ppid;
 
     for (let hop = 0; hop < 6 && pid > 1; hop++) {
         const envDump = spawnSync("ps", ["eww", String(pid)], { encoding: "utf8" });
-        const match = /(?:^|\s)TOOLS_CLAUDE_ACCOUNT=(\S+)/.exec(envDump.stdout ?? "");
+        const live = accountNameFromPsDump(envDump.stdout ?? "");
 
-        if (match?.[1]) {
-            return match[1];
+        if (live) {
+            return live;
         }
 
         const parent = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" });
