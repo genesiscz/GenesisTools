@@ -27,6 +27,8 @@ interface MeasureOpts {
     verbose?: boolean;
     silent?: boolean;
     showPartners?: boolean;
+    /** commander sets this false when `--no-unique` is passed. */
+    unique?: boolean;
 }
 
 export function applySharedMeasureFlags(cmd: Command): Command {
@@ -45,6 +47,12 @@ export function applySharedMeasureFlags(cmd: Command): Command {
             "Probe known clone-aware locations (bun's install cache) to resolve cross-tree partner paths. " +
                 "Off by default; the probe can take seconds on large caches.",
             false
+        )
+        .option(
+            "--no-unique",
+            "Skip the clone-deduped on-disk figure. It costs a second full walk of every root " +
+                "(~120-200 ms on 40k files, and ~195 s on 5.8 M), so on a very large tree this " +
+                "roughly halves the run — at the cost of the number that answers how big it really is."
         )
         .option("-v, --verbose", "Verbose logging", false)
         .option("--silent", "Suppress non-essential output", false);
@@ -86,6 +94,7 @@ export function createMeasureCommand(): Command {
             exclude: parseVariadic(opts.exclude),
             sort: (opts.sort as "overcount" | "real" | "du") ?? "overcount",
             probePartners: Boolean(opts.showPartners),
+            skipUnique: opts.unique === false,
         });
         report.nodeModulesMode = Boolean(opts.nodeModules);
 
@@ -138,6 +147,7 @@ export function createDuCommand(): Command {
             sort: (opts.sort as "overcount" | "real" | "du") ?? "overcount",
             maxDepth: depth !== undefined && !Number.isNaN(depth) ? depth : undefined,
             probePartners: Boolean(opts.showPartners),
+            skipUnique: opts.unique === false,
         });
 
         if (opts.top) {

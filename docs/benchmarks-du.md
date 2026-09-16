@@ -1037,3 +1037,39 @@ one byte each, so the same three assertions hold — `roots === 4100`, `files.le
 
 Nothing about the scan semantics moved: `min_bytes` is a filter the caller passes, and every
 file in that fixture is above the floor in both arms, so `files_listed` is 4100 either way.
+
+## 2026-09-16 21:39 — `macos clones measure` calls the du engine, and what that costs
+
+`measure`'s "real" was Σ per-file PRIVATESIZE, which reads 0 for a tree whose files all clone
+each other: `du clonesize` called the same 4 MB tree 4 MB unique while `measure` printed
+`real: 0`. Each tool was wrong on the other's easy case. `measure` now calls `scanWithCFfi`
+and reports both figures, `unique` (what it occupies) and `frees ≥` (what deleting returns).
+
+**This deliberately changes what is counted**, per the rule at the top of this file: a new
+`uniqueAllocated` total appears, and no existing total moves. Verified on the clones matrix —
+8 cases changed output, all of them the added field, 0 otherwise.
+
+### The cost, measured
+
+It is a SECOND full walk of every root, on top of `gatherEnrichedRecords`. `PROFILE=clones`
+attributes it as `measure.du-engine`:
+
+| tree | files | `measure.du-engine` | measure total |
+|---|---|---|---|
+| fixture `c-worktrees` | ~50 | 117 ms | ~360 ms |
+| a client app's `ios/Pods` | ~40 k | 119-204 ms warm | ~520 ms |
+| a client monorepo with 19 worktrees | 5.8 M | — (`du clonesize --depth 1` alone is ~195 s) | — |
+
+So on a multi-million-file tree this roughly doubles a read-only `measure`. `--no-unique`
+skips it: the 40 k-file tree drops from ~0.52 s to 0.31 s.
+
+### Filters are NOT passed through, on purpose
+
+The du engine prunes by absolute subtree; `measure` filters by glob. Passing one as the other
+would compute the two totals over DIFFERENT file sets. Verified before the fix: excluding one
+framework subtree moved `allocated` by 20,480 B and left `uniqueAllocated` byte-identical, so
+the output silently disagreed with itself. A run with `--include`/`--exclude` now returns
+`uniqueAllocated: null` rather than a number that cannot be compared to the one beside it.
+
+Raised by eve-bot-lovinka on PR #393; the perf half was its finding, the filter half fell out
+of checking it.
