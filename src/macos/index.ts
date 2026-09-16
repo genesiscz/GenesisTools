@@ -42,20 +42,32 @@
  *   tools macos contacts search
  */
 
-import { registerCalendarCommand } from "@app/macos/commands/calendar/index";
-import { registerClonesCommand } from "@app/macos/commands/clones/index";
-import { registerControlCommand } from "@app/macos/commands/control/index";
-import { registerMailCommand } from "@app/macos/commands/mail/index";
-import { registerMessagesCommand } from "@app/macos/commands/messages/index";
-import { registerPermissionsCommand } from "@app/macos/commands/permissions/index";
-import { registerRemindersCommand } from "@app/macos/commands/reminders/index";
-import { registerSleepCommand } from "@app/macos/commands/sleep/index";
-import { registerSwapCommand } from "@app/macos/commands/swap/index";
-import { registerVoiceMemosCommand } from "@app/macos/commands/voice-memos/index";
 import { runTool } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
-import { closeDarwinKit } from "@genesiscz/utils/macos/darwinkit";
 import { Command } from "commander";
+
+/**
+ * One entry per subcommand tree, imported only when that tree is the one being
+ * run. Importing all ten eagerly cost ~230 ms and ~68 MB on EVERY invocation —
+ * `tools macos clones measure` was loading Mail, Calendar, Reminders, Messages
+ * and DarwinKit before it did any work. Measured: `macos clones config --list`,
+ * which scans nothing, took ~350 ms / 126 MB against `tools du` at ~124 ms / 55 MB.
+ *
+ * Help and an unknown subcommand still need every description, so those load
+ * the lot; only a recognised subcommand takes the fast path.
+ */
+const REGISTRARS: Record<string, () => Promise<(program: Command) => void>> = {
+    calendar: async () => (await import("@app/macos/commands/calendar/index")).registerCalendarCommand,
+    clones: async () => (await import("@app/macos/commands/clones/index")).registerClonesCommand,
+    control: async () => (await import("@app/macos/commands/control/index")).registerControlCommand,
+    mail: async () => (await import("@app/macos/commands/mail/index")).registerMailCommand,
+    messages: async () => (await import("@app/macos/commands/messages/index")).registerMessagesCommand,
+    permissions: async () => (await import("@app/macos/commands/permissions/index")).registerPermissionsCommand,
+    reminders: async () => (await import("@app/macos/commands/reminders/index")).registerRemindersCommand,
+    sleep: async () => (await import("@app/macos/commands/sleep/index")).registerSleepCommand,
+    swap: async () => (await import("@app/macos/commands/swap/index")).registerSwapCommand,
+    "voice-memos": async () => (await import("@app/macos/commands/voice-memos/index")).registerVoiceMemosCommand,
+};
 
 const program = new Command();
 
@@ -65,16 +77,11 @@ program
     .version("1.0.0")
     .showHelpAfterError(true);
 
-registerCalendarCommand(program);
-registerClonesCommand(program);
-registerPermissionsCommand(program);
-registerControlCommand(program);
-registerMailCommand(program);
-registerMessagesCommand(program);
-registerRemindersCommand(program);
-registerSleepCommand(program);
-registerSwapCommand(program);
-registerVoiceMemosCommand(program);
+const requested = process.argv[2];
+const toRegister = requested && requested in REGISTRARS ? [requested] : Object.keys(REGISTRARS);
+for (const name of toRegister) {
+    (await REGISTRARS[name]!())(program);
+}
 
 async function main(): Promise<void> {
     try {
@@ -93,6 +100,11 @@ async function main(): Promise<void> {
 
         process.exit(1);
     } finally {
+        // No-op unless a command actually opened DarwinKit, and by then the
+        // module is already in the loader cache, so this import is free. Doing
+        // it here keeps it off the startup path for the nine trees that never
+        // touch it.
+        const { closeDarwinKit } = await import("@genesiscz/utils/macos/darwinkit");
         closeDarwinKit();
     }
 }
