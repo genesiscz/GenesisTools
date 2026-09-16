@@ -166,6 +166,7 @@ export class CpuSpinAnalyzer extends Analyzer {
             return;
         }
 
+        const startedAt = performance.now();
         await Bun.sleep(this.windowMs);
         const after = await this.sample();
 
@@ -173,9 +174,10 @@ export class CpuSpinAnalyzer extends Analyzer {
             return;
         }
 
-        const windowSeconds = (this.windowMs / 1000).toFixed(1);
+        const measuredMs = Math.max(1, performance.now() - startedAt);
+        const windowSeconds = (measuredMs / 1000).toFixed(1);
 
-        for (const record of spinningProcesses(before, after, this.windowMs, this.thresholdPercent)) {
+        for (const record of spinningProcesses(before, after, measuredMs, this.thresholdPercent)) {
             if (record.pid === process.pid) {
                 continue;
             }
