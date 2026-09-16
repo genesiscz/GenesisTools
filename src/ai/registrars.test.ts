@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { Command } from "commander";
 import { AI_REGISTRARS } from "./registrars";
 
@@ -41,6 +41,13 @@ describe("AI_REGISTRARS", () => {
         const registered = program.commands.flatMap((command) => [command.name(), ...command.aliases()]);
 
         expect(registered.sort()).toEqual(AI_REGISTRARS.flatMap((entry) => entry.names).sort());
+    });
+
+    test("requestedCommandFromArgv skips root flags such as -v", () => {
+        expect(requestedCommandFromArgv(["bun", "src/ai/index.ts", "-v", "accounts"])).toBe("accounts");
+        expect(requestedCommandFromArgv(["bun", "src/ai/index.ts", "--verbose", "who"])).toBe("who");
+        expect(requestedCommandFromArgv(["bun", "src/ai/index.ts", "translate", "--to", "en"])).toBe("translate");
+        expect(requestedCommandFromArgv(["bun", "src/ai/index.ts", "--help"])).toBeUndefined();
     });
 
     test("an inline command already on the program registers no extra trees", async () => {

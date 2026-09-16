@@ -10,7 +10,6 @@
  * Usage: bun scripts/backfill-product-units.ts [--dry-run]
  */
 
-import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -104,8 +103,8 @@ function deriveSignature(row: Row): {
 }
 
 async function main(): Promise<void> {
-    const db = new Database(DB_PATH);
     const shops = new ShopsDatabase(DB_PATH);
+    const db = shops.raw();
     const rows = db
         .query<Row, []>(
             `SELECT id, shop_origin, name, unit, unit_amount, pack_count, flavor_key, metadata_json, master_product_id

@@ -155,7 +155,7 @@ Computing the list walks every native session home and stats about 12,000 files,
 The `ai-usage-poll` tick recomputes that file once a minute, so a poller on any cadence finds it warm. The tick refreshes only the query the CLI last asked for, and only while something has asked within the hour, so an idle machine pays nothing.
 
 - The payload carries `fetchedAt` (when the rows were computed, not when you asked) and `cached: true|false`, so a consumer can judge the age itself.
-- `--fresh` recomputes and rewrites the file.
+- `--json --fresh` recomputes and rewrites the file. Without `--json`, `--fresh` renders an uncached table and does not write.
 - The human table is never served from the cache.
 
 ## `ai warmup`: start a session timer on every account

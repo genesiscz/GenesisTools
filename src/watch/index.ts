@@ -606,6 +606,12 @@ async function startWatcher() {
                     }
 
                     const stats = fs.statSync(file);
+                    const tracked = filePositions[file] || 0;
+
+                    if (stats.size < tracked) {
+                        log.debug(`File shrank, restarting from 0: ${file} (${tracked} -> ${stats.size})`);
+                        filePositions[file] = 0;
+                    }
 
                     if (stats.size > (filePositions[file] || 0)) {
                         log.debug(`Size grew without an event: ${file} (${filePositions[file] || 0} -> ${stats.size})`);

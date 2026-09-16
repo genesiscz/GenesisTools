@@ -93,6 +93,13 @@ describe("read and write", () => {
     test("an absent file is a miss", async () => {
         expect(await readSessionRowsCache(await scratch())).toBeNull();
     });
+
+    test("a JSON file with query: null is a miss, not a throw", async () => {
+        const path = await scratch();
+        await Bun.write(path, '{"query":null,"fetchedAt":1,"lastRequestedAt":1,"rows":[]}');
+
+        expect(await readSessionRowsCache(path)).toBeNull();
+    });
 });
 
 describe("refreshSessionRowsCache", () => {

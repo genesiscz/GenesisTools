@@ -106,7 +106,7 @@ Both counters report a **floor**, never a total, and each module's JSDoc says wh
 `ps %cpu` on macOS is a decayed average over a process's whole life, so a daemon that spun hard
 yesterday still reads high today. `sampleProcess` takes two `cputime` snapshots a known interval
 apart instead, which cannot be gamed that way. Wall time on this machine swings with load average
-(see [`docs/benchmarks-du.md`](../../docs/benchmarks-du.md)), so CPU time and call counts are the
+(see [`docs/benchmarks-cpu.md`](../../docs/benchmarks-cpu.md)), so CPU time and call counts are the
 metrics a baseline should hold.
 
 Baselines are git-tracked under [`scripts/benchmarks/baselines/`](../../scripts/benchmarks/baselines/).
