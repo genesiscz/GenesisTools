@@ -1,0 +1,18 @@
+{
+    // The root tsconfig includes only `src/**`, so nothing under `scripts/` is typechecked by a
+    // bare `bunx tsgo --noEmit` — it exits 0 on a file with a blatant type error, which is how a
+    // broken benchmark reads as a clean one. This config inherits the repo's compiler options and
+    // path aliases and points them at this directory:
+    //
+    //   bunx tsgo --noEmit -p scripts/benchmarks/youtube
+    //
+    // `types` is named explicitly because automatic `@types` discovery starts at THIS directory,
+    // and from here it does not reach the repo's `@types/bun`; without it every `Bun.argv` and
+    // `bun:sqlite` import in here reads as an unknown name.
+    "extends": "../../../tsconfig.json",
+    "compilerOptions": {
+        "types": ["bun"]
+    },
+    "include": ["*.ts"],
+    "exclude": []
+}

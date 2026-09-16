@@ -37,6 +37,12 @@ export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {
         cloudTranscribe: 8,
         summarize: 4,
     },
+    workers: {
+        max: 8,
+        spawnPolicy: "burst",
+        idleTeardownMs: 30_000,
+        pollMs: 2_000,
+    },
     ttls: {
         audio: "7 days",
         video: "3 days",
@@ -166,6 +172,7 @@ function mergeConfig(base: YoutubeConfigShape, patch: YoutubeConfigPatch): Youtu
         },
         freeTier: { ...base.freeTier, ...patch.freeTier },
         concurrency: { ...base.concurrency, ...patch.concurrency },
+        workers: { ...base.workers, ...patch.workers },
         ttls: { ...base.ttls, ...patch.ttls },
         preferredLangs: patch.preferredLangs ?? base.preferredLangs,
     };

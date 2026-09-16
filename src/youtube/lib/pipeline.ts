@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { YoutubeConfig } from "@app/youtube/lib/config";
+import type { YoutubeConfigShape } from "@app/youtube/lib/config.types";
 import type { YoutubeDatabase } from "@app/youtube/lib/db";
 import { withJobActivity } from "@app/youtube/lib/job-activity";
 import { JOB_STAGES, type JobEvent, type JobStage, type PipelineJob } from "@app/youtube/lib/jobs.types";
@@ -13,16 +14,70 @@ import type {
 } from "@app/youtube/lib/pipeline.types";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import { logger } from "@genesiscz/utils/logger";
+import { WorkerPool, type WorkerPoolStats, watchSqliteChanges } from "@genesiscz/utils/workers";
 
-const DEFAULT_POLL_MS = 250;
+/**
+ * A job handed from the dispatcher to a worker, with the stage it was claimed for. A multi-stage
+ * job is re-claimed once per stage, so the stage is not derivable from the row alone.
+ */
+interface ClaimedJob {
+    job: PipelineJob;
+    stage: JobStage;
+}
+
+/**
+ * Later stages first. A job already part-way through the pipeline finishes before a new one starts,
+ * which keeps the queue draining rather than fanning out and holding everything half-done.
+ */
+const CLAIM_ORDER: readonly JobStage[] = [...JOB_STAGES].reverse();
+
+/** How long the cached config limits may be reused. Re-read lazily, only while work is flowing. */
+const LIMITS_TTL_MS = 30_000;
+
+/** What `workerStats()` answers before `start()` and after `stop()`. */
+const IDLE_STATS: WorkerPoolStats = {
+    workers: 0,
+    busy: 0,
+    idle: 0,
+    kicks: 0,
+    spawned: 0,
+    retired: 0,
+    claims: 0,
+    claimed: 0,
+    wakes: { notify: 0, timer: 0, cascade: 0 },
+    abandoned: 0,
+};
+
+interface StageLimits {
+    /** Total live workers allowed, whatever stage they are on. */
+    max: number;
+    /** Per-stage ceiling, so one stage cannot take the whole pool. */
+    capacity: (stage: JobStage) => number;
+    idleTeardownMs: number;
+    pollMs: number;
+    readAt: number;
+}
 
 export class Pipeline {
     private readonly emitter = new EventEmitter();
-    private abortController: AbortController | null = null;
-    private readonly workers: Promise<void>[] = [];
     private readonly jobAborts = new Map<number, AbortController>();
     private globalConcurrencyOverride: number | null = null;
     private running = false;
+    private pool: WorkerPool<ClaimedJob> | null = null;
+    private stopDbWatch: (() => void) | null = null;
+    /** Live jobs per stage, so the per-stage concurrency caps still hold inside one shared pool. */
+    private readonly inFlight = new Map<JobStage, number>();
+    private limits: StageLimits | null = null;
+    private limitsRefresh: Promise<void> | null = null;
+    /**
+     * The stage the last claim succeeded on, or null after a claim came back empty.
+     *
+     * While a queue is draining the next row is almost always on the same stage, so a worker
+     * retries it directly and skips the pending-count read: one statement per job instead of two.
+     * A null claim clears it, so an IDLE pool never pays the speculative UPDATE and reads the
+     * cheaper count instead. That asymmetry is the point: idle is the common case.
+     */
+    private hotStage: JobStage | null = null;
 
     constructor(
         private readonly db: YoutubeDatabase,
@@ -69,6 +124,10 @@ export class Pipeline {
             this.emit({ type: "job:created", job });
         }
 
+        // In-process wake. A worker starts on this row within a tick instead of waiting for the
+        // fallback poll, which is what makes a long poll interval affordable.
+        this.pool?.kick();
+
         return { job, reused, queuePosition };
     }
 
@@ -101,19 +160,27 @@ export class Pipeline {
         }
 
         this.running = true;
-        this.abortController = new AbortController();
         const requeued = this.db.markInterruptedJobsForRequeue();
-        logger.info({ requeued }, "youtube pipeline starting");
+        const limits = await this.readLimits();
+        logger.info({ requeued, max: limits.max, pollMs: limits.pollMs }, "youtube pipeline starting");
 
-        for (const stage of JOB_STAGES) {
-            const count = await this.workerCountForStage(stage);
-            logger.debug({ stage, count }, "youtube pipeline starting stage workers");
-
-            for (let i = 0; i < count; i++) {
-                const workerId = `${this.deps.workerIdPrefix ?? "youtube"}-${stage}-${i}`;
-                this.workers.push(this.workerLoop(stage, workerId, this.abortController.signal));
-            }
-        }
+        this.pool = new WorkerPool<ClaimedJob>({
+            name: this.deps.workerIdPrefix ?? "youtube",
+            max: () => this.currentMax(),
+            claim: (ctx) => this.claimNext(ctx.workerId),
+            run: (claimed, ctx) => this.runJob(claimed.job, claimed.stage, ctx.signal),
+            pendingHint: () => this.pendingHint(),
+            idleTeardownMs: limits.idleTeardownMs,
+            pollMs: this.deps.pollMs ?? limits.pollMs,
+            onError: (error, ctx) => {
+                logger.warn({ err: error, workerId: ctx.workerId, phase: ctx.phase }, "youtube pipeline worker failed");
+            },
+        });
+        this.pool.start();
+        // A `tools youtube queue add` in another process writes the row and exits, with nothing to
+        // raise an in-process event. This watches the database file instead, so a CLI enqueue is
+        // picked up in milliseconds rather than waiting out the fallback poll.
+        this.stopDbWatch = watchSqliteChanges(this.db.getDb(), () => this.pool?.kick());
     }
 
     async stop(): Promise<void> {
@@ -121,33 +188,136 @@ export class Pipeline {
             return;
         }
 
-        logger.info({ workers: this.workers.length }, "youtube pipeline stopping");
+        logger.info({ workers: this.pool?.getStats().workers ?? 0 }, "youtube pipeline stopping");
         this.running = false;
-        this.abortController?.abort();
-        await Promise.allSettled(this.workers);
-        this.workers.length = 0;
-        this.abortController = null;
+        this.stopDbWatch?.();
+        this.stopDbWatch = null;
+        await this.pool?.stop();
+        this.pool = null;
+        this.inFlight.clear();
     }
 
-    private async workerLoop(stage: JobStage, workerId: string, signal: AbortSignal): Promise<void> {
-        while (this.running && !signal.aborted) {
-            let job: PipelineJob | null = null;
+    /** Live pool counters. The idle benchmark reads this; it is also the first thing to look at
+     *  when jobs sit pending, since `workers` at `max` with `idle` at 0 means capacity, not a stall. */
+    workerStats(): WorkerPoolStats {
+        return this.pool?.getStats() ?? IDLE_STATS;
+    }
 
-            try {
-                job = this.db.claimNextJob(workerId, { stage });
-            } catch (error) {
-                logger.warn({ err: error, stage, workerId }, "youtube pipeline claim failed (will retry)");
-                await sleep(this.deps.pollMs ?? DEFAULT_POLL_MS);
-                continue;
-            }
-
-            if (!job) {
-                await sleep(this.deps.pollMs ?? DEFAULT_POLL_MS);
-                continue;
-            }
-
-            await this.runJob(job, stage, signal);
+    /**
+     * One read of the pending set, then at most one claim against a stage that has both a row and
+     * free capacity. Returns null when there is nothing this worker may take, which parks it.
+     *
+     * Synchronous against the database on purpose: `bun:sqlite` calls do not yield, so two workers
+     * can never interleave between the count and the claim, and `claimNextJob`'s conditional UPDATE
+     * is the real guard against a double claim anyway.
+     */
+    private async claimNext(workerId: string): Promise<ClaimedJob | null> {
+        if (!this.running) {
+            return null;
         }
+
+        const limits = await this.readLimits();
+        const hot = this.hotStage;
+
+        if (hot !== null && this.inFlightFor(hot) < limits.capacity(hot)) {
+            const job = this.db.claimNextJob(workerId, { stage: hot });
+
+            if (job) {
+                this.inFlight.set(hot, this.inFlightFor(hot) + 1);
+
+                return { job, stage: hot };
+            }
+        }
+
+        const pending = this.db.countPendingJobsByStage();
+
+        if (pending.size === 0) {
+            this.hotStage = null;
+
+            return null;
+        }
+
+        for (const stage of CLAIM_ORDER) {
+            if (!pending.has(stage) || this.inFlightFor(stage) >= limits.capacity(stage)) {
+                continue;
+            }
+
+            const job = this.db.claimNextJob(workerId, { stage });
+
+            if (job) {
+                this.inFlight.set(stage, this.inFlightFor(stage) + 1);
+                this.hotStage = stage;
+
+                return { job, stage };
+            }
+        }
+
+        this.hotStage = null;
+
+        return null;
+    }
+
+    /** How many workers a kick should engage: pending rows, narrowed by what each stage may still run. */
+    private pendingHint(): number {
+        if (!this.running || !this.limits) {
+            return 1;
+        }
+
+        let want = 0;
+
+        for (const [stage, count] of this.db.countPendingJobsByStage()) {
+            want += Math.min(count, Math.max(0, this.limits.capacity(stage) - this.inFlightFor(stage)));
+        }
+
+        return want;
+    }
+
+    private inFlightFor(stage: JobStage): number {
+        return this.inFlight.get(stage) ?? 0;
+    }
+
+    private currentMax(): number {
+        if (this.globalConcurrencyOverride !== null) {
+            return this.globalConcurrencyOverride;
+        }
+
+        return this.limits?.max ?? 1;
+    }
+
+    /**
+     * Cached config limits, re-read at most every `LIMITS_TTL_MS` and only while claims are running.
+     * Worker counts used to be read once in `start()`, so a `PATCH /api/v1/config` had no effect
+     * until the server restarted; the pool asks for its ceiling on every scale decision instead.
+     */
+    private async readLimits(): Promise<StageLimits> {
+        if (this.limits && Date.now() - this.limits.readAt < LIMITS_TTL_MS) {
+            return this.limits;
+        }
+
+        this.limitsRefresh ??= this.refreshLimits().finally(() => {
+            this.limitsRefresh = null;
+        });
+        await this.limitsRefresh;
+
+        return this.limits as StageLimits;
+    }
+
+    private async refreshLimits(): Promise<void> {
+        const all = await this.config.getAll();
+        const { concurrency, workers } = all;
+        const capacityByStage = new Map<JobStage, number>();
+
+        for (const stage of JOB_STAGES) {
+            capacityByStage.set(stage, stageCapacityFrom(stage, concurrency));
+        }
+
+        this.limits = {
+            max: Math.max(1, workers.max),
+            capacity: (stage) => this.globalConcurrencyOverride ?? capacityByStage.get(stage) ?? 1,
+            idleTeardownMs: workers.idleTeardownMs,
+            pollMs: workers.pollMs,
+            readAt: Date.now(),
+        };
     }
 
     private async runJob(job: PipelineJob, claimedStage: JobStage, signal: AbortSignal): Promise<void> {
@@ -227,6 +397,9 @@ export class Pipeline {
                     { jobId: job.id, completed: claimedStage, next: remaining[0] },
                     "youtube pipeline job advanced to next stage"
                 );
+                // The row went back to pending under a different stage. Wake a worker for it now
+                // rather than leaving it until the fallback poll.
+                this.pool?.kick();
                 return;
             }
 
@@ -272,32 +445,7 @@ export class Pipeline {
             this.emit({ type: "job:failed", job: failed, error: message });
         } finally {
             this.jobAborts.delete(job.id);
-        }
-    }
-
-    private async workerCountForStage(stage: JobStage): Promise<number> {
-        if (this.globalConcurrencyOverride !== null) {
-            return this.globalConcurrencyOverride;
-        }
-
-        const concurrency = await this.config.get("concurrency");
-
-        switch (stage) {
-            case "discover":
-            case "metadata":
-            case "comments":
-            case "captions":
-            case "audio":
-                return Math.max(1, concurrency.download);
-            case "transcribe":
-                return Math.max(1, Math.max(concurrency.localTranscribe, concurrency.cloudTranscribe));
-            case "qaIndex":
-            case "summarize":
-            case "qa":
-            case "reportSynthesize":
-                return Math.max(1, concurrency.summarize);
-            case "video":
-                return Math.max(1, concurrency.download);
+            this.inFlight.set(claimedStage, Math.max(0, this.inFlightFor(claimedStage) - 1));
         }
     }
 
@@ -338,6 +486,26 @@ export class Pipeline {
     }
 }
 
+/** The per-stage ceiling, from the user-facing `concurrency` block. */
+function stageCapacityFrom(stage: JobStage, concurrency: YoutubeConfigShape["concurrency"]): number {
+    switch (stage) {
+        case "discover":
+        case "metadata":
+        case "comments":
+        case "captions":
+        case "audio":
+        case "video":
+            return Math.max(1, concurrency.download);
+        case "transcribe":
+            return Math.max(1, Math.max(concurrency.localTranscribe, concurrency.cloudTranscribe));
+        case "qaIndex":
+        case "summarize":
+        case "qa":
+        case "reportSynthesize":
+            return Math.max(1, concurrency.summarize);
+    }
+}
+
 function remainingStagesAfter(job: PipelineJob, claimedStage: JobStage): JobStage[] {
     if (job.targetKind === "channel" && claimedStage === "discover") {
         return [];
@@ -350,8 +518,4 @@ function remainingStagesAfter(job: PipelineJob, claimedStage: JobStage): JobStag
     }
 
     return job.stages.slice(idx + 1);
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
