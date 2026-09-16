@@ -113,7 +113,7 @@ for (const group of groups) {
 }
 
 for (const masterId of touchedMasters) {
-    refreshMasterDenorm(raw, masterId);
+    await refreshMasterDenorm(db, masterId);
 }
 
 console.log(`Unlinked ${unlinked} products into fresh masters.`);

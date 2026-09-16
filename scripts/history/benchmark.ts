@@ -274,17 +274,15 @@ export function parseBenchmarkCliArgs(argv: string[]): BenchmarkCliConfig {
     };
 }
 
-const COUNTER_NAMES = [
-    "sourceBytesRead",
-    "parsedRecords",
-    "candidates",
-    "metadataReads",
-    "sourceHydrations",
-    "transactions",
-] as const satisfies readonly (keyof BenchmarkCounters)[];
-
 function normalizeCounters(input: BenchmarkInvocationResult["counters"]): BenchmarkCounters {
-    return Object.fromEntries(COUNTER_NAMES.map((name) => [name, input?.[name] ?? "unavailable"])) as BenchmarkCounters;
+    return {
+        sourceBytesRead: input?.sourceBytesRead ?? "unavailable",
+        parsedRecords: input?.parsedRecords ?? "unavailable",
+        candidates: input?.candidates ?? "unavailable",
+        metadataReads: input?.metadataReads ?? "unavailable",
+        sourceHydrations: input?.sourceHydrations ?? "unavailable",
+        transactions: input?.transactions ?? "unavailable",
+    };
 }
 
 function orderedIds(value: object | object[]): string[] {
@@ -888,7 +886,7 @@ export function createBaselineBenchmarkVariant(options: {
             manifest = oracle.manifest;
             storagePaths.add(join(context.cachePath, ".genesis-tools", "claude-history", "index.db"));
             return {
-                initializationDetails: oracle.startupMeasurement,
+                initializationDetails: { ...oracle.startupMeasurement },
                 execute: (operation) => executeBaseline(oracle, operation, options.corpus),
                 close: () => oracle.close(),
             };

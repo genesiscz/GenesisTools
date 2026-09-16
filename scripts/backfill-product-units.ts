@@ -14,6 +14,7 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { ShopsDatabase } from "../src/shops/db/ShopsDatabase";
 import { refreshMasterDenorm } from "../src/shops/lib/master-denorm";
 import { extractFlavorKey, extractPackCount, extractSize, parseUnit, type Unit } from "../src/shops/lib/normalize";
 
@@ -102,8 +103,9 @@ function deriveSignature(row: Row): {
     };
 }
 
-function main(): void {
+async function main(): Promise<void> {
     const db = new Database(DB_PATH);
+    const shops = new ShopsDatabase(DB_PATH);
     const rows = db
         .query<Row, []>(
             `SELECT id, shop_origin, name, unit, unit_amount, pack_count, flavor_key, metadata_json, master_product_id
@@ -162,7 +164,7 @@ function main(): void {
 
         if (!DRY_RUN) {
             for (const masterId of dirtyMasters) {
-                refreshMasterDenorm(db, masterId);
+                await refreshMasterDenorm(shops, masterId);
             }
         }
 
@@ -185,4 +187,4 @@ function main(): void {
     console.log(`  masters refreshed: ${DRY_RUN ? `${dirtyMasters.size} (would be)` : dirtyMasters.size}`);
 }
 
-main();
+await main();

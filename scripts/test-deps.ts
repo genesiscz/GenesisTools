@@ -36,7 +36,7 @@ export function lockStamp(root: string): string {
         const stat = statOrNull(join(root, name));
 
         if (stat) {
-            return `${name}:${stat.size}:${Math.round(stat.mtimeMs)}`;
+            return `${name}:${stat.size}:${Math.round(Number(stat.mtimeMs))}`;
         }
     }
 
