@@ -57,6 +57,7 @@ export function monitorLoopStalls(opts?: { tickMs?: number }): LoopStallMonitor 
     let lastFire = startedAt;
     let stoppedAt: number | null = null;
 
+    // lint-rules-ignore: stall probe must tick faster than the stalls it measures
     const timer = setInterval(() => {
         const now = performance.now();
         ticks += 1;

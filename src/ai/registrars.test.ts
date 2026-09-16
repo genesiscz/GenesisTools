@@ -42,4 +42,12 @@ describe("AI_REGISTRARS", () => {
 
         expect(registered.sort()).toEqual(AI_REGISTRARS.flatMap((entry) => entry.names).sort());
     });
+
+    test("an inline command already on the program registers no extra trees", async () => {
+        const program = new Command();
+        program.command("translate");
+        await registerRequestedTrees({ program, registrars: AI_REGISTRARS, requested: "translate" });
+
+        expect(program.commands.map((command) => command.name())).toEqual(["translate"]);
+    });
 });

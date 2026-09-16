@@ -1,5 +1,6 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { capture } from "@genesiscz/utils/process/ps";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import {
@@ -84,18 +85,18 @@ async function spawnTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSp
 
     // TMUX_SPAWN_GUARD, not bare options: capture now runs from an HTTP handler, so an
     // unbounded spawn against a wedged tmux server leaves the request pending forever.
-    const proc = Bun.spawn(argvWithChildDeadline(cmd), {
-        cwd: opts?.cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        ...TMUX_SPAWN_GUARD,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    const [binary, ...args] = argvWithChildDeadline(cmd);
 
-    return { exitCode, stdout, stderr };
+    if (!binary) {
+        return { exitCode: 127, stdout: "", stderr: "empty argv" };
+    }
+
+    const result = await capture(binary, args, {
+        timeoutMs: TMUX_SPAWN_GUARD.timeout,
+        cwd: opts?.cwd,
+    });
+
+    return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 /** Override spawn for tests. Also forwards to sessions.ts so create/kill mock too. */

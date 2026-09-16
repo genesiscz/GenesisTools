@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+    capture,
     chunk,
     PS_BATCH_SIZE,
+    parseCpuTime,
     parseOpenFileCounts,
     parsePsLine,
     parsePsList,
@@ -104,6 +106,38 @@ describe("parseOpenFileCounts", () => {
 
     test("returns nothing for empty output", () => {
         expect(parseOpenFileCounts("").size).toBe(0);
+    });
+});
+
+describe("parseCpuTime", () => {
+    test("parses macOS mm:ss.cc, hh:mm:ss, and dd-hh:mm:ss", () => {
+        expect(parseCpuTime("0:00.01")).toBe(10);
+        expect(parseCpuTime("0:00.44")).toBe(440);
+        expect(parseCpuTime("8:03.60")).toBe(483_600);
+        expect(parseCpuTime("12:34.56")).toBe(754_560);
+        expect(parseCpuTime("01:02:03")).toBe(3_723_000);
+        expect(parseCpuTime("1:02:03.50")).toBe(3_723_500);
+        expect(parseCpuTime("5-23:12:45")).toBe(5 * 86_400_000 + 83_565_000);
+        expect(parseCpuTime("1-02:03:04.50")).toBe(93_784_500);
+    });
+
+    test("returns null rather than zero for something it cannot read", () => {
+        expect(parseCpuTime("")).toBeNull();
+        expect(parseCpuTime("   ")).toBeNull();
+        expect(parseCpuTime("not-a-time")).toBeNull();
+        expect(parseCpuTime("garbage")).toBeNull();
+        expect(parseCpuTime("1:2:3:4")).toBeNull();
+    });
+});
+
+describe("capture timeout", () => {
+    test("returns after the deadline instead of waiting on streams", async () => {
+        const started = performance.now();
+        const result = await capture("/bin/sleep", ["30"], { timeoutMs: 80 });
+
+        expect(performance.now() - started).toBeLessThan(2000);
+        expect(result.status).toBeNull();
+        expect(result.stdout).toBe("");
     });
 });
 

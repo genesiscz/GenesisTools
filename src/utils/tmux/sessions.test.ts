@@ -3,6 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
 import {
+    argvWithChildDeadline,
     buildTmuxSpawnEnv,
     createTmuxSession,
     createTmuxSessionRunning,
@@ -14,6 +15,7 @@ import {
     scrollTmuxToFraction,
     sessionExists,
     setTmuxSpawnSyncForTests,
+    TMUX_CHILD_DEADLINE_MS,
     TMUX_SPAWN_GUARD,
 } from "@genesiscz/utils/tmux/sessions";
 
@@ -31,6 +33,15 @@ describe("tmux sessions", () => {
         setTmuxSpawnSyncForTests(null);
         setTmuxBinForTests(null);
         resetTmuxBinCache();
+    });
+
+    test("argvWithChildDeadline prefixes a bounded watchdog, not an unbounded wait", () => {
+        const wrapped = argvWithChildDeadline(["/usr/bin/tmux", "list-sessions"]);
+
+        expect(wrapped[0]).toBe("/usr/bin/perl");
+        expect(wrapped).toContain(String(TMUX_CHILD_DEADLINE_MS));
+        expect(wrapped.at(-1)).toBe("list-sessions");
+        expect(wrapped.join(" ")).toContain("alarm 1");
     });
 
     test("listTmuxSessions parses every column of the tmux list-sessions record", async () => {

@@ -62,6 +62,7 @@ export async function waitForControlResponse(
     timeoutMs = 30_000
 ): Promise<ControlResponse> {
     const path = sessionResponsePath(name, requestId);
+    mkdirSync(dirname(path), { recursive: true });
     // `respondToControl` creates this file with an atomic rename, which the parent directory sees
     // as one event. `waitForPath` watches that directory, so the answer arrives when it is written
     // rather than up to 20 ms later. It used to stat the path 50 times a second for as long as

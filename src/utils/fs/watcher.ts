@@ -1,4 +1,4 @@
-import { existsSync, type FSWatcher, mkdirSync, watch } from "node:fs";
+import { existsSync, type FSWatcher, watch } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { AsyncSubscription, Event } from "@parcel/watcher";
 
@@ -241,11 +241,9 @@ export interface WatchPathOptions {
 
 const DEFAULT_WAIT_FOR_PATH_POLL_MS = 500;
 
-export interface WaitForPathOptions {
-    /** Give up after this long. Default: no deadline. */
-    timeoutMs?: number;
-    /** Abort early; resolves `false` like a timeout. */
-    signal?: AbortSignal;
+type WaitForPathDeadline = { timeoutMs: number; signal?: AbortSignal } | { timeoutMs?: number; signal: AbortSignal };
+
+export type WaitForPathOptions = WaitForPathDeadline & {
     /**
      * Safety-net poll behind the directory watch, in ms. Default 500; 0 disables it.
      *
@@ -256,7 +254,7 @@ export interface WaitForPathOptions {
      * half a second; the watch still answers first whenever it works.
      */
     pollMs?: number;
-}
+};
 
 /**
  * Watch ONE path (a file that may not exist yet) with `node:fs`, no native addon.
@@ -268,20 +266,22 @@ export interface WaitForPathOptions {
  *
  * Costs about 0.5 ms to arm against roughly 5 to 8 ms for loading `@parcel/watcher` plus its first
  * subscribe, which is why single-path waits do not go through `createWatcher`. The parent
- * directory must exist; it is created if it does not. Not recursive, not cross-directory: for a
- * tree, use `createWatcher`.
+ * directory must already exist; this function does not create it. Not recursive, not
+ * cross-directory: for a tree, use `createWatcher`.
  */
 export function watchPath(path: string, callback: WatcherCallback, opts?: WatchPathOptions): WatcherSubscription {
     const resolvedPath = resolve(path);
     const dir = dirname(resolvedPath);
+    if (!existsSync(dir)) {
+        throw new Error(`watchPath: parent directory does not exist: ${dir}`);
+    }
+
     const name = basename(resolvedPath);
     const debounceMs = opts?.debounceMs ?? 0;
-    mkdirSync(dir, { recursive: true });
 
     let isActive = true;
     let pending: WatcherEvent | null = null;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let consecutiveErrors = 0;
 
     const fire = async () => {
         debounceTimer = null;
@@ -294,9 +294,7 @@ export function watchPath(path: string, callback: WatcherCallback, opts?: WatchP
 
         try {
             await callback([event]);
-            consecutiveErrors = 0;
         } catch (err) {
-            consecutiveErrors++;
             const { logger } = await import("@genesiscz/utils/logger");
             logger.warn({ err, path: resolvedPath }, "[watcher] watchPath callback failed");
         }
@@ -326,7 +324,6 @@ export function watchPath(path: string, callback: WatcherCallback, opts?: WatchP
     });
 
     watcher.on("error", (err) => {
-        consecutiveErrors++;
         void import("@genesiscz/utils/logger").then(({ logger }) =>
             logger.warn({ err, path: resolvedPath }, "[watcher] watchPath fs.watch error")
         );
@@ -354,18 +351,23 @@ export function watchPath(path: string, callback: WatcherCallback, opts?: WatchP
         },
 
         get errorCount() {
-            return consecutiveErrors;
+            return 0;
         },
     };
 }
 
 /**
- * Resolve `true` as soon as `path` exists, `false` on timeout or abort. Never throws: one `watchPath`
- * subscription, one deadline timer and a slow existence poll behind the watch (see `pollMs`). The
- * path existing before the call resolves at once; a file landing between the existence check and
- * the watch being armed is caught by a second check after arming.
+ * Resolve `true` as soon as `path` exists, `false` on timeout or abort. Never throws for those
+ * outcomes: one `watchPath` subscription, one deadline timer and a slow existence poll behind the
+ * watch (see `pollMs`). The path existing before the call resolves at once; a file landing between
+ * the existence check and the watch being armed is caught by a second check after arming.
+ * Requires `timeoutMs` or `signal`. The parent directory must already exist.
  */
-export async function waitForPath(path: string, opts?: WaitForPathOptions): Promise<boolean> {
+export async function waitForPath(path: string, opts: WaitForPathOptions): Promise<boolean> {
+    if (opts.timeoutMs === undefined && opts.signal === undefined) {
+        throw new Error("waitForPath requires timeoutMs or signal");
+    }
+
     const resolvedPath = resolve(path);
 
     if (existsSync(resolvedPath)) {

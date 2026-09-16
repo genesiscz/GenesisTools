@@ -64,8 +64,8 @@ export async function wakefulSleep(totalMs: number, options: WakefulSleepOptions
         const now = Date.now();
         const elapsed = now - lastTickAt;
 
-        if (elapsed > WAKEFUL_JUMP_THRESHOLD_MS) {
-            const ctx = { elapsedMs: elapsed, expectedMs: WAKEFUL_TICK_MS };
+        if (elapsed > tick * 5) {
+            const ctx = { elapsedMs: elapsed, expectedMs: tick };
 
             if (options.onWallClockJump) {
                 options.onWallClockJump(ctx);

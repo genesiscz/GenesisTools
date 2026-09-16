@@ -34,6 +34,14 @@ export async function registerRequestedTrees({
     registrars: readonly LazyRegistrar[];
     requested: string | undefined;
 }): Promise<void> {
+    const alreadyRegistered =
+        requested !== undefined &&
+        program.commands.some((command) => command.name() === requested || command.aliases().includes(requested));
+
+    if (alreadyRegistered) {
+        return;
+    }
+
     const matched = requested ? registrars.find((entry) => entry.names.includes(requested)) : undefined;
 
     for (const entry of matched ? [matched] : registrars) {

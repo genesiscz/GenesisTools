@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { argvWithChildDeadline as wrapArgvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
+import { capture } from "@genesiscz/utils/process/ps";
 import { profiler } from "@genesiscz/utils/profile";
 import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -118,34 +119,25 @@ export const TMUX_SPAWN_GUARD = { timeout: 10_000, killSignal: "SIGKILL" } as co
  */
 export const TMUX_CHILD_DEADLINE_MS = 8_000;
 
-const PERL_WATCHDOG = "/usr/bin/perl";
-const PERL_WATCHDOG_SCRIPT =
-    'my $ms=shift @ARGV; my $sec=int(($ms+999)/1000); $sec=1 if $sec<1; my $pid=fork(); die "fork: $!\\n" unless defined $pid; if($pid==0){exec {$ARGV[0]} @ARGV; exit 127} $SIG{ALRM}=sub{kill 9,$pid; waitpid($pid,0); exit 124}; alarm $sec; waitpid($pid,0); my $sig=$?&127; exit $sig?128+$sig:($?>>8);';
-
 /** Prefix argv so a parent crash cannot leave a spinning tmux client. */
 export function argvWithChildDeadline(cmd: string[]): string[] {
-    if (cmd.length === 0 || !existsSync(PERL_WATCHDOG)) {
-        return cmd;
-    }
-
-    return [PERL_WATCHDOG, "-e", PERL_WATCHDOG_SCRIPT, "--", String(TMUX_CHILD_DEADLINE_MS), ...cmd];
+    return wrapArgvWithChildDeadline(cmd, TMUX_CHILD_DEADLINE_MS);
 }
 
 const defaultSpawn: TmuxSpawnSync = async (cmd, opts) => {
-    const proc = Bun.spawn(argvWithChildDeadline(cmd), {
+    const [binary, ...args] = argvWithChildDeadline(cmd);
+
+    if (!binary) {
+        return { exitCode: 127, stdout: "", stderr: "empty argv" };
+    }
+
+    const result = await capture(binary, args, {
+        timeoutMs: TMUX_SPAWN_GUARD.timeout,
         cwd: opts?.cwd,
         env: buildTmuxSpawnEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        ...TMUX_SPAWN_GUARD,
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
-
-    return { exitCode, stdout, stderr };
+    return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr };
 };
 
 let spawnImpl: TmuxSpawnSync = defaultSpawn;

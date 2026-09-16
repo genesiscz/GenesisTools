@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
+import { capture, parseCpuTime } from "@genesiscz/utils/process/ps";
 
 const { log } = logger.scoped("benchmark-sample");
 
@@ -52,54 +53,7 @@ function delay(ms: number): Promise<void> {
     });
 }
 
-/**
- * Parse a POSIX `ps -o time` cell into milliseconds.
- *
- * macOS prints `mm:ss.cc` (and `hh:mm:ss` past an hour), Linux prints
- * `[[dd-]hh:]mm:ss`, and both use a leading `dd-` for multi-day processes.
- * Returns null for anything it does not recognise, so a caller can tell a
- * parse failure apart from a genuine zero.
- */
-export function parseCpuTime(raw: string): number | null {
-    const text = raw.trim();
-
-    if (text.length === 0) {
-        return null;
-    }
-
-    const dashIndex = text.indexOf("-");
-    let days = 0;
-    let rest = text;
-
-    if (dashIndex > 0) {
-        days = Number(text.slice(0, dashIndex));
-        rest = text.slice(dashIndex + 1);
-    }
-
-    if (!Number.isFinite(days)) {
-        return null;
-    }
-
-    const parts = rest.split(":");
-
-    if (parts.length > 3) {
-        return null;
-    }
-
-    let seconds = 0;
-
-    for (const part of parts) {
-        const value = Number(part);
-
-        if (!Number.isFinite(value)) {
-            return null;
-        }
-
-        seconds = seconds * 60 + value;
-    }
-
-    return Math.round((days * 86_400 + seconds) * 1000);
-}
+export { parseCpuTime };
 
 /** Parse `Threads:\t7` out of a Linux /proc/<pid>/status body. */
 export function parseProcThreads(status: string): number | null {
@@ -151,21 +105,19 @@ export function parseProcStatCpuMs(stat: string): number | null {
     return ((utime + stime) / LINUX_USER_HZ) * 1000;
 }
 
-async function runPs(args: string[]): Promise<string | null> {
-    const proc = Bun.spawn(["ps", ...args], { stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    await proc.exited;
+async function psStdout(args: string[]): Promise<string | null> {
+    const result = await capture("ps", args);
 
-    if (proc.exitCode !== 0) {
-        log.debug({ args, exitCode: proc.exitCode, stderr: stderr.trim() }, "ps returned non-zero");
+    if (result.status !== 0) {
+        log.debug({ args, exitCode: result.status, stderr: result.stderr.trim() }, "ps returned non-zero");
         return null;
     }
 
-    return stdout;
+    return result.stdout;
 }
 
 async function psSnapshot(pid: number): Promise<RawSnapshot | null> {
-    const stdout = await runPs(["-o", "time=,rss=", "-p", String(pid)]);
+    const stdout = await psStdout(["-o", "time=,rss=", "-p", String(pid)]);
 
     if (stdout === null) {
         return null;
@@ -221,7 +173,7 @@ export async function countThreads(pid: number): Promise<number> {
         return procSnapshot(pid)?.threads ?? 0;
     }
 
-    const stdout = await runPs(["-M", "-p", String(pid)]);
+    const stdout = await psStdout(["-M", "-p", String(pid)]);
 
     if (stdout === null) {
         return 0;

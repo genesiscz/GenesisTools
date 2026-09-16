@@ -188,7 +188,7 @@ const SUB_100MS_INTERVAL_RULE = {
     severity: "error" as const,
     message:
         "`setInterval` under 100 ms is a busy poll. Wake on the event instead (fs.watch behind a slow safety " +
-        "poll: `watchFileFeed`, `waitForPath`, `FileTailer`; a `WorkerPool` claim for queues), or " +
+        "poll: `watchFileFeed`, `waitForPath`, `FileTailer`), or " +
         "`// lint-rules-ignore: <why this must poll>`.",
 };
 const INTERVAL_FLOOR_MS = 100;
@@ -226,24 +226,132 @@ const SWIFT_WAIT_RULE = {
 };
 const SWIFT_BARE_WAIT = /\.wait\(\s*\)/;
 
-/** The second argument of a `setInterval` call when it is a number literal; a computed delay is not judged. */
+function parseNumberLiteral(text: string): number | null {
+    const value = Number(text.replace(/_/g, ""));
+
+    return Number.isFinite(value) ? value : null;
+}
+
+function unwrapToNumberOrIdentifier(
+    node: SgNode
+): { kind: "number"; value: number } | { kind: "identifier"; name: string } | null {
+    let current: SgNode | undefined = node;
+
+    for (let i = 0; i < 4 && current; i++) {
+        const kind = current.kind();
+
+        if (kind === "number") {
+            const value = parseNumberLiteral(current.text());
+
+            return value === null ? null : { kind: "number", value };
+        }
+
+        if (kind === "identifier") {
+            return { kind: "identifier", name: current.text() };
+        }
+
+        const next: SgNode | undefined = current.namedChildren()[0];
+
+        if (!next) {
+            return null;
+        }
+
+        current = next;
+    }
+
+    return null;
+}
+
+function findNumericBinding(root: SgNode, name: string, depth = 0): number | null {
+    if (depth > 4) {
+        return null;
+    }
+
+    for (const decl of root.findAll({ rule: { kind: "variable_declarator" } })) {
+        const boundName =
+            decl.field("name")?.text() ??
+            decl
+                .children()
+                .find((child) => child.isNamed())
+                ?.text();
+        if (boundName !== name) {
+            continue;
+        }
+
+        const value = decl.field("value") ?? decl.children().filter((child) => child.isNamed())[1];
+
+        if (!value) {
+            return null;
+        }
+
+        const unwrapped = unwrapToNumberOrIdentifier(value);
+
+        if (!unwrapped) {
+            return null;
+        }
+
+        if (unwrapped.kind === "number") {
+            return unwrapped.value;
+        }
+
+        return findNumericBinding(root, unwrapped.name, depth + 1);
+    }
+
+    return null;
+}
+
+/** Number-literal delay, or an identifier bound to one in this file. Computed delays are not judged. */
 function intervalDelayMs(node: SgNode): number | null {
     const args = (node.field("arguments")?.children() ?? []).filter((child) => child.isNamed());
     const delay = args[1];
 
-    if (delay?.kind() !== "number") {
+    if (!delay) {
         return null;
     }
 
-    const value = Number(delay.text().replace(/_/g, ""));
+    const unwrapped = unwrapToNumberOrIdentifier(delay);
 
-    return Number.isFinite(value) ? value : null;
+    if (!unwrapped) {
+        return null;
+    }
+
+    if (unwrapped.kind === "number") {
+        return unwrapped.value;
+    }
+
+    return findNumericBinding(intervalAstRoot(node), unwrapped.name);
+}
+
+/** `node.getRoot()` is the file SgRoot; `.root()` is the program SgNode that has `findAll`. */
+function intervalAstRoot(node: SgNode): SgNode {
+    return node.getRoot().root();
 }
 
 function intervalViolates(node: SgNode): boolean {
     const delay = intervalDelayMs(node);
 
     return delay !== null && delay < INTERVAL_FLOOR_MS;
+}
+
+type RecordFinding = (node: SgNode, rule: { name: string; severity: Severity; message: string }) => void;
+
+function recordIntervalFindings(nodes: SgNode[], record: RecordFinding): void {
+    for (const node of nodes) {
+        if (intervalViolates(node)) {
+            record(node, SUB_100MS_INTERVAL_RULE);
+        }
+    }
+}
+
+function recordSleepSyncFindings(nodes: SgNode[], record: RecordFinding): void {
+    for (const node of nodes) {
+        record(node, SYNC_POLL_LOOP_RULE);
+    }
+}
+
+function recordBusyWaitFindings(root: SgNode, record: RecordFinding): void {
+    recordIntervalFindings(root.findAll(INTERVAL_CALL_MATCHER), record);
+    recordSleepSyncFindings(root.findAll(SLEEP_SYNC_IN_LOOP_MATCHER), record);
 }
 
 /** Swift has no grammar in the ast-grep napi package, so its one rule is a line regex. */
@@ -443,15 +551,7 @@ export function checkSource(file: string, source: string): Finding[] {
         }
     }
 
-    for (const node of root.findAll(INTERVAL_CALL_MATCHER)) {
-        if (intervalViolates(node)) {
-            record(node, SUB_100MS_INTERVAL_RULE);
-        }
-    }
-
-    for (const node of root.findAll(SLEEP_SYNC_IN_LOOP_MATCHER)) {
-        record(node, SYNC_POLL_LOOP_RULE);
-    }
+    recordBusyWaitFindings(root, record);
 
     // The `.genesis-tools` rule is about REACHING that directory through
     // `homedir()`, not about the literal. `join(env.tools.getHome(),
@@ -661,20 +761,14 @@ async function scanAll(files: string[]): Promise<Finding[]> {
                 lang,
                 { paths, matcher: INTERVAL_CALL_MATCHER },
                 guard((nodes) => {
-                    for (const node of nodes) {
-                        if (intervalViolates(node)) {
-                            push(node, SUB_100MS_INTERVAL_RULE);
-                        }
-                    }
+                    recordIntervalFindings(nodes, push);
                 })
             ),
             findInFiles(
                 lang,
                 { paths, matcher: SLEEP_SYNC_IN_LOOP_MATCHER },
                 guard((nodes) => {
-                    for (const node of nodes) {
-                        push(node, SYNC_POLL_LOOP_RULE);
-                    }
+                    recordSleepSyncFindings(nodes, push);
                 })
             ),
             findInFiles(
