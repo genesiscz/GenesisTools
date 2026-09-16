@@ -21,7 +21,7 @@ const SafeJSON = JSON;
  *
  * ⚠️ All three harnesses run this, and they name their edit tools differently. Claude sends
  * `Edit` / `Write` / `MultiEdit` with `tool_input.file_path`; Codex sends `apply_patch` and
- * `shell`; Grok sends `edit_file` / `create_file`. `EDIT_TOOLS` and `filePathOf` below are
+ * `shell`; Grok sends `edit_file` / `create_file`. `EDIT_TOOLS` and `filePathsOf` below are
  * the whole of that difference — everything else is shared.
  */
 
@@ -35,12 +35,15 @@ interface HookInput {
         /** Codex `apply_patch`, Grok `edit_file` / `create_file`. */
         path?: string;
         filePath?: string;
+        command?: string;
     };
-    tool_response?: {
-        success?: boolean;
-        filePath?: string;
-        path?: string;
-    };
+    tool_response?:
+        | string
+        | {
+              success?: boolean;
+              filePath?: string;
+              path?: string;
+          };
 }
 
 /**
@@ -48,16 +51,10 @@ interface HookInput {
  * tracked; the hook never guesses from arguments, because a shell call that happens to carry
  * a path is usually reading it.
  *
- * 🛑 Outside Claude this set is currently unreachable, and that is deliberate. Verified
- * 2026-09-11: a `codex exec` that really created a file produced NO PostToolUse hook call at
- * all, because Codex honours the `matcher` in `hooks.json` and none of its tool names match
- * it. Widening the matcher to `*` would spawn this process on every Read, Grep and Bash call
- * in every harness to discard almost all of them. Codex and Grok do not need it: their own
- * transcripts already record every file they changed.
- *
- * The set and `recordUnknownTool` stay because they cost nothing and remove the guesswork if
- * a harness ever does deliver an edit tool here — the tally names it instead of the hook
- * silently dropping it.
+ * Codex 0.154 keeps `apply_patch` as the payload name but exposes `Write` and `Edit` as matcher
+ * aliases, so the Claude-shaped matcher selects this hook without running it for every tool.
+ * Codex carries every affected path inside `tool_input.command`; `filePathsOf` parses that patch.
+ * Unknown names are still tallied so later harness vocabulary changes remain observable.
  */
 const EDIT_TOOLS = new Set([
     // Claude Code — verified, and the matcher in hooks.json uses the first three.
@@ -137,11 +134,10 @@ function recordUnknownTool(harness: string, toolName: string): void {
  * What SessionStart tells the model, which is not the same sentence on every harness.
  *
  * 🛑 A SessionStart `additionalContext` reaches Codex as a DEVELOPER message, which outranks
- * AGENTS.md. Promising "all files you modify are tracked" there was simply false: the
- * PostToolUse matcher names Claude's edit tools, so nothing is tracked outside Claude. Codex
- * and Grok are not missing the feature — their own transcripts record every file they changed,
- * and `tools codex history` / `tools grok history` read it out (see
- * `src/utils/agent-sessions/readers/codex.ts`). So say the session id and stop.
+ * AGENTS.md. Promising "all files you modify are tracked" remains false outside Claude: Codex
+ * `apply_patch` calls are tracked, but shell commands can also modify files without hitting this
+ * edit-only matcher. Codex and Grok transcripts remain the complete record consumed by
+ * `tools codex history` / `tools grok history`. So say the session id and stop.
  */
 function sessionStartOutput(input: HookInput): { hookEventName: string; additionalContext: string } {
     const tracked =
@@ -152,15 +148,40 @@ function sessionStartOutput(input: HookInput): { hookEventName: string; addition
     return { hookEventName: "SessionStart", additionalContext: `📌 Session ID: ${input.session_id}${tracked}` };
 }
 
-/** The path an edit tool names, in whichever field its harness puts it. */
-function filePathOf(input: HookInput): string | undefined {
-    return (
+function applyPatchFilePaths(command: string): string[] {
+    const paths = new Set<string>();
+
+    for (const line of command.split(/\r?\n/)) {
+        const match = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/.exec(line) ?? /^\*\*\* Move to: (.+)$/.exec(line);
+        const path = match?.[1]?.trim();
+
+        if (path) {
+            paths.add(path);
+        }
+    }
+
+    return [...paths];
+}
+
+/** Every path an edit tool names, in whichever field its harness puts it. */
+function filePathsOf(input: HookInput): string[] {
+    const response = typeof input.tool_response === "object" ? input.tool_response : undefined;
+    const explicitPath =
         input.tool_input?.file_path ??
         input.tool_input?.path ??
         input.tool_input?.filePath ??
-        input.tool_response?.filePath ??
-        input.tool_response?.path
-    );
+        response?.filePath ??
+        response?.path;
+
+    if (explicitPath) {
+        return [explicitPath];
+    }
+
+    if (input.tool_name === "apply_patch" && typeof input.tool_input?.command === "string") {
+        return applyPatchFilePaths(input.tool_input.command);
+    }
+
+    return [];
 }
 
 interface SessionData {
@@ -275,17 +296,19 @@ async function main() {
             process.exit(0);
         }
 
-        const filePath = filePathOf(input);
-        if (!filePath) {
-            process.exit(0);
-        }
-
         // Skip if write failed
-        if (tool_response && tool_response.success === false) {
+        if (typeof tool_response === "object" && tool_response?.success === false) {
             process.exit(0);
         }
 
-        trackFile(session_id, filePath);
+        const filePaths = filePathsOf(input);
+        if (filePaths.length === 0) {
+            process.exit(0);
+        }
+
+        for (const filePath of filePaths) {
+            trackFile(session_id, filePath);
+        }
     }
 
     process.exit(0);

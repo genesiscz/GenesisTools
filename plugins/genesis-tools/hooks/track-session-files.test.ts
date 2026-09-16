@@ -68,6 +68,50 @@ test("an edit tool that names its path in another field is still tracked", async
     expect((await readJson<{ files: string[] }>("sessions", "s2.json")).files).toEqual(["/repo/b.ts"]);
 });
 
+// Regression test: Codex 0.154 apply_patch hooks serialize paths inside tool_input.command.
+test("a Codex apply_patch payload tracks its complete path set", async () => {
+    await runHook({
+        session_id: "s2-patch",
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: "src/seed.ts" },
+        transcript_path: CLAUDE_TRANSCRIPT,
+    });
+
+    expect(
+        await runHook({
+            session_id: "s2-patch",
+            hook_event_name: "PostToolUse",
+            tool_name: "apply_patch",
+            tool_input: {
+                command: [
+                    "*** Begin Patch",
+                    "*** Add File: src/added.ts",
+                    "+added",
+                    "*** Update File: src/original.ts",
+                    "*** Move to: src/moved.ts",
+                    "@@",
+                    "-old",
+                    "+new",
+                    "*** Delete File: src/deleted.ts",
+                    "*** End Patch",
+                ].join("\n"),
+            },
+            tool_response:
+                "Exit code: 0\nSuccess. Updated the following files:\nA src/added.ts\nM src/moved.ts\nD src/deleted.ts",
+            transcript_path: CODEX_TRANSCRIPT,
+        })
+    ).toBe(0);
+
+    expect((await readJson<{ files: string[] }>("sessions", "s2-patch.json")).files).toEqual([
+        "src/seed.ts",
+        "src/added.ts",
+        "src/original.ts",
+        "src/moved.ts",
+        "src/deleted.ts",
+    ]);
+});
+
 test("an unrecognised tool is tallied by harness, so the vocabulary can be confirmed", async () => {
     await runHook({
         session_id: "s3",
