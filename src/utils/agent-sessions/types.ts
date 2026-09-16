@@ -63,6 +63,12 @@ export interface AgentSearchFilters {
     conversationDate?: Date;
     conversationDateUntil?: Date;
     sortByRelevance?: boolean;
+    /**
+     * Stop at the ripgrep gate: answer a content query with the metadata rows of the sessions
+     * whose transcript contains it, and parse no transcript at all. A resume picker needs only
+     * that; placing the matches inside eleven large sessions cost 12 s and showed nothing.
+     */
+    candidatesOnly?: boolean;
     signal?: AbortSignal;
     /** Limits a cached search to the adapter's configured native roots. */
     sourceRoots?: string[];

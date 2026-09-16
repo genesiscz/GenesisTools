@@ -777,6 +777,35 @@ export class HistoryService {
                   .concat(agents.slice(0, relevanceParseCap(agents.length, filters.limit)))
             : mains.concat(agents);
 
+        // A resume picker needs to know WHICH sessions mention the query, and ripgrep has just
+        // answered that. Parsing every candidate transcript to place the matches cost 12 s for
+        // eleven col-fe sessions (4 s of JSON.parse, 2 s of commit-hash regexes) and produced
+        // nothing the picker shows, so the candidates' metadata rows ARE the results here.
+        if (filters.candidatesOnly) {
+            const cap = filters.limit ?? planned.length;
+
+            for (const candidate of planned) {
+                if (results.length >= cap) {
+                    break;
+                }
+
+                const rows = metadataFor(candidate.source);
+                const metadata =
+                    rows.find((row) => row.nativeId === candidate.source.metadata?.sessionId) ??
+                    (rows.length === 1 ? rows[0] : undefined);
+
+                if (!metadata || !metadataInScope(metadata, scoped)) {
+                    continue;
+                }
+
+                const result = resultFromMetadata(metadata, reader.kind);
+                result.relevanceScore = candidate.matchCount;
+                results.push(result);
+            }
+
+            return { results, issues };
+        }
+
         const scanCandidate = async ({
             source,
         }: (typeof planned)[number]): Promise<MatchedHistorySource | undefined> => {

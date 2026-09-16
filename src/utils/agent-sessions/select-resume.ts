@@ -207,8 +207,10 @@ async function resolveResumeSession(
     if (!matches.some((session) => identifiesSession(session, trimmed))) {
         // `scope` lifts the limit so exact identity resolution can enumerate everything; the
         // full-text fallback must not inherit that, or it hydrates the whole corpus.
+        // `candidatesOnly`: the picker needs which sessions mention the query, which ripgrep
+        // answers in under a second; placing the matches inside the transcripts took 12 s.
         const hits = await prof.measureAsync(`resume.search.${adapter.kind}`, () =>
-            adapter.search({ ...scope, query, limit: filters.limit ?? DEFAULT_RESUME_MATCHES })
+            adapter.search({ ...scope, query, limit: filters.limit ?? DEFAULT_RESUME_MATCHES, candidatesOnly: true })
         );
 
         matches = dedupeSessions([...matches, ...hits.filter((session) => session.kind === adapter.kind)]);
