@@ -16,11 +16,20 @@ func resolveApp(_ name: String) -> pid_t {
     return pid
 }
 
-/// Chromium and Electron build no AX tree until an assistive client asks for one. Setting
-/// this attribute is that request. Other apps report it unsupported, which is fine; it is left
-/// on because Chromium tears the tree down again the moment it is cleared, and a CLI has no
-/// session to scope it to. `AXEnhancedUserInterface` is deliberately NOT set: AppKit apps change
-/// layout behaviour under it and that would be visible to the user.
+/// Chromium and Electron build no AX tree until an assistive client asks for one. Setting this
+/// attribute is one way to ask, and it is left on because the tree is torn down again the moment
+/// it is cleared and a CLI has no session to scope it to.
+///
+/// ⚠️ It only actually lands on ELECTRON. Chromium itself implements `AXEnhancedUserInterface` and
+/// not this one, so Brave and Chrome report `AXManualAccessibility` unsupported while Cursor
+/// reports a real value — confirmed by `tools control audit` reading all 117 running apps on
+/// 2026-09-16. Chromium builds its tree on any AX access anyway, so the no-op costs nothing and
+/// the call stays for Electron's sake. Do NOT "fix" it by setting `AXEnhancedUserInterface`
+/// instead: AppKit apps change layout behaviour under that one and the user would see it.
+///
+/// 🛑 This WRITES to another application and nothing ever clears it. That is why `resolveAppPid`
+/// exists for callers that only need the pid, and why `tools control audit` reports every app
+/// carrying the flag.
 private func enableManualAccessibility(_ pid: pid_t) {
     _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
 }
