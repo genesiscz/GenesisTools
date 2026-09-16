@@ -1,5 +1,14 @@
 # tools du
 
+Measurement only, and never writes. macOS/APFS: the engines map physical extents
+through `F_LOG2PHYS_EXT`, so every verb exits 2 with an explanation on other
+platforms rather than failing to compile.
+
+To *recover* the space this reports, see **`tools macos clones`** — `duplicates`,
+`optimize` and `reclaim plan|apply` re-share byte-identical files that lost their
+clone links. It calls this tool's engine for its on-disk figure, so the two
+always agree; `src/macos/lib/clones/du-parity.test.ts` pins that.
+
 > **Clone-aware disk usage for APFS.**
 
 Measures the real on-disk footprint of trees full of clonefiles, which plain `du` massively overcounts because every clone reports its full size even though clones share physical blocks.
@@ -29,8 +38,8 @@ tools du clonesize ~ --changed-within 7d        # what GREW, not what is big
 tools du volume                                 # the Data volume
 sudo tools du volume                            # including root-only subtrees
 
-tools du clones ~/.bun --against ~/Projects
-tools du clones ~/repo/.worktrees/feat-x --against ~/repo
+tools du partners ~/.bun --against ~/Projects
+tools du partners ~/repo/.worktrees/feat-x --against ~/repo
 ```
 
 ---

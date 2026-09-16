@@ -18,6 +18,25 @@ const program = new Command();
 const storage = new Storage("du");
 
 /**
+ * Clone accounting needs APFS: the engines map physical extents through
+ * `F_LOG2PHYS_EXT` and read `ATTR_CMNEXT_*`, and the C core includes
+ * <sys/attr.h> / <sys/vnode.h>. Off darwin the honest answer is "this build
+ * cannot measure clones here", not a clang error about missing headers.
+ */
+function assertClonePlatform(): void {
+    if (process.platform === "darwin") {
+        return;
+    }
+
+    out.error(
+        `tools du measures APFS clone sharing and only runs on macOS (this is ${process.platform}).\n` +
+            `Linux reflinks (btrfs/XFS) would need a FIEMAP backend, which this build does not have.\n` +
+            `For a plain allocated-size total anywhere, use \`du -sh\`.`
+    );
+    process.exit(2);
+}
+
+/**
  * Extent-cache directory. One file per volume lives here, keyed by fsid, so a
  * single cache serves every scan root on that volume (fileids are volume-wide).
  */
@@ -34,7 +53,8 @@ program
             "worktrees), which plain `du` massively overcounts because every clone reports\n" +
             "its full size even though clones share physical blocks."
     )
-    .version("0.1.0");
+    .version("0.1.0")
+    .hook("preAction", assertClonePlatform);
 
 function assertDir(dir: string): string {
     const root = resolve(dir);
@@ -299,7 +319,7 @@ program
 // clones
 // ---------------------------------------------------------------------------
 program
-    .command("clones")
+    .command("partners")
     .description("Find WHERE ELSE a directory's blocks live — the concrete clone partners")
     .argument("<dir>", "Directory whose shared blocks to trace")
     .option("--against <root>", "Where to search for partners (default: the dir's parent)")
@@ -314,8 +334,8 @@ program
             "That is the question that decides whether a package-manager cache is safe to delete:",
             "blocks a live node_modules still references are not freed by deleting the cache.",
             "",
-            "  tools du clones ~/.bun --against ~/Projects",
-            "  tools du clones ~/repo/.worktrees/feat-x --against ~/repo",
+            "  tools du partners ~/.bun --against ~/Projects",
+            "  tools du partners ~/repo/.worktrees/feat-x --against ~/repo",
         ].join("\n")
     )
     .action(async (dir: string, o: { against?: string; format: "human" | "json"; threads?: number; top?: number }) => {
