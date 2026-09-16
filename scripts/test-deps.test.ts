@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as XLSX from "xlsx";
 import { CANARY_PACKAGES, diagnose, lockStamp, missingCanaries } from "./test-deps";
 
 const roots: string[] = [];
@@ -97,5 +98,26 @@ describe("lockStamp", () => {
         writeFileSync(join(root, "bun.lock"), "stable");
 
         expect(lockStamp(root)).toBe(lockStamp(root));
+    });
+});
+
+describe("xlsx CE pin", () => {
+    test("0.20.3 still reads a Uint8Array the way MfRentalClient does", () => {
+        expect(XLSX.version).toBe("0.20.3");
+
+        const ws = XLSX.utils.aoa_to_sheet([
+            ["katastr", "obec"],
+            ["Vinohrady", "Praha 3"],
+        ]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Cenova mapa");
+        const u8 = new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }));
+        const parsed = XLSX.read(u8);
+        const sheet = parsed.Sheets[parsed.SheetNames.find((n) => n.includes("Cenov")) ?? parsed.SheetNames[0]];
+        const range = XLSX.utils.decode_range(sheet["!ref"]!);
+        const addr = XLSX.utils.encode_cell({ r: 1, c: 1 });
+
+        expect(range.e.r).toBe(1);
+        expect(String(sheet[addr].v)).toBe("Praha 3");
     });
 });
