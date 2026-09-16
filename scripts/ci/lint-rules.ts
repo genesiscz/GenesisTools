@@ -250,6 +250,12 @@ function unwrapToNumberOrIdentifier(
             return { kind: "identifier", name: current.text() };
         }
 
+        // Computed delays (`60 * 60 * 1000`) are not judged. Walking into the
+        // binary expression would treat the first operand as the delay.
+        if (kind === "binary_expression" || kind === "call_expression" || kind === "member_expression") {
+            return null;
+        }
+
         const next: SgNode | undefined = current.namedChildren()[0];
 
         if (!next) {
