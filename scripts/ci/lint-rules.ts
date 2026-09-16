@@ -177,6 +177,105 @@ const TRANSPARENT_ARG_KINDS = new Set([
     "null",
 ]);
 
+/**
+ * Busy-wait guards (2026-09-16 campaign). A `RunLoop.run` with no sources returned at once and
+ * spun an app face at 60% for an hour; 48 pipeline workers polling every 250 ms cost 0.9% of a
+ * core doing nothing; a 50 ms stat loop was the whole idle cost of `tools watch`; `sleepSync` in
+ * `waitFor` froze the event loop for 1055 ms per wait. The three rules below catch those shapes.
+ */
+const SUB_100MS_INTERVAL_RULE = {
+    name: "no-sub-100ms-interval",
+    severity: "error" as const,
+    message:
+        "`setInterval` under 100 ms is a busy poll. Wake on the event instead (fs.watch behind a slow safety " +
+        "poll: `watchFileFeed`, `waitForPath`, `FileTailer`; a `WorkerPool` claim for queues), or " +
+        "`// lint-rules-ignore: <why this must poll>`.",
+};
+const INTERVAL_FLOOR_MS = 100;
+const INTERVAL_CALL_MATCHER = {
+    rule: {
+        kind: "call_expression",
+        has: { field: "function", regex: "^(?:globalThis\\.|window\\.)?setInterval$" },
+    },
+};
+
+const SYNC_POLL_LOOP_RULE = {
+    name: "no-sync-poll-loop",
+    severity: "error" as const,
+    message:
+        "`sleepSync` inside a loop freezes the event loop for the whole wait (1055 ms stalls measured in " +
+        "`waitFor`). Use `await Bun.sleep(...)` in an async loop, wait on the event, or " +
+        "`// lint-rules-ignore: <why this process may block>`.",
+};
+const LOOP_KINDS = ["while_statement", "do_statement", "for_statement", "for_in_statement"];
+const SLEEP_SYNC_IN_LOOP_MATCHER = {
+    rule: {
+        kind: "call_expression",
+        has: { field: "function", regex: "^(?:Bun\\.)?sleepSync$" },
+        inside: { any: LOOP_KINDS.map((kind) => ({ kind })), stopBy: "end" as const },
+    },
+};
+
+const SWIFT_WAIT_RULE = {
+    name: "swift-wait-without-timeout",
+    severity: "error" as const,
+    message:
+        "A bare `.wait()` blocks forever when the signal never comes (an ax-tool face hung at 60% CPU for an " +
+        "hour on exactly this). Use `.wait(timeout:)` and handle `.timedOut`, or " +
+        "`// lint-rules-ignore: <why it cannot hang>`.",
+};
+const SWIFT_BARE_WAIT = /\.wait\(\s*\)/;
+
+/** The second argument of a `setInterval` call when it is a number literal; a computed delay is not judged. */
+function intervalDelayMs(node: SgNode): number | null {
+    const args = (node.field("arguments")?.children() ?? []).filter((child) => child.isNamed());
+    const delay = args[1];
+
+    if (delay?.kind() !== "number") {
+        return null;
+    }
+
+    const value = Number(delay.text().replace(/_/g, ""));
+
+    return Number.isFinite(value) ? value : null;
+}
+
+function intervalViolates(node: SgNode): boolean {
+    const delay = intervalDelayMs(node);
+
+    return delay !== null && delay < INTERVAL_FLOOR_MS;
+}
+
+/** Swift has no grammar in the ast-grep napi package, so its one rule is a line regex. */
+export function checkSwiftSource(file: string, source: string): Finding[] {
+    const lines = source.split("\n");
+    const findings: Finding[] = [];
+
+    for (const [index, text] of lines.entries()) {
+        if (/^\s*\/\//.test(text) || isSuppressed(lines, index + 1)) {
+            continue;
+        }
+
+        const column = text.search(SWIFT_BARE_WAIT);
+
+        if (column === -1) {
+            continue;
+        }
+
+        findings.push({
+            file,
+            line: index + 1,
+            column: column + 1,
+            rule: SWIFT_WAIT_RULE.name,
+            severity: SWIFT_WAIT_RULE.severity,
+            message: SWIFT_WAIT_RULE.message,
+            text: text.trim().slice(0, 120),
+        });
+    }
+
+    return findings;
+}
+
 /** Test files: the literal rules stay OFF here (see pluginsDisabledFor); the spawn rule runs ONLY here. */
 export function isTestFile(file: string): boolean {
     return /\.test\.tsx?$/.test(file) || /(^|\/)__tests__\//.test(file);
@@ -207,7 +306,7 @@ function spawnArgsCarryEnv(args: SgNode[]): boolean {
             });
         }
 
-        return index > 0 && !TRANSPARENT_ARG_KINDS.has(kind);
+        return index > 0 && !TRANSPARENT_ARG_KINDS.has(String(kind));
     });
 }
 
@@ -274,6 +373,10 @@ export function pluginsDisabledFor(file: string): boolean {
 }
 
 export function checkSource(file: string, source: string): Finding[] {
+    if (file.endsWith(".swift")) {
+        return checkSwiftSource(file, source);
+    }
+
     const lang = langFor(file);
 
     if (lang === null) {
@@ -338,6 +441,16 @@ export function checkSource(file: string, source: string): Finding[] {
         if (HOMEDIR_GENESIS_TOOLS_TEMPLATE.test(text)) {
             record(node, HOMEDIR_RULE);
         }
+    }
+
+    for (const node of root.findAll(INTERVAL_CALL_MATCHER)) {
+        if (intervalViolates(node)) {
+            record(node, SUB_100MS_INTERVAL_RULE);
+        }
+    }
+
+    for (const node of root.findAll(SLEEP_SYNC_IN_LOOP_MATCHER)) {
+        record(node, SYNC_POLL_LOOP_RULE);
     }
 
     // The `.genesis-tools` rule is about REACHING that directory through
@@ -436,6 +549,7 @@ async function targetFiles(): Promise<string[]> {
         "*.jsx",
         "*.mjs",
         "*.cjs",
+        "*.swift",
     ]);
     const files = listed.stdout.toString().split("\0").filter(Boolean);
 
@@ -545,6 +659,26 @@ async function scanAll(files: string[]): Promise<Finding[]> {
             ),
             findInFiles(
                 lang,
+                { paths, matcher: INTERVAL_CALL_MATCHER },
+                guard((nodes) => {
+                    for (const node of nodes) {
+                        if (intervalViolates(node)) {
+                            push(node, SUB_100MS_INTERVAL_RULE);
+                        }
+                    }
+                })
+            ),
+            findInFiles(
+                lang,
+                { paths, matcher: SLEEP_SYNC_IN_LOOP_MATCHER },
+                guard((nodes) => {
+                    for (const node of nodes) {
+                        push(node, SYNC_POLL_LOOP_RULE);
+                    }
+                })
+            ),
+            findInFiles(
+                lang,
                 { paths, matcher: { rule: { pattern: "$FN(homedir(), $$$ARGS)" } } },
                 guard((nodes) => {
                     for (const node of nodes) {
@@ -602,6 +736,12 @@ async function scanAll(files: string[]): Promise<Finding[]> {
         );
     }
 
+    for (const file of files) {
+        if (file.endsWith(".swift")) {
+            unfiltered.push(...checkSwiftSource(file, await Bun.file(file).text()));
+        }
+    }
+
     const sources = new Map<string, string[]>();
 
     for (const file of new Set(unfiltered.map((finding) => finding.file))) {
@@ -642,7 +782,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 7 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 10 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }
