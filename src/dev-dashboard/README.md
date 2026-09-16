@@ -9,11 +9,13 @@ tools dev-dashboard ui up          # build once, then serve (default; what `ui i
 tools dev-dashboard ui restart
 tools dev-dashboard ui up --foreground
 tools dev-dashboard ui dev         # Vite dev + HMR in the foreground; Ctrl+C brings the installed server back
+tools dev-dashboard ui install     # launchd agent on the built bundle
+tools dev-dashboard ui install --dev   # launchd agent on the watch build (rebuild on save, page reload); kept until the next install
 ```
 
 Default serve mode is **static** (one Vite build into `~/.genesis-tools/dashboards/dev-dashboard.static/`, then `vite preview` behind the front proxy): a few bundled assets per load, much faster over the Cloudflare tunnel than per-module dev requests, and nothing watches anything while the server idles. Restart the server to pick up code changes.
 
-To work on the dashboard, run `ui dev`: it stops the installed server (launchd agent or background instance), runs Vite dev + HMR in the foreground, and starts the installed server again when you stop it. The older watch mode (`bun src/dev-dashboard/index.ts __ui-server` with no flag: `build --watch` + preview, rebuild and page reload on save) still exists for a plist installed before the static mode.
+To work on the dashboard, run `ui dev`: it stops the installed server (launchd agent or background instance), runs Vite dev + HMR in the foreground, and starts the installed server again when you stop it. To keep the watch mode running under launchd instead (`build --watch` + preview: rebuild and page reload on save, bundled assets over the tunnel), run `ui install --dev`; a later `ui up` or `ui restart` keeps whichever mode the last `install` chose.
 
 APIs (`/api/tmux/*`, Obsidian share, ttyd) behave the same in every mode. Harness config lives in `ui/app.ts` (`buildDashboardUiServerCmd` from `@genesiscz/utils/DashboardApp`). The serve loop itself is `runDashboardPreviewUiServer` in `@genesiscz/utils/DashboardApp/preview`; dev-dashboard only wires front-proxy, Reminders paths, and reload hooks in `lib/preview-ui-server.ts`.
 

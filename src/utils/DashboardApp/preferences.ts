@@ -22,6 +22,8 @@ export interface DashboardPreferences {
      * dashboard to the LAN (a tunnel, a phone) without a code change; `"127.0.0.1"` pins it back.
      */
     bindHost?: DashboardBindHost;
+    /** `install --dev` registered `spawn.previewCmd`; `up` and `restart` keep that until the next `install`. */
+    launchdServe?: "preview";
 }
 
 export function readPreferences(key: string): DashboardPreferences {

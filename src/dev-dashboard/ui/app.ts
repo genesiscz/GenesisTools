@@ -7,7 +7,8 @@ const serverScript = resolve(fileURLToPath(new URL("../index.ts", import.meta.ur
 
 /**
  * DashboardApp harness config. `up` and `install` run the static server (one build, then serve);
- * `ui dev` swaps in Vite dev + HMR for one run and brings the installed server back on exit.
+ * `install --dev` registers the watch build instead (rebuild on save, page reload), and `ui dev`
+ * swaps in Vite dev + HMR for one run and brings the installed server back on exit.
  */
 export const devDashboardUiApp = defineDashboardApp({
     type: "ui",
@@ -20,6 +21,7 @@ export const devDashboardUiApp = defineDashboardApp({
     spawn: {
         cmd: buildDashboardUiServerCmd({ serverScript, mode: "static" }),
         devCmd: buildDashboardUiServerCmd({ serverScript, mode: "dev" }),
+        previewCmd: buildDashboardUiServerCmd({ serverScript, mode: "preview" }),
         cwd: PROJECT_ROOT,
     },
     readiness: { kind: "http", path: "/", timeoutMs: 90_000 },

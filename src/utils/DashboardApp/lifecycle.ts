@@ -88,12 +88,21 @@ export function buildLifecycleContext(config: DashboardAppConfig, resolvedPort: 
     };
 }
 
-function resolveSpawnCmd(config: DashboardAppConfig, opts: UpOptions = {}): string[] {
+export function resolveSpawnCmd(config: DashboardAppConfig, opts: UpOptions = {}): string[] {
     if (opts.uiServe === "dev" && config.spawn.devCmd) {
         return [...config.spawn.devCmd];
     }
 
+    if (opts.uiServe === "preview" && config.spawn.previewCmd) {
+        return [...config.spawn.previewCmd];
+    }
+
     return [...config.spawn.cmd];
+}
+
+/** The command the launchd plist carries: the mode `install` chose, unless this call names one. */
+function launchdSpawnCmd(config: DashboardAppConfig, opts: UpOptions): string[] {
+    return resolveSpawnCmd(config, { ...opts, uiServe: opts.uiServe ?? readPreferences(config.key).launchdServe });
 }
 
 function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined> {
@@ -140,9 +149,16 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         }
     }
 
-    // If launchd is already installed, prefer launchd over a duplicate manual spawn.
+    // If launchd is already installed, prefer launchd over a duplicate manual spawn. The agent keeps
+    // the mode `install` registered; `--dev` here would rewrite the plist for good, so it is refused.
     if (config.launchd?.available && !opts.foreground && isLaunchdInstalled(ctx.plistLabel)) {
-        return finishLaunchdStart(ctx, port, { ...opts, skipInstallPrompt: true });
+        if (opts.uiServe) {
+            out.warn(
+                `${config.name ?? config.key} runs under launchd; --dev is ignored here. Use \`${config.commandName} dev\` for one foreground run or \`${config.commandName} install --dev\` to change the agent.`
+            );
+        }
+
+        return finishLaunchdStart(ctx, port, { ...opts, uiServe: undefined, skipInstallPrompt: true });
     }
 
     // 5. Spawn — foreground OR background.
@@ -301,13 +317,14 @@ async function preparePort(ctx: LifecycleContext, port: number, opts: UpOptions)
 async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpOptions): Promise<UpResult> {
     const { config } = ctx;
     const newlyInstalled = !isLaunchdInstalled(ctx.plistLabel);
+    const command = launchdSpawnCmd(config, opts);
 
     resetLogFile(config.key);
 
     if (newlyInstalled) {
         await installLaunchd({
             label: ctx.plistLabel,
-            command: config.spawn.cmd,
+            command,
             cwd: config.spawn.cwd,
             env: spawnEnv(config),
             logFile: ctx.logFile,
@@ -339,7 +356,7 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
         out.log.step(`Starting launchd agent ${ctx.plistLabel}…`);
         await refreshLaunchd({
             label: ctx.plistLabel,
-            command: config.spawn.cmd,
+            command,
             cwd: config.spawn.cwd,
             env: spawnEnv(config),
             logFile: ctx.logFile,
@@ -851,7 +868,13 @@ export async function install(ctx: LifecycleContext, opts: InstallOptions = {}):
         throw new Error(`${config.name ?? config.key}: port ${port} is still in use.`);
     }
 
-    const result = await finishLaunchdStart(ctx, port, { open: false, skipInstallPrompt: true });
+    // The chosen mode outlives this call: every later `up` and `restart` rewrites the plist from it.
+    writePreferences(config.key, { launchdServe: opts.dev ? "preview" : undefined });
+    const result = await finishLaunchdStart(ctx, port, {
+        open: false,
+        skipInstallPrompt: true,
+        ...(opts.dev ? { uiServe: "preview" as const } : {}),
+    });
 
     if (!result.started) {
         throw new Error(

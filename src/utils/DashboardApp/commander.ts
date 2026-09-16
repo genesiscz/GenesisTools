@@ -12,7 +12,7 @@
  *     attach       --lines <n>
  *     logs         --lines <n>
  *     open         --port <n> --no-qr --no-open --query key=value
- *     install      (only if launchd.available)
+ *     install      --force --port <n> --dev (only if launchd.available; --dev only with spawn.previewCmd)
  *     uninstall    (only if launchd.available)
  *
  * Global flag on every verb AND the no-verb default:
@@ -212,16 +212,26 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
 
     // `install` / `uninstall` only when the app opts into launchd.
     if (config.launchd?.available) {
-        cmd.command("install")
+        const installCmd = cmd
+            .command("install")
             .description("Register a launchd plist so this dashboard survives reboot and respawns on crash.")
             .option("--force", "kill any conflicting process before installing")
-            .option("-p, --port <n>", "override the default port")
-            .action(async (flags: { force?: boolean; port?: string }) => {
-                await install(ctx, {
-                    force: flags.force,
-                    port: flags.port ? parsePort(flags.port) : undefined,
-                });
+            .option("-p, --port <n>", "override the default port");
+
+        if (config.spawn.previewCmd) {
+            installCmd.option(
+                "--dev",
+                "register the watch build (rebuild on save, page reload) instead of the built bundle; HMR is the `dev` verb"
+            );
+        }
+
+        installCmd.action(async (flags: { force?: boolean; port?: string; dev?: boolean }) => {
+            await install(ctx, {
+                force: flags.force,
+                port: flags.port ? parsePort(flags.port) : undefined,
+                dev: flags.dev,
             });
+        });
         cmd.command("uninstall")
             .description("Remove the launchd plist registered by `install`.")
             .action(async () => {
