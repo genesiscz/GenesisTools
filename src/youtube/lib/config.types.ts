@@ -57,6 +57,19 @@ export interface YoutubeConfigShape {
         cloudTranscribe: number;
         summarize: number;
     };
+    /**
+     * Pipeline worker pool. Workers are spawned on demand up to `max` (the per-stage `concurrency`
+     * caps still apply within that total) and retire after `idleTeardownMs` without work.
+     * `spawnPolicy` "burst" lets every successful claim wake one more worker so a queue burst ramps
+     * to `max` at once; "one" spawns only when a job arrives. `pollMs` is the fallback claim cadence
+     * when no wake signal fires (in-process enqueue and other-process commits both signal).
+     */
+    workers: {
+        max: number;
+        spawnPolicy: "burst" | "one";
+        idleTeardownMs: number;
+        pollMs: number;
+    };
     ttls: {
         audio: string;
         video: string;

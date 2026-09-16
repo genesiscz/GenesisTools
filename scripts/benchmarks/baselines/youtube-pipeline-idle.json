@@ -1,0 +1,24 @@
+{
+    "name": "youtube-pipeline-idle",
+    "capturedAt": "2026-09-16T16:48:20.187Z",
+    "commit": "5c05726ba",
+    "loadAvg": [
+        17.57666015625,
+        24.94873046875,
+        61.76806640625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "idleCpuPercent": 0.5028594281143771,
+        "idleStatementsPerSec": 182.3635272945411,
+        "idleClaimsPerSec": 182.3635272945411,
+        "burstEnqueueMs": 3.050167000001238,
+        "burstFirstStartMs": 18.07454200000211,
+        "burstDrainMs": 24.709292000003188,
+        "burstCpuTimeMs": 10.581,
+        "peakWorkers": 48,
+        "postBurstCpuPercent": 0.4420315936812638,
+        "postBurstStatementsPerSec": 190.9618076384723
+    },
+    "notes": "5s idle window, burst of 50, per-metric median of 5 run(s); load 17.58 24.95 61.77; peakWorkers pipeline.workers.length (private field)"
+}
