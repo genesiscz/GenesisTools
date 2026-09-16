@@ -9,40 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as JobsRouteImport } from './routes/jobs'
-import { Route as HistoryRouteImport } from './routes/history'
-import { Route as FirstRunRouteImport } from './routes/first-run'
-import { Route as DigestRouteImport } from './routes/digest'
-import { Route as CollectionsRouteImport } from './routes/collections'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as VideosIdRouteImport } from './routes/videos.$id'
-import { Route as CollectionsIdRouteImport } from './routes/collections_.$id'
+import { Route as CollectionsRouteImport } from './routes/collections'
+import { Route as DigestRouteImport } from './routes/digest'
+import { Route as FirstRunRouteImport } from './routes/first-run'
+import { Route as HistoryRouteImport } from './routes/history'
+import { Route as JobsRouteImport } from './routes/jobs'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ChannelsHandleRouteImport } from './routes/channels.$handle'
+import { Route as CollectionsIdRouteImport } from './routes/collections_.$id'
+import { Route as VideosIdRouteImport } from './routes/videos.$id'
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JobsRoute = JobsRouteImport.update({
-  id: '/jobs',
-  path: '/jobs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HistoryRoute = HistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FirstRunRoute = FirstRunRouteImport.update({
-  id: '/first-run',
-  path: '/first-run',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DigestRoute = DigestRouteImport.update({
-  id: '/digest',
-  path: '/digest',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsRoute = CollectionsRouteImport.update({
@@ -50,14 +30,34 @@ const CollectionsRoute = CollectionsRouteImport.update({
   path: '/collections',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DigestRoute = DigestRouteImport.update({
+  id: '/digest',
+  path: '/digest',
   getParentRoute: () => rootRouteImport,
 } as any)
-const VideosIdRoute = VideosIdRouteImport.update({
-  id: '/videos/$id',
-  path: '/videos/$id',
+const FirstRunRoute = FirstRunRouteImport.update({
+  id: '/first-run',
+  path: '/first-run',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsRoute = JobsRouteImport.update({
+  id: '/jobs',
+  path: '/jobs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChannelsHandleRoute = ChannelsHandleRouteImport.update({
+  id: '/channels/$handle',
+  path: '/channels/$handle',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsIdRoute = CollectionsIdRouteImport.update({
@@ -65,9 +65,9 @@ const CollectionsIdRoute = CollectionsIdRouteImport.update({
   path: '/collections/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ChannelsHandleRoute = ChannelsHandleRouteImport.update({
-  id: '/channels/$handle',
-  path: '/channels/$handle',
+const VideosIdRoute = VideosIdRouteImport.update({
+  id: '/videos/$id',
+  path: '/videos/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -162,39 +162,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/jobs': {
-      id: '/jobs'
-      path: '/jobs'
-      fullPath: '/jobs'
-      preLoaderRoute: typeof JobsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/history': {
-      id: '/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof HistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/first-run': {
-      id: '/first-run'
-      path: '/first-run'
-      fullPath: '/first-run'
-      preLoaderRoute: typeof FirstRunRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/digest': {
-      id: '/digest'
-      path: '/digest'
-      fullPath: '/digest'
-      preLoaderRoute: typeof DigestRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections': {
@@ -204,18 +176,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CollectionsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/digest': {
+      id: '/digest'
+      path: '/digest'
+      fullPath: '/digest'
+      preLoaderRoute: typeof DigestRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/videos/$id': {
-      id: '/videos/$id'
-      path: '/videos/$id'
-      fullPath: '/videos/$id'
-      preLoaderRoute: typeof VideosIdRouteImport
+    '/first-run': {
+      id: '/first-run'
+      path: '/first-run'
+      fullPath: '/first-run'
+      preLoaderRoute: typeof FirstRunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/jobs': {
+      id: '/jobs'
+      path: '/jobs'
+      fullPath: '/jobs'
+      preLoaderRoute: typeof JobsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/channels/$handle': {
+      id: '/channels/$handle'
+      path: '/channels/$handle'
+      fullPath: '/channels/$handle'
+      preLoaderRoute: typeof ChannelsHandleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections_/$id': {
@@ -225,11 +225,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CollectionsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/channels/$handle': {
-      id: '/channels/$handle'
-      path: '/channels/$handle'
-      fullPath: '/channels/$handle'
-      preLoaderRoute: typeof ChannelsHandleRouteImport
+    '/videos/$id': {
+      id: '/videos/$id'
+      path: '/videos/$id'
+      fullPath: '/videos/$id'
+      preLoaderRoute: typeof VideosIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
