@@ -30,6 +30,12 @@ export interface LoginOptions {
     device?: boolean;
     yes?: boolean;
     clientName?: string;
+    /**
+     * Called with the URL the user has to visit, before it is presented. A caller with
+     * no terminal — the gateway — uses it to put the link somewhere reachable, so a
+     * banner that already faded or a window closed by accident is not a dead end.
+     */
+    onAuthorizationUrl?: (url: string) => void | Promise<void>;
 }
 
 export interface LoginResult {
@@ -236,11 +242,13 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
 
             const deviceConfig: DeviceFlowConfig = {
                 clientId,
+                clientSecret: registered.client_secret,
                 scope: discovered.prm.scopes_supported?.join(" ") ?? "openid",
                 deviceCodeUrl: as.device_authorization_endpoint,
                 tokenUrl: as.token_endpoint,
             };
             const started = await startDeviceFlow(deviceConfig);
+            await options.onAuthorizationUrl?.(started.verification_uri);
             // `started.expires_in` is the device_code's lifetime and only bounds the
             // poll. The access token's own lifetime comes back with the token, and
             // storing the former as the latter expired a live token within minutes.
@@ -292,6 +300,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
             authorize.searchParams.set("scope", discovered.prm.scopes_supported.join(" "));
         }
 
+        await options.onAuthorizationUrl?.(authorize.toString());
         await presentAuthorizationUrl({
             authUrl: authorize.toString(),
             provider: options.server,

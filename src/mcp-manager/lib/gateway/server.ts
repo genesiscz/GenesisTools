@@ -7,6 +7,7 @@ import { gatewayBaseUrl, gatewayListen } from "../auth/project.ts";
 import { ensureGatewayClientToken } from "../auth/secrets.ts";
 import { accessTokenForRequest } from "../auth/tokens.ts";
 import { headersToClient, headersToUpstream, localTokenMatches, loopbackHostOk } from "./headers.ts";
+import { gatewayLoginLauncher } from "./login-runner.ts";
 
 export interface GatewayHandle {
     port: number;
@@ -34,6 +35,33 @@ function jsonRpcError(message: string, status = 401): Response {
             headers: { "Content-Type": "application/json" },
         }
     );
+}
+
+/**
+ * Answer a request that cannot be served because the server has no usable token, and
+ * start the login that fixes it.
+ *
+ * The client is told what is happening rather than what to type: a harness that offers
+ * its own "Authenticate" button cannot use it here, because that button registers an
+ * OAuth client against the GATEWAY's origin, which serves no metadata and answers 404.
+ */
+function loginRequiredResponse(name: string): Response {
+    const outcome = gatewayLoginLauncher.request(name);
+    logger.info({ server: name, outcome }, "gateway requested an MCP login");
+
+    if (outcome === "cooling-down") {
+        return jsonRpcError(
+            `${name} needs a login and the last attempt failed. Run tools mcp-manager auth login ${name}`
+        );
+    }
+
+    const lead = outcome === "started" ? "a browser window is opening" : "a browser window is already open";
+    // Known only on a repeat request: the first one is answered before the login has
+    // built its URL. The notification carries the link in both cases.
+    const url = gatewayLoginLauncher.authorizationUrl(name);
+    const link = url ? ` Reopen it here: ${url}` : "";
+
+    return jsonRpcError(`${name} needs a login: ${lead}. Authorize it, then reconnect this server.${link}`);
 }
 
 function serverNameFromPath(pathname: string): string | undefined {
@@ -133,7 +161,7 @@ export async function startGatewayServer(
             const tokenEndpoint = auth?.tokenEndpoint;
 
             if (!tokenEndpoint) {
-                return jsonRpcError(`tools mcp-manager auth login ${name}`);
+                return loginRequiredResponse(name);
             }
 
             let accessToken: string;
@@ -145,10 +173,9 @@ export async function startGatewayServer(
                     allowRefresh: true,
                 });
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
                 logger.warn({ server: name, error }, "gateway could not obtain an upstream token");
 
-                return jsonRpcError(message.includes("auth login") ? message : `tools mcp-manager auth login ${name}`);
+                return loginRequiredResponse(name);
             }
 
             const upstream = new URL(upstreamUrl);

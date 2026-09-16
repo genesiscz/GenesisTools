@@ -314,8 +314,13 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
         // get reparented to launchd (PPID=1) — without this poll, a long-lived
         // dashboard (`tools <foo> --dashboard`) survives invisibly and burns
         // CPU/holds DB locks for days. Detect reparent → kill child → exit.
+        //
+        // TOOLS_DETACHED=1 opts out: the caller spawned us in our own session ON PURPOSE
+        // and expects the tool to outlive it. The mcp gateway starts OAuth logins this
+        // way, because the gateway is a supervised service that restarts, and a login
+        // killed mid-flow left the user's approval landing on a dead callback port.
         const orphanTimer = setInterval(() => {
-            if (process.ppid === 1) {
+            if (process.ppid === 1 && process.env.TOOLS_DETACHED !== "1") {
                 try {
                     child.kill("SIGTERM");
                 } catch (err) {

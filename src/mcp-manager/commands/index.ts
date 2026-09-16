@@ -8,7 +8,16 @@ export { openConfig } from "./config.js";
 export { configJson } from "./config-json.js";
 export { disableServer } from "./disable.js";
 export { enableServer } from "./enable.js";
-export { gatewayRotateClient, gatewayStart, gatewayStatus, gatewayStdio, gatewayStop } from "./gateway.js";
+export {
+    gatewayInstall,
+    gatewayRotateClient,
+    gatewayStart,
+    gatewayStatus,
+    gatewayStdio,
+    gatewayStop,
+    gatewayUninstall,
+    gatewayUp,
+} from "./gateway.js";
 export { installServer } from "./install.js";
 export { listServers } from "./list.js";
 export { removeServers } from "./remove.js";

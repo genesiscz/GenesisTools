@@ -454,3 +454,49 @@ Ensure your TOML syntax is valid. The tool uses `@iarna/toml` for parsing.
 -   `mcp-tsc`: TypeScript diagnostics MCP server
 -   `mcp-ripgrep`: Code search MCP server
 -   `mcp-web-reader`: Web content fetching MCP server
+
+## Local auth gateway
+
+Remote MCP servers that need OAuth are stored with `auth.gateway: true` and projected into
+each harness as `http://127.0.0.1:8318/mcp/<server>`. GenesisTools owns the tokens; the
+harness only carries a local gateway header.
+
+| Command | Description |
+| --- | --- |
+| `gateway install` | Install the gateway as a launchd agent (KeepAlive, RunAtLoad) |
+| `gateway up` | Start the installed agent and wait until it answers `/health` |
+| `gateway uninstall` | Remove the launchd agent |
+| `gateway start` | Run a gateway in the foreground (dies with the terminal) |
+| `gateway status` | Listen address, health, and whether an agent supervises it |
+| `gateway stop` | Stop listeners this process started |
+| `gateway rotate-client` | Rotate the local gateway header, then resync every harness |
+
+**Install it.** Without the agent, the only gateway is the in-process one `ensureGatewayUp`
+starts, and that dies with the CLI that started it. A harness launched afterwards then shows
+every gateway-backed server as ConnectionRefused, which reads as a broken server rather than
+a missing process.
+
+**Logins start themselves.** A request for a server with no usable token makes the gateway
+run the OAuth login, open the browser and post a notification, then answer the client with
+what is happening. One browser window per server, and a failed login waits 60 seconds before
+another attempt, so a reconnecting client cannot open a tab per retry.
+
+The login runs as a detached `tools mcp-manager auth login <server>` process, never inside
+the gateway, so a gateway restart (crash, KeepAlive respawn, `gateway up` after a code change)
+does not kill the callback listener your browser is about to return to. Every login records
+itself in `~/.genesis-tools/mcp-manager/logins/<server>.json` (pid and authorization URL);
+a restarted gateway reads that record and answers "already open" with the link instead of
+starting a second login. The notification carries the same link, and clicking it reopens
+the page. The child sets `TOOLS_DETACHED=1`, which tells the `tools` wrapper to skip its
+orphan watchdog; without that the wrapper SIGTERMs the tool two seconds after its parent
+exits.
+
+A harness's own "Authenticate" button cannot do this: it runs Dynamic Client Registration
+against the gateway's origin, which serves no OAuth metadata and answers 404. Claude Code
+reports that as `Dynamic Client Registration rejected (HTTP 404)`.
+
+**Config changes need no restart.** The gateway re-reads the unified config on every request,
+so adding or editing a server is picked up immediately and sessions already connected keep
+their streams. Reconnect a harness only for a server it has never connected to: Claude Code
+retries dropped servers by itself, but a server that failed at startup stays failed until you
+press Reconnect in `/mcp`.
