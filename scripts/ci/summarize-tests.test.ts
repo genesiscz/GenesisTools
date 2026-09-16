@@ -63,8 +63,9 @@ describe.skipIf(skip.onWindows)("summarize-tests.sh", () => {
      * A fully green suite has zero `(fail)` lines, so `grep '(fail)'` exits 1. Under
      * `pipefail` that is the pipeline's status, and under `-e` a failing command
      * substitution aborts the script at the FIRST assignment — before a single byte
-     * reaches the job summary. The step has no `continue-on-error`, so a clean run
-     * turned the job RED and printed nothing at all.
+     * reaches the job summary. The step now has `continue-on-error: true`, so a
+     * green abort would no longer redden the job, but the script must still survive
+     * `-eo pipefail` or the summary is empty — the same false green.
      */
     test("a clean log exits 0 and reports zero failures", async () => {
         const { code, out } = await summarize(GREEN_LOG);
@@ -85,11 +86,19 @@ describe.skipIf(skip.onWindows)("summarize-tests.sh", () => {
         expect(out).toContain("(fail) gamma > explodes");
     });
 
+    test("an all-failing log lists the failures, not LOG UNREADABLE", async () => {
+        const { code, out } = await summarize("(fail) gamma > explodes [3.00ms]\n(fail) gamma > explodes");
+
+        expect(code).toBe(0);
+        expect(out).toContain("1 FAILING TESTS");
+        expect(out).not.toContain("LOG UNREADABLE");
+    });
+
     /**
-     * The positive control. Zero `(pass)` lines means the instrument failed, and saying
-     * "0 failing tests" there is the exact false green the whole step exists to prevent.
-     * Each of these aborted before the `if` under the original inline version, so the
-     * banner could never be printed.
+     * The positive control. Zero `(pass)` AND zero `(fail)` lines means the instrument
+     * failed, and saying "0 failing tests" there is the exact false green the whole
+     * step exists to prevent. Each of these aborted before the `if` under the original
+     * inline version, so the banner could never be printed.
      */
     test("a missing log reports LOG UNREADABLE, not success", async () => {
         const { code, out } = await summarize(null);

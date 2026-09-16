@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyze, sourceIsConcurrent } from "./test-runtime-guard";
+import { analyze, formatTopRanking, sourceIsConcurrent } from "./test-runtime-guard";
 
 /** A GitHub Actions log line carries a BOM, a job/step prefix, a timestamp and ANSI. */
 function ciLine(text: string): string {
@@ -148,6 +148,44 @@ describe("analyze", () => {
         const report = analyze(["src/slow/thing.test.ts:", "(fail) waits > broken and slow [30000.00ms]"].join("\n"));
 
         expect(report.ranked[0]).toEqual({ file: "src/slow/thing.test.ts", ms: 30000, tests: 1 });
+    });
+});
+
+describe("--top ranking", () => {
+    const GROUPED = [
+        "::group::src/foo.test.ts:",
+        "(pass) case > one [1500.00ms]",
+        "::endgroup::",
+        "::group::src/bar.test.ts:",
+        "(pass) case > two [100.00ms]",
+        "::endgroup::",
+    ].join("\n");
+
+    test("a bun 1.4 ::group:: log produces a non-empty ranking", () => {
+        const report = analyze(GROUPED);
+        const top = formatTopRanking(report.ranked);
+
+        expect(report.ranked.length).toBeGreaterThan(0);
+        expect(top).toContain("src/foo.test.ts");
+        expect(top).toMatch(/1\.5s/);
+        expect(top).not.toMatch(/^\s*$/);
+    });
+
+    test("the CLI --top path prints that ranking for a ::group:: log", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "runtime-guard-top-"));
+        const logPath = join(dir, "test.log");
+        writeFileSync(logPath, GROUPED);
+
+        const proc = Bun.spawn(["bun", join(import.meta.dir, "test-runtime-guard.ts"), logPath, "--top"], {
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+        expect(code).toBe(0);
+        expect(out).toContain("src/foo.test.ts");
+        expect(out).toMatch(/1\.5s/);
+        expect(out).toContain("src/bar.test.ts");
     });
 });
 

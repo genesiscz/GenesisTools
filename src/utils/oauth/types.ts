@@ -8,13 +8,6 @@ export interface DeviceCodeResponse {
 
 export interface DeviceFlowConfig {
     clientId: string;
-    /**
-     * Set only when dynamic registration produced a CONFIDENTIAL client. An
-     * authorization server that registered the client with client_secret_post refuses
-     * both the device-authorization request and the token poll without it, with
-     * `invalid_client: Missing client_secret`.
-     */
-    clientSecret?: string;
     scope: string;
     deviceCodeUrl: string;
     tokenUrl: string;

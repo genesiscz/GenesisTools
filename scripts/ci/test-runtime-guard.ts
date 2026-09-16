@@ -219,6 +219,18 @@ function describeCeiling(report: GuardReport, explicitMs: number | undefined): s
     return `(${(DEFAULT_CEILING_SHARE * 100).toFixed(0)}% of ${(report.summedMs / 1000).toFixed(0)}s summed)`;
 }
 
+/** The ranking the CI "Slowest test files" step prints. Same parser as the ceiling guard. */
+export function formatTopRanking(ranked: Array<{ file: string; ms: number; tests: number }>, limit = 25): string {
+    const lines = ["Slowest 25 test files — sum of per-test ms under each file header"];
+
+    for (const row of ranked.slice(0, limit)) {
+        const tests = row.tests === 1 ? "1" : String(row.tests);
+        lines.push(`${(row.ms / 1000).toFixed(1).padStart(9)}s ${tests.padStart(5)}  ${row.file}`);
+    }
+
+    return `${lines.join("\n")}\n`;
+}
+
 /**
  * True when the WHOLE file runs concurrently, which is what makes the summed metric overcount.
  *
@@ -259,7 +271,7 @@ function main(argv: string[]): number {
     const logPath = positional[0];
 
     if (!logPath) {
-        process.stderr.write("usage: bun scripts/ci/test-runtime-guard.ts <test-log> [--ceiling-ms N]\n");
+        process.stderr.write("usage: bun scripts/ci/test-runtime-guard.ts <test-log> [--ceiling-ms N] [--top]\n");
         return 1;
     }
 
@@ -285,12 +297,24 @@ function main(argv: string[]): number {
     // A log that was truncated, never written, or written by a step that died reports zero
     // slow files, which is indistinguishable from a clean suite without this check.
     if (report.testLines === 0) {
+        if (argv.includes("--top")) {
+            process.stdout.write("test-runtime-guard: log holds zero (pass)/(fail) lines — ranking unavailable\n");
+        }
+
         process.stderr.write(
             `::error::test-runtime-guard: ${logPath} holds zero (pass)/(fail) lines. ` +
                 "The log is missing or truncated, so a clean result here would be the instrument failing, " +
                 "not the suite passing.\n"
         );
         return 1;
+    }
+
+    // Summary-only path: print the ranking and stop. The ceiling step invokes this
+    // script without --top; mixing ::error:: into the step-summary fence would look
+    // like "nothing slow" if the parser died, which is the defect --top exists to kill.
+    if (argv.includes("--top")) {
+        process.stdout.write(formatTopRanking(report.ranked));
+        return 0;
     }
 
     if (report.totalSeconds !== null && report.totalSeconds > warnTotal) {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parsePidRecord } from "@genesiscz/utils/process/pidfile";
+import { parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { attemptRenameSteal, LockTimeoutError, tryAcquireLock, withFileLock } from "./file-lock";
 
 describe("file-lock: stale/orphaned lock handling", () => {
@@ -42,6 +42,27 @@ describe("file-lock: stale/orphaned lock handling", () => {
     it("steals a lock owned by a dead PID", async () => {
         const lockPath = join(dir, "target.lock");
         writeFileSync(lockPath, "999999999");
+
+        const result = await withFileLock(lockPath, async () => "acquired", 2000);
+
+        expect(result).toBe("acquired");
+        expect(existsSync(lockPath)).toBe(false);
+    });
+
+    it("steals a lock whose pid was recycled onto this process from a foreign command", async () => {
+        // The own-pid shortcut this replaces treated record.pid === process.pid as
+        // "held forever". A recycled number that happens to be ours is the case
+        // classifyPidRecord is supposed to catch (foreign command / old start time).
+        const lockPath = join(dir, "target.lock");
+        writeFileSync(
+            lockPath,
+            serializePidRecord({
+                pid: process.pid,
+                command: "/usr/bin/definitely-not-this-process --serve",
+                startedAt: Date.now() - 600_000,
+                writtenAt: 1,
+            })
+        );
 
         const result = await withFileLock(lockPath, async () => "acquired", 2000);
 

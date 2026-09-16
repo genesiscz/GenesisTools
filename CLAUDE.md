@@ -38,7 +38,7 @@ This exists because inside a **git worktree** any `bunx` call creates a partial 
 
 **A run that stops making progress is killed after 15 minutes**, per `bun test` phase, and the wrapper then prints `[test] suite STALLED` INSTEAD of the `[test] suite complete` marker, so a killed run can never read as a finished one. Raise or disable it with `GENESIS_TOOLS_TEST_MAX_MINUTES=<n>` (`0` = off). It exists because bun 1.3.13 hangs `bun test --parallel` in a checkout with tens of thousands of directories (a worktree carrying a generated `ios/Pods` tree): the coordinator loops on `posix_spawn` past the macOS fd ceiling and never starts a worker. One such run burned 5 h 27 m unnoticed. Run a directory-heavy worktree **serially**; the full rationale and the measured arms are in the block comment in `scripts/test.ts`.
 
-🛑 **CI runs bun 1.4.2 (which has the fix); the repo still SUPPORTS 1.3.13, which is what developers run.** Those are different statements. A green CI run does not mean the hang is gone on your machine, and a 1.4-only API must not enter the codebase just because CI accepts it.
+🛑 **CI runs bun 1.4.2 (which has the hang fix); the repo still SUPPORTS 1.3.13, which is what developers run.** Those are different statements. A green CI run does not mean the hang is gone on your machine, and a 1.4-only API must not enter the codebase just because CI accepts it.
 
 **Tests must not use real account names.** Fixture handles, emails, and login ids in `*.test.ts` are invented (`work`, `personal`, `shop`, `side`, `work@shop`, `alice@example.com`). Never copy a live Claude/AI account name, email, or org from this machine into a test. A test that needs several distinct accounts uses those fixtures, not the real ones.
 

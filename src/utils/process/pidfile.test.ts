@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    classifyPidRecord,
     clearPidFile,
     inspectPidFile,
     ownsPidFile,
@@ -84,6 +85,26 @@ describe("pidfile", () => {
 
         expect(inspectPidFile(path).status).toBe("foreign");
         expect(readSignalablePid(path)).toBeNull();
+    });
+
+    test("classifyPidRecord is the same verdict inspectPidFile uses, including start-time reuse", () => {
+        writePidFile(path);
+        const record = readPidRecord(path);
+
+        expect(record).not.toBeNull();
+
+        if (!record) {
+            return;
+        }
+
+        if (!record.command) {
+            return;
+        }
+
+        expect(classifyPidRecord(record).status).toBe("live");
+
+        const recycled = { ...record, startedAt: (record.startedAt ?? Date.now()) - 600_000 };
+        expect(classifyPidRecord(recycled).status).toBe("foreign");
     });
 
     test("a start time inside ps's one-second granularity is still ours", () => {
