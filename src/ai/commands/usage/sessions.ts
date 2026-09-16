@@ -123,7 +123,11 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
                     // against an hour, so rewriting the whole file on every 35 s poll would be
                     // churn for nothing. Bumped at most twice a minute.
                     if (now - cached.lastRequestedAt > 30_000) {
-                        await writeSessionRowsCache({ ...cached, lastRequestedAt: now });
+                        const latest = await readSessionRowsCache();
+
+                        if (latest && latest.fetchedAt === cached.fetchedAt) {
+                            await writeSessionRowsCache({ ...latest, lastRequestedAt: now });
+                        }
                     }
 
                     return;

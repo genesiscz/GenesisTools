@@ -383,11 +383,17 @@ export async function waitForPath(path: string, opts: WaitForPathOptions): Promi
         settle = resolvePromise;
     });
 
-    const subscription = watchPath(resolvedPath, (events) => {
-        if (events.some((event) => event.type !== "delete")) {
-            settle(true);
-        }
-    });
+    let subscription: WatcherSubscription | null = null;
+
+    try {
+        subscription = watchPath(resolvedPath, (events) => {
+            if (events.some((event) => event.type !== "delete")) {
+                settle(true);
+            }
+        });
+    } catch {
+        subscription = null;
+    }
 
     if (existsSync(resolvedPath)) {
         settle(true);
@@ -418,6 +424,6 @@ export async function waitForPath(path: string, opts: WaitForPathOptions): Promi
         }
 
         opts?.signal?.removeEventListener("abort", onAbort);
-        await subscription.unsubscribe();
+        await subscription?.unsubscribe();
     }
 }
