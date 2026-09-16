@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { scanWithCFfi } from "@app/du/lib/engine";
 import { formatBytes } from "@genesiscz/utils/format";
 import {
     type DiskUsage,
@@ -569,6 +570,31 @@ function sortTree(nodes: DirNode[], by: "overcount" | "real" | "du"): DirNode[] 
     return [...nodes].sort((a, b) => key(b) - key(a)).map((n) => ({ ...n, children: sortTree(n.children, by) }));
 }
 
+/**
+ * Clone-deduped on-disk size, from the `tools du` extent engine.
+ *
+ * PRIVATESIZE alone answers "what does deleting return", which is 0 for a tree
+ * whose files all clone each other — true, and useless as a size. The extent
+ * merge answers "what does this actually occupy". Both are reported; neither is
+ * a substitute for the other. Roots are summed independently, so two roots that
+ * clone-share with each other are counted twice here; that is the same
+ * convention `allocated` already uses for this report.
+ */
+function measureUniqueAllocated(roots: string[]): number | null {
+    let total = 0;
+    for (const root of roots) {
+        try {
+            const r = scanWithCFfi({ path: root });
+            total += r.unique_allocated_bytes ?? r.unique_bytes;
+        } catch (err) {
+            log.debug({ err, root }, "du extent engine unavailable; unique size omitted");
+            return null;
+        }
+    }
+
+    return total;
+}
+
 export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     const sw = new Stopwatch();
     const totalsAgg: DiskUsage = {
@@ -630,6 +656,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     }
 
     const totalReal = privateUnknown ? null : totalsAgg.private;
+    const uniqueAllocated = measureUniqueAllocated(args.roots);
     const totalOvercount = totalReal !== null && totalReal > 0 ? totalsAgg.allocated / totalReal : null;
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
@@ -674,6 +701,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             logical: totalsAgg.logical,
             allocated: totalsAgg.allocated,
             real: totalReal,
+            uniqueAllocated,
             overcount: totalOvercount,
         },
         cloneAnalysis,

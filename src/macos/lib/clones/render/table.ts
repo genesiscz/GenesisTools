@@ -71,7 +71,14 @@ export class TableRenderer implements CloneRenderer {
         lines.push(
             pc.bold(
                 `TOTAL  logical ${formatBytes(r.totals.logical)}  du ${formatBytes(r.totals.allocated)}  ` +
-                    `real ${realCell(r.totals.real)}  overcount ${overcountCell(r.totals.overcount)}`
+                    `unique ${realCell(r.totals.uniqueAllocated)}  frees ≥ ${realCell(r.totals.real)}  ` +
+                    `overcount ${overcountCell(r.totals.overcount)}`
+            )
+        );
+        lines.push(
+            pc.dim(
+                "unique = deduped on-disk size (shared blocks counted once) · " +
+                    "frees ≥ = what deleting returns while every clone partner stays"
             )
         );
         lines.push(
