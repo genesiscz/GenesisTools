@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { AppServerClient, type AppServerProcess } from "./app-server-client";
+import { AppServerClient, type AppServerProcess, appServerCommand } from "./app-server-client";
 
 function createProcessHarness(): {
     process: AppServerProcess;
@@ -234,4 +234,20 @@ test("a wedged stdin never blocks the app-server from being killed", async () =>
 
     expect(killed).toBe("SIGTERM");
     expect(await wedged.exited).toBe(0);
+});
+
+describe("appServerCommand", () => {
+    test("puts the hook-trust bypass before the subcommand, where codex parses it as a global flag", () => {
+        expect(appServerCommand("/opt/codex", { bypassHookTrust: true, config: ["sandbox_mode=read-only"] })).toEqual([
+            "/opt/codex",
+            "--dangerously-bypass-hook-trust",
+            "app-server",
+            "-c",
+            "sandbox_mode=read-only",
+        ]);
+    });
+
+    test("omits the flag by default", () => {
+        expect(appServerCommand("/opt/codex", {})).toEqual(["/opt/codex", "app-server"]);
+    });
 });

@@ -63,6 +63,9 @@ async function run(): Promise<void> {
         home: meta.home,
         config: [...(accountOptions?.config ?? []), ...config],
         envOverrides: { ...accountOptions?.envOverrides, GT_RENDEZVOUS_SESSION: meta.rendezvousSession },
+        // A worker cannot answer codex's hook-trust prompt, and the hooks are the user's own
+        // (~/.codex/hooks.json, installed plugins); without this every hook is skipped silently.
+        bypassHookTrust: true,
     });
     await store.updateMeta(name, { appServerPid: child.pid, daemonPid: process.pid });
 
