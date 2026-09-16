@@ -425,6 +425,41 @@ function settingsRealPath(): string {
     return existsSync(path) ? realpathSync(path) : path;
 }
 
+/** Parse the host settings document. Missing `statusLine` is null; unreadable JSON throws. */
+export function parseInstalledCommand(text: string): string | null {
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(text);
+    } catch (error) {
+        throw new Error("Claude Code settings are unreadable JSON", { cause: error });
+    }
+
+    const settings = asRecord(parsed);
+    const statusLine = asRecord(settings?.statusLine);
+
+    return asString(statusLine?.command);
+}
+
+function readSettingsRecord(path: string): Record<string, unknown> {
+    let text: string;
+
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (error) {
+        throw new Error(`Claude Code settings at ${path} could not be read`, { cause: error });
+    }
+
+    try {
+        return asRecord(SafeJSON.parse(text)) ?? {};
+    } catch (error) {
+        throw new Error(
+            `Claude Code settings at ${path} are unreadable JSON; refusing to treat that as no statusline`,
+            { cause: error }
+        );
+    }
+}
+
 async function readInstalledCommand(): Promise<string | null> {
     const path = settingsRealPath();
 
@@ -432,16 +467,15 @@ async function readInstalledCommand(): Promise<string | null> {
         return null;
     }
 
-    const settings = asRecord(SafeJSON.parse(readFileSync(path, "utf8")));
-    const statusLine = asRecord(settings?.statusLine);
+    const settings = readSettingsRecord(path);
+    const statusLine = asRecord(settings.statusLine);
 
     return asString(statusLine?.command);
 }
 
 async function writeInstalledCommand(command: string | null): Promise<void> {
     const path = settingsRealPath();
-    const text = existsSync(path) ? readFileSync(path, "utf8") : "{}";
-    const settings = (SafeJSON.parse(text) as Record<string, unknown> | undefined) ?? {};
+    const settings = existsSync(path) ? readSettingsRecord(path) : {};
 
     if (command === null) {
         delete settings.statusLine;
