@@ -35,6 +35,7 @@ tools macos-resources --fileslimit 100 --say
 | `--cpulimit <percent>` | `-c` | Alert when CPU usage exceeds the given percentage |
 | `--memorylimit <MB>` | `-m` | Alert when memory usage exceeds MB |
 | `--fileslimit <count>` | `-f` | Alert when open files exceed count |
+| `--interval <seconds>` | | Seconds between refresh cycles (default 5) |
 | `--notify` | `-n` | Fire a desktop notification on alert |
 | `--say` | `-s` | Speak the alert aloud |
 | `--help` | `-h` | Show help |
@@ -47,7 +48,7 @@ tools macos-resources --fileslimit 100 --say
 |-----|--------|
 | `↑` / `↓` | Navigate processes |
 | `f` | Toggle file view for the selected process |
-| `r` | Refresh |
+| `r` | Refresh now, including a fresh open-files count for every process |
 | `s` | Toggle sort (CPU / PID / Files) |
 | `q` | Quit |
 
@@ -55,5 +56,6 @@ tools macos-resources --fileslimit 100 --say
 
 ## Notes
 
-- Uses `ps` under the hood for process stats and `lsof` for open files. Some processes require elevated privileges for full visibility.
+- One refresh cycle per `--interval`: a single `ps -axo` for every process, then one batched `lsof -p a,b,c,...` per 60 pids for the open-file counts (the selected process every cycle, the rest once a minute). Nothing is spawned through a shell. Some processes refuse `lsof` and show `?`; they are not re-asked every cycle.
+- The table shows only the rows that fit the terminal, with a `rows X-Y of N` line above it, and scrolls to keep the selection in view. Rendering every process cost three terminal lines each, which at two thousand processes was most of a core and gigabytes of heap.
 - The alert hooks call `tools notify` and `tools say` — so configuration, sound, and muting for those tools apply here too.
