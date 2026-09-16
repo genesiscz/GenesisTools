@@ -7,7 +7,7 @@ import { haystackMatch } from "./match";
 import { validateHistoryFilters } from "./native-match";
 import { historyPathUnderRoot, historyProjectMatches } from "./project-scope";
 import type { CachedHistoryMetadata } from "./repository";
-import { historyCandidates } from "./search-candidates";
+import { historyCandidates, matchSnippets } from "./search-candidates";
 import {
     listingIndexSlice,
     listingPassesDate,
@@ -365,7 +365,15 @@ export class HistoryService {
         };
         const discovery = await this.options.reader.discover(this.options.roots, scope);
         const candidates = await historyCandidates({ sources: discovery.sources, filters: { signal: filters.signal } });
-        const selected = listingIndexSlice(candidates, filters.limit);
+        // A windowed listing refreshes the window and its top-up only; everything older is read
+        // as indexed. Old sessions do not change, and refreshing all of them was the cost.
+        const windowed =
+            filters.mtimeFrom === undefined
+                ? candidates
+                : listingIndexSlice(candidates).filter(
+                      (candidate, index) => candidate.mtime >= (filters.mtimeFrom ?? 0) || index < (filters.newest ?? 0)
+                  );
+        const selected = listingIndexSlice(windowed, filters.limit);
         return synchronizeHistory({
             ...this.options,
             discovery,
@@ -384,9 +392,23 @@ export class HistoryService {
             excludeAgents: false,
             agentsOnly: false,
         };
-        const metadata = this.options.repository.metadata
-            .listMetadata({ providerId: this.options.providerId, orderBy: "firstTimestamp" })
-            .filter((entry) => metadataInScope(entry, scoped));
+        const { repository, providerId } = this.options;
+        const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
+        const metadata = repository.metadata
+            .listMetadata({ providerId, orderBy: "firstTimestamp", mtimeFrom: filters.mtimeFrom })
+            .filter(inScope);
+
+        if (filters.mtimeFrom !== undefined && filters.newest) {
+            // The top-up: the newest rows by mtime whatever their age, read with a bound instead
+            // of the whole table. Fetched wider than asked because the scope filter runs after.
+            const seen = new Set(metadata.map((entry) => entry.sourceKey));
+            const newest = repository.metadata
+                .listMetadata({ providerId, orderBy: "mtime", limit: Math.max(20, filters.newest * 4) })
+                .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
+                .slice(0, filters.newest);
+            metadata.push(...newest);
+        }
+
         return { metadata, report: synchronized.report, reindexed: synchronized.reindexed };
     }
 
@@ -801,6 +823,19 @@ export class HistoryService {
                 const result = resultFromMetadata(metadata, reader.kind);
                 result.relevanceScore = candidate.matchCount;
                 results.push(result);
+            }
+
+            // The snippet the picker shows, from one ripgrep pass over the chosen files.
+            if (filters.query && results.length > 0) {
+                const snippets = await matchSnippets({
+                    files: results.map((result) => result.metadata.filePath),
+                    query: filters.query,
+                    signal: filters.signal,
+                });
+
+                for (const result of results) {
+                    result.matchedText = snippets.get(result.metadata.filePath);
+                }
             }
 
             return { results, issues };

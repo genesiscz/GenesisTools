@@ -280,3 +280,132 @@ export async function historyCandidates(options: {
         return [{ source, mtime, matchCount: Math.max(0, ...(searchable ?? []).map((path) => counts.get(path) ?? 0)) }];
     });
 }
+
+/** Characters kept on each side of the hit; the picker truncates further itself. */
+const SNIPPET_CONTEXT = 160;
+/** Hits per file ripgrep reports, so a hit inside a uuid or a hash can be passed over for a prose one. */
+const SNIPPET_HITS_PER_FILE = 3;
+
+/**
+ * A short query such as `7404` also matches inside uuids and content hashes, and a raw JSONL
+ * line is full of those. Prefer a window whose hit is not part of a long hex run.
+ */
+function hitLooksLikeIdentifier(snippet: string, needle: string): boolean {
+    const at = snippet.toLowerCase().indexOf(needle.toLowerCase());
+
+    if (at < 0) {
+        return false;
+    }
+
+    let start = at;
+    let end = at + needle.length;
+
+    while (start > 0 && /[0-9a-f-]/i.test(snippet[start - 1] ?? "")) {
+        start--;
+    }
+
+    while (end < snippet.length && /[0-9a-f-]/i.test(snippet[end] ?? "")) {
+        end++;
+    }
+
+    return end - start >= 20;
+}
+
+/** The raw window comes from a JSONL line: undo the JSON escapes and collapse whitespace. */
+function decodeSnippet(raw: string): string {
+    return raw
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+        .replace(/\\[ntr]/g, " ")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/**
+ * One ripgrep pass over the candidate files that returns, per file, the text around the first
+ * hit: the picker's snippet without parsing a transcript. `searchHistorySource` produced it from
+ * the matched record's text, which meant parsing every record of every candidate (and running
+ * the commit regexes on each) for a line the picker shows once.
+ */
+export async function matchSnippets(options: {
+    files: string[];
+    query: string;
+    signal?: AbortSignal;
+}): Promise<Map<string, string>> {
+    const snippets = new Map<string, string>();
+    const needle = (options.query.match(/[a-z0-9_-]{3,}/gi) ?? []).sort((left, right) => right.length - left.length)[0];
+    const binary = needle && options.files.length ? ripgrepBinary() : null;
+
+    if (!needle || !binary) {
+        return snippets;
+    }
+
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const child = Bun.spawn(
+        [
+            binary,
+            "--no-config",
+            "--no-heading",
+            "--with-filename",
+            "--null",
+            "--color",
+            "never",
+            "--text",
+            "--hidden",
+            "--no-ignore",
+            "--max-count",
+            String(SNIPPET_HITS_PER_FILE),
+            "--only-matching",
+            "--ignore-case",
+            "-e",
+            `.{0,${SNIPPET_CONTEXT}}${escaped}.{0,${SNIPPET_CONTEXT}}`,
+            "--",
+            ...options.files,
+        ],
+        { stdout: "pipe", stderr: "pipe" }
+    );
+    const abort = () => child.kill();
+    options.signal?.addEventListener("abort", abort, { once: true });
+
+    try {
+        const [output, , exitCode] = await Promise.all([
+            new Response(child.stdout).text(),
+            new Response(child.stderr).text(),
+            child.exited,
+        ]);
+
+        if (exitCode !== 0 && exitCode !== 1) {
+            return snippets;
+        }
+
+        const identifierHits = new Set<string>();
+
+        for (const line of output.split("\n")) {
+            const separator = line.indexOf("\0");
+
+            if (separator < 0) {
+                continue;
+            }
+
+            const path = line.slice(0, separator);
+            const snippet = decodeSnippet(line.slice(separator + 1));
+            const identifier = hitLooksLikeIdentifier(snippet, needle);
+
+            // First prose hit wins; an identifier hit is kept only until a prose one appears.
+            if (!snippets.has(path) || (identifierHits.has(path) && !identifier)) {
+                snippets.set(path, snippet);
+
+                if (identifier) {
+                    identifierHits.add(path);
+                } else {
+                    identifierHits.delete(path);
+                }
+            }
+        }
+    } finally {
+        options.signal?.removeEventListener("abort", abort);
+    }
+
+    return snippets;
+}

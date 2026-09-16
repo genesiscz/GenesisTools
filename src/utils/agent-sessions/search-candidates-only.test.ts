@@ -56,6 +56,7 @@ test("candidatesOnly answers a content query from the ripgrep gate and metadata,
         expect(hydrated.results.map((result) => result.session.sessionId)).toEqual([hit]);
         expect(light.results.map((result) => result.session.sessionId)).toEqual([hit]);
         expect(light.results[0].matchedEntries).toEqual([]);
+        expect(light.results[0].matchedText).toContain("ticket 7404 reconciled the invoice split");
         expect(light.results[0].relevanceScore).toBeGreaterThan(0);
         expect(scansForHydrated).toBeGreaterThan(0);
         expect(scans).toBe(scansForHydrated);

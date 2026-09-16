@@ -186,6 +186,8 @@ export class HistoryRepository {
         sessionId?: string;
         project?: string;
         pathPrefix?: string;
+        /** Rows whose file mtime is at or after this epoch ms; served by idx_session_metadata_provider_mtime. */
+        mtimeFrom?: number;
         orderBy?: "mtime" | "firstTimestamp";
         limit?: number;
     }): CachedHistoryMetadata[] {
@@ -228,6 +230,10 @@ export class HistoryRepository {
         if (options.pathPrefix !== undefined) {
             clauses.push("m.file_path LIKE ?");
             params.push(`${options.pathPrefix}%`);
+        }
+        if (options.mtimeFrom !== undefined) {
+            clauses.push("m.mtime >= ?");
+            params.push(options.mtimeFrom);
         }
         const order = options.orderBy === "firstTimestamp" ? "COALESCE(m.first_timestamp, '') DESC" : "m.mtime DESC";
         const limit = options.limit === undefined ? "" : " LIMIT ?";

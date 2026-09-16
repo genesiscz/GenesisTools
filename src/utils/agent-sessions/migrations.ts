@@ -361,6 +361,15 @@ const COMPACT_HISTORY_MIGRATIONS: Migration[] = [
             }
         },
     },
+    {
+        id: "2026-09-history-metadata-mtime-index",
+        description: "Serve a windowed listing (provider, mtime >= ?) from an index instead of a table scan",
+        apply(db) {
+            db.exec(
+                "CREATE INDEX IF NOT EXISTS idx_session_metadata_provider_mtime ON session_metadata(provider, mtime)"
+            );
+        },
+    },
 ];
 
 export const PRE_COMPACT_BACKUP_SUFFIX = ".pre-compact.bak";

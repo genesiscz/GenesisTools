@@ -368,7 +368,7 @@ test("reset removes one provider's derived rows while preserving observations an
     expect(tableHash(db, "spend_snapshots")).toBe(spendHash);
     expect(db.query("SELECT value FROM unknown_fixture WHERE id=1").get()).toEqual({ value: "kept" });
     expect(db.query("SELECT COUNT(*) AS count FROM _migrations WHERE id LIKE 'provider_history:%'").get()).toEqual({
-        count: 6,
+        count: 7,
     });
 
     usage.close();

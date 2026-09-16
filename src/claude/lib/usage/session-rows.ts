@@ -358,7 +358,12 @@ export async function listSessionRowsWithTimings(
     const started = performance.now();
     const now = opts.now ?? Date.now();
     const result = await prof.measureAsync("listing", () =>
-        getSessionListing({ excludeSubagents: opts.excludeSubagents ?? true })
+        getSessionListing({
+            excludeSubagents: opts.excludeSubagents ?? true,
+            // The window and the top-up go down to the refresh and the SQL read; the filters
+            // below then keep exactly what they kept before.
+            ...(opts.hours === undefined ? {} : { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }),
+        })
     );
     const listingMs = performance.now() - started;
     const cutoff = opts.hours === undefined ? Number.NEGATIVE_INFINITY : now - opts.hours * 60 * 60 * 1000;

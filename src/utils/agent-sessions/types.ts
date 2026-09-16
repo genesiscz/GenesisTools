@@ -69,6 +69,14 @@ export interface AgentSearchFilters {
      * that; placing the matches inside eleven large sessions cost 12 s and showed nothing.
      */
     candidatesOnly?: boolean;
+    /**
+     * The listing's time window as a file mtime (epoch ms): only sessions touched at or after it
+     * are refreshed and read. `--hours 24` used to refresh and decode all 12,322 Claude sessions
+     * and keep 50 of them; the window belongs in the refresh and in the SQL, not in a filter after.
+     */
+    mtimeFrom?: number;
+    /** With `mtimeFrom`: also the N newest sessions by mtime whatever their age (the `--min` top-up). */
+    newest?: number;
     signal?: AbortSignal;
     /** Limits a cached search to the adapter's configured native roots. */
     sourceRoots?: string[];
