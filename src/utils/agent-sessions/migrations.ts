@@ -400,17 +400,24 @@ function backupBeforeCompactRewrite(db: Database): void {
     logger.warn({ path, backup }, "Copied the history database aside before the provider-history rewrite");
 }
 
+const COMPACT_REWRITE_MIGRATION_IDS = new Set([
+    "2026-09-history-session-keys",
+    "2026-09-history-source-freshness",
+    "2026-09-history-provider-aggregates",
+]);
+
 /** Used by the compact repository only after its compatibility and size gates pass. */
 export function initializeCompactHistorySchema(db: Database): void {
     initializeHistorySchema(db);
-    const pending = COMPACT_HISTORY_MIGRATIONS.some(
+    const pendingRewrite = COMPACT_HISTORY_MIGRATIONS.some(
         (migration) =>
+            COMPACT_REWRITE_MIGRATION_IDS.has(migration.id) &&
             !db
                 .query<{ id: string }, [string]>("SELECT id FROM _migrations WHERE id = ?")
                 .get(`provider_history:${migration.id}`)
     );
 
-    if (pending) {
+    if (pendingRewrite) {
         backupBeforeCompactRewrite(db);
     }
 

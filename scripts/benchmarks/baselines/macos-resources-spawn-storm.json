@@ -13,5 +13,5 @@
         "rssMb": 144.5625,
         "spawnsPerMinute": 10470.482469283786
     },
-    "notes": "pre-rewrite code, recorded from src/macos-resources/_benchold/ (a copy of HEAD) on a quiet machine"
+    "notes": "pre-rewrite code, recorded from src/macos-resources/_benchold/ (a copy of HEAD) under loadAvg 481/235/136 — not a quiet machine; cpuPercent is therefore a lower bound"
 }

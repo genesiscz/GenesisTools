@@ -90,18 +90,17 @@ dropping the second discovery walk when the first one is seconds old.
 ## Rerunning
 
 ```bash
-bun scripts/benchmarks/youtube/pipeline-idle.ts --compare
 bun scripts/benchmarks/macos-resources/spawn-storm.ts --compare
 bun scripts/benchmarks/fs/tools-watch.ts --compare
 bun scripts/benchmarks/polls/agents-request-wait.ts --compare --runs 3
 bun scripts/benchmarks/statusline/current-statusline.ts --compare --command "tools ai statusline run --claude"
-bun scripts/benchmarks/dashboards/idle-cost.ts --mode preview,static --repeat 5 --compare
-bun scripts/benchmarks/swift/ax-tool-depth.ts --compare
 
 # Startup and import cost (no baseline file: print, change, print again, note `uptime`)
 bun scripts/benchmarks/startup/cli-startup.ts "claude who" 7 bun src/claude/index.ts who --help
 bun scripts/benchmarks/startup/import-cost.ts "@genesiscz/utils/ai/AIConfig.ts"
 ```
+
+Sibling PRs own youtube/dashboard/swift scripts; those commands are not in this tree.
 
 Run one script at a time: two benchmarks in flight skew each other, and a load average above
 about 30 on this machine turns every timing metric into noise (note `uptime` before each run).

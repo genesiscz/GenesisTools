@@ -103,13 +103,28 @@ export function parseCliOptions(argv: string[]): AppOptions | "help" {
 
     return {
         filter: values.process ?? "",
-        cpuLimit: values.cpulimit === undefined ? null : Number.parseFloat(values.cpulimit),
-        memoryLimit: values.memorylimit === undefined ? null : Number.parseFloat(values.memorylimit),
-        filesLimit: values.fileslimit === undefined ? null : Number.parseInt(values.fileslimit, 10),
+        cpuLimit: parseLimit("cpulimit", values.cpulimit),
+        memoryLimit: parseLimit("memorylimit", values.memorylimit),
+        filesLimit: parseLimit("fileslimit", values.fileslimit, true),
         notify: values.notify ?? false,
         say: values.say ?? false,
         intervalMs: Number.isFinite(interval) && interval > 0 ? interval * 1000 : DEFAULT_INTERVAL_SECONDS * 1000,
     };
+}
+
+function parseLimit(name: string, raw: string | undefined, integer = false): number | null {
+    if (raw === undefined) {
+        return null;
+    }
+
+    const text = raw.trim();
+    const value = Number(text);
+
+    if (text === "" || !Number.isFinite(value) || value < 0 || (integer && !Number.isInteger(value))) {
+        throw new Error(`Invalid value for --${name}: ${raw}`);
+    }
+
+    return value;
 }
 
 /**
@@ -477,7 +492,8 @@ const App: React.FC<{ options: AppOptions }> = ({ options }) => {
 
     const renderHeader = useCallback(
         (props: React.PropsWithChildren) => {
-            const headerText = String(props.children);
+            const raw = String(props.children);
+            const headerText = raw.trim();
             let indicator = "";
             let color = "blue";
 
@@ -492,10 +508,11 @@ const App: React.FC<{ options: AppOptions }> = ({ options }) => {
                 color = "cyan";
             }
 
+            const shown = indicator ? `${raw.slice(0, Math.max(0, raw.length - indicator.length))}${indicator}` : raw;
+
             return (
                 <Text bold color={color}>
-                    {headerText}
-                    {indicator}
+                    {shown}
                 </Text>
             );
         },
@@ -582,7 +599,15 @@ const App: React.FC<{ options: AppOptions }> = ({ options }) => {
 export default App;
 
 if (import.meta.main) {
-    const options = parseCliOptions(process.argv.slice(2));
+    let options: AppOptions | "help";
+
+    try {
+        options = parseCliOptions(process.argv.slice(2));
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(message);
+        process.exit(1);
+    }
 
     if (options === "help") {
         out.print(HELP);

@@ -35,7 +35,7 @@ tools macos-resources --fileslimit 100 --say
 | `--cpulimit <percent>` | `-c` | Alert when CPU usage exceeds the given percentage |
 | `--memorylimit <MB>` | `-m` | Alert when memory usage exceeds MB |
 | `--fileslimit <count>` | `-f` | Alert when open files exceed count |
-| `--interval <seconds>` | | Seconds between refresh cycles (default 5) |
+| `--interval <seconds>` | `-i` | Seconds between refresh cycles (default 5) |
 | `--notify` | `-n` | Fire a desktop notification on alert |
 | `--say` | `-s` | Speak the alert aloud |
 | `--help` | `-h` | Show help |

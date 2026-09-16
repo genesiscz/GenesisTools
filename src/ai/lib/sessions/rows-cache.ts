@@ -61,7 +61,13 @@ export async function readSessionRowsCache(path = sessionRowsCachePath()): Promi
 
         const parsed = SafeJSON.parse(await file.text()) as SessionRowsCache;
 
-        if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.rows) || typeof parsed.query !== "object") {
+        if (
+            !parsed ||
+            typeof parsed !== "object" ||
+            !Array.isArray(parsed.rows) ||
+            parsed.query === null ||
+            typeof parsed.query !== "object"
+        ) {
             return null;
         }
 

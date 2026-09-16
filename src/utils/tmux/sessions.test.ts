@@ -421,7 +421,11 @@ describe("tmux spawn wedge guard", () => {
     // ~95% CPU for 28h after the feat-dev-dashboard-mobile parent died (PPID 1,
     // stdout gone). Bun.spawn `{ timeout }` lives in the parent, so it dies with it.
     test("SIGKILL of the parent still reaps a wedged list-sessions client", async () => {
-        const { chmodSync, mkdirSync, writeFileSync } = await import("node:fs");
+        const { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+
+        if (!existsSync("/usr/bin/perl")) {
+            return;
+        }
         const { tmpdir } = await import("node:os");
         const { join } = await import("node:path");
         const { isProcessAlive } = await import("@genesiscz/utils/process-alive");
@@ -490,6 +494,7 @@ describe("tmux spawn wedge guard", () => {
         }
 
         expect(stillAlive).toBe(false);
+        rmSync(dir, { recursive: true, force: true });
     }, 20_000);
 
     // Regression test: 2026-09-16 — dashboard polls overlapped, so three wedged

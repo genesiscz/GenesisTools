@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
 import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
-import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
+import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format.ts";
@@ -590,7 +590,11 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
-await registerRequestedTrees({ program, registrars: AI_REGISTRARS, requested: process.argv[2] });
+await registerRequestedTrees({
+    program,
+    registrars: AI_REGISTRARS,
+    requested: requestedCommandFromArgv(process.argv),
+});
 
 async function main(): Promise<void> {
     try {

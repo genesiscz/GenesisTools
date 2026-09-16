@@ -29,7 +29,7 @@ re-deriving how it was produced.
    sample cannot support a confidence claim at all. Counts (spawns, fs calls) are deterministic
    and N = 1 is enough for them.
 7. **CPU time and counts are the primary metrics.** Wall time is the noisy one. See
-   [`docs/benchmarks-du.md`](../../docs/benchmarks-du.md) for the measured evidence.
+   [`docs/benchmarks-cpu.md`](../../docs/benchmarks-cpu.md) for the measured evidence.
 
 ## Existing trees
 

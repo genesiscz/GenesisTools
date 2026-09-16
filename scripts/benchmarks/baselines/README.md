@@ -58,5 +58,5 @@ delta passes. A missing baseline is a failure, never a silent pass.
 
 CPU time and call counts. Wall time on this machine swings with load average by more than most
 fixes move it, so a wall-time baseline mostly records what else was running. The measured evidence
-is in [`docs/benchmarks-du.md`](../../../docs/benchmarks-du.md). If a wall-time number has to go
+is in [`docs/benchmarks-cpu.md`](../../../docs/benchmarks-cpu.md). If a wall-time number has to go
 in, record min/median/max across at least five interleaved runs, never a single sample.

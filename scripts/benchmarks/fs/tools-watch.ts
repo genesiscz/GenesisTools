@@ -128,114 +128,123 @@ async function runOnce(args: BenchArgs, runIndex: number): Promise<RunResult> {
     pump(child.stdout, waiter);
     pump(child.stderr, waiter);
 
-    // The watcher prints this last, after the initial glob scan and every
-    // per-file dump, so it is the only honest "idle now" signal.
-    await waiter.wait("Watch-glob is running", READY_TIMEOUT_MS);
-    const startupMs = performance.now() - spawnedAt;
-    await waiter.wait("Watcher initialized and ready", READY_TIMEOUT_MS);
-    await sleep(BETWEEN_EVENTS_MS);
+    try {
+        // The watcher prints this last, after the initial glob scan and every
+        // per-file dump, so it is the only honest "idle now" signal.
+        await waiter.wait("Watch-glob is running", READY_TIMEOUT_MS);
+        const startupMs = performance.now() - spawnedAt;
+        await waiter.wait("Watcher initialized and ready", READY_TIMEOUT_MS);
+        await sleep(BETWEEN_EVENTS_MS);
 
-    const idle = await sampleProcess(child.pid, { windowMs: IDLE_WINDOW_MS });
+        const idle = await sampleProcess(child.pid, { windowMs: IDLE_WINDOW_MS });
 
-    if (!idle.alive) {
-        throw new Error(`the watcher pid ${child.pid} could not be sampled; it probably died during the idle window`);
-    }
+        if (!idle.alive) {
+            throw new Error(
+                `the watcher pid ${child.pid} could not be sampled; it probably died during the idle window`
+            );
+        }
 
-    // The watcher installs one `fs.watch` per matched file in glob order, and
-    // the bun defect below spares whichever one was created first. Measuring
-    // only the first file would report a healthy sub-millisecond append for a
-    // process whose other 19 watchers are deaf, so the first and last watched
-    // files are measured separately.
-    const firstWatched = files[0] as string;
-    const lastWatched = files[files.length - 1] as string;
+        // The watcher installs one `fs.watch` per matched file in glob order, and
+        // the bun defect below spares whichever one was created first. Measuring
+        // only the first file would report a healthy sub-millisecond append for a
+        // process whose other 19 watchers are deaf, so the first and last watched
+        // files are measured separately.
+        const firstWatched = files[0] as string;
+        const lastWatched = files[files.length - 1] as string;
 
-    async function measureAppends(tag: string, target: string): Promise<SampleSummary> {
-        const latencies: number[] = [];
+        async function measureAppends(tag: string, target: string): Promise<SampleSummary> {
+            const latencies: number[] = [];
 
-        for (let index = 0; index < APPEND_SAMPLES; index++) {
-            const marker = `GTBENCH-${tag}-${nonce}-${index}`;
+            for (let index = 0; index < APPEND_SAMPLES; index++) {
+                const marker = `GTBENCH-${tag}-${nonce}-${index}`;
+                const startedAt = performance.now();
+                appendFileSync(target, `${marker}\n`);
+                const arrivedAt = await waiter.wait(marker, MARKER_TIMEOUT_MS);
+                latencies.push(arrivedAt - startedAt);
+                await sleep(BETWEEN_EVENTS_MS);
+            }
+
+            return summarize(latencies);
+        }
+
+        const appendSamples = await measureAppends("APPEND", firstWatched);
+        // Control for the phase below: before anything is rebuilt, a file's
+        // position in the watch order must not change its append latency. If this
+        // and `appendLatencyMs` ever diverge, the comparison after discovery means
+        // nothing.
+        const appendLastWatchedSamples = await measureAppends("APPENDLAST", lastWatched);
+        const newFileLatencies: number[] = [];
+
+        for (let index = 0; index < NEW_FILE_SAMPLES; index++) {
+            const marker = `GTBENCH-NEWFILE-${nonce}-${index}`;
+            const path = join(dir, `created-${nonce}-${index}.log`);
             const startedAt = performance.now();
-            appendFileSync(target, `${marker}\n`);
+            writeFileSync(path, `${marker}\n`);
             const arrivedAt = await waiter.wait(marker, MARKER_TIMEOUT_MS);
-            latencies.push(arrivedAt - startedAt);
+            newFileLatencies.push(arrivedAt - startedAt);
             await sleep(BETWEEN_EVENTS_MS);
         }
 
-        return summarize(latencies);
+        // The same file as the control above, now that discovery has run.
+        //
+        // On this baseline it matches the control, and the reason matters. The only
+        // path that closes a live watcher is `setupFileWatchers()`, which runs from
+        // the rescan behind `currentFiles.length > matchedFiles.size`; chokidar's
+        // `add` handler wins the race and inserts the file first, so that guard is
+        // already false and no rebuild happens (verified with `--verbose`: "File
+        // added event" appears, "Found N new file(s) during rescan" never does).
+        //
+        // The metric is here because a rewrite that reinstates a close-then-recreate
+        // cycle would be invisible otherwise. On bun 1.3.13 the FIRST
+        // `FSWatcher.close()` in a process leaves every watcher created after it
+        // deaf past one event — measured directly: a fresh watcher on an untouched
+        // file delivered 1 of 10 appends once any close had happened, against 10 of
+        // 10 while nothing had been closed. A rebuild would therefore push this
+        // number from under a millisecond up to the chokidar poll, and the 50 ms
+        // interval at index.ts:588 would be the only thing keeping it lower.
+        const appendAfterNewFileSamples = await measureAppends("APPEND2", lastWatched);
+        const newFileSamples = summarize(newFileLatencies);
+
+        child.kill("SIGINT");
+        const exited = await Promise.race([child.exited, sleep(EXIT_TIMEOUT_MS).then(() => null)]);
+        let exitedCleanly = 0;
+
+        if (exited === 0) {
+            exitedCleanly = 1;
+        } else if (exited === null) {
+            log.warn({ pid: child.pid }, "the watcher ignored SIGINT within the deadline; sending SIGKILL");
+            child.kill("SIGKILL");
+            await child.exited;
+        } else {
+            log.warn({ pid: child.pid, exitCode: exited }, "the watcher exited non-zero after SIGINT");
+        }
+
+        return {
+            dir,
+            samples: {
+                append: appendSamples,
+                appendLastWatched: appendLastWatchedSamples,
+                newFile: newFileSamples,
+                appendAfterNewFile: appendAfterNewFileSamples,
+            },
+            metrics: {
+                startupMs,
+                idleCpuPercent: idle.cpuPercent,
+                idleCpuTimeMs: idle.cpuTimeMs,
+                idleRssBytes: idle.rssBytes,
+                appendLatencyMs: appendSamples.median,
+                appendLastWatchedLatencyMs: appendLastWatchedSamples.median,
+                newFileLatencyMs: newFileSamples.median,
+                appendAfterNewFileLatencyMs: appendAfterNewFileSamples.median,
+                exitedCleanly,
+            },
+        };
+    } finally {
+        if (child.exitCode === null) {
+            child.kill("SIGKILL");
+            await child.exited;
+        }
     }
-
-    const appendSamples = await measureAppends("APPEND", firstWatched);
-    // Control for the phase below: before anything is rebuilt, a file's
-    // position in the watch order must not change its append latency. If this
-    // and `appendLatencyMs` ever diverge, the comparison after discovery means
-    // nothing.
-    const appendLastWatchedSamples = await measureAppends("APPENDLAST", lastWatched);
-    const newFileLatencies: number[] = [];
-
-    for (let index = 0; index < NEW_FILE_SAMPLES; index++) {
-        const marker = `GTBENCH-NEWFILE-${nonce}-${index}`;
-        const path = join(dir, `created-${nonce}-${index}.log`);
-        const startedAt = performance.now();
-        writeFileSync(path, `${marker}\n`);
-        const arrivedAt = await waiter.wait(marker, MARKER_TIMEOUT_MS);
-        newFileLatencies.push(arrivedAt - startedAt);
-        await sleep(BETWEEN_EVENTS_MS);
-    }
-
-    // The same file as the control above, now that discovery has run.
-    //
-    // On this baseline it matches the control, and the reason matters. The only
-    // path that closes a live watcher is `setupFileWatchers()`, which runs from
-    // the rescan behind `currentFiles.length > matchedFiles.size`; chokidar's
-    // `add` handler wins the race and inserts the file first, so that guard is
-    // already false and no rebuild happens (verified with `--verbose`: "File
-    // added event" appears, "Found N new file(s) during rescan" never does).
-    //
-    // The metric is here because a rewrite that reinstates a close-then-recreate
-    // cycle would be invisible otherwise. On bun 1.3.13 the FIRST
-    // `FSWatcher.close()` in a process leaves every watcher created after it
-    // deaf past one event — measured directly: a fresh watcher on an untouched
-    // file delivered 1 of 10 appends once any close had happened, against 10 of
-    // 10 while nothing had been closed. A rebuild would therefore push this
-    // number from under a millisecond up to the chokidar poll, and the 50 ms
-    // interval at index.ts:588 would be the only thing keeping it lower.
-    const appendAfterNewFileSamples = await measureAppends("APPEND2", lastWatched);
-    const newFileSamples = summarize(newFileLatencies);
-
-    child.kill("SIGINT");
-    const exited = await Promise.race([child.exited, sleep(EXIT_TIMEOUT_MS).then(() => null)]);
-    let exitedCleanly = 0;
-
-    if (exited === 0) {
-        exitedCleanly = 1;
-    } else if (exited === null) {
-        log.warn({ pid: child.pid }, "the watcher ignored SIGINT within the deadline; sending SIGKILL");
-        child.kill("SIGKILL");
-        await child.exited;
-    } else {
-        log.warn({ pid: child.pid, exitCode: exited }, "the watcher exited non-zero after SIGINT");
-    }
-
-    return {
-        dir,
-        samples: {
-            append: appendSamples,
-            appendLastWatched: appendLastWatchedSamples,
-            newFile: newFileSamples,
-            appendAfterNewFile: appendAfterNewFileSamples,
-        },
-        metrics: {
-            startupMs,
-            idleCpuPercent: idle.cpuPercent,
-            idleCpuTimeMs: idle.cpuTimeMs,
-            idleRssBytes: idle.rssBytes,
-            appendLatencyMs: appendSamples.median,
-            appendLastWatchedLatencyMs: appendLastWatchedSamples.median,
-            newFileLatencyMs: newFileSamples.median,
-            appendAfterNewFileLatencyMs: appendAfterNewFileSamples.median,
-            exitedCleanly,
-        },
-    };
 }
 
 const args = parseBenchArgs(Bun.argv.slice(2));
