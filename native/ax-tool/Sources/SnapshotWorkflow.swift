@@ -277,7 +277,7 @@ private func workflowAfterState(appName: String, pid: pid_t, launch: Double, win
 
 private func workflowPermissions() {
     guard AXIsProcessTrusted() else {
-        workflowFailure("Accessibility permission is required; grant access to the responsible app/process")
+        axUntrustedExit()
     }
 }
 
