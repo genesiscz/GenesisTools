@@ -400,7 +400,7 @@ export class HistoryService {
         const { repository, providerId } = this.options;
         const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
         const metadata = repository.metadata
-            .listMetadata({ providerId, orderBy: "firstTimestamp", mtimeFrom: filters.mtimeFrom })
+            .listMetadata({ providerId, orderBy: "firstTimestamp", mtimeFrom: filters.mtimeFrom, withUserText: false })
             .filter(inScope);
 
         if (filters.mtimeFrom !== undefined && filters.newest) {
@@ -408,7 +408,12 @@ export class HistoryService {
             // of the whole table. Fetched wider than asked because the scope filter runs after.
             const seen = new Set(metadata.map((entry) => entry.sourceKey));
             const newest = repository.metadata
-                .listMetadata({ providerId, orderBy: "mtime", limit: Math.max(20, filters.newest * 4) })
+                .listMetadata({
+                    providerId,
+                    orderBy: "mtime",
+                    limit: Math.max(20, filters.newest * 4),
+                    withUserText: false,
+                })
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
                 .slice(0, filters.newest);
             metadata.push(...newest);

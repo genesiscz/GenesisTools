@@ -47,7 +47,8 @@ interface MetadataRow {
     custom_title: string | null;
     summary: string | null;
     first_prompt: string | null;
-    all_user_text: string | null;
+    /** Absent when the caller asked for the listing projection. */
+    all_user_text?: string | null;
     git_branch: string | null;
     project: string | null;
     cwd: string | null;
@@ -89,7 +90,9 @@ function decodeMetadata(row: MetadataRow): CachedHistoryMetadata {
         customTitle: row.custom_title,
         summary: row.summary,
         firstPrompt: row.first_prompt,
-        allUserText: row.all_user_text,
+        // Absent when the caller asked for the listing projection. A listing never reads it,
+        // and the column is by far the widest: 27 MB across this machine's 12k rows.
+        allUserText: row.all_user_text ?? null,
         gitBranch: row.git_branch,
         project: row.project,
         cwd: row.cwd,
@@ -111,6 +114,34 @@ function decodeMetadata(row: MetadataRow): CachedHistoryMetadata {
 /** SQL only. Opening a repository neither initializes schema nor discovers sources. */
 export class HistoryRepository {
     constructor(private readonly db: Database) {}
+
+    /**
+     * `m.*` minus `all_user_text`, read from the schema rather than written out, so a column
+     * added later is carried without anyone remembering this list.
+     *
+     * The column holds up to 20 KB of prose per session and nothing but `search` reads it, so
+     * a listing that selects it moves 27 MB off disk on this machine to show a title and a
+     * path. Cached per connection; the schema does not change under a live connection.
+     */
+    private listingColumns?: string;
+
+    private metadataColumns(withUserText: boolean): string {
+        if (withUserText) {
+            return "m.*";
+        }
+
+        if (!this.listingColumns) {
+            const names = this.db
+                .query<{ name: string }, []>("PRAGMA table_info(session_metadata)")
+                .all()
+                .map((row) => row.name)
+                .filter((name) => name !== "all_user_text");
+
+            this.listingColumns = names.map((name) => `m.${name}`).join(", ");
+        }
+
+        return this.listingColumns;
+    }
 
     getSource(sourceKey: string): HistorySourceSnapshot | null {
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM file_index WHERE source_key = ?").get(sourceKey);
@@ -190,6 +221,11 @@ export class HistoryRepository {
         mtimeFrom?: number;
         orderBy?: "mtime" | "firstTimestamp";
         limit?: number;
+        /**
+         * Read `all_user_text` too. Default true, because a search matches on it. A listing
+         * passes false and gets `allUserText: null`.
+         */
+        withUserText?: boolean;
     }): CachedHistoryMetadata[] {
         if (options.sourceKeys?.length === 0 || options.filePaths?.length === 0) {
             return [];
@@ -243,7 +279,7 @@ export class HistoryRepository {
         return (
             this.db
                 .query(`
-                    SELECT m.*, f.root FROM session_metadata m
+                    SELECT ${this.metadataColumns(options.withUserText ?? true)}, f.root FROM session_metadata m
                     LEFT JOIN file_index f ON f.source_key = m.source_key
                     WHERE ${clauses.join(" AND ")} ORDER BY ${order}${limit}
                 `)
