@@ -33,19 +33,21 @@ now; the Swift fixes below make the waits finite.
 | `tools ai usage sessions` (Genesis.app, every 35 s) | `/usr/bin/time -p`, `bun --cpu-prof` | 1.6 s wall, 1.2 s user + 1.3 s sys per call; 0.6 s of it 364 codex `thread_items` scans (one per rollout) | codex projection index built once per home and cached by database stamp: 1.3 s wall, 0.95 s user + 1.2 s sys; the codex part is under 1 ms |
 | `cr … --resume <text>` (content search) | `PROFILE=agent-sessions` probe | 12.0 s wall, 12.5 s CPU: every candidate transcript parsed and commit-regexed to place matches the picker never shows | `candidatesOnly` search: ripgrep gate plus metadata rows, 2.0 s wall, 0.86 s CPU |
 | `tools ai` import tree (DECISION 2, lazy imports) | `tools ts imports lazy src/ai/index.ts`, `bun src/ai/index.ts --help` x10 | 298 ms sum of self, 465 modules; user CPU 0.36 s under load 26 to 37 (0.29 s quiet) | the ai barrel (122 ms) and run-who (57.5 ms) imported at their use sites with the measured saving in a comment: user CPU 0.22 s under the same load |
+| `tools claude` import tree (D9 from the bash-calls-guard session) | `tools ts imports lazy src/claude/index.ts`, `bun src/claude/index.ts --help` x10 | 406 ms sum of self; user CPU 0.40 s, wall 0.30 s at load 10 to 14 | vite (53.9 ms) lazy inside the preview server, cli-highlight (49.8 ms) behind a `createRequire` in the sync `highlightCode`, clipboardy (32.8 ms) and `@inquirer/prompts` (12.1 ms) at their use sites: 278 ms sum of self, user CPU 0.27 s, wall 0.18 s at the same load. Every other tool that imports those four utils gets the same cut. Not done: `history.ts` → DashboardApp barrel (61.7 ms) because `defineDashboardApp` runs at registration and needs argv-gated registration to move |
 | `tools ai usage sessions --hours 24 --min 10`, the window (DECISION 4) | `bun --cpu-prof`, `PROFILE=claude-history`, JSON row diff | every call refreshed metadata for all 12,322 Claude sessions and decoded every row, then kept 53 in JavaScript: catalog 282 ms, discover-full 220 ms, sampled CPU 2521 ms, direct call 0.93 s user | `mtimeFrom` + `newest` reach the refresh and the SQL (`idx_session_metadata_provider_mtime`): catalog 91 ms, discover-full 72 ms, metadata parse 42 ms to 6 ms, sampled CPU 1374 ms, direct call 0.74 s user; the 53 rows are byte-identical |
 | `cr … --resume 7404` snippet | probe with the real Claude adapter | hydrated search 16.7 s for 11 hits; snippet = the first 1200 chars of the matched record (often a table, not the hit) | ripgrep gate + one ripgrep pass for the snippet: 0.96 to 1.17 s for 20 hits, snippet centred on the hit, a prose hit preferred over one inside a uuid; the ripgrep gate also counts hits inside ids, which the record-text match did not (11 to 20 candidates) |
 
-## What the remaining `usage sessions` second is
+## What the remaining `usage sessions` time is
 
-After the codex fix the profile of one call is, in order: reading the 12,322-row Claude index
-twice per call (`listSources` and `listMetadata`, about 450 ms of SQLite page reads in a fresh
-process; `all_user_text` alone is 27 MB and costs 80 ms of the `listMetadata` read), the two
-discovery walks over `~/.claude/projects` (3,796 directories, about 130 ms), the transcript tails
-(45 ms), and process start (240 ms for the `tools ai` import tree plus 110 ms for the launcher
-hop). A poller that recomputes this from 12 GB of transcripts every 35 s is the wrong shape;
-the honest fix is a resident answer (the poll daemon writing the rows to a file the app reads,
-or an HTTP endpoint), which is DECISION 4 in the campaign plan.
+After the codex fix and the window (decision 4), the profile of one call is, in order: the
+discovery walk over `~/.claude/projects` (3,796 directories, 12,493 files) and one `stat` per
+file to learn which sessions moved (about 200 ms under load, 60 ms quiet), the `listSources`
+read of the 12,322-row `file_index` (37 ms warm, up to 250 ms cold per process, run once per
+provider plus once inside the write transaction), the transcript tails of the window's rows
+(35 ms), and process start (220 ms for the lazy `tools ai` import tree plus 110 ms for the
+launcher hop). The metadata refresh and the metadata read now cover the window only. What would
+cut further: a resident answer (the poll daemon writing the rows to a file the app reads), and
+dropping the second discovery walk when the first one is seconds old.
 
 ## Rerunning
 
