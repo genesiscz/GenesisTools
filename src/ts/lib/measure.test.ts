@@ -88,14 +88,11 @@ describe("measureGraph", () => {
             cwd: root,
         });
 
-        // The worker finished on its own: no kill, and every plan line has a sample.
+        // The worker finished on its own: no kill. After a hang it exits, and the tail of the
+        // plan (the entry) is imported in a fresh process so the hung evaluation cannot pollute it.
         expect(result.timedOut).toBe(false);
         expect(result.self.get(join(root, "leaf.ts"))?.status).toBe("ok");
         expect(result.self.get(join(root, "hang.ts"))?.status).toBe("hang");
-        // The entry statically imports the module that never settled. Whether bun lets that
-        // import resolve anyway is bun's business and not what this test is for; what matters is
-        // that the run continued and the entry still produced a sample, where before the whole
-        // worker was killed and everything from `hang.ts` onwards was missing.
         expect(result.self.has(entry)).toBe(true);
     });
 

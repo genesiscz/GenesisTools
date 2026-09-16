@@ -14,6 +14,11 @@ export interface ImportSite {
     /** Local binding names, matched against identifiers later (alias-aware). */
     locals: string[];
     line: number;
+    /**
+     * `import()` under a module-scope `await`. That call blocks evaluation, so it is a load-time
+     * edge even though `kind` stays `"dynamic"`.
+     */
+    awaited?: boolean;
 }
 
 export type SideEffectKind =
@@ -116,7 +121,6 @@ export interface Finding {
         | "side-effects"
         | "large-subtree"
         | "barrel"
-        | "unused-reexports"
         | "exits-on-import"
         | "import-error"
         | "cycle";

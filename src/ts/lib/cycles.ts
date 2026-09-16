@@ -1,10 +1,13 @@
-import { startupEdges } from "./graph";
+import { loadTimeEdges } from "./graph";
 import type { WorkerSample } from "./measure";
 import type { ImportGraph } from "./types";
 
 export interface ImportCycle {
+    /** Absolute module ids; used internally so two files that share a label cannot alias. */
+    memberIds: string[];
+    /** Repo-relative labels, for render and JSON. */
     members: string[];
-    /** `from:line -> to` for every startup edge inside the cycle. */
+    /** `from:line -> to` for every load-time edge inside the cycle. */
     edges: Array<{ from: string; to: string; line: number }>;
     selfMs: number;
 }
@@ -32,7 +35,7 @@ export function findCycles(graph: ImportGraph, self?: Map<string, WorkerSample>)
         counter++;
         stack.push(id);
         onStack.add(id);
-        frames.push({ id, edges: startupEdges(graph, id).map((edge) => edge.to), next: 0 });
+        frames.push({ id, edges: loadTimeEdges(graph, id).map((edge) => edge.to), next: 0 });
     }
 
     for (const start of graph.nodes.keys()) {
@@ -87,7 +90,8 @@ export function findCycles(graph: ImportGraph, self?: Map<string, WorkerSample>)
 
     for (const component of components) {
         const members = new Set(component);
-        const selfLoop = component.length === 1 && startupEdges(graph, component[0]).some((e) => e.to === component[0]);
+        const selfLoop =
+            component.length === 1 && loadTimeEdges(graph, component[0]).some((e) => e.to === component[0]);
 
         if (component.length < 2 && !selfLoop) {
             continue;
@@ -99,7 +103,7 @@ export function findCycles(graph: ImportGraph, self?: Map<string, WorkerSample>)
         for (const id of component) {
             selfMs += self?.get(id)?.ms ?? 0;
 
-            for (const edge of startupEdges(graph, id)) {
+            for (const edge of loadTimeEdges(graph, id)) {
                 if (members.has(edge.to)) {
                     edges.push({
                         from: graph.nodes.get(id)?.label ?? id,
@@ -111,6 +115,7 @@ export function findCycles(graph: ImportGraph, self?: Map<string, WorkerSample>)
         }
 
         cycles.push({
+            memberIds: [...component],
             members: component.map((id) => graph.nodes.get(id)?.label ?? id).sort(),
             edges,
             selfMs,

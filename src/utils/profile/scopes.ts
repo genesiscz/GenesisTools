@@ -20,6 +20,7 @@ export const PROFILER_SCOPE_NAMES = [
     "pipeline",
     "ai-proxy",
     "ttyd",
+    "ts",
     "macos-mail",
     "chrome-devtools",
     "ts",

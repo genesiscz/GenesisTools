@@ -1,4 +1,4 @@
-import { reachableFrom, startupEdges } from "./graph";
+import { exclusiveFrom, loadTimeEdges, reachableFrom } from "./graph";
 import type { WorkerSample } from "./measure";
 import type { ImportGraph } from "./types";
 
@@ -34,7 +34,7 @@ export function findLazyCandidates(graph: ImportGraph, self: Map<string, WorkerS
             continue;
         }
 
-        for (const edge of startupEdges(graph, importer)) {
+        for (const edge of loadTimeEdges(graph, importer)) {
             const site = edge.site;
 
             if (site.kind !== "static" || site.locals.length === 0) {
@@ -49,20 +49,14 @@ export function findLazyCandidates(graph: ImportGraph, self: Map<string, WorkerS
                 continue;
             }
 
-            const withoutEdge = reachableFrom(graph, graph.entry, { from: importer, to: edge.to });
-            let exclusiveModules = 0;
+            const exclusive = exclusiveFrom(graph, graph.entry, { from: importer, to: edge.to });
             let savingMs = 0;
 
-            for (const id of [edge.to, ...reachableFrom(graph, edge.to)]) {
-                if (withoutEdge.has(id)) {
-                    continue;
-                }
-
-                exclusiveModules++;
+            for (const id of exclusive) {
                 savingMs += self.get(id)?.ms ?? 0;
             }
 
-            if (exclusiveModules === 0) {
+            if (exclusive.size === 0) {
                 continue;
             }
 
@@ -80,7 +74,7 @@ export function findLazyCandidates(graph: ImportGraph, self: Map<string, WorkerS
                 line: site.line,
                 target: target?.label ?? edge.to,
                 locals: site.locals,
-                exclusiveModules,
+                exclusiveModules: exclusive.size,
                 savingMs,
                 caveats,
             });

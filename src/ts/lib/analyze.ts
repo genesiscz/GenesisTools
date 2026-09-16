@@ -53,10 +53,12 @@ export function computeTotals(
     const position = new Map(order.map((id, index) => [id, index]));
 
     for (const cycle of findCycles(graph)) {
-        // `members` are labels; map back to ids through the graph so the lookup is by id.
-        const ids = [...graph.nodes.values()]
-            .filter((node) => cycle.members.includes(node.label))
-            .map((node) => node.id);
+        const ids = cycle.memberIds;
+
+        if (ids.length === 0) {
+            continue;
+        }
+
         const first = ids.reduce((best, id) =>
             (position.get(id) ?? Infinity) < (position.get(best) ?? Infinity) ? id : best
         );

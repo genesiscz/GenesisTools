@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeRecursive } from "@genesiscz/utils/fs";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { ImportGraph } from "./types";
@@ -139,48 +140,128 @@ export async function measureGraph(options: MeasureOptions): Promise<MeasureResu
     const planPath = join(dir, "plan.txt");
     writeFileSync(planPath, `${importable.join("\n")}\n`);
 
-    const moduleTimeoutMs = options.moduleTimeoutMs ?? Math.max(1_000, Math.floor(options.timeoutMs / 3));
+    const eachModuleTimeoutMs = options.moduleTimeoutMs ?? Math.max(1_000, Math.floor(options.timeoutMs / 3));
+    // Cold imports the entry in an empty process: that import IS the whole graph, so the
+    // per-module deadline has to be the outer timeout, not a third of it.
+    const coldModuleTimeoutMs = options.moduleTimeoutMs ?? options.timeoutMs;
     const self = new Map<string, WorkerSample>();
     let cold: WorkerSample | undefined;
     let stderr = "";
     let timedOut = false;
 
-    for (let run = 0; run < options.runs; run++) {
-        const each = await prof.measureAsync(`each run ${run + 1}`, () =>
-            runWorker({
-                planPath,
-                outPath: join(dir, `each-${run}.tsv`),
-                mode: "each",
-                cwd: options.cwd,
-                timeoutMs: options.timeoutMs,
-                moduleTimeoutMs,
-            })
-        );
+    try {
+        for (let run = 0; run < options.runs; run++) {
+            const each = await prof.measureAsync(`each run ${run + 1}`, () =>
+                runEachPlan({
+                    importable,
+                    dir,
+                    run,
+                    cwd: options.cwd,
+                    timeoutMs: options.timeoutMs,
+                    moduleTimeoutMs: eachModuleTimeoutMs,
+                })
+            );
+            timedOut = timedOut || each.timedOut;
+            stderr = each.stderr.length > stderr.length ? each.stderr : stderr;
+
+            for (const [id, sample] of each.self) {
+                keepBest(self, id, sample);
+            }
+
+            const coldRun = await prof.measureAsync(`cold run ${run + 1}`, () =>
+                runWorker({
+                    planPath,
+                    outPath: join(dir, `cold-${run}.tsv`),
+                    mode: "cold",
+                    cwd: options.cwd,
+                    timeoutMs: options.timeoutMs,
+                    moduleTimeoutMs: coldModuleTimeoutMs,
+                })
+            );
+            timedOut = timedOut || coldRun.timedOut;
+            const coldSample = coldRun.samples.get(importable.length - 1);
+
+            if (coldSample && (!cold || coldSample.ms < cold.ms)) {
+                cold = coldSample;
+            }
+        }
+
+        logger.debug({ measured: self.size, planned: importable.length, cold: cold?.ms, timedOut }, "ts: measured");
+        return { self, cold, stderr, timedOut };
+    } finally {
+        removeRecursive(dir);
+    }
+}
+
+/**
+ * One `each` plan may take several workers: a hang `realExit`s so later lines are not timed
+ * inside a process that is still evaluating the hung module. The tail (skipping the hung id)
+ * runs in a fresh worker.
+ */
+async function runEachPlan(options: {
+    importable: string[];
+    dir: string;
+    run: number;
+    cwd: string;
+    timeoutMs: number;
+    moduleTimeoutMs: number;
+}): Promise<{ self: Map<string, WorkerSample>; stderr: string; timedOut: boolean }> {
+    const self = new Map<string, WorkerSample>();
+    let stderr = "";
+    let timedOut = false;
+    let offset = 0;
+
+    while (offset < options.importable.length) {
+        const slice = options.importable.slice(offset);
+        const slicePlan = join(options.dir, `plan-each-${options.run}-${offset}.txt`);
+        writeFileSync(slicePlan, `${slice.join("\n")}\n`);
+        const each = await runWorker({
+            planPath: slicePlan,
+            outPath: join(options.dir, `each-${options.run}-${offset}.tsv`),
+            mode: "each",
+            cwd: options.cwd,
+            timeoutMs: options.timeoutMs,
+            moduleTimeoutMs: options.moduleTimeoutMs,
+        });
         timedOut = timedOut || each.timedOut;
         stderr = each.stderr.length > stderr.length ? each.stderr : stderr;
 
+        let hangIndex: number | undefined;
+        let lastIndex = -1;
+
         for (const [index, sample] of each.samples) {
-            keepBest(self, importable[index], sample);
+            const id = slice[index];
+
+            if (!id) {
+                continue;
+            }
+
+            keepBest(self, id, sample);
+            lastIndex = Math.max(lastIndex, index);
+
+            if (sample.status === "hang") {
+                hangIndex = index;
+            }
         }
 
-        const coldRun = await prof.measureAsync(`cold run ${run + 1}`, () =>
-            runWorker({
-                planPath,
-                outPath: join(dir, `cold-${run}.tsv`),
-                mode: "cold",
-                cwd: options.cwd,
-                timeoutMs: options.timeoutMs,
-                moduleTimeoutMs,
-            })
-        );
-        timedOut = timedOut || coldRun.timedOut;
-        const coldSample = coldRun.samples.get(importable.length - 1);
-
-        if (coldSample && (!cold || coldSample.ms < cold.ms)) {
-            cold = coldSample;
+        if (each.timedOut) {
+            break;
         }
+
+        if (hangIndex !== undefined) {
+            offset += hangIndex + 1;
+            continue;
+        }
+
+        if (lastIndex < slice.length - 1) {
+            logger.warn(
+                { run: options.run, offset, lastIndex, planned: slice.length },
+                "ts: measure worker exited before the plan ended"
+            );
+        }
+
+        break;
     }
 
-    logger.debug({ measured: self.size, planned: importable.length, cold: cold?.ms, timedOut }, "ts: measured");
-    return { self, cold, stderr, timedOut };
+    return { self, stderr, timedOut };
 }

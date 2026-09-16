@@ -35,7 +35,7 @@ tools ts imports analyze src/du/index.ts --json > /tmp/du-imports.json
 
 Nothing here is estimated from file size. Every number is a measurement in a fresh `bun` process.
 
-1. **Static graph.** The entry is parsed with ast-grep; every runtime import edge is followed and resolved with `Bun.resolveSync`, so tsconfig `paths` (`@genesiscz/utils/*`, `@app/*`) resolve exactly as they do at runtime. `import type` and `import { type X }` are dropped, because Bun erases them. Dynamic `import()` edges are recorded but not followed unless `--include-dynamic` is set. A package under `node_modules` is one leaf node: its self time is the whole package, which is the number you can act on. `--walk-packages` parses inside packages too.
+1. **Static graph.** The entry is parsed with ast-grep; every runtime import edge is followed and resolved with `Bun.resolveSync`, so tsconfig `paths` (`@genesiscz/utils/*`, `@app/*`) resolve exactly as they do at runtime. `import type` and `import { type X }` are dropped, because Bun erases them. Module-scope `await import()` is a load-time edge and is always followed. Deferred `import()` inside a function is recorded but not followed unless `--include-dynamic` is set. A package under `node_modules` is one leaf node: its self time is the whole package, which is the number you can act on. `--walk-packages` parses inside packages too.
 
 2. **Self time.** One worker process (`lib/measure-worker.ts`, deliberately free of repo imports) imports every module in the graph **children first**. Because each module's static children are already in the module cache when it is imported, the time `await import(module)` takes is that module's own evaluation and nothing else. This is the same module-cache behaviour that makes a naive script double count, turned into the measurement.
 
@@ -49,9 +49,9 @@ Things the measurement is honest about:
 
 - **Import cycles.** The whole cycle evaluates when its first member is imported, so that member's self time is the cycle's and the others read near zero. Cycle members carry a `⇄` mark, and the "Why" section names which member paid.
 - **A module that calls `process.exit()` while being imported** (a CLI entrypoint that parses argv at module scope) is reported as `exits-on-import`; the worker catches the exit, records the time, and keeps going.
-- **A module that never resolves** (a top-level await on a prompt, say) is given up on after its own deadline, a third of `--timeout`, and reported as a `hang` row. The run continues, so one bad module costs one deadline instead of the whole measurement. `--timeout` stays as the backstop for a module that blocks the event loop synchronously, and everything measured before a kill survives, because the worker appends one line per module as it goes.
+- **A module that never resolves** (a top-level await on a prompt, say) is given up on after its own deadline — a third of `--timeout` in children-first mode, the full `--timeout` for a cold import of the entry — and reported as a `hang` row. The worker then exits; remaining plan lines run in a fresh process so a hung evaluation cannot pollute later self times. `--timeout` stays as the backstop for a module that blocks the event loop synchronously, and everything measured before a kill survives, because the worker appends one line per module as it goes.
 - **The worker runs an entrypoint with `--help` in argv**, not with an empty one. Commander runs its DEFAULT action for an empty argv, and a default action that opens a prompt never returns: `tools ai` used to have both of its workers killed at 60 s for exactly that, and the table was then built from a partial results file with nothing on screen saying so. `--help` is also the argv that loads every subcommand tree, which is what a cost analysis of an entrypoint wants.
-- **A partial run says so.** When a worker is killed, or a planned module comes back with no sample, a warning is printed ABOVE the table naming how many of the plan are missing; `--json` carries `timedOut`, `planned` and `unmeasured`.
+- **A partial run says so.** When a worker is killed, or a planned module comes back with no sample, a warning is printed ABOVE the table naming how many of the plan are missing; `--json` is always an array of sessions and every command carries `timedOut`, `planned` and `unmeasured`.
 - **A package's self time depends on what is already warm.** `@parcel/watcher` measures about 4.5 ms in the children-first plan, where `node:fs` and friends are already loaded, and about 7.5 ms imported alone in an empty process. Both are real; the tool reports the marginal one.
 
 ## Reading `analyze`
@@ -91,7 +91,7 @@ For `import { a, b } from "<barrel>"`, the names are traced to the re-export tar
 
 ## `cycles`
 
-Tarjan's strongly connected components over the startup edges. A cycle is where "X is not a function" at import time comes from: whichever member evaluates first sees the others' exports as `undefined` until they finish. Dynamic imports are not edges here; they never cycle at load time.
+Tarjan's strongly connected components over load-time edges (static, require, module-scope `await import()`). A cycle is where "X is not a function" at import time comes from: whichever member evaluates first sees the others' exports as `undefined` until they finish. Deferred `import()` is not an edge here, even with `--include-dynamic`; it never cycles at load time.
 
 ## Options
 
