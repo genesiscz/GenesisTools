@@ -6,7 +6,7 @@ import { withSpawnCounter } from "./spawn-counter";
 describe.skipIf(skip.onWindows)("withSpawnCounter", () => {
     test("counts Bun.spawnSync and records its argv", async () => {
         const { result, count, spawns } = await withSpawnCounter(async () => {
-            Bun.spawnSync(["true"]);
+            Bun.spawnSync(["true"], { env: process.env });
             return "done";
         });
 
@@ -19,7 +19,7 @@ describe.skipIf(skip.onWindows)("withSpawnCounter", () => {
 
     test("counts Bun.spawn called with an options object", async () => {
         const { spawns } = await withSpawnCounter(async () => {
-            const proc = Bun.spawn({ cmd: ["true"], stdout: "ignore", stderr: "ignore" });
+            const proc = Bun.spawn({ cmd: ["true"], stdout: "ignore", stderr: "ignore", env: process.env });
             await proc.exited;
         });
 
@@ -65,7 +65,7 @@ describe.skipIf(skip.onWindows)("withSpawnCounter", () => {
 
         await expect(
             withSpawnCounter(async () => {
-                Bun.spawnSync(["true"]);
+                Bun.spawnSync(["true"], { env: process.env });
                 throw new Error("boom");
             })
         ).rejects.toThrow("boom");
@@ -77,7 +77,7 @@ describe.skipIf(skip.onWindows)("withSpawnCounter", () => {
     test("nests, so an inner window is also visible to the outer one", async () => {
         const outer = await withSpawnCounter(async () => {
             return await withSpawnCounter(async () => {
-                Bun.spawnSync(["true"]);
+                Bun.spawnSync(["true"], { env: process.env });
             });
         });
 
