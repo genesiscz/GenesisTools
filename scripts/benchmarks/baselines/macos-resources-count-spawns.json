@@ -1,0 +1,17 @@
+{
+    "name": "macos-resources-count-spawns",
+    "capturedAt": "2026-09-16T16:12:13.786Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        53.2919921875,
+        78.5771484375,
+        104.12744140625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "spawnsFirstCycle": 37,
+        "spawnsSteadyCycle": 2,
+        "cycleMsSteadyMedian": 319.2119789999997
+    },
+    "notes": "the NEW headless core; there is no before for this metric because the old code had no importable cycle"
+}

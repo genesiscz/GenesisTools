@@ -1,0 +1,17 @@
+{
+    "name": "macos-resources-spawn-storm",
+    "capturedAt": "2026-09-16T16:57:38.578Z",
+    "commit": "0278633cb",
+    "loadAvg": [
+        481.3427734375,
+        235.48388671875,
+        136.412109375
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "cpuPercent": 4.496402877697841,
+        "rssMb": 144.5625,
+        "spawnsPerMinute": 10470.482469283786
+    },
+    "notes": "pre-rewrite code, recorded from src/macos-resources/_benchold/ (a copy of HEAD) on a quiet machine"
+}
