@@ -401,6 +401,46 @@ private func remove(_ params: NotifyRemoveParams) {
     }
 }
 
+/// Ask macOS for notification permission and WAIT for the answer.
+///
+/// `notify.post` also calls `requestAuthorization`, but that process exits a few hundred
+/// milliseconds later, which is not long enough for a user to answer a prompt. This one holds the
+/// run loop open until the callback fires, so the prompt can actually be answered.
+///
+/// ⚠️ macOS shows the prompt only while the status is `notDetermined`. Once it is `authorized` or
+/// `denied` the call returns immediately with no UI, and the only way to change the answer is
+/// System Settings. This reports which of those happened rather than pretending it asked.
+private func authorize(timeoutSeconds: Double) {
+    let center = UNUserNotificationCenter.current()
+
+    center.getNotificationSettings { before in
+        let wasDetermined = before.authorizationStatus != .notDetermined
+
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            center.getNotificationSettings { after in
+                emitResult([
+                    "granted": granted,
+                    // A prompt is only possible while the status is notDetermined. Reporting this
+                    // the wrong way round once already made the reply contradict its own note.
+                    "prompted": !wasDetermined,
+                    "statusBefore": describe(before.authorizationStatus),
+                    "statusAfter": describe(after.authorizationStatus),
+                    "alertStyle": describe(after.alertStyle),
+                    "error": error?.localizedDescription ?? "",
+                    "note": wasDetermined
+                        ? "Already answered once, so macOS showed no prompt. Change it in System Settings > Notifications."
+                        : "macOS was asked for the first time.",
+                ])
+            }
+        }
+    }
+
+    // A prompt the user never answers must not wedge the caller forever.
+    DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds) {
+        emitError(code: "timeout", message: "no answer within \(Int(timeoutSeconds))s", exitCode: 75)
+    }
+}
+
 /// What macOS actually thinks of us. `notify.post` reporting success only means the request was
 /// accepted; a provisional or quiet authorization accepts it and then never shows a banner, which
 /// looks identical from the caller's side. This is the only way to tell those apart.
@@ -480,7 +520,7 @@ private func list() {
 /// bump it: a client discovers those from `rpc.hello`'s method list instead.
 let rpcProtocolVersion = 1
 
-let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status"]
+let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize"]
 
 /// `GenesisTools --rpc '<json>'`, or `--rpc -` to read the request from stdin: run one method and
 /// exit with one JSON line on stdout.
@@ -543,6 +583,9 @@ func runRpc(_ arguments: [String]) -> Never {
 
     case "notify.status":
         status()
+
+    case "notify.authorize":
+        authorize(timeoutSeconds: 120)
 
     default:
         emitError(code: "method_unknown", message: "unknown method \(envelope.method)", exitCode: 69)
