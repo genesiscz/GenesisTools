@@ -231,6 +231,7 @@ async function stopChild(child: Bun.Subprocess, tuiPid: number): Promise<boolean
     log.warn({ tuiPid }, "SIGINT on the pty wrapper left the TUI alive; signalling the TUI directly");
 
     try {
+        // pid-verified: tuiPid is the bun run we spawned this arm, re-checked after SIGINT
         process.kill(tuiPid, "SIGTERM");
     } catch (err) {
         log.debug({ err, tuiPid }, "SIGTERM raced the process exiting");
@@ -244,6 +245,7 @@ async function stopChild(child: Bun.Subprocess, tuiPid: number): Promise<boolean
     child.kill("SIGKILL");
 
     try {
+        // pid-verified: same tuiPid as above, still the arm this run started
         process.kill(tuiPid, "SIGKILL");
     } catch (err) {
         log.debug({ err, tuiPid }, "SIGKILL raced the process exiting");
@@ -302,6 +304,7 @@ async function sweepSurvivors(entry: string): Promise<void> {
         log.warn({ pid, entry }, "a second process of the entry outlived the run; killing it");
 
         try {
+            // pid-verified: survivorsOf matched a live `bun run ${entry}` ps row this sweep
             process.kill(pid, "SIGKILL");
         } catch (err) {
             log.debug({ err, pid }, "survivor exited before the kill landed");

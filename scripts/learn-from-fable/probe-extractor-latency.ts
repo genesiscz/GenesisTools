@@ -66,7 +66,7 @@ for (const probe of PROBES) {
             `${probe.label.padEnd(20)} wall=${(wall / 1000).toFixed(1)}s ` +
                 `proxy=${(result.elapsedMs / 1000).toFixed(1)}s ` +
                 `overhead=${((wall - result.elapsedMs) / 1000).toFixed(2)}s ` +
-                `in=${result.usage?.prompt_tokens ?? "?"} out=${result.usage?.completion_tokens ?? "?"} ` +
+                `in=${result.usage?.promptTokens ?? "?"} out=${result.usage?.completionTokens ?? "?"} ` +
                 `parsed=${result.parsed ? "yes" : `no (${result.parseError ?? "-"})`}`
         );
     } catch (err) {
