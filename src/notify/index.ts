@@ -4,11 +4,29 @@ import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import type { GenesisAppRpcFailure, GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
 import type { NotificationAction, NotificationOptions } from "@genesiscz/utils/macos/notifications";
-import { askNotification, postNotification, readNotificationReply } from "@genesiscz/utils/macos/notifications";
+import {
+    askNotification,
+    authorizeNotifications,
+    listNotifications,
+    notificationStatus,
+    openNotificationSettings,
+    parseNotificationOptions,
+    postNotification,
+    readNotificationReply,
+    removeNotifications,
+} from "@genesiscz/utils/macos/notifications";
 import type { ChannelConfigs } from "@genesiscz/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
+import {
+    createBoxTable,
+    formatDotStatus,
+    renderCliHeader,
+    renderCliKeyRow,
+    truncateDisplay,
+} from "@genesiscz/utils/table";
 import { Command } from "commander";
 import pc from "picocolors";
 
@@ -261,7 +279,7 @@ const program = new Command();
 
 program
     .name("notify")
-    .description("Send macOS notifications via terminal-notifier")
+    .description("Send macOS notifications via GenesisTools.app")
     .argument("[message]", "Notification message")
     .option("-t, --title <title>", "Notification title")
     .option("-s, --subtitle <subtitle>", "Notification subtitle")
@@ -427,6 +445,194 @@ program
         out.println(reply.text ?? reply.actionId);
     });
 
+program
+    .command("status")
+    .description("Show what macOS thinks of GenesisTools.app notifications")
+    .option("--json", "Print the status as JSON")
+    .action(async (options: { json?: boolean }) => {
+        const outcome = await notificationStatus();
+
+        if (!printRpcOutcome(outcome, options.json)) {
+            return;
+        }
+
+        if (options.json) {
+            out.result(outcome.result);
+            return;
+        }
+
+        const status = outcome.result;
+        const authKind =
+            status.authorization === "authorized" ? "ok" : status.authorization === "denied" ? "err" : "warn";
+        renderCliHeader("Notifications", status.bundleId);
+        renderCliKeyRow("AUTH", formatDotStatus(authKind, status.authorization), 12);
+        renderCliKeyRow("STYLE", status.alertStyle, 12);
+        renderCliKeyRow(
+            "TEMPORARY",
+            status.temporary ? "yes — banners fade in ~5s; pick Persistent in System Settings" : "no",
+            12
+        );
+        renderCliKeyRow("SOUND", status.soundSetting, 12);
+        renderCliKeyRow("BUNDLE", truncateDisplay(status.bundlePath, 80), 12);
+
+        if (status.temporary) {
+            out.println();
+            out.println(`  ${pc.dim("Next")} ${suggestCommand("tools notify", { replaceCommand: ["settings"] })}`);
+        }
+
+        if (status.authorization === "notDetermined" || status.authorization === "denied") {
+            out.println();
+            out.println(`  ${pc.dim("Next")} ${suggestCommand("tools notify", { replaceCommand: ["authorize"] })}`);
+        }
+    });
+
+program
+    .command("authorize")
+    .description("Ask macOS for notification permission and wait for the answer")
+    .option("--json", "Print the result as JSON")
+    .action(async (options: { json?: boolean }) => {
+        const outcome = await authorizeNotifications();
+
+        if (!printRpcOutcome(outcome, options.json)) {
+            return;
+        }
+
+        if (options.json) {
+            out.result(outcome.result);
+            return;
+        }
+
+        const granted = outcome.result.granted === true;
+        out.println(granted ? "granted" : "not granted");
+
+        if (typeof outcome.result.note === "string" && outcome.result.note.length > 0) {
+            out.println(pc.dim(outcome.result.note));
+        }
+    });
+
+program
+    .command("settings")
+    .description("Open System Settings > Notifications for GenesisTools.app")
+    .option("--json", "Print the result as JSON")
+    .action(async (options: { json?: boolean }) => {
+        const outcome = await openNotificationSettings();
+
+        if (!printRpcOutcome(outcome, options.json)) {
+            return;
+        }
+
+        if (options.json) {
+            out.result(outcome.result);
+            return;
+        }
+
+        out.println(outcome.result.opened);
+    });
+
+program
+    .command("list")
+    .description("List notifications still in Notification Center from GenesisTools.app")
+    .option("--json", "Print the list as JSON")
+    .action(async (options: { json?: boolean }) => {
+        const rows = await listNotifications();
+
+        if (rows === null) {
+            printAppUnavailable();
+            return;
+        }
+
+        if (options.json) {
+            out.result({ notifications: rows });
+            return;
+        }
+
+        if (rows.length === 0) {
+            out.println("No delivered GenesisTools.app notifications.");
+            return;
+        }
+
+        const table = createBoxTable(["ID", "TITLE", "MESSAGE", "GROUP"]);
+
+        for (const row of rows) {
+            table.push([
+                pc.white(truncateDisplay(row.id, 36)),
+                truncateDisplay(row.title, 24),
+                truncateDisplay(row.message, 40),
+                truncateDisplay(row.group, 16),
+            ]);
+        }
+
+        out.println(table.toString());
+    });
+
+program
+    .command("remove")
+    .description("Retract notifications posted by GenesisTools.app")
+    .argument("[ids...]", "Notification ids to retract")
+    .option("--group <id>", "Remove every notification in this group")
+    .option("--all", "Remove every GenesisTools.app notification")
+    .option("--json", "Print the result as JSON")
+    .action(async (ids: string[], options: { group?: string; all?: boolean; json?: boolean }) => {
+        if (!options.all && !options.group && ids.length === 0) {
+            out.error("notify remove needs ids, --group, or --all");
+            out.info(suggestCommand("tools notify", { replaceCommand: ["remove", "--all"] }));
+            process.exitCode = 1;
+            return;
+        }
+
+        const removed = await removeNotifications({
+            ids: ids.length > 0 ? ids : undefined,
+            group: options.group,
+            all: options.all,
+        });
+
+        if (removed === null) {
+            printAppUnavailable();
+            return;
+        }
+
+        if (options.json) {
+            out.result({ removed });
+            return;
+        }
+
+        out.println(removed === "all" ? "removed all" : `removed ${removed.join(" ")}`);
+    });
+
+function printAppUnavailable(): void {
+    out.error("GenesisTools.app is not installed, or routing is switched off.");
+    out.info(suggestCommand("tools macos permissions", { replaceCommand: ["build"] }));
+    process.exitCode = 1;
+}
+
+function printRpcFailure(error: GenesisAppRpcFailure): void {
+    out.error(`${error.code}: ${error.message}`);
+
+    if (error.code === "unavailable") {
+        out.info(suggestCommand("tools macos permissions", { replaceCommand: ["build"] }));
+    } else if (error.code === "not_determined" || error.code === "denied") {
+        out.info(suggestCommand("tools notify", { replaceCommand: ["authorize"] }));
+    }
+
+    process.exitCode = 1;
+}
+
+function printRpcOutcome<T>(outcome: GenesisAppRpcOutcome<T>, json?: boolean): outcome is { ok: true; result: T } {
+    if (outcome.ok) {
+        return true;
+    }
+
+    if (json) {
+        out.result(outcome);
+    } else {
+        printRpcFailure(outcome.error);
+        return false;
+    }
+
+    process.exitCode = 1;
+    return false;
+}
+
 /**
  * `tools notify --payload '<json>'` (or `--payload -` for stdin).
  *
@@ -436,28 +642,30 @@ program
  */
 async function sendPayload(source: string, wait: boolean, timeoutMs: number): Promise<void> {
     const raw = source === "-" ? await Bun.stdin.text() : source;
-    let payload: NotificationOptions;
+    let parsed: unknown;
 
     try {
-        payload = SafeJSON.parse(raw, { strict: true }) as NotificationOptions;
+        parsed = SafeJSON.parse(raw, { strict: true });
     } catch (error) {
         out.error(`--payload is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
         process.exitCode = 1;
         return;
     }
 
-    if (!payload?.message) {
-        out.error("--payload needs at least a `message` field");
+    const payload = parseNotificationOptions(parsed);
+
+    if (!payload.ok) {
+        out.error(payload.error);
         process.exitCode = 1;
         return;
     }
 
     if (!wait) {
-        out.result(await postNotification(payload));
+        out.result(await postNotification(payload.value));
         return;
     }
 
-    const reply = await askNotification(payload, { timeoutMs });
+    const reply = await askNotification(payload.value, { timeoutMs });
     out.result(reply ?? { answered: false });
 
     if (!reply) {

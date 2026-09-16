@@ -2,9 +2,10 @@
  * `ax-tool --id` lookup cost against a known accessibility-hierarchy depth.
  *
  * `findByIdentifier` (`native/ax-tool/Sources/main.swift`) recurses the accessibility tree with
- * no depth cap, while every sibling walker in the same file caps at 10 or 15. This script builds
- * a fixture app whose third window holds a chain of nested `NSBox`es of a chosen depth with one
- * button at the bottom, then times `ax-tool get --id deep-leaf` against it.
+ * `maxDepth: 50`. The depth-60 arm of this fixture must stay unfound — that is the cap working —
+ * while every sibling walker in the same file caps at 10 or 15. This script builds a fixture app
+ * whose third window holds a chain of nested `NSBox`es of a chosen depth with one button at the
+ * bottom, then times `ax-tool get --id deep-leaf` against it.
  *
  * ONE NSBox IS ONE ACCESSIBILITY LEVEL, measured, not assumed: with a 60-box chain the leaf first
  * appears at `ax-tool list --depth 61`. So a `maxDepth` of 15 puts the leaf out of reach at every

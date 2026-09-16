@@ -164,6 +164,9 @@ function installHostEffectGuards(): void {
         // timeout with no indication why.
         askNotification: blockedAsync("askNotification", "Assert the question payload; fake the reply."),
         readNotificationReply: blockedAsync("readNotificationReply", "Fake the reply instead of reading one."),
+        authorizeNotifications: blockedAsync("authorizeNotifications", "Do not raise the grant prompt from a test."),
+        openNotificationSettings: blockedAsync("openNotificationSettings", "Do not open System Settings from a test."),
+        notificationStatus: blockedAsync("notificationStatus", "Fake the status; do not spawn the app."),
     }));
 
     mock.module("@genesiscz/utils/macos/genesis-app-rpc", () => ({

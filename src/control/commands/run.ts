@@ -200,8 +200,7 @@ export function registerRunCommand(program: Command): void {
                 if (timeline && typeof step.atMs === "number") {
                     const wait = step.atMs - (performance.now() - startedAt);
                     if (wait > 0) {
-                        // lint-rules-ignore: control replays a recorded timeline; this process does nothing else while it waits
-                        Bun.sleepSync(wait);
+                        await Bun.sleep(wait);
                     }
                 }
 
@@ -274,8 +273,7 @@ export function registerRunCommand(program: Command): void {
                 if (!timeline) {
                     const stepDelay = typeof step.delay === "number" ? step.delay : delay;
                     if (stepDelay > 0) {
-                        // lint-rules-ignore: control replays steps at a fixed delay; this process does nothing else while it waits
-                        Bun.sleepSync(stepDelay);
+                        await Bun.sleep(stepDelay);
                     }
                 }
             }

@@ -2134,7 +2134,7 @@ func cmdRecord() {
         eventsOfInterest: mask, callback: callback,
         userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(recorder).toOpaque())
     ) else {
-        errorExit("could not create event tap — grant Accessibility + Input Monitoring to the calling terminal")
+        errorExit("could not create event tap — grant Accessibility + Input Monitoring to GenesisTools.app")
     }
 
     let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)

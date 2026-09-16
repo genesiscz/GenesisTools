@@ -347,14 +347,16 @@ with no program argument is a window instance, and its start time tells you whic
 
 **Notifications specifically** (`src/macos/GenesisTools/Sources/Notify.swift`, reached from
 `src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then
-`GenesisTools --rpc '{"method":"notify.status"}'`. `alertStyle: banner` means macOS's "Temporary" —
-the banner fades in ~5 s, taking its buttons and attachment with it, and **code cannot change this**
+`tools notify status`. `alertStyle: banner` means macOS's "Temporary" — the banner fades in ~5 s,
+taking its buttons and attachment with it, and **code cannot change this**
 (`UNNotificationSettings.alertStyle` is read-only by design). The only fix is the user picking
-"Persistent" in System Settings, deep-linked by `notify.settings`. `timeSensitiveSetting:
+"Persistent" in System Settings, deep-linked by `tools notify settings`. `timeSensitiveSetting:
 notSupported` is likewise permanent: the entitlement needs a provisioning profile a Developer ID
-signature cannot carry, so `ignoreDnD` is accepted and ignored. Click handling logs every launch and
-action to `~/.genesis-tools/app/notify-clicks.log` — read it before theorising, since a click runs in
-a process with no terminal and a dropped click is otherwise indistinguishable from no click at all.
+signature cannot carry, so `ignoreDnD` is accepted and ignored. First grant on a machine is
+`tools notify authorize` (post will not put up a prompt the 8s RPC deadline cannot survive). Click
+handling logs every launch and action to `~/.genesis-tools/app/notify-clicks.log` — read it before
+theorising, since a click runs in a process with no terminal and a dropped click is otherwise
+indistinguishable from no click at all.
 
 ## macOS privacy grants (TCC) live on GenesisTools.app
 

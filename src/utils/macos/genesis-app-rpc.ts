@@ -47,10 +47,15 @@ export function isGenesisAppRpcAvailable(): boolean {
     return installedGenesisAppLauncher() !== null;
 }
 
+export interface GenesisAppRpcOptions<T = unknown> {
+    timeoutMs?: number;
+    isResult?: (value: unknown) => value is T;
+}
+
 export async function genesisAppRpc<T>(
     method: string,
     params?: Record<string, unknown>,
-    opts: { timeoutMs?: number } = {}
+    opts: GenesisAppRpcOptions<T> = {}
 ): Promise<GenesisAppRpcOutcome<T>> {
     const launcher = installedGenesisAppLauncher();
 
@@ -103,14 +108,20 @@ export async function genesisAppRpc<T>(
             };
         }
 
-        return parseReply<T>(method, line, exitCode, stderr);
+        return parseReply<T>(method, line, exitCode, stderr, opts.isResult);
     } finally {
         clearTimeout(timer);
     }
 }
 
 /** Exported for tests: this is where a reply from something other than the app has to be caught. */
-export function parseReply<T>(method: string, line: string, exitCode: number, stderr: string): GenesisAppRpcOutcome<T> {
+export function parseReply<T>(
+    method: string,
+    line: string,
+    exitCode: number,
+    stderr: string,
+    isResult?: (value: unknown) => value is T
+): GenesisAppRpcOutcome<T> {
     let reply: unknown;
 
     try {
@@ -124,38 +135,52 @@ export function parseReply<T>(method: string, line: string, exitCode: number, st
         return { ok: false, error: { code: "handshake", message: `${method} replied in an unknown shape: ${line}` } };
     }
 
-    if (reply.ok) {
-        logger.debug({ method }, "GenesisTools.app RPC ok");
-        return { ok: true, result: reply.result as T };
+    if (!reply.ok) {
+        logger.debug({ method, error: reply.error }, "GenesisTools.app RPC failed");
+        return { ok: false, error: reply.error };
     }
 
-    logger.debug({ method, error: reply.error }, "GenesisTools.app RPC failed");
-    return { ok: false, error: reply.error };
+    if (isResult) {
+        if (!isResult(reply.result)) {
+            logger.debug({ method, line }, "GenesisTools.app RPC result did not match the contract");
+            return {
+                ok: false,
+                error: { code: "handshake", message: `${method} replied with a result that did not match: ${line}` },
+            };
+        }
+
+        logger.debug({ method }, "GenesisTools.app RPC ok");
+        return { ok: true, result: reply.result };
+    }
+
+    logger.debug({ method }, "GenesisTools.app RPC ok");
+    return { ok: true, result: reply.result as T };
 }
 
-interface ReplyShape {
-    ok: boolean;
-    result?: unknown;
-    error: GenesisAppRpcFailure;
+export function isNotifyPostResult(value: unknown): value is { id: string } {
+    return isObject(value) && typeof value.id === "string" && value.id.length > 0;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+type ReplyShape = { ok: true; result: unknown } | { ok: false; error: GenesisAppRpcFailure };
+
+function isRpcError(value: unknown): value is GenesisAppRpcFailure {
+    return isObject(value) && typeof value.code === "string" && typeof value.message === "string";
 }
 
 function isReplyShape(value: unknown): value is ReplyShape {
-    if (typeof value !== "object" || value === null || !("ok" in value)) {
+    if (!isObject(value) || typeof value.ok !== "boolean") {
         return false;
     }
 
-    const candidate = value as { ok: unknown; error?: unknown };
-
-    if (candidate.ok === true) {
-        return true;
+    if (value.ok) {
+        return "result" in value;
     }
 
-    return (
-        typeof candidate.error === "object" &&
-        candidate.error !== null &&
-        "code" in candidate.error &&
-        "message" in candidate.error
-    );
+    return isRpcError(value.error);
 }
 
 function stripUndefined(params: Record<string, unknown>): Record<string, unknown> {
