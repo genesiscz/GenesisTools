@@ -1,0 +1,18 @@
+{
+    "name": "polls-agents-request-wait",
+    "capturedAt": "2026-09-16T16:37:09.761Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        30.44677734375,
+        86.02587890625,
+        114.60498046875
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "feedReads": 134,
+        "readsPerSec": 44.25,
+        "bytesParsedPerSec": 26440021,
+        "cpuPercent": 10.47
+    },
+    "notes": "real sendRequest, 2000-event temp feed, 3000 ms timeout, no reply | 3 runs, median | 18:37  up 4 days, 2 hrs, 35 users, load averages: 30.45 86.03 114.60"
+}

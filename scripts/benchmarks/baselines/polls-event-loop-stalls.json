@@ -1,0 +1,24 @@
+{
+    "name": "polls-event-loop-stalls",
+    "capturedAt": "2026-09-16T16:37:41.520Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        22.07080078125,
+        77.79052734375,
+        110.451171875
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "verifyMaxStallMs": 1055,
+        "verifyP99StallMs": 1055,
+        "verifyStallsOver100Ms": 1,
+        "verifySpawnCount": 4,
+        "verifyElapsedMs": 1065,
+        "launchMaxStallMs": 4144,
+        "launchP99StallMs": 4144,
+        "launchStallsOver100Ms": 1,
+        "launchSpawnCount": 16,
+        "launchElapsedMs": 4154
+    },
+    "notes": "real waitFor (1000 ms / 200 ms) and real injectLeadAssignment (4000 ms), both against targets that never answer | 3 runs, median | 18:37  up 4 days, 2 hrs, 35 users, load averages: 22.07 77.79 110.45"
+}

@@ -1,0 +1,21 @@
+{
+    "name": "polls-codex-control-loop",
+    "capturedAt": "2026-09-16T16:37:25.308Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        26.5634765625,
+        82.4345703125,
+        112.8232421875
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "controlReads": 59,
+        "readsPerSec": 19.42,
+        "bytesParsedPerSec": 628879,
+        "loopCpuPercent": 2.73,
+        "existsChecks": 96,
+        "existsChecksPerSec": 47.97,
+        "waitCpuPercent": 0.75
+    },
+    "notes": "real readControlRequests and waitForControlResponse, 200-entry temp control file, 3000 ms loop, 2000 ms wait | 3 runs, median | 18:37  up 4 days, 2 hrs, 35 users, load averages: 26.56 82.43 112.82"
+}

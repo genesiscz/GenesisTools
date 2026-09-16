@@ -1,0 +1,19 @@
+{
+    "name": "polls-agents-bridge-register",
+    "capturedAt": "2026-09-16T16:38:21.500Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        22.609375,
+        70.8779296875,
+        106.41259765625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "spawnCount": 17,
+        "discoverSpawns": 16,
+        "elapsedMs": 5075,
+        "cpuPercent": 1.23,
+        "medianDiscoverCycleMs": 288.46
+    },
+    "notes": "real CliAgentsTransport, temp GENESIS_TOOLS_HOME, read-only session dir so the 5 s deadline runs in full | 3 runs, median | 18:38  up 4 days,  2:01, 35 users, load averages: 22.61 70.88 106.41"
+}
