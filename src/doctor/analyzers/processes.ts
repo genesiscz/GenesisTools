@@ -106,7 +106,7 @@ export function descendants(pid: number, tree: Map<number, ProcessRecord[]>): Pr
     return out;
 }
 
-function killPidAction(pid: number, label: string): Action {
+export function killPidAction(pid: number, label: string): Action {
     return {
         id: "kill",
         label: `Kill PID ${pid} - ${label}`,

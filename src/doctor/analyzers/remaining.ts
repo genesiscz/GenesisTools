@@ -1,6 +1,7 @@
 import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { BatteryAnalyzer } from "./battery";
 import { BrewAnalyzer } from "./brew";
+import { CpuSpinAnalyzer } from "./cpu-spin";
 import { DevCachesAnalyzer } from "./dev-caches";
 import { NetworkAnalyzer } from "./network";
 import { SecurityAnalyzer } from "./security";
@@ -10,6 +11,7 @@ import { SystemCachesAnalyzer } from "./system-caches";
 export type AnalyzerConstructor = new () => Analyzer;
 
 export const remainingAnalyzerConstructors: AnalyzerConstructor[] = [
+    CpuSpinAnalyzer,
     DevCachesAnalyzer,
     SystemCachesAnalyzer,
     StartupAnalyzer,

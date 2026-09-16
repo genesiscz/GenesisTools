@@ -17,6 +17,9 @@ Diagnose and fix common macOS dev-machine problems — disk bloat, memory pressu
     tools doctor log --since 7d                    # recent actions
     tools doctor stats --since 30d                 # rolled-up reclaim totals
     tools doctor wipe-cache                        # force next run to be fresh
+    tools doctor cpu --window 3000                 # what burned CPU between two samples: busy-waits, stuck app faces
+
+`cpu` reads `ps -o cputime` twice, `--window` milliseconds apart, and lists every process that used at least `--threshold` percent of one core in between (default 25). Two readings of accumulated CPU time are exact where `pcpu` is a decaying average that smears an old spin and hides a fresh one. GenesisTools.app faces and `tools` processes are named as such, with the fix. The same analyzer runs as `cpu-spin` inside the full `tools doctor`; the static half of the same guard is `bun scripts/ci/lint-rules.ts` (timers under 100 ms, `sleepSync` in a loop, a Swift `.wait()` without a timeout).
 
 ## Safety tiers
 

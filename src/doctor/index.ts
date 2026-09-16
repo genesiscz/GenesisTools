@@ -2,6 +2,11 @@
 
 import { homedir } from "node:os";
 import { createDoctorAnalyzers } from "@app/doctor/analyzers";
+import {
+    CPU_SPIN_ANALYZER_ID,
+    CpuSpinAnalyzer,
+    DEFAULT_CPU_SPIN_THRESHOLD_PERCENT,
+} from "@app/doctor/analyzers/cpu-spin";
 import { DiskSpaceAnalyzer } from "@app/doctor/analyzers/disk-space";
 import { wipeCache } from "@app/doctor/lib/cache";
 import { ensureDirs, makeRunId } from "@app/doctor/lib/paths";
@@ -109,6 +114,48 @@ program
         for (const finding of findings) {
             logger.info(`  ${finding.title} - ${finding.detail ?? ""}`);
         }
+    });
+
+program
+    .command("cpu")
+    .description("Sample CPU time twice and list what spun in between: busy-waits, stuck app faces, runaway tools")
+    .option("--window <ms>", "Gap between the two samples", "3000")
+    .option(
+        "--threshold <pct>",
+        "Report at or above this share of one core",
+        String(DEFAULT_CPU_SPIN_THRESHOLD_PERCENT)
+    )
+    .option("--json", "Machine-readable output")
+    .action(async (opts: { window: string; threshold: string; json?: boolean }) => {
+        const windowMs = Number.parseInt(opts.window, 10);
+        const thresholdPercent = Number.parseFloat(opts.threshold);
+
+        if (
+            !Number.isFinite(windowMs) ||
+            windowMs < 100 ||
+            !Number.isFinite(thresholdPercent) ||
+            thresholdPercent <= 0
+        ) {
+            throw new Error("--window must be at least 100 ms and --threshold a positive percentage");
+        }
+
+        const runId = makeRunId();
+        ensureDirs(runId);
+        const shared = {
+            analyzers: [new CpuSpinAnalyzer({ windowMs, thresholdPercent })],
+            runId,
+            only: [CPU_SPIN_ANALYZER_ID],
+            thorough: false,
+            fresh: true,
+            dryRun: Boolean(opts.json),
+        };
+
+        if (opts.json) {
+            await runJson(shared);
+            return;
+        }
+
+        await runPlain(shared);
     });
 
 program
