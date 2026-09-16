@@ -45,6 +45,8 @@ export type SchedulerResilienceOptions = {
     watchdogIntervalMs?: number;
     wedgeThresholdMs?: number;
     loadConfigTimeoutMs?: number;
+    /** Test seam: how often wakefulSleep re-reads shouldAbort while the loop is idle. */
+    wakefulTickMs?: number;
     /** Test seam for process.exit. */
     exit?: (code: number) => void;
     /** Test seam for notifications (threaded through to task runs). */
@@ -94,6 +96,7 @@ export async function runSchedulerLoop(
     const watchdogIntervalMs = resilience.watchdogIntervalMs ?? WATCHDOG_INTERVAL_MS;
     const wedgeThresholdMs = resilience.wedgeThresholdMs ?? WEDGE_THRESHOLD_MS;
     const loadConfigTimeoutMs = resilience.loadConfigTimeoutMs ?? LOAD_CONFIG_TIMEOUT_MS;
+    const wakefulTickMs = resilience.wakefulTickMs;
     const exit = resilience.exit ?? ((code: number) => process.exit(code));
     const notify = resilience.notify ?? dispatchNotification;
     const runTaskImpl = resilience.runTask ?? runTask;
@@ -195,6 +198,7 @@ export async function runSchedulerLoop(
                 const sleepMs = getNextWakeupMs(taskStates, config.tasks);
                 logSchedulerHeartbeat(sleepMs, activeRuns.size);
                 await wakefulSleep(sleepMs, {
+                    tickMs: wakefulTickMs,
                     shouldAbort: () => !running,
                     onWallClockJump: ({ elapsedMs, expectedMs }) => {
                         log.info(
@@ -207,7 +211,7 @@ export async function runSchedulerLoop(
             } catch (err) {
                 consecutiveLoopFailures++;
                 logSchedulerLoopFailure(err, consecutiveLoopFailures);
-                await wakefulSleep(5000, { shouldAbort: () => !running });
+                await wakefulSleep(5000, { tickMs: wakefulTickMs, shouldAbort: () => !running });
             }
         }
 
