@@ -32,13 +32,13 @@ So when you write the end-of-task notification, you can typically rely on a save
 
 ### Running Tests
 
-**Use `bun run test` (or `bun scripts/test.ts <paths>`), never bare `bun test`.** The wrapper stat-checks the dependency tree first (~1ms) and reinstalls when it is missing, partial or stale, then hands off to `bun test` with argv, output and exit code untouched.
+**Use `bun run test` (or `bun scripts/test.ts <paths>`).** The wrapper stat-checks the dependency tree first (~1ms) and reinstalls when it is missing, partial or stale, then hands off argv, output and exit code untouched.
 
-This exists because inside a **git worktree** any `bunx` call creates a partial `node_modules/` that shadows the parent checkout's complete one. Bare `bun test` then fails across a hundred unrelated files with errors like `Cannot find module 'parse5/lib/common/doctype'`, which looks exactly like the branch broke the world. Logic lives in `scripts/test-deps.ts` (`diagnose()` / `lockStamp()`), covered by `scripts/test-deps.test.ts`.
+This exists because inside a **git worktree** any `bunx` call creates a partial `node_modules/` that shadows the parent checkout's complete one. Running the suite without the wrapper then fails across a hundred unrelated files with errors like `Cannot find module 'parse5/lib/common/doctype'`, which looks exactly like the branch broke the world. Logic lives in `scripts/test-deps.ts` (`diagnose()` / `lockStamp()`), covered by `scripts/test-deps.test.ts`.
 
-**A run that stops making progress is killed after 15 minutes**, per `bun test` phase, and the wrapper then prints `[test] suite STALLED` INSTEAD of the `[test] suite complete` marker, so a killed run can never read as a finished one. Raise or disable it with `GENESIS_TOOLS_TEST_MAX_MINUTES=<n>` (`0` = off). It exists because bun 1.3.13 hangs `bun test --parallel` in a checkout with tens of thousands of directories (a worktree carrying a generated `ios/Pods` tree): the coordinator loops on `posix_spawn` past the macOS fd ceiling and never starts a worker. One such run burned 5 h 27 m unnoticed. Run a directory-heavy worktree **serially**; the full rationale and the measured arms are in the block comment in `scripts/test.ts`.
+**A run that stops making progress is killed after 15 minutes**, per `bun run test` phase, and the wrapper then prints `[test] suite STALLED` INSTEAD of the `[test] suite complete` marker, so a killed run can never read as a finished one. Raise or disable it with `GENESIS_TOOLS_TEST_MAX_MINUTES=<n>` (`0` = off). It exists because bun 1.3.13 hangs the parallel suite in a checkout with tens of thousands of directories (a worktree carrying a generated `ios/Pods` tree): the coordinator loops on `posix_spawn` past the macOS fd ceiling and never starts a worker. One such run burned 5 h 27 m unnoticed. Run a directory-heavy worktree **serially**; the full rationale and the measured arms are in the block comment in `scripts/test.ts`.
 
-🛑 **CI runs bun 1.4.2 (which has the fix); the repo still SUPPORTS 1.3.13, which is what developers run.** Those are different statements. A green CI run does not mean the hang is gone on your machine, and a 1.4-only API must not enter the codebase just because CI accepts it.
+🛑 **CI and this machine run bun 1.4.2.** The repo still supports 1.3.13 (`bun-1.3` on PATH). A 1.4-only API must not enter the codebase just because CI accepts it.
 
 **Tests must not use real account names.** Fixture handles, emails, and login ids in `*.test.ts` are invented (`work`, `personal`, `shop`, `side`, `work@shop`, `alice@example.com`). Never copy a live Claude/AI account name, email, or org from this machine into a test. A test that needs several distinct accounts uses those fixtures, not the real ones.
 
@@ -74,7 +74,7 @@ Every teammate/subagent given its own worktree MUST, before ANY other work:
 
 1. **Verify the base commit.** Isolated worktrees are often cut from `origin/master`, NOT the campaign/feature branch you were briefed on. Run `git log --oneline -1`; if the briefed base commit is not an ancestor, `git fetch origin <branch> && git reset --hard <base-sha>`. Building on the wrong base silently invalidates every anchor in your brief.
 2. **Run `bun install` in the worktree.** A worktree without its own `node_modules` resolves imports against the MAIN repo's dependency tree and fabricates failures that look like "the branch broke the world" (verified repeatedly; see also Running Tests below).
-3. **Never bare `bun test`** — always `bun run test` (the wrapper repairs the dependency tree first).
+3. **Always `bun run test`** (the wrapper repairs the dependency tree first).
 
 Skipping any of these has cost real sessions hours; there are no exceptions.
 
