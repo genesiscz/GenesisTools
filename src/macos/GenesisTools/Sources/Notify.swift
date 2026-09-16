@@ -91,6 +91,31 @@ func emitResult(_ result: [String: Any]) -> Never {
     exit(0)
 }
 
+/// How long a method may wait on `usernoted` before this process gives up and says so.
+///
+/// Every method exits through `emitResult` or `emitError`, so a method that finishes simply beats
+/// the timer and it never fires: nothing needs cancelling. Only the methods that wait on a
+/// UserNotifications callback get one; the synchronous ones cannot hang, and `notify.authorize`
+/// arms its own 120 s deadline because a human has to click. Without this, a wedged `usernoted`
+/// left the process alive at 0% CPU, holding the LaunchServices registration for the bundle and
+/// swallowing every notification click, with no signature to find it by.
+private func rpcDeadlineSeconds(for method: String) -> Double? {
+    switch method {
+    case "notify.post", "notify.remove", "notify.list", "notify.status":
+        // Under the 10 s the TypeScript caller allows, so this side reports first with a real reason.
+        return 8
+    default:
+        return nil
+    }
+}
+
+private func armRpcDeadline(for method: String) {
+    guard let seconds = rpcDeadlineSeconds(for: method) else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+        emitError(code: "timeout", message: "\(method) got no answer from the notification service within \(Int(seconds))s", exitCode: 75)
+    }
+}
+
 func emitError(code: String, message: String, exitCode: Int32) -> Never {
     emit(["ok": false, "error": ["code": code, "message": message]])
     exit(exitCode)
@@ -677,6 +702,7 @@ func runRpc(_ arguments: [String]) -> Never {
 
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
+    armRpcDeadline(for: envelope.method)
     UNUserNotificationCenter.current().delegate = sharedNotificationDelegate
 
     // Every request is logged, so the file is a complete record of what this bundle was asked to do

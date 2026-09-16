@@ -255,12 +255,20 @@ func cmdAudit() {
 }
 
 // Recursive search by AXIdentifier. Returns first match.
-func findByIdentifier(_ root: AXUIElement, id: String) -> AXUIElement? {
+//
+// Capped like every other walker here (collectElements 15, buildTree 10, the ancestor climbs 50).
+// One nested NSBox is one accessibility level and Electron trees go past 15, so the cap is the
+// climbs' 50: deep enough for anything real, and a pathological tree ends instead of walking
+// every node for the whole 10 s the caller allows.
+func findByIdentifier(_ root: AXUIElement, id: String, maxDepth: Int = 50, depth: Int = 0) -> AXUIElement? {
     if axStringAttribute(root, "AXIdentifier") == id {
         return root
     }
+    if depth >= maxDepth {
+        return nil
+    }
     for child in axChildren(root) {
-        if let found = findByIdentifier(child, id: id) {
+        if let found = findByIdentifier(child, id: id, maxDepth: maxDepth, depth: depth + 1) {
             return found
         }
     }
@@ -268,9 +276,9 @@ func findByIdentifier(_ root: AXUIElement, id: String) -> AXUIElement? {
 }
 
 // Search across all windows of an app
-func findInApp(_ appElement: AXUIElement, id: String) -> AXUIElement? {
+func findInApp(_ appElement: AXUIElement, id: String, maxDepth: Int = 50) -> AXUIElement? {
     for window in axWindows(appElement) {
-        if let found = findByIdentifier(window, id: id) {
+        if let found = findByIdentifier(window, id: id, maxDepth: maxDepth) {
             return found
         }
     }
@@ -1168,8 +1176,12 @@ func cmdFocus(appName: String) {
 
 func raiseElementWindow(_ el: AXUIElement) {
     var cur = el
-    while let p = axAttribute(cur, "AXWindow") ?? axAttribute(cur, "AXParent") {
-        guard CFGetTypeID(p) == AXUIElementGetTypeID() else { break }
+    // Capped at 50 hops like the other ancestor climbs. Without a cap an element whose AXWindow
+    // answers with something that is not a window and names itself as its own parent spins this
+    // loop at 100% of a core, with no syscall to yield on, until the caller's 10 s kill lands.
+    for _ in 0..<50 {
+        guard let p = axAttribute(cur, "AXWindow") ?? axAttribute(cur, "AXParent") else { return }
+        guard CFGetTypeID(p) == AXUIElementGetTypeID() else { return }
         let pEl = p as! AXUIElement
         if axStringAttribute(pEl, "AXRole") == "AXWindow" {
             let _ = performActionWithTimeout(pEl, action: kAXRaiseAction as String, timeoutMs: 1000)
