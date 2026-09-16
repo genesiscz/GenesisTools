@@ -1,0 +1,20 @@
+{
+    "name": "fs-file-watcher",
+    "capturedAt": "2026-09-16T16:39:41.599Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        15.486328125,
+        57.3076171875,
+        98.04150390625
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "idleCpuPercent": 0.15530893821235753,
+        "idleCpuTimeMs": 7.767,
+        "idleRssBytes": 51183616,
+        "idleFsCalls": 0,
+        "appendLatencyMs": 300.3899999999994,
+        "truncateDetected": 1
+    },
+    "notes": "runs=5 warmup=1 idleWindowMs=5000 appends=10 pollIntervalMs=300 | commit 0d077f1c9 | uptime 18:39  up 4 days,  2:02, 35 users, load averages: 15.49 57.31 98.04"
+}

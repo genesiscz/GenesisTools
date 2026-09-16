@@ -10,7 +10,7 @@ import chalk from "chalk";
 import chokidar from "chokidar";
 import { Command } from "commander";
 import { glob } from "glob";
-import { closeAllFileWatchers, closeFileWatcher, setFileWatcher } from "./file-watchers";
+import { closeAllFileWatchers, closeFileWatcher, hasFileWatcher, setFileWatcher } from "./file-watchers";
 
 // Handle --readme flag early (before Commander parses)
 handleReadmeFlag(import.meta.url);
@@ -367,8 +367,14 @@ function processNewFiles(files: string[]) {
 // Function to directly check for file changes (using fs.watch API)
 async function setupFileWatchers() {
     try {
-        // For each tracked file, set up a watcher for direct file changes
+        // Only files that have no watcher yet. This used to close and recreate every watcher on
+        // every rescan (once a second by default), which was pure churn, and on bun 1.3.13 a
+        // watcher created after any close goes deaf, so the churn also killed the instant path.
         Array.from(matchedFiles).forEach((file) => {
+            if (hasFileWatcher(file)) {
+                return;
+            }
+
             try {
                 const watcher = fs.watch(file, { persistent: true } as WatchOptions, (eventType: WatchEventType) => {
                     if (eventType === "change") {
@@ -452,12 +458,14 @@ async function startWatcher() {
     // Set up direct FS watchers for instant file change detection
     await setupFileWatchers();
 
-    // Configure chokidar options for maximum responsiveness
+    // Native events (FSEvents on macOS), not chokidar's own stat poll. Three pollers used to cover
+    // the same files: this one at 100 ms per file, a 50 ms setInterval below, and the per-file
+    // fs.watch. Events carry appends and new files at once; the once-per-`--seconds` rescan is the
+    // backstop for an event the platform drops, which is the only job a poll has here.
     const watchOptions = {
         persistent: true,
         ignoreInitial: true, // Already did initial scan
-        usePolling: true,
-        interval: 100, // Poll very frequently (100ms) for instant file updates
+        usePolling: false,
         followSymlinks: true,
         alwaysStat: true,
         awaitWriteFinish: {
@@ -584,35 +592,31 @@ async function startWatcher() {
             log.info(chalk.green("Watcher initialized and ready"));
         });
 
-    // Fallback check in case any file system events are missed
-    const fileCheckInterval = setInterval(() => {
-        Array.from(matchedFiles).forEach((file) => {
-            try {
-                if (fs.existsSync(file)) {
-                    const stats = fs.statSync(file);
-                    const currentSize = stats.size;
-                    const trackedSize = filePositions[file] || 0;
-
-                    if (currentSize > trackedSize) {
-                        log.debug(
-                            `File size change detected in interval check: ${file} (${trackedSize} -> ${currentSize})`
-                        );
-                        // Update last modified time
-                        fileLastModified[file] = stats.mtimeMs;
-                        tailFile({ filepath: file });
-                    }
-                }
-            } catch (err) {
-                log.debug(`Error checking file ${file}: ${err}`);
-            }
-        });
-    }, 50); // Very frequent checks (50ms)
-
     // Periodically rescan to catch any new/changed files that may be missed
     const rescanInterval = setInterval(async () => {
         log.debug(`Performing periodic rescan for new files...`);
 
         try {
+            // Size sweep: the backstop for an append whose event was dropped. Once per rescan, one
+            // stat per file; the 50 ms loop this replaces did the same twenty times a second.
+            for (const file of matchedFiles) {
+                try {
+                    if (!fs.existsSync(file)) {
+                        continue;
+                    }
+
+                    const stats = fs.statSync(file);
+
+                    if (stats.size > (filePositions[file] || 0)) {
+                        log.debug(`Size grew without an event: ${file} (${filePositions[file] || 0} -> ${stats.size})`);
+                        fileLastModified[file] = stats.mtimeMs;
+                        tailFile({ filepath: file });
+                    }
+                } catch (err) {
+                    log.debug(`Error checking file ${file}: ${err}`);
+                }
+            }
+
             // Scan for current matching files
             const currentFiles = await scanForFiles();
 
@@ -671,7 +675,6 @@ async function startWatcher() {
     // Handle process termination
     process.on("SIGINT", () => {
         log.info(chalk.yellow("Stopping file watcher..."));
-        clearInterval(fileCheckInterval);
         clearInterval(rescanInterval);
         closeAllFileWatchers();
         watcher.close().then(() => process.exit(0));
