@@ -148,6 +148,39 @@ describe("Youtube", () => {
         }
     });
 
+    it("dispose stops a running pipeline and closes the database", async () => {
+        const { yt, db, dir } = await makeFixture();
+        const pipeline = yt.pipeline;
+
+        try {
+            await pipeline.start();
+            const job = pipeline.enqueue({
+                targetKind: "video",
+                target: "abc123def45",
+                stages: ["metadata"],
+            }).job!;
+            await waitFor(() => pipeline.getJob(job.id)?.status === "completed");
+            await yt.dispose();
+            expect(pipeline.workerStats()).toMatchObject({ workers: 0, busy: 0 });
+            expect(() => db.listJobs()).toThrow();
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("dispose closes the database when the pipeline was never started", async () => {
+        const { yt, db, dir } = await makeFixture();
+
+        try {
+            expect(yt.queue).toBeDefined();
+            await yt.dispose();
+            await yt.dispose();
+            expect(() => db.listJobs()).toThrow();
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("syncDates backfills upload_date for rows that are missing one", async () => {
         const { yt, db, dir, calls } = await makeFixture();
         db.upsertChannel({ handle: "@mkbhd" });

@@ -222,6 +222,87 @@ describe("WorkerPool", () => {
         expect(pool.getStats().workers).toBe(0);
     });
 
+    it("does not wake parked workers when busy already covers pendingHint", async () => {
+        const queue = makeQueue();
+        queue.push(4);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let claims = 0;
+        const pool = new WorkerPool<number>({
+            name: "t",
+            max: 6,
+            min: 6,
+            spawnPolicy: "one",
+            pendingHint: () => 3,
+            claim: () => {
+                claims++;
+
+                return queue.claim();
+            },
+            run: async (item) => {
+                await gate;
+                queue.done.push(item);
+            },
+            pollMs: 0,
+            idleTeardownMs: 60_000,
+        });
+        pool.start();
+        await waitFor(() => pool.getStats().busy === 4 && pool.getStats().idle === 2);
+        const claimsBeforeKick = claims;
+        pool.kick();
+        await Bun.sleep(20);
+        expect(pool.getStats().busy).toBe(4);
+        expect(pool.getStats().idle).toBe(2);
+        expect(claims).toBe(claimsBeforeKick);
+        release();
+        await waitFor(() => queue.done.length === 4);
+        await pool.stop();
+    });
+
+    it("does not spawn a tourist when pendingHint is 0", async () => {
+        const queue = makeQueue();
+        const pool = new WorkerPool<number>({
+            name: "t",
+            max: 4,
+            pendingHint: () => 0,
+            claim: queue.claim,
+            run: async (item) => {
+                queue.done.push(item);
+            },
+            pollMs: 0,
+            idleTeardownMs: 60_000,
+        });
+        pool.start();
+        await Bun.sleep(20);
+        expect(pool.getStats().workers).toBe(0);
+        expect(pool.getStats().spawned).toBe(0);
+        await pool.stop();
+    });
+
+    it("does not spawn when max is 0", async () => {
+        const queue = makeQueue();
+        queue.push(3);
+        const pool = new WorkerPool<number>({
+            name: "t",
+            max: () => 0,
+            pendingHint: () => queue.items.length,
+            claim: queue.claim,
+            run: async (item) => {
+                queue.done.push(item);
+            },
+            pollMs: 0,
+            idleTeardownMs: 10,
+        });
+        pool.start();
+        pool.kick();
+        await Bun.sleep(20);
+        expect(pool.getStats().workers).toBe(0);
+        expect(queue.done).toEqual([]);
+        await pool.stop();
+    });
+
     it("falls back to the poll when no kick arrives", async () => {
         const queue = makeQueue();
         const pool = new WorkerPool<number>({

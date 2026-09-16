@@ -55,6 +55,7 @@ interface StageLimits {
     capacity: (stage: JobStage) => number;
     idleTeardownMs: number;
     pollMs: number;
+    spawnPolicy: "burst" | "one";
     readAt: number;
 }
 
@@ -160,6 +161,7 @@ export class Pipeline {
         }
 
         this.running = true;
+        this.hotStage = null;
         const requeued = this.db.markInterruptedJobsForRequeue();
         const limits = await this.readLimits();
         logger.info({ requeued, max: limits.max, pollMs: limits.pollMs }, "youtube pipeline starting");
@@ -170,6 +172,7 @@ export class Pipeline {
             claim: (ctx) => this.claimNext(ctx.workerId),
             run: (claimed, ctx) => this.runJob(claimed.job, claimed.stage, ctx.signal),
             pendingHint: () => this.pendingHint(),
+            spawnPolicy: limits.spawnPolicy,
             idleTeardownMs: limits.idleTeardownMs,
             pollMs: this.deps.pollMs ?? limits.pollMs,
             onError: (error, ctx) => {
@@ -184,17 +187,17 @@ export class Pipeline {
     }
 
     async stop(): Promise<void> {
-        if (!this.running) {
-            return;
+        if (this.running) {
+            logger.info({ workers: this.pool?.getStats().workers ?? 0 }, "youtube pipeline stopping");
+            this.running = false;
+            this.stopDbWatch?.();
+            this.stopDbWatch = null;
+            await this.pool?.stop();
+            this.pool = null;
+            this.inFlight.clear();
         }
 
-        logger.info({ workers: this.pool?.getStats().workers ?? 0 }, "youtube pipeline stopping");
-        this.running = false;
-        this.stopDbWatch?.();
-        this.stopDbWatch = null;
-        await this.pool?.stop();
-        this.pool = null;
-        this.inFlight.clear();
+        this.hotStage = null;
     }
 
     /** Live pool counters. The idle benchmark reads this; it is also the first thing to look at
@@ -217,6 +220,11 @@ export class Pipeline {
         }
 
         const limits = await this.readLimits();
+
+        if (!this.running) {
+            return null;
+        }
+
         const hot = this.hotStage;
 
         if (hot !== null && this.inFlightFor(hot) < limits.capacity(hot)) {
@@ -316,6 +324,7 @@ export class Pipeline {
             capacity: (stage) => this.globalConcurrencyOverride ?? capacityByStage.get(stage) ?? 1,
             idleTeardownMs: workers.idleTeardownMs,
             pollMs: workers.pollMs,
+            spawnPolicy: workers.spawnPolicy,
             readAt: Date.now(),
         };
     }
