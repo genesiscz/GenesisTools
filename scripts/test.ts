@@ -216,6 +216,12 @@ const LOAD_SENSITIVE_FILES = [
     // phantom failure in every full run, on master too.
     "src/doctor/ui/tui/views/__tests__/drawer-content-packing.test.ts",
     "src/utils/prompts/p/backend.test.ts",
+    // Both spawn a real child and assert on what it reports, so both fail only
+    // under the parallel run's pressure and pass 1/1 alone (measured 2026-09-16).
+    // quote.test.ts read an EMPTY stdout back from `/bin/sh` for one case of
+    // sixteen; benchmark.test.ts saw a subprocess peak RSS above its 1 GB ceiling.
+    "src/utils/shell/quote.test.ts",
+    "scripts/history/benchmark.test.ts",
 ];
 
 /**
@@ -231,7 +237,20 @@ const LOAD_SENSITIVE_FILES = [
  * Declared once and spread into `DEFAULT_EXCLUDES` below, so the default run and the
  * explicit-path run can never disagree about it.
  */
-const ALWAYS_EXCLUDES = ["**/*.spec.ts"];
+const ALWAYS_EXCLUDES = [
+    "**/*.spec.ts",
+    // Same reasoning as `*.spec.ts`, one directory further: every test under
+    // DevDashboard/cloud/web is a vitest file, and its own `test` script runs
+    // `vitest run` for exactly that reason. The tree loads `better-sqlite3`, a
+    // native Node addon bun cannot dlopen ("'better-sqlite3' is not yet supported
+    // in Bun", ERR_DLOPEN_FAILED), so bun collecting one is always a mistake and
+    // never a choice. Verified 2026-09-16: 6 test files under
+    // DevDashboard/cloud/web/src, all 6 import `vitest`, NONE imports `bun:test`;
+    // they contributed 13 phantom failures to a local full run. Only `cloud/web`
+    // is excluded: `cloud/shared` holds real bun tests, which `bun test ../shared`
+    // runs from that package.
+    "**/DevDashboard/cloud/web/**",
+];
 
 /**
  * Excluded from every full run unless targeted explicitly. These lived only in
