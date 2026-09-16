@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { tmpdir } from "@genesiscz/utils/paths";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
 import { parseNativeWindowList, parseScreenList, type ScreenInfo, type WindowBounds } from "./native-record";
@@ -22,6 +23,11 @@ export const CHROMIUM_APPS = new Set([
     "Opera",
 ]);
 
+// Every process this file spawns (peekaboo, osascript, ax-tool, open) goes through the
+// GenesisTools.app launcher when it is installed, so Accessibility, Screen Recording and
+// Automation are attributed to the app and not to whichever terminal started `tools`. Same
+// rule as src/control/lib/runner.ts; a bare spawn here was how the capture runner's ax-tool
+// actions and osascript focus fallback kept using the terminal's grants.
 // Every spawned command gets a hard timeout: a wedged bridge makes peekaboo
 // block for 20s+, and ONE blocking lookup inside the action loop shoves every
 // later action off the timeline (observed live: atMs 2000 fired at 20369ms).
@@ -38,7 +44,7 @@ export function runCmd(cmd: string[], timeoutMs = 15_000): { ok: boolean; stdout
  * looks exactly like "the binary is not there".
  */
 export function runCmdFull(cmd: string[], timeoutMs = 15_000): { ok: boolean; stdout: string; stderr: string } {
-    const r = Bun.spawnSync(cmd, { timeout: timeoutMs, killSignal: "SIGKILL" });
+    const r = Bun.spawnSync(wrapWithGenesisApp(cmd), { timeout: timeoutMs, killSignal: "SIGKILL" });
     return {
         ok: r.exitCode === 0,
         stdout: r.stdout.toString().trim(),
@@ -52,7 +58,10 @@ export function runPeekabooJson(
     args: string[],
     timeoutMs = 15_000
 ): { ok: boolean; data?: unknown; stdout: string; stderr: string } {
-    const r = Bun.spawnSync(["peekaboo", ...args, "--json"], { timeout: timeoutMs, killSignal: "SIGKILL" });
+    const r = Bun.spawnSync(wrapWithGenesisApp(["peekaboo", ...args, "--json"]), {
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+    });
     const raw = r.stdout.toString();
     const start = raw.indexOf("{");
     let data: unknown;
@@ -557,10 +566,13 @@ function run() {
 
 export async function runCountdown(sec: number): Promise<void> {
     // overlay runs detached and paces itself; stderr ticks are the guaranteed channel
-    const overlay = Bun.spawn(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec)], {
-        stdout: "ignore",
-        stderr: "ignore",
-    });
+    const overlay = Bun.spawn(
+        wrapWithGenesisApp(["osascript", "-l", "JavaScript", "-e", countdownOverlayScript(sec)]),
+        {
+            stdout: "ignore",
+            stderr: "ignore",
+        }
+    );
     overlay.unref();
 
     for (let i = sec; i >= 1; i--) {
@@ -669,7 +681,9 @@ export async function startCapture(argv: string[]): Promise<CaptureAttempt> {
     mkdirSync(sessionsRoot, { recursive: true });
     const preexisting = new Set(readdirSync(sessionsRoot));
     const tool = argv[0].split("/").pop() ?? argv[0];
-    const p = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+    // killTree walks `pgrep -P` recursively, so the two launcher stages in front of the recorder
+    // are killed together with it; the launcher also proxies the recorder's exit status.
+    const p = Bun.spawn(wrapWithGenesisApp(argv), { stdout: "pipe", stderr: "pipe" });
     // Drain both pipes from spawn time: an undrained 64KB pipe blocks peekaboo
     // mid-write (large final JSON on long captures, or visualizer logs when
     // PEEKABOO_VISUALIZER_STDOUT=true) and is indistinguishable from a hang.
