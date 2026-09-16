@@ -12,8 +12,8 @@ import {
     dirtySegment,
     gitSegment,
     modelDirSegment,
+    modelLabel,
     sessionSegment,
-    shortModel,
 } from "./segments";
 import type { RenderResult, RenderTimings, StatuslineConfig, StatuslineFeature, StatuslinePayload } from "./types";
 
@@ -65,7 +65,8 @@ export async function renderStatusline(raw: Record<string, unknown>, deps: Rende
     }
 
     const [model, lastMessageTime, sessionName, account, autocompact, git, graft, extension] = await Promise.all([
-        time("model", async () => (await deps.feature.resolveModel?.(payload)) ?? payload.modelDisplayName ?? "Claude"),
+        // The transcript's id first: the host's field lags a `/model` switch by a whole turn.
+        time("model", async () => (await deps.feature.resolveModel?.(payload)) ?? payload.modelId ?? null),
         time("lastMessage", async () => (await deps.feature.resolveLastMessageTime?.(payload)) ?? null),
         time(
             "sessionName",
@@ -78,8 +79,11 @@ export async function renderStatusline(raw: Record<string, unknown>, deps: Rende
         time("extension", async () => (config.extends ? runExtension(payload, config) : [])),
     ]);
 
-    const line1Parts = [modelDirSegment(shortModel(model), basename(payload.cwd)), gitSegment(git?.branch ?? null)];
-    const line2Parts: string[] = [dirtySegment(git?.branch ?? null, git?.dirty ?? 0)];
+    const line1Parts = [
+        modelDirSegment(modelLabel(model, payload.modelDisplayName, config.modelStyle), basename(payload.cwd)),
+        gitSegment(git?.branch ?? null),
+    ];
+    const line2Parts: string[] = [config.showDirty ? dirtySegment(git?.branch ?? null, git?.dirty ?? 0) : ""];
 
     if (payload.contextWindowSize && payload.usage) {
         const usedTokens =

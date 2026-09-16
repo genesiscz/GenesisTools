@@ -15,6 +15,7 @@ import {
     formatDeltaK,
     formatK,
     modelDisplayFromId,
+    modelLabel,
     shortModel,
 } from "./segments";
 import type { StatuslineFeature } from "./types";
@@ -114,7 +115,8 @@ describe("renderStatusline", () => {
     const feature: StatuslineFeature = {
         host: "Test Host",
         parsePayload: parseClaudeCodePayload,
-        resolveModel: async () => "Opus 4.6",
+        // `resolveModel` returns the model ID; the renderer decides how it reads.
+        resolveModel: async () => "claude-opus-4-6",
         resolveLastMessageTime: async () => "12:45:13",
         resolveSessionName: async () => null,
         resolveAccount: async () => ({
@@ -150,7 +152,7 @@ describe("renderStatusline", () => {
 
         const first = await renderStatusline(raw(436_000), { feature, config, cache, columns: 120 });
         expect(first.lines).toHaveLength(2);
-        expect(first.lines[0]).toBe(`${ANSI.dim}O4.6${ANSI.reset} ${ANSI.blue}proj${ANSI.reset}`);
+        expect(first.lines[0]).toBe(`${ANSI.dim}claude-opus-4-6${ANSI.reset} ${ANSI.blue}proj${ANSI.reset}`);
         expect(first.lines[1]).toContain("436k/775k(56%)");
         expect(first.lines[1]).toContain(`${ANSI.dim}AC${ANSI.reset}`);
         expect(first.lines[1]).toContain("f0b20987");
@@ -173,5 +175,34 @@ describe("renderStatusline", () => {
             { feature, config, columns: 80 }
         );
         expect(result.lines).toEqual([]);
+    });
+});
+
+describe("modelLabel", () => {
+    /**
+     * The default has to reproduce `~/.claude/statusline.sh`, which prints the raw id. The short
+     * form stays available because it is narrower, but it is opt-in.
+     */
+    test("the default prints the id the shell script prints", () => {
+        expect(modelLabel("claude-opus-5", "Opus 5", "id")).toBe("claude-opus-5");
+    });
+
+    test("the short form goes through the display mapping", () => {
+        expect(modelLabel("claude-opus-5", "Opus 5", "short")).toBe("O5");
+        expect(modelLabel("claude-sonnet-4-6", null, "short")).toBe("S4.6");
+    });
+
+    test("an unknown id falls back to the host's own label rather than inventing one", () => {
+        expect(modelLabel(null, "Opus 5", "id")).toBe("Opus 5");
+        expect(modelLabel(null, "Opus 5", "short")).toBe("O5");
+        expect(modelLabel(null, null, "id")).toBe("Claude");
+        expect(modelLabel(null, null, "short")).toBe("Claude");
+    });
+});
+
+describe("dirty marker", () => {
+    test("is off by default, because the shell script computes it and then wipes it", () => {
+        expect(defaultStatuslineConfig().showDirty).toBe(false);
+        expect(defaultStatuslineConfig().modelStyle).toBe("id");
     });
 });

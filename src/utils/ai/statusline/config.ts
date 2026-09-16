@@ -16,6 +16,8 @@ export function defaultStatuslineConfig(): StatuslineConfig {
         showSession: true,
         showAccount: true,
         showGit: true,
+        showDirty: false,
+        modelStyle: "id",
         graft: { enabled: true, shim: join(homedir(), ".claude", "helpers", "graft-statusline.cjs"), ttlMs: 10_000 },
         metricsPost: { enabled: true, url: "http://localhost:8765/statusline", timeoutMs: 300 },
         gitTtlMs: 5_000,

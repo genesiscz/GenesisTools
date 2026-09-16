@@ -24,6 +24,8 @@ export interface StatuslinePayload {
     transcriptPath: string | null;
     /** The host's own idea of the model, which may lag a `/model` switch. */
     modelDisplayName: string | null;
+    /** The host's model id (`claude-opus-5`), which is what `modelStyle: "id"` prints. */
+    modelId: string | null;
     contextWindowSize: number | null;
     usage: StatuslineUsage | null;
     /** True for a subagent frame; the graft line is the only thing rendered for those. */
@@ -61,6 +63,18 @@ export interface StatuslineConfig {
     showAccount: boolean;
     /** Branch and dirty count. */
     showGit: boolean;
+    /**
+     * The `*N` uncommitted-file marker. Default FALSE, because `~/.claude/statusline.sh`
+     * computes the count and then wipes it before printing, and the point of this renderer is
+     * to produce the line Martin already reads. Turn it on to get the count back.
+     */
+    showDirty: boolean;
+    /**
+     * `"id"` prints the model id the payload carries (`claude-opus-5`), which is what the shell
+     * script shows. `"short"` prints `O5`, which is narrower but hides the family for a model id
+     * the shortener does not recognise.
+     */
+    modelStyle: "id" | "short";
     /** Append graft's graph line in a checkout that has a graph. */
     graft: { enabled: boolean; shim: string; ttlMs: number };
     /** Post the raw payload to a local metrics sink, fire and forget. */
@@ -92,7 +106,13 @@ export interface StatuslineFeature {
     readonly host: string;
     /** Turn the host's stdin document into the neutral payload, or null when it is not this host's. */
     parsePayload(raw: Record<string, unknown>): StatuslinePayload | null;
-    /** The model that really produced the last turn, when the host's field lags. Returns a display name. */
+    /**
+     * The model that really produced the last turn, when the host's field lags.
+     *
+     * Returns the model ID (`claude-opus-5`). Formatting belongs to the renderer, because only
+     * the renderer knows `modelStyle`, and a provider cannot guess whether the reader wants the
+     * id or a short label.
+     */
     resolveModel?(payload: StatuslinePayload): Promise<string | null>;
     /** Wall-clock of the last real message, as local `HH:MM:SS`, for the prompt-cache gauge. */
     resolveLastMessageTime?(payload: StatuslinePayload): Promise<string | null>;

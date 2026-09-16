@@ -77,6 +77,24 @@ function roundHalfEven(value: number, digits: number): number {
     return Math.round(scaled) / factor;
 }
 
+/**
+ * What the first cell reads as.
+ *
+ * `"id"` is the default because `~/.claude/statusline.sh` prints the raw id and this renderer
+ * exists to produce the line Martin already reads. `"short"` runs the id through the display
+ * mapping first (`claude-opus-5` to `Opus 5` to `O5`), and falls back to the host's own label
+ * when the id is missing or the mapping does not recognise it.
+ */
+export function modelLabel(modelId: string | null, hostLabel: string | null, style: "id" | "short"): string {
+    if (style === "id") {
+        return modelId ?? hostLabel ?? "Claude";
+    }
+
+    const display = modelId ? modelDisplayFromId(modelId) : hostLabel;
+
+    return display ? shortModel(display) : "Claude";
+}
+
 export function modelDirSegment(short: string, dirName: string): string {
     return `${ANSI.dim}${short}${ANSI.reset} ${ANSI.blue}${dirName}${ANSI.reset}`;
 }

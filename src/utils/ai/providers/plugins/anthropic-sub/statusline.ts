@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { normalizeLimits } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/limits";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { StatuslineCache } from "@genesiscz/utils/ai/statusline/cache";
-import { modelDisplayFromId } from "@genesiscz/utils/ai/statusline/segments";
 import type { AccountSegmentData, StatuslineFeature, StatuslinePayload } from "@genesiscz/utils/ai/statusline/types";
 import type { Cached } from "@genesiscz/utils/ai/usage-poll/shared-cache";
 import { snapshotsCacheKey, USAGE_CACHE_TTL, usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
@@ -81,6 +80,7 @@ export function parseClaudeCodePayload(raw: Record<string, unknown>): Statusline
         sessionId: asString(raw.session_id),
         transcriptPath: asString(raw.transcript_path),
         modelDisplayName: asString(model?.display_name),
+        modelId: asString(model?.id),
         contextWindowSize: asNumber(contextWindow?.context_window_size),
         usage: usage
             ? {
@@ -444,7 +444,7 @@ export function claudeCodeStatusline(cache = new StatuslineCache()): StatuslineF
         resolveModel: async (payload) => {
             const facts = await factsFor(payload);
 
-            return facts.modelId ? modelDisplayFromId(facts.modelId) : null;
+            return facts.modelId;
         },
         resolveLastMessageTime: async (payload) => {
             const facts = await factsFor(payload);
