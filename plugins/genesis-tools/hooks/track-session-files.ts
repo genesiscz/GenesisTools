@@ -10,7 +10,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { harnessOf } from "./harness";
 
 // biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @app/utils/json
@@ -30,6 +30,8 @@ interface HookInput {
     hook_event_name: string;
     tool_name?: string;
     transcript_path?: string;
+    /** Where the tool ran; an apply_patch path is relative to it. */
+    cwd?: string;
     tool_input?: {
         file_path?: string;
         /** Codex `apply_patch`, Grok `edit_file` / `create_file`. */
@@ -163,7 +165,12 @@ function applyPatchFilePaths(command: string): string[] {
     return [...paths];
 }
 
-/** Every path an edit tool names, in whichever field its harness puts it. */
+/**
+ * Every path an edit tool names, in whichever field its harness puts it, made absolute against
+ * the payload's `cwd`. Claude sends an absolute `file_path`; an apply_patch path is relative to
+ * where Codex ran, and a bare `src/a.ts` beside absolute entries names nothing. A payload with
+ * no `cwd` keeps the path as given rather than guessing from this process's directory.
+ */
 function filePathsOf(input: HookInput): string[] {
     const response = typeof input.tool_response === "object" ? input.tool_response : undefined;
     const explicitPath =
@@ -172,16 +179,31 @@ function filePathsOf(input: HookInput): string[] {
         input.tool_input?.filePath ??
         response?.filePath ??
         response?.path;
+    let named: string[] = [];
 
     if (explicitPath) {
-        return [explicitPath];
+        named = [explicitPath];
+    } else if (input.tool_name === "apply_patch" && typeof input.tool_input?.command === "string") {
+        named = applyPatchFilePaths(input.tool_input.command);
     }
 
-    if (input.tool_name === "apply_patch" && typeof input.tool_input?.command === "string") {
-        return applyPatchFilePaths(input.tool_input.command);
+    const cwd = input.cwd;
+
+    return cwd ? named.map((path) => (isAbsolute(path) ? path : resolve(cwd, path))) : named;
+}
+
+/**
+ * Whether the edit did not happen. An object response says so in `success`; Codex's string
+ * response leads with the patch's exit code, and a rejected patch touched nothing.
+ */
+function writeFailed(response: HookInput["tool_response"]): boolean {
+    if (typeof response === "string") {
+        const exitCode = /^Exit code: (\d+)/.exec(response);
+
+        return exitCode !== null && exitCode[1] !== "0";
     }
 
-    return [];
+    return response?.success === false;
 }
 
 interface SessionData {
@@ -296,8 +318,7 @@ async function main() {
             process.exit(0);
         }
 
-        // Skip if write failed
-        if (typeof tool_response === "object" && tool_response?.success === false) {
+        if (writeFailed(tool_response)) {
             process.exit(0);
         }
 
