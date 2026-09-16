@@ -32,6 +32,7 @@ now; the Swift fixes below make the waits finite.
 | ai-usage-poll daemon | `~/.genesis-tools/logs/<day>.log` run counts | 12 accounts fetched on almost every 30 s tick: ~890 runs/day at a 9.4 s median, ~12% of a core | 60 s floor per account and a 60 s tick; re-measure after a day |
 | `tools ai usage sessions` (Genesis.app, every 35 s) | `/usr/bin/time -p`, `bun --cpu-prof` | 1.6 s wall, 1.2 s user + 1.3 s sys per call; 0.6 s of it 364 codex `thread_items` scans (one per rollout) | codex projection index built once per home and cached by database stamp: 1.3 s wall, 0.95 s user + 1.2 s sys; the codex part is under 1 ms |
 | `cr … --resume <text>` (content search) | `PROFILE=agent-sessions` probe | 12.0 s wall, 12.5 s CPU: every candidate transcript parsed and commit-regexed to place matches the picker never shows | `candidatesOnly` search: ripgrep gate plus metadata rows, 2.0 s wall, 0.86 s CPU |
+| `tools ai` import tree (DECISION 2, lazy imports) | `tools ts imports lazy src/ai/index.ts`, `bun src/ai/index.ts --help` x10 | 298 ms sum of self, 465 modules; user CPU 0.36 s under load 26 to 37 (0.29 s quiet) | the ai barrel (122 ms) and run-who (57.5 ms) imported at their use sites with the measured saving in a comment: user CPU 0.22 s under the same load |
 
 ## What the remaining `usage sessions` second is
 
