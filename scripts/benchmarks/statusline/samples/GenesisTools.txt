@@ -1,0 +1,3 @@
+claude-opus-5 GenesisTools feat/2026-09-15-enhancements
+ 436k/775k(56%) AC f0b20987 @12:45:13 ⚿ <account> (U:52%;29%;F:31%)
+◤ graft · 39051 nodes / 100657 edges · ⚠ stale
