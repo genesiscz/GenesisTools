@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import * as p from "@clack/prompts";
-import { AI, AIConfig } from "@genesiscz/utils/ai/index.ts";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig.ts";
 import { ModelManager } from "@genesiscz/utils/ai/ModelManager.ts";
 import { runTool } from "@genesiscz/utils/cli";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
@@ -95,6 +95,8 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
     s.start("Translating...");
 
     try {
+        // lazy: saves 122 ms cold import (tools ts imports lazy, 2026-09-16) — the ai barrel evaluates every provider plugin and only translate and summarize need it
+        const { AI } = await import("@genesiscz/utils/ai/index.ts");
         const translator = await AI.Translator.create({
             provider: opts.provider,
         });
@@ -168,6 +170,8 @@ async function cmdSummarize(file: string | undefined, opts: SummarizeFlags): Pro
     s.start("Summarizing...");
 
     try {
+        // lazy: saves 122 ms cold import (tools ts imports lazy, 2026-09-16) — the ai barrel evaluates every provider plugin and only translate and summarize need it
+        const { AI } = await import("@genesiscz/utils/ai/index.ts");
         const result = await AI.summarize(input, { maxLength });
 
         s.stop(pc.green("Summarization complete"));

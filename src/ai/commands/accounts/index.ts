@@ -8,7 +8,6 @@ import { runLoginLong } from "../../lib/accounts/run-login-long";
 import { runLoginSecondary } from "../../lib/accounts/run-login-secondary";
 import { runLogout } from "../../lib/accounts/run-logout";
 import { runShow } from "../../lib/accounts/run-show";
-import { runWho } from "../../lib/accounts/run-who";
 import { registerAccountLoginCommand } from "./login";
 
 const TOOL = "tools ai accounts";
@@ -108,6 +107,8 @@ export function registerAccountsCommands(program: Command): void {
         .option("--json", "Machine-readable output")
         .option("--all", "Include helper processes (mcp servers, SDK launchers)")
         .action(async (opts: { json?: boolean; all?: boolean }) => {
+            // lazy: saves 57.5 ms cold import (tools ts imports lazy, 2026-09-16) — run-who drags active-sessions, tail-list, the session formatter and cli-highlight, wanted by `who` alone
+            const { runWho } = await import("../../lib/accounts/run-who");
             await runWho(opts);
         });
 }
