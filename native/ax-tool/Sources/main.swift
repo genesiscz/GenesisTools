@@ -16,11 +16,20 @@ func resolveApp(_ name: String) -> pid_t {
     return pid
 }
 
-/// Chromium and Electron build no AX tree until an assistive client asks for one. Setting
-/// this attribute is that request. Other apps report it unsupported, which is fine; it is left
-/// on because Chromium tears the tree down again the moment it is cleared, and a CLI has no
-/// session to scope it to. `AXEnhancedUserInterface` is deliberately NOT set: AppKit apps change
-/// layout behaviour under it and that would be visible to the user.
+/// Chromium and Electron build no AX tree until an assistive client asks for one. Setting this
+/// attribute is one way to ask, and it is left on because the tree is torn down again the moment
+/// it is cleared and a CLI has no session to scope it to.
+///
+/// ⚠️ It only actually lands on ELECTRON. Chromium itself implements `AXEnhancedUserInterface` and
+/// not this one, so Brave and Chrome report `AXManualAccessibility` unsupported while Cursor
+/// reports a real value — confirmed by `tools control audit` reading all 117 running apps on
+/// 2026-09-16. Chromium builds its tree on any AX access anyway, so the no-op costs nothing and
+/// the call stays for Electron's sake. Do NOT "fix" it by setting `AXEnhancedUserInterface`
+/// instead: AppKit apps change layout behaviour under that one and the user would see it.
+///
+/// 🛑 This WRITES to another application and nothing ever clears it. That is why `resolveAppPid`
+/// exists for callers that only need the pid, and why `tools control audit` reports every app
+/// carrying the flag.
 private func enableManualAccessibility(_ pid: pid_t) {
     _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
 }
@@ -87,13 +96,179 @@ func axWindows(_ app: AXUIElement) -> [AXUIElement] {
     return windows
 }
 
+// MARK: - Trust
+
+/// Private libSystem API, the same one the launcher uses on the write side: the pid macOS
+/// consults for every TCC decision about `pid`.
+@_silgen_name("responsibility_get_pid_responsible_for_pid")
+func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
+
+let genesisAppBundleIdentifier = "com.genesiscz.genesistools"
+
+/// Who macOS actually holds responsible for THIS process, read from the kernel rather than
+/// from the environment. `GENESIS_TOOLS_APP_BUNDLE_ID` is inherited by every descendant of a
+/// launcher-started session, so a bare `ax-tool` run inside such a session still carries it
+/// while its grants follow the terminal; only the responsible pid tells those two apart.
+func responsibleProcess() -> (pid: pid_t, bundleId: String?, path: String) {
+    let pid = responsibility_get_pid_responsible_for_pid(getpid())
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) * 4)
+    let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    let path = length > 0 ? String(cString: buffer) : ""
+    let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        ?? (path.contains("/GenesisTools.app/") ? genesisAppBundleIdentifier : nil)
+    return (pid, bundleId, path)
+}
+
+/// The GenesisTools.app bundle id when the launcher is this process's responsible process.
+func genesisAppBundleId() -> String? {
+    responsibleProcess().bundleId == genesisAppBundleIdentifier ? genesisAppBundleIdentifier : nil
+}
+
+func axErrorName(_ err: AXError) -> String {
+    switch err {
+    case .success: return "success"
+    case .failure: return "kAXErrorFailure"
+    case .illegalArgument: return "kAXErrorIllegalArgument"
+    case .invalidUIElement: return "kAXErrorInvalidUIElement"
+    case .invalidUIElementObserver: return "kAXErrorInvalidUIElementObserver"
+    case .cannotComplete: return "kAXErrorCannotComplete"
+    case .attributeUnsupported: return "kAXErrorAttributeUnsupported"
+    case .actionUnsupported: return "kAXErrorActionUnsupported"
+    case .notificationUnsupported: return "kAXErrorNotificationUnsupported"
+    case .notImplemented: return "kAXErrorNotImplemented"
+    case .notificationAlreadyRegistered: return "kAXErrorNotificationAlreadyRegistered"
+    case .notificationNotRegistered: return "kAXErrorNotificationNotRegistered"
+    case .apiDisabled: return "kAXErrorAPIDisabled"
+    case .noValue: return "kAXErrorNoValue"
+    case .parameterizedAttributeUnsupported: return "kAXErrorParameterizedAttributeUnsupported"
+    case .notEnoughPrecision: return "kAXErrorNotEnoughPrecision"
+    @unknown default: return "AXError(\(err.rawValue))"
+    }
+}
+
+/// The one message every AX command prints when the grant is missing. It is a claim about the
+/// CALLER, never about the target app: an untrusted client gets an empty window list from every
+/// app, and reporting that as "no windows for X" sent a session chasing a window bug that did
+/// not exist (handoff h_xt5ixzf9).
+func axUntrustedMessage() -> String {
+    let route: String
+    if let bundle = genesisAppBundleId() {
+        route = "This run went through GenesisTools.app (\(bundle)), which is the identity to grant."
+    } else {
+        route = "This run did NOT go through GenesisTools.app, so macOS attributes it to the terminal or whatever launched it; `tools control` normally routes ax-tool through the app."
+    }
+    return "Accessibility is not granted to the process macOS holds responsible for ax-tool. \(route) Grant it in System Settings > Privacy & Security > Accessibility (`tools macos permissions open --pane accessibility`), then re-run. `tools control doctor` shows every grant tools control needs."
+}
+
+func axUntrustedExit() -> Never {
+    jsonOutput(["ok": false, "error": axUntrustedMessage(), "reason": "accessibility-not-granted",
+                "responsible": genesisAppBundleId() ?? "not GenesisTools.app"])
+    exit(1)
+}
+
+/// `AXIsProcessTrusted()` never prompts and never writes a TCC row; the prompting variant is
+/// `AXIsProcessTrustedWithOptions`, which nothing here calls.
+func requireAxTrust() {
+    if !AXIsProcessTrusted() { axUntrustedExit() }
+}
+
+/// The window list, or a loud exit that says WHICH of three different things happened: the
+/// grant is missing, the app did not answer the AX query, or the query succeeded and the app
+/// really has no windows. Only the last one may say "no windows".
+func axWindowsOrExit(_ app: AXUIElement, _ appName: String) -> [AXUIElement] {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+    if err == .success, let windows = value as? [AXUIElement], !windows.isEmpty { return windows }
+    if !AXIsProcessTrusted() { axUntrustedExit() }
+    if err != .success && err != .noValue {
+        errorExit("accessibility query failed for \(appName): \(axErrorName(err)); the app has no accessibility server or is not answering, which is not the same as having no windows")
+    }
+    errorExit("no windows for \(appName)")
+}
+
+// MARK: - Permissions and audit (read-only)
+
+/// Live grant state for THIS process: what a `tools control` call actually holds, as opposed
+/// to what TCC.db records for some bundle. `CGPreflightScreenCaptureAccess` is the
+/// non-prompting probe; `CGRequestScreenCaptureAccess` is the one that shows the dialog.
+func cmdPermissions() {
+    let responsible = responsibleProcess()
+    jsonOutput(["ok": true, "pid": getpid(),
+                "accessibility": AXIsProcessTrusted(),
+                "screenRecording": CGPreflightScreenCaptureAccess(),
+                "responsible": genesisAppBundleId() ?? "not GenesisTools.app",
+                "responsiblePid": responsible.pid,
+                "responsibleBundleId": responsible.bundleId ?? "",
+                "responsiblePath": responsible.path,
+                "viaGenesisApp": genesisAppBundleId() != nil])
+}
+
+/// One app-level boolean attribute, read without touching the target. `AXManualAccessibility`
+/// is what `resolveApp` writes into every target (and nothing clears); `AXEnhancedUserInterface`
+/// is what VoiceOver writes and this tool deliberately never does.
+private func readAppFlag(_ app: AXUIElement, _ attr: String) -> String {
+    var value: CFTypeRef?
+    let err = AXUIElementCopyAttributeValue(app, attr as CFString, &value)
+    switch err {
+    case .success:
+        if let b = value as? NSNumber { return b.boolValue ? "on" : "off" }
+        return "unreadable"
+    case .attributeUnsupported, .noValue:
+        return "unsupported"
+    default:
+        return axErrorName(err)
+    }
+}
+
+/// Which running apps carry the accessibility flags an assistive client can set. Iterates
+/// NSWorkspace directly and never calls `resolveApp`, so auditing cannot flip the flag it audits.
+/// Default scope is apps with a UI (regular + accessory); `--all` adds background-only processes.
+func cmdAudit() {
+    let includeAll = args.contains("--all")
+    let trusted = AXIsProcessTrusted()
+    let me = getpid()
+    var list: [[String: Any]] = []
+    for app in NSWorkspace.shared.runningApplications {
+        if app.processIdentifier == me { continue }
+        if !includeAll && app.activationPolicy == .prohibited { continue }
+        var entry: [String: Any] = ["pid": app.processIdentifier]
+        if let n = app.localizedName { entry["name"] = n }
+        if let b = app.bundleIdentifier { entry["bundleId"] = b }
+        entry["policy"] = app.activationPolicy == .regular ? "regular"
+            : app.activationPolicy == .accessory ? "accessory" : "prohibited"
+        if trusted {
+            let el = AXUIElementCreateApplication(app.processIdentifier)
+            // A hung app must not hang the audit: half a second per attribute, no retry.
+            AXUIElementSetMessagingTimeout(el, 0.5)
+            entry["manualAccessibility"] = readAppFlag(el, "AXManualAccessibility")
+            entry["enhancedUserInterface"] = readAppFlag(el, "AXEnhancedUserInterface")
+        } else {
+            entry["manualAccessibility"] = "unknown (not trusted)"
+            entry["enhancedUserInterface"] = "unknown (not trusted)"
+        }
+        list.append(entry)
+    }
+    list.sort { (($0["name"] as? String) ?? "").lowercased() < (($1["name"] as? String) ?? "").lowercased() }
+    jsonOutput(["ok": true, "trusted": trusted, "count": list.count, "apps": list,
+                "responsible": genesisAppBundleId() ?? "not GenesisTools.app",
+                "note": "manualAccessibility on = an assistive client asked the app to build its AX tree; tools control sets it on every --app resolution and never clears it. enhancedUserInterface is never set by tools control."])
+}
+
 // Recursive search by AXIdentifier. Returns first match.
-func findByIdentifier(_ root: AXUIElement, id: String) -> AXUIElement? {
+//
+// Capped like every other walker here (collectElements 15, buildTree 10, the ancestor climbs 50).
+// One nested NSBox is one accessibility level and Electron trees go past 15, so the cap is the
+// climbs' 50: deep enough for anything real, and a pathological tree ends instead of walking
+// every node for the whole 10 s the caller allows.
+func findByIdentifier(_ root: AXUIElement, id: String, maxDepth: Int = 50, depth: Int = 0) -> AXUIElement? {
     if axStringAttribute(root, "AXIdentifier") == id {
         return root
     }
+    if depth >= maxDepth {
+        return nil
+    }
     for child in axChildren(root) {
-        if let found = findByIdentifier(child, id: id) {
+        if let found = findByIdentifier(child, id: id, maxDepth: maxDepth, depth: depth + 1) {
             return found
         }
     }
@@ -101,9 +276,9 @@ func findByIdentifier(_ root: AXUIElement, id: String) -> AXUIElement? {
 }
 
 // Search across all windows of an app
-func findInApp(_ appElement: AXUIElement, id: String) -> AXUIElement? {
+func findInApp(_ appElement: AXUIElement, id: String, maxDepth: Int = 50) -> AXUIElement? {
     for window in axWindows(appElement) {
-        if let found = findByIdentifier(window, id: id) {
+        if let found = findByIdentifier(window, id: id, maxDepth: maxDepth) {
             return found
         }
     }
@@ -727,10 +902,7 @@ func cmdGet(appName: String) {
 func cmdList(appName: String, maxDepth: Int) {
     let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
-    let windows = axWindows(app)
-    if windows.isEmpty {
-        errorExit("no windows for \(appName)")
-    }
+    let windows = axWindowsOrExit(app, appName)
 
     var allElements: [[String: Any]] = []
     let cap = 2000
@@ -763,8 +935,7 @@ func cmdList(appName: String, maxDepth: Int) {
 func cmdTree(appName: String, maxDepth: Int) {
     let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
-    let windows = axWindows(app)
-    if windows.isEmpty { errorExit("no windows for \(appName)") }
+    let windows = axWindowsOrExit(app, appName)
     let tree = windows.map { buildTree($0, maxDepth: maxDepth) }
     jsonOutput(["ok": true, "app": appName, "pid": pid, "windows": tree])
 }
@@ -828,8 +999,7 @@ func cmdFind(appName: String, role: String?, title: String?, value: String?,
         errorExit("at least one of --q, --text, --role, --title, --value, --desc, or --subrole required")
     }
     let app = AXUIElementCreateApplication(pid)
-    var windows = axWindows(app)
-    if windows.isEmpty { errorExit("no windows for \(appName)") }
+    var windows = axWindowsOrExit(app, appName)
     if let ws = argValue("--window") {
         windows = windows.filter {
             (axStringAttribute($0, "AXTitle") ?? "").localizedCaseInsensitiveContains(ws)
@@ -869,8 +1039,7 @@ func cmdFind(appName: String, role: String?, title: String?, value: String?,
 }
 
 func resolveWindow(_ app: AXUIElement, _ appName: String) -> AXUIElement {
-    let windows = axWindows(app)
-    if windows.isEmpty { errorExit("no windows for \(appName)") }
+    let windows = axWindowsOrExit(app, appName)
     if let ws = argValue("--window") {
         let matches = windows.filter {
             (axStringAttribute($0, "AXTitle") ?? "").localizedCaseInsensitiveContains(ws)
@@ -946,8 +1115,7 @@ func cmdWindow(appName: String) {
         return
     }
 
-    let windows = axWindows(app)
-    if windows.isEmpty { errorExit("no windows for \(appName)") }
+    let windows = axWindowsOrExit(app, appName)
     var infos: [[String: Any]] = []
     for (i, w) in windows.enumerated() {
         var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
@@ -1008,8 +1176,12 @@ func cmdFocus(appName: String) {
 
 func raiseElementWindow(_ el: AXUIElement) {
     var cur = el
-    while let p = axAttribute(cur, "AXWindow") ?? axAttribute(cur, "AXParent") {
-        guard CFGetTypeID(p) == AXUIElementGetTypeID() else { break }
+    // Capped at 50 hops like the other ancestor climbs. Without a cap an element whose AXWindow
+    // answers with something that is not a window and names itself as its own parent spins this
+    // loop at 100% of a core, with no syscall to yield on, until the caller's 10 s kill lands.
+    for _ in 0..<50 {
+        guard let p = axAttribute(cur, "AXWindow") ?? axAttribute(cur, "AXParent") else { return }
+        guard CFGetTypeID(p) == AXUIElementGetTypeID() else { return }
         let pEl = p as! AXUIElement
         if axStringAttribute(pEl, "AXRole") == "AXWindow" {
             let _ = performActionWithTimeout(pEl, action: kAXRaiseAction as String, timeoutMs: 1000)
@@ -2048,8 +2220,7 @@ func cmdPreflight(appName: String, maxDepth: Int) {
     let displayName = NSWorkspace.shared.runningApplications
         .first { $0.processIdentifier == pid }?.localizedName ?? appName
     let app = AXUIElementCreateApplication(pid)
-    let windows = axWindows(app)
-    if windows.isEmpty { errorExit("no windows for \(appName)") }
+    let windows = axWindowsOrExit(app, appName)
 
     // --wanted screens,frontmost,windows,elements[,elements:<Role>],browser,plan
     // Default: all groups, element groups truncated to 15/role.
@@ -2240,6 +2411,9 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                         --wanted groups: screens,frontmost,windows,elements,browser,plan
                         (elements truncated 15/role; --wanted elements:<Role> = full one role)
       ax-tool apps [--all]                                    List running apps (valid --app values)
+      ax-tool permissions                                     Live Accessibility + Screen Recording state of THIS process (never prompts)
+      ax-tool audit [--all]                                   Which running apps carry AXManualAccessibility / AXEnhancedUserInterface
+                      (read-only: never resolves an app, so it cannot set the flag it reports)
       ax-tool list    --app <name> [--depth <n=10>]           List elements (flat, max 2000)
       ax-tool tree    --app <name> [--depth <n=10>]           Hierarchical tree (nested JSON)
       ax-tool dump    --app <name>                            Windows + on-screen elements, scroll-clipped
@@ -2292,7 +2466,9 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
     success, {"ok":false,"error":"..."} on failure.
     set/type refuse when the target app is not frontmost, and verify the field
     content after typing (retry once, then fail loud with fieldValue).
-    Permission: requires Accessibility access for the calling terminal/process.
+    Permission: requires Accessibility for the responsible process; `tools control` routes every
+    call through GenesisTools.app, so that is the identity to grant. Missing grant = a distinct
+    {"reason":"accessibility-not-granted"} error, never "no windows".
 
     Examples:
       ax-tool preflight --app Genesis
@@ -2320,12 +2496,31 @@ func argValue(_ flag: String) -> String? {
     return args[idx + 1]
 }
 
-if command == "snapshot" {
-    cmdSnapshot()
+if command == "permissions" {
+    cmdPermissions()
+    exit(0)
+}
+if command == "audit" {
+    cmdAudit()
     exit(0)
 }
 if command == "apps" {
     cmdApps()
+    exit(0)
+}
+
+// Every command from here on reads or drives an AX tree, posts events, or taps input, and all
+// of those need Accessibility. Without it the AX API answers every app with an empty window
+// list, which every command used to report as a fact about the target ("no windows for X").
+// The exceptions read no AX state: `screens` (NSScreen), `capture` (ScreenCaptureKit, gated
+// on Screen Recording inside Record.swift) and `ocr --image` (a file on disk).
+let axFreeCommands: Set<String> = ["screens", "capture"]
+if !axFreeCommands.contains(command) && !(command == "ocr" && argValue("--image") != nil) {
+    requireAxTrust()
+}
+
+if command == "snapshot" {
+    cmdSnapshot()
     exit(0)
 }
 if command == "restore" {
@@ -2640,5 +2835,5 @@ case "screenshot":
     guard let path = argValue("--path") else { errorExit("--path <file.png> required") }
     cmdScreenshot(appName: appName, path: path)
 default:
-    errorExit("unknown command: \(command). Use: list, tree, dump, typography, hittest, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, snapshot, restore, record, capture, screens")
+    errorExit("unknown command: \(command). Use: list, tree, dump, typography, hittest, get, set, press, attrs, actions, perform, find, window, focus, click, type, scroll, hotkey, screenshot, ocr, preflight, apps, permissions, audit, snapshot, restore, record, capture, screens")
 }

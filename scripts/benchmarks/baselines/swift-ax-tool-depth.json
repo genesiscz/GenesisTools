@@ -1,0 +1,27 @@
+{
+    "name": "swift-ax-tool-depth",
+    "capturedAt": "2026-09-16T16:41:21.404Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        15.36474609375,
+        44.93603515625,
+        88.67529296875
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "findMsAtDepth10": 48.06,
+        "findMinMsAtDepth10": 46.57,
+        "findMsAtDepth20": 49.17,
+        "findMinMsAtDepth20": 46.18,
+        "findMsAtDepth40": 51.31,
+        "findMinMsAtDepth40": 47.94,
+        "findMsAtDepth60": 54.69,
+        "findMinMsAtDepth60": 52.36,
+        "findExitCodeAtDepth60": 0,
+        "foundAtDepth10": 1,
+        "foundAtDepth20": 1,
+        "foundAtDepth40": 1,
+        "foundAtDepth60": 1
+    },
+    "notes": "commit 0d077f1c9; uptime 18:41  up 4 days,  2:04, 35 users, load averages: 15.36 44.94 88.68; ax-tool mtime 2026-09-16T15:25:15.300Z; runs 5; depths 10,20,40,60"
+}

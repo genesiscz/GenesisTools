@@ -19,6 +19,35 @@ final class DragSurface: NSView {
     }
 }
 
+/// Depth of the opt-in "Deep" window, or nil when it must not be built at all.
+///
+/// Opt-in on purpose: `src/control/scripts/live-smoke.ts` asserts this fixture shows exactly two
+/// windows, so a third one may only appear when a caller asks for it. The benchmark that asks is
+/// `scripts/benchmarks/swift/ax-tool-depth.ts`, which measures an `--id` lookup against a known
+/// hierarchy depth.
+///
+/// The command-line form wins over the environment form because `open(1)` launches through
+/// LaunchServices, which does not promise to forward the caller's environment.
+func deepWindowDepth() -> (depth: Int, source: String)? {
+    let arguments = CommandLine.arguments
+
+    if let flag = arguments.firstIndex(of: "--deep-depth"), flag + 1 < arguments.count,
+       let parsed = Int(arguments[flag + 1]), parsed > 0 {
+        return (parsed, "arg")
+    }
+
+    if let raw = ProcessInfo.processInfo.environment["CONTROL_FIXTURE_DEEP_DEPTH"],
+       let parsed = Int(raw), parsed > 0 {
+        return (parsed, "env")
+    }
+
+    if arguments.contains("--deep") {
+        return (60, "default")
+    }
+
+    return nil
+}
+
 final class ControlFixture: NSObject, NSApplicationDelegate {
     var windows: [NSWindow] = []
     var counters: [NSTextField] = []
@@ -95,13 +124,63 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
                 window.makeKeyAndOrderFront(nil)
             }
         }
+        let deep = deepWindowDepth()
+
+        if let deep {
+            let window = makeDeepWindow(depth: deep.depth, screen: screen)
+            windows.append(window)
+
+            if CommandLine.arguments.contains("--background") {
+                window.orderFrontRegardless()
+            } else {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+
         if !CommandLine.arguments.contains("--background") {
             NSApp.activate(ignoringOtherApps: true)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            print("ready:\(ProcessInfo.processInfo.processIdentifier)")
+            let suffix = deep.map { " deep:\($0.depth) deepSource:\($0.source)" } ?? ""
+            print("ready:\(ProcessInfo.processInfo.processIdentifier)\(suffix)")
             fflush(stdout)
         }
+    }
+
+    /// A chain of `depth` nested `NSBox`es with one button at the bottom, identified `deep-leaf`.
+    ///
+    /// Every box carries `deep-<level>` so the real accessibility depth of the leaf can be read
+    /// back rather than assumed: AppKit decides how many accessibility levels one `NSBox` becomes,
+    /// and that number is what the depth cap in `findByIdentifier` counts.
+    ///
+    /// All boxes share one frame instead of insetting, so a 60-level chain still has a visible,
+    /// non-degenerate leaf; an element accessibility reports as zero-sized is a different test.
+    private func makeDeepWindow(depth: Int, screen: NSRect) -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: screen.minX + 40 + 2 * 380, y: screen.minY + 80,
+                                                  width: 320, height: 200),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Deep"
+        window.isReleasedWhenClosed = false
+        var parent = window.contentView!
+
+        for level in 0..<depth {
+            let box = NSBox(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+            box.boxType = .custom
+            box.titlePosition = .noTitle
+            box.borderWidth = 0
+            box.contentViewMargins = .zero
+            box.setAccessibilityIdentifier("deep-\(level)")
+            parent.addSubview(box)
+            parent = box.contentView ?? box
+        }
+
+        // Inert on purpose: the benchmark only looks this button up, and an action here would let
+        // a stray press change the counters the other two windows assert on.
+        let leaf = NSButton(title: "Leaf", target: nil, action: nil)
+        leaf.frame = NSRect(x: 20, y: 20, width: 130, height: 32)
+        leaf.setAccessibilityIdentifier("deep-leaf")
+        parent.addSubview(leaf)
+        return window
     }
 
     @objc func increment(_ sender: NSButton) {

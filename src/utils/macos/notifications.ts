@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, watch } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import type { DarwinKit } from "@genesiscz/utils/macos/darwinkit";
-import { getDarwinKit } from "@genesiscz/utils/macos/darwinkit";
+import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
+import { genesisAppRpc, isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -16,19 +16,39 @@ export interface NotificationOptions {
     open?: string;
     execute?: string;
     appIcon?: string;
+    /**
+     * Image, audio or video files shown with the banner: a thumbnail on the right, and the first
+     * one full size when the notification is expanded. Paths, `~` allowed.
+     *
+     * `genesis-app` only. The other backends ignore it. The app copies each file before attaching
+     * it, because `UNNotificationAttachment` MOVES the file it is given out of its original place.
+     */
+    attachments?: string[];
     ignoreDnD?: boolean;
     say?: boolean;
-    /** DarwinKit-exclusive: action buttons via registered category */
-    categoryIdentifier?: string;
-    /** DarwinKit-exclusive: notification attachments (file paths) */
-    attachments?: string[];
     /**
-     * Force a specific backend instead of the default chain (darwinkit → terminal-notifier → osascript).
+     * Stable id, so the notification can be retracted later with {@link removeNotifications}, or
+     * replaced in place by posting again with the same id. Generated when omitted.
      *
-     * - `darwinkit`: native UNUserNotificationCenter via DarwinKit (~90ms, supports onInteraction listener
-     *   while sender is alive; click actions stored in user_info, lost when sender exits)
-     * - `terminal-notifier`: spawns terminal-notifier binary (~240ms, bakes `-execute` into the notification
-     *   at OS level so click actions survive sender exit)
+     * `genesis-app` only. The other backends ignore it.
+     */
+    id?: string;
+    /**
+     * Buttons on the banner, each with its own click action. The body click still uses the
+     * top-level `open` / `execute`.
+     *
+     * `genesis-app` only. The other backends ignore it.
+     */
+    actions?: NotificationAction[];
+    /**
+     * Force a specific backend instead of the default chain (genesis-app → terminal-notifier → osascript).
+     *
+     * - `genesis-app`: posts from GenesisTools.app through UNUserNotificationCenter, so the banner carries
+     *   the GenesisTools icon and identity. Click actions live in the notification's userInfo and macOS
+     *   relaunches the bundle to run them, so they survive the sender exiting. Only backend with action
+     *   buttons, retraction and listing.
+     * - `terminal-notifier`: spawns the terminal-notifier binary (~240ms, bakes `-execute` into the
+     *   notification at OS level so click actions survive sender exit, but shows ITS icon, not ours)
      * - `osascript`: uses macOS osascript fallback (no click actions, no grouping)
      *
      * If the preferred backend is unavailable (e.g. `terminal-notifier` not installed), falls through to
@@ -37,8 +57,36 @@ export interface NotificationOptions {
     preferred?: NotificationBackend;
 }
 
+/** One button on a banner. `execute` runs first, then `open`. */
+export interface NotificationAction {
+    id: string;
+    title: string;
+    open?: string;
+    execute?: string;
+    /** Renders the button in red. Cosmetic only. */
+    destructive?: boolean;
+    /**
+     * Turn this button into a text field. macOS shows an input box with a send button, and what the
+     * user types comes back as {@link NotificationReply.text}.
+     *
+     * `genesis-app` only.
+     */
+    input?: { buttonTitle?: string; placeholder?: string };
+}
+
+/** What the user did with a notification, available long after the asking process has exited. */
+export interface NotificationReply {
+    id: string;
+    /** The action's own id, or `com.apple.UNNotificationDefaultActionIdentifier` for a body click. */
+    actionId: string;
+    /** Only present when the action had an `input` field. */
+    text?: string;
+    /** ISO 8601, when the user answered. */
+    at: string;
+}
+
 export enum NotificationBackend {
-    DarwinKit = "darwinkit",
+    GenesisApp = "genesis-app",
     TerminalNotifier = "terminal-notifier",
     Osascript = "osascript",
 }
@@ -196,46 +244,40 @@ function sendViaOsascript(opts: NotificationOptions): void {
 }
 
 /**
- * Try sending via DarwinKit's native UNUserNotificationCenter bridge.
- * Returns true if successful, false if darwinkit is unavailable or fails.
+ * Post through GenesisTools.app, so the banner carries our icon and identity.
+ * Returns the notification id, or null when the app could not take it and the chain should move on.
  */
-async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
-    let dk: DarwinKit & {
-        notifications?: { send(opts: Record<string, unknown>): Promise<void> };
-    };
+async function sendViaGenesisApp(opts: NotificationOptions): Promise<string | null> {
+    const outcome = await genesisAppRpc<{ id: string }>("notify.post", {
+        message: opts.message,
+        title: opts.title,
+        subtitle: opts.subtitle,
+        sound: opts.sound,
+        group: opts.group,
+        open: opts.open,
+        execute: opts.execute,
+        appIcon: opts.appIcon,
+        attachments: opts.attachments,
+        ignoreDnD: opts.ignoreDnD,
+        id: opts.id,
+        actions: opts.actions,
+    });
 
-    try {
-        dk = getDarwinKit() as DarwinKit & {
-            notifications?: { send(opts: Record<string, unknown>): Promise<void> };
-        };
-    } catch (error) {
-        logger.debug(`DarwinKit init failed: ${error instanceof Error ? error.message : error}`);
-        return false;
+    if (outcome.ok) {
+        return outcome.result.id;
     }
 
-    if (!dk.notifications) {
-        return false;
+    if (outcome.error.code === "denied") {
+        // Falling through means another bundle delivers instead, so the user still gets the banner
+        // and never learns the grant is missing. That is the documented contract for this function,
+        // so the warning is how the problem stays visible.
+        logger.warn(
+            { error: outcome.error },
+            "GenesisTools.app may not post notifications; grant it in System Settings > Notifications. Falling back to terminal-notifier."
+        );
     }
 
-    try {
-        await dk.notifications.send({
-            title: opts.title ?? "GenesisTools",
-            body: opts.message,
-            subtitle: opts.subtitle,
-            sound: opts.sound ? { named: opts.sound } : "default",
-            thread_identifier: opts.group,
-            category_identifier: opts.categoryIdentifier,
-            attachments: opts.attachments,
-            user_info: {
-                ...(opts.open ? { open: opts.open } : {}),
-                ...(opts.execute ? { execute: opts.execute } : {}),
-            },
-        });
-        return true;
-    } catch (error) {
-        logger.debug(`DarwinKit notification failed: ${error instanceof Error ? error.message : error}`);
-        return false;
-    }
+    return null;
 }
 
 /**
@@ -243,7 +285,7 @@ async function sendViaDarwinKit(opts: NotificationOptions): Promise<boolean> {
  * Always ends with osascript so a notification is always delivered.
  */
 function backendChain(preferred?: NotificationBackend): NotificationBackend[] {
-    const all = [NotificationBackend.DarwinKit, NotificationBackend.TerminalNotifier, NotificationBackend.Osascript];
+    const all = [NotificationBackend.GenesisApp, NotificationBackend.TerminalNotifier, NotificationBackend.Osascript];
 
     if (!preferred) {
         return all;
@@ -252,29 +294,38 @@ function backendChain(preferred?: NotificationBackend): NotificationBackend[] {
     return [preferred, ...all.filter((b) => b !== preferred)];
 }
 
+/** What {@link postNotification} delivered, and through which backend. */
+export interface PostedNotification {
+    backend: NotificationBackend;
+    /** Only `genesis-app` returns one. The other backends cannot address a notification later. */
+    id: string | null;
+}
+
 /**
- * Send a macOS notification.
+ * Send a macOS notification and report which backend took it.
  *
- * Default backend chain: DarwinKit → terminal-notifier → osascript.
+ * Default backend chain: GenesisTools.app → terminal-notifier → osascript.
  * Override with `opts.preferred` to force a specific starting point — the chain still
  * falls through if the preferred backend is unavailable (e.g. `terminal-notifier` not
  * installed → osascript).
+ *
+ * Prefer {@link sendNotification} unless you need the id back to retract it later.
  */
-export async function sendNotification(opts: NotificationOptions): Promise<void> {
+export async function postNotification(opts: NotificationOptions): Promise<PostedNotification> {
     const chain = backendChain(opts.preferred);
 
-    const hasClickAction = Boolean(opts.open || opts.execute);
-
     for (const backend of chain) {
-        if (backend === NotificationBackend.DarwinKit) {
-            if (hasClickAction) {
-                logger.debug("DarwinKit skipped: open/execute actions don't survive sender exit");
+        if (backend === NotificationBackend.GenesisApp) {
+            if (!isGenesisAppRpcAvailable()) {
+                logger.debug("GenesisTools.app unavailable; skipping the genesis-app backend");
                 continue;
             }
 
-            if (await sendViaDarwinKit(opts)) {
-                logger.debug(`Notification sent via DarwinKit: ${opts.message}`);
-                break;
+            const id = await sendViaGenesisApp(opts);
+
+            if (id) {
+                logger.debug(`Notification sent via GenesisTools.app: ${opts.message}`);
+                return { backend, id };
             }
 
             continue;
@@ -285,7 +336,7 @@ export async function sendNotification(opts: NotificationOptions): Promise<void>
 
             if (bin && sendViaTerminalNotifier(bin, opts)) {
                 logger.debug(`Notification sent via terminal-notifier: ${opts.message}`);
-                break;
+                return { backend, id: null };
             }
 
             logger.debug("terminal-notifier unavailable or failed");
@@ -295,8 +346,160 @@ export async function sendNotification(opts: NotificationOptions): Promise<void>
         // osascript — always-available terminal fallback
         sendViaOsascript(opts);
         logger.debug(`Notification sent via osascript: ${opts.message}`);
-        break;
+        return { backend, id: null };
     }
+
+    // Unreachable in practice: osascript is always last and always "succeeds". Kept so a future
+    // reordering cannot silently return a backend that never ran.
+    return { backend: NotificationBackend.Osascript, id: null };
+}
+
+/**
+ * Retract delivered notifications. Only notifications posted through GenesisTools.app can be
+ * addressed, since the other backends post under a different bundle.
+ *
+ * Returns the ids actually removed, `"all"`, or null when the app is unavailable.
+ */
+export async function removeNotifications(target: {
+    ids?: string[];
+    group?: string;
+    all?: boolean;
+}): Promise<string[] | "all" | null> {
+    const outcome = await genesisAppRpc<{ removed: string[] | "all" }>("notify.remove", target);
+
+    if (!outcome.ok) {
+        logger.debug({ error: outcome.error, target }, "Could not remove notifications");
+        return null;
+    }
+
+    return outcome.result.removed;
+}
+
+export interface DeliveredNotification {
+    id: string;
+    title: string;
+    subtitle: string;
+    message: string;
+    group: string;
+    /** Seconds since the epoch. */
+    deliveredAt: number;
+}
+
+/**
+ * Notifications still in Notification Center, posted by GenesisTools.app. Null when unavailable.
+ *
+ * ⚠️ A notification does not appear here the instant {@link postNotification} resolves. `usernoted`
+ * takes roughly a second to publish it, so a list taken straight after a post comes back without
+ * it. Measured 2026-09-16: absent immediately, present after 1s. Do not use this to confirm a post.
+ */
+export async function listNotifications(): Promise<DeliveredNotification[] | null> {
+    const outcome = await genesisAppRpc<{ notifications: DeliveredNotification[] }>("notify.list");
+
+    if (!outcome.ok) {
+        logger.debug({ error: outcome.error }, "Could not list notifications");
+        return null;
+    }
+
+    return outcome.result.notifications;
+}
+
+/**
+ * The answer to a notification, if the user has given one. Null when unanswered or unavailable.
+ *
+ * Non-blocking. Pass `consume` to delete the answer as you read it, so two callers cannot act on
+ * the same reply.
+ */
+export async function readNotificationReply(
+    id: string,
+    opts: { consume?: boolean } = {}
+): Promise<NotificationReply | null> {
+    const outcome = await genesisAppRpc<{ answered: boolean } & NotificationReply>("notify.reply", {
+        id,
+        consume: opts.consume,
+    });
+
+    if (!outcome.ok || !outcome.result.answered) {
+        return null;
+    }
+
+    return outcome.result;
+}
+
+/**
+ * Ask a question in a notification and wait for the answer.
+ *
+ * Give one action an `input` field and the user gets a text box; give plain buttons and you learn
+ * which was pressed. Resolves null on timeout, on a dismissed notification, or when the app is
+ * unavailable — an unanswered question is a normal outcome, not an error.
+ *
+ * ⚠️ The wait is event-driven (`fs.watch` on the reply directory), never a poll. The answer arrives
+ * minutes later from a process macOS launches, so a polling loop here would spin for the entire
+ * time the user is thinking. See the busy-wait section in CLAUDE.md.
+ */
+export async function askNotification(
+    opts: NotificationOptions,
+    waitOpts: { timeoutMs?: number } = {}
+): Promise<NotificationReply | null> {
+    const posted = await postNotification(opts);
+
+    if (posted.backend !== NotificationBackend.GenesisApp || !posted.id) {
+        logger.debug({ backend: posted.backend }, "askNotification: only the genesis-app backend can carry a reply");
+        return null;
+    }
+
+    const timeoutMs = waitOpts.timeoutMs ?? 5 * 60_000;
+    const replyPath = join(genesisAppDir(), "replies", `${posted.id}.json`);
+    await waitForFile(replyPath, timeoutMs);
+
+    return readNotificationReply(posted.id, { consume: true });
+}
+
+/**
+ * Resolve once `path` exists, or when the deadline passes. Never throws, never spins.
+ *
+ * Arms a `node:fs` watch on the parent directory instead of loading the `@parcel/watcher` addon
+ * to wait for one file. The directory watch survives the app's write-temp-then-rename, which a
+ * file-bound watcher does not. There is no debounce: a human answer should not sit in a buffer.
+ */
+async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+    if (existsSync(path)) {
+        return;
+    }
+
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true });
+
+    await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) {
+                return;
+            }
+
+            done = true;
+            clearTimeout(timer);
+            watcher.close();
+            resolve();
+        };
+
+        const timer = setTimeout(finish, timeoutMs);
+        const watcher = watch(dir, () => {
+            if (existsSync(path)) {
+                finish();
+            }
+        });
+    });
+}
+
+/**
+ * Send a macOS notification.
+ *
+ * Default backend chain: GenesisTools.app → terminal-notifier → osascript. Which one ran is not
+ * reported: every caller gets a banner either way. Use {@link postNotification} when you need the
+ * id back so you can retract it later.
+ */
+export async function sendNotification(opts: NotificationOptions): Promise<void> {
+    await postNotification(opts);
 
     if (opts.say) {
         try {

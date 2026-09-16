@@ -36,7 +36,9 @@ func launcherUsage() -> Never {
     usage: GenesisTools <program> [args...]
     Runs <program> with this app bundle as the TCC responsible process.
     With no arguments, opens the GenesisTools settings window.
-      --version   print the bundle version
+      --rpc <json>  run one request as this bundle ("-" reads stdin), reply on stdout
+      --window      open the settings window without waiting for a notification click
+      --version     print the bundle version
 
     """.utf8))
     exit(64)

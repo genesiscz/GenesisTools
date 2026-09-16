@@ -87,6 +87,8 @@ const probes = [
         command: "control cursor click",
         flags: ["--name", "--snapshot", "--button", "--double"],
     },
+    { argv: [...control, "doctor", "--help"], command: "control doctor", flags: ["--json"] },
+    { argv: [...control, "audit", "--help"], command: "control audit", flags: ["--all", "--json"] },
     { argv: [...control, "capture", "--help"], command: "control capture", flags: [] },
     { argv: [...control, "capture", "preflight", "--help"], command: "control capture preflight", flags: ["--app"] },
 ];

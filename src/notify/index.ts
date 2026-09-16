@@ -2,7 +2,10 @@
 
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import type { NotificationAction, NotificationOptions } from "@genesiscz/utils/macos/notifications";
+import { askNotification, postNotification, readNotificationReply } from "@genesiscz/utils/macos/notifications";
 import type { ChannelConfigs } from "@genesiscz/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -269,6 +272,12 @@ program
     .option("--app-icon <path>", "Custom icon path or URL")
     .option("--ignore-dnd", "Send even in Do Not Disturb mode")
     .option("--no-ignore-dnd", "Cancel ignore-dnd if set in config")
+    .option(
+        "--payload <json>",
+        'Full notification as JSON ("-" reads stdin). Reaches every field the flags cannot: actions, input fields, attachments, id. Prints the result as JSON.'
+    )
+    .option("--wait", "With --payload: block until the user answers, and print the reply")
+    .option("--timeout <seconds>", "With --payload --wait: how long to wait", "300")
     .action(
         async (
             message: string | undefined,
@@ -281,8 +290,18 @@ program
                 execute?: string;
                 appIcon?: string;
                 ignoreDnd?: boolean;
+                payload?: string;
+                wait?: boolean;
+                timeout: string;
             }
         ) => {
+            // One JSON door, the same shape the app's own --rpc takes, so anything the API can
+            // express is reachable from the CLI without growing a flag per field.
+            if (options.payload) {
+                await sendPayload(options.payload, Boolean(options.wait), Number(options.timeout) * 1000);
+                return;
+            }
+
             if (!message) {
                 program.outputHelp();
                 process.exit(0);
@@ -304,6 +323,176 @@ program
     );
 
 program.command("config").description("Configure default notification settings").action(configCommand);
+
+program
+    .command("ask")
+    .description("Ask a question in a notification and wait for the typed answer")
+    .argument("<question>", "The question shown in the notification body")
+    .option("-t, --title <title>", "Notification title", "GenesisTools asks")
+    .option("-s, --subtitle <subtitle>", "Notification subtitle")
+    .option("-g, --group <id>", "Group id, so repeated asks collapse instead of stacking")
+    .option("--id <id>", "Stable notification id (generated when omitted); needed to read the reply later")
+    .option("--placeholder <text>", "Hint shown inside the empty text field")
+    .option("--button <label>", "Label on the send button", "Send")
+    .option("--choice <id:label>", "Extra plain button instead of typing (repeatable)", collectChoice, [])
+    .option("--timeout <seconds>", "How long to wait before giving up", "300")
+    .option("--no-wait", "Post and print the id, do not block; read it later with `notify reply`")
+    .option("--json", "Print the reply as JSON")
+    .action(async (question: string, options: AskOptions) => {
+        const actions: NotificationAction[] = [
+            {
+                id: "answer",
+                title: "Answer",
+                input: { buttonTitle: options.button, placeholder: options.placeholder },
+            },
+            ...options.choice.map((c) => ({ id: c.id, title: c.label })),
+        ];
+
+        const payload: NotificationOptions = {
+            id: options.id,
+            title: options.title,
+            subtitle: options.subtitle,
+            message: question,
+            group: options.group,
+            actions,
+        };
+
+        if (!options.wait) {
+            const posted = await postNotification(payload);
+
+            if (!posted.id) {
+                out.error("Only the genesis-app backend can carry a reply; is GenesisTools.app built?");
+                out.error(suggestCommand("tools macos permissions", { replaceCommand: ["build"] }));
+                process.exitCode = 1;
+                return;
+            }
+
+            if (options.json) {
+                out.result({ id: posted.id, answered: false });
+            } else {
+                out.println(posted.id);
+            }
+
+            return;
+        }
+
+        const reply = await askNotification(payload, { timeoutMs: Number(options.timeout) * 1000 });
+
+        if (!reply) {
+            // Not an error: a question the user ignored is a normal outcome, and the exit code is
+            // what a script branches on.
+            if (options.json) {
+                out.result({ answered: false });
+            } else {
+                out.log.warn(`No answer within ${options.timeout}s`);
+            }
+
+            process.exitCode = 1;
+            return;
+        }
+
+        if (options.json) {
+            out.result(reply);
+            return;
+        }
+
+        out.println(reply.text ?? reply.actionId);
+    });
+
+program
+    .command("reply")
+    .description("Read the answer to a question asked earlier with `notify ask --no-wait`")
+    .argument("<id>", "The notification id printed by `notify ask --no-wait`")
+    .option("--consume", "Delete the answer as it is read, so it cannot be acted on twice")
+    .option("--json", "Print the reply as JSON")
+    .action(async (id: string, options: { consume?: boolean; json?: boolean }) => {
+        const reply = await readNotificationReply(id, { consume: options.consume });
+
+        if (!reply) {
+            if (options.json) {
+                out.result({ answered: false, id });
+            } else {
+                out.log.warn(`${id} has not been answered yet`);
+            }
+
+            process.exitCode = 1;
+            return;
+        }
+
+        if (options.json) {
+            out.result(reply);
+            return;
+        }
+
+        out.println(reply.text ?? reply.actionId);
+    });
+
+/**
+ * `tools notify --payload '<json>'` (or `--payload -` for stdin).
+ *
+ * The flags cover the common case; this covers everything else — action buttons, text-input
+ * questions, attachments, a stable id — without the CLI growing a flag per field. The JSON is the
+ * same `NotificationOptions` the library takes, which is the same shape the app's `--rpc` carries.
+ */
+async function sendPayload(source: string, wait: boolean, timeoutMs: number): Promise<void> {
+    const raw = source === "-" ? await Bun.stdin.text() : source;
+    let payload: NotificationOptions;
+
+    try {
+        payload = SafeJSON.parse(raw, { strict: true }) as NotificationOptions;
+    } catch (error) {
+        out.error(`--payload is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+        process.exitCode = 1;
+        return;
+    }
+
+    if (!payload?.message) {
+        out.error("--payload needs at least a `message` field");
+        process.exitCode = 1;
+        return;
+    }
+
+    if (!wait) {
+        out.result(await postNotification(payload));
+        return;
+    }
+
+    const reply = await askNotification(payload, { timeoutMs });
+    out.result(reply ?? { answered: false });
+
+    if (!reply) {
+        process.exitCode = 1;
+    }
+}
+
+interface AskChoice {
+    id: string;
+    label: string;
+}
+
+interface AskOptions {
+    title: string;
+    subtitle?: string;
+    group?: string;
+    id?: string;
+    placeholder?: string;
+    button: string;
+    choice: AskChoice[];
+    timeout: string;
+    wait: boolean;
+    json?: boolean;
+}
+
+/** `--choice deploy:Deploy now` → `{id: "deploy", label: "Deploy now"}`. A bare value is both. */
+function collectChoice(value: string, previous: AskChoice[]): AskChoice[] {
+    const separator = value.indexOf(":");
+    const choice =
+        separator === -1
+            ? { id: value, label: value }
+            : { id: value.slice(0, separator), label: value.slice(separator + 1) };
+
+    return [...previous, choice];
+}
 
 async function main(): Promise<void> {
     try {
@@ -335,9 +524,13 @@ async function main(): Promise<void> {
     }
 }
 
-try {
-    await main();
-} catch (err) {
-    logger.error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+// Guarded so importing this module (a test, `tools ts imports analyze`) does not run the CLI:
+// unguarded, the import parsed an empty argv and cost 63 ms of commander work.
+if (import.meta.main) {
+    try {
+        await main();
+    } catch (err) {
+        logger.error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+    }
 }

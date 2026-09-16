@@ -340,7 +340,11 @@ private final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         writerInput.markAsFinished()
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }
-        done.wait()
+        // A writer that never calls back used to hold this thread forever, after the capture had
+        // already succeeded. Ten seconds is generous for finalising a file; past that, warn and go on.
+        if done.wait(timeout: .now() + 10) == .timedOut {
+            warnings.append("video writer did not finish within 10s; the file may be truncated")
+        }
         if writer.status != .completed {
             warnings.append("video writer ended with status \(writer.status.rawValue): \(writer.error?.localizedDescription ?? "unknown")")
         }
@@ -574,7 +578,13 @@ func cmdCaptureScreen() {
 }
 
 /// Runs one async throwing call to completion from a plain command-line entry point.
-private func awaitResult<T>(_ operation: @escaping () async throws -> T) throws -> T {
+/// Blocks the main thread on an async operation, for at most `timeoutSeconds`.
+///
+/// The wait is a kernel sleep, so it costs nothing while it waits; the point of the deadline is
+/// that ScreenCaptureKit's start and stop are XPC calls, and an XPC call that never answers used to
+/// hold this process forever. The caller's own grace kill exists too, but a timeout here reports a
+/// real error to the user instead of a silent kill.
+private func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {
     let done = DispatchSemaphore(value: 0)
     var outcome: Result<T, Error>?
     Task {
@@ -585,6 +595,12 @@ private func awaitResult<T>(_ operation: @escaping () async throws -> T) throws 
         }
         done.signal()
     }
-    done.wait()
+    if done.wait(timeout: .now() + timeoutSeconds) == .timedOut {
+        throw NSError(
+            domain: "ax-tool",
+            code: 75,
+            userInfo: [NSLocalizedDescriptionKey: "screen capture did not answer within \(Int(timeoutSeconds))s"]
+        )
+    }
     return try outcome!.get()
 }

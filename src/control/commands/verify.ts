@@ -37,8 +37,14 @@ function checkOnce(o: CheckOpts): { pass: boolean; state: AxResult } {
     return { pass: true, state };
 }
 
-/** Polls until the condition holds or timeout. Shared by the CLI command and run steps. */
-export function waitFor(o: CheckOpts & { timeout: number; interval: number }): AxResult {
+/**
+ * Polls until the condition holds or timeout. Shared by the CLI command and run steps.
+ *
+ * Async because of the sleep, not the check: `checkOnce` spawns ax-tool synchronously and always
+ * did. With `Bun.sleepSync` the whole wait was one unbroken block, measured at 1055 ms for a
+ * 1000 ms timeout, during which no timer ran and Ctrl-C was not delivered until it ended.
+ */
+export async function waitFor(o: CheckOpts & { timeout: number; interval: number }): Promise<AxResult> {
     const t0 = performance.now();
     let last: { pass: boolean; state: AxResult } = { pass: false, state: { ok: false } };
     let polls = 0;
@@ -54,7 +60,13 @@ export function waitFor(o: CheckOpts & { timeout: number; interval: number }): A
                 ...(o.gone ? { gone: true } : { element: last.state }),
             };
         }
-        Bun.sleepSync(o.interval);
+        // Sleep only up to the deadline. A full interval here let one more poll start at the
+        // last millisecond and run the wait 20% past its timeout, one ax-tool spawn for nothing.
+        const remaining = o.timeout - (performance.now() - t0);
+        if (remaining <= 0) {
+            break;
+        }
+        await Bun.sleep(Math.min(o.interval, remaining));
     }
     const cond = o.gone
         ? "gone"
@@ -125,8 +137,8 @@ export function registerVerifyCommands(program: Command): void {
         .option("--interval <ms>", "poll interval", "200")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action((opts) => {
-            const result = waitFor({
+        .action(async (opts) => {
+            const result = await waitFor({
                 ...conditionOpts(opts),
                 timeout: Number(opts.timeout),
                 interval: Number(opts.interval),

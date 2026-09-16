@@ -5,6 +5,7 @@ import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -141,7 +142,21 @@ export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
 export const DEFAULT_AX_RUN_BOUNDARY: AxRunBoundary = {
     ensureBinary,
     spawn: ({ binary, args, timeoutMs, maxBufferBytes }) => {
-        const result = spawnSync(binary, args, {
+        // Accessibility is granted to GenesisTools.app, and ax-tool only holds it while the app is
+        // its responsible process. Re-entering through the launcher on every call is what
+        // guarantees that.
+        //
+        // ⚠️ `installedGenesisAppLauncher()`, NOT `genesisAppLauncher()`. The latter returns null
+        // when the CALLING process already runs under the app, assuming responsibility is
+        // inherited. That holds for file and Calendar grants but NOT for Accessibility down a long
+        // descendant chain: any session started through the launcher (a `gt-cc` Claude Code run, a
+        // dashboard) therefore ran ax-tool unwrapped, every AX subcommand returned "no windows",
+        // and that reads as a fact about the target app rather than a missing grant.
+        const launcher = installedGenesisAppLauncher();
+        const command = launcher ?? binary;
+        const commandArgs = launcher ? [binary, ...args] : args;
+
+        const result = spawnSync(command, commandArgs, {
             timeout: timeoutMs,
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],

@@ -397,7 +397,60 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         );
     }
 
+    step("reap stale app-face processes");
+    reapStaleAppFaces(step);
+
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
     return { bundlePath, identity, signature, manifest };
+}
+
+/**
+ * Kill app-face processes left over from the bundle this install just replaced.
+ *
+ * 🛑 This is not tidiness, it is correctness. macOS delivers a notification click to the bundle's
+ * ALREADY-RUNNING instance and only launches a fresh one when none exists. A settings window or an
+ * `--rpc` process from an older build therefore keeps receiving every click and answers with
+ * whatever code it was built from — silently, since it looks exactly like a working app. That cost
+ * two hours on 2026-09-16: a window instance from 13:48 swallowed every click for the rest of the
+ * session, and a hung `--rpc` process spun at 60% CPU for an hour doing the same.
+ *
+ * ⚠️ Only argument-less and flag-argument faces are killed. `GenesisTools <program> [args...]` is
+ * the LAUNCHER running somebody's actual work (a dev server, an editor session, a long build), and
+ * killing those would take the user's tools down with the rebuild.
+ */
+function reapStaleAppFaces(step: (message: string) => void): void {
+    const launcher = join(genesisAppBundlePath(), "Contents", "MacOS", GENESIS_APP_NAME);
+    const listing = run(["ps", "-Ao", "pid=,args="]);
+
+    if (listing.code !== 0) {
+        logger.debug({ stderr: listing.stderr }, "could not list processes; skipping the stale-face reap");
+        return;
+    }
+
+    const stale: string[] = [];
+
+    for (const line of listing.stdout.split("\n")) {
+        const match = line.trim().match(/^(\d+)\s+(.*)$/);
+
+        if (!match || !match[2].startsWith(launcher)) {
+            continue;
+        }
+
+        const rest = match[2].slice(launcher.length).trim();
+
+        // "" is the settings window; a leading dash is --rpc / --window / --notify. Anything else
+        // starts with a program path, which means it is the launcher and must be left alone.
+        if (rest === "" || rest.startsWith("-")) {
+            stale.push(match[1]);
+        }
+    }
+
+    if (stale.length === 0) {
+        return;
+    }
+
+    step(`killing ${stale.length} stale app-face process(es): ${stale.join(" ")}`);
+    run(["kill", ...stale]);
+    logger.info({ pids: stale }, "reaped GenesisTools app-face processes from the replaced bundle");
 }
