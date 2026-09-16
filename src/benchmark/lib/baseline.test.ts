@@ -103,6 +103,31 @@ describe("compareToBaseline", () => {
         expect(dropped.deltas.throughput.ok).toBe(false);
     });
 
+    test("floor passes a change under the absolute floor even when the percentage fails", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "baseline-floor-"));
+        await recordBaseline({ name: "tiny", metrics: { cpuPercent: 0.16, latencyMs: 300 }, dir });
+
+        const gated = await compareToBaseline({
+            name: "tiny",
+            metrics: { cpuPercent: 0.19, latencyMs: 360 },
+            tolerancePct: 15,
+            dir,
+        });
+        expect(gated.deltas.cpuPercent?.ok).toBe(false);
+        expect(gated.deltas.latencyMs?.ok).toBe(false);
+
+        const floored = await compareToBaseline({
+            name: "tiny",
+            metrics: { cpuPercent: 0.19, latencyMs: 360 },
+            tolerancePct: 15,
+            floor: { cpuPercent: 0.1 },
+            dir,
+        });
+        expect(floored.deltas.cpuPercent?.ok).toBe(true);
+        expect(floored.deltas.latencyMs?.ok).toBe(false);
+        expect(floored.ok).toBe(false);
+    });
+
     test("names a metric the baseline does not carry instead of scoring it", async () => {
         const cmp = await compareToBaseline({
             name: "cmp",

@@ -160,6 +160,13 @@ export async function compareToBaseline(input: {
     metrics: BaselineMetrics;
     tolerancePct: number;
     lowerIsBetter?: string[];
+    /**
+     * Absolute tolerance per metric, in the metric's own unit. A delta whose magnitude is under the
+     * floor passes whatever the percentage says. A percentage gate is meaningless on a tiny
+     * magnitude: 0.16% of a core going to 0.19% is a 23% "regression" and 1.8 ms of CPU over five
+     * seconds, which is noise. Set the floor to the smallest change that would matter.
+     */
+    floor?: Record<string, number>;
     dir?: string;
 }): Promise<BaselineComparison> {
     const baseline = await readBaseline(input.name, { dir: input.dir });
@@ -181,7 +188,8 @@ export async function compareToBaseline(input: {
 
         const lowerBetter = input.lowerIsBetter === undefined || input.lowerIsBetter.includes(metric);
         const limit = lowerBetter ? before * (1 + input.tolerancePct / 100) : before * (1 - input.tolerancePct / 100);
-        const ok = lowerBetter ? after <= limit : after >= limit;
+        const withinFloor = Math.abs(after - before) <= (input.floor?.[metric] ?? 0);
+        const ok = withinFloor || (lowerBetter ? after <= limit : after >= limit);
         let pct = 0;
 
         if (before !== 0) {
