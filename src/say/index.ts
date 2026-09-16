@@ -28,6 +28,9 @@ import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
 import { SayAudioCache } from "./lib/cache";
+import { captureCallerContext } from "./lib/caller";
+import { newCallId, type SayCallOutcome, type SayCallRequest, tryFinishCall, tryRecordCall } from "./lib/calls";
+import { showCallLogs, showCallStats } from "./lib/calls-view";
 import { speakWithProfile } from "./lib/speak";
 import { getSayStorage } from "./lib/storage";
 
@@ -50,6 +53,8 @@ interface SayOptions {
     save?: boolean;
     unset?: string[];
     fallback?: boolean;
+    logs?: boolean;
+    stats?: boolean;
 }
 
 const program = new Command()
@@ -89,7 +94,19 @@ const program = new Command()
         [] as string[]
     )
     .option("--no-fallback", "Disable automatic fallback to macos TTS when a cloud provider fails")
+    .option("--logs", "Show the last 100 calls (who called, from where, what happened). Same as `tools say logs`.")
+    .option("--stats", "Show call statistics. Same as `tools say stats`.")
     .action(async (messageParts: string[], opts: SayOptions, cmd: Command) => {
+        if (opts.logs) {
+            await showCallLogs({ limit: 100 });
+            return;
+        }
+
+        if (opts.stats) {
+            await showCallStats({});
+            return;
+        }
+
         const mgr = new SayConfigManager();
 
         if (opts.mute && opts.unmute) {
@@ -141,8 +158,27 @@ const program = new Command()
         // can never be persisted from a currently-muted profile.
         // --output still synthesizes (mute only silences speaker playback).
         const wantsMuteWrite = opts.save === true && (opts.unmute === true || unsetList.includes("mute"));
+        const muted = !wantsMuteWrite && !opts.output && (await mgr.isMuted(opts.app));
 
-        if (!wantsMuteWrite && !opts.output && (await mgr.isMuted(opts.app))) {
+        // Every call lands in the call log (`tools say logs`). The foreground process
+        // writes the row with the caller's identity; the speaker writes the outcome
+        // onto it. The detached speaker child knows the row by GENESIS_SAY_CALL_ID
+        // and is the only process that skips the caller capture.
+        const speakerCallId = env.tools.getSayCallId();
+        const request: SayCallRequest = {
+            id: speakerCallId ?? newCallId(),
+            ts: Date.now(),
+            text,
+            argv: process.argv.slice(2),
+            app: opts.app ?? null,
+            pid: process.pid,
+        };
+
+        if (muted) {
+            if (!speakerCallId) {
+                tryRecordCall(request, await captureCallerContext(), "muted");
+            }
+
             process.stderr.write("[say] muted\n");
             return;
         }
@@ -155,14 +191,24 @@ const program = new Command()
         // immediately. --wait opts back into blocking; it is also the recursion
         // guard since this branch only triggers without it. --save / --output
         // run inline so confirmation text and the audio file are ready before exit.
+        // The caller capture (two `ps` calls) runs AFTER the spawn so speech never
+        // waits for it; both writes are upserts, so their order does not matter.
         if (!opts.wait && !opts.save && !opts.output) {
-            spawnDetachedSpeaker();
+            spawnDetachedSpeaker(request.id);
+            tryRecordCall(request, await captureCallerContext(), "started");
             return;
+        }
+
+        if (!speakerCallId) {
+            tryRecordCall(request, await captureCallerContext(), "started");
         }
 
         const effective = await resolveEffective({ mgr, opts, unsetList });
         const effectiveForRun: EffectiveSettings = { ...effective };
         let provider: SayProvider = effective.provider ?? "macos";
+        let fallbackFrom: SayProvider | null = null;
+        const finish = (outcome: Omit<SayCallOutcome, "speakerPid">) =>
+            tryFinishCall(request, { ...outcome, speakerPid: process.pid });
 
         // Per-text provider override: route phrases like "Permission needed"
         // to a different provider (typically local macos) regardless of the
@@ -192,12 +238,14 @@ const program = new Command()
 
         if (provider !== "macos" && !envForProvider(provider)) {
             if (opts.fallback === false) {
+                finish({ status: "failed", provider, error: `env var for ${provider} is not set` });
                 out.error(pc.red(`[say] env var for ${provider} is not set.`));
                 out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
                 process.exit(1);
             }
 
             out.error(pc.yellow(`[say] env var for ${provider} is not set — falling back to macos.`));
+            fallbackFrom = provider;
             provider = "macos";
 
             if (!isFromCLI(cmd, "voice")) {
@@ -210,13 +258,16 @@ const program = new Command()
         }
 
         const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
+        const doneStatus = opts.output ? "written" : "spoken";
 
         try {
-            await speakCached({ mgr, text, provider, effective: effectiveForRun, opts, stream });
+            const { cacheHit } = await speakCached({ mgr, text, provider, effective: effectiveForRun, opts, stream });
+            finish({ status: doneStatus, provider, voice: effectiveForRun.voice, cacheHit, fallbackFrom });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
 
             if (isVoiceNotFoundError(message)) {
+                finish({ status: "failed", provider, voice: effectiveForRun.voice, fallbackFrom, error: message });
                 out.error(pc.red(`[say] TTS failed: ${message}`));
                 await printVoiceList(provider);
                 process.exit(1);
@@ -224,6 +275,7 @@ const program = new Command()
 
             // Cloud TTS is transient; macos is always available — drop provider-specific voice/model in the retry.
             if (provider === "macos" || opts.fallback === false) {
+                finish({ status: "failed", provider, voice: effectiveForRun.voice, fallbackFrom, error: message });
                 out.error(pc.red(`[say] TTS failed: ${message}`));
                 process.exit(1);
             }
@@ -234,9 +286,23 @@ const program = new Command()
             const macosRun: EffectiveSettings = { ...effectiveForRun, voice: null, model: null };
 
             try {
-                await speakCached({ mgr, text, provider: "macos", effective: macosRun, opts, stream });
+                const { cacheHit } = await speakCached({
+                    mgr,
+                    text,
+                    provider: "macos",
+                    effective: macosRun,
+                    opts,
+                    stream,
+                });
+                finish({ status: doneStatus, provider: "macos", cacheHit, fallbackFrom: provider, error: message });
             } catch (fallbackErr) {
                 const fmsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+                finish({
+                    status: "failed",
+                    provider: "macos",
+                    fallbackFrom: provider,
+                    error: `${message}; macos: ${fmsg}`,
+                });
                 out.error(pc.red(`[say] macos fallback also failed: ${fmsg}`));
                 process.exit(1);
             }
@@ -283,6 +349,37 @@ program
     });
 
 program
+    .command("logs")
+    .description("The last N calls: when, which agent and session, which cmux workspace, what was said, what happened")
+    .option("-n, --limit <count>", "How many calls to show", (v: string) => Number.parseInt(v, 10), 100)
+    .option("--attention", "Only calls whose text carries the 'Attention please!!' marker")
+    .option("--grep <text>", "Only calls whose text contains this (case-insensitive)")
+    .option("--since <when>", "Only calls after a duration ago (7d, 24h, 90m) or a date (2026-09-15)")
+    .option("--full", "One detail block per call instead of the table: argv, cwd, process chain, pids, jump command")
+    .option("--json", "Print the records as JSON")
+    .action(
+        async (opts: {
+            limit: number;
+            attention?: boolean;
+            grep?: string;
+            since?: string;
+            full?: boolean;
+            json?: boolean;
+        }) => {
+            await showCallLogs(opts);
+        }
+    );
+
+program
+    .command("stats")
+    .description("Call statistics: outcomes, agents, app profiles, providers, days, hours, top sessions and phrases")
+    .option("--since <when>", "Only calls after a duration ago (7d, 24h, 90m) or a date (2026-09-15)")
+    .option("--json", "Print the aggregates as JSON")
+    .action(async (opts: { since?: string; json?: boolean }) => {
+        await showCallStats(opts);
+    });
+
+program
     .command("config")
     .description("Manage per-app TTS profiles (add/edit/delete) interactively")
     .action(async () => {
@@ -317,14 +414,16 @@ interface EffectiveSettings {
  * skipped — the say tool needs neither the sqlite-vec nor the solid-scope
  * preload — so the background process starts lean. Errors in the detached
  * child surface in the day-stamped log file (`@app/logger`), not on stderr
- * (which is intentionally ignored here).
+ * (which is intentionally ignored here). `callId` names the call-log row the
+ * child reports its outcome to.
  */
-function spawnDetachedSpeaker(): void {
+function spawnDetachedSpeaker(callId: string): void {
     const child = Bun.spawn([process.execPath, import.meta.path, ...process.argv.slice(2), "--wait"], {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
         detached: true,
+        env: { ...env.getProcessEnv(), GENESIS_SAY_CALL_ID: callId },
     });
 
     child.unref();
@@ -399,8 +498,10 @@ interface SpeakCachedArgs {
  * With `--output`, never plays: synthesizes (or serves cache), writes the
  * full buffer to the path, then returns. Streaming is ignored because a
  * complete file is required.
+ *
+ * Reports whether the audio came from the cache, for the call log.
  */
-async function speakCached(args: SpeakCachedArgs): Promise<void> {
+async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }> {
     const { mgr, text, provider, effective, opts, stream } = args;
     const outputPath = opts.output ? resolve(opts.output) : undefined;
 
@@ -422,7 +523,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
             wait: opts.wait,
             model: effective.model ?? undefined,
         });
-        return;
+        return { cacheHit: false };
     }
 
     // macos + --output, or cloud (with optional cache): need the buffer.
@@ -436,7 +537,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
             model: effective.model ?? undefined,
         });
         writeAudioFile(outputPath as string, result.audio, result.contentType);
-        return;
+        return { cacheHit: false };
     }
 
     const { threshold, maxBytes, ttlMs, audioTtlMs } = await mgr.getCacheSettings();
@@ -473,14 +574,14 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
 
         if (outputPath) {
             writeAudioFile(outputPath, hit.audio, hit.contentType);
-            return;
+            return { cacheHit: true };
         }
 
         await playBuffer(hit.audio, hit.contentType, {
             volume: effective.volume ?? undefined,
             wait: opts.wait,
         });
-        return;
+        return { cacheHit: true };
     }
 
     // Miss: synthesize fresh, play the buffer, record the miss (with audio so
@@ -507,13 +608,15 @@ async function speakCached(args: SpeakCachedArgs): Promise<void> {
 
     if (outputPath) {
         writeAudioFile(outputPath, result.audio, result.contentType);
-        return;
+        return { cacheHit: false };
     }
 
     await playBuffer(result.audio, result.contentType, {
         volume: effective.volume ?? undefined,
         wait: opts.wait,
     });
+
+    return { cacheHit: false };
 }
 
 /** MIME → preferred extension when the user path has none. */

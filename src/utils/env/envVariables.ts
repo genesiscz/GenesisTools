@@ -182,6 +182,8 @@ export const env = {
         isAppLauncherDisabled: () => getRaw("GENESIS_TOOLS_NO_APP") === "1",
         /** codesign identity for the GenesisTools.app build; overrides the automatic Developer ID / Apple Development pick. */
         getCodesignIdentity: () => getTrimmed("GENESIS_TOOLS_CODESIGN_IDENTITY"),
+        /** Set by `tools say` on the detached speaker it spawns: the call-log row that child reports its outcome to. */
+        getSayCallId: () => getTrimmed("GENESIS_SAY_CALL_ID"),
         /**
          * Opt out of the worktree migration guard for the deliberate post-merge
          * run. Read through the facade so `env.testing` overrides are seen; a
