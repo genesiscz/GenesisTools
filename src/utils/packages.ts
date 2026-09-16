@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -100,7 +101,7 @@ export async function ensurePackages(packages: string[], options?: EnsurePackage
     // install. With every grammar declared in package.json the same test runs in ~4 ms.
     // Returning rather than throwing keeps the failure where it belongs: the caller reports
     // the capability as unavailable, instead of the suite mutating node_modules mid-run.
-    if (process.env.NODE_ENV === "test") {
+    if (env.get("NODE_ENV") === "test") {
         logger.debug(
             { packages: missing },
             "ensurePackages: refusing to install under NODE_ENV=test — declare the package in package.json instead"

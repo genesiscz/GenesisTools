@@ -2,8 +2,13 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
-import { buildPidRecord, type PidRecord, parsePidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
-import { classifyPid } from "@genesiscz/utils/process-identity";
+import {
+    buildPidRecord,
+    classifyPidRecord,
+    type PidRecord,
+    parsePidRecord,
+    serializePidRecord,
+} from "@genesiscz/utils/process/pidfile";
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const POLL_INTERVAL_MS = 50;
@@ -190,19 +195,11 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
             // normal alive/dead check below.
         }
 
-        // Held by THIS process: a concurrent async caller on the same path. It is alive by
-        // definition and its PID cannot have been reissued, so the identity check below has
-        // nothing to verify. The spawn cost of that check for the own pid is documented at
-        // `readProcessCommand` in process-identity.ts, which is where it is fixed.
-        if (record.pid === process.pid) {
-            return false;
-        }
-
         // Identity, not just liveness: a holder that died and had its number
         // reissued would otherwise look alive forever, and every acquirer would
-        // time out against a lock nobody holds.
-        const identity = classifyPid(record.pid, record.command ?? undefined);
-
+        // time out against a lock nobody holds. Same verdict as inspectPidFile
+        // (command + startedAt), including when the recycled pid is ours.
+        const identity = classifyPidRecord(record);
         if (identity.status === "live" || identity.status === "unverified") {
             return false;
         }

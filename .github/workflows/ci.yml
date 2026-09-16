@@ -227,13 +227,12 @@ jobs:
             "${{ steps.tests.outcome }}" \
             >> "$GITHUB_STEP_SUMMARY"
 
-      # bun prints `(pass) name [N ms]` under a `path.test.ts:` header on the
-      # runner (it does not locally), so the log already holds per-test timings.
-      # Summing them per file header is a ranking, not a wall clock (imports and
-      # setup are outside the brackets); `bun run test --profile` gives wall time.
-      # A summary must never fail the job: continue-on-error, no `set -e`, and no
-      # `head` after `sort` (with pipefail, head closing the pipe early kills sort
-      # with SIGPIPE and the step went red on its first real run, 34373807424).
+      # bun prints `(pass) name [N ms]` under a file header on the runner (it does
+      # not locally), so the log already holds per-test timings. Rank via the same
+      # parser as the per-file ceiling (`--top`): bun 1.4.2 prints
+      # `::group::src/…test.ts:`, and a bare `src/…test.ts:` awk matched ZERO lines
+      # on the pin probe (run 34961144349). A summary must never fail the job:
+      # continue-on-error, no `set -e`.
       - name: Slowest test files
         if: always()
         continue-on-error: true
@@ -246,7 +245,7 @@ jobs:
             echo '<details><summary>Slowest 25 test files — sum of per-test ms under each file header</summary>'
             echo ''
             echo '```'
-            awk '/^src\/.*\.test\.tsx?:$/ { f = $0 } /\[[0-9.]+ms\]$/ { if (f != "") { n = split($0, a, "["); v = a[n]; sub(/ms\]$/, "", v); t[f] += v; c[f]++ } } END { for (k in t) printf "%9.1fs %5d  %s\n", t[k] / 1000, c[k], k }' "$log" | sort -rn | awk 'NR <= 25'
+            bun scripts/ci/test-runtime-guard.ts "$log" --top
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"

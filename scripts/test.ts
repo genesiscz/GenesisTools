@@ -391,9 +391,18 @@ let stalled = false;
 
 function maxRunMs(): number {
     const raw = process.env.GENESIS_TOOLS_TEST_MAX_MINUTES;
-    const minutes = raw == null || raw === "" ? DEFAULT_MAX_MINUTES : Number(raw);
 
-    if (!Number.isFinite(minutes) || minutes <= 0) {
+    if (raw == null || raw === "") {
+        return DEFAULT_MAX_MINUTES * 60_000;
+    }
+
+    const minutes = Number(raw);
+    if (!Number.isFinite(minutes)) {
+        warn(`GENESIS_TOOLS_TEST_MAX_MINUTES=${raw} is not a number — using ${DEFAULT_MAX_MINUTES}m`);
+        return DEFAULT_MAX_MINUTES * 60_000;
+    }
+
+    if (minutes <= 0) {
         return 0;
     }
 
@@ -600,6 +609,10 @@ const parallelExit = await runBunTest([
     ...EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`),
     ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
 ]);
+if (stalled) {
+    finish(parallelExit);
+}
+
 process.stderr.write(`\x1b[90m[test] serial phase: ${LOAD_SENSITIVE_FILES.length} load-sensitive file(s)\x1b[0m\n`);
 // `startsWith`, not equality: bun also accepts `--parallel=N`, and an exact match would let
 // that form through into the phase whose whole purpose is to run these files serially.

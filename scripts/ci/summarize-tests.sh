@@ -7,17 +7,20 @@
 # This lived inline in `.github/workflows/ci.yml` until 2026-09-15. Shell inside YAML
 # cannot be tested, and the first version shipped a defect that fires only on a GREEN
 # run, so nothing on this PR would have caught it. It is a script with a suite now:
-# `summarize-tests.test.ts` drives it through all five input classes.
+# `summarize-tests.test.ts` drives the input classes (green, mixed-red, all-red, empty,
+# missing, directory, space-in-path, SIGPIPE volume).
 #
 # 🛑 `-e` is ON, so every command that may legitimately fail says `|| true` in place.
 # The caller is a `shell: bash` step, which GitHub Actions runs as
 # `bash --noprofile --norc -eo pipefail {0}`, and that combination is exactly what the
 # original defect needed: `grep` exits 1 when it matches nothing, `pipefail` promotes
-# that to the pipeline's status, and `-e` then aborts the step AT THE FIRST ASSIGNMENT,
-# before one byte reaches the summary. A fully passing suite has no `(fail)` lines, so
-# the green path aborted, the step has no `continue-on-error`, and the job went RED
-# while printing nothing. The `LOG UNREADABLE` branch was unreachable for the same
-# reason: a missing log makes `grep` exit 2.
+# that to the pipeline's status, and `-e` then aborted the step AT THE FIRST ASSIGNMENT,
+# before one byte reached the summary. A fully passing suite has no `(fail)` lines, so
+# the green path aborted. The step now has `continue-on-error: true`, so a green abort
+# would no longer redden the job — but the script must still survive `-eo pipefail`
+# because GitHub still runs `shell: bash` that way, and a silent empty summary is the
+# same false green this step exists to prevent. The `LOG UNREADABLE` branch was
+# unreachable for the same reason: a missing log makes `grep` exit 2.
 set -euo pipefail
 
 if [ "$#" -ne 4 ]; then
@@ -53,16 +56,18 @@ PASSES=$(pass_lines | wc -l | tr -d ' ')
 echo "## ${OS_LABEL} — test discovery"
 echo ""
 
-if [ "$PASSES" -eq 0 ]; then
+if [ "$PASSES" -eq 0 ] && [ "$UNIQUE" -eq 0 ]; then
     echo "### ⚠️ LOG UNREADABLE — this result means nothing"
     echo ""
-    echo "Zero \`(pass)\` lines, so the log is missing or truncated. A zero failure"
-    echo "count here is the instrument failing, not the suite passing."
+    echo "Zero \`(pass)\` and zero \`(fail)\` lines, so the log is missing or truncated."
+    echo "A zero failure count here is the instrument failing, not the suite passing."
 elif [ "$UNIQUE" -gt 0 ]; then
     echo "### 🛑 ${UNIQUE} FAILING TESTS (the job is still green — that is on purpose)"
     echo ""
-    echo "\`${PASSES}\` \`(pass)\` lines confirm the log is readable."
-    echo ""
+    if [ "$PASSES" -gt 0 ]; then
+        echo "\`${PASSES}\` \`(pass)\` lines confirm the log is readable."
+        echo ""
+    fi
     echo '```'
     # `|| true` because `head` closes the pipe once it has 40 lines, which hands `sort` an
     # EPIPE. Under `pipefail` that becomes the pipeline's status and `-e` aborts the step.

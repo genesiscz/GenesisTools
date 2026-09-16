@@ -3,7 +3,13 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid, processStartMs, readProcessCommand, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
+import {
+    classifyPid,
+    type PidIdentity,
+    processStartMs,
+    readProcessCommand,
+    START_MS_TOLERANCE,
+} from "@genesiscz/utils/process-identity";
 
 /**
  * Pidfiles that survive pid recycling.
@@ -133,6 +139,30 @@ export function parsePidRecord(raw: string): PidRecord | null {
     return parseRecord(raw, "(caller-supplied)");
 }
 
+/**
+ * One identity verdict for a PidRecord: command line, then start time.
+ *
+ * Callers that already hold the parsed record (file locks comparing the exact
+ * bytes they validated) must not invent a second rule. A live own pid with a
+ * matching command and start time is `live`; a recycled number — including this
+ * process's — is `foreign`/`dead` and safe to steal.
+ */
+export function classifyPidRecord(record: PidRecord, expected?: PidExpectation): PidIdentity {
+    const identity = classifyPid(record.pid, record.command ?? expected);
+    if (identity.status === "live" && record.startedAt !== null) {
+        const startedAt = processStartMs(record.pid);
+        if (startedAt !== null && Math.abs(startedAt - record.startedAt) > START_MS_TOLERANCE) {
+            return {
+                status: "foreign",
+                pid: record.pid,
+                command: identity.command ?? "(unknown)",
+            };
+        }
+    }
+
+    return identity;
+}
+
 /** Read the raw record without judging liveness. Prefer {@link inspectPidFile}. */
 export function readPidRecord(path: string): PidRecord | null {
     if (!existsSync(path)) {
@@ -190,31 +220,11 @@ export function inspectPidFile(path: string, opts: ReadOpts = {}): PidFileState 
         return { status: "none" };
     }
 
-    // The recorded command line is the exact identity of the process that
-    // claimed this file, so it outranks any predicate the caller guessed at.
-    const expected = record.command ?? opts.expected;
-    const identity = classifyPid(record.pid, expected);
-
-    // A matching command line still cannot separate our owner from a second
-    // copy launched the same way onto the recycled number. The start time can,
-    // so when we recorded one it gets the final say.
-    if (identity.status === "live" && record.startedAt !== null) {
-        const startedAt = processStartMs(record.pid);
-
-        if (startedAt !== null && Math.abs(startedAt - record.startedAt) > START_MS_TOLERANCE) {
-            logger.warn(
-                { path, pid: record.pid, recordedStart: record.startedAt, actualStart: startedAt },
-                "[pidfile] pid matches the recorded command but started at a different time; treating as recycled"
-            );
-
-            return { status: "foreign", pid: record.pid, record, command: identity.command ?? "(unknown)" };
-        }
-    }
-
+    const identity = classifyPidRecord(record, opts.expected);
     if (identity.status === "foreign") {
         logger.warn(
             { path, pid: record.pid, recorded: record.command, actual: identity.command },
-            "[pidfile] recorded pid was recycled onto another program; treating the pidfile as stale"
+            "[pidfile] recorded pid was recycled; treating the pidfile as stale"
         );
 
         return { status: "foreign", pid: record.pid, record, command: identity.command ?? "(unknown)" };
