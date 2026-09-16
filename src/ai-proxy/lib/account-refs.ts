@@ -1,5 +1,5 @@
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
-import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import type { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import {
     type AccountRef,
     accountRef,
@@ -144,6 +144,10 @@ export async function ensureProxyAccountRefs(io: {
     const config = await io.load();
 
     try {
+        // lazy: saves 52 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — every
+        // process that only REGISTERS the scanner paid for the whole AI config store,
+        // and `tools ai` registers it on every invocation.
+        const { AiConfigStore } = await import("@genesiscz/utils/ai/config/AiConfigStore");
         const store = await AiConfigStore.load();
         const { accounts, drifts } = backfillProxyAccountRefs(config.accounts, store);
 

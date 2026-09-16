@@ -5,40 +5,29 @@ import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
-import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig.ts";
-import { ModelManager } from "@genesiscz/utils/ai/ModelManager.ts";
 import { runTool } from "@genesiscz/utils/cli";
+import { registerRequestedTrees } from "@genesiscz/utils/cli/lazy-registrars";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format.ts";
 import { logger, out } from "@genesiscz/utils/logger";
-import { classifyText } from "@genesiscz/utils/macos/classification.ts";
-import { detectLanguage } from "@genesiscz/utils/macos/nlp.ts";
-import { ensurePackage } from "@genesiscz/utils/packages.ts";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers.ts";
 import { formatTable } from "@genesiscz/utils/table.ts";
 import { Command } from "commander";
 import pc from "picocolors";
-import { registerAccountsCommands } from "./commands/accounts";
-import { registerAiProviderLoginCommands } from "./commands/accounts/login";
-import { registerConfigCommands } from "./commands/config";
 import { readStdinValue } from "./commands/config/stdin";
-import { runConfigTui } from "./commands/config/tui";
-import { registerSessionsCommands } from "./commands/sessions";
-import { registerStatuslineCommands } from "./commands/statusline";
-import { registerUsageDaemonCommands } from "./commands/usage/daemon";
-import { registerAiUsageCommand } from "./commands/usage/index";
-import { registerAiUsageSessionsCommand } from "./commands/usage/sessions";
-import { registerWarmupCommand } from "./commands/warmup";
+import { AI_REGISTRARS } from "./registrars";
 
 // Without this, `referrersOf` in this process cannot see the accounts the
 // ai-proxy config bills, so `account rm` would delete an account (and its vault
 // secrets) the running proxy still routes to, and `link ls`/`doctor` would
 // miss dangling proxy refs. The scanner registry is per process; ai-proxy's own
 // entrypoint registers the same scanner for itself.
-registerAiProxyRefScanner(loadConfigFresh);
+// lazy: saves 66 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the scanner
+// takes its loader by argument, so the proxy config is read only when something
+// actually asks `referrersOf` who points at an account.
+registerAiProxyRefScanner(async () => (await import("@app/ai-proxy/lib/config")).loadConfigFresh());
 
 // ============================================
 // Translate
@@ -83,6 +72,8 @@ async function cmdTranslate(text: string | undefined, opts: TranslateFlags): Pro
 
     if (!fromLang && process.platform === "darwin") {
         try {
+            // lazy: saves 25.5 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — darwinkit NLP, wanted by translate alone
+            const { detectLanguage } = await import("@genesiscz/utils/macos/nlp.ts");
             const detected = await detectLanguage(input);
             fromLang = detected.language;
             out.error(pc.dim(`Detected language: ${fromLang}`));
@@ -199,6 +190,8 @@ interface ImageFlags {
 }
 
 async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
+    // lazy: saves 51.6 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the deprecated config facade, wanted by image alone
+    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig.ts");
     const config = await AIConfig.load();
     const token = config.getHfToken() ?? env.hf.getKey();
 
@@ -215,6 +208,8 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
     s.start(`Generating image with ${pc.bold(model)}...`);
 
     try {
+        // lazy: saves 25.6 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the on-demand installer, wanted by image alone
+        const { ensurePackage } = await import("@genesiscz/utils/packages.ts");
         await ensurePackage("@huggingface/inference", {
             label: "HuggingFace Inference (image generation)",
         });
@@ -285,6 +280,8 @@ async function cmdClassify(text: string | undefined, opts: ClassifyFlags): Promi
     s.start("Classifying...");
 
     try {
+        // lazy: saves 26.8 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — darwinkit classification, wanted by classify alone
+        const { classifyText } = await import("@genesiscz/utils/macos/classification.ts");
         const result = await classifyText(input, categories);
 
         s.stop(pc.green("Classification complete"));
@@ -307,8 +304,18 @@ async function cmdClassify(text: string | undefined, opts: ClassifyFlags): Promi
 // Models
 // ============================================
 
+/**
+ * lazy: saves 24.6 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the model
+ * cache manager pulls the transformers runtime, wanted by `models` alone.
+ */
+async function loadModelManager() {
+    const { ModelManager } = await import("@genesiscz/utils/ai/ModelManager.ts");
+
+    return new ModelManager();
+}
+
 async function cmdModelsList(): Promise<void> {
-    const manager = new ModelManager();
+    const manager = await loadModelManager();
     const models = await manager.listDownloaded();
 
     if (models.length === 0) {
@@ -325,7 +332,7 @@ async function cmdModelsList(): Promise<void> {
 }
 
 async function cmdModelsDownload(modelId: string, opts: { dtype?: string }): Promise<void> {
-    const manager = new ModelManager();
+    const manager = await loadModelManager();
 
     if (manager.isDownloaded(modelId)) {
         p.log.info(`Model ${pc.bold(modelId)} is already downloaded.`);
@@ -347,7 +354,7 @@ async function cmdModelsDownload(modelId: string, opts: { dtype?: string }): Pro
 }
 
 async function cmdModelsClean(opts: { older?: string }): Promise<void> {
-    const manager = new ModelManager();
+    const manager = await loadModelManager();
     const olderThanMs = opts.older ? Number.parseInt(opts.older, 10) * 24 * 60 * 60 * 1000 : undefined;
 
     const s = p.spinner();
@@ -379,6 +386,8 @@ async function interactiveMode(): Promise<void> {
     );
 
     if (action === "config") {
+        // lazy: saves 59.8 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) — the interactive config screen, reached from this menu alone
+        const { runConfigTui } = await import("./commands/config/tui");
         await runConfigTui();
         return;
     }
@@ -581,19 +590,7 @@ modelsCmd
         await cmdModelsClean(opts);
     });
 
-registerAccountsCommands(program);
-registerAiProviderLoginCommands(program);
-registerConfigCommands(program);
-registerSessionsCommands(program);
-registerStatuslineCommands(program);
-
-// `tools ai usage` opens the dashboard across every provider that reports quota; its
-// `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).
-const usageCmd = program.command("usage").description("Usage limits for every AI provider");
-registerAiUsageCommand(usageCmd);
-registerAiUsageSessionsCommand(usageCmd);
-registerUsageDaemonCommands(usageCmd);
-registerWarmupCommand(program, { tool: "tools ai warmup" });
+await registerRequestedTrees({ program, registrars: AI_REGISTRARS, requested: process.argv[2] });
 
 async function main(): Promise<void> {
     try {
